@@ -8,17 +8,8 @@
     "with_trigger_files": 4,
     "c_triggers_compile": 2,
     "c_triggers_total": 2,
-    "unique_healing_actions": [
-      "IgnoreDoubleFree",
-      "IgnoreForeignFree",
-      "ReturnSafeDefault"
-    ],
-    "uaf_patterns_covered": [
-      "double_free",
-      "foreign_free",
-      "type_confusion",
-      "use_after_free"
-    ],
+    "unique_healing_actions": ["IgnoreDoubleFree", "IgnoreForeignFree", "ReturnSafeDefault"],
+    "uaf_patterns_covered": ["double_free", "foreign_free", "type_confusion", "use_after_free"],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -27,26 +18,18 @@
       "cve_id": "CVE-2025-8058",
       "test_name": "regcomp_double_free_on_alloc_failure",
       "category": "glibc",
-      "cwe_ids": [
-        "CWE-415"
-      ],
+      "cwe_ids": ["CWE-415"],
       "cvss_score": 5.5,
-      "trigger_files": [
-        "trigger.c"
-      ],
+      "trigger_files": ["trigger.c"],
       "c_compiles": true,
-      "healing_actions": [
-        "IgnoreDoubleFree"
-      ],
+      "healing_actions": ["IgnoreDoubleFree"],
       "tsm_features": [
         "generational_arena",
         "quarantine",
         "ignore_double_free",
         "allocation_fingerprints"
       ],
-      "uaf_patterns": [
-        "double_free"
-      ],
+      "uaf_patterns": ["double_free"],
       "manifest_valid": true,
       "issues": []
     },
@@ -54,18 +37,11 @@
       "cve_id": "CVE-2024-24990 (synthetic)",
       "test_name": "quic_uaf_cve_2024_24990",
       "category": "synthetic",
-      "cwe_ids": [
-        "CWE-416"
-      ],
+      "cwe_ids": ["CWE-416"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.c"
-      ],
+      "trigger_files": ["trigger.c"],
       "c_compiles": true,
-      "healing_actions": [
-        "ReturnSafeDefault",
-        "IgnoreDoubleFree"
-      ],
+      "healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"],
       "tsm_features": [
         "GenerationalArena",
         "QuarantineQueue",
@@ -74,11 +50,7 @@
         "ReturnSafeDefault",
         "AllocationFingerprints"
       ],
-      "uaf_patterns": [
-        "use_after_free",
-        "type_confusion",
-        "double_free"
-      ],
+      "uaf_patterns": ["use_after_free", "type_confusion", "double_free"],
       "manifest_valid": true,
       "issues": []
     },
@@ -86,18 +58,11 @@
       "cve_id": "CVE-2024-6197",
       "test_name": "curl_asn1_stack_use_after_free",
       "category": "targets",
-      "cwe_ids": [
-        "CWE-416",
-        "CWE-825"
-      ],
+      "cwe_ids": ["CWE-416", "CWE-825"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.sh"
-      ],
+      "trigger_files": ["trigger.sh"],
       "c_compiles": null,
-      "healing_actions": [
-        "IgnoreForeignFree"
-      ],
+      "healing_actions": ["IgnoreForeignFree"],
       "tsm_features": [
         "bloom_filter_precheck",
         "page_oracle",
@@ -105,10 +70,7 @@
         "ignore_foreign_free_healing",
         "stack_vs_heap_discrimination"
       ],
-      "uaf_patterns": [
-        "use_after_free",
-        "foreign_free"
-      ],
+      "uaf_patterns": ["use_after_free", "foreign_free"],
       "manifest_valid": true,
       "issues": []
     },
@@ -116,19 +78,11 @@
       "cve_id": "CVE-2025-49844",
       "test_name": "redis_lua_gc_use_after_free",
       "category": "targets",
-      "cwe_ids": [
-        "CWE-416"
-      ],
+      "cwe_ids": ["CWE-416"],
       "cvss_score": 10.0,
-      "trigger_files": [
-        "trigger.sh",
-        "trigger.py"
-      ],
+      "trigger_files": ["trigger.sh", "trigger.py"],
       "c_compiles": null,
-      "healing_actions": [
-        "IgnoreDoubleFree",
-        "ReturnSafeDefault"
-      ],
+      "healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"],
       "tsm_features": [
         "generational_arena",
         "quarantine_queue",
@@ -136,10 +90,7 @@
         "use_after_free_healing",
         "allocation_fingerprint"
       ],
-      "uaf_patterns": [
-        "use_after_free",
-        "double_free"
-      ],
+      "uaf_patterns": ["use_after_free", "double_free"],
       "manifest_valid": true,
       "issues": []
     }

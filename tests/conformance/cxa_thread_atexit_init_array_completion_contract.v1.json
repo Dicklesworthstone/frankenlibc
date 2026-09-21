@@ -100,11 +100,17 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "startup_abi_tests", "name": "cxa_thread_atexit_impl_returns_zero"},
-        {"source": "unistd_abi_tests", "name": "cxa_thread_atexit_registers_via_impl"},
-        {"source": "completion_harness", "name": "manifest_binds_cxa_thread_atexit_init_array_completion_evidence"},
-        {"source": "completion_harness", "name": "checker_validates_atomic_resolver_and_reentry_guard"},
-        {"source": "completion_harness", "name": "checker_rejects_once_lock_regression"}
+        { "source": "startup_abi_tests", "name": "cxa_thread_atexit_impl_returns_zero" },
+        { "source": "unistd_abi_tests", "name": "cxa_thread_atexit_registers_via_impl" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_cxa_thread_atexit_init_array_completion_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_validates_atomic_resolver_and_reentry_guard"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_once_lock_regression" }
       ],
       "required_commands": [
         "bash scripts/check_cxa_thread_atexit_init_array_completion_contract.sh",

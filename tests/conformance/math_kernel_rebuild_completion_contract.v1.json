@@ -90,9 +90,15 @@
       "missing_item_id": "tests.unit.primary",
       "description": "The math-kernel rebuild unit proof is the runtime-math production-admission parent harness plus production/research split invariants.",
       "required_test_refs": [
-        {"source": "production_admission_harness", "name": "manifest_binds_all_bd3ot4_missing_items"},
-        {"source": "production_admission_harness", "name": "checker_validates_runtime_math_production_admission_contract"},
-        {"source": "completion_harness", "name": "manifest_binds_math_kernel_rebuild_evidence"}
+        {
+          "source": "production_admission_harness",
+          "name": "manifest_binds_all_bd3ot4_missing_items"
+        },
+        {
+          "source": "production_admission_harness",
+          "name": "checker_validates_runtime_math_production_admission_contract"
+        },
+        { "source": "completion_harness", "name": "manifest_binds_math_kernel_rebuild_evidence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_kernel_rebuild_completion_contract_test -- --nocapture",
@@ -103,9 +109,15 @@
       "missing_item_id": "tests.e2e.primary",
       "description": "The rebuild E2E proof replays the runtime-math production admission checker and binds its report/log as the aggregate closeout surface for bd-kan.",
       "required_test_refs": [
-        {"source": "production_admission_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_validates_math_kernel_rebuild_contract"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_production_admission_contract"}
+        { "source": "production_admission_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_validates_math_kernel_rebuild_contract"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_production_admission_contract"
+        }
       ],
       "required_commands": [
         "bash scripts/check_runtime_math_production_admission_completion_contract.sh",
@@ -120,7 +132,10 @@
       "required_cargo_fuzz_command": "rch exec -- env CARGO_TARGET_DIR=<target> cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz fuzz_runtime_math -- -runs=1000000 -print_final_stats=1",
       "max_crashes": 0,
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_rejects_missing_runtime_math_fuzz_target"}
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_runtime_math_fuzz_target"
+        }
       ]
     },
     "conformance_primary": {
@@ -141,7 +156,10 @@
         "target/conformance/math_kernel_rebuild_completion_contract.log.jsonl"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_rejects_non_rch_cargo_validation_command"}
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_non_rch_cargo_validation_command"
+        }
       ]
     },
     "telemetry_primary": {
@@ -175,8 +193,8 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_telemetry_event"}
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_telemetry_event" }
       ]
     },
     "test_sources": {

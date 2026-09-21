@@ -12,10 +12,7 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/dual_mode_e2e_completion_contract_test.rs"
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"],
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",
       "description": "Unit evidence pins this completion contract and its fail-closed checker so stale E2E bindings, missing structured fields, and non-rch cargo evidence commands cannot silently pass.",
@@ -95,10 +92,7 @@
   },
   "required_dual_mode_e2e_contract": {
     "scenario_id": "bd-oai.5-dual-mode-runtime-math-e2e",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "deterministic_replay_steps": 96,
     "strict_divergence_rows": 64,
     "hardened_divergence_rows": 64,
@@ -165,8 +159,6 @@
       "dual_mode_e2e_bindings_verified",
       "dual_mode_e2e_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "dual_mode_e2e_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["dual_mode_e2e_completion_contract_fail"]
   }
 }

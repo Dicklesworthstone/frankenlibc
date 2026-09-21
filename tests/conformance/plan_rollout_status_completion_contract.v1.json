@@ -16,10 +16,7 @@
     "in_progress_source": "bd-as0w2.3 close window",
     "closed_at_source": ".beads/issues.jsonl"
   },
-  "artifact_refs": [
-    "PLAN_TO_PORT_GLIBC_TO_RUST.md",
-    "PROPOSED_ARCHITECTURE.md"
-  ],
+  "artifact_refs": ["PLAN_TO_PORT_GLIBC_TO_RUST.md", "PROPOSED_ARCHITECTURE.md"],
   "validation": [
     "PLAN_TO_PORT implementation status updated to 4119 symbols, 100% native, L1",
     "Close reason records commit 1f502815"

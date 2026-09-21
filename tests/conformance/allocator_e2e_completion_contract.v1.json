@@ -65,20 +65,9 @@
     "required_e2e_gate": {
       "script": "scripts/check_allocator_e2e.sh",
       "bead": "bd-2x5.5",
-      "fixtures": [
-        "fixture_malloc",
-        "fixture_malloc_stress"
-      ],
-      "modes": [
-        "host",
-        "strict",
-        "hardened"
-      ],
-      "required_env": [
-        "FRANKENLIBC_MODE",
-        "LD_PRELOAD",
-        "TIMEOUT_SECONDS"
-      ],
+      "fixtures": ["fixture_malloc", "fixture_malloc_stress"],
+      "modes": ["host", "strict", "hardened"],
+      "required_env": ["FRANKENLIBC_MODE", "LD_PRELOAD", "TIMEOUT_SECONDS"],
       "required_report_fields": [
         "schema_version",
         "bead",
@@ -102,13 +91,7 @@
         "fixture_malloc": {
           "source": "tests/integration/fixture_malloc.c",
           "tests": 6,
-          "covered_symbols": [
-            "malloc",
-            "free",
-            "calloc",
-            "realloc",
-            "memset"
-          ]
+          "covered_symbols": ["malloc", "free", "calloc", "realloc", "memset"]
         },
         "fixture_malloc_stress": {
           "source": "tests/integration/fixture_malloc_stress.c",
@@ -122,13 +105,8 @@
             "pthread_create",
             "pthread_join"
           ],
-          "link_flags": [
-            "-pthread"
-          ],
-          "mode_expectations": [
-            "strict",
-            "hardened"
-          ]
+          "link_flags": ["-pthread"],
+          "mode_expectations": ["strict", "hardened"]
         }
       }
     },
@@ -156,12 +134,7 @@
       "path": "tests/conformance/fixtures/allocator.json",
       "version": "v1",
       "family": "allocator",
-      "required_functions": [
-        "malloc",
-        "calloc",
-        "free",
-        "realloc"
-      ],
+      "required_functions": ["malloc", "calloc", "free", "realloc"],
       "min_cases": 5,
       "required_case_names": [
         "malloc_basic",

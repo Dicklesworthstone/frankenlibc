@@ -64,11 +64,7 @@
         "reason",
         "migration_action"
       ],
-      "allowed_decisions": [
-        "RETAIN",
-        "RETIRE",
-        "BLOCK"
-      ],
+      "allowed_decisions": ["RETAIN", "RETIRE", "BLOCK"],
       "required_migration_fields": [
         "description",
         "feature_gate",
@@ -82,10 +78,10 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Harness unit tests validate ablation report shape, partition invariants, math-value ablation coverage, and the completion contract.",
       "required_test_refs": [
-        {"source": "controller_ablation", "name": "controller_ablation_passes"},
-        {"source": "controller_ablation", "name": "controller_ablation_partition_invariants"},
-        {"source": "math_value_ablations", "name": "module_set_matches_math_value_proof"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_migration_evidence"}
+        { "source": "controller_ablation", "name": "controller_ablation_passes" },
+        { "source": "controller_ablation", "name": "controller_ablation_partition_invariants" },
+        { "source": "math_value_ablations", "name": "module_set_matches_math_value_proof" },
+        { "source": "completion_harness", "name": "manifest_binds_unit_e2e_and_migration_evidence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test controller_ablation_test -- --nocapture",
@@ -96,8 +92,8 @@
       "missing_item_id": "tests.e2e.primary",
       "description": "The controller ablation gate validates the generated partition report end-to-end; the completion checker validates the gate/report/log wiring without regenerating tracked artifacts.",
       "required_test_refs": [
-        {"source": "controller_ablation", "name": "controller_ablation_passes"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"}
+        { "source": "controller_ablation", "name": "controller_ablation_passes" },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" }
       ],
       "required_commands": [
         "bash scripts/check_controller_ablation.sh",
@@ -112,9 +108,15 @@
       "required_research_retire_count": 44,
       "required_production_retain_count": 25,
       "required_test_refs": [
-        {"source": "controller_ablation", "name": "controller_ablation_partition_invariants"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_migration_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_research_migration_binding"}
+        { "source": "controller_ablation", "name": "controller_ablation_partition_invariants" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_and_migration_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_research_migration_binding"
+        }
       ]
     }
   }

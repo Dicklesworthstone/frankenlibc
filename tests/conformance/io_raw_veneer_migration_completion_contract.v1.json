@@ -33,9 +33,7 @@
         "pub unsafe extern \"C\" fn mmap64",
         "crate::mmap_abi::mmap"
       ],
-      "forbidden_needles": [
-        "libc::syscall("
-      ]
+      "forbidden_needles": ["libc::syscall("]
     },
     {
       "artifact_id": "abi_io_raw_routes",
@@ -58,9 +56,7 @@
         "syscall::sys_copy_file_range",
         "syscall::sys_memfd_create"
       ],
-      "forbidden_needles": [
-        "libc::syscall("
-      ]
+      "forbidden_needles": ["libc::syscall("]
     },
     {
       "artifact_id": "abi_mmap_raw_routes",
@@ -79,9 +75,7 @@
         "raw_syscall::sys_mlock",
         "raw_syscall::sys_mremap"
       ],
-      "forbidden_needles": [
-        "libc::syscall("
-      ]
+      "forbidden_needles": ["libc::syscall("]
     },
     {
       "artifact_id": "abi_io_tests",
@@ -208,9 +202,7 @@
         "rch exec -- cargo test -p frankenlibc-abi --test mmap_abi_test mmap_anonymous_and_munmap -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test open_write_read_close_round_trip -- --nocapture"
       ],
-      "required_completion_events": [
-        "io_raw_veneer_migration.unit_binding_validated"
-      ]
+      "required_completion_events": ["io_raw_veneer_migration.unit_binding_validated"]
     },
     "e2e_primary": {
       "required_test_refs": [
@@ -240,9 +232,7 @@
         "rch exec -- cargo test -p frankenlibc-abi --test mmap_abi_test mprotect_changes_protection -- --nocapture",
         "rch exec -- cargo test -p frankenlibc-abi --test unistd_abi_test lseek_reports_position -- --nocapture"
       ],
-      "required_completion_events": [
-        "io_raw_veneer_migration.e2e_binding_validated"
-      ]
+      "required_completion_events": ["io_raw_veneer_migration.e2e_binding_validated"]
     },
     "migrations_primary": {
       "required_sources": [
@@ -251,15 +241,9 @@
         "abi_mmap_raw_routes",
         "verification_matrix_record"
       ],
-      "forbidden_needles": [
-        "libc::syscall("
-      ],
-      "required_commands": [
-        "bash scripts/check_io_raw_veneer_migration_completion_contract.sh"
-      ],
-      "required_completion_events": [
-        "io_raw_veneer_migration.migration_binding_validated"
-      ]
+      "forbidden_needles": ["libc::syscall("],
+      "required_commands": ["bash scripts/check_io_raw_veneer_migration_completion_contract.sh"],
+      "required_completion_events": ["io_raw_veneer_migration.migration_binding_validated"]
     },
     "telemetry_primary": {
       "required_test_refs": [

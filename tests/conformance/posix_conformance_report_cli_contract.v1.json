@@ -8,12 +8,7 @@
   "subcommand_name": "posix-conformance-report",
   "binary_target": "harness",
   "required_flags": [],
-  "optional_flags": [
-    "--support-matrix",
-    "--fixture",
-    "--conformance-matrix",
-    "--output"
-  ],
+  "optional_flags": ["--support-matrix", "--fixture", "--conformance-matrix", "--output"],
   "default_support_matrix": "support_matrix.json",
   "default_fixture": "tests/conformance/fixtures",
   "default_conformance_matrix": "tests/conformance/conformance_matrix.v1.json",
@@ -50,20 +45,8 @@
       "execution",
       "quality_flags"
     ],
-    "required_category_fields": [
-      "normal",
-      "boundary",
-      "error",
-      "other"
-    ],
-    "required_execution_fields": [
-      "total",
-      "pass",
-      "fail",
-      "error",
-      "timeout",
-      "crash"
-    ],
+    "required_category_fields": ["normal", "boundary", "error", "other"],
+    "required_execution_fields": ["total", "pass", "fail", "error", "timeout", "crash"],
     "symbols_must_be_non_empty_for_canonical_inputs": true,
     "symbols_must_be_sorted_ascending": true,
     "case_count_must_equal_category_total": true

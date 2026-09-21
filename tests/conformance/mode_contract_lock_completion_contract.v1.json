@@ -145,10 +145,7 @@
   },
   "required_source_contract": {
     "env_key": "FRANKENLIBC_MODE",
-    "allowed_values": [
-      "strict",
-      "hardened"
-    ],
+    "allowed_values": ["strict", "hardened"],
     "default_value": "strict",
     "unknown_value_behavior": "fallback_to_strict",
     "required_mutability_substring": "immutable",
@@ -181,10 +178,7 @@
       "startup_reentrant_anchors"
     ],
     "runtime_evidence_policy": {
-      "allowed_modes": [
-        "strict",
-        "hardened"
-      ],
+      "allowed_modes": ["strict", "hardened"],
       "process_immutable_after_startup": true,
       "subprocess_rows_must_override_inherited_mode": true,
       "startup_evidence_required": true,

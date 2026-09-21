@@ -66,8 +66,28 @@
       "symbols": ["__libc_start_main", "__frankenlibc_startup_phase0"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["runtime_policy_decide", "validate_main", "scan_argv", "scan_envp", "scan_auxv", "classify_secure_mode", "call_init", "call_main", "call_fini"],
-      "actual_order": ["runtime_policy_decide", "validate_main", "scan_argv", "scan_envp", "scan_auxv", "classify_secure_mode", "call_init", "call_main", "call_fini"],
+      "expected_order": [
+        "runtime_policy_decide",
+        "validate_main",
+        "scan_argv",
+        "scan_envp",
+        "scan_auxv",
+        "classify_secure_mode",
+        "call_init",
+        "call_main",
+        "call_fini"
+      ],
+      "actual_order": [
+        "runtime_policy_decide",
+        "validate_main",
+        "scan_argv",
+        "scan_envp",
+        "scan_auxv",
+        "classify_secure_mode",
+        "call_init",
+        "call_main",
+        "call_fini"
+      ],
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
@@ -90,8 +110,18 @@
       "symbols": ["__frankenlibc_startup_phase0", "__frankenlibc_startup_snapshot"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["normalize_argc", "scan_argv_until_null", "scan_envp_until_null", "snapshot_counts"],
-      "actual_order": ["normalize_argc", "scan_argv_until_null", "scan_envp_until_null", "snapshot_counts"],
+      "expected_order": [
+        "normalize_argc",
+        "scan_argv_until_null",
+        "scan_envp_until_null",
+        "snapshot_counts"
+      ],
+      "actual_order": [
+        "normalize_argc",
+        "scan_argv_until_null",
+        "scan_envp_until_null",
+        "snapshot_counts"
+      ],
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
@@ -114,8 +144,18 @@
       "symbols": ["__errno_location", "pthread_create", "pthread_join"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["startup_policy_gate", "thread_local_errno_ready", "pthread_thread_start", "tls_destructor_registration"],
-      "actual_order": ["startup_policy_gate", "thread_local_errno_ready", "pthread_thread_start", "tls_destructor_registration"],
+      "expected_order": [
+        "startup_policy_gate",
+        "thread_local_errno_ready",
+        "pthread_thread_start",
+        "tls_destructor_registration"
+      ],
+      "actual_order": [
+        "startup_policy_gate",
+        "thread_local_errno_ready",
+        "pthread_thread_start",
+        "tls_destructor_registration"
+      ],
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
@@ -138,11 +178,28 @@
       "id": "pthread_tls_keys",
       "dimension": "tls",
       "title": "pthread_key create/get/set/delete and destructor obligations",
-      "symbols": ["pthread_key_create", "pthread_key_delete", "pthread_getspecific", "pthread_setspecific"],
+      "symbols": [
+        "pthread_key_create",
+        "pthread_key_delete",
+        "pthread_getspecific",
+        "pthread_setspecific"
+      ],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["key_create", "setspecific", "getspecific", "thread_exit_destructor_pass", "key_delete"],
-      "actual_order": ["key_create", "setspecific", "getspecific", "thread_exit_destructor_pass", "key_delete"],
+      "expected_order": [
+        "key_create",
+        "setspecific",
+        "getspecific",
+        "thread_exit_destructor_pass",
+        "key_delete"
+      ],
+      "actual_order": [
+        "key_create",
+        "setspecific",
+        "getspecific",
+        "thread_exit_destructor_pass",
+        "key_delete"
+      ],
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
@@ -210,7 +267,12 @@
       "symbols": ["atexit", "on_exit", "__cxa_atexit", "__cxa_finalize"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["register_callbacks", "main_return", "callbacks_lifo", "status_propagated"],
+      "expected_order": [
+        "register_callbacks",
+        "main_return",
+        "callbacks_lifo",
+        "status_propagated"
+      ],
       "actual_order": ["register_callbacks", "main_return", "callbacks_lifo", "status_propagated"],
       "expected_status": "required",
       "actual_status": "pass",
@@ -262,8 +324,18 @@
       "symbols": ["__errno_location", "pthread_create", "pthread_join"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["thread_a_set_errno", "thread_b_set_errno", "join_threads", "main_errno_unchanged"],
-      "actual_order": ["thread_a_set_errno", "thread_b_set_errno", "join_threads", "main_errno_unchanged"],
+      "expected_order": [
+        "thread_a_set_errno",
+        "thread_b_set_errno",
+        "join_threads",
+        "main_errno_unchanged"
+      ],
+      "actual_order": [
+        "thread_a_set_errno",
+        "thread_b_set_errno",
+        "join_threads",
+        "main_errno_unchanged"
+      ],
       "expected_status": "required",
       "actual_status": "pass",
       "promotion_decision": "satisfied",
@@ -297,9 +369,7 @@
         "tests/conformance/fixtures/startup_ops.json",
         "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"
       ],
-      "check_commands": [
-        "cargo test -p frankenlibc-harness --test startup_ops_conformance_test"
-      ],
+      "check_commands": ["cargo test -p frankenlibc-harness --test startup_ops_conformance_test"],
       "failure_signature": "l1_secure_mode_evidence_missing"
     },
     {
@@ -309,8 +379,18 @@
       "symbols": ["replacement_levels_l1_gate"],
       "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
-      "expected_order": ["load_proof_matrix", "validate_required_rows", "validate_freshness", "classify_claim"],
-      "actual_order": ["load_proof_matrix", "validate_required_rows", "validate_freshness", "classify_claim"],
+      "expected_order": [
+        "load_proof_matrix",
+        "validate_required_rows",
+        "validate_freshness",
+        "classify_claim"
+      ],
+      "actual_order": [
+        "load_proof_matrix",
+        "validate_required_rows",
+        "validate_freshness",
+        "classify_claim"
+      ],
       "expected_status": "pass",
       "actual_status": "pass",
       "promotion_decision": "satisfied",

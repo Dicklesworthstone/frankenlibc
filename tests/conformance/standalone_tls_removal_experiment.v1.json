@@ -141,10 +141,7 @@
         "--features=standalone"
       ],
       "tls_model": "local-exec",
-      "rustflags": [
-        "-C",
-        "tls-model=local-exec"
-      ],
+      "rustflags": ["-C", "tls-model=local-exec"],
       "report_only": true,
       "expected_claim_status": "report_only",
       "must_not_change_default_tls_model": true,

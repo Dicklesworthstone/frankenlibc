@@ -26,16 +26,8 @@
       "unique_healing_actions",
       "uaf_patterns_covered"
     ],
-    "required_top_level_fields": [
-      "schema_version",
-      "bead",
-      "summary",
-      "tests"
-    ],
-    "required_uaf_patterns": [
-      "use_after_free",
-      "double_free"
-    ],
+    "required_top_level_fields": ["schema_version", "bead", "summary", "tests"],
+    "required_uaf_patterns": ["use_after_free", "double_free"],
     "rationale": "The e2e test invokes the python validator which scans the CVE arena UAF/double-free corpus and emits a deterministic JSON report. Downstream gates consume this report as the canonical telemetry signal that both UAF patterns (use-after-free + double-free) are covered with valid manifests."
   },
   "policy": {
@@ -58,11 +50,7 @@
     "pass": "2026-05-10T03-16-16Z",
     "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1m5.3/scorecard.md",
     "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-1m5.3/spec.json",
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "score_before": 470,
     "score_threshold": 700
   },

@@ -36,24 +36,10 @@
       "workload_trace_jsonl",
       "healing_oracle_log_jsonl"
     ],
-    "identity_key_fields": [
-      "scenario_id",
-      "api_family",
-      "symbol",
-      "decision_path",
-      "input_class"
-    ],
+    "identity_key_fields": ["scenario_id", "api_family", "symbol", "decision_path", "input_class"],
     "mode_field": "mode",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "divergence_fields": [
-      "decision_action",
-      "outcome",
-      "healing_action",
-      "errno"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "divergence_fields": ["decision_action", "outcome", "healing_action", "errno"],
     "required_row_fields": [
       "schema_version",
       "trace_id",

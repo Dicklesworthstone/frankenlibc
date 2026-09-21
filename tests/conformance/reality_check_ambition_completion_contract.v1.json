@@ -74,10 +74,7 @@
       "id": "bd-bp8fl.1",
       "name": "semantic contracts",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "support_matrix",
-        "feature_parity_contract"
-      ]
+      "evidence_artifacts": ["support_matrix", "feature_parity_contract"]
     },
     {
       "id": "bd-bp8fl.2",
@@ -93,114 +90,85 @@
       "id": "bd-bp8fl.3",
       "name": "feature parity evidence",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "feature_parity_contract"
-      ]
+      "evidence_artifacts": ["feature_parity_contract"]
     },
     {
       "id": "bd-bp8fl.4",
       "name": "fixture coverage",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "fixture_coverage_contract"
-      ]
+      "evidence_artifacts": ["fixture_coverage_contract"]
     },
     {
       "id": "bd-bp8fl.5",
       "name": "hard-parts parity",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "hard_parts_contract"
-      ]
+      "evidence_artifacts": ["hard_parts_contract"]
     },
     {
       "id": "bd-bp8fl.6",
       "name": "replacement gates",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "replacement_contract",
-        "replacement_levels"
-      ]
+      "evidence_artifacts": ["replacement_contract", "replacement_levels"]
     },
     {
       "id": "bd-bp8fl.7",
       "name": "workspace gates",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "workspace_contract"
-      ]
+      "evidence_artifacts": ["workspace_contract"]
     },
     {
       "id": "bd-bp8fl.8",
       "name": "performance",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "perf_contract"
-      ]
+      "evidence_artifacts": ["perf_contract"]
     },
     {
       "id": "bd-bp8fl.9",
       "name": "formal/runtime-math",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "runtime_evidence_contract"
-      ]
+      "evidence_artifacts": ["runtime_evidence_contract"]
     },
     {
       "id": "bd-bp8fl.10",
       "name": "user workload diagnostics",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "workload_handoff_contract"
-      ]
+      "evidence_artifacts": ["workload_handoff_contract"]
     },
     {
       "id": "bd-bp8fl.11",
       "name": "done templates",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "workstream_done_contract"
-      ]
+      "evidence_artifacts": ["workstream_done_contract"]
     },
     {
       "id": "bd-bp8fl.12",
       "name": "handoff discipline",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "agent_handoff_contract"
-      ]
+      "evidence_artifacts": ["agent_handoff_contract"]
     },
     {
       "id": "bd-bp8fl.13",
       "name": "acct rustfmt cleanup",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "rustfmt_quarantine_contract"
-      ]
+      "evidence_artifacts": ["rustfmt_quarantine_contract"]
     },
     {
       "id": "bd-bp8fl.14",
       "name": "adjtimex rustfmt cleanup",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "rustfmt_quarantine_contract"
-      ]
+      "evidence_artifacts": ["rustfmt_quarantine_contract"]
     },
     {
       "id": "bd-bp8fl.15",
       "name": "aligned_alloc rustfmt cleanup",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "rustfmt_quarantine_contract"
-      ]
+      "evidence_artifacts": ["rustfmt_quarantine_contract"]
     },
     {
       "id": "bd-bp8fl.16",
       "name": "bsd_signal rustfmt cleanup",
       "required_status": "closed",
-      "evidence_artifacts": [
-        "rustfmt_quarantine_contract"
-      ]
+      "evidence_artifacts": ["rustfmt_quarantine_contract"]
     }
   ],
   "claimed_closure_contract": {

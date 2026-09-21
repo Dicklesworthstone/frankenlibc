@@ -4,9 +4,9 @@
   "description": "Tiered Gentoo package selection for FrankenLibC ecosystem validation.",
   "selection_criteria": {
     "popularity_weight": 0.35,
-    "criticality_weight": 0.30,
+    "criticality_weight": 0.3,
     "coverage_weight": 0.25,
-    "build_feasibility_weight": 0.10,
+    "build_feasibility_weight": 0.1,
     "notes": "Weights are used qualitatively for curation. Final selection is deterministic in this artifact."
   },
   "data_sources": [

@@ -38,12 +38,7 @@
     {
       "artifact_id": "stub_todo_generator",
       "path": "scripts/generate_stub_todo_debt_census.py",
-      "required_needles": [
-        "TODO_RE",
-        "UNIMPLEMENTED_RE",
-        "scan_source_debt",
-        "risk_ranked_debt"
-      ]
+      "required_needles": ["TODO_RE", "UNIMPLEMENTED_RE", "scan_source_debt", "risk_ranked_debt"]
     },
     {
       "artifact_id": "stub_guard_script",
@@ -70,11 +65,7 @@
     "bead": "bd-2vb.1",
     "original_bead": "bd-2vb",
     "next_audit_score_threshold": 900,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",
       "test_source": "crates/frankenlibc-harness/tests/stub_guard_test.rs",

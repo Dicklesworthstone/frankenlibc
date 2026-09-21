@@ -16,11 +16,7 @@
     "in_progress_source": "bd-as0w2.1 close window",
     "closed_at_source": ".beads/issues.jsonl"
   },
-  "artifact_refs": [
-    "DEPLOYMENT.md",
-    "tests/conformance/replacement_levels.json",
-    "README.md"
-  ],
+  "artifact_refs": ["DEPLOYMENT.md", "tests/conformance/replacement_levels.json", "README.md"],
   "validation": [
     "DEPLOYMENT.md release-level claim updated from L0 to L1",
     "Close reason records commit 34fe884b"

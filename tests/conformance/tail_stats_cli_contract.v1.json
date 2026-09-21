@@ -7,16 +7,10 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_harness::tail_stats::compute as a standalone CLI. The tail_stats module is the canonical deterministic p50/p95/p99/p999 and p99 bootstrap-CI calculator referenced by perf_budget_policy and high-core tail baselines, but shell/CI gates previously needed Rust glue to compute a reusable report from raw samples.",
   "subcommand_name": "tail-stats",
   "binary_target": "harness",
-  "required_flags": [
-    "--samples-json",
-    "--seed",
-    "--output"
-  ],
+  "required_flags": ["--samples-json", "--seed", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::tail_stats::compute",
-  "underlying_lib_functions": [
-    "frankenlibc_harness::tail_stats::compute"
-  ],
+  "underlying_lib_functions": ["frankenlibc_harness::tail_stats::compute"],
   "input_contract": {
     "format": "json_array",
     "sample_type": "finite_json_number",

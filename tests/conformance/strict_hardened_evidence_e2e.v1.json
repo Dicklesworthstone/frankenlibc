@@ -16,17 +16,8 @@
     "destructive_system_operation": false,
     "filesystem_write_scope": "target/conformance/strict_hardened_evidence_e2e only"
   },
-  "required_api_families": [
-    "string",
-    "malloc",
-    "stdio",
-    "pthread",
-    "resolver"
-  ],
-  "required_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_api_families": ["string", "malloc", "stdio", "pthread", "resolver"],
+  "required_modes": ["strict", "hardened"],
   "required_log_fields": [
     "trace_id",
     "bead_id",

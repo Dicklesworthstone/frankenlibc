@@ -6,11 +6,7 @@
   "source_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-25n/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "artifacts": {
       "beads_jsonl": ".beads/issues.jsonl",
       "source_scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-25n/scorecard.md",
@@ -89,10 +85,7 @@
         "pthread_once_test",
         "pthread_tsd_test"
       ],
-      "gate_success_markers": [
-        "All 12 required families present",
-        "check_unit_test_packs: PASS"
-      ]
+      "gate_success_markers": ["All 12 required families present", "check_unit_test_packs: PASS"]
     },
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",

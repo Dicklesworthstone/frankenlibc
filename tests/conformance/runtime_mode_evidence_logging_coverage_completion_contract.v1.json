@@ -137,10 +137,7 @@
     ],
     "required_policy": {
       "env_key": "FRANKENLIBC_MODE",
-      "allowed_modes": [
-        "strict",
-        "hardened"
-      ],
+      "allowed_modes": ["strict", "hardened"],
       "process_immutable_after_startup": true,
       "subprocess_rows_must_override_inherited_mode": true,
       "startup_evidence_required": true,

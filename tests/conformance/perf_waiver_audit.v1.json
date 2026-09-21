@@ -33,11 +33,7 @@
   "policy": {
     "default_decision": "block_until_waivers_narrow_and_unexpired",
     "max_total_waivers": 3,
-    "broad_symbol_patterns": [
-      "*",
-      "all",
-      "any"
-    ],
+    "broad_symbol_patterns": ["*", "all", "any"],
     "required_waiver_fields": [
       "bead_id",
       "owner",
@@ -60,10 +56,7 @@
     {
       "bead_id": "bd-242",
       "owner": "bd-b92jd.5",
-      "suite_ids": [
-        "string",
-        "malloc"
-      ],
+      "suite_ids": ["string", "malloc"],
       "expires_at": "2026-08-31",
       "scope": "target_violation_only",
       "failure_signature": "perf_gate::target_violation_within_threshold",

@@ -4,17 +4,9 @@
   "description": "Terminal-state waiver policy for stub/TODO debt regression prevention. Empty waivers are valid only while the active debt set remains empty.",
   "policy": {
     "forbidden_without_waiver": {
-      "source_debt_scopes": [
-        "critical_non_exported_debt",
-        "exported_shadow_debt"
-      ],
-      "risk_tiers": [
-        "critical",
-        "high"
-      ],
-      "matrix_statuses": [
-        "Stub"
-      ]
+      "source_debt_scopes": ["critical_non_exported_debt", "exported_shadow_debt"],
+      "risk_tiers": ["critical", "high"],
+      "matrix_statuses": ["Stub"]
     },
     "waiver_requirements": [
       "symbol",
@@ -43,9 +35,7 @@
       "expires_utc"
     ]
   },
-  "waivers": [
-    
-  ],
+  "waivers": [],
   "matrix_waivers": [],
   "summary": {
     "waiver_count": 0,

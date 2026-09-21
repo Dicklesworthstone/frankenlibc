@@ -20,10 +20,7 @@
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-iconv-locale-bootstrap-with-errno-bridge",
     "accepted_host_symbols": [
       "<dynamic>",

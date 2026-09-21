@@ -30,9 +30,7 @@
     {
       "changed_file": ".beads/issues.jsonl",
       "owner_bead": "bd-bp8fl.7.4",
-      "affected_crates": [
-        "beads"
-      ],
+      "affected_crates": ["beads"],
       "targeted_cargo_commands": [],
       "targeted_cargo_skip_justification": "Tracker-only hunk; Rust behavior is covered through the changed harness test row.",
       "ubs_command": "ubs .beads/issues.jsonl",
@@ -42,9 +40,7 @@
       "artifact_regeneration_commands": [
         "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
       ],
-      "br_bv_commands": [
-        "br dep cycles --no-db --json"
-      ],
+      "br_bv_commands": ["br dep cycles --no-db --json"],
       "unrelated_failure_note": "Unrelated dirty harness/docs files and tmp.*.ec files remain unstaged; workspace fmt drift is reported by bd-bp8fl.7.3 and is not normalized away here.",
       "expected": "Tracker close hunk is staged only with matching changed-surface validation evidence.",
       "actual": "Checklist requires br graph proof, artifact regeneration, UBS coverage, and an unrelated-failure note.",
@@ -60,9 +56,7 @@
     {
       "changed_file": "crates/frankenlibc-harness/tests/changed_surface_validation_checklist_test.rs",
       "owner_bead": "bd-bp8fl.7.4",
-      "affected_crates": [
-        "frankenlibc-harness"
-      ],
+      "affected_crates": ["frankenlibc-harness"],
       "targeted_cargo_commands": [
         "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture",
         "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-clippy2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo clippy -p frankenlibc-harness --test changed_surface_validation_checklist_test -- -D warnings"
@@ -75,9 +69,7 @@
       "artifact_regeneration_commands": [
         "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
       ],
-      "br_bv_commands": [
-        "br dep cycles --no-db --json"
-      ],
+      "br_bv_commands": ["br dep cycles --no-db --json"],
       "unrelated_failure_note": "Focused harness test covers checklist schema, missing changed-file rows, missing targeted cargo gates, stale artifacts, skipped UBS without justification, and missing unrelated-failure notes.",
       "expected": "Harness test changes have targeted cargo test/clippy proof and fail-closed mutations.",
       "actual": "Checklist records the focused rch test/clippy commands and gate replay script.",
@@ -93,10 +85,7 @@
     {
       "changed_file": "scripts/check_changed_surface_validation_checklist.sh",
       "owner_bead": "bd-bp8fl.7.4",
-      "affected_crates": [
-        "frankenlibc-harness",
-        "scripts"
-      ],
+      "affected_crates": ["frankenlibc-harness", "scripts"],
       "targeted_cargo_commands": [
         "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture"
       ],
@@ -109,9 +98,7 @@
       "artifact_regeneration_commands": [
         "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
       ],
-      "br_bv_commands": [
-        "br dep cycles --no-db --json"
-      ],
+      "br_bv_commands": ["br dep cycles --no-db --json"],
       "unrelated_failure_note": "The shell gate validates the checklist artifact only; broad cargo workspace state remains recorded by the workspace validation dashboard.",
       "expected": "Script changes have syntax, e2e replay, artifact regeneration, UBS, and harness test coverage.",
       "actual": "Checklist records bash -n, script replay, harness test, and clippy commands.",
@@ -127,10 +114,7 @@
     {
       "changed_file": "tests/conformance/changed_surface_validation_checklist.v1.json",
       "owner_bead": "bd-bp8fl.7.4",
-      "affected_crates": [
-        "frankenlibc-harness",
-        "conformance"
-      ],
+      "affected_crates": ["frankenlibc-harness", "conformance"],
       "targeted_cargo_commands": [
         "CARGO_TARGET_DIR=/data/tmp/frankenlibc-pearlforest-bd-bp8fl-7-4-test2 RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR RCH_VISIBILITY=summary rch exec -- cargo test -p frankenlibc-harness --test changed_surface_validation_checklist_test -- --nocapture"
       ],
@@ -143,9 +127,7 @@
       "artifact_regeneration_commands": [
         "FRANKENLIBC_CHANGED_SURFACE_VALIDATION_TARGET_DIR=target/conformance/bd-bp8fl.7.4 bash scripts/check_changed_surface_validation_checklist.sh"
       ],
-      "br_bv_commands": [
-        "br dep cycles --no-db --json"
-      ],
+      "br_bv_commands": ["br dep cycles --no-db --json"],
       "unrelated_failure_note": "JSON artifact captures the changed-surface contract and explicitly carries the residual unrelated-failure note into every closure row.",
       "expected": "Conformance artifact changes have JSON parse, script replay, harness test, and freshness coverage.",
       "actual": "Checklist records parse/replay/test commands and rejects stale freshness state.",

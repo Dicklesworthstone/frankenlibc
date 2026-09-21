@@ -70,14 +70,8 @@
     "failure_unsupported",
     "standalone_future"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
-  "required_replacement_levels": [
-    "L0",
-    "L1"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
+  "required_replacement_levels": ["L0", "L1"],
   "artifact_policy": {
     "interpose_library_env": "FRANKENLIBC_SMOKE_LIB_PATH",
     "standalone_library_env": "FRANKENLIBC_STANDALONE_LIB",
@@ -140,14 +134,7 @@
       "artifact_refs",
       "redaction"
     ],
-    "redacted_env_key_patterns": [
-      "TOKEN",
-      "SECRET",
-      "PASSWORD",
-      "CREDENTIAL",
-      "AUTH",
-      "KEY"
-    ],
+    "redacted_env_key_patterns": ["TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "AUTH", "KEY"],
     "required_failure_classes": [
       "symbol_missing",
       "semantic_divergence",
@@ -279,17 +266,12 @@
       "workload_id": "shell_coreutils.sort_pipeline",
       "domain": "shell_coreutils",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf '%s\\n' c a b | sort | tr -d '\\n'"
-      ],
+      "argv": ["-c", "printf '%s\\n' c a b | sort | tr -d '\\n'"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -314,17 +296,12 @@
       "workload_id": "shell_coreutils.sort_pipeline",
       "domain": "shell_coreutils",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf '%s\\n' c a b | sort | tr -d '\\n'"
-      ],
+      "argv": ["-c", "printf '%s\\n' c a b | sort | tr -d '\\n'"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -349,17 +326,13 @@
       "workload_id": "build_tool.compiler_version",
       "domain": "build_tool",
       "command": "cc",
-      "argv": [
-        "--version"
-      ],
+      "argv": ["--version"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -369,9 +342,7 @@
         "status": 0,
         "errno": null
       },
-      "allowed_divergence": [
-        "compiler version banners may use stdout or stderr"
-      ],
+      "allowed_divergence": ["compiler version banners may use stdout or stderr"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/build_tool_compiler_version_l0_strict"
@@ -384,17 +355,13 @@
       "workload_id": "build_tool.compiler_version",
       "domain": "build_tool",
       "command": "cc",
-      "argv": [
-        "--version"
-      ],
+      "argv": ["--version"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -404,9 +371,7 @@
         "status": 0,
         "errno": null
       },
-      "allowed_divergence": [
-        "compiler version banners may use stdout or stderr"
-      ],
+      "allowed_divergence": ["compiler version banners may use stdout or stderr"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/build_tool_compiler_version_l1_hardened"
@@ -419,18 +384,13 @@
       "workload_id": "resolver_nss.localhost",
       "domain": "resolver_nss",
       "command": "getent",
-      "argv": [
-        "hosts",
-        "localhost"
-      ],
+      "argv": ["hosts", "localhost"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -441,9 +401,7 @@
         "stdout_contains": "localhost",
         "errno": null
       },
-      "allowed_divergence": [
-        "IPv4 or IPv6 localhost ordering may vary"
-      ],
+      "allowed_divergence": ["IPv4 or IPv6 localhost ordering may vary"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/resolver_nss_localhost_l0_strict"
@@ -456,18 +414,13 @@
       "workload_id": "resolver_nss.localhost",
       "domain": "resolver_nss",
       "command": "getent",
-      "argv": [
-        "hosts",
-        "localhost"
-      ],
+      "argv": ["hosts", "localhost"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -478,9 +431,7 @@
         "stdout_contains": "localhost",
         "errno": null
       },
-      "allowed_divergence": [
-        "IPv4 or IPv6 localhost ordering may vary"
-      ],
+      "allowed_divergence": ["IPv4 or IPv6 localhost ordering may vary"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/resolver_nss_localhost_l1_hardened"
@@ -493,17 +444,13 @@
       "workload_id": "locale_iconv.iconv_list",
       "domain": "locale_iconv",
       "command": "iconv",
-      "argv": [
-        "-l"
-      ],
+      "argv": ["-l"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -514,9 +461,7 @@
         "stdout_contains": "UTF",
         "errno": null
       },
-      "allowed_divergence": [
-        "iconv aliases and case vary by host"
-      ],
+      "allowed_divergence": ["iconv aliases and case vary by host"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/locale_iconv_list_utf_l0_strict"
@@ -529,17 +474,13 @@
       "workload_id": "locale_iconv.iconv_list",
       "domain": "locale_iconv",
       "command": "iconv",
-      "argv": [
-        "-l"
-      ],
+      "argv": ["-l"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -550,9 +491,7 @@
         "stdout_contains": "UTF",
         "errno": null
       },
-      "allowed_divergence": [
-        "iconv aliases and case vary by host"
-      ],
+      "allowed_divergence": ["iconv aliases and case vary by host"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/locale_iconv_list_utf_l1_hardened"
@@ -565,17 +504,12 @@
       "workload_id": "stdio_file.roundtrip",
       "domain": "stdio_file",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"
-      ],
+      "argv": ["-c", "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -600,17 +534,12 @@
       "workload_id": "stdio_file.roundtrip",
       "domain": "stdio_file",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"
-      ],
+      "argv": ["-c", "printf 'stdio-ok\\n' > smoke-file.txt; cat smoke-file.txt"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -644,9 +573,7 @@
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "strict",
@@ -680,9 +607,7 @@
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "hardened",
@@ -707,17 +632,12 @@
       "workload_id": "failure_unsupported.expected_exit",
       "domain": "failure_unsupported",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf 'intentional-failure\\n' >&2; exit 42"
-      ],
+      "argv": ["-c", "printf 'intentional-failure\\n' >&2; exit 42"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -741,17 +661,12 @@
       "workload_id": "failure_unsupported.expected_exit",
       "domain": "failure_unsupported",
       "command": "/bin/sh",
-      "argv": [
-        "-c",
-        "printf 'intentional-failure\\n' >&2; exit 42"
-      ],
+      "argv": ["-c", "printf 'intentional-failure\\n' >&2; exit 42"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -775,18 +690,13 @@
       "workload_id": "failure_unsupported.optional_sqlite",
       "domain": "failure_unsupported",
       "command": "sqlite3",
-      "argv": [
-        ":memory:",
-        "select 1;"
-      ],
+      "argv": [":memory:", "select 1;"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "strict",
@@ -797,9 +707,7 @@
         "stdout_contains": "1",
         "errno": null
       },
-      "allowed_divergence": [
-        "optional external binary may be unavailable"
-      ],
+      "allowed_divergence": ["optional external binary may be unavailable"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/unsupported_optional_sqlite_l0_strict"
@@ -812,18 +720,13 @@
       "workload_id": "failure_unsupported.optional_sqlite",
       "domain": "failure_unsupported",
       "command": "sqlite3",
-      "argv": [
-        ":memory:",
-        "select 1;"
-      ],
+      "argv": [":memory:", "select 1;"],
       "optional": true,
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 5000,
       "runtime_mode": "hardened",
@@ -834,9 +737,7 @@
         "stdout_contains": "1",
         "errno": null
       },
-      "allowed_divergence": [
-        "optional external binary may be unavailable"
-      ],
+      "allowed_divergence": ["optional external binary may be unavailable"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/unsupported_optional_sqlite_l1_hardened"
@@ -849,17 +750,12 @@
       "workload_id": "standalone_future.minimal",
       "domain": "standalone_future",
       "command": "standalone_link_run_smoke",
-      "argv": [
-        "--run",
-        "standalone.minimal_exit"
-      ],
+      "argv": ["--run", "standalone.minimal_exit"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "strict",
@@ -869,9 +765,7 @@
         "status": "claim_blocked",
         "errno": null
       },
-      "allowed_divergence": [
-        "current repo has no supported libfrankenlibc_replace.so artifact"
-      ],
+      "allowed_divergence": ["current repo has no supported libfrankenlibc_replace.so artifact"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_future_minimal_l1_strict"
@@ -884,17 +778,12 @@
       "workload_id": "standalone_future.minimal",
       "domain": "standalone_future",
       "command": "standalone_link_run_smoke",
-      "argv": [
-        "--run",
-        "standalone.minimal_exit"
-      ],
+      "argv": ["--run", "standalone.minimal_exit"],
       "env": {
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "hardened",
@@ -904,9 +793,7 @@
         "status": "claim_blocked",
         "errno": null
       },
-      "allowed_divergence": [
-        "current repo has no supported libfrankenlibc_replace.so artifact"
-      ],
+      "allowed_divergence": ["current repo has no supported libfrankenlibc_replace.so artifact"],
       "cleanup": {
         "policy": "case_dir_scoped",
         "artifact_dir": "target/real_program_smoke_suite/${run_id}/standalone_future_minimal_l1_hardened"
@@ -931,9 +818,7 @@
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "strict",
@@ -956,9 +841,7 @@
       },
       "oracle_kind": "standalone_real_program_direct_link_gate",
       "support_claim": "never",
-      "standalone_run_argv": [
-        "argv-env"
-      ],
+      "standalone_run_argv": ["argv-env"],
       "standalone_source": "#include <stdio.h>\n#include <stdlib.h>\nint main(int argc, char **argv) {\n    const char *locale = getenv(\"LC_ALL\");\n    const char *arg = argc > 1 ? argv[1] : \"missing\";\n    printf(\"standalone-real-program:%d:%s:%s\\n\", argc, arg, locale ? locale : \"unset\");\n    return (argc == 2 && locale && arg[0] != 0) ? 0 : 3;\n}\n"
     },
     {
@@ -978,9 +861,7 @@
         "set": {
           "LC_ALL": "C"
         },
-        "unset": [
-          "LD_PRELOAD"
-        ]
+        "unset": ["LD_PRELOAD"]
       },
       "timeout_ms": 10000,
       "runtime_mode": "hardened",
@@ -1003,9 +884,7 @@
       },
       "oracle_kind": "standalone_real_program_direct_link_gate",
       "support_claim": "never",
-      "standalone_run_argv": [
-        "argv-env"
-      ],
+      "standalone_run_argv": ["argv-env"],
       "standalone_source": "#include <stdio.h>\n#include <stdlib.h>\nint main(int argc, char **argv) {\n    const char *locale = getenv(\"LC_ALL\");\n    const char *arg = argc > 1 ? argv[1] : \"missing\";\n    printf(\"standalone-real-program:%d:%s:%s\\n\", argc, arg, locale ? locale : \"unset\");\n    return (argc == 2 && locale && arg[0] != 0) ? 0 : 3;\n}\n"
     }
   ],

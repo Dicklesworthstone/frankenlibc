@@ -92,9 +92,7 @@
     },
     {
       "scenario_id": "bv_zero_open_jsonl_open",
-      "expected_discrepancies": [
-        "conflicting_ready_lists"
-      ],
+      "expected_discrepancies": ["conflicting_ready_lists"],
       "expected_current_source_of_truth": "br_no_db_jsonl",
       "expected_next_safe_action": "render_open_jsonl_rows_and_file_tracker_repair",
       "implementation_may_proceed": true,
@@ -135,9 +133,7 @@
     },
     {
       "scenario_id": "bv_ready_like_rows_source_filtered",
-      "expected_discrepancies": [
-        "source_filter_quarantine"
-      ],
+      "expected_discrepancies": ["source_filter_quarantine"],
       "expected_current_source_of_truth": "source_filtered_jsonl",
       "expected_next_safe_action": "use_source_aware_readiness_and_do_not_claim_quarantined_rows",
       "implementation_may_proceed": true,
@@ -151,11 +147,7 @@
         "safe_ready_count": 0,
         "permissioned_ready_count": 0,
         "cross_project_review_count": 3,
-        "source_filtered_ids": [
-          "bd-rchk0.53.8",
-          "bd-rchk3",
-          "bd-rchk3.3"
-        ],
+        "source_filtered_ids": ["bd-rchk0.53.8", "bd-rchk3", "bd-rchk3.3"],
         "cycles_count": 0,
         "exact_id_split_brain": false,
         "stale_blocked_cache": false,
@@ -222,9 +214,7 @@
     },
     {
       "scenario_id": "exact_id_split_brain",
-      "expected_discrepancies": [
-        "exact_id_split_brain"
-      ],
+      "expected_discrepancies": ["exact_id_split_brain"],
       "expected_current_source_of_truth": "br_no_db_show",
       "expected_next_safe_action": "prefer_named_no_db_show_and_reconcile_duplicate_rows",
       "implementation_may_proceed": false,
@@ -254,9 +244,7 @@
     },
     {
       "scenario_id": "timeout_only",
-      "expected_discrepancies": [
-        "timeout"
-      ],
+      "expected_discrepancies": ["timeout"],
       "expected_current_source_of_truth": "inconclusive",
       "expected_next_safe_action": "retry_timed_out_command_with_tighter_scope",
       "implementation_may_proceed": false,
@@ -287,9 +275,7 @@
     },
     {
       "scenario_id": "cycle_report_disagreement",
-      "expected_discrepancies": [
-        "cycle_report_disagreement"
-      ],
+      "expected_discrepancies": ["cycle_report_disagreement"],
       "expected_current_source_of_truth": "blocked_graph",
       "expected_next_safe_action": "fix_dependency_cycles_before_dashboard_claims",
       "implementation_may_proceed": false,
@@ -320,9 +306,7 @@
     },
     {
       "scenario_id": "missing_issue_record",
-      "expected_discrepancies": [
-        "missing_issue_record"
-      ],
+      "expected_discrepancies": ["missing_issue_record"],
       "expected_current_source_of_truth": "br_no_db_show",
       "expected_next_safe_action": "repair_missing_issue_or_dependency_record",
       "implementation_may_proceed": false,
@@ -336,9 +320,7 @@
         "exact_id_split_brain": false,
         "stale_blocked_cache": false,
         "already_shipped_but_open": [],
-        "missing_records": [
-          "bd-missing-parent"
-        ]
+        "missing_records": ["bd-missing-parent"]
       },
       "commands": [
         {
@@ -355,9 +337,7 @@
     },
     {
       "scenario_id": "already_shipped_but_open",
-      "expected_discrepancies": [
-        "already_shipped_but_open_bead"
-      ],
+      "expected_discrepancies": ["already_shipped_but_open_bead"],
       "expected_current_source_of_truth": "br_no_db_jsonl",
       "expected_next_safe_action": "close_shipped_bead_or_reopen_with_current_blocker",
       "implementation_may_proceed": true,
@@ -370,9 +350,7 @@
         "cycles_count": 0,
         "exact_id_split_brain": false,
         "stale_blocked_cache": false,
-        "already_shipped_but_open": [
-          "bd-shipped-open"
-        ],
+        "already_shipped_but_open": ["bd-shipped-open"],
         "missing_records": []
       },
       "commands": [

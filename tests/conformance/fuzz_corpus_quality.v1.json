@@ -22,9 +22,7 @@
     "required_directed_targets": {
       "fuzz_ctype": {
         "min_readable_seed_files": 7,
-        "required_prefixes": [
-          "ctype:"
-        ]
+        "required_prefixes": ["ctype:"]
       }
     }
   },

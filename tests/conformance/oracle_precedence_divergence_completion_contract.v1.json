@@ -121,12 +121,7 @@
       "safety_repair",
       "unsupported_contract"
     ],
-    "required_observable_fields": [
-      "errno",
-      "status",
-      "stdout",
-      "stderr"
-    ],
+    "required_observable_fields": ["errno", "status", "stdout", "stderr"],
     "required_replay_kinds": [
       "allowed_divergence",
       "blocked_divergence",

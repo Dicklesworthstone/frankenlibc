@@ -28,11 +28,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800
   },
   "source_artifacts": [
@@ -54,11 +50,7 @@
       "id": "support_matrix",
       "path": "support_matrix.json",
       "role": "module support taxonomy used by workload blocker checks",
-      "required_needles": [
-        "\"symbols\"",
-        "\"Implemented\"",
-        "\"RawSyscall\""
-      ]
+      "required_needles": ["\"symbols\"", "\"Implemented\"", "\"RawSyscall\""]
     },
     {
       "id": "value_gate",

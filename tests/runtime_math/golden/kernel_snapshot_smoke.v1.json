@@ -74,16 +74,7 @@
       "sparse_residual_ewma": 0.0,
       "sparse_critical_count": 0,
       "sparse_canonical_class": 0,
-      "sparse_canonical_counts": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
+      "sparse_canonical_counts": [0, 0, 0, 0, 0, 0, 0, 0],
       "equivariant_alignment_ppm": 1000000,
       "equivariant_drift_count": 0,
       "equivariant_fractured_count": 0,
@@ -206,12 +197,7 @@
       "sobol_augmented_mask": 0,
       "sobol_augmented_count": 0,
       "policy_hash_prefix": 0,
-      "policy_action_dist": [
-        314,
-        15,
-        0,
-        183
-      ],
+      "policy_action_dist": [314, 15, 0, 183],
       "evidence_seqno": 183,
       "evidence_loss_count": 0,
       "evidence_max_epoch": 0,
@@ -281,16 +267,7 @@
       "sparse_residual_ewma": 0.0,
       "sparse_critical_count": 0,
       "sparse_canonical_class": 0,
-      "sparse_canonical_counts": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
+      "sparse_canonical_counts": [0, 0, 0, 0, 0, 0, 0, 0],
       "equivariant_alignment_ppm": 1000000,
       "equivariant_drift_count": 0,
       "equivariant_fractured_count": 0,
@@ -413,12 +390,7 @@
       "sobol_augmented_mask": 0,
       "sobol_augmented_count": 0,
       "policy_hash_prefix": 0,
-      "policy_action_dist": [
-        15,
-        268,
-        229,
-        0
-      ],
+      "policy_action_dist": [15, 268, 229, 0],
       "evidence_seqno": 229,
       "evidence_loss_count": 0,
       "evidence_max_epoch": 0,

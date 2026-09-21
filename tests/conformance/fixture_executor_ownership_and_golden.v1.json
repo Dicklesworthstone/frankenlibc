@@ -2,20 +2,14 @@
   "schema_version": "fixture_executor_ownership_and_golden.v1",
   "generated_by_bead": "bd-0agsk.7",
   "purpose": "Freeze the current fixture-executor ownership boundary and byte-for-byte representative execute_fixture_case outputs before implementation ownership is moved out of the legacy conformance crate.",
-  "source_todo_ids": [
-    "TODO-0402",
-    "TODO-0404"
-  ],
+  "source_todo_ids": ["TODO-0402", "TODO-0404"],
   "canonical_command": "scripts/check_fixture_executor_ownership_and_golden.sh --validate-only",
   "ownership_contract": {
     "stable_public_boundary": {
       "crate": "frankenlibc-fixture-exec",
       "manifest": "crates/frankenlibc-fixture-exec/Cargo.toml",
       "entrypoint": "crates/frankenlibc-fixture-exec/src/lib.rs",
-      "public_items": [
-        "execute_fixture_case",
-        "DifferentialExecution"
-      ],
+      "public_items": ["execute_fixture_case", "DifferentialExecution"],
       "current_implementation_source": "frankenlibc-fixture-exec",
       "migration_target": "bd-0agsk.8 moved Cargo ownership into frankenlibc-fixture-exec while preserving this public API and every golden payload hash in this manifest."
     },

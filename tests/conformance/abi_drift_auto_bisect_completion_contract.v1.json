@@ -40,10 +40,7 @@
       "ABI Drift Auto-Bisect Engine",
       "Engine must emit reproducible bisect transcript and candidate root-cause bundle"
     ],
-    "workspace_manifest": [
-      "asupersync-conformance = \"0.3.1\"",
-      "ftui-harness = \"0.3.1\""
-    ],
+    "workspace_manifest": ["asupersync-conformance = \"0.3.1\"", "ftui-harness = \"0.3.1\""],
     "harness_manifest": [
       "default = [\"asupersync-tooling\"]",
       "frankentui-ui = [",
@@ -54,10 +51,7 @@
       "Deterministic harness orchestration using /dp/asupersync tooling",
       "asupersync_conformance::checkpoint"
     ],
-    "snapshot_diff": [
-      "pub fn render_ftui",
-      "ftui_harness::buffer_to_text"
-    ],
+    "snapshot_diff": ["pub fn render_ftui", "ftui_harness::buffer_to_text"],
     "completion_gate": [
       "abi_drift_auto_bisect_completion.unit_binding",
       "abi_drift_auto_bisect_completion.e2e_transcript",
@@ -114,23 +108,17 @@
           {
             "id": "abi-mid-000",
             "status": "pass",
-            "witnesses": [
-              "support_matrix:fopen64:Implemented"
-            ]
+            "witnesses": ["support_matrix:fopen64:Implemented"]
           },
           {
             "id": "abi-mid-001",
             "status": "pass",
-            "witnesses": [
-              "version_script:fopen64@GLIBC_2.2.5"
-            ]
+            "witnesses": ["version_script:fopen64@GLIBC_2.2.5"]
           },
           {
             "id": "abi-mid-002",
             "status": "pass",
-            "witnesses": [
-              "fixture:fopen64:strict+hardened"
-            ]
+            "witnesses": ["fixture:fopen64:strict+hardened"]
           },
           {
             "id": "abi-mid-003",
@@ -143,46 +131,32 @@
           {
             "id": "abi-mid-004",
             "status": "fail",
-            "witnesses": [
-              "abi_witness:missing_export:fopen64"
-            ]
+            "witnesses": ["abi_witness:missing_export:fopen64"]
           },
           {
             "id": "abi-mid-005",
             "status": "fail",
-            "witnesses": [
-              "abi_witness:missing_export:fopen64"
-            ]
+            "witnesses": ["abi_witness:missing_export:fopen64"]
           },
           {
             "id": "abi-mid-006",
             "status": "fail",
-            "witnesses": [
-              "abi_witness:missing_export:fopen64"
-            ]
+            "witnesses": ["abi_witness:missing_export:fopen64"]
           },
           {
             "id": "abi-mid-007",
             "status": "fail",
-            "witnesses": [
-              "abi_witness:missing_export:fopen64"
-            ]
+            "witnesses": ["abi_witness:missing_export:fopen64"]
           }
         ],
-        "expected_probe_sequence": [
-          "abi-mid-003",
-          "abi-mid-001",
-          "abi-mid-002"
-        ],
+        "expected_probe_sequence": ["abi-mid-003", "abi-mid-001", "abi-mid-002"],
         "expected_first_bad_commit": "abi-mid-003",
         "expected_previous_good_commit": "abi-mid-002",
         "candidate_root_cause": {
           "scenario_id": "midrange_symbol_removed",
           "first_bad_commit": "abi-mid-003",
           "previous_good_commit": "abi-mid-002",
-          "changed_symbols": [
-            "fopen64"
-          ],
+          "changed_symbols": ["fopen64"],
           "drift_class": "abi_symbol_removed",
           "witnesses": [
             "abi_witness:missing_export:fopen64",
@@ -204,51 +178,37 @@
           {
             "id": "abi-late-000",
             "status": "pass",
-            "witnesses": [
-              "support_matrix:copy_file_range:RawSyscall"
-            ]
+            "witnesses": ["support_matrix:copy_file_range:RawSyscall"]
           },
           {
             "id": "abi-late-001",
             "status": "pass",
-            "witnesses": [
-              "raw_syscall_probe:copy_file_range:ENOSYS_or_success"
-            ]
+            "witnesses": ["raw_syscall_probe:copy_file_range:ENOSYS_or_success"]
           },
           {
             "id": "abi-late-002",
             "status": "pass",
-            "witnesses": [
-              "abi_witness:copy_file_range:exported"
-            ]
+            "witnesses": ["abi_witness:copy_file_range:exported"]
           },
           {
             "id": "abi-late-003",
             "status": "pass",
-            "witnesses": [
-              "behavior_probe:copy_file_range:errno_parity"
-            ]
+            "witnesses": ["behavior_probe:copy_file_range:errno_parity"]
           },
           {
             "id": "abi-late-004",
             "status": "pass",
-            "witnesses": [
-              "support_matrix:copy_file_range:RawSyscall"
-            ]
+            "witnesses": ["support_matrix:copy_file_range:RawSyscall"]
           },
           {
             "id": "abi-late-005",
             "status": "pass",
-            "witnesses": [
-              "fixture:copy_file_range:strict"
-            ]
+            "witnesses": ["fixture:copy_file_range:strict"]
           },
           {
             "id": "abi-late-006",
             "status": "pass",
-            "witnesses": [
-              "fixture:copy_file_range:hardened"
-            ]
+            "witnesses": ["fixture:copy_file_range:hardened"]
           },
           {
             "id": "abi-late-007",
@@ -261,25 +221,17 @@
           {
             "id": "abi-late-008",
             "status": "fail",
-            "witnesses": [
-              "support_matrix:copy_file_range:Stub"
-            ]
+            "witnesses": ["support_matrix:copy_file_range:Stub"]
           }
         ],
-        "expected_probe_sequence": [
-          "abi-late-004",
-          "abi-late-006",
-          "abi-late-007"
-        ],
+        "expected_probe_sequence": ["abi-late-004", "abi-late-006", "abi-late-007"],
         "expected_first_bad_commit": "abi-late-007",
         "expected_previous_good_commit": "abi-late-006",
         "candidate_root_cause": {
           "scenario_id": "late_status_taxonomy_regression",
           "first_bad_commit": "abi-late-007",
           "previous_good_commit": "abi-late-006",
-          "changed_symbols": [
-            "copy_file_range"
-          ],
+          "changed_symbols": ["copy_file_range"],
           "drift_class": "support_status_regression",
           "witnesses": [
             "support_matrix:copy_file_range:Stub",
@@ -301,16 +253,12 @@
           {
             "id": "abi-early-000",
             "status": "pass",
-            "witnesses": [
-              "behavior_probe:memmove:overlap_parity"
-            ]
+            "witnesses": ["behavior_probe:memmove:overlap_parity"]
           },
           {
             "id": "abi-early-001",
             "status": "pass",
-            "witnesses": [
-              "behavior_probe:memmove:reverse_overlap_parity"
-            ]
+            "witnesses": ["behavior_probe:memmove:reverse_overlap_parity"]
           },
           {
             "id": "abi-early-002",
@@ -323,31 +271,22 @@
           {
             "id": "abi-early-003",
             "status": "fail",
-            "witnesses": [
-              "behavior_probe:memmove:overlap_order_drift"
-            ]
+            "witnesses": ["behavior_probe:memmove:overlap_order_drift"]
           },
           {
             "id": "abi-early-004",
             "status": "fail",
-            "witnesses": [
-              "behavior_probe:memmove:overlap_order_drift"
-            ]
+            "witnesses": ["behavior_probe:memmove:overlap_order_drift"]
           }
         ],
-        "expected_probe_sequence": [
-          "abi-early-002",
-          "abi-early-001"
-        ],
+        "expected_probe_sequence": ["abi-early-002", "abi-early-001"],
         "expected_first_bad_commit": "abi-early-002",
         "expected_previous_good_commit": "abi-early-001",
         "candidate_root_cause": {
           "scenario_id": "early_behavior_probe_divergence",
           "first_bad_commit": "abi-early-002",
           "previous_good_commit": "abi-early-001",
-          "changed_symbols": [
-            "memmove"
-          ],
+          "changed_symbols": ["memmove"],
           "drift_class": "behavior_probe_divergence",
           "witnesses": [
             "behavior_probe:memmove:overlap_order_drift",

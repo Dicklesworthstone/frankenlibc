@@ -10,11 +10,7 @@
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-34s.7/scorecard.md",
     "audit_score": 470,
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
   },
   "source_artifacts": [
     {
@@ -177,14 +173,8 @@
         "name": "gate_script_emits_logs_and_reports"
       }
     ],
-    "required_gate_scripts": [
-      "scripts/check_proof_binder.sh",
-      "scripts/check_proof_chain_e2e.sh"
-    ],
-    "required_cli_subcommands": [
-      "proof-binder-proofs",
-      "proof-chain-e2e"
-    ]
+    "required_gate_scripts": ["scripts/check_proof_binder.sh", "scripts/check_proof_chain_e2e.sh"],
+    "required_cli_subcommands": ["proof-binder-proofs", "proof-chain-e2e"]
   },
   "telemetry_primary": {
     "description": "Proof logging telemetry requires evidence-compliance proof events, proof-chain E2E events, deterministic JSON reports, JSONL logs, source commit, artifact references, and failure signatures.",

@@ -139,9 +139,7 @@
         "target/conformance/evidence_symbol_records_completion_contract.report.json",
         "target/conformance/evidence_symbol_records_completion_contract.log.jsonl"
       ],
-      "required_test_refs": [
-        "checker_accepts_contract_and_emits_telemetry"
-      ]
+      "required_test_refs": ["checker_accepts_contract_and_emits_telemetry"]
     }
   ],
   "evidence_symbol_record_contract": {
@@ -156,20 +154,13 @@
     "systematic_flag_bit": 0,
     "repair_flag_bit": 1,
     "auth_tag_flag_bit": 2,
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_integrity_checks": [
       "validate_basic",
       "verify_payload_hash_v1",
       "verify_chain_hash_v1"
     ],
-    "required_decoder_statuses": [
-      "Success",
-      "Partial",
-      "Failed"
-    ],
+    "required_decoder_statuses": ["Success", "Partial", "Failed"],
     "required_record_fields": [
       "epoch_id",
       "seqno",

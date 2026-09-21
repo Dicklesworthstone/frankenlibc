@@ -43,11 +43,7 @@
     "original_bead": "bd-ldj.2",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.2/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.integration.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.integration.primary", "tests.e2e.primary"]
   },
   "target_symbols": [
     "pthread_create",
@@ -99,86 +95,62 @@
         {
           "artifact": "core_thread",
           "name": "create_and_join_thread_returns_value",
-          "covers": [
-            "core clone-backed create/join return value"
-          ]
+          "covers": ["core clone-backed create/join return value"]
         },
         {
           "artifact": "core_thread",
           "name": "multiple_threads_created_and_joined",
-          "covers": [
-            "core thread lifecycle fanout"
-          ]
+          "covers": ["core thread lifecycle fanout"]
         },
         {
           "artifact": "core_thread",
           "name": "join_after_detach_returns_einval",
-          "covers": [
-            "core detach/join error contract"
-          ]
+          "covers": ["core detach/join error contract"]
         },
         {
           "artifact": "core_mutex",
           "name": "contract_errorcheck_relock_is_ededlk",
-          "covers": [
-            "errorcheck mutex relock semantics"
-          ]
+          "covers": ["errorcheck mutex relock semantics"]
         },
         {
           "artifact": "core_mutex",
           "name": "contract_recursive_relock_succeeds_nonblocking",
-          "covers": [
-            "recursive mutex relock semantics"
-          ]
+          "covers": ["recursive mutex relock semantics"]
         },
         {
           "artifact": "core_mutex",
           "name": "posix_mutex_unlock_conformance_table",
-          "covers": [
-            "mutex unlock POSIX outcome table"
-          ]
+          "covers": ["mutex unlock POSIX outcome table"]
         },
         {
           "artifact": "core_cond",
           "name": "scenario_timedwait_monotonic_past_deadline",
-          "covers": [
-            "cond timedwait timeout semantics"
-          ]
+          "covers": ["cond timedwait timeout semantics"]
         },
         {
           "artifact": "core_cond",
           "name": "scenario_signal_before_wait_not_queued",
-          "covers": [
-            "cond signal non-queueing semantics"
-          ]
+          "covers": ["cond signal non-queueing semantics"]
         },
         {
           "artifact": "core_cond",
           "name": "posix_cond_destroy_conformance_table",
-          "covers": [
-            "cond destroy POSIX outcome table"
-          ]
+          "covers": ["cond destroy POSIX outcome table"]
         },
         {
           "artifact": "core_rwlock",
           "name": "sanitize_rwlock_kind_check",
-          "covers": [
-            "rwlock kind sanitization"
-          ]
+          "covers": ["rwlock kind sanitization"]
         },
         {
           "artifact": "core_tls",
           "name": "setspecific_and_getspecific_roundtrip",
-          "covers": [
-            "pthread TLS set/get round-trip"
-          ]
+          "covers": ["pthread TLS set/get round-trip"]
         },
         {
           "artifact": "core_tls",
           "name": "destructor_iteration_is_bounded_at_max",
-          "covers": [
-            "pthread TLS destructor iteration bound"
-          ]
+          "covers": ["pthread TLS destructor iteration bound"]
         }
       ],
       "required_commands": [
@@ -191,156 +163,112 @@
         {
           "artifact": "abi_pthread_test",
           "name": "thread_create_join",
-          "covers": [
-            "ABI pthread_create/pthread_join"
-          ]
+          "covers": ["ABI pthread_create/pthread_join"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "mutex_errorcheck_double_lock_returns_edeadlk",
-          "covers": [
-            "ABI errorcheck mutex relock"
-          ]
+          "covers": ["ABI errorcheck mutex relock"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "mutex_zeroed_static_initializer_promotes_on_first_use",
-          "covers": [
-            "ABI PTHREAD_MUTEX_INITIALIZER lazy promotion"
-          ]
+          "covers": ["ABI PTHREAD_MUTEX_INITIALIZER lazy promotion"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "condvar_wait_signal_wakeup",
-          "covers": [
-            "ABI cond wait/signal wakeup"
-          ]
+          "covers": ["ABI cond wait/signal wakeup"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "cond_clockwait_rejects_invalid_clockid",
-          "covers": [
-            "ABI pthread_cond_clockwait validation"
-          ]
+          "covers": ["ABI pthread_cond_clockwait validation"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "rwlock_multiple_readers",
-          "covers": [
-            "ABI rwlock concurrent readers"
-          ]
+          "covers": ["ABI rwlock concurrent readers"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "key_setspecific_getspecific",
-          "covers": [
-            "ABI pthread TLS set/get"
-          ]
+          "covers": ["ABI pthread TLS set/get"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "once_runs_exactly_once",
-          "covers": [
-            "ABI pthread_once"
-          ]
+          "covers": ["ABI pthread_once"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "barrier_single_thread_wait",
-          "covers": [
-            "ABI pthread_barrier_wait"
-          ]
+          "covers": ["ABI pthread_barrier_wait"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "spinlock_trylock_fails_locked",
-          "covers": [
-            "ABI pthread spin trylock busy"
-          ]
+          "covers": ["ABI pthread spin trylock busy"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "cancel_running_thread",
-          "covers": [
-            "ABI pthread_cancel"
-          ]
+          "covers": ["ABI pthread_cancel"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "getattr_np_returns_valid_info",
-          "covers": [
-            "ABI pthread_getattr_np"
-          ]
+          "covers": ["ABI pthread_getattr_np"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "tryjoin_np_on_finished_thread",
-          "covers": [
-            "ABI pthread_tryjoin_np"
-          ]
+          "covers": ["ABI pthread_tryjoin_np"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "timedjoin_np_succeeds_before_deadline",
-          "covers": [
-            "ABI pthread_timedjoin_np"
-          ]
+          "covers": ["ABI pthread_timedjoin_np"]
         },
         {
           "artifact": "abi_pthread_test",
           "name": "clockjoin_np_monotonic_succeeds_before_deadline",
-          "covers": [
-            "ABI pthread_clockjoin_np"
-          ]
+          "covers": ["ABI pthread_clockjoin_np"]
         },
         {
           "artifact": "abi_thread_lifecycle_test",
           "name": "pthread_detach_makes_subsequent_join_fail_with_esrch",
-          "covers": [
-            "ABI detach consumed-handle contract"
-          ]
+          "covers": ["ABI detach consumed-handle contract"]
         },
         {
           "artifact": "abi_mutex_core_test",
           "name": "futex_mutex_contention_increments_wait_and_wake_counters",
-          "covers": [
-            "native futex mutex contention telemetry"
-          ]
+          "covers": ["native futex mutex contention telemetry"]
         },
         {
           "artifact": "abi_cond_core_test",
           "name": "condvar_broadcast_wakes_multiple_timedwait_threads",
-          "covers": [
-            "native cond broadcast wakeup"
-          ]
+          "covers": ["native cond broadcast wakeup"]
         },
         {
           "artifact": "abi_rwlock_core_test",
           "name": "rwlock_writer_blocks_reader_until_unlock",
-          "covers": [
-            "native rwlock exclusion"
-          ]
+          "covers": ["native rwlock exclusion"]
         },
         {
           "artifact": "abi_once_test",
           "name": "once_concurrent_threads_run_exactly_once",
-          "covers": [
-            "pthread_once concurrency"
-          ]
+          "covers": ["pthread_once concurrency"]
         },
         {
           "artifact": "abi_tsd_test",
           "name": "tsd_isolated_across_concurrent_threads",
-          "covers": [
-            "pthread TLS cross-thread isolation"
-          ]
+          "covers": ["pthread TLS cross-thread isolation"]
         },
         {
           "artifact": "abi_barrier_spin_diff_test",
           "name": "diff_pthread_barrier_wait_count_one_releases_immediately",
-          "covers": [
-            "barrier behavior parity"
-          ]
+          "covers": ["barrier behavior parity"]
         }
       ],
       "required_commands": [
@@ -385,10 +313,7 @@
   },
   "required_source_contract": {
     "support_matrix": {
-      "expected_statuses": [
-        "Implemented",
-        "WrapsHostLibc"
-      ],
+      "expected_statuses": ["Implemented", "WrapsHostLibc"],
       "expected_module": "pthread_abi",
       "expected_symbols": 42
     },
@@ -415,10 +340,7 @@
       ]
     },
     "thread_stress_spec": {
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_modes": ["strict", "hardened"],
       "required_fixture_id": "c_fixture_pthread_common_adversarial"
     }
   }

@@ -24,10 +24,7 @@
     "accepted_claim_status": "standalone_evidence_passed",
     "positive_candidate_required_status": "pass",
     "negative_candidate_required_status": "claim_blocked",
-    "allowed_short_modes": [
-      "--validate-only",
-      "--smoke"
-    ],
+    "allowed_short_modes": ["--validate-only", "--smoke"],
     "short_modes_are_not_soak_evidence": true,
     "failure_signatures": {
       "duration_too_short": "ws8_soak_duration_too_short",

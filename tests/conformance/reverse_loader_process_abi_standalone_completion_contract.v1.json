@@ -6,11 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.7/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.conformance.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.conformance.primary", "telemetry.primary"],
     "artifacts": {
       "base_artifact": "tests/conformance/reverse_loader_process_abi_standalone_gate.v1.json",
       "base_checker": "scripts/check_reverse_loader_process_abi_standalone_gate.sh",
@@ -56,20 +52,13 @@
     ],
     "gate_policy": {
       "required_gap_count": 10,
-      "required_runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_runtime_modes": ["strict", "hardened"],
       "required_structured_log_rows": 20,
       "minimum_positive_smoke_rows": 4,
       "minimum_negative_smoke_rows": 1,
       "required_negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "required_evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "required_claim_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "required_claim_levels": ["L1", "L2", "L3"],
       "required_claim_rejections": [
         "ld_preload_only",
         "version_script_only",

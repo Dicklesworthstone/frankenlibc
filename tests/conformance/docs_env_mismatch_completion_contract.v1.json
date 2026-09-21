@@ -67,10 +67,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary"],
     "required_docs_summary": {
       "total_keys_min": 25,
       "total_mentions_min": 25,
@@ -83,11 +80,7 @@
         "PROPOSED_ARCHITECTURE.md",
         "docs/planning/EXISTING_GLIBC_STRUCTURE.md"
       ],
-      "required_env_keys": [
-        "FRANKENLIBC_MODE",
-        "FRANKENLIBC_LOG",
-        "FRANKENLIBC_LIB"
-      ]
+      "required_env_keys": ["FRANKENLIBC_MODE", "FRANKENLIBC_LOG", "FRANKENLIBC_LIB"]
     },
     "required_report_summary": {
       "docs_keys_min": 25,

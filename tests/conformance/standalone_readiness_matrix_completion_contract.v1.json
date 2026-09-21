@@ -70,10 +70,7 @@
       "minimum_proof_row_count": 14,
       "minimum_obligation_count": 12,
       "minimum_negative_claim_test_count": 12,
-      "required_readiness_levels": [
-        "L2",
-        "L3"
-      ],
+      "required_readiness_levels": ["L2", "L3"],
       "required_proof_row_ids": [
         "loader_startup",
         "crt_objects",

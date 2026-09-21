@@ -74,33 +74,21 @@
     ]
   },
   "correlation_contract": {
-    "required_identifiers": [
-      "trace_id",
-      "decision_id",
-      "policy_id",
-      "evidence_seqno"
-    ],
+    "required_identifiers": ["trace_id", "decision_id", "policy_id", "evidence_seqno"],
     "correlation_function": "frankenlibc_membrane::EvidenceLedger::correlation_index",
     "monotonic_sequence": true,
     "bounded_retention": true
   },
   "privacy_redaction_policy": {
     "default_policy": "redact_pointers",
-    "accepted_policies": [
-      "none",
-      "redact_pointers",
-      "full"
-    ],
+    "accepted_policies": ["none", "redact_pointers", "full"],
     "redacted_pointer_marker": "[REDACTED]",
     "full_redaction_symbol_prefix": "redacted_"
   },
   "telemetry_contract": {
     "default_report_path": "target/conformance/evidence_ledger_contract.report.json",
     "default_log_path": "target/conformance/evidence_ledger_contract.log.jsonl",
-    "required_events": [
-      "evidence_ledger_contract_validated",
-      "evidence_ledger_contract_failed"
-    ],
+    "required_events": ["evidence_ledger_contract_validated", "evidence_ledger_contract_failed"],
     "required_log_fields": [
       "timestamp",
       "trace_id",
@@ -172,10 +160,7 @@
       "description": "Structured report and JSONL telemetry emitted by the evidence ledger contract checker.",
       "default_report_path": "target/conformance/evidence_ledger_contract.report.json",
       "default_log_path": "target/conformance/evidence_ledger_contract.log.jsonl",
-      "required_events": [
-        "evidence_ledger_contract_validated",
-        "evidence_ledger_contract_failed"
-      ],
+      "required_events": ["evidence_ledger_contract_validated", "evidence_ledger_contract_failed"],
       "required_test_names": [
         "evidence_ledger_contract_checker_accepts_contract",
         "jsonl_and_otlp_exports_cover_completion_contract_fields",

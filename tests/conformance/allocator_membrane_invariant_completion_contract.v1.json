@@ -69,28 +69,46 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "arena_unit", "name": "generation_increases"},
-        {"source": "arena_unit", "name": "free_promotes_slot_to_quarantined_with_new_generation"},
-        {"source": "arena_unit", "name": "proof_uaf_detection_probability_one"},
-        {"source": "arena_unit", "name": "proof_double_free_always_detected"},
-        {"source": "arena_unit", "name": "canary_corruption_detected"},
-        {"source": "arena_unit", "name": "foreign_pointer_detected"},
-        {"source": "fingerprint_unit", "name": "canary_detects_corruption"},
-        {"source": "fingerprint_unit", "name": "prop_fingerprint_roundtrip"},
-        {"source": "fingerprint_unit", "name": "prop_fingerprint_verify_correct_addr"},
-        {"source": "fingerprint_unit", "name": "prop_canary_detects_any_byte_flip"},
-        {"source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free"},
-        {"source": "ptr_validator_unit", "name": "foreign_free_reported"},
-        {"source": "ptr_validator_unit", "name": "double_free_reported"},
-        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
-        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
-        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
-        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"},
-        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
-        {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"},
-        {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
-        {"source": "sibling_contract_harness", "name": "manifest_binds_allocator_unit_and_property_evidence"},
-        {"source": "completion_harness", "name": "manifest_binds_allocator_membrane_unit_and_telemetry_evidence"}
+        { "source": "arena_unit", "name": "generation_increases" },
+        { "source": "arena_unit", "name": "free_promotes_slot_to_quarantined_with_new_generation" },
+        { "source": "arena_unit", "name": "proof_uaf_detection_probability_one" },
+        { "source": "arena_unit", "name": "proof_double_free_always_detected" },
+        { "source": "arena_unit", "name": "canary_corruption_detected" },
+        { "source": "arena_unit", "name": "foreign_pointer_detected" },
+        { "source": "fingerprint_unit", "name": "canary_detects_corruption" },
+        { "source": "fingerprint_unit", "name": "prop_fingerprint_roundtrip" },
+        { "source": "fingerprint_unit", "name": "prop_fingerprint_verify_correct_addr" },
+        { "source": "fingerprint_unit", "name": "prop_canary_detects_any_byte_flip" },
+        { "source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free" },
+        { "source": "ptr_validator_unit", "name": "foreign_free_reported" },
+        { "source": "ptr_validator_unit", "name": "double_free_reported" },
+        { "source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free" },
+        { "source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live" },
+        {
+          "source": "ptr_validator_unit",
+          "name": "freed_pointer_property_becomes_temporal_violation"
+        },
+        { "source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds" },
+        {
+          "source": "allocator_sequences",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "concurrent_double_free_detection_basic_10k_16t_10pct"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        },
+        {
+          "source": "sibling_contract_harness",
+          "name": "manifest_binds_allocator_unit_and_property_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_allocator_membrane_unit_and_telemetry_evidence"
+        }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane generation_increases -- --nocapture",
@@ -106,11 +124,20 @@
       "default_report_path": "target/conformance/allocator_membrane_invariant_completion_contract.report.json",
       "default_log_path": "target/conformance/allocator_membrane_invariant_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "validation_log_export_includes_trace_and_decision_ids"},
-        {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"},
-        {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_log"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_unit_binding"}
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "concurrent_double_free_detection_basic_10k_16t_10pct"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_log" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_unit_binding" }
       ],
       "required_events": [
         "allocator_membrane_invariant_completion_contract_validated",

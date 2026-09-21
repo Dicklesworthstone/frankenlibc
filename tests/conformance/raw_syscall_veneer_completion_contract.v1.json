@@ -128,10 +128,7 @@
     }
   ],
   "raw_veneer_expectations": {
-    "expected_architectures": [
-      "x86_64",
-      "aarch64"
-    ],
+    "expected_architectures": ["x86_64", "aarch64"],
     "minimum_raw_syscall_primitives": 14,
     "minimum_typed_wrappers": 25,
     "minimum_core_unit_tests": 13,
@@ -144,30 +141,16 @@
     },
     "x86_64_register_contract": {
       "syscall_number": "rax",
-      "arguments": [
-        "rdi",
-        "rsi",
-        "rdx",
-        "r10",
-        "r8",
-        "r9"
-      ],
+      "arguments": ["rdi", "rsi", "rdx", "r10", "r8", "r9"],
       "return_register": "rax",
-      "clobbers": [
-        "rcx",
-        "r11"
-      ]
+      "clobbers": ["rcx", "r11"]
     }
   },
   "completion_debt_evidence": {
     "bead": "bd-cj0.1",
     "original_bead": "bd-cj0",
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "non_claim": "This contract binds existing raw-syscall implementation evidence and completion telemetry; it does not broaden libc API coverage or change runtime syscall behavior.",
     "unit_primary": {
       "required_test_refs": [
@@ -191,9 +174,7 @@
       "required_commands": [
         "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_unit cargo test -p frankenlibc-core syscall -- --nocapture"
       ],
-      "required_completion_events": [
-        "raw_syscall_veneer.unit_binding_validated"
-      ]
+      "required_completion_events": ["raw_syscall_veneer.unit_binding_validated"]
     },
     "e2e_primary": {
       "required_test_refs": [
@@ -225,9 +206,7 @@
       "required_commands": [
         "RCH_FORCE_REMOTE=true RCH_VISIBILITY=summary rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_raw_syscall_veneer_e2e cargo test -p frankenlibc-core --test syscall_veneer_test -- --nocapture"
       ],
-      "required_completion_events": [
-        "raw_syscall_veneer.e2e_binding_validated"
-      ]
+      "required_completion_events": ["raw_syscall_veneer.e2e_binding_validated"]
     },
     "telemetry_primary": {
       "required_test_refs": [

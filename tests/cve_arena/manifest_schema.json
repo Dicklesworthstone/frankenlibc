@@ -1,319 +1,316 @@
 {
-    "$schema": "https://json-schema.org/draft-07/schema#",
-    "$id": "https://github.com/nickel-org/frankenlibc/tests/cve_arena/manifest_schema.json",
-    "title": "CVE Arena Test Manifest",
-    "description": "Schema for manifest.json files in CVE Arena test directories. Each CVE reproduction test must include a manifest that describes how to build, run, and evaluate the test against both stock glibc and frankenlibc. Supports both canonical field names (run_cmd_stock/run_cmd_tsm) and shorthand (run_cmd).",
-    "type": "object",
-    "required": [
-        "cve_id",
-        "test_name",
-        "category",
-        "description",
-        "build_cmd",
-        "tsm_features_tested",
-        "cwe_ids"
-    ],
-    "oneOf": [
-        {
-            "required": ["run_cmd_stock", "run_cmd_tsm"]
-        },
-        {
-            "required": ["run_cmd"]
-        }
-    ],
-    "anyOf": [
-        {
-            "required": ["expected_stock_behavior"]
-        },
-        {
-            "required": ["expected_stock"]
-        }
-    ],
-    "properties": {
-        "cve_id": {
-            "type": "string",
-            "description": "The CVE identifier. For synthetic tests, may include a '(synthetic)' suffix.",
-            "pattern": "^CVE-\\d{4}-\\d{4,}(\\s*\\(synthetic\\))?$",
-            "examples": ["CVE-2024-2961", "CVE-2024-24990 (synthetic)"]
-        },
-        "test_name": {
-            "type": "string",
-            "description": "A short, filesystem-safe name for this specific test case.",
-            "pattern": "^[a-z0-9_]+$",
-            "minLength": 1,
-            "maxLength": 64,
-            "examples": ["iconv_overflow", "looney_tunables_envp", "double_free_fastbin"]
-        },
-        "category": {
-            "type": "string",
-            "description": "The test category. 'glibc-internal'/'glibc' tests exercise glibc bugs. 'external'/'targets' tests exercise vulnerabilities in programs using glibc. 'synthetic' tests are hand-crafted for specific TSM features.",
-            "enum": ["glibc-internal", "glibc", "external", "targets", "synthetic"]
-        },
-        "description": {
-            "type": "string",
-            "description": "Human-readable description of what this test does and what vulnerability it targets.",
-            "minLength": 10,
-            "maxLength": 1024
-        },
-        "build_cmd": {
-            "type": ["string", "null"],
-            "description": "Shell command to compile the trigger program. Null if no build step needed.",
-            "examples": [
-                "gcc -o trigger trigger.c -O0 -fno-stack-protector",
-                null
-            ]
-        },
-        "run_cmd": {
-            "type": "string",
-            "description": "Unified run command used for both stock and TSM modes. The runner sets LD_PRELOAD and FRANKENLIBC_MODE automatically.",
-            "minLength": 1
-        },
-        "run_cmd_stock": {
-            "type": "string",
-            "description": "Shell command to run the trigger with stock glibc.",
-            "minLength": 1
-        },
-        "run_cmd_tsm": {
-            "type": "string",
-            "description": "Shell command to run the trigger with frankenlibc.",
-            "minLength": 1
-        },
-        "expected_stock_behavior": {
-            "type": "object",
-            "description": "Expected behavior when running with stock glibc (canonical name).",
-            "required": ["crashes"],
-            "properties": {
-                "crashes": {
-                    "type": "boolean",
-                    "description": "Whether the trigger is expected to crash under stock glibc."
-                },
-                "signal": {
-                    "type": ["string", "null"],
-                    "description": "Expected termination signal.",
-                    "enum": [null, "SIGSEGV", "SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSYS", "SIGKILL"],
-                    "default": null
-                },
-                "exit_code": {
-                    "type": ["integer", "null"],
-                    "description": "Expected exit code. Null means any exit code is acceptable.",
-                    "minimum": 0,
-                    "maximum": 255,
-                    "default": null
-                }
-            },
-            "additionalProperties": false
-        },
-        "expected_stock": {
-            "type": "object",
-            "description": "Expected behavior when running with stock glibc (shorthand name).",
-            "required": ["crashes"],
-            "properties": {
-                "crashes": {
-                    "type": "boolean"
-                },
-                "signal": {
-                    "type": ["string", "null"],
-                    "enum": [null, "SIGSEGV", "SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSYS", "SIGKILL"],
-                    "default": null
-                },
-                "exit_code": {
-                    "type": ["integer", "null"],
-                    "minimum": 0,
-                    "maximum": 255,
-                    "default": null
-                }
-            },
-            "additionalProperties": false
-        },
-        "expected_tsm_behavior": {
-            "type": "object",
-            "description": "Expected behavior when running with frankenlibc hardened mode (canonical name).",
-            "required": ["crashes", "exit_code"],
-            "properties": {
-                "crashes": {
-                    "type": "boolean"
-                },
-                "exit_code": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 255
-                },
-                "healing_actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "ClampSize",
-                            "TruncateWithNull",
-                            "IgnoreDoubleFree",
-                            "IgnoreForeignFree",
-                            "ReallocAsMalloc",
-                            "ReturnSafeDefault",
-                            "UpgradeToSafeVariant",
-                            "FreedWithCanaryCorruption"
-                        ]
-                    },
-                    "uniqueItems": true,
-                    "default": []
-                }
-            },
-            "additionalProperties": false
-        },
-        "expected_tsm": {
-            "type": "object",
-            "description": "Expected behavior when running with frankenlibc hardened mode (shorthand name).",
-            "required": ["crashes", "exit_code"],
-            "properties": {
-                "crashes": {
-                    "type": "boolean"
-                },
-                "exit_code": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 255
-                },
-                "healing_actions": {
-                    "type": "array",
-                    "items": {
-                        "type": "string",
-                        "enum": [
-                            "ClampSize",
-                            "TruncateWithNull",
-                            "IgnoreDoubleFree",
-                            "IgnoreForeignFree",
-                            "ReallocAsMalloc",
-                            "ReturnSafeDefault",
-                            "UpgradeToSafeVariant",
-                            "FreedWithCanaryCorruption"
-                        ]
-                    },
-                    "uniqueItems": true,
-                    "default": []
-                }
-            },
-            "additionalProperties": false
-        },
-        "tsm_features_tested": {
-            "type": "array",
-            "description": "List of TSM/membrane features that this CVE test exercises.",
-            "items": {
-                "type": "string"
-            },
-            "uniqueItems": true,
-            "minItems": 1
-        },
-        "cwe_ids": {
-            "type": "array",
-            "description": "CWE identifiers for the vulnerability class(es) this test covers.",
-            "items": {
-                "type": "string",
-                "pattern": "^CWE-\\d+$"
-            },
-            "uniqueItems": true,
-            "minItems": 1
-        },
-        "cvss_score": {
-            "type": "number",
-            "description": "CVSS v3.1 base score for the vulnerability.",
-            "minimum": 0.0,
-            "maximum": 10.0,
-            "default": 0.0
-        },
-        "references": {
-            "type": "array",
-            "description": "URLs to advisories, write-ups, or patches.",
-            "items": {
-                "type": "string",
-                "format": "uri"
-            },
-            "default": []
-        },
-        "requires_root": {
-            "type": "boolean",
-            "description": "Whether this test requires root privileges.",
-            "default": false
-        },
-        "requires_network": {
-            "type": "boolean",
-            "description": "Whether this test requires network access.",
-            "default": false
-        },
-        "min_glibc_version": {
-            "type": ["string", "null"],
-            "description": "Minimum glibc version where the vulnerability is present.",
-            "pattern": "^\\d+\\.\\d+$",
-            "default": null
-        },
-        "max_glibc_version": {
-            "type": ["string", "null"],
-            "description": "Maximum glibc version where the vulnerability is present.",
-            "pattern": "^\\d+\\.\\d+$",
-            "default": null
-        },
-        "architecture": {
-            "type": "array",
-            "description": "CPU architectures where this CVE is reproducible.",
-            "items": {
-                "type": "string",
-                "enum": ["x86_64", "aarch64", "i686", "armv7"]
-            },
-            "default": ["x86_64"],
-            "uniqueItems": true
-        },
-        "timeout_seconds": {
-            "type": "integer",
-            "description": "Per-test timeout override (default 30s).",
-            "minimum": 1,
-            "maximum": 300
-        },
-        "software": {
-            "type": "string",
-            "description": "For external/targets category: the software under test (e.g., 'redis', 'curl')."
-        },
-        "software_version": {
-            "type": "string",
-            "description": "For external/targets category: the version of the software under test."
-        },
-        "ld_preload_mode": {
-            "type": "boolean",
-            "description": "Whether this test uses LD_PRELOAD injection rather than static linking.",
-            "default": true
-        },
-        "original_cve": {
-            "type": "string",
-            "description": "For synthetic tests: the original CVE that inspired this synthetic reproduction.",
-            "pattern": "^CVE-\\d{4}-\\d{4,}$"
-        },
-        "related_cves": {
-            "type": "array",
-            "description": "Related CVEs that share the same root cause or test suite.",
-            "items": {
-                "type": "string",
-                "pattern": "^CVE-\\d{4}-\\d{4,}$"
-            },
-            "uniqueItems": true
-        },
-        "attack_vectors": {
-            "type": "array",
-            "description": "For format string and multi-vector tests: specific attack vector definitions.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": { "type": "string" },
-                    "payload": { "type": "string" },
-                    "effect": { "type": "string" }
-                },
-                "required": ["name", "payload", "effect"]
-            }
-        },
-        "packet_structure": {
-            "type": "object",
-            "description": "For network protocol tests: packet structure metadata."
-        },
-        "uaf_sequence": {
-            "type": "object",
-            "description": "For UAF tests: step-by-step allocation/free/use sequence."
-        }
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/nickel-org/frankenlibc/tests/cve_arena/manifest_schema.json",
+  "title": "CVE Arena Test Manifest",
+  "description": "Schema for manifest.json files in CVE Arena test directories. Each CVE reproduction test must include a manifest that describes how to build, run, and evaluate the test against both stock glibc and frankenlibc. Supports both canonical field names (run_cmd_stock/run_cmd_tsm) and shorthand (run_cmd).",
+  "type": "object",
+  "required": [
+    "cve_id",
+    "test_name",
+    "category",
+    "description",
+    "build_cmd",
+    "tsm_features_tested",
+    "cwe_ids"
+  ],
+  "oneOf": [
+    {
+      "required": ["run_cmd_stock", "run_cmd_tsm"]
     },
-    "additionalProperties": false
+    {
+      "required": ["run_cmd"]
+    }
+  ],
+  "anyOf": [
+    {
+      "required": ["expected_stock_behavior"]
+    },
+    {
+      "required": ["expected_stock"]
+    }
+  ],
+  "properties": {
+    "cve_id": {
+      "type": "string",
+      "description": "The CVE identifier. For synthetic tests, may include a '(synthetic)' suffix.",
+      "pattern": "^CVE-\\d{4}-\\d{4,}(\\s*\\(synthetic\\))?$",
+      "examples": ["CVE-2024-2961", "CVE-2024-24990 (synthetic)"]
+    },
+    "test_name": {
+      "type": "string",
+      "description": "A short, filesystem-safe name for this specific test case.",
+      "pattern": "^[a-z0-9_]+$",
+      "minLength": 1,
+      "maxLength": 64,
+      "examples": ["iconv_overflow", "looney_tunables_envp", "double_free_fastbin"]
+    },
+    "category": {
+      "type": "string",
+      "description": "The test category. 'glibc-internal'/'glibc' tests exercise glibc bugs. 'external'/'targets' tests exercise vulnerabilities in programs using glibc. 'synthetic' tests are hand-crafted for specific TSM features.",
+      "enum": ["glibc-internal", "glibc", "external", "targets", "synthetic"]
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this test does and what vulnerability it targets.",
+      "minLength": 10,
+      "maxLength": 1024
+    },
+    "build_cmd": {
+      "type": ["string", "null"],
+      "description": "Shell command to compile the trigger program. Null if no build step needed.",
+      "examples": ["gcc -o trigger trigger.c -O0 -fno-stack-protector", null]
+    },
+    "run_cmd": {
+      "type": "string",
+      "description": "Unified run command used for both stock and TSM modes. The runner sets LD_PRELOAD and FRANKENLIBC_MODE automatically.",
+      "minLength": 1
+    },
+    "run_cmd_stock": {
+      "type": "string",
+      "description": "Shell command to run the trigger with stock glibc.",
+      "minLength": 1
+    },
+    "run_cmd_tsm": {
+      "type": "string",
+      "description": "Shell command to run the trigger with frankenlibc.",
+      "minLength": 1
+    },
+    "expected_stock_behavior": {
+      "type": "object",
+      "description": "Expected behavior when running with stock glibc (canonical name).",
+      "required": ["crashes"],
+      "properties": {
+        "crashes": {
+          "type": "boolean",
+          "description": "Whether the trigger is expected to crash under stock glibc."
+        },
+        "signal": {
+          "type": ["string", "null"],
+          "description": "Expected termination signal.",
+          "enum": [null, "SIGSEGV", "SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSYS", "SIGKILL"],
+          "default": null
+        },
+        "exit_code": {
+          "type": ["integer", "null"],
+          "description": "Expected exit code. Null means any exit code is acceptable.",
+          "minimum": 0,
+          "maximum": 255,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_stock": {
+      "type": "object",
+      "description": "Expected behavior when running with stock glibc (shorthand name).",
+      "required": ["crashes"],
+      "properties": {
+        "crashes": {
+          "type": "boolean"
+        },
+        "signal": {
+          "type": ["string", "null"],
+          "enum": [null, "SIGSEGV", "SIGABRT", "SIGBUS", "SIGFPE", "SIGILL", "SIGSYS", "SIGKILL"],
+          "default": null
+        },
+        "exit_code": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "maximum": 255,
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_tsm_behavior": {
+      "type": "object",
+      "description": "Expected behavior when running with frankenlibc hardened mode (canonical name).",
+      "required": ["crashes", "exit_code"],
+      "properties": {
+        "crashes": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "healing_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ClampSize",
+              "TruncateWithNull",
+              "IgnoreDoubleFree",
+              "IgnoreForeignFree",
+              "ReallocAsMalloc",
+              "ReturnSafeDefault",
+              "UpgradeToSafeVariant",
+              "FreedWithCanaryCorruption"
+            ]
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_tsm": {
+      "type": "object",
+      "description": "Expected behavior when running with frankenlibc hardened mode (shorthand name).",
+      "required": ["crashes", "exit_code"],
+      "properties": {
+        "crashes": {
+          "type": "boolean"
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255
+        },
+        "healing_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "ClampSize",
+              "TruncateWithNull",
+              "IgnoreDoubleFree",
+              "IgnoreForeignFree",
+              "ReallocAsMalloc",
+              "ReturnSafeDefault",
+              "UpgradeToSafeVariant",
+              "FreedWithCanaryCorruption"
+            ]
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "tsm_features_tested": {
+      "type": "array",
+      "description": "List of TSM/membrane features that this CVE test exercises.",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "cwe_ids": {
+      "type": "array",
+      "description": "CWE identifiers for the vulnerability class(es) this test covers.",
+      "items": {
+        "type": "string",
+        "pattern": "^CWE-\\d+$"
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "cvss_score": {
+      "type": "number",
+      "description": "CVSS v3.1 base score for the vulnerability.",
+      "minimum": 0.0,
+      "maximum": 10.0,
+      "default": 0.0
+    },
+    "references": {
+      "type": "array",
+      "description": "URLs to advisories, write-ups, or patches.",
+      "items": {
+        "type": "string",
+        "format": "uri"
+      },
+      "default": []
+    },
+    "requires_root": {
+      "type": "boolean",
+      "description": "Whether this test requires root privileges.",
+      "default": false
+    },
+    "requires_network": {
+      "type": "boolean",
+      "description": "Whether this test requires network access.",
+      "default": false
+    },
+    "min_glibc_version": {
+      "type": ["string", "null"],
+      "description": "Minimum glibc version where the vulnerability is present.",
+      "pattern": "^\\d+\\.\\d+$",
+      "default": null
+    },
+    "max_glibc_version": {
+      "type": ["string", "null"],
+      "description": "Maximum glibc version where the vulnerability is present.",
+      "pattern": "^\\d+\\.\\d+$",
+      "default": null
+    },
+    "architecture": {
+      "type": "array",
+      "description": "CPU architectures where this CVE is reproducible.",
+      "items": {
+        "type": "string",
+        "enum": ["x86_64", "aarch64", "i686", "armv7"]
+      },
+      "default": ["x86_64"],
+      "uniqueItems": true
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "description": "Per-test timeout override (default 30s).",
+      "minimum": 1,
+      "maximum": 300
+    },
+    "software": {
+      "type": "string",
+      "description": "For external/targets category: the software under test (e.g., 'redis', 'curl')."
+    },
+    "software_version": {
+      "type": "string",
+      "description": "For external/targets category: the version of the software under test."
+    },
+    "ld_preload_mode": {
+      "type": "boolean",
+      "description": "Whether this test uses LD_PRELOAD injection rather than static linking.",
+      "default": true
+    },
+    "original_cve": {
+      "type": "string",
+      "description": "For synthetic tests: the original CVE that inspired this synthetic reproduction.",
+      "pattern": "^CVE-\\d{4}-\\d{4,}$"
+    },
+    "related_cves": {
+      "type": "array",
+      "description": "Related CVEs that share the same root cause or test suite.",
+      "items": {
+        "type": "string",
+        "pattern": "^CVE-\\d{4}-\\d{4,}$"
+      },
+      "uniqueItems": true
+    },
+    "attack_vectors": {
+      "type": "array",
+      "description": "For format string and multi-vector tests: specific attack vector definitions.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "payload": { "type": "string" },
+          "effect": { "type": "string" }
+        },
+        "required": ["name", "payload", "effect"]
+      }
+    },
+    "packet_structure": {
+      "type": "object",
+      "description": "For network protocol tests: packet structure metadata."
+    },
+    "uaf_sequence": {
+      "type": "object",
+      "description": "For UAF tests: step-by-step allocation/free/use sequence."
+    }
+  },
+  "additionalProperties": false
 }

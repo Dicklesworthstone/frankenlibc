@@ -7,10 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-2icq.19/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "telemetry.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "telemetry.primary"]
   },
   "source_paths": {
     "format_doc": "docs/gentoo/log-format.md",
@@ -226,10 +223,7 @@
         "completion_checker",
         "completion_harness"
       ],
-      "test_refs": [
-        "unit_stats_validator_test",
-        "completion_harness"
-      ],
+      "test_refs": ["unit_stats_validator_test", "completion_harness"],
       "telemetry_refs": [
         {
           "path": "target/conformance/log_parsing_validation_completion_contract.report.json",

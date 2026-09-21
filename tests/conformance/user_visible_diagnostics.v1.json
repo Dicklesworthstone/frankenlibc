@@ -141,10 +141,7 @@
       "user_message_id": "diag.native_behavior",
       "user_message": "strlen uses FrankenLibC native string behavior in strict mode; the claim still depends on current fixture evidence.",
       "support_claim": "on_current_evidence",
-      "artifact_refs": [
-        "support_matrix.json",
-        "tests/conformance/fixtures/strlen_strict.json"
-      ],
+      "artifact_refs": ["support_matrix.json", "tests/conformance/fixtures/strlen_strict.json"],
       "evidence_status": "current",
       "source_commit": "HEAD",
       "failure_signature": "none",
@@ -166,10 +163,7 @@
       "user_message_id": "diag.native_behavior",
       "user_message": "memcpy uses FrankenLibC native string behavior in strict mode with no repair rewrite.",
       "support_claim": "on_current_evidence",
-      "artifact_refs": [
-        "support_matrix.json",
-        "tests/conformance/fixtures/memcpy_strict.json"
-      ],
+      "artifact_refs": ["support_matrix.json", "tests/conformance/fixtures/memcpy_strict.json"],
       "evidence_status": "current",
       "source_commit": "HEAD",
       "failure_signature": "none",
@@ -191,10 +185,7 @@
       "user_message_id": "diag.raw_syscall",
       "user_message": "write is routed through FrankenLibC raw Linux syscall marshaling for the declared POSIX I/O scope.",
       "support_claim": "on_current_evidence",
-      "artifact_refs": [
-        "support_matrix.json",
-        "tests/conformance/fixtures/unistd_ops.json"
-      ],
+      "artifact_refs": ["support_matrix.json", "tests/conformance/fixtures/unistd_ops.json"],
       "evidence_status": "current",
       "source_commit": "HEAD",
       "failure_signature": "none",

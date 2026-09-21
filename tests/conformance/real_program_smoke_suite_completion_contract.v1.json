@@ -18,10 +18,7 @@
     "original_bead": "bd-bp8fl.10.2",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.10.2/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "completion_debt_evidence": {
     "unit_primary": {
@@ -29,26 +26,17 @@
         {
           "artifact": "smoke_test",
           "name": "manifest_defines_case_schema_and_log_contract",
-          "covers": [
-            "case schema",
-            "structured log fields"
-          ]
+          "covers": ["case schema", "structured log fields"]
         },
         {
           "artifact": "smoke_test",
           "name": "stale_source_commit_policy_blocks_real_program_smoke_evidence",
-          "covers": [
-            "source commit freshness policy",
-            "stale evidence block rule"
-          ]
+          "covers": ["source commit freshness policy", "stale evidence block rule"]
         },
         {
           "artifact": "smoke_test",
           "name": "manifest_defines_failure_bundle_schema_and_fixture_classes",
-          "covers": [
-            "failure bundle schema",
-            "failure class fixtures"
-          ]
+          "covers": ["failure bundle schema", "failure class fixtures"]
         },
         {
           "artifact": "smoke_test",
@@ -71,40 +59,27 @@
         {
           "artifact": "smoke_test",
           "name": "run_mode_writes_artifacts_and_blocks_claims_without_current_artifacts",
-          "covers": [
-            "run mode",
-            "artifact writing",
-            "missing-artifact claim block"
-          ]
+          "covers": ["run mode", "artifact writing", "missing-artifact claim block"]
         },
         {
           "artifact": "smoke_test",
           "name": "validate_only_rejects_stale_recorded_source_commit",
-          "covers": [
-            "validate-only stale evidence rejection"
-          ]
+          "covers": ["validate-only stale evidence rejection"]
         },
         {
           "artifact": "smoke_test",
           "name": "current_standalone_artifact_rows_block_host_glibc_dependency",
-          "covers": [
-            "standalone host dependency probe"
-          ]
+          "covers": ["standalone host dependency probe"]
         },
         {
           "artifact": "smoke_test",
           "name": "bundle_fixture_mode_covers_required_classes_and_redacts_runner_env",
-          "covers": [
-            "failure bundle fixture mode",
-            "environment redaction"
-          ]
+          "covers": ["failure bundle fixture mode", "environment redaction"]
         },
         {
           "artifact": "smoke_test",
           "name": "gate_script_exists_and_is_executable",
-          "covers": [
-            "gate script executable mode"
-          ]
+          "covers": ["gate script executable mode"]
         }
       ],
       "required_commands": [
@@ -140,14 +115,8 @@
       "failure_unsupported",
       "standalone_future"
     ],
-    "required_runtime_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_replacement_levels": [
-      "L0",
-      "L1"
-    ],
+    "required_runtime_modes": ["strict", "hardened"],
+    "required_replacement_levels": ["L0", "L1"],
     "required_case_fields": [
       "case_id",
       "workload_id",

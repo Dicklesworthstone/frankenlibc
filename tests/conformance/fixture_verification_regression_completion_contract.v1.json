@@ -73,10 +73,7 @@
       "id": "tests.conformance.primary",
       "kind": "conformance",
       "description": "The checked-in fixture report covers fixture file validity, regression baselines, content hashes, and deterministic fixture loading.",
-      "source_refs": [
-        "tests/conformance/fixture_unit_tests.v1.json",
-        "tests/conformance/fixtures"
-      ]
+      "source_refs": ["tests/conformance/fixture_unit_tests.v1.json", "tests/conformance/fixtures"]
     }
   ],
   "generated_log_contract": {

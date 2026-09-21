@@ -14,9 +14,7 @@
     "--allocation-epoch-lag-ppm",
     "--output"
   ],
-  "optional_flags": [
-    "--arena-owner-conflict"
-  ],
+  "optional_flags": ["--arena-owner-conflict"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_thread_safety_barrier",
   "underlying_lib_functions": [

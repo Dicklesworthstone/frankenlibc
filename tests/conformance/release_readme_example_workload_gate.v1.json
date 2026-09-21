@@ -59,17 +59,9 @@
       ],
       "workload_id": "uwm-shell-coreutils",
       "replacement_level": "L0",
-      "runtime_modes": [
-        "strict"
-      ],
-      "support_matrix_symbols": [
-        "write",
-        "strlen",
-        "close"
-      ],
-      "semantic_overlay_ids": [
-        "sem-stdio-vtable-helpers"
-      ],
+      "runtime_modes": ["strict"],
+      "support_matrix_symbols": ["write", "strlen", "close"],
+      "semantic_overlay_ids": ["sem-stdio-vtable-helpers"],
       "smoke_expectation": {
         "overall_failed": false,
         "required_mode_status": {
@@ -101,19 +93,9 @@
       ],
       "workload_id": "uwm-shell-coreutils",
       "replacement_level": "L0",
-      "runtime_modes": [
-        "hardened"
-      ],
-      "support_matrix_symbols": [
-        "malloc",
-        "free",
-        "strlen",
-        "write"
-      ],
-      "semantic_overlay_ids": [
-        "sem-malloc-debug-hooks",
-        "sem-stdio-vtable-helpers"
-      ],
+      "runtime_modes": ["hardened"],
+      "support_matrix_symbols": ["malloc", "free", "strlen", "write"],
+      "semantic_overlay_ids": ["sem-malloc-debug-hooks", "sem-stdio-vtable-helpers"],
       "smoke_expectation": {
         "overall_failed": false,
         "required_mode_status": {
@@ -144,20 +126,9 @@
       ],
       "workload_id": "uwm-shell-coreutils",
       "replacement_level": "L0",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "support_matrix_symbols": [
-        "open",
-        "read",
-        "write",
-        "close"
-      ],
-      "semantic_overlay_ids": [
-        "sem-stdio-vtable-helpers",
-        "sem-argp-help-family"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "support_matrix_symbols": ["open", "read", "write", "close"],
+      "semantic_overlay_ids": ["sem-stdio-vtable-helpers", "sem-argp-help-family"],
       "smoke_expectation": {
         "overall_failed": false,
         "required_mode_status": {
@@ -189,20 +160,9 @@
       ],
       "workload_id": "uwm-language-runtime",
       "replacement_level": "L0",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "support_matrix_symbols": [
-        "dlopen",
-        "pthread_create",
-        "getaddrinfo",
-        "setlocale"
-      ],
-      "semantic_overlay_ids": [
-        "sem-pthread-cancel-private",
-        "sem-nss-configure-lookup"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "support_matrix_symbols": ["dlopen", "pthread_create", "getaddrinfo", "setlocale"],
+      "semantic_overlay_ids": ["sem-pthread-cancel-private", "sem-nss-configure-lookup"],
       "smoke_expectation": {
         "overall_failed": false,
         "required_mode_status": {
@@ -235,19 +195,9 @@
       ],
       "workload_id": "uwm-startup-linking",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "support_matrix_symbols": [
-        "__libc_start_main",
-        "execve",
-        "waitpid"
-      ],
-      "semantic_overlay_ids": [
-        "sem-elf-relocation-support",
-        "sem-nss-configure-lookup"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "support_matrix_symbols": ["__libc_start_main", "execve", "waitpid"],
+      "semantic_overlay_ids": ["sem-elf-relocation-support", "sem-nss-configure-lookup"],
       "smoke_expectation": {
         "overall_failed": false,
         "required_mode_status": {

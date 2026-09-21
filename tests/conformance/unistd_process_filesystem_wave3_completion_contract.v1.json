@@ -130,17 +130,8 @@
       "aio_read64",
       "aio_return"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
     "forbidden_ambient_output_tokens": [
       "/dev/null",
       "/tmp",

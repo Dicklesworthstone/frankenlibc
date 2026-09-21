@@ -78,9 +78,7 @@
     },
     "conformance_primary": {
       "missing_item_id": "tests.conformance.primary",
-      "required_artifacts": [
-        "tests/conformance/feature_parity_gap_ledger.v1.json"
-      ],
+      "required_artifacts": ["tests/conformance/feature_parity_gap_ledger.v1.json"],
       "required_counts": {
         "row_count": 170,
         "gap_count": 110,

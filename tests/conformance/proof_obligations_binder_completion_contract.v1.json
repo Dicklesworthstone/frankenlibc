@@ -4,10 +4,7 @@
   "completion_debt_bead": "bd-5fw.4.1",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.e2e.primary", "telemetry.primary"],
     "implementation_refs": [
       "tests/conformance/proof_obligations_binder.v1.json:5",
       "tests/conformance/proof_obligations_binder.v1.json:14",
@@ -44,16 +41,9 @@
       "resolution_policy": {
         "decision_artifact": "tests/conformance/proof_program_owner_decision.v1.json",
         "decision_choice": "reframe_as_tested_invariant_catalogs",
-        "allowed_final_statuses": [
-          "discharged",
-          "deferred"
-        ],
+        "allowed_final_statuses": ["discharged", "deferred"],
         "minimum_resolved_obligations": 24,
-        "deferred_required_fields": [
-          "deferred_reason",
-          "target_bead",
-          "target_resolution"
-        ]
+        "deferred_required_fields": ["deferred_reason", "target_bead", "target_resolution"]
       },
       "required_obligation_ids": [
         "PO-01",

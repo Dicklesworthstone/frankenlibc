@@ -70,7 +70,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <locale-single-lever-commit>",
         "expected_revert_scope": "Only locale_abi stub-elimination changes plus regenerated opportunity/proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-3pe",
@@ -103,7 +106,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <resolver-single-lever-commit>",
         "expected_revert_scope": "Only the resolv_abi stub-elimination lever and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-66s",
@@ -136,7 +142,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <dlfcn-single-lever-commit>",
         "expected_revert_scope": "Only the dlfcn raw-syscall migration lever and regenerated proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-3rn",
@@ -158,7 +167,10 @@
       "status": "eligible",
       "lever_category": "callthrough_removal",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/mutex_hotpath_optimization.v1.json", "tests/cve_arena/results/bd-1qy/report.json"],
+        "artifact_refs": [
+          "tests/conformance/mutex_hotpath_optimization.v1.json",
+          "tests/cve_arena/results/bd-1qy/report.json"
+        ],
         "verification_command": "bash scripts/check_bd1qy_mutex_fixture.sh",
         "invariants": [
           "Mutex strict and hardened fixture artifacts remain replayable",
@@ -169,7 +181,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <mutex-single-lever-commit>",
         "expected_revert_scope": "Only the mutex hot-path lever plus regenerated opportunity/proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-z84",
@@ -191,7 +206,10 @@
       "status": "eligible",
       "lever_category": "callthrough_removal",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/thread_hotpath_optimization.v1.json", "tests/cve_arena/results/bd-1f35/report.json"],
+        "artifact_refs": [
+          "tests/conformance/thread_hotpath_optimization.v1.json",
+          "tests/cve_arena/results/bd-1f35/report.json"
+        ],
         "verification_command": "bash scripts/check_bd1f35_thread_stress.sh",
         "invariants": [
           "Thread lifecycle stress evidence remains replayable in strict and hardened modes",
@@ -202,7 +220,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <thread-bootstrap-single-lever-commit>",
         "expected_revert_scope": "Only the thread bootstrap lever plus regenerated opportunity/proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-yos",
@@ -224,7 +245,10 @@
       "status": "eligible",
       "lever_category": "simd_acceleration",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/fixtures/string_memory_full.json", "tests/conformance/fixtures/memcpy_strict.json"],
+        "artifact_refs": [
+          "tests/conformance/fixtures/string_memory_full.json",
+          "tests/conformance/fixtures/memcpy_strict.json"
+        ],
         "verification_command": "bash scripts/check_mode_semantics.sh",
         "invariants": [
           "String-memory fixture outputs remain byte-for-byte stable",
@@ -235,7 +259,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <string-simd-single-lever-commit>",
         "expected_revert_scope": "Only the SIMD string lever plus regenerated opportunity/proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "unassigned",
@@ -257,7 +284,10 @@
       "status": "eligible",
       "lever_category": "subsystem_implementation",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/fixtures/startup_ops.json", "tests/integration/fixture_startup.c"],
+        "artifact_refs": [
+          "tests/conformance/fixtures/startup_ops.json",
+          "tests/integration/fixture_startup.c"
+        ],
         "verification_command": "bash scripts/check_setjmp_phase1_core.sh",
         "invariants": [
           "Startup fixture coverage remains replayable before the CRT lever changes",
@@ -268,7 +298,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <crt-bootstrap-single-lever-commit>",
         "expected_revert_scope": "Only the CRT/bootstrap lever and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-qwm",
@@ -301,7 +334,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <env-single-lever-commit>",
         "expected_revert_scope": "Only getenv/setenv/unsetenv lever changes and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-747",
@@ -323,7 +359,11 @@
       "status": "eligible",
       "lever_category": "subsystem_implementation",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/fixtures/pwd_ops.json", "tests/conformance/fixtures/grp_ops.json", "tests/integration/fixture_nss.c"],
+        "artifact_refs": [
+          "tests/conformance/fixtures/pwd_ops.json",
+          "tests/conformance/fixtures/grp_ops.json",
+          "tests/integration/fixture_nss.c"
+        ],
         "verification_command": "bash scripts/check_conformance_matrix.sh",
         "invariants": [
           "passwd/group/NSS fixture outputs remain replayable",
@@ -334,12 +374,18 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <nss-files-single-lever-commit>",
         "expected_revert_scope": "Only the NSS files backend lever and regenerated proof/opportunity artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-1rf",
         "selection_basis": "opportunity_score_formula_v1",
-        "baseline_artifacts": ["tests/conformance/fixtures/pwd_ops.json", "tests/conformance/fixtures/grp_ops.json"],
+        "baseline_artifacts": [
+          "tests/conformance/fixtures/pwd_ops.json",
+          "tests/conformance/fixtures/grp_ops.json"
+        ],
         "profile_artifacts": ["tests/integration/fixture_nss.c"]
       }
     },
@@ -356,7 +402,10 @@
       "status": "eligible",
       "lever_category": "subsystem_implementation",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/fixtures/resolver.json", "tests/conformance/conformance_matrix.v1.json"],
+        "artifact_refs": [
+          "tests/conformance/fixtures/resolver.json",
+          "tests/conformance/conformance_matrix.v1.json"
+        ],
         "verification_command": "bash scripts/check_differential_glibc.sh",
         "invariants": [
           "Resolver fixture parity remains replayable across libc comparisons",
@@ -367,7 +416,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <resolver-udp-single-lever-commit>",
         "expected_revert_scope": "Only the resolver UDP backend lever and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-1y7",
@@ -400,7 +452,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <ctype-cache-single-lever-commit>",
         "expected_revert_scope": "Only the ctype cache-optimization lever and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_isomorphism_proof.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_isomorphism_proof.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "unassigned",
@@ -422,7 +477,10 @@
       "status": "eligible",
       "lever_category": "subsystem_implementation",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/fixtures/stdio_file_ops.json", "tests/integration/fixture_stdio.c"],
+        "artifact_refs": [
+          "tests/conformance/fixtures/stdio_file_ops.json",
+          "tests/integration/fixture_stdio.c"
+        ],
         "verification_command": "bash scripts/check_stdio_native.sh",
         "invariants": [
           "stdio fixture outputs remain replayable for the declared FILE* surface",
@@ -433,7 +491,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <stdio-single-lever-commit>",
         "expected_revert_scope": "Only the stdio subsystem-implementation lever and regenerated wave artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "unassigned",
@@ -455,7 +516,10 @@
       "status": "eligible",
       "lever_category": "subsystem_implementation",
       "golden_output_verification": {
-        "artifact_refs": ["tests/conformance/symbol_latency_baseline.v1.json", "tests/conformance/workload_api_wave_plan.v1.json"],
+        "artifact_refs": [
+          "tests/conformance/symbol_latency_baseline.v1.json",
+          "tests/conformance/workload_api_wave_plan.v1.json"
+        ],
         "verification_command": "bash scripts/check_symbol_latency_baseline.sh",
         "invariants": [
           "Hotspot seeding remains grounded in deterministic baseline artifacts",
@@ -466,7 +530,10 @@
         "strategy": "git_revert_single_lever",
         "command": "git revert <hotspot-seeding-single-lever-commit>",
         "expected_revert_scope": "Only the hotspot-seeding lever and regenerated opportunity/proof artifacts.",
-        "artifact_regeneration_commands": ["bash scripts/check_one_lever_discipline.sh", "bash scripts/check_opportunity_matrix.sh"]
+        "artifact_regeneration_commands": [
+          "bash scripts/check_one_lever_discipline.sh",
+          "bash scripts/check_opportunity_matrix.sh"
+        ]
       },
       "attribution_metadata": {
         "opportunity_owner": "bd-w2c3.8.1",

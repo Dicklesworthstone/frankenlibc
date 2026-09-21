@@ -36,13 +36,7 @@
     "target_dir",
     "failure_signature"
   ],
-  "tracker_states": [
-    "healthy",
-    "tracker_failure",
-    "graph_failure",
-    "tool_timeout",
-    "split_brain"
-  ],
+  "tracker_states": ["healthy", "tracker_failure", "graph_failure", "tool_timeout", "split_brain"],
   "discrepancy_types": [
     "db_jsonl_count_mismatch",
     "exact_id_split_brain",
@@ -155,10 +149,7 @@
         "stale_blocked_cache": true,
         "exact_id_split_brain": false,
         "already_shipped_but_open": [],
-        "known_degraded_commands": [
-          "br doctor --json",
-          "br sync --flush-only --json"
-        ]
+        "known_degraded_commands": ["br doctor --json", "br sync --flush-only --json"]
       },
       "commands": [
         {
@@ -199,10 +190,7 @@
         "stale_blocked_cache": false,
         "exact_id_split_brain": false,
         "already_shipped_but_open": [],
-        "known_degraded_commands": [
-          "br ready --json",
-          "bv --robot-triage"
-        ]
+        "known_degraded_commands": ["br ready --json", "bv --robot-triage"]
       },
       "commands": [
         {
@@ -243,9 +231,7 @@
         "stale_blocked_cache": null,
         "exact_id_split_brain": false,
         "already_shipped_but_open": [],
-        "known_degraded_commands": [
-          "br --no-db ready --json"
-        ]
+        "known_degraded_commands": ["br --no-db ready --json"]
       },
       "commands": [
         {
@@ -276,13 +262,8 @@
         "dirty_issues": 0,
         "stale_blocked_cache": true,
         "exact_id_split_brain": true,
-        "already_shipped_but_open": [
-          "bd-bp8fl.2.1"
-        ],
-        "known_degraded_commands": [
-          "br show bd-bp8fl.2.1 --json",
-          "br close bd-bp8fl.2.1 --json"
-        ]
+        "already_shipped_but_open": ["bd-bp8fl.2.1"],
+        "known_degraded_commands": ["br show bd-bp8fl.2.1 --json", "br close bd-bp8fl.2.1 --json"]
       },
       "commands": [
         {

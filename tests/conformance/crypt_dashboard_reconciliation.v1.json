@@ -8,11 +8,7 @@
   "source_of_truth_policy": {
     "primary_open_rows": "br --no-db list --status open --json",
     "named_crypt_row": "br --no-db show bd-fd42da --json",
-    "dashboard_inputs": [
-      "bv --robot-triage",
-      "br/bv dashboard export",
-      ".beads/issues.jsonl"
-    ],
+    "dashboard_inputs": ["bv --robot-triage", "br/bv dashboard export", ".beads/issues.jsonl"],
     "crypt_evidence": "crates/frankenlibc-abi/tests/conformance_diff_crypt.rs",
     "claim_rule": "A zero-open dashboard cannot hide a known crypt divergence; it is valid only when current crypt conformance evidence proves parity and the crypt issue row is closed.",
     "fail_closed_rule": "Missing bd-fd42da, stale parity evidence, duplicate status rows, or exact-ID lookup failure blocks dashboard zero-open claims and points to the next safe tracker action."

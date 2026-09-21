@@ -7,12 +7,7 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1(epoch_seed, &[[u8; 128]], repair_esi) -> [u8; 128]. Reads source payloads from a binary file containing K concatenated 128-byte EVIDENCE_SYMBOL_SIZE_T symbols, derives the XOR schedule via derive_repair_schedule_v1(epoch_seed, k_source, repair_esi), and XOR-combines the source symbols at scheduled indices to produce one repair payload. Emits a single JSONL record { kind: 'xor_repair_payload', epoch_seed, k_source, repair_esi, schedule_indices, payload_hex } where payload_hex is 256 lowercase hex chars (128 bytes). Previously reachable only from Rust callers; the CLI lets CI verify XOR-repair encoding without compiling.",
   "subcommand_name": "encode-xor-repair-payload",
   "binary_target": "harness",
-  "required_flags": [
-    "--epoch-seed",
-    "--source-payloads",
-    "--repair-esi",
-    "--output"
-  ],
+  "required_flags": ["--epoch-seed", "--source-payloads", "--repair-esi", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::encode_xor_repair_payload_v1",
   "underlying_lib_functions": [

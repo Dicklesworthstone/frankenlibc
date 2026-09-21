@@ -734,12 +734,8 @@
   ],
   "findings": [],
   "feature_gate_config": {
-    "default": [
-      "runtime-math-production"
-    ],
-    "optional": [
-      "runtime-math-research"
-    ],
+    "default": ["runtime-math-production"],
+    "optional": ["runtime-math-research"],
     "production_gate": "runtime-math-production",
     "research_gate": "runtime-math-research"
   },

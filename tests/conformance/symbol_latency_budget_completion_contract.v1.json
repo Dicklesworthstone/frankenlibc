@@ -11,10 +11,7 @@
     "score_threshold": 800
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.conformance.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.conformance.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800,
     "non_claim": "This contract binds the existing deterministic symbol-latency artifact and policy-aware budget telemetry. It does not claim fresh live benchmark capture beyond the checked-in sample log."
   },
@@ -196,10 +193,10 @@
         "name": "checker_rejects_policy_budget_drift"
       }
     ],
-  "required_symbol_latency_events": [
-    "ci.symbol_latency_budget.pass",
-    "ci.symbol_latency_budget.waived_target_violation"
-  ],
+    "required_symbol_latency_events": [
+      "ci.symbol_latency_budget.pass",
+      "ci.symbol_latency_budget.waived_target_violation"
+    ],
     "required_completion_events": [
       "symbol_latency_budget.source_artifacts_validated",
       "symbol_latency_budget.conformance_binding_validated",
@@ -236,9 +233,7 @@
     "required_summary": {
       "minimum_measured_symbol_count": 16,
       "minimum_evaluated_mode_count": 8,
-      "required_active_waiver_beads": [
-        "bd-242"
-      ],
+      "required_active_waiver_beads": ["bd-242"],
       "gate_passed": true,
       "allow_waived_target_violations": true
     }

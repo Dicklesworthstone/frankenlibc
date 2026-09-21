@@ -14,10 +14,7 @@
   },
   "purpose": "Doc-claim audit binder. README and release docs cannot imply standalone replacement readiness — words like 'standalone-ready', 'L1 production-ready', 'replaces glibc' — unless the L1 dry-run dashboard (tests/conformance/l1_dry_run_readiness_dashboard.v1.json) currently shows every row passing AND replacement_levels.json#current_level has been promoted to L1 by an explicit human signoff. The audit fails closed on overclaim phrasing in any cited doc, and pins forbidden phrasing inline so reviewers see the exact language that would have shipped.",
   "subject": {
-    "doc_paths": [
-      "README.md",
-      "FEATURE_PARITY.md"
-    ],
+    "doc_paths": ["README.md", "FEATURE_PARITY.md"],
     "release_script": "scripts/release/check_replacement_claim_evidence.sh"
   },
   "inputs": {

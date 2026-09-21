@@ -7,16 +7,8 @@
   "purpose": "Pin the harness binary subcommand that drives a paired-lane live measurement and emits JSONL. Previously bd-gxgr5 + bd-vmp2v + bd-6epxt shipped lib-level helpers but had no production binary entry point; only conformance tests called them. The CLI subcommand makes the bridge invokable from rch cargo run and from CI runners without writing Rust.",
   "subcommand_name": "live-measurement",
   "binary_target": "harness",
-  "required_flags": [
-    "--profile-id",
-    "--n",
-    "--seed",
-    "--source-commit",
-    "--output"
-  ],
-  "optional_flags": [
-    "--environment-fingerprint"
-  ],
+  "required_flags": ["--profile-id", "--n", "--seed", "--source-commit", "--output"],
+  "optional_flags": ["--environment-fingerprint"],
   "underlying_bridge_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta",
   "underlying_default_fingerprint_function": "frankenlibc_harness::read_mostly_fast_path_prototype::run_live_measurement_pair_with_p99_delta_and_detected_fingerprint",
   "underlying_lib_functions": [
@@ -25,11 +17,7 @@
   ],
   "jsonl_output_contract": {
     "record_count": 3,
-    "record_order": [
-      "conservative LiveMeasurementRow",
-      "seqlock LiveMeasurementRow",
-      "P99Delta"
-    ],
+    "record_order": ["conservative LiveMeasurementRow", "seqlock LiveMeasurementRow", "P99Delta"],
     "row_kind_marker": "live_measurement_row",
     "delta_kind_marker": "p99_delta",
     "row_required_fields": [

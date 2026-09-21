@@ -55,11 +55,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "migrations.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "migrations.primary", "telemetry.primary"],
     "required_support_matrix": {
       "total_exported": 4119,
       "status_summary_callthrough": 0,

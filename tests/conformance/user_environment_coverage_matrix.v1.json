@@ -45,20 +45,8 @@
     "reason_code",
     "failure_signature"
   ],
-  "state_values": [
-    "required",
-    "optional",
-    "skipped",
-    "blocked"
-  ],
-  "evidence_states": [
-    "claim_blocked",
-    "current",
-    "flaky",
-    "skipped",
-    "stale",
-    "unsupported"
-  ],
+  "state_values": ["required", "optional", "skipped", "blocked"],
+  "evidence_states": ["claim_blocked", "current", "flaky", "skipped", "stale", "unsupported"],
   "reason_codes": [
     {
       "id": "interpose_artifact_missing",
@@ -128,31 +116,11 @@
     }
   ],
   "coverage_requirements": {
-    "architectures": [
-      "x86_64",
-      "aarch64"
-    ],
-    "runtime_modes": [
-      "strict",
-      "hardened"
-    ],
-    "replacement_levels": [
-      "L0",
-      "L1"
-    ],
-    "states": [
-      "required",
-      "blocked",
-      "optional",
-      "skipped"
-    ],
-    "evidence_states": [
-      "claim_blocked",
-      "flaky",
-      "skipped",
-      "stale",
-      "unsupported"
-    ],
+    "architectures": ["x86_64", "aarch64"],
+    "runtime_modes": ["strict", "hardened"],
+    "replacement_levels": ["L0", "L1"],
+    "states": ["required", "blocked", "optional", "skipped"],
+    "evidence_states": ["claim_blocked", "flaky", "skipped", "stale", "unsupported"],
     "environment_patterns": [
       "x86_64_l0_strict",
       "x86_64_l0_hardened",
@@ -306,9 +274,7 @@
       "errno": null,
       "status": "blocked",
       "latency_ns": 0,
-      "artifact_refs": [
-        "tests/conformance/user_workload_acceptance_matrix.v1.json"
-      ],
+      "artifact_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json"],
       "source_commit": "current",
       "target_dir": "target/conformance",
       "failure_signature": "aarch64_bringup_missing",

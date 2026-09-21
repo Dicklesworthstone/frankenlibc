@@ -7,7 +7,13 @@
     "max_exclusion_rate_percent": 10.0,
     "review_cadence": "weekly",
     "required_fields": ["package", "type", "reason", "workaround", "tracking"],
-    "allowed_types": ["fundamental", "setuid", "static_binary", "frankenlibc_bug", "environmental_constraint"]
+    "allowed_types": [
+      "fundamental",
+      "setuid",
+      "static_binary",
+      "frankenlibc_bug",
+      "environmental_constraint"
+    ]
   },
   "exclusions": [
     {

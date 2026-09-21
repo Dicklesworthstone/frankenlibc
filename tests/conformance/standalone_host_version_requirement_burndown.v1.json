@@ -45,28 +45,16 @@
       "libgcc_s.so.1:GCC_4.2.0"
     ],
     "observed_version_needs": {
-      "ld-linux-x86-64.so.2": [
-        "GLIBC_2.3"
-      ],
-      "libgcc_s.so.1": [
-        "GCC_3.0",
-        "GCC_3.3",
-        "GCC_4.2.0"
-      ]
+      "ld-linux-x86-64.so.2": ["GLIBC_2.3"],
+      "libgcc_s.so.1": ["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]
     },
     "evidence_command_results": {
       "readelf_version": {
         "command": "readelf --version-info libfrankenlibc_replace.so",
         "exit_code": 0,
         "observed_version_needs": {
-          "ld-linux-x86-64.so.2": [
-            "GLIBC_2.3"
-          ],
-          "libgcc_s.so.1": [
-            "GCC_3.0",
-            "GCC_3.3",
-            "GCC_4.2.0"
-          ]
+          "ld-linux-x86-64.so.2": ["GLIBC_2.3"],
+          "libgcc_s.so.1": ["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]
         }
       }
     }
@@ -118,9 +106,7 @@
         "readelf -Ws libfrankenlibc_replace.so | rg \"UND __tls_get_addr(@GLIBC_2.3)?\"",
         "ldd libfrankenlibc_replace.so"
       ],
-      "observed_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
+      "observed_symbols": ["__tls_get_addr@GLIBC_2.3"],
       "source_owner_artifact": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json",
       "first_safe_action": "Run a TLS model/startup experiment that preserves default forge semantics and proves whether the __tls_get_addr edge can be removed.",
       "exit_criteria": [
@@ -136,10 +122,7 @@
       "provider_library": "libgcc_s.so.1",
       "version_node": "GCC_3.0",
       "blocker_reason": "host_version_requirements",
-      "secondary_blocking_reasons": [
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols"
-      ],
+      "secondary_blocking_reasons": ["libgcc_runtime_dependency", "undefined_unwind_symbols"],
       "owner_surface": "compiler_runtime_and_unwind_runtime",
       "owned_substitute_strategy": "Remove or own the GCC_3.0 unwinder ABI edges by proving a panic/profile change, owned unwinder/personality implementation, or owned compiler-runtime substitution.",
       "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
@@ -175,10 +158,7 @@
       "provider_library": "libgcc_s.so.1",
       "version_node": "GCC_3.3",
       "blocker_reason": "host_version_requirements",
-      "secondary_blocking_reasons": [
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols"
-      ],
+      "secondary_blocking_reasons": ["libgcc_runtime_dependency", "undefined_unwind_symbols"],
       "owner_surface": "compiler_runtime_and_unwind_runtime",
       "owned_substitute_strategy": "Remove or own the backtrace unwinder ABI edge that keeps the GCC_3.3 provider version live.",
       "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
@@ -187,9 +167,7 @@
         "readelf -d libfrankenlibc_replace.so | rg \"libgcc_s.so.1\"",
         "ldd libfrankenlibc_replace.so | rg \"libgcc_s.so.1\""
       ],
-      "observed_symbols": [
-        "_Unwind_Backtrace@GCC_3.3"
-      ],
+      "observed_symbols": ["_Unwind_Backtrace@GCC_3.3"],
       "source_owner_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
       "first_safe_action": "Prove whether owned unwinder/backtrace support or unwind elimination removes _Unwind_Backtrace before clearing the version need.",
       "exit_criteria": [
@@ -205,10 +183,7 @@
       "provider_library": "libgcc_s.so.1",
       "version_node": "GCC_4.2.0",
       "blocker_reason": "host_version_requirements",
-      "secondary_blocking_reasons": [
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols"
-      ],
+      "secondary_blocking_reasons": ["libgcc_runtime_dependency", "undefined_unwind_symbols"],
       "owner_surface": "compiler_runtime_and_unwind_runtime",
       "owned_substitute_strategy": "Remove or own the modern IP-info unwinder ABI edge that keeps the GCC_4.2.0 provider version live.",
       "evidence_command": "readelf --version-info libfrankenlibc_replace.so",
@@ -217,9 +192,7 @@
         "readelf -d libfrankenlibc_replace.so | rg \"libgcc_s.so.1\"",
         "ldd libfrankenlibc_replace.so | rg \"libgcc_s.so.1\""
       ],
-      "observed_symbols": [
-        "_Unwind_GetIPInfo@GCC_4.2.0"
-      ],
+      "observed_symbols": ["_Unwind_GetIPInfo@GCC_4.2.0"],
       "source_owner_artifact": "tests/conformance/standalone_compiler_runtime_blocker_diagnostics.v1.json",
       "first_safe_action": "Prove whether owned unwinder/IP-info support or unwind elimination removes _Unwind_GetIPInfo before clearing the version need.",
       "exit_criteria": [

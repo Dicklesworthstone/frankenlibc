@@ -7,17 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation(operation, candidate_isa, src_addr, dst_addr, len, overlap) -> CliffordIsomorphismCertificate as a standalone CLI. The lib API builds an algebraic equivalence certificate between a candidate SIMD string kernel implementation (avx2/sse4.2/neon/scalar) and the scalar reference using a Clifford-algebra grade decomposition: grade-0 (scalar) energy, grade-2 (bivector) energy, parity imbalance, and rotor norm deviation. Equivalence requires the candidate to be lane- and tail-contract compatible AND the controller to not observe an overlap/parity violation. Memcpy with `overlap=true` is always rejected (Pin parity witness forbids overlap). Previously reachable only from Rust callers; the CLI bridge lets CI validate per-ISA SIMD-string isomorphism certificates without compiling.",
   "subcommand_name": "certify-simd-string-op",
   "binary_target": "harness",
-  "required_flags": [
-    "--operation",
-    "--candidate-isa",
-    "--output"
-  ],
-  "optional_flags": [
-    "--src-addr",
-    "--dst-addr",
-    "--len",
-    "--overlap"
-  ],
+  "required_flags": ["--operation", "--candidate-isa", "--output"],
+  "optional_flags": ["--src-addr", "--dst-addr", "--len", "--overlap"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::clifford::certify_simd_string_operation",
   "underlying_lib_functions": [

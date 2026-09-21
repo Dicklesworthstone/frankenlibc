@@ -26,13 +26,7 @@
     "network_access": "forbidden",
     "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected_class",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected_class", "actual", "failure_signature"],
   "cases": [
     {
       "name": "__rpc_thread_createerr_tls_accessor_strict",

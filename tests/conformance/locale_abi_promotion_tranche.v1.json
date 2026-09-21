@@ -8,19 +8,12 @@
     "fixture": "tests/conformance/fixtures/locale_catalog_wave01.json",
     "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
     "abi_source": "crates/frankenlibc-abi/src/locale_abi.rs",
-    "core_sources": [
-      "crates/frankenlibc-core/src/locale/catgets.rs"
-    ],
-    "harness_tests": [
-      "crates/frankenlibc-harness/tests/locale_catalog_wave01_conformance_test.rs"
-    ]
+    "core_sources": ["crates/frankenlibc-core/src/locale/catgets.rs"],
+    "harness_tests": ["crates/frankenlibc-harness/tests/locale_catalog_wave01_conformance_test.rs"]
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-locale-catalog-with-errno-bridge",
     "accepted_host_symbols": [
       "<dynamic>",

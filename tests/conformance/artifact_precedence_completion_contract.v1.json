@@ -89,9 +89,7 @@
           "gate_emits_current_manifest_pass_report_and_log",
           "checker_validates_artifact_precedence_completion_contract"
         ],
-        "required_negative_tests": [
-          "checker_rejects_missing_e2e_binding"
-        ],
+        "required_negative_tests": ["checker_rejects_missing_e2e_binding"],
         "required_commands": [
           "bash scripts/check_artifact_precedence.sh",
           "bash scripts/check_artifact_precedence_completion_contract.sh"
@@ -213,10 +211,7 @@
       "prose_only_claim_advancement_fails",
       "out_of_order_generated_artifact_fails"
     ],
-    "required_ci_terms": [
-      "FRANKENLIBC_EXTENDED_GATES",
-      "scripts/check_artifact_precedence.sh"
-    ]
+    "required_ci_terms": ["FRANKENLIBC_EXTENDED_GATES", "scripts/check_artifact_precedence.sh"]
   },
   "completion_output_contract": {
     "report_path": "target/conformance/artifact_precedence_completion_contract.report.json",

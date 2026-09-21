@@ -24,11 +24,7 @@
   "renderer_function": "frankenlibc_harness::system_fingerprint::from_components",
   "detector_function": "frankenlibc_harness::system_fingerprint::environment_fingerprint",
   "components_struct": "frankenlibc_harness::system_fingerprint::EnvironmentFingerprintComponents",
-  "rejected_evidence_kinds": [
-    "invalid_format",
-    "empty_component",
-    "invalid_cpu_count"
-  ],
+  "rejected_evidence_kinds": ["invalid_format", "empty_component", "invalid_cpu_count"],
   "policy": {
     "fail_closed_when_format_invalid": true,
     "fail_closed_when_component_empty": true,

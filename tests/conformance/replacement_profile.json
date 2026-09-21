@@ -128,12 +128,7 @@
     "description": "dlfcn-specific boundary contract between interpose and replacement profiles.",
     "interpose": {
       "host_callthrough_symbols": [],
-      "local_symbol": [
-        "dlopen",
-        "dlsym",
-        "dlclose",
-        "dlerror"
-      ],
+      "local_symbol": ["dlopen", "dlsym", "dlclose", "dlerror"],
       "hardened_invalid_flags_repair": "RTLD_NOW"
     },
     "replacement": {

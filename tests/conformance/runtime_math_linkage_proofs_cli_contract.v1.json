@@ -8,14 +8,8 @@
   "subcommand_name": "runtime-math-linkage-proofs",
   "binary_target": "harness",
   "required_flags": [],
-  "optional_flags": [
-    "--workspace-root",
-    "--log",
-    "--report"
-  ],
-  "underlying_lib_functions": [
-    "frankenlibc_harness::runtime_math_linkage_proofs::run_and_write"
-  ],
+  "optional_flags": ["--workspace-root", "--log", "--report"],
+  "underlying_lib_functions": ["frankenlibc_harness::runtime_math_linkage_proofs::run_and_write"],
   "io_pattern": "jsonl_log_plus_json_report_no_stdout_jsonl",
   "default_workspace_root": ".",
   "default_log_path": "target/conformance/runtime_math_linkage_proofs.log.jsonl",

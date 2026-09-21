@@ -73,10 +73,7 @@
     "coverage_close_commit": "650e6ad8",
     "fixture_file": "tests/conformance/fixtures/string_memory_hotpaths_wave10.json",
     "harness_test": "crates/frankenlibc-harness/tests/string_memory_hotpaths_wave10_conformance_test.rs",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_first_wave_symbols": [
       "argz_create",
       "bcmp",

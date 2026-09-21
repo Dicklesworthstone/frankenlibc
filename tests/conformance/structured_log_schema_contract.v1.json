@@ -10,12 +10,7 @@
   "schema_file": "crates/frankenlibc-harness/src/structured_log.rs",
   "validator_line_function": "frankenlibc_harness::structured_log::validate_log_line",
   "validator_file_function": "frankenlibc_harness::structured_log::validate_log_file",
-  "required_log_entry_fields": [
-    "timestamp",
-    "trace_id",
-    "level",
-    "event"
-  ],
+  "required_log_entry_fields": ["timestamp", "trace_id", "level", "event"],
   "telemetry_correlation_fields": [
     "bead_id",
     "trace_id",
@@ -56,11 +51,7 @@
     "pass": "2026-05-10T03-16-16Z",
     "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-144/scorecard.md",
     "spec_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-144/spec.json",
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "score_before": 470,
     "score_threshold": 700
   },

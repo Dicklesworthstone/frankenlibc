@@ -51,39 +51,27 @@
         {
           "artifact": "source_test",
           "name": "gate_script_passes_and_emits_structured_artifacts",
-          "covers": [
-            "gate script execution",
-            "report emission",
-            "structured JSONL emission"
-          ]
+          "covers": ["gate script execution", "report emission", "structured JSONL emission"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_missing_foundation_anchor",
-          "covers": [
-            "missing evidence anchor fail-closed behavior"
-          ]
+          "covers": ["missing evidence anchor fail-closed behavior"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_premature_done_claim",
-          "covers": [
-            "premature DONE claim fail-closed behavior"
-          ]
+          "covers": ["premature DONE claim fail-closed behavior"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_stale_gate_source_commit",
-          "covers": [
-            "stale source commit fail-closed behavior"
-          ]
+          "covers": ["stale source commit fail-closed behavior"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_stale_feature_parity_binding",
-          "covers": [
-            "stale FEATURE_PARITY line binding fail-closed behavior"
-          ]
+          "covers": ["stale FEATURE_PARITY line binding fail-closed behavior"]
         }
       ],
       "required_commands": [
@@ -150,11 +138,7 @@
     "claim_policy": {
       "default_decision": "block_done_until_foundation_evidence_current",
       "blocked_done_status": "DONE",
-      "blocked_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "blocked_replacement_levels": ["L1", "L2", "L3"],
       "missing_or_stale_result": "claim_blocked"
     },
     "required_source_markers": {
@@ -174,14 +158,8 @@
         "gate_rejects_stale_gate_source_commit",
         "gate_rejects_stale_feature_parity_binding"
       ],
-      "feature_parity": [
-        "Initial conformance fixtures committed",
-        "membrane_mode_split.json"
-      ],
-      "owner_family_groups": [
-        "fpg-gap-summary-evidence-foundation",
-        "bd-bp8fl.3.12"
-      ]
+      "feature_parity": ["Initial conformance fixtures committed", "membrane_mode_split.json"],
+      "owner_family_groups": ["fpg-gap-summary-evidence-foundation", "bd-bp8fl.3.12"]
     }
   }
 }

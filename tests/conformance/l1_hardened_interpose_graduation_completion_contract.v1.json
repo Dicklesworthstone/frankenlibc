@@ -125,13 +125,7 @@
     "l1_crt_current_gate_status": "pass",
     "script_check_count": 8,
     "script_failure_count": 0,
-    "required_log_fields": [
-      "trace_id",
-      "level",
-      "obligation_id",
-      "outcome",
-      "artifact_ref"
-    ],
+    "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
     "required_script_checks": [
       "levels_file_valid",
       "level_definitions",

@@ -7,12 +7,7 @@
   "purpose": "Pin the harness binary subcommand that composes frankenlibc_membrane::runtime_math::policy_table::{risk_bucket_v1, budget_bucket_v1, consistency_bucket_v1, key_v1_index} into a single CLI for discretizing a runtime control decision's continuous state onto a u32 row index into the Policy Compaction Profile Table. Previously the four bucket helpers were reachable only from Rust callers; the CLI bridge lets CI verify the discretization pipeline + key index math without compiling.",
   "subcommand_name": "derive-policy-key",
   "binary_target": "harness",
-  "required_flags": [
-    "--mode",
-    "--family",
-    "--risk-ppm",
-    "--output"
-  ],
+  "required_flags": ["--mode", "--family", "--risk-ppm", "--output"],
   "optional_flags": [
     "--fast-over-budget",
     "--full-over-budget",

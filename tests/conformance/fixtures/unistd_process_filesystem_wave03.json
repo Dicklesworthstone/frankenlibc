@@ -26,13 +26,7 @@
     ],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "addseverity_registers_wave03_label_strict",

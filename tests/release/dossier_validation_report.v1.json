@@ -294,11 +294,7 @@
         "priority": 1,
         "closed_at": "2026-06-05T16:34:28.188572222Z",
         "closed_by": "BlackThrush",
-        "labels": [
-          "no-gaps",
-          "perf",
-          "string"
-        ],
+        "labels": ["no-gaps", "perf", "string"],
         "close_reason": "Rejected/restored: memmove #[inline(always)] passed behavior proof but regressed same-worker ts2 focused benchmark p50 59.188->62.522 ns/op, mean 61.808->66.450; score 0.0. Artifact: tests/artifacts/\u2026"
       },
       {
@@ -328,13 +324,7 @@
         "priority": 1,
         "closed_at": "2026-06-05T07:49:03.749332419Z",
         "closed_by": "BlackThrush",
-        "labels": [
-          "alien-artifact",
-          "no-gaps",
-          "perf",
-          "printf",
-          "stdio"
-        ],
+        "labels": ["alien-artifact", "no-gaps", "perf", "printf", "stdio"],
         "close_reason": "Closed no-code after focused RCH baseline. Fresh broad ts2 row showed a small printf_g_6 gap, but focused RCH on ts1 with sample-size 50 showed no active p50 gap: FrankenLibC p50 129.150 ns/op vs hos\u2026"
       },
       {
@@ -354,13 +344,7 @@
         "priority": 1,
         "closed_at": "2026-06-05T07:38:22.412345930Z",
         "closed_by": "BlackThrush",
-        "labels": [
-          "alien-graveyard",
-          "allocator",
-          "malloc",
-          "no-gaps",
-          "perf"
-        ],
+        "labels": ["alien-graveyard", "allocator", "malloc", "no-gaps", "perf"],
         "close_reason": "Kept in commit b5f99f36. RCH criterion same-worker ts2 malloc_free_large improved p50 40.849 -> 13.166 ns/op and mean 44.323 -> 14.252 ns/op (Score 9.0). Behavior proof passed: RCH cargo test -p fran\u2026"
       },
       {
@@ -370,13 +354,7 @@
         "priority": 1,
         "closed_at": "2026-06-05T07:25:03.909470746Z",
         "closed_by": "BlackThrush",
-        "labels": [
-          "alien-graveyard",
-          "memmove",
-          "no-gaps",
-          "perf",
-          "string"
-        ],
+        "labels": ["alien-graveyard", "memmove", "no-gaps", "perf", "string"],
         "close_reason": "Rejected: safe fixed-array [u8;64] memmove copy kernel preserved behavior but regressed same-worker RCH ts2. Focused baseline Franken memmove_4096 p50 64.095ns mean 66.804ns vs host p50 54.942ns mean\u2026"
       },
       {
@@ -386,13 +364,7 @@
         "priority": 1,
         "closed_at": "2026-06-05T07:15:14.259464754Z",
         "closed_by": "BlackThrush",
-        "labels": [
-          "alien-graveyard",
-          "memchr",
-          "no-gaps",
-          "perf",
-          "string"
-        ],
+        "labels": ["alien-graveyard", "memchr", "no-gaps", "perf", "string"],
         "close_reason": "Rejected: same-worker ts2 128-byte register-pressure memchr fold preserved behavior but failed keep gate. Baseline Franken memchr_absent p50 34.136ns mean 45.646ns vs host p50 29.775ns mean 32.025ns.\u2026"
       }
     ],

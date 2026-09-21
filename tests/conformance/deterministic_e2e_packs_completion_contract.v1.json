@@ -7,11 +7,7 @@
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.9.2/scorecard.md",
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "tests.conformance.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "tests.conformance.primary"]
   },
   "source_artifacts": {
     "e2e_manifest_contract": "tests/conformance/e2e_scenario_manifest_catalog_completion_contract.v1.json",
@@ -130,40 +126,23 @@
     }
   ],
   "deterministic_pack_contract": {
-    "required_manifest_classes": [
-      "smoke",
-      "stress",
-      "fault",
-      "stability"
-    ],
+    "required_manifest_classes": ["smoke", "stress", "fault", "stability"],
     "class_minimums": {
       "smoke": 13,
       "stress": 2,
       "fault": 3,
       "stability": 1
     },
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_replay_seed_key": "FRANKENLIBC_E2E_SEED",
-    "required_replay_env_keys": [
-      "FRANKENLIBC_E2E_SEED",
-      "FRANKENLIBC_MODE",
-      "LD_PRELOAD"
-    ],
+    "required_replay_env_keys": ["FRANKENLIBC_E2E_SEED", "FRANKENLIBC_MODE", "LD_PRELOAD"],
     "required_replay_components": [
       "replay_key_controller",
       "strict_hardened_pair_comparator",
       "checker_fail_closed_validation",
       "strict_hardened_runtime_evidence"
     ],
-    "required_runtime_decisions": [
-      "Allow",
-      "FullValidate",
-      "Repair",
-      "Deny"
-    ],
+    "required_runtime_decisions": ["Allow", "FullValidate", "Repair", "Deny"],
     "security_evidence_markers": [
       "redacted_required_field",
       "decision_mismatch",
@@ -180,10 +159,7 @@
       "identity_value": "e2e_scenario_manifest_catalog_completion_contract.v1",
       "expected_bead": "bd-b5a.1",
       "expected_completion_debt_bead": "bd-b5a.1.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary"],
       "required_artifact_keys": [
         "e2e_manifest",
         "e2e_manifest_checker",
@@ -222,10 +198,7 @@
       "identity_value": "replay_engine_pair_comparator_completion_contract.v1",
       "expected_bead": "bd-b5a.2",
       "expected_completion_debt_bead": "bd-b5a.2.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary"],
       "required_artifact_keys": [
         "replay_pair_checker",
         "replay_pair_test",
@@ -263,14 +236,8 @@
       "identity_field": "manifest_id",
       "identity_value": "runtime-evidence-replay-gate",
       "expected_bead": "bd-bp8fl.9.4",
-      "covers": [
-        "tests.unit.primary",
-        "tests.conformance.primary"
-      ],
-      "required_artifact_keys": [
-        "runtime_replay_checker",
-        "runtime_replay_test"
-      ],
+      "covers": ["tests.unit.primary", "tests.conformance.primary"],
+      "required_artifact_keys": ["runtime_replay_checker", "runtime_replay_test"],
       "required_test_refs": [
         {
           "source": "runtime_replay_test",
@@ -300,14 +267,8 @@
       "identity_field": "manifest_id",
       "identity_value": "strict-hardened-evidence-e2e",
       "expected_bead": "bd-b92jd.4.3",
-      "covers": [
-        "tests.e2e.primary",
-        "tests.conformance.primary"
-      ],
-      "required_artifact_keys": [
-        "strict_hardened_checker",
-        "strict_hardened_test"
-      ],
+      "covers": ["tests.e2e.primary", "tests.conformance.primary"],
+      "required_artifact_keys": ["strict_hardened_checker", "strict_hardened_test"],
       "required_test_refs": [
         {
           "source": "strict_hardened_test",
@@ -368,10 +329,7 @@
     {
       "missing_item_id": "tests.conformance.primary",
       "status": "covered",
-      "binding_ids": [
-        "runtime_evidence_replay_gate",
-        "strict_hardened_runtime_evidence_e2e"
-      ],
+      "binding_ids": ["runtime_evidence_replay_gate", "strict_hardened_runtime_evidence_e2e"],
       "validation_commands": [
         "bash scripts/check_runtime_evidence_replay_gate.sh",
         "bash scripts/check_strict_hardened_evidence_e2e.sh",

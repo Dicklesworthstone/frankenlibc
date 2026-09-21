@@ -55,11 +55,7 @@
       "clear_validation_logs",
       "export_validation_log_jsonl"
     ],
-    "required_structs": [
-      "ValidationLogRow",
-      "ValidationLogInputs",
-      "ValidationTraceContext"
-    ],
+    "required_structs": ["ValidationLogRow", "ValidationLogInputs", "ValidationTraceContext"],
     "required_runtime_events": [
       "validation_stage",
       "validation_transition",
@@ -70,13 +66,7 @@
       "tsm_logging_completion_contract_validated",
       "tsm_logging_completion_contract_failed"
     ],
-    "required_levels": [
-      "trace",
-      "debug",
-      "info",
-      "warn",
-      "error"
-    ],
+    "required_levels": ["trace", "debug", "info", "warn", "error"],
     "required_log_fields": [
       "timestamp",
       "trace_id",
@@ -104,16 +94,8 @@
       "stage_inputs",
       "artifact_refs"
     ],
-    "required_stage_input_fields": [
-      "aligned",
-      "recent_page",
-      "bloom_negative",
-      "cache_hit"
-    ],
-    "required_security_verdicts": [
-      "allow",
-      "deny"
-    ],
+    "required_stage_input_fields": ["aligned", "recent_page", "bloom_negative", "cache_hit"],
+    "required_security_verdicts": ["allow", "deny"],
     "bounded_cardinality": {
       "log_capacity": 2048,
       "max_level_label_cardinality": 5,

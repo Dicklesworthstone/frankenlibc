@@ -101,13 +101,7 @@
     "missing_item_id": "tests.golden.primary",
     "description": "The base-image golden contract pins the Portage stage3/builder/make.conf/build-script/runtime-test mechanics that make the Portage study reproducible without requiring Docker or live emerge during the completion gate.",
     "golden_file": "tests/gentoo/base-image-contract.golden.json",
-    "required_sections": [
-      "stage3",
-      "builder",
-      "make_conf",
-      "build_script",
-      "runtime_test"
-    ],
+    "required_sections": ["stage3", "builder", "make_conf", "build_script", "runtime_test"],
     "required_paths": [
       "docker/gentoo/Dockerfile.stage3",
       "docker/gentoo/Dockerfile.builder",

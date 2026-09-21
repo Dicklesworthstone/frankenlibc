@@ -38,9 +38,7 @@
       "current_behavior": "RelocationSupport includes Stub and Unsupported variants even though exported-symbol taxonomy reports Stub=0.",
       "user_risk": "A release claim based only on exported symbols can overstate loader readiness for binaries that need relocation classes outside the phase-1 subset.",
       "required_followup": "Gate replacement claims on per-relocation class coverage and fixture execution, not only exported-symbol status counts.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-pthread-cancel-private",
@@ -64,20 +62,13 @@
       "current_behavior": "Registration and cleanup helpers are no-op compatibility hooks; __pthread_unwind_next aborts instead of performing glibc cancellation unwinding.",
       "user_risk": "Thread-cancellation consumers can link but cleanup/unwind behavior is not semantically equivalent.",
       "required_followup": "Add cancellation cleanup and unwind fixtures before any L1 replacement promotion.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-libcrypt-des",
       "seed_overlay_id": "sem-libcrypt-des",
       "surface": "obsolete libcrypt DES helpers",
-      "symbols": [
-        "encrypt",
-        "encrypt_r",
-        "setkey",
-        "setkey_r"
-      ],
+      "symbols": ["encrypt", "encrypt_r", "setkey", "setkey_r"],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "source_line": 7586,
@@ -88,20 +79,13 @@
       "current_behavior": "DES block and key-schedule helpers are no-op compatibility stubs.",
       "user_risk": "Legacy crypt callers that expect DES mutation can silently receive no transformation.",
       "required_followup": "Keep the no-op contract explicit in fixtures or implement DES semantics before counting this family as crypt parity.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-nss-files-plugin",
       "seed_overlay_id": "sem-nss-files-plugin",
       "surface": "NSS files module private plugin entries",
-      "symbols": [
-        "_nss_files_end*",
-        "_nss_files_set*",
-        "_nss_files_get*_r",
-        "_nss_files_parse_*"
-      ],
+      "symbols": ["_nss_files_end*", "_nss_files_set*", "_nss_files_get*_r", "_nss_files_parse_*"],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "source_line": 9311,
@@ -112,20 +96,13 @@
       "current_behavior": "Files plugin entries return SUCCESS or NOTFOUND/ENOENT style deterministic results without opening full NSS backing stores.",
       "user_risk": "NSS module consumers can link while module iteration, parsing, and backend fallthrough are only approximated.",
       "required_followup": "Add exhaustive NSS private-entry inventory and fixtures that distinguish bootstrap behavior from files/compat/hesiod/systemd backend semantics.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-nss-configure-lookup",
       "seed_overlay_id": "sem-nss-configure-lookup",
       "surface": "NSS lookup configuration internals",
-      "symbols": [
-        "__nss_configure_lookup",
-        "__nss_next",
-        "__nss_next2",
-        "__nss_lookup_function"
-      ],
+      "symbols": ["__nss_configure_lookup", "__nss_next", "__nss_next2", "__nss_lookup_function"],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "source_line": 1462,
@@ -136,9 +113,7 @@
       "current_behavior": "NSS dispatch internals are collapsed into native file parsing and UNAVAIL/null fallbacks rather than glibc's module chain.",
       "user_risk": "Programs relying on nsswitch module ordering, dynamic services, or fallback-name dispatch can observe divergence.",
       "required_followup": "Gate NSS maturity on nsswitch ordering, module loading, backend fallthrough, concurrency, and cache-coherence fixtures.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-stdio-vtable-helpers",
@@ -162,21 +137,13 @@
       "current_behavior": "Narrow libio-style helpers and public wide helper entrypoints route through native _IO/wide stream paths; full glibc FILE/_wide_data object-model semantics remain outside the phase-1 bridge.",
       "user_risk": "Programs that rely on deep libio buffer internals, codecvt state, or indirect vtable behavior can still observe divergence even though the public helper roundtrips are native.",
       "required_followup": "Gate full libio parity on FILE/_wide_data buffer-state, codecvt/locale, and indirect vtable fixture coverage beyond public helper roundtrips.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-historical-linux-syscalls",
       "seed_overlay_id": "sem-historical-linux-syscalls",
       "surface": "removed or unsupported historical syscall wrappers",
-      "symbols": [
-        "__sysctl",
-        "bdflush",
-        "create_module",
-        "get_kernel_syms",
-        "query_module"
-      ],
+      "symbols": ["__sysctl", "bdflush", "create_module", "get_kernel_syms", "query_module"],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "source_line": 4662,
@@ -187,21 +154,13 @@
       "current_behavior": "Removed or unsupported Linux interfaces deliberately return ENOSYS-style contracts.",
       "user_risk": "Legacy binaries get a deterministic unavailable result, not historical kernel behavior.",
       "required_followup": "Keep these rows explicit as unsupported platform contracts and exclude them from behavior-complete replacement claims.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-malloc-debug-hooks",
       "seed_overlay_id": "sem-malloc-debug-hooks",
       "surface": "malloc debug hook compatibility",
-      "symbols": [
-        "mcheck",
-        "mcheck_pedantic",
-        "mcheck_check_all",
-        "mtrace",
-        "muntrace"
-      ],
+      "symbols": ["mcheck", "mcheck_pedantic", "mcheck_check_all", "mtrace", "muntrace"],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "source_line": 19307,
@@ -212,21 +171,13 @@
       "current_behavior": "mcheck and mtrace setup/teardown hooks are accepted as safe no-ops while mprobe delegates to allocator metadata.",
       "user_risk": "Programs expecting glibc mcheck/mtrace reporting do not receive those diagnostics.",
       "required_followup": "Track these as membrane-substituted compatibility contracts with explicit tests and exclude them from glibc debug-hook parity counts.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-argp-help-family",
       "seed_overlay_id": "sem-argp-help-family",
       "surface": "GNU argp help and reporting helpers",
-      "symbols": [
-        "argp_help",
-        "argp_usage",
-        "argp_error",
-        "argp_failure",
-        "argp_state_help"
-      ],
+      "symbols": ["argp_help", "argp_usage", "argp_error", "argp_failure", "argp_state_help"],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "source_line": 21901,
@@ -237,18 +188,13 @@
       "current_behavior": "argp_help prints bounded literal usage/doc sections to supplied streams, argp_state_help bridges state.root_argp/name into the same renderer without process exit, argp_usage renders standard usage through state.err_stream without process exit, and argp_error/failure render bounded printf-style diagnostics to state.err_stream/state.out_stream when a non-null state stream is available while null-state fixture rows remain deterministic no-ops.",
       "user_risk": "Command-line programs can still lose option-table help, child-parser/filter behavior, full parser callback diagnostics, and argp-triggered process exits while appearing link-compatible.",
       "required_followup": "Add full argp parser/help fixtures for options, child parsers, filters, complete state stream selection, and process-exit behavior before claiming complete GNU argp parity.",
-      "evidence_artifacts": [
-        "tests/conformance/support_semantic_overlay.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/support_semantic_overlay.v1.json"]
     },
     {
       "id": "sem-pthread-priority-protocol",
       "seed_overlay_id": null,
       "surface": "pthread regular-mutex priority-ceiling helpers",
-      "symbols": [
-        "pthread_mutex_getprioceiling",
-        "pthread_mutex_setprioceiling"
-      ],
+      "symbols": ["pthread_mutex_getprioceiling", "pthread_mutex_setprioceiling"],
       "module": "frankenlibc-abi::glibc_internal_abi",
       "source_path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
       "source_line": 291,
@@ -287,9 +233,7 @@
       "current_behavior": "Instrumentation hooks are accepted as no-ops or success-no-ops because profiling data is unused.",
       "user_risk": "Profiling-enabled binaries can start, but gprof-style data collection is absent.",
       "required_followup": "Add a replacement-level decision: either document profiling as unsupported or implement compatible profiling output.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/glibc_internal_abi.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/src/glibc_internal_abi.rs"]
     },
     {
       "id": "sem-gconv-private-internals",
@@ -316,9 +260,7 @@
       "current_behavior": "Private gconv step-chain APIs expose safe-default descriptors, null databases, and public-iconv-adjacent behavior rather than glibc module internals.",
       "user_risk": "Programs reaching GLIBC_PRIVATE gconv internals can link but may not observe glibc cache/module/transliteration semantics.",
       "required_followup": "Gate iconv maturity on codec-table coverage, transliteration fixtures, gconv cache behavior, and replacement-level policy.",
-      "evidence_artifacts": [
-        "tests/conformance/iconv_codec_scope_ledger.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/iconv_codec_scope_ledger.v1.json"]
     },
     {
       "id": "sem-nis-yp-failsafe",
@@ -343,9 +285,7 @@
       "current_behavior": "NIS runtime calls collapse to no-domain or unreachable deterministic errors instead of contacting NIS services.",
       "user_risk": "Legacy network identity consumers can link but will not resolve NIS records.",
       "required_followup": "Keep this as an explicit unsupported/failsafe replacement-level decision, with fixtures for errno/status stability.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/unistd_abi.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
     },
     {
       "id": "sem-nis-xdr-failsafe",
@@ -368,20 +308,13 @@
       "current_behavior": "NIS XDR helpers fail closed with XDR_FALSE instead of serializing real NIS protocol structures.",
       "user_risk": "RPC/NIS protocol consumers can link but cannot perform real encode/decode operations.",
       "required_followup": "Either implement XDR structures or mark this family as link-only for replacement-level claims.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/unistd_abi.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
     },
     {
       "id": "sem-async-resolver-partial",
       "seed_overlay_id": null,
       "surface": "asynchronous resolver compatibility surface",
-      "symbols": [
-        "getaddrinfo_a",
-        "gai_cancel",
-        "gai_error",
-        "gai_suspend"
-      ],
+      "symbols": ["getaddrinfo_a", "gai_cancel", "gai_error", "gai_suspend"],
       "module": "frankenlibc-abi::unistd_abi",
       "source_path": "crates/frankenlibc-abi/src/unistd_abi.rs",
       "source_line": 24931,
@@ -392,22 +325,13 @@
       "current_behavior": "Degenerate synchronous request shapes are supported, while true async resolver work is treated as unsupported with ENOSYS/EAI_SYSTEM paths.",
       "user_risk": "Programs expecting background getaddrinfo_a requests do not receive asynchronous behavior.",
       "required_followup": "Add strict/hardened async resolver fixtures for pending, canceled, done, invalid, and timeout paths before parity promotion.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/tests/conformance_diff_getaddrinfo.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/tests/conformance_diff_getaddrinfo.rs"]
     },
     {
       "id": "sem-setjmp-phase1",
       "seed_overlay_id": null,
       "surface": "setjmp/longjmp phase-1 metadata contract",
-      "symbols": [
-        "setjmp",
-        "_setjmp",
-        "sigsetjmp",
-        "longjmp",
-        "_longjmp",
-        "siglongjmp"
-      ],
+      "symbols": ["setjmp", "_setjmp", "sigsetjmp", "longjmp", "_longjmp", "siglongjmp"],
       "module": "frankenlibc-abi::setjmp_abi",
       "source_path": "crates/frankenlibc-abi/src/setjmp_abi.rs",
       "source_line": 3,
@@ -418,9 +342,7 @@
       "current_behavior": "Capture entrypoints write deterministic metadata, while restore entrypoints validate metadata and terminate explicitly until true stack transfer is implemented in the unsafe backend stage.",
       "user_risk": "Programs can link setjmp-family symbols, but full non-local stack transfer semantics are not yet replacement-complete.",
       "required_followup": "Gate setjmp parity promotion on backend stack-transfer fixtures, signal-mask restoration cases, and process-level longjmp behavior evidence.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/setjmp_abi.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/src/setjmp_abi.rs"]
     },
     {
       "id": "sem-cxx-abi-fail-stop",
@@ -442,9 +364,7 @@
       "current_behavior": "C++ ABI violation hooks write diagnostics or directly abort, matching fail-stop linkage needs but not implementing a full C++ runtime.",
       "user_risk": "C++ binaries can resolve these hooks, but exception/runtime semantics still depend on the surrounding C++ runtime.",
       "required_followup": "Keep abort-only hooks separate from libc semantic parity and cover them with process-exit fixtures if replacement claims mention C++ runtime compatibility.",
-      "evidence_artifacts": [
-        "crates/frankenlibc-abi/src/unistd_abi.rs"
-      ]
+      "evidence_artifacts": ["crates/frankenlibc-abi/src/unistd_abi.rs"]
     }
   ],
   "summary": {

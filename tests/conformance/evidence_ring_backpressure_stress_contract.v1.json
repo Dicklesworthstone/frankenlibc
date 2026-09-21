@@ -115,10 +115,7 @@
   "stress_profile": {
     "drive_to_capacity_multiple": 4,
     "rationale": "Drive each ring to 4x capacity. That guarantees at least 3x capacity worth of overwrites — enough to verify that overwrite_oldest is correct, that evidence_loss_count is monotone-incrementing, and that max_epoch advances at least 3 times.",
-    "modes": [
-      "strict",
-      "hardened"
-    ],
+    "modes": ["strict", "hardened"],
     "deterministic_seed_required": true,
     "deterministic_seed_field": "stress_seed"
   },

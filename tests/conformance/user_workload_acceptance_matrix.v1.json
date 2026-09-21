@@ -298,12 +298,7 @@
       "persona_id": "persona-shell-operator",
       "title": "Interactive shell plus coreutils file and text commands",
       "primary_domain": "shell_coreutils",
-      "coverage_domains": [
-        "shell_coreutils",
-        "stdio_libio",
-        "locale_iconv",
-        "startup_linking"
-      ],
+      "coverage_domains": ["shell_coreutils", "stdio_libio", "locale_iconv", "startup_linking"],
       "representative_commands": [
         {
           "scenario_id": "shell.echo-cat-ls",
@@ -311,25 +306,10 @@
           "deterministic_inputs": "Pinned argv, /tmp listing, and fixed locale C.UTF-8."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "mode_pair_process_replay",
-      "subsystems": [
-        "process",
-        "stdio",
-        "unistd",
-        "dirent",
-        "locale",
-        "startup"
-      ],
+      "subsystems": ["process", "stdio", "unistd", "dirent", "locale", "startup"],
       "required_unit_tests": [
         "stdio formatting and flush boundary tests when stdio code changes",
         "locale and ctype boundary tests when shell-visible locale code changes",
@@ -352,21 +332,13 @@
           "taxonomy_id": "startup_linking_failure",
           "expected_failure_signature": "shell command fails before executing argv",
           "diagnostic_expectation": "Report loader phase, replacement level, runtime mode, and artifact bundle.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         },
         {
           "taxonomy_id": "stdio_libio_divergence",
           "expected_failure_signature": "stdout, stderr, ferror, or buffered flush order differs",
           "diagnostic_expectation": "Report stream state, expected output, actual output, and FILE flags.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1"
-          ]
+          "blocks_claim_levels": ["L0", "L1"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -405,25 +377,10 @@
           "deterministic_inputs": "Pinned smoke.c fixture, clean temp directory, fixed compiler argv."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "compile_link_run_replay",
-      "subsystems": [
-        "malloc",
-        "stdio",
-        "unistd",
-        "process",
-        "dlfcn",
-        "startup"
-      ],
+      "subsystems": ["malloc", "stdio", "unistd", "process", "dlfcn", "startup"],
       "required_unit_tests": [
         "allocator ownership and realloc edge tests when allocator code changes",
         "process spawn and exit-status tests when process code changes",
@@ -445,20 +402,13 @@
           "taxonomy_id": "symbol_missing",
           "expected_failure_signature": "link or runtime loader reports missing symbol or unsupported version node",
           "diagnostic_expectation": "Report symbol, version, owning ABI module, and support evidence.",
-          "blocks_claim_levels": [
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L1", "L2", "L3"]
         },
         {
           "taxonomy_id": "allocator_ownership",
           "expected_failure_signature": "foreign free, realloc ownership, or allocator fingerprint failure",
           "diagnostic_expectation": "Report pointer class, generation, healing action, and mode.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1"
-          ]
+          "blocks_claim_levels": ["L0", "L1"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -498,26 +448,10 @@
           "deterministic_inputs": "localhost lookup, fixed locale environment, no network egress."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "runtime_mode_pair_replay",
-      "subsystems": [
-        "pthread",
-        "dlfcn",
-        "resolver",
-        "locale",
-        "malloc",
-        "stdio",
-        "signal"
-      ],
+      "subsystems": ["pthread", "dlfcn", "resolver", "locale", "malloc", "stdio", "signal"],
       "required_unit_tests": [
         "pthread lifecycle and cancellation tests when thread code changes",
         "resolver localhost and invalid-name tests when resolver code changes",
@@ -539,21 +473,13 @@
           "taxonomy_id": "pthread_cancellation",
           "expected_failure_signature": "thread lifecycle, mutex, condvar, or cancellation result differs",
           "diagnostic_expectation": "Report primitive, thread count, strict result, hardened result, and timeout.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2"]
         },
         {
           "taxonomy_id": "resolver_nss_failure",
           "expected_failure_signature": "localhost or NSS-backed lookup differs from host glibc",
           "diagnostic_expectation": "Report lookup name, source, expected records, actual records, and timeout.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -593,25 +519,10 @@
           "deterministic_inputs": "Local-only package fixture; no network egress unless resolver row is explicitly selected."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "package_workflow_replay",
-      "subsystems": [
-        "resolver",
-        "stdio",
-        "unistd",
-        "malloc",
-        "process",
-        "time"
-      ],
+      "subsystems": ["resolver", "stdio", "unistd", "malloc", "process", "time"],
       "required_unit_tests": [
         "filesystem errno and partial write tests when unistd/io code changes",
         "resolver timeout and hosts-file tests when resolver code changes",
@@ -633,20 +544,13 @@
           "taxonomy_id": "semantic_divergence",
           "expected_failure_signature": "metadata file state, errno, or process status differs",
           "diagnostic_expectation": "Report command phase, file path, expected state, actual state, and errno.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1"
-          ]
+          "blocks_claim_levels": ["L0", "L1"]
         },
         {
           "taxonomy_id": "resolver_nss_failure",
           "expected_failure_signature": "package source lookup differs or times out",
           "diagnostic_expectation": "Report lookup source, timeout policy, expected records, and actual records.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -684,25 +588,10 @@
           "deterministic_inputs": "Loopback-only socket workload with fixed request count and timeout."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "threaded_service_replay",
-      "subsystems": [
-        "pthread",
-        "socket",
-        "poll",
-        "malloc",
-        "signal",
-        "time"
-      ],
+      "subsystems": ["pthread", "socket", "poll", "malloc", "signal", "time"],
       "required_unit_tests": [
         "mutex, condvar, rwlock, and TLS tests when pthread code changes",
         "socket lifecycle and poll timeout tests when socket or poll code changes",
@@ -724,21 +613,13 @@
           "taxonomy_id": "pthread_cancellation",
           "expected_failure_signature": "service hangs, deadlocks, or mismatches strict/hardened thread outcome",
           "diagnostic_expectation": "Report primitive, timeout, thread count, and mode-pair classification.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2"]
         },
         {
           "taxonomy_id": "performance_regression",
           "expected_failure_signature": "service latency or contention budget exceeded",
           "diagnostic_expectation": "Report baseline, actual, budget, and hardware profile.",
-          "blocks_claim_levels": [
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -763,11 +644,7 @@
       "persona_id": "persona-i18n-network-user",
       "title": "Resolver and NSS identity/name lookup",
       "primary_domain": "resolver_nss",
-      "coverage_domains": [
-        "resolver_nss",
-        "startup_linking",
-        "stdio_libio"
-      ],
+      "coverage_domains": ["resolver_nss", "startup_linking", "stdio_libio"],
       "representative_commands": [
         {
           "scenario_id": "resolver.localhost-passwd",
@@ -775,24 +652,10 @@
           "deterministic_inputs": "Pinned localhost and root lookups with captured host oracle fixtures."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "resolver_nss_fixture_oracle",
-      "subsystems": [
-        "resolv",
-        "nss",
-        "socket",
-        "stdio",
-        "errno"
-      ],
+      "subsystems": ["resolv", "nss", "socket", "stdio", "errno"],
       "required_unit_tests": [
         "getaddrinfo localhost and invalid host tests when resolver code changes",
         "passwd/group positive and missing-record tests when NSS code changes",
@@ -814,12 +677,7 @@
           "taxonomy_id": "resolver_nss_failure",
           "expected_failure_signature": "lookup status, canonical name, records, passwd entry, or errno mismatch",
           "diagnostic_expectation": "Report source, query, expected records, actual records, timeout, and errno.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -844,11 +702,7 @@
       "persona_id": "persona-i18n-network-user",
       "title": "Locale, collation, multibyte, wide-char, and iconv conversion",
       "primary_domain": "locale_iconv",
-      "coverage_domains": [
-        "locale_iconv",
-        "stdio_libio",
-        "language_runtimes"
-      ],
+      "coverage_domains": ["locale_iconv", "stdio_libio", "language_runtimes"],
       "representative_commands": [
         {
           "scenario_id": "locale.iconv-collate",
@@ -856,24 +710,10 @@
           "deterministic_inputs": "Pinned locale, encoding pair, and byte vectors."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "locale_iconv_fixture_oracle",
-      "subsystems": [
-        "locale",
-        "iconv",
-        "wcsmbs",
-        "ctype",
-        "stdio"
-      ],
+      "subsystems": ["locale", "iconv", "wcsmbs", "ctype", "stdio"],
       "required_unit_tests": [
         "setlocale positive, invalid, and default-locale tests when locale code changes",
         "iconv valid, invalid, and partial-sequence tests when iconv code changes",
@@ -895,12 +735,7 @@
           "taxonomy_id": "locale_iconv_divergence",
           "expected_failure_signature": "collation, multibyte, wide-char, or conversion bytes differ",
           "diagnostic_expectation": "Report locale, encoding, input bytes, expected bytes, and actual bytes.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -925,12 +760,7 @@
       "persona_id": "persona-shell-operator",
       "title": "stdio/libio formatting, scanning, buffering, and stream state",
       "primary_domain": "stdio_libio",
-      "coverage_domains": [
-        "stdio_libio",
-        "shell_coreutils",
-        "build_tools",
-        "package_manager"
-      ],
+      "coverage_domains": ["stdio_libio", "shell_coreutils", "build_tools", "package_manager"],
       "representative_commands": [
         {
           "scenario_id": "stdio.printf-scanf-file",
@@ -938,24 +768,10 @@
           "deterministic_inputs": "Pinned format strings, byte streams, and temporary file contents."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "stdio_golden_fixture_oracle",
-      "subsystems": [
-        "stdio",
-        "libio",
-        "errno",
-        "locale",
-        "unistd"
-      ],
+      "subsystems": ["stdio", "libio", "errno", "locale", "unistd"],
       "required_unit_tests": [
         "printf flags, width, precision, NaN, inf, and length-modifier tests when printf code changes",
         "scanf tokenization and error recovery tests when scanner code changes",
@@ -977,12 +793,7 @@
           "taxonomy_id": "stdio_libio_divergence",
           "expected_failure_signature": "printf, scanf, FILE state, buffering, or errno mismatch",
           "diagnostic_expectation": "Report format string, stream state, expected output, actual output, and flags.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -1007,11 +818,7 @@
       "persona_id": "persona-service-operator",
       "title": "Allocator ownership, realloc, free, and membrane healing under stress",
       "primary_domain": "allocator",
-      "coverage_domains": [
-        "allocator",
-        "threaded_services",
-        "performance_sensitive"
-      ],
+      "coverage_domains": ["allocator", "threaded_services", "performance_sensitive"],
       "representative_commands": [
         {
           "scenario_id": "alloc.mixed-sizes-threaded",
@@ -1019,23 +826,10 @@
           "deterministic_inputs": "Pinned allocation sequence, thread count, and invalid-pointer cases."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "membrane_allocator_oracle",
-      "subsystems": [
-        "malloc",
-        "membrane",
-        "pthread",
-        "metrics"
-      ],
+      "subsystems": ["malloc", "membrane", "pthread", "metrics"],
       "required_unit_tests": [
         "zero-size, max-size, align, realloc, and free tests when allocator code changes",
         "foreign free, double free, quarantine, and generation tests when membrane allocator logic changes",
@@ -1057,22 +851,13 @@
           "taxonomy_id": "allocator_ownership",
           "expected_failure_signature": "foreign free, double free, generation, or canary/fingerprint check diverges",
           "diagnostic_expectation": "Report pointer class, allocation metadata, healing action, and metric counters.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         },
         {
           "taxonomy_id": "performance_regression",
           "expected_failure_signature": "allocator or membrane latency exceeds strict or hardened budget",
           "diagnostic_expectation": "Report baseline, actual latency, budget, and contention profile.",
-          "blocks_claim_levels": [
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -1097,11 +882,7 @@
       "persona_id": "persona-build-engineer",
       "title": "Startup, dynamic linking, symbol versioning, TLS, and init/fini",
       "primary_domain": "startup_linking",
-      "coverage_domains": [
-        "startup_linking",
-        "build_tools",
-        "language_runtimes"
-      ],
+      "coverage_domains": ["startup_linking", "build_tools", "language_runtimes"],
       "representative_commands": [
         {
           "scenario_id": "startup.versioned-symbols",
@@ -1109,25 +890,10 @@
           "deterministic_inputs": "Pinned shared object fixtures and version script expectations."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "loader_symbol_replay",
-      "subsystems": [
-        "abi",
-        "rtld",
-        "dlfcn",
-        "tls",
-        "startup",
-        "version_script"
-      ],
+      "subsystems": ["abi", "rtld", "dlfcn", "tls", "startup", "version_script"],
       "required_unit_tests": [
         "version-script export tests when ABI maps change",
         "TLS and init/fini order tests when startup code changes",
@@ -1149,22 +915,13 @@
           "taxonomy_id": "startup_linking_failure",
           "expected_failure_signature": "loader, TLS, init/fini, or symbol version failure before user code",
           "diagnostic_expectation": "Report object, symbol, version, phase, and replacement level.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         },
         {
           "taxonomy_id": "symbol_missing",
           "expected_failure_signature": "expected versioned ABI symbol is absent or incorrectly advertised",
           "diagnostic_expectation": "Report symbol, version node, support status, and fixture coverage.",
-          "blocks_claim_levels": [
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",
@@ -1202,25 +959,10 @@
           "deterministic_inputs": "Pinned benchmark families, iteration budget, and hardware metadata."
         }
       ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "benchmark_budget_gate",
-      "subsystems": [
-        "string",
-        "malloc",
-        "stdio",
-        "pthread",
-        "unistd",
-        "membrane"
-      ],
+      "subsystems": ["string", "malloc", "stdio", "pthread", "unistd", "membrane"],
       "required_unit_tests": [
         "semantic parity tests before any hot-path optimization",
         "strict and hardened membrane decision tests when validation fast paths change",
@@ -1243,22 +985,13 @@
           "taxonomy_id": "performance_regression",
           "expected_failure_signature": "strict or hardened latency budget exceeded for a hot-path family",
           "diagnostic_expectation": "Report operation, baseline, actual, budget, hardware profile, and artifact refs.",
-          "blocks_claim_levels": [
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L1", "L2", "L3"]
         },
         {
           "taxonomy_id": "semantic_divergence",
           "expected_failure_signature": "optimized path passes faster but breaks return, errno, output, or memory semantics",
           "diagnostic_expectation": "Report parity oracle, expected, actual, and optimized decision path.",
-          "blocks_claim_levels": [
-            "L0",
-            "L1",
-            "L2",
-            "L3"
-          ]
+          "blocks_claim_levels": ["L0", "L1", "L2", "L3"]
         }
       ],
       "structured_log_fields": "required_log_fields",

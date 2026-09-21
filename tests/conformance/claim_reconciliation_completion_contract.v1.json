@@ -26,10 +26,7 @@
     "original_bead": "bd-w2c3.10.1",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.10.1/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "claim_reconciliation_surface": {
     "input_artifacts": [

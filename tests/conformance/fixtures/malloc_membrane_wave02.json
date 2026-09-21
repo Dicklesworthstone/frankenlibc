@@ -10,22 +10,10 @@
     "wave_id": "wave-02-malloc-membrane-alignment-tail",
     "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "ambient_state_policy": "forbid_allocator_pointer_address_heap_layout_page_size_rss_stderr_bytes_or_process_global_counter_capture",
-    "first_wave_symbols": [
-      "mallopt",
-      "memalign",
-      "posix_memalign",
-      "pvalloc",
-      "valloc"
-    ],
+    "first_wave_symbols": ["mallopt", "memalign", "posix_memalign", "pvalloc", "valloc"],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "mallopt_accepts_tuning_request_strict",

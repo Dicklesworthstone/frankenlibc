@@ -113,12 +113,30 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_validates_required_rows"},
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_rejects_missing_required_row"},
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_rejects_stale_evidence"},
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_validates_required_rows"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_rejects_missing_required_row"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_rejects_stale_evidence"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_rejects_contradictory_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/l1_crt_startup_tls_completion_contract.v1.json",
@@ -130,10 +148,19 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "gate_script_refreshes_l1_objective_gate_artifacts"},
-        {"source": "replacement_harness", "name": "gate_script_rejects_stale_l1_crt_startup_tls_source_commit"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"}
+        {
+          "source": "replacement_harness",
+          "name": "gate_script_refreshes_l1_objective_gate_artifacts"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "gate_script_rejects_stale_l1_crt_startup_tls_source_commit"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"
+        }
       ],
       "required_commands": [
         "FLC_REPLACEMENT_LEVELS_REPORT_PATH=<report> FLC_REPLACEMENT_LEVELS_LOG_PATH=<log> bash scripts/check_replacement_levels.sh",
@@ -145,11 +172,23 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence"},
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_rejects_policy_that_allows_stale_evidence"},
-        {"source": "replacement_harness", "name": "l1_crt_startup_tls_proof_matrix_rejects_stale_recorded_source_commit"},
-        {"source": "completion_harness", "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_proof_row_binding"}
+        {
+          "source": "replacement_harness",
+          "name": "stale_source_commit_policy_blocks_l1_crt_startup_tls_matrix_evidence"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_rejects_policy_that_allows_stale_evidence"
+        },
+        {
+          "source": "replacement_harness",
+          "name": "l1_crt_startup_tls_proof_matrix_rejects_stale_recorded_source_commit"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_proof_row_binding" }
       ],
       "required_commands": [
         "bash scripts/check_replacement_levels.sh",
@@ -163,10 +202,19 @@
       "default_report_path": "target/conformance/l1_crt_startup_tls_completion_contract.report.json",
       "default_log_path": "target/conformance/l1_crt_startup_tls_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "gate_script_refreshes_l1_objective_gate_artifacts"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        {
+          "source": "replacement_harness",
+          "name": "gate_script_refreshes_l1_objective_gate_artifacts"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_level_gate_and_preserves_l1_blockers"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "bash scripts/check_l1_crt_startup_tls_completion_contract.sh",

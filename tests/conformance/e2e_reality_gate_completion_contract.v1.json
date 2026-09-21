@@ -28,17 +28,11 @@
     },
     "e2e_suite_script": {
       "path": "scripts/e2e_suite.sh",
-      "required_text": [
-        "FRANKENLIBC_E2E_MANIFEST",
-        "--dry-run-manifest"
-      ]
+      "required_text": ["FRANKENLIBC_E2E_MANIFEST", "--dry-run-manifest"]
     },
     "e2e_validator": {
       "path": "scripts/validate_e2e_manifest.py",
-      "required_text": [
-        "schema_version",
-        "scenarios"
-      ]
+      "required_text": ["schema_version", "scenarios"]
     },
     "ld_preload_smoke_summary": {
       "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
@@ -50,10 +44,7 @@
     },
     "ld_preload_smoke_script": {
       "path": "scripts/ld_preload_smoke.sh",
-      "required_text": [
-        "LD_PRELOAD",
-        "rch exec -- cargo build -p frankenlibc-abi --release"
-      ]
+      "required_text": ["LD_PRELOAD", "rch exec -- cargo build -p frankenlibc-abi --release"]
     },
     "ld_preload_smoke_index_test": {
       "path": "crates/frankenlibc-harness/tests/ld_preload_smoke_e2e_index_test.rs"
@@ -142,11 +133,7 @@
   "proof_lanes": [
     {
       "id": "scenario-manifest",
-      "missing_items": [
-        "tests.unit.primary",
-        "tests.e2e.primary",
-        "telemetry.primary"
-      ],
+      "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
       "artifact_ids": [
         "e2e_scenario_manifest",
         "e2e_manifest_contract",
@@ -164,10 +151,7 @@
     },
     {
       "id": "ld-preload-smoke",
-      "missing_items": [
-        "tests.e2e.primary",
-        "telemetry.primary"
-      ],
+      "missing_items": ["tests.e2e.primary", "telemetry.primary"],
       "artifact_ids": [
         "ld_preload_smoke_summary",
         "ld_preload_smoke_index",
@@ -175,9 +159,7 @@
         "real_program_smoke_suite",
         "real_program_smoke_contract"
       ],
-      "checker_commands": [
-        "bash scripts/check_real_program_smoke_suite_completion_contract.sh"
-      ],
+      "checker_commands": ["bash scripts/check_real_program_smoke_suite_completion_contract.sh"],
       "test_artifact": "real_program_smoke_test",
       "required_test_refs": [
         "manifest_binds_real_program_smoke_completion_items",
@@ -186,17 +168,9 @@
     },
     {
       "id": "standalone-link-run",
-      "missing_items": [
-        "tests.e2e.primary",
-        "telemetry.primary"
-      ],
-      "artifact_ids": [
-        "standalone_link_run_smoke",
-        "standalone_link_run_smoke_contract"
-      ],
-      "checker_commands": [
-        "bash scripts/check_standalone_link_run_smoke_completion_contract.sh"
-      ],
+      "missing_items": ["tests.e2e.primary", "telemetry.primary"],
+      "artifact_ids": ["standalone_link_run_smoke", "standalone_link_run_smoke_contract"],
+      "checker_commands": ["bash scripts/check_standalone_link_run_smoke_completion_contract.sh"],
       "test_artifact": "standalone_link_run_smoke_test",
       "required_test_refs": [
         "manifest_binds_unit_e2e_metamorphic_conformance_and_telemetry_evidence",
@@ -206,15 +180,8 @@
     },
     {
       "id": "dual-mode-strict-hardened",
-      "missing_items": [
-        "tests.unit.primary",
-        "tests.e2e.primary",
-        "telemetry.primary"
-      ],
-      "artifact_ids": [
-        "dual_mode_e2e_contract",
-        "strict_hardened_evidence"
-      ],
+      "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
+      "artifact_ids": ["dual_mode_e2e_contract", "strict_hardened_evidence"],
       "checker_commands": [
         "bash scripts/check_dual_mode_e2e_completion_contract.sh",
         "bash scripts/check_strict_hardened_evidence_e2e.sh"
@@ -227,14 +194,8 @@
     },
     {
       "id": "abi-surface",
-      "missing_items": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
-      "artifact_ids": [
-        "libc_map",
-        "libc_map_export_golden"
-      ],
+      "missing_items": ["tests.unit.primary", "tests.e2e.primary"],
+      "artifact_ids": ["libc_map", "libc_map_export_golden"],
       "checker_commands": [],
       "test_artifact": "libc_map_export_golden_test",
       "required_test_refs": [
@@ -247,11 +208,7 @@
     {
       "id": "tests.unit.primary",
       "kind": "unit",
-      "lane_ids": [
-        "scenario-manifest",
-        "dual-mode-strict-hardened",
-        "abi-surface"
-      ],
+      "lane_ids": ["scenario-manifest", "dual-mode-strict-hardened", "abi-surface"],
       "required_test_refs": [
         "manifest_binds_e2e_reality_gate_sources",
         "checker_accepts_contract_and_replays_e2e_gates",

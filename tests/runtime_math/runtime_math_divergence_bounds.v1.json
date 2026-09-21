@@ -3,10 +3,7 @@
   "bead": "bd-2625",
   "generated_at": "2026-02-13T00:00:00Z",
   "description": "Strict-vs-hardened divergence bounds for runtime_math decisions (profile+action). This matrix is intentionally small and focuses on invariants that must remain explainable across modes. It is NOT a full behavioral spec of libc outcomes; it gates the runtime_math controller output surface consumed by membrane call paths.",
-  "mode_pair": [
-    "strict",
-    "hardened"
-  ],
+  "mode_pair": ["strict", "hardened"],
   "forbidden_divergences": [
     {
       "id": "hardened_profile_less_conservative",

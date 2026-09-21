@@ -42,21 +42,13 @@
       "crates/frankenlibc-harness/tests/tsm_stage_pipeline_contract_test.rs:1"
     ],
     "stage_contract": {
-      "required_stage_labels": [
-        "null_check",
-        "tls_cache",
-        "bloom"
-      ],
+      "required_stage_labels": ["null_check", "tls_cache", "bloom"],
       "required_stage_paths": [
         "pipeline::stage1::null_check",
         "pipeline::stage2::tls_cache",
         "pipeline::stage3::bloom"
       ],
-      "required_fast_path_metrics": [
-        "validations",
-        "tls_cache_hits",
-        "bloom_misses"
-      ],
+      "required_fast_path_metrics": ["validations", "tls_cache_hits", "bloom_misses"],
       "evidence_summary": "The validator fast path and logged full path both preserve the required null-check, TLS cache, and bloom-filter stages with explicit stage labels, stage paths, and metrics accounting."
     },
     "unit_primary": {

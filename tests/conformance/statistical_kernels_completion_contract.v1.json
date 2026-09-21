@@ -152,12 +152,21 @@
         "alpha_investing": 21
       },
       "required_test_refs": [
-        {"source": "runtime_risk_monitor_calibration", "name": "gate_artifact_covers_runtime_risk_monitor_calibration_contract"},
-        {"source": "runtime_risk_monitor_calibration", "name": "gate_fails_closed_for_threshold_edge_case_mismatch"},
-        {"source": "anytime_valid_monitor", "name": "eprocess_parameters_consistent"},
-        {"source": "anytime_valid_monitor", "name": "alpha_investing_fdr_bound_correct"},
-        {"source": "changepoint_drift", "name": "bocpd_parameters_consistent"},
-        {"source": "completion_harness", "name": "contract_binds_statistical_kernel_unit_and_e2e_evidence"}
+        {
+          "source": "runtime_risk_monitor_calibration",
+          "name": "gate_artifact_covers_runtime_risk_monitor_calibration_contract"
+        },
+        {
+          "source": "runtime_risk_monitor_calibration",
+          "name": "gate_fails_closed_for_threshold_edge_case_mismatch"
+        },
+        { "source": "anytime_valid_monitor", "name": "eprocess_parameters_consistent" },
+        { "source": "anytime_valid_monitor", "name": "alpha_investing_fdr_bound_correct" },
+        { "source": "changepoint_drift", "name": "bocpd_parameters_consistent" },
+        {
+          "source": "completion_harness",
+          "name": "contract_binds_statistical_kernel_unit_and_e2e_evidence"
+        }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math:: -- --nocapture"
@@ -183,10 +192,13 @@
         "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json"
       ],
       "required_test_refs": [
-        {"source": "runtime_risk_monitor_calibration", "name": "gate_script_passes_and_emits_report_and_jsonl_log"},
-        {"source": "anytime_valid_monitor", "name": "gate_script_exists_and_executable"},
-        {"source": "changepoint_drift", "name": "gate_script_exists_and_executable"},
-        {"source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl"}
+        {
+          "source": "runtime_risk_monitor_calibration",
+          "name": "gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        { "source": "anytime_valid_monitor", "name": "gate_script_exists_and_executable" },
+        { "source": "changepoint_drift", "name": "gate_script_exists_and_executable" },
+        { "source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl" }
       ],
       "required_commands": [
         "bash scripts/check_runtime_risk_monitor_calibration.sh",
@@ -219,9 +231,12 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_alpha_investing_binding"},
-        {"source": "completion_harness", "name": "checker_rejects_inline_unit_threshold_drift"}
+        { "source": "completion_harness", "name": "checker_passes_and_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_alpha_investing_binding"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_inline_unit_threshold_drift" }
       ]
     }
   }

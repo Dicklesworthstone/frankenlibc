@@ -59,10 +59,7 @@
   "required_gap_bead_coverage_contract": {
     "schema_version": "v1",
     "bead": "bd-w2c3.1.3",
-    "source_inputs": [
-      "feature_parity_gap_ledger",
-      "issues"
-    ],
+    "source_inputs": ["feature_parity_gap_ledger", "issues"],
     "summary_expectations": {
       "total_unresolved_gaps": 110,
       "covered_gaps": 110,
@@ -127,8 +124,6 @@
       "gap_bead_coverage_artifact_verified",
       "gap_bead_coverage_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "gap_bead_coverage_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["gap_bead_coverage_completion_contract_fail"]
   }
 }

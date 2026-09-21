@@ -159,9 +159,7 @@
     },
     {
       "actual": {
-        "archived_artifacts": [
-          "tests/conformance/reality_report.v1.json"
-        ],
+        "archived_artifacts": ["tests/conformance/reality_report.v1.json"],
         "contradictory_artifacts": [],
         "evidence_ref_count": 3,
         "missing_artifacts": [],
@@ -236,18 +234,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/large_deviations.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/large_deviations.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/large_deviations.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/large_deviations.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -285,18 +277,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/mean_field_game.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/mean_field_game.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/mean_field_game.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/mean_field_game.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -334,18 +320,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/eprocess.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -479,18 +459,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/bandit.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/bandit.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/bandit.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/bandit.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -528,18 +502,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/quarantine_controller.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/quarantine_controller.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/quarantine_controller.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/quarantine_controller.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -641,18 +609,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/design.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/design.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/design.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/design.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -690,18 +652,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/control.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/control.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/control.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/control.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -771,18 +727,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/risk.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/risk.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/risk.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/risk.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -884,18 +834,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/pareto.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/pareto.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -997,18 +941,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/risk_engine.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/risk_engine.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/risk_engine.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/risk_engine.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1078,18 +1016,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/schrodinger_bridge.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/schrodinger_bridge.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/schrodinger_bridge.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/schrodinger_bridge.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1127,18 +1059,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/cvar.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/cvar.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/cvar.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/cvar.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1176,18 +1102,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/padic_valuation.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/padic_valuation.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/padic_valuation.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/padic_valuation.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1353,18 +1273,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/spectral_monitor.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/spectral_monitor.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/spectral_monitor.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/spectral_monitor.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1402,18 +1316,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/barrier.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/barrier.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/barrier.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/barrier.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1515,18 +1423,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/fusion.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/fusion.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/fusion.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1564,18 +1466,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/equivariant.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1613,18 +1509,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/cohomology.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1854,18 +1744,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/rough_path.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/rough_path.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/rough_path.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/rough_path.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1903,18 +1787,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/check_oracle.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/check_oracle.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/check_oracle.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/check_oracle.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -1952,18 +1830,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/persistence.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/persistence.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/persistence.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/persistence.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -2097,18 +1969,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/tropical_latency.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/tropical_latency.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/tropical_latency.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/tropical_latency.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -2210,18 +2076,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/runtime_math/sparse.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/runtime_math/sparse.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/sparse.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/sparse.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -2259,18 +2119,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/hji_reachability.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/hji_reachability.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/hji_reachability.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/hji_reachability.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {
@@ -2372,18 +2226,12 @@
         "contradictory_artifacts": [],
         "evidence_ref_count": 1,
         "missing_artifacts": [],
-        "source_only_artifacts": [
-          "crates/frankenlibc-membrane/src/symplectic_reduction.rs"
-        ],
+        "source_only_artifacts": ["crates/frankenlibc-membrane/src/symplectic_reduction.rs"],
         "stale_artifacts": [],
         "status": "DONE",
-        "validation_commands": [
-          "cargo test --workspace --all-targets"
-        ]
+        "validation_commands": ["cargo test --workspace --all-targets"]
       },
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/symplectic_reduction.rs"
-      ],
+      "artifact_refs": ["crates/frankenlibc-membrane/src/symplectic_reduction.rs"],
       "audit_status": "fail",
       "evidence_refs": [
         {

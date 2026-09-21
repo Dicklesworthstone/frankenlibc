@@ -18,10 +18,7 @@
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-setjmp-phase1-with-errno-bridges",
     "accepted_host_symbols": [
       "<dynamic>",

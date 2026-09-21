@@ -94,12 +94,7 @@
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:75",
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:81"
       ],
-      "required_needles": [
-        "sanitize_format",
-        "asprintf",
-        "libc::strlen",
-        "libc::free"
-      ]
+      "required_needles": ["sanitize_format", "asprintf", "libc::strlen", "libc::free"]
     },
     {
       "artifact_id": "nightly_runner",
@@ -240,22 +235,13 @@
       "corpus": {
         "path": "crates/frankenlibc-fuzz/corpus/fuzz_printf_adversarial",
         "min_seed_count": 3,
-        "required_seeds": [
-          "seed_percent_n",
-          "seed_positional_width",
-          "seed_percent_storm"
-        ]
+        "required_seeds": ["seed_percent_n", "seed_positional_width", "seed_percent_storm"]
       }
     },
     {
       "target": "fuzz_asprintf",
       "source": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs",
-      "required_source_needles": [
-        "sanitize_format",
-        "asprintf",
-        "libc::strlen",
-        "libc::free"
-      ],
+      "required_source_needles": ["sanitize_format", "asprintf", "libc::strlen", "libc::free"],
       "evidence_line_refs": [
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:29",
         "crates/frankenlibc-fuzz/fuzz_targets/fuzz_asprintf.rs:58",

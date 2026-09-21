@@ -242,14 +242,7 @@
           "name": "checker_passes_and_emits_report_log"
         }
       ],
-      "required_subsystems": [
-        "startup",
-        "threading",
-        "resolver",
-        "nss",
-        "locale",
-        "iconv"
-      ],
+      "required_subsystems": ["startup", "threading", "resolver", "nss", "locale", "iconv"],
       "required_failure_classes": [
         "match",
         "deterministic_failure",

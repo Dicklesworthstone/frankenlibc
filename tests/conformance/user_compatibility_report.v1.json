@@ -51,10 +51,7 @@
   ],
   "environment": {
     "environment_id": "host-l0-preload-current",
-    "runtime_modes": [
-      "strict",
-      "hardened"
-    ],
+    "runtime_modes": ["strict", "hardened"],
     "replacement_level": "L0"
   },
   "support_status_rules": {
@@ -73,20 +70,12 @@
     {
       "id": "full_standalone_replacement_today",
       "pattern": "full standalone (libc )?replacement (today|now)",
-      "allowed_if_line_contains": [
-        "not ",
-        "planned",
-        "remains"
-      ]
+      "allowed_if_line_contains": ["not ", "planned", "remains"]
     },
     {
       "id": "all_workloads_fully_supported",
       "pattern": "all workloads (are )?(fully )?supported",
-      "allowed_if_line_contains": [
-        "not ",
-        "cannot",
-        "planned"
-      ]
+      "allowed_if_line_contains": ["not ", "cannot", "planned"]
     }
   ],
   "replay_cases": [

@@ -51,10 +51,7 @@
     "dns_poisoning",
     "search_domain"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
   "diagnostic_signatures": [
     {
       "id": "missing_field",
@@ -94,17 +91,12 @@
       "kernel_id": "hosts-files-hermetic-local",
       "semantic_domain": "hosts",
       "scenario_id": "nss-hosts-files-only",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
       "fake_root_file": "etc/hosts",
       "query": "hermetic.local",
       "expected": {
-        "addresses": [
-          "198.51.100.7"
-        ],
+        "addresses": ["198.51.100.7"],
         "lookup_source": "files",
         "dns_fallback": false
       },
@@ -117,10 +109,7 @@
       "kernel_id": "services-hermetic-service-tcp",
       "semantic_domain": "services",
       "scenario_id": "nss-hosts-files-only",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
       "fake_root_file": "etc/services",
       "query": "hermetic-service/tcp",
@@ -138,10 +127,7 @@
       "kernel_id": "passwd-hermetic-user",
       "semantic_domain": "passwd",
       "scenario_id": "nss-passwd-files-only",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
       "fake_root_file": "etc/passwd",
       "query": "hermetic_user",
@@ -161,19 +147,14 @@
       "kernel_id": "group-hermetic-members",
       "semantic_domain": "group",
       "scenario_id": "nss-group-files-only",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
       "fake_root_file": "etc/group",
       "query": "hermetic",
       "expected": {
         "name": "hermetic",
         "gid": 60001,
-        "members": [
-          "hermetic_user"
-        ]
+        "members": ["hermetic_user"]
       },
       "artifact_refs": [
         "tests/conformance/hermetic_nss_resolver_lab.v1.json",
@@ -184,10 +165,7 @@
       "kernel_id": "resolv-conf-loopback-timeout-search",
       "semantic_domain": "resolv_conf",
       "scenario_id": "nss-dns-timeout",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "deadline_bound_replay",
       "fake_root_file": "etc/resolv.conf",
       "query": "timeout.example",
@@ -195,10 +173,7 @@
         "nameserver_loopback": true,
         "timeout": 1,
         "attempts": 1,
-        "search": [
-          "a.example",
-          "b.example"
-        ]
+        "search": ["a.example", "b.example"]
       },
       "artifact_refs": [
         "tests/conformance/hermetic_nss_resolver_lab.v1.json",
@@ -209,27 +184,15 @@
       "kernel_id": "nsswitch-files-dns-order",
       "semantic_domain": "nsswitch",
       "scenario_id": "nss-dns-success-then-cache",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "udp_send_count_replay",
       "fake_root_file": "etc/nsswitch.conf",
       "query": "hosts",
       "expected": {
-        "hosts": [
-          "files",
-          "dns"
-        ],
-        "passwd": [
-          "files"
-        ],
-        "group": [
-          "files"
-        ],
-        "services": [
-          "files"
-        ]
+        "hosts": ["files", "dns"],
+        "passwd": ["files"],
+        "group": ["files"],
+        "services": ["files"]
       },
       "artifact_refs": [
         "tests/conformance/hermetic_nss_resolver_lab.v1.json",
@@ -240,18 +203,12 @@
       "kernel_id": "dns-success-cache-hit",
       "semantic_domain": "dns_cache",
       "scenario_id": "nss-dns-success-then-cache",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "udp_send_count_replay",
       "fake_root_file": "etc/resolv.conf",
       "query": "cached.example",
       "expected": {
-        "resolved_addrs": [
-          "203.0.113.10",
-          "2001:db8::10"
-        ],
+        "resolved_addrs": ["203.0.113.10", "2001:db8::10"],
         "first_udp_sends": 1,
         "second_udp_sends": 0,
         "cache_hit": true,
@@ -266,10 +223,7 @@
       "kernel_id": "dns-timeout-bounded",
       "semantic_domain": "dns_timeout",
       "scenario_id": "nss-dns-timeout",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "deadline_bound_replay",
       "fake_root_file": "etc/resolv.conf",
       "query": "timeout.example",
@@ -289,10 +243,7 @@
       "kernel_id": "dns-poisoning-txid-rejected",
       "semantic_domain": "dns_poisoning",
       "scenario_id": "nss-dns-poisoning-rejected",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "poisoning_reject_replay",
       "fake_root_file": "etc/resolv.conf",
       "query": "poisoned.example",
@@ -312,22 +263,14 @@
       "kernel_id": "dns-search-domain-order",
       "semantic_domain": "search_domain",
       "scenario_id": "nss-search-domain-walk",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "search_walk_order_replay",
       "fake_root_file": "etc/resolv.conf",
       "query": "foo",
       "expected": {
-        "resolved_addrs": [
-          "203.0.113.44"
-        ],
+        "resolved_addrs": ["203.0.113.44"],
         "resolved_errno": "0",
-        "queries": [
-          "foo.a.example",
-          "foo.b.example"
-        ],
+        "queries": ["foo.a.example", "foo.b.example"],
         "stop_index": 2
       },
       "artifact_refs": [

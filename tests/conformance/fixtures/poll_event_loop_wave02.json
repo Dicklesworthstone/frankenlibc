@@ -10,18 +10,10 @@
     "wave_id": "wave-02-poll-event-loop",
     "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "ambient_state_policy": "forbid_fd_thread_time_stderr_scheduler_or_process_capture",
-    "first_wave_symbols": [
-      "timerfd_settime"
-    ],
+    "first_wave_symbols": ["timerfd_settime"],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "timerfd_settime_valid_relative_timer_strict",

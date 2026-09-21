@@ -448,10 +448,7 @@
   "telemetry_contract": {
     "report_path": "target/conformance/gentoo_unit_test_contract.report.json",
     "log_path": "target/conformance/gentoo_unit_test_contract.log.jsonl",
-    "required_log_events": [
-      "gentoo_unit_component",
-      "gentoo_unit_contract_summary"
-    ],
+    "required_log_events": ["gentoo_unit_component", "gentoo_unit_contract_summary"],
     "required_log_fields": [
       "timestamp",
       "trace_id",

@@ -41,12 +41,7 @@
     "R10": {
       "name": "NSS / resolv",
       "problem_focus": "Multi-source lookup orchestration, retries and timeouts, negative caching, and poisoning or collision resilience.",
-      "legacy_surfaces": [
-        "nss",
-        "resolv",
-        "nscd",
-        "sunrpc"
-      ],
+      "legacy_surfaces": ["nss", "resolv", "nscd", "sunrpc"],
       "failure_class": "poisoning/retry/cache instability",
       "artifacts": "deterministic lookup DAGs + calibrated thresholds",
       "implementation_plan": [
@@ -182,12 +177,7 @@
     "R11": {
       "name": "libm / fenv",
       "problem_focus": "Correct rounding, IEEE exception behavior, consistent fenv semantics, and ULP guarantees.",
-      "legacy_surfaces": [
-        "math",
-        "soft-fp",
-        "ieee754",
-        "fenv"
-      ],
+      "legacy_surfaces": ["math", "soft-fp", "ieee754", "fenv"],
       "failure_class": "denormal/NaN/payload drift across regimes",
       "artifacts": "regime-indexed numeric guard tables + certified fallback kernels",
       "implementation_plan": [
@@ -306,11 +296,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "decision-theory",
-          "experimental-design"
-        ],
+        "unique_classes": ["algebra", "decision-theory", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": false,
@@ -322,13 +308,7 @@
     "R12": {
       "name": "Cross-Architecture Gluing",
       "problem_focus": "Maintaining one semantic contract across ISA-specialized implementations, syscall veneers, and multiarch kernels without silently changing ABI-visible behavior.",
-      "legacy_surfaces": [
-        "sysdeps",
-        "multiarch",
-        "unistd",
-        "time64",
-        "loader"
-      ],
+      "legacy_surfaces": ["sysdeps", "multiarch", "unistd", "time64", "loader"],
       "failure_class": "cross-ISA semantic drift",
       "artifacts": "ISA witness bundles + cross-architecture glue proofs + coverage-optimal architecture campaigns",
       "implementation_plan": [
@@ -451,13 +431,7 @@
     "R13": {
       "name": "Stream / Syscall Surface",
       "problem_focus": "Preserving POSIX-observable buffering, flush ordering, short I/O, and cancellation semantics while replacing unsafe stream and syscall failure paths with deterministic control.",
-      "legacy_surfaces": [
-        "libio",
-        "io",
-        "posix",
-        "stdio",
-        "unistd"
-      ],
+      "legacy_surfaces": ["libio", "io", "posix", "stdio", "unistd"],
       "failure_class": "stream-state divergence and flush-latency blowup",
       "artifacts": "stream automata + latency envelope certificates + lock/flush strategy tables",
       "implementation_plan": [
@@ -575,12 +549,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "decision-theory",
-          "game-theory"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "decision-theory", "game-theory"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": false,
@@ -592,13 +561,7 @@
     "R14": {
       "name": "Locale / Encoding / Transliteration",
       "problem_focus": "Correctness and performance of multibyte conversion, transliteration, locale facets, and formatting surfaces under deterministic artifact and compatibility constraints.",
-      "legacy_surfaces": [
-        "localedata",
-        "locale",
-        "iconvdata",
-        "iconv",
-        "wcsmbs"
-      ],
+      "legacy_surfaces": ["localedata", "locale", "iconvdata", "iconv", "wcsmbs"],
       "failure_class": "codec drift and locale-shard inconsistency",
       "artifacts": "factorized codec automata + locale obstruction diagnostics + inverse-domain witnesses",
       "implementation_plan": [
@@ -737,13 +700,7 @@
     "R15": {
       "name": "Temporal Semantics Engine",
       "problem_focus": "DST transitions, leap-second edges, timezone drift, and wall-clock/UTC conversion semantics without hidden discontinuity bugs.",
-      "legacy_surfaces": [
-        "time",
-        "timezone",
-        "strftime",
-        "mktime",
-        "localtime"
-      ],
+      "legacy_surfaces": ["time", "timezone", "strftime", "mktime", "localtime"],
       "failure_class": "temporal discontinuity and conversion drift",
       "artifacts": "transition systems + DST/leap certificates + drift alarms",
       "implementation_plan": [
@@ -874,12 +831,7 @@
     "R16": {
       "name": "Cache-Coherent Identity / RPC",
       "problem_focus": "Coherent positive and negative caching, retry idempotence, poisoning resistance, and RPC lookup consistency under concurrency.",
-      "legacy_surfaces": [
-        "nscd",
-        "sunrpc",
-        "nss",
-        "resolv"
-      ],
+      "legacy_surfaces": ["nscd", "sunrpc", "nss", "resolv"],
       "failure_class": "cache-poisoning and retry-policy instability",
       "artifacts": "security policy tables + tail-risk bounds + consistency witnesses",
       "implementation_plan": [
@@ -1014,13 +966,7 @@
     "R17": {
       "name": "Regex / Parsing / Pattern Substrate",
       "problem_focus": "Deterministic, memory-safe regex and parser behavior with bounded worst-case complexity and no catastrophic pattern explosions.",
-      "legacy_surfaces": [
-        "regex",
-        "glob",
-        "printf",
-        "scanf",
-        "parser-heavy posix"
-      ],
+      "legacy_surfaces": ["regex", "glob", "printf", "scanf", "parser-heavy posix"],
       "failure_class": "pattern-state explosion and adversarial parse blowup",
       "artifacts": "certified parser kernels + bounded-complexity certificates + adversarial fixture labels",
       "implementation_plan": [
@@ -1138,12 +1084,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "experimental-design",
-          "game-theory"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "experimental-design", "game-theory"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": false,
@@ -1155,13 +1096,7 @@
     "R18": {
       "name": "Bootstrap / Init / Observability Spine",
       "problem_focus": "Startup ordering, initialization invariants, and diagnostic observability that do not perturb ABI behavior or hot-path overhead budgets.",
-      "legacy_surfaces": [
-        "csu",
-        "debug",
-        "support",
-        "startup",
-        "diagnostics"
-      ],
+      "legacy_surfaces": ["csu", "debug", "support", "startup", "diagnostics"],
       "failure_class": "startup-order drift and opaque failure surfaces",
       "artifacts": "dependency proofs + minimally invasive probe sets + identifiability budgets",
       "implementation_plan": [
@@ -1422,12 +1357,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "game-theory",
-          "grothendieck-serre"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "game-theory", "grothendieck-serre"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": true,
@@ -1439,13 +1369,7 @@
     "R20": {
       "name": "Non-Local Control / Async Signal Semantics",
       "problem_focus": "Sigaction, sigaltstack, setjmp/longjmp, and cancellation interactions that can violate stack, cleanup, or temporal invariants under adversarial delivery timing.",
-      "legacy_surfaces": [
-        "signal",
-        "setjmp",
-        "nptl",
-        "cancellation",
-        "sigaltstack"
-      ],
+      "legacy_surfaces": ["signal", "setjmp", "nptl", "cancellation", "sigaltstack"],
       "failure_class": "non-local control corruption and re-entrancy deadlock",
       "artifacts": "transition rules + continuation-safety witnesses + repair/deny tables",
       "implementation_plan": [
@@ -1588,13 +1512,7 @@
     "R21": {
       "name": "Terminal / Session / PTY Cohesion",
       "problem_focus": "Termios, session, and PTY transitions with minimal tail overhead and no hidden ABI-visible legality drift.",
-      "legacy_surfaces": [
-        "termios",
-        "login",
-        "io",
-        "posix",
-        "pty"
-      ],
+      "legacy_surfaces": ["termios", "login", "io", "posix", "pty"],
       "failure_class": "terminal-mode divergence and PTY tail blowup",
       "artifacts": "admissibility polytopes + PTY control policies + reversible state projections",
       "implementation_plan": [
@@ -1725,15 +1643,7 @@
     "R22": {
       "name": "Process Creation / Path / Pattern Semantics",
       "problem_focus": "Deterministic and safe spawn/exec/path/pattern semantics under edge-heavy inputs, environment mutation, and adversarial launch states.",
-      "legacy_surfaces": [
-        "spawn",
-        "exec",
-        "glob",
-        "fnmatch",
-        "regex",
-        "env",
-        "path"
-      ],
+      "legacy_surfaces": ["spawn", "exec", "glob", "fnmatch", "regex", "env", "path"],
       "failure_class": "launch-policy and path-complexity drift",
       "artifacts": "launch DAGs + interaction-optimal fixture plans + anomaly guards",
       "implementation_plan": [
@@ -1855,12 +1765,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "experimental-design",
-          "game-theory"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "experimental-design", "game-theory"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": true,
@@ -1872,14 +1777,7 @@
     "R23": {
       "name": "Filesystem Metadata / Directory Semantics",
       "problem_focus": "Coherent metadata, directory iteration, descriptor capabilities, and race-prone file-state transitions across stat/fcntl/dirent surfaces.",
-      "legacy_surfaces": [
-        "io",
-        "dirent",
-        "posix",
-        "fcntl",
-        "stat",
-        "descriptor views"
-      ],
+      "legacy_surfaces": ["io", "dirent", "posix", "fcntl", "stat", "descriptor views"],
       "failure_class": "metadata-view divergence and descriptor-state drift",
       "artifacts": "descriptor automata + coherence diagnostics + regime-transition plans",
       "implementation_plan": [
@@ -2014,13 +1912,7 @@
     "R24": {
       "name": "Secure Bootstrap / Policy Noninterference",
       "problem_focus": "Ensuring startup diagnostics, tunables, and secure-mode policy channels do not violate noninterference or mutate safety-critical behavior unexpectedly.",
-      "legacy_surfaces": [
-        "csu",
-        "elf",
-        "secure mode",
-        "tunables",
-        "diagnostics"
-      ],
+      "legacy_surfaces": ["csu", "elf", "secure mode", "tunables", "diagnostics"],
       "failure_class": "secure-mode policy leakage and false-admit drift",
       "artifacts": "noninterference certificates + secure-mode gates + bounded false-admit/deny budgets",
       "implementation_plan": [
@@ -2138,12 +2030,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "decision-theory",
-          "game-theory",
-          "information-theory"
-        ],
+        "unique_classes": ["algebra", "decision-theory", "game-theory", "information-theory"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": false,
@@ -2155,15 +2042,7 @@
     "R25": {
       "name": "Virtual Memory Transition Semantics",
       "problem_focus": "Safe and ABI-faithful mmap, mprotect, mremap, brk, and mmap-backed stdio transitions under resize, remap, and permission churn.",
-      "legacy_surfaces": [
-        "mmap",
-        "munmap",
-        "mprotect",
-        "mremap",
-        "brk",
-        "sbrk",
-        "stdio"
-      ],
+      "legacy_surfaces": ["mmap", "munmap", "mprotect", "mremap", "brk", "sbrk", "stdio"],
       "failure_class": "region-transition and permission-churn instability",
       "artifacts": "VM admissibility complexes + trajectory certificates + churn stabilization policies",
       "implementation_plan": [
@@ -2281,12 +2160,7 @@
       "verification_hooks_found": 2,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "conformal-statistics",
-          "game-theory"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "conformal-statistics", "game-theory"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": true,
@@ -2298,13 +2172,7 @@
     "R26": {
       "name": "Futex / PI / Robust-Concurrency Semantics",
       "problem_focus": "Correctness under futex wait/wake races, PI locking, robust mutex recovery, cancellation edges, and timeout semantics across clocks and time64 variants.",
-      "legacy_surfaces": [
-        "nptl",
-        "futex",
-        "pthread",
-        "time64",
-        "robust lists"
-      ],
+      "legacy_surfaces": ["nptl", "futex", "pthread", "time64", "robust lists"],
       "failure_class": "wait-queue and recovery protocol drift",
       "artifacts": "futex/PI protocol kernels + fairness/starvation witness budgets",
       "implementation_plan": [
@@ -2424,13 +2292,7 @@
     "R27": {
       "name": "Multiarch SIMD Kernel Coherence",
       "problem_focus": "Preserving one semantic contract across SSE, AVX, EVEX, NEON, and related kernels while optimizing dispatch decisions and guarding edge-case alignment and alias behavior.",
-      "legacy_surfaces": [
-        "sysdeps/*/multiarch",
-        "IFUNC",
-        "string",
-        "memory",
-        "hwcaps"
-      ],
+      "legacy_surfaces": ["sysdeps/*/multiarch", "IFUNC", "string", "memory", "hwcaps"],
       "failure_class": "cross-ISA semantic divergence",
       "artifacts": "dispatch manifolds + semantic witness bundles + SIMD stress campaigns",
       "implementation_plan": [
@@ -2529,11 +2391,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "experimental-design"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": false,
@@ -2545,13 +2403,7 @@
     "R28": {
       "name": "Real-Time Event and Queue Semantics",
       "problem_focus": "Deterministic semantics and bounded tails for timer creation and arming, queue delivery, and clock-based timing behavior.",
-      "legacy_surfaces": [
-        "rt",
-        "timers",
-        "mqueue",
-        "clock",
-        "poll"
-      ],
+      "legacy_surfaces": ["rt", "timers", "mqueue", "clock", "poll"],
       "failure_class": "timing envelope and overrun drift",
       "artifacts": "timer/queue envelopes + overrun budgets + retry policy tables",
       "implementation_plan": [
@@ -2650,11 +2502,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "conformal-statistics",
-          "decision-theory",
-          "stochastic-analysis"
-        ],
+        "unique_classes": ["conformal-statistics", "decision-theory", "stochastic-analysis"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -2666,13 +2514,7 @@
     "R29": {
       "name": "SysV IPC Lifecycle Semantics",
       "problem_focus": "Correctness and safety of segment and key lifecycle, permission semantics, and cleanup in adversarial or failure-prone process topologies.",
-      "legacy_surfaces": [
-        "sysvipc",
-        "shm",
-        "sem",
-        "msg",
-        "process"
-      ],
+      "legacy_surfaces": ["sysvipc", "shm", "sem", "msg", "process"],
       "failure_class": "lifecycle leak and stale-handle drift",
       "artifacts": "IPC lifecycle automata + admissibility solvers + cleanup policies",
       "implementation_plan": [
@@ -2788,13 +2630,7 @@
     "R30": {
       "name": "ABI Layout and Time64 Compatibility Geometry",
       "problem_focus": "Preserving ABI contract across layout variants, time64 bridges, and symbol-version translations without semantic drift.",
-      "legacy_surfaces": [
-        "x32/64",
-        "time64",
-        "symbol versions",
-        "layout bridges",
-        "ABI"
-      ],
+      "legacy_surfaces": ["x32/64", "time64", "symbol versions", "layout bridges", "ABI"],
       "failure_class": "layout-translation and compatibility drift",
       "artifacts": "layout translation certificates + compatibility witnesses + release drift alerts",
       "implementation_plan": [
@@ -3011,11 +2847,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "conformal-statistics",
-          "decision-theory",
-          "experimental-design"
-        ],
+        "unique_classes": ["conformal-statistics", "decision-theory", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -3027,14 +2859,7 @@
     "R32": {
       "name": "Algebraic Topology of Dependency and State Defects",
       "problem_focus": "Detecting and localizing global consistency defects that are invisible in local invariants across loader, thread, I/O, lookup, and time surfaces.",
-      "legacy_surfaces": [
-        "loader",
-        "threads",
-        "io",
-        "lookup",
-        "time",
-        "cross-layer"
-      ],
+      "legacy_surfaces": ["loader", "threads", "io", "lookup", "time", "cross-layer"],
       "failure_class": "hidden global consistency contradictions",
       "artifacts": "obstruction witnesses + reduced complexes + topology-aware remediation plans",
       "implementation_plan": [
@@ -3153,11 +2978,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "conformal-statistics"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "conformal-statistics"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -3169,13 +2990,7 @@
     "R33": {
       "name": "Abstract Algebraic Normal Forms",
       "problem_focus": "Enforcing canonical behavior in rewrite-heavy paths so equivalent policies, parsers, dispatch logic, and conversion kernels normalize to one certified form.",
-      "legacy_surfaces": [
-        "policies",
-        "parsers",
-        "dispatch",
-        "conversion kernels",
-        "regex"
-      ],
+      "legacy_surfaces": ["policies", "parsers", "dispatch", "conversion kernels", "regex"],
       "failure_class": "rewrite-equivalent behavior drift",
       "artifacts": "canonical normal forms + invariant generators + orbit-collapsed conformance spaces",
       "implementation_plan": [
@@ -3286,11 +3101,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "experimental-design"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -3302,13 +3113,7 @@
     "R34": {
       "name": "Noncommutative and Random-Matrix Concurrency Models",
       "problem_focus": "Obtaining stronger tail guarantees for heavily concurrent lock, queue, and allocator interactions where commutative assumptions fail.",
-      "legacy_surfaces": [
-        "nptl",
-        "allocator",
-        "thread cache",
-        "rcu",
-        "concurrency"
-      ],
+      "legacy_surfaces": ["nptl", "allocator", "thread cache", "rcu", "concurrency"],
       "failure_class": "contention-spectrum and convoy drift",
       "artifacts": "contention risk envelopes + stability-preserving tuning constraints + burst witnesses",
       "implementation_plan": [
@@ -3423,11 +3228,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "game-theory",
-          "stochastic-analysis"
-        ],
+        "unique_classes": ["algebra", "game-theory", "stochastic-analysis"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": false,
@@ -3548,11 +3349,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "conformal-statistics"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "conformal-statistics"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -3564,14 +3361,7 @@
     "R36": {
       "name": "Serre-Spectral Invariant Lifting",
       "problem_focus": "Proving that local invariants proven at lower layers survive composition through deep subsystem towers without hidden extension failures.",
-      "legacy_surfaces": [
-        "loader",
-        "memory",
-        "io",
-        "threading",
-        "networking",
-        "dependency towers"
-      ],
+      "legacy_surfaces": ["loader", "memory", "io", "threading", "networking", "dependency towers"],
       "failure_class": "invariant-lift and extension failure drift",
       "artifacts": "page-indexed invariant ledgers + obstruction reports + compositional guards",
       "implementation_plan": [
@@ -3707,14 +3497,7 @@
     "R37": {
       "name": "Grothendieck Site / Topos Runtime Semantics",
       "problem_focus": "Unifying inconsistent local views such as thread shards, allocator regions, loader namespaces, and cache partitions into one global semantic truth while preserving developer-transparent runtime behavior.",
-      "legacy_surfaces": [
-        "threads",
-        "pages",
-        "namespaces",
-        "descriptors",
-        "strict",
-        "hardened"
-      ],
+      "legacy_surfaces": ["threads", "pages", "namespaces", "descriptors", "strict", "hardened"],
       "failure_class": "local-to-global state reconciliation drift",
       "artifacts": "runtime site definitions + sheafified reconstruction kernels + mode admissibility certificates",
       "implementation_plan": [
@@ -3825,11 +3608,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "experimental-design",
-          "grothendieck-serre"
-        ],
+        "unique_classes": ["algebra", "experimental-design", "grothendieck-serre"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": false,
@@ -3841,13 +3620,7 @@
     "R38": {
       "name": "Grothendieck Descent and Stackification for ABI / ISA Compatibility",
       "problem_focus": "Guaranteeing that compatibility patches validated on local ABI and ISA charts glue into a coherent global release contract.",
-      "legacy_surfaces": [
-        "sysdeps",
-        "ABI",
-        "ISA",
-        "symbol-version families",
-        "layout variants"
-      ],
+      "legacy_surfaces": ["sysdeps", "ABI", "ISA", "symbol-version families", "layout variants"],
       "failure_class": "non-gluable compatibility patch drift",
       "artifacts": "descent certificates + stackified witness registries + fail-fast glue diagnostics",
       "implementation_plan": [
@@ -3954,11 +3727,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebraic-topology",
-          "conformal-statistics",
-          "grothendieck-serre"
-        ],
+        "unique_classes": ["algebraic-topology", "conformal-statistics", "grothendieck-serre"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4087,11 +3856,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "algebraic-topology",
-          "conformal-statistics"
-        ],
+        "unique_classes": ["algebra", "algebraic-topology", "conformal-statistics"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4208,11 +3973,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebraic-topology",
-          "conformal-statistics",
-          "experimental-design"
-        ],
+        "unique_classes": ["algebraic-topology", "conformal-statistics", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4224,13 +3985,7 @@
     "R41": {
       "name": "Clifford Algebra Kernel Geometry",
       "problem_focus": "Constructing SIMD and memory kernels with unified geometric semantics across architectures while preserving strict ABI behavior and hardened safety guarantees.",
-      "legacy_surfaces": [
-        "string",
-        "memory",
-        "alignment",
-        "overlap",
-        "vector lanes"
-      ],
+      "legacy_surfaces": ["string", "memory", "alignment", "overlap", "vector lanes"],
       "failure_class": "overlap and vector-geometry drift",
       "artifacts": "kernel geometry normal forms + guard generators + regime-tagged fixtures",
       "implementation_plan": [
@@ -4333,11 +4088,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "experimental-design"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "experimental-design"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4349,13 +4100,7 @@
     "R7": {
       "name": "Loader / Symbol / IFUNC",
       "problem_focus": "Versioned symbol lookup under dlopen/dlclose, IFUNC, hwcaps, and relocation dependencies.",
-      "legacy_surfaces": [
-        "elf",
-        "dl-*",
-        "IFUNC",
-        "hwcaps",
-        "tunables"
-      ],
+      "legacy_surfaces": ["elf", "dl-*", "IFUNC", "hwcaps", "tunables"],
       "failure_class": "global compatibility drift",
       "artifacts": "resolver automata + compatibility witness ledgers",
       "implementation_plan": [
@@ -4467,12 +4212,7 @@
     "R8": {
       "name": "Allocator / nptl",
       "problem_focus": "Arena contention, tcache poisoning classes, cancellation/futex races, and TLS lifecycle edges.",
-      "legacy_surfaces": [
-        "malloc",
-        "nptl",
-        "futex",
-        "pthread"
-      ],
+      "legacy_surfaces": ["malloc", "nptl", "futex", "pthread"],
       "failure_class": "temporal/provenance corruption",
       "artifacts": "allocator policy tables + admissibility guards",
       "implementation_plan": [
@@ -4591,12 +4331,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "game-theory",
-          "stochastic-analysis"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "game-theory", "stochastic-analysis"],
         "class_count": 4,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4608,13 +4343,7 @@
     "R9": {
       "name": "Format / Locale",
       "problem_focus": "Format parser complexity, locale-sensitive behavior, and wide-char boundary correctness under bounded overhead.",
-      "legacy_surfaces": [
-        "stdio-common",
-        "libio",
-        "locale",
-        "iconv",
-        "wcsmbs"
-      ],
+      "legacy_surfaces": ["stdio-common", "libio", "locale", "iconv", "wcsmbs"],
       "failure_class": "parser-state explosion and locale drift",
       "artifacts": "parser/transducer tables + consistency certs",
       "implementation_plan": [
@@ -4723,11 +4452,7 @@
       "verification_hooks_found": 3,
       "branch_diversity": {
         "total_families": 4,
-        "unique_classes": [
-          "algebra",
-          "conformal-statistics",
-          "grothendieck-serre"
-        ],
+        "unique_classes": ["algebra", "conformal-statistics", "grothendieck-serre"],
         "class_count": 3,
         "passes_diversity": true,
         "has_conformal": true,
@@ -4740,27 +4465,14 @@
   "cross_round_integrations": {
     "allocator_locale": {
       "name": "Allocator-backed format and locale staging",
-      "rounds": [
-        "R8",
-        "R9"
-      ],
+      "rounds": ["R8", "R9"],
       "seam": "Transient printf/scanf, locale, and iconv staging buffers must inherit allocator quotas, quarantine semantics, and TLS ownership rules without losing parser-state determinism.",
-      "legacy_surfaces": [
-        "malloc",
-        "nptl",
-        "stdio-common",
-        "locale",
-        "iconv",
-        "wcsmbs"
-      ],
+      "legacy_surfaces": ["malloc", "nptl", "stdio-common", "locale", "iconv", "wcsmbs"],
       "round_hashes": {
         "R8": "fd21d6709ab1",
         "R9": "1c8f487e1ef1"
       },
-      "shared_classes": [
-        "algebra",
-        "conformal-statistics"
-      ],
+      "shared_classes": ["algebra", "conformal-statistics"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -4823,25 +4535,14 @@
     },
     "loader_allocator": {
       "name": "Loader relocation scratch allocation discipline",
-      "rounds": [
-        "R7",
-        "R8"
-      ],
+      "rounds": ["R7", "R8"],
       "seam": "IFUNC resolution, relocation scratch buffers, and TLS materialization must flow through allocator and thread-runtime guardrails instead of bypassing quarantine, provenance, or cancellation boundaries.",
-      "legacy_surfaces": [
-        "elf",
-        "dl-*",
-        "malloc",
-        "nptl",
-        "pthread"
-      ],
+      "legacy_surfaces": ["elf", "dl-*", "malloc", "nptl", "pthread"],
       "round_hashes": {
         "R7": "aac99f84f6dc",
         "R8": "fd21d6709ab1"
       },
-      "shared_classes": [
-        "algebra"
-      ],
+      "shared_classes": ["algebra"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -4908,26 +4609,14 @@
     },
     "loader_resolver": {
       "name": "Dynamic loader and NSS backend composition",
-      "rounds": [
-        "R7",
-        "R10"
-      ],
+      "rounds": ["R7", "R10"],
       "seam": "Loader policy, hwcaps selection, and versioned symbol resolution must compose with NSS backend loading so service lookup plugins stay inside deterministic compatibility envelopes.",
-      "legacy_surfaces": [
-        "elf",
-        "dl-*",
-        "hwcaps",
-        "nss",
-        "resolv"
-      ],
+      "legacy_surfaces": ["elf", "dl-*", "hwcaps", "nss", "resolv"],
       "round_hashes": {
         "R7": "aac99f84f6dc",
         "R10": "7e84357ec964"
       },
-      "shared_classes": [
-        "algebraic-topology",
-        "decision-theory"
-      ],
+      "shared_classes": ["algebraic-topology", "decision-theory"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -4992,28 +4681,14 @@
     },
     "loader_time64_bridge": {
       "name": "Loader/bootstrap compatibility and time64 bridge coherence",
-      "rounds": [
-        "R7",
-        "R30"
-      ],
+      "rounds": ["R7", "R30"],
       "seam": "Loader symbol/version resolution and bootstrap ABI contracts must remain coherent with time64 and layout-bridge witnesses so early-process startup cannot split compatibility policy from temporal ABI translation.",
-      "legacy_surfaces": [
-        "elf",
-        "dl-*",
-        "symbol versions",
-        "time64",
-        "ABI",
-        "startup"
-      ],
+      "legacy_surfaces": ["elf", "dl-*", "symbol versions", "time64", "ABI", "startup"],
       "round_hashes": {
         "R7": "aac99f84f6dc",
         "R30": "8c28eb2d0490"
       },
-      "shared_classes": [
-        "algebra",
-        "algebraic-topology",
-        "decision-theory"
-      ],
+      "shared_classes": ["algebra", "algebraic-topology", "decision-theory"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -5085,27 +4760,14 @@
     },
     "locale_numeric": {
       "name": "Numeric formatting and libm/fenv witness continuity",
-      "rounds": [
-        "R9",
-        "R11"
-      ],
+      "rounds": ["R9", "R11"],
       "seam": "Printf/scanf numeric formatting, locale rules, and libm/fenv witnesses must agree on rounding, NaN handling, and representational stability across presentation boundaries.",
-      "legacy_surfaces": [
-        "stdio-common",
-        "locale",
-        "wcsmbs",
-        "math",
-        "soft-fp",
-        "ieee754",
-        "fenv"
-      ],
+      "legacy_surfaces": ["stdio-common", "locale", "wcsmbs", "math", "soft-fp", "ieee754", "fenv"],
       "round_hashes": {
         "R9": "1c8f487e1ef1",
         "R11": "33bf75d138f7"
       },
-      "shared_classes": [
-        "algebra"
-      ],
+      "shared_classes": ["algebra"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -5168,26 +4830,14 @@
     },
     "locale_resolver": {
       "name": "Locale and resolver payload normalization",
-      "rounds": [
-        "R9",
-        "R10"
-      ],
+      "rounds": ["R9", "R10"],
       "seam": "Resolver payload parsing, NSS answer decoding, and locale-sensitive formatting must share one normalization contract so codec and lookup policy drift are caught together.",
-      "legacy_surfaces": [
-        "stdio-common",
-        "locale",
-        "iconv",
-        "nss",
-        "resolv",
-        "sunrpc"
-      ],
+      "legacy_surfaces": ["stdio-common", "locale", "iconv", "nss", "resolv", "sunrpc"],
       "round_hashes": {
         "R9": "1c8f487e1ef1",
         "R10": "7e84357ec964"
       },
-      "shared_classes": [
-        "conformal-statistics"
-      ],
+      "shared_classes": ["conformal-statistics"],
       "min_class_count": 5,
       "supporting_files": [
         {
@@ -5254,11 +4904,7 @@
   "milestone_branch_diversity": {
     "bootstrap_surface": {
       "name": "Bootstrap surface milestone",
-      "rounds": [
-        "R7",
-        "R8",
-        "R9"
-      ],
+      "rounds": ["R7", "R8", "R9"],
       "goal": "Loader, allocator, and locale/format surfaces must share enough mathematical diversity that bootstrap-time policy drift cannot hide inside one family.",
       "round_hashes": {
         "R7": "aac99f84f6dc",
@@ -5327,12 +4973,7 @@
     },
     "loader_temporal_policy_surface": {
       "name": "Loader/temporal/mode-policy surface milestone",
-      "rounds": [
-        "R7",
-        "R28",
-        "R30",
-        "R37"
-      ],
+      "rounds": ["R7", "R28", "R30", "R37"],
       "goal": "Loader policy, timing envelopes, bootstrap/time64 bridges, and mode admissibility must share enough mathematical diversity that early-runtime drift cannot hide across bootstrap and temporal policy surfaces.",
       "round_hashes": {
         "R7": "aac99f84f6dc",
@@ -5425,11 +5066,7 @@
     },
     "numeric_observability_surface": {
       "name": "Numeric observability milestone",
-      "rounds": [
-        "R9",
-        "R10",
-        "R11"
-      ],
+      "rounds": ["R9", "R10", "R11"],
       "goal": "Format, resolver, and libm/fenv surfaces must remain branch-diverse enough that numeric and lookup regressions cannot collapse onto one controller family.",
       "round_hashes": {
         "R9": "1c8f487e1ef1",
@@ -5498,11 +5135,7 @@
     },
     "service_lookup_surface": {
       "name": "Service lookup surface milestone",
-      "rounds": [
-        "R8",
-        "R9",
-        "R10"
-      ],
+      "rounds": ["R8", "R9", "R10"],
       "goal": "Allocator, locale, and resolver surfaces must hold a balanced class mix while service lookup state crosses parser, cache, and retry boundaries.",
       "round_hashes": {
         "R8": "fd21d6709ab1",

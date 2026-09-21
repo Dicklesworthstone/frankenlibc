@@ -7,10 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.2.2/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "source_paths": {
     "abi_build_script": "crates/frankenlibc-abi/build.rs",
@@ -240,27 +237,13 @@
     },
     "packaging_spec": {
       "replace_host_glibc_required": false,
-      "replace_allowed_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "replace_cargo_features": [
-        "standalone"
-      ],
-      "standalone_feature_gate": [
-        "standalone"
-      ]
+      "replace_allowed_statuses": ["Implemented", "RawSyscall"],
+      "replace_cargo_features": ["standalone"],
+      "standalone_feature_gate": ["standalone"]
     },
     "support_matrix": {
-      "replace_applicable_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "forbidden_statuses": [
-        "GlibcCallThrough",
-        "Stub",
-        "WrapsHostLibc"
-      ],
+      "replace_applicable_statuses": ["Implemented", "RawSyscall"],
+      "forbidden_statuses": ["GlibcCallThrough", "Stub", "WrapsHostLibc"],
       "expected_forbidden_symbol_count": 0
     },
     "replacement_guard": {
@@ -273,13 +256,7 @@
     },
     "standalone_build": {
       "existing_harness_test": "standalone_build_matches_replacement_guard_outcome",
-      "expected_cargo_args": [
-        "check",
-        "-p",
-        "frankenlibc-abi",
-        "--features",
-        "standalone"
-      ],
+      "expected_cargo_args": ["check", "-p", "frankenlibc-abi", "--features", "standalone"],
       "expected_failure_message": "standalone feature requires a replacement-clean ABI",
       "expected_guard_hint": "scripts/check_replacement_guard.sh replacement"
     }

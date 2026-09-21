@@ -108,7 +108,14 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-malloc-free-churn",
         "minimum_tier": "normal",
-        "counter_fields": ["alloc_calls", "free_calls", "bytes_allocated", "bytes_in_use_end", "fingerprint_mismatches", "canary_corruptions"]
+        "counter_fields": [
+          "alloc_calls",
+          "free_calls",
+          "bytes_allocated",
+          "bytes_in_use_end",
+          "fingerprint_mismatches",
+          "canary_corruptions"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/malloc_concurrent_alloc_free.jsonl"
@@ -124,7 +131,13 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-stdio-concurrent-writers",
         "minimum_tier": "normal",
-        "counter_fields": ["write_records", "flush_cycles", "torn_records", "buffer_overflows", "records_reassembled"]
+        "counter_fields": [
+          "write_records",
+          "flush_cycles",
+          "torn_records",
+          "buffer_overflows",
+          "records_reassembled"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/stdio_file_buffering_contention.jsonl"
@@ -140,7 +153,13 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-pthread-mutex-lifecycle",
         "minimum_tier": "normal",
-        "counter_fields": ["lock_cycles", "unlock_cycles", "held_destroy_ebusy", "foreign_unlock_eperm", "state_machine_errors"]
+        "counter_fields": [
+          "lock_cycles",
+          "unlock_cycles",
+          "held_destroy_ebusy",
+          "foreign_unlock_eperm",
+          "state_machine_errors"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/pthread_mutex_lifecycle.jsonl"
@@ -172,7 +191,13 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-pthread-condvar-timeout-edge",
         "minimum_tier": "normal",
-        "counter_fields": ["timed_waits", "expired_deadlines", "signaled_before_timeout", "parked_after_deadline", "etimedout_returns"]
+        "counter_fields": [
+          "timed_waits",
+          "expired_deadlines",
+          "signaled_before_timeout",
+          "parked_after_deadline",
+          "etimedout_returns"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/pthread_condvar_timeout_edge.jsonl"
@@ -188,7 +213,12 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-pthread-rwlock-writer-priority",
         "minimum_tier": "normal",
-        "counter_fields": ["reader_cycles", "writer_cycles", "writer_starvation_bound", "trylock_errors"]
+        "counter_fields": [
+          "reader_cycles",
+          "writer_cycles",
+          "writer_starvation_bound",
+          "trylock_errors"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/pthread_rwlock_writer_priority.jsonl"
@@ -204,7 +234,12 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-pthread-cancellation-adjacent-state",
         "minimum_tier": "normal",
-        "counter_fields": ["cancel_requests", "cleanup_handlers_run", "cleanup_lifo_violations", "mutex_leaks"]
+        "counter_fields": [
+          "cancel_requests",
+          "cleanup_handlers_run",
+          "cleanup_lifo_violations",
+          "mutex_leaks"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/pthread_cancellation_adjacent_state.jsonl"
@@ -220,7 +255,12 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-hardened-malloc-overflow-repair",
         "minimum_tier": "normal",
-        "counter_fields": ["overflow_probes", "clamp_size_repairs", "enomem_returns", "unexpected_successes"]
+        "counter_fields": [
+          "overflow_probes",
+          "clamp_size_repairs",
+          "enomem_returns",
+          "unexpected_successes"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/hardened_repair_malloc_overflow.jsonl"
@@ -236,7 +276,12 @@
       "normal_tier_kernel": {
         "kernel_id": "normal-hardened-stdio-format-truncation",
         "minimum_tier": "normal",
-        "counter_fields": ["format_overflow_probes", "truncate_repairs", "nul_terminated_outputs", "unexpected_unbounded_writes"]
+        "counter_fields": [
+          "format_overflow_probes",
+          "truncate_repairs",
+          "nul_terminated_outputs",
+          "unexpected_unbounded_writes"
+        ]
       },
       "expected_failure_signatures": [],
       "evidence_artifact": "target/conformance/stress_orchard/hardened_repair_stdio_format_truncation.jsonl"

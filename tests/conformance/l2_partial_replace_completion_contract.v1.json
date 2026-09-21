@@ -152,12 +152,24 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "readiness_harness", "name": "artifact_exists_and_has_required_shape"},
-        {"source": "readiness_harness", "name": "obligations_cover_dimensions_and_block_overclaims"},
-        {"source": "readiness_harness", "name": "proof_rows_cover_standalone_surfaces_and_fail_closed"},
-        {"source": "artifact_harness", "name": "manifest_matches_forge_contract"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        { "source": "readiness_harness", "name": "artifact_exists_and_has_required_shape" },
+        {
+          "source": "readiness_harness",
+          "name": "obligations_cover_dimensions_and_block_overclaims"
+        },
+        {
+          "source": "readiness_harness",
+          "name": "proof_rows_cover_standalone_surfaces_and_fail_closed"
+        },
+        { "source": "artifact_harness", "name": "manifest_matches_forge_contract" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/l2_partial_replace_completion_contract.v1.json",
@@ -169,11 +181,23 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "readiness_harness", "name": "gate_script_passes_and_emits_structured_report_and_log"},
-        {"source": "artifact_harness", "name": "validate_only_writes_report_and_required_log_fields"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_readiness_gate_and_preserves_l2_blockers"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_artifact_validate_only_gate"}
+        {
+          "source": "readiness_harness",
+          "name": "gate_script_passes_and_emits_structured_report_and_log"
+        },
+        {
+          "source": "artifact_harness",
+          "name": "validate_only_writes_report_and_required_log_fields"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_readiness_gate_and_preserves_l2_blockers"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_artifact_validate_only_gate"
+        }
       ],
       "required_commands": [
         "FLC_STANDALONE_READINESS_REPORT=<report> FLC_STANDALONE_READINESS_LOG=<log> bash scripts/check_standalone_readiness_matrix.sh",
@@ -186,12 +210,21 @@
       "missing_item_id": "tests.fuzz.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "readiness_harness", "name": "gate_rejects_stale_recorded_source_commit"},
-        {"source": "readiness_harness", "name": "gate_rejects_missing_source_commit_freshness_policy"},
-        {"source": "artifact_harness", "name": "validate_only_rejects_artifact_policy_contract_drift"},
-        {"source": "artifact_harness", "name": "validate_only_rejects_blocker_delta_policy_drift"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_fuzz_binding"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_l2_obligation_binding"}
+        { "source": "readiness_harness", "name": "gate_rejects_stale_recorded_source_commit" },
+        {
+          "source": "readiness_harness",
+          "name": "gate_rejects_missing_source_commit_freshness_policy"
+        },
+        {
+          "source": "artifact_harness",
+          "name": "validate_only_rejects_artifact_policy_contract_drift"
+        },
+        {
+          "source": "artifact_harness",
+          "name": "validate_only_rejects_blocker_delta_policy_drift"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_fuzz_binding" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_l2_obligation_binding" }
       ],
       "required_commands": [
         "bash scripts/check_l2_partial_replace_completion_contract.sh",
@@ -204,12 +237,24 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "readiness_harness", "name": "standalone_artifact_is_first_class_readiness_evidence"},
-        {"source": "readiness_harness", "name": "standalone_forge_audits_are_present_failing_evidence"},
-        {"source": "readiness_harness", "name": "replacement_levels_remain_blocked_for_l2_l3"},
-        {"source": "artifact_harness", "name": "stale_source_commit_policy_blocks_artifact_evidence"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_readiness_gate_and_preserves_l2_blockers"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_l2_obligation_binding"}
+        {
+          "source": "readiness_harness",
+          "name": "standalone_artifact_is_first_class_readiness_evidence"
+        },
+        {
+          "source": "readiness_harness",
+          "name": "standalone_forge_audits_are_present_failing_evidence"
+        },
+        { "source": "readiness_harness", "name": "replacement_levels_remain_blocked_for_l2_l3" },
+        {
+          "source": "artifact_harness",
+          "name": "stale_source_commit_policy_blocks_artifact_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_readiness_gate_and_preserves_l2_blockers"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_l2_obligation_binding" }
       ],
       "required_commands": [
         "bash scripts/check_standalone_readiness_matrix.sh",
@@ -224,11 +269,23 @@
       "default_report_path": "target/conformance/l2_partial_replace_completion_contract.report.json",
       "default_log_path": "target/conformance/l2_partial_replace_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "readiness_harness", "name": "gate_script_passes_and_emits_structured_report_and_log"},
-        {"source": "artifact_harness", "name": "validate_only_writes_report_and_required_log_fields"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_artifact_validate_only_gate"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        {
+          "source": "readiness_harness",
+          "name": "gate_script_passes_and_emits_structured_report_and_log"
+        },
+        {
+          "source": "artifact_harness",
+          "name": "validate_only_writes_report_and_required_log_fields"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_artifact_validate_only_gate"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "bash scripts/check_l2_partial_replace_completion_contract.sh",

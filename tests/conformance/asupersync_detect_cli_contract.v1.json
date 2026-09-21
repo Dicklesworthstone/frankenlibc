@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that probes asupersync Lab availability via detect_asupersync_available (bd-qfbhc). Previously only conformance tests called this function; the CLI surface makes it invokable from rch cargo run and CI without writing Rust.",
   "subcommand_name": "asupersync-detect",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
-  "optional_flags": [
-    "--override-var",
-    "--asupersync-dir",
-    "--path-search-paths"
-  ],
+  "required_flags": ["--output"],
+  "optional_flags": ["--override-var", "--asupersync-dir", "--path-search-paths"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
   "underlying_lib_functions": [
@@ -23,13 +17,7 @@
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "lab_availability",
-    "required_fields": [
-      "kind",
-      "available",
-      "version",
-      "path",
-      "detection_reason"
-    ],
+    "required_fields": ["kind", "available", "version", "path", "detection_reason"],
     "valid_detection_reasons": [
       "env_override_disabled",
       "env_override_enabled",

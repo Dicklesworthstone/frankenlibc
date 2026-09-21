@@ -74,21 +74,9 @@
   },
   "startup_mode_contract": {
     "env_key": "FRANKENLIBC_MODE",
-    "allowed_modes": [
-      "strict",
-      "hardened"
-    ],
-    "strict_aliases": [
-      "strict",
-      "default",
-      "abi"
-    ],
-    "hardened_aliases": [
-      "hardened",
-      "repair",
-      "tsm",
-      "full"
-    ],
+    "allowed_modes": ["strict", "hardened"],
+    "strict_aliases": ["strict", "default", "abi"],
+    "hardened_aliases": ["hardened", "repair", "tsm", "full"],
     "unknown_value_behavior": "strict",
     "unset_behavior": "strict",
     "resolution_scope": "process",
@@ -108,10 +96,7 @@
     {
       "id": "tests.unit.primary",
       "kind": "unit",
-      "evidence_sources": [
-        "runtime_policy_inline",
-        "completion_harness"
-      ],
+      "evidence_sources": ["runtime_policy_inline", "completion_harness"],
       "required_test_refs": [
         "runtime_mode_value_parser_is_strict_or_hardened_only",
         "mode_resolution_is_sticky_until_cache_reset",

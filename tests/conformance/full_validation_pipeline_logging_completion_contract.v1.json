@@ -130,11 +130,7 @@
         "count_healing_actions",
         "assert_file_exists"
       ],
-      "artifact_paths": [
-        "package/build.log",
-        "package/frankenlibc.jsonl",
-        "summary.json"
-      ]
+      "artifact_paths": ["package/build.log", "package/frankenlibc.jsonl", "summary.json"]
     },
     {
       "id": "build_wave",

@@ -5,6 +5,27 @@
   "lib_path": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
   "sample_count": 10,
   "warmup_runs": 2,
-  "results": [{"runtime":"python3","status":"PASS","baseline_p50_ns":20379538,"preload_p50_ns":40041614,"baseline_p999_ns":22083864,"preload_p999_ns":44816140,"ratio_p999_ppm":2029361,"budget_ppm":3000000},{"runtime":"perl","status":"PASS","baseline_p50_ns":8717474,"preload_p50_ns":20856875,"baseline_p999_ns":11240614,"preload_p999_ns":24617215,"ratio_p999_ppm":2190024,"budget_ppm":3000000}],
+  "results": [
+    {
+      "runtime": "python3",
+      "status": "PASS",
+      "baseline_p50_ns": 20379538,
+      "preload_p50_ns": 40041614,
+      "baseline_p999_ns": 22083864,
+      "preload_p999_ns": 44816140,
+      "ratio_p999_ppm": 2029361,
+      "budget_ppm": 3000000
+    },
+    {
+      "runtime": "perl",
+      "status": "PASS",
+      "baseline_p50_ns": 8717474,
+      "preload_p50_ns": 20856875,
+      "baseline_p999_ns": 11240614,
+      "preload_p999_ns": 24617215,
+      "ratio_p999_ppm": 2190024,
+      "budget_ppm": 3000000
+    }
+  ],
   "overall_status": "pass"
 }

@@ -122,9 +122,5 @@
     }
   ],
   "expires_at_horizon_days": 60,
-  "consuming_gates": [
-    "tests/conformance/replacement_levels.json",
-    "FEATURE_PARITY.md",
-    "README.md"
-  ]
+  "consuming_gates": ["tests/conformance/replacement_levels.json", "FEATURE_PARITY.md", "README.md"]
 }

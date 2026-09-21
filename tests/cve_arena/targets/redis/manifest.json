@@ -18,10 +18,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "IgnoreDoubleFree",
-      "ReturnSafeDefault"
-    ],
+    "healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"],
     "description": "Generational arena detects generation mismatch on stale userdata pointer; quarantine prevents reallocation of freed slot; healing engine returns safe default for the invalid access"
   },
   "tsm_features_tested": [

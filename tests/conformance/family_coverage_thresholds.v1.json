@@ -11,10 +11,7 @@
       "L2": "blocked until standalone host-dependency evidence exists",
       "L3": "blocked until cross-environment standalone evidence exists"
     },
-    "target_statuses": [
-      "Implemented",
-      "RawSyscall"
-    ]
+    "target_statuses": ["Implemented", "RawSyscall"]
   },
   "gaps_requiring_fixture_beads": [
     {
@@ -409,9 +406,7 @@
       "family_id": "c11threads_abi",
       "fixture_count": {
         "fixture_cases": 15,
-        "fixture_file_refs": [
-          "c11threads_ops.json"
-        ],
+        "fixture_file_refs": ["c11threads_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -500,13 +495,9 @@
       "family_id": "ctype_abi",
       "fixture_count": {
         "fixture_cases": 37,
-        "fixture_file_refs": [
-          "ctype_ops.json"
-        ],
+        "fixture_file_refs": ["ctype_ops.json"],
         "fixture_files": 1,
-        "isolated_fixture_ids": [
-          "fixture_ctype"
-        ],
+        "isolated_fixture_ids": ["fixture_ctype"],
         "isolated_fixture_mentions": 11
       },
       "freshness_state": {
@@ -593,9 +584,7 @@
       "family_id": "dirent_abi",
       "fixture_count": {
         "fixture_cases": 9,
-        "fixture_file_refs": [
-          "dirent_ops.json"
-        ],
+        "fixture_file_refs": ["dirent_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -684,9 +673,7 @@
       "family_id": "dlfcn_abi",
       "fixture_count": {
         "fixture_cases": 1,
-        "fixture_file_refs": [
-          "dlfcn_ops.json"
-        ],
+        "fixture_file_refs": ["dlfcn_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -702,9 +689,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "startup"
-        ]
+        "subsystems": ["startup"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 0,
@@ -866,9 +851,7 @@
       "family_id": "errno_abi",
       "fixture_count": {
         "fixture_cases": 5,
-        "fixture_file_refs": [
-          "errno_ops.json"
-        ],
+        "fixture_file_refs": ["errno_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -957,9 +940,7 @@
       "family_id": "fenv_abi",
       "fixture_count": {
         "fixture_cases": 11,
-        "fixture_file_refs": [
-          "fenv_ops.json"
-        ],
+        "fixture_file_refs": ["fenv_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1067,12 +1048,7 @@
       },
       "hard_parts_risk": {
         "risk_level": "normal",
-        "risk_tags": [
-          "buffer_boundary",
-          "claim_blocked",
-          "diagnostics_gap",
-          "hardened_repair"
-        ],
+        "risk_tags": ["buffer_boundary", "claim_blocked", "diagnostics_gap", "hardened_repair"],
         "subsystems": []
       },
       "mode_coverage": {
@@ -1116,11 +1092,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 5,
-        "workload_domains": [
-          "build_tools",
-          "performance_sensitive",
-          "shell_coreutils"
-        ],
+        "workload_domains": ["build_tools", "performance_sensitive", "shell_coreutils"],
         "workload_ids": []
       }
     },
@@ -1219,11 +1191,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 7,
-        "workload_domains": [
-          "build_tools",
-          "diagnostics",
-          "startup_linking"
-        ],
+        "workload_domains": ["build_tools", "diagnostics", "startup_linking"],
         "workload_ids": []
       }
     },
@@ -1253,13 +1221,9 @@
       "family_id": "grp_abi",
       "fixture_count": {
         "fixture_cases": 4,
-        "fixture_file_refs": [
-          "grp_ops.json"
-        ],
+        "fixture_file_refs": ["grp_ops.json"],
         "fixture_files": 1,
-        "isolated_fixture_ids": [
-          "fixture_nss"
-        ],
+        "isolated_fixture_ids": ["fixture_nss"],
         "isolated_fixture_mentions": 2
       },
       "freshness_state": {
@@ -1273,9 +1237,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "nss"
-        ]
+        "subsystems": ["nss"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 2,
@@ -1348,9 +1310,7 @@
       "family_id": "iconv_abi",
       "fixture_count": {
         "fixture_cases": 18,
-        "fixture_file_refs": [
-          "iconv_phase1.json"
-        ],
+        "fixture_file_refs": ["iconv_phase1.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1366,9 +1326,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "iconv"
-        ]
+        "subsystems": ["iconv"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 3,
@@ -1441,9 +1399,7 @@
       "family_id": "inet_abi",
       "fixture_count": {
         "fixture_cases": 10,
-        "fixture_file_refs": [
-          "inet_ops.json"
-        ],
+        "fixture_file_refs": ["inet_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1532,13 +1488,9 @@
       "family_id": "io_abi",
       "fixture_count": {
         "fixture_cases": 1,
-        "fixture_file_refs": [
-          "unistd_ops.json"
-        ],
+        "fixture_file_refs": ["unistd_ops.json"],
         "fixture_files": 1,
-        "isolated_fixture_ids": [
-          "fixture_io"
-        ],
+        "isolated_fixture_ids": ["fixture_io"],
         "isolated_fixture_mentions": 1
       },
       "freshness_state": {
@@ -1625,9 +1577,7 @@
       "family_id": "io_internal_abi",
       "fixture_count": {
         "fixture_cases": 27,
-        "fixture_file_refs": [
-          "io_internal_ops.json"
-        ],
+        "fixture_file_refs": ["io_internal_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1716,9 +1666,7 @@
       "family_id": "isoc_abi",
       "fixture_count": {
         "fixture_cases": 2,
-        "fixture_file_refs": [
-          "isoc_wide_scanf_ops.json"
-        ],
+        "fixture_file_refs": ["isoc_wide_scanf_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1807,10 +1755,7 @@
       "family_id": "locale_abi",
       "fixture_count": {
         "fixture_cases": 36,
-        "fixture_file_refs": [
-          "locale_catalog_wave01.json",
-          "locale_ops.json"
-        ],
+        "fixture_file_refs": ["locale_catalog_wave01.json", "locale_ops.json"],
         "fixture_files": 2,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1826,9 +1771,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "locale"
-        ]
+        "subsystems": ["locale"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 16,
@@ -1901,10 +1844,7 @@
       "family_id": "malloc_abi",
       "fixture_count": {
         "fixture_cases": 20,
-        "fixture_file_refs": [
-          "malloc_membrane_wave01.json",
-          "malloc_membrane_wave02.json"
-        ],
+        "fixture_file_refs": ["malloc_membrane_wave01.json", "malloc_membrane_wave02.json"],
         "fixture_files": 2,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1999,9 +1939,7 @@
           "math_ops.json"
         ],
         "fixture_files": 3,
-        "isolated_fixture_ids": [
-          "fixture_math"
-        ],
+        "isolated_fixture_ids": ["fixture_math"],
         "isolated_fixture_mentions": 7
       },
       "freshness_state": {
@@ -2064,11 +2002,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 6,
-        "workload_domains": [
-          "build_tools",
-          "language_runtimes",
-          "performance_sensitive"
-        ],
+        "workload_domains": ["build_tools", "language_runtimes", "performance_sensitive"],
         "workload_ids": []
       }
     },
@@ -2098,9 +2032,7 @@
       "family_id": "mmap_abi",
       "fixture_count": {
         "fixture_cases": 8,
-        "fixture_file_refs": [
-          "virtual_memory_ops.json"
-        ],
+        "fixture_file_refs": ["virtual_memory_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2304,9 +2236,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "startup"
-        ]
+        "subsystems": ["startup"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 25,
@@ -2392,10 +2322,7 @@
           "pthread_tls_keys.json"
         ],
         "fixture_files": 10,
-        "isolated_fixture_ids": [
-          "fixture_pthread",
-          "fixture_pthread_mutex_adversarial"
-        ],
+        "isolated_fixture_ids": ["fixture_pthread", "fixture_pthread_mutex_adversarial"],
         "isolated_fixture_mentions": 12
       },
       "freshness_state": {
@@ -2415,9 +2342,7 @@
           "pthread_cancellation",
           "threading"
         ],
-        "subsystems": [
-          "threading"
-        ]
+        "subsystems": ["threading"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 73,
@@ -2460,11 +2385,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 3,
-        "workload_domains": [
-          "language_runtimes",
-          "performance_sensitive",
-          "threaded_services"
-        ],
+        "workload_domains": ["language_runtimes", "performance_sensitive", "threaded_services"],
         "workload_ids": []
       }
     },
@@ -2494,13 +2415,9 @@
       "family_id": "pwd_abi",
       "fixture_count": {
         "fixture_cases": 4,
-        "fixture_file_refs": [
-          "pwd_ops.json"
-        ],
+        "fixture_file_refs": ["pwd_ops.json"],
         "fixture_files": 1,
-        "isolated_fixture_ids": [
-          "fixture_nss"
-        ],
+        "isolated_fixture_ids": ["fixture_nss"],
         "isolated_fixture_mentions": 2
       },
       "freshness_state": {
@@ -2514,9 +2431,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "nss"
-        ]
+        "subsystems": ["nss"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 2,
@@ -2589,9 +2504,7 @@
       "family_id": "resolv_abi",
       "fixture_count": {
         "fixture_cases": 12,
-        "fixture_file_refs": [
-          "resolver_nss_core_wave01.json"
-        ],
+        "fixture_file_refs": ["resolver_nss_core_wave01.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2607,10 +2520,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "nss",
-          "resolver"
-        ]
+        "subsystems": ["nss", "resolver"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 6,
@@ -2683,9 +2593,7 @@
       "family_id": "resource_abi",
       "fixture_count": {
         "fixture_cases": 11,
-        "fixture_file_refs": [
-          "resource_ops.json"
-        ],
+        "fixture_file_refs": ["resource_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2842,11 +2750,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 8,
-        "workload_domains": [
-          "legacy_network",
-          "package_manager",
-          "resolver_nss"
-        ],
+        "workload_domains": ["legacy_network", "package_manager", "resolver_nss"],
         "workload_ids": []
       }
     },
@@ -2965,9 +2869,7 @@
       "family_id": "search_abi",
       "fixture_count": {
         "fixture_cases": 5,
-        "fixture_file_refs": [
-          "search_ops.json"
-        ],
+        "fixture_file_refs": ["search_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3056,9 +2958,7 @@
       "family_id": "setjmp_abi",
       "fixture_count": {
         "fixture_cases": 6,
-        "fixture_file_refs": [
-          "setjmp_ops.json"
-        ],
+        "fixture_file_refs": ["setjmp_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3240,14 +3140,9 @@
       "family_id": "socket_abi",
       "fixture_count": {
         "fixture_cases": 34,
-        "fixture_file_refs": [
-          "socket_network_wave01.json",
-          "socket_ops.json"
-        ],
+        "fixture_file_refs": ["socket_network_wave01.json", "socket_ops.json"],
         "fixture_files": 2,
-        "isolated_fixture_ids": [
-          "fixture_socket"
-        ],
+        "isolated_fixture_ids": ["fixture_socket"],
         "isolated_fixture_mentions": 6
       },
       "freshness_state": {
@@ -3350,9 +3245,7 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": [
-          "startup"
-        ]
+        "subsystems": ["startup"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 0,
@@ -3425,9 +3318,7 @@
       "family_id": "stdbit_abi",
       "fixture_count": {
         "fixture_cases": 140,
-        "fixture_file_refs": [
-          "stdbit_ops.json"
-        ],
+        "fixture_file_refs": ["stdbit_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3584,12 +3475,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 2,
-        "workload_domains": [
-          "build_tools",
-          "package_manager",
-          "shell_coreutils",
-          "stdio_libio"
-        ],
+        "workload_domains": ["build_tools", "package_manager", "shell_coreutils", "stdio_libio"],
         "workload_ids": []
       }
     },
@@ -3735,11 +3621,7 @@
           "strlen_strict.json"
         ],
         "fixture_files": 19,
-        "isolated_fixture_ids": [
-          "fixture_malloc",
-          "fixture_malloc_stress",
-          "fixture_string"
-        ],
+        "isolated_fixture_ids": ["fixture_malloc", "fixture_malloc_stress", "fixture_string"],
         "isolated_fixture_mentions": 8
       },
       "freshness_state": {
@@ -3826,9 +3708,7 @@
       "family_id": "termios_abi",
       "fixture_count": {
         "fixture_cases": 8,
-        "fixture_file_refs": [
-          "termios_ops.json"
-        ],
+        "fixture_file_refs": ["termios_ops.json"],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -4035,9 +3915,7 @@
           "unistd_process_filesystem_wave13.json"
         ],
         "fixture_files": 22,
-        "isolated_fixture_ids": [
-          "fixture_io"
-        ],
+        "isolated_fixture_ids": ["fixture_io"],
         "isolated_fixture_mentions": 6
       },
       "freshness_state": {
@@ -4162,10 +4040,7 @@
           "semantic_divergence",
           "stateful_encoding"
         ],
-        "subsystems": [
-          "iconv",
-          "locale"
-        ]
+        "subsystems": ["iconv", "locale"]
       },
       "mode_coverage": {
         "dual_mode_symbols": 40,
@@ -4208,11 +4083,7 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 4,
-        "workload_domains": [
-          "language_runtimes",
-          "locale_iconv",
-          "shell_coreutils"
-        ],
+        "workload_domains": ["language_runtimes", "locale_iconv", "shell_coreutils"],
         "workload_ids": []
       }
     }

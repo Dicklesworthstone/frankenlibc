@@ -63,10 +63,7 @@
     ],
     "fail_closed_when_lane_id_label_wrong": true,
     "fail_closed_when_anchoring_field_differs_between_lanes": true,
-    "rejected_evidence_kinds_added": [
-      "lane_id_label_wrong",
-      "lane_pair_anchoring_field_differs"
-    ]
+    "rejected_evidence_kinds_added": ["lane_id_label_wrong", "lane_pair_anchoring_field_differs"]
   },
   "policy": {
     "default_decision": "block_promotion_until_lanes_agree_on_isomorphism_witness",

@@ -11,11 +11,7 @@
     "score_threshold": 800
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800,
     "non_claim": "This contract binds the existing mode semantics matrix evidence and adds completion telemetry; it does not change strict or hardened runtime behavior."
   },
@@ -23,10 +19,7 @@
     "schema_version": 1,
     "bead": "bd-wud",
     "env_variable": "FRANKENLIBC_MODE",
-    "modes": [
-      "strict",
-      "hardened"
-    ],
+    "modes": ["strict", "hardened"],
     "total_families": 20,
     "families_with_healing": 19,
     "total_heals_call_sites": 141
@@ -166,9 +159,7 @@
       "required_commands": [
         "rch exec -- cargo test -p frankenlibc-harness --test mode_semantics_test -- --nocapture"
       ],
-      "required_completion_events": [
-        "mode_semantics_matrix.unit_binding_validated"
-      ]
+      "required_completion_events": ["mode_semantics_matrix.unit_binding_validated"]
     },
     {
       "missing_item_id": "tests.e2e.primary",
@@ -183,9 +174,7 @@
         "bash scripts/check_mode_semantics.sh",
         "bash scripts/check_mode_semantics_matrix_completion_contract.sh"
       ],
-      "required_completion_events": [
-        "mode_semantics_matrix.e2e_binding_validated"
-      ]
+      "required_completion_events": ["mode_semantics_matrix.e2e_binding_validated"]
     },
     {
       "missing_item_id": "telemetry.primary",

@@ -7,10 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-b5a.3/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "source_paths": {
     "scenario_manifest": "tests/conformance/e2e_scenario_manifest.v1.json",
@@ -205,10 +202,7 @@
       "FRANKENLIBC_E2E_COMPLETION_ONLY",
       "e2e_suite_completion_debt_validated"
     ],
-    "ci_script": [
-      "deterministic E2E CI gate",
-      "scripts/check_e2e_suite.sh"
-    ],
+    "ci_script": ["deterministic E2E CI gate", "scripts/check_e2e_suite.sh"],
     "e2e_suite_harness": [
       "fn e2e_suite_runs_and_produces_jsonl",
       "fn e2e_suite_supports_manifest_dry_run",
@@ -220,12 +214,7 @@
     ]
   },
   "gate_contract": {
-    "required_scenario_packs": [
-      "smoke",
-      "stress",
-      "fault",
-      "stability"
-    ],
+    "required_scenario_packs": ["smoke", "stress", "fault", "stability"],
     "required_artifacts": [
       "trace.jsonl",
       "artifact_index.json",
@@ -264,9 +253,7 @@
       "e2e_suite_completion_debt_validated"
     ],
     "ci_gate": {
-      "required_scripts": [
-        "scripts/check_e2e_suite.sh"
-      ],
+      "required_scripts": ["scripts/check_e2e_suite.sh"],
       "gating_mode": "extended"
     },
     "quarantine_policy": {

@@ -122,7 +122,13 @@
       "evidence_snapshot": {
         "ring_sequence_start": 1020,
         "ring_sequence_end": 1024,
-        "event_ids": ["ev-1020-policy", "ev-1021-arena", "ev-1022-generation", "ev-1023-heal", "ev-1024-repair"],
+        "event_ids": [
+          "ev-1020-policy",
+          "ev-1021-arena",
+          "ev-1022-generation",
+          "ev-1023-heal",
+          "ev-1024-repair"
+        ],
         "snapshot_age_state": "current",
         "redaction_state": "none"
       },

@@ -5,10 +5,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-15n.2/scorecard.md",
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary"],
     "closed_reason_original": "Fixture gap-fill wave validated: strict+hardened artifacts pass after socket invalid-fd errno fix; traceability + mode expectations are deterministic and green."
   },
   "completion_debt_evidence": {
@@ -16,15 +13,8 @@
     "original_bead": "bd-15n.2",
     "next_audit_score_threshold": 800,
     "gate": "scripts/check_bd15n2_fixture_gap_fill_completion_contract.sh",
-    "required_fixtures": [
-      "fixture_ctype",
-      "fixture_math",
-      "fixture_socket"
-    ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_fixtures": ["fixture_ctype", "fixture_math", "fixture_socket"],
+    "required_modes": ["strict", "hardened"],
     "required_trace_fields": [
       "timestamp",
       "trace_id",

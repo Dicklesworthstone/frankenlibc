@@ -75,12 +75,20 @@
       {
         "id": "bd-r5k32.1",
         "status": "closed",
-        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "rch exec"]
+        "evidence_fragments": [
+          "jq empty",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "rch exec"
+        ]
       },
       {
         "id": "bd-r5k32.2",
         "status": "closed",
-        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+        "evidence_fragments": [
+          "jq empty",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "remote RCH"
+        ]
       },
       {
         "id": "bd-r5k32.3",
@@ -95,47 +103,83 @@
       {
         "id": "bd-r5k32.5",
         "status": "closed",
-        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "Tracker-only closeout",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-r5k32.6",
         "status": "closed",
-        "evidence_fragments": ["jq empty", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+        "evidence_fragments": [
+          "jq empty",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "remote RCH"
+        ]
       },
       {
         "id": "bd-r5k32.7",
         "status": "closed",
-        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "Tracker-only closeout",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-r5k32.8",
         "status": "closed",
-        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "Tracker-only closeout",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-r5k32.9",
         "status": "closed",
-        "evidence_fragments": ["Tracker-only closeout", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "Tracker-only closeout",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-r5k32.10",
         "status": "closed",
-        "evidence_fragments": ["time/clock calendar wave-01", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "time/clock calendar wave-01",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-r5k32.11",
         "status": "closed",
-        "evidence_fragments": ["math_finite_special_wave02", "scripts/check_fixture_coverage_prioritizer.sh", "remote RCH"]
+        "evidence_fragments": [
+          "math_finite_special_wave02",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "remote RCH"
+        ]
       },
       {
         "id": "bd-r5k32.12",
         "status": "closed",
-        "evidence_fragments": ["signal_async_wave01", "scripts/check_fixture_coverage_prioritizer.sh", "rch cargo"]
+        "evidence_fragments": [
+          "signal_async_wave01",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "rch cargo"
+        ]
       },
       {
         "id": "bd-r5k32.13",
         "status": "closed",
-        "evidence_fragments": ["glibc_internal_compat_wave02", "scripts/check_fixture_coverage_prioritizer.sh", "rch tests"]
+        "evidence_fragments": [
+          "glibc_internal_compat_wave02",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "rch tests"
+        ]
       },
       {
         "id": "bd-r5k32.14",

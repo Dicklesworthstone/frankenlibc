@@ -67,12 +67,7 @@
         "source_contract_annotation_drift",
         "support_taxonomy_claim_blocker"
       ],
-      "required_replay_kinds": [
-        "allowlisted",
-        "clean",
-        "new_drift",
-        "stale_artifact"
-      ],
+      "required_replay_kinds": ["allowlisted", "clean", "new_drift", "stale_artifact"],
       "required_log_fields": [
         "trace_id",
         "bead_id",

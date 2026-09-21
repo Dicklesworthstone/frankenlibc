@@ -101,10 +101,7 @@
         "owner": "docs.api",
         "review_policy": "ABI support owner review required whenever symbol classification or parity narratives change",
         "freshness_status": "fresh",
-        "backing_paths": [
-          "FEATURE_PARITY.md",
-          "README.md"
-        ],
+        "backing_paths": ["FEATURE_PARITY.md", "README.md"],
         "source_artifacts": [
           "tests/conformance/reality_report.v1.json",
           "tests/conformance/verification_matrix.json",
@@ -120,9 +117,7 @@
         "owner": "docs.conformance",
         "review_policy": "conformance owner review required when fixture families or traceability coverage change",
         "freshness_status": "fresh",
-        "backing_paths": [
-          "FEATURE_PARITY.md"
-        ],
+        "backing_paths": ["FEATURE_PARITY.md"],
         "source_artifacts": [
           "tests/conformance/per_symbol_fixture_tests.v1.json",
           "tests/conformance/symbol_fixture_coverage.v1.json",
@@ -163,25 +158,19 @@
     {
       "id": "docs_env_gate",
       "command": "bash scripts/check_docs_env_mismatch.sh",
-      "expected_stdout": [
-        "PASS: docs source-of-truth map validated"
-      ],
+      "expected_stdout": ["PASS: docs source-of-truth map validated"],
       "timeout_seconds": 120
     },
     {
       "id": "docs_semantic_claims_gate",
       "command": "bash scripts/check_docs_semantic_claims.sh",
-      "expected_stdout": [
-        "\"status\": \"pass\""
-      ],
+      "expected_stdout": ["\"status\": \"pass\""],
       "timeout_seconds": 120
     },
     {
       "id": "support_matrix_maintenance_gate",
       "command": "bash scripts/check_support_matrix_maintenance.sh",
-      "expected_stdout": [
-        "check_support_matrix_maintenance (default): PASS"
-      ],
+      "expected_stdout": ["check_support_matrix_maintenance (default): PASS"],
       "timeout_seconds": 180
     },
     {
@@ -190,17 +179,13 @@
       "env": {
         "FRANKENLIBC_SUPPORT_MATRIX_UNIVERSE_COMPLETION_OUT_DIR": "<out_dir>/support_matrix_universe"
       },
-      "expected_stdout": [
-        "PASS: support_matrix universe docs completion contract"
-      ],
+      "expected_stdout": ["PASS: support_matrix universe docs completion contract"],
       "timeout_seconds": 120
     },
     {
       "id": "claim_reconciliation_gate",
       "command": "bash scripts/check_claim_reconciliation.sh <out_dir>/claim_reconciliation_report.v1.json",
-      "expected_stdout": [
-        "PASS: No contradictions detected across canonical artifacts."
-      ],
+      "expected_stdout": ["PASS: No contradictions detected across canonical artifacts."],
       "timeout_seconds": 120
     }
   ],

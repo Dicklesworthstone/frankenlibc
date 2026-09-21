@@ -18,10 +18,7 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/runtime_kernel_snapshot_completion_contract_test.rs"
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"],
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",
       "description": "Unit evidence pins RuntimeKernelSnapshot schema completeness, non-reentrant snapshot construction, field range sanity, monotone counters, structured fixture serialization, and structured diff rendering.",
@@ -126,10 +123,7 @@
         "time"
       ]
     },
-    "modes": [
-      "strict",
-      "hardened"
-    ],
+    "modes": ["strict", "hardened"],
     "expected_sha256": "90ee952d0398f187d583ce552014cad53d102c5102118ab6e83b6e1b788a7651",
     "expected_filename": "kernel_snapshot_smoke.v1.json",
     "required_snapshot_fields": [
@@ -166,11 +160,7 @@
         "SnapshotMode::Both",
         "snapshot_lines"
       ],
-      "snapshot_diff_source": [
-        "snapshot_field_map",
-        "KEY_FIELDS",
-        "DiffStatus::Alert"
-      ]
+      "snapshot_diff_source": ["snapshot_field_map", "KEY_FIELDS", "DiffStatus::Alert"]
     }
   },
   "telemetry_contract": {
@@ -206,8 +196,6 @@
       "runtime_kernel_snapshot_e2e_bindings_verified",
       "runtime_kernel_snapshot_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "runtime_kernel_snapshot_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["runtime_kernel_snapshot_completion_contract_fail"]
   }
 }

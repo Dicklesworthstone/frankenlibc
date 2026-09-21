@@ -9,11 +9,7 @@
     {
       "artifact_id": "runtime_evidence_replay_gate",
       "path": "tests/conformance/runtime_evidence_replay_gate.v1.json",
-      "required_needles": [
-        "\"required_decisions\"",
-        "\"artifact_refs\"",
-        "\"failure_signature\""
-      ]
+      "required_needles": ["\"required_decisions\"", "\"artifact_refs\"", "\"failure_signature\""]
     },
     {
       "artifact_id": "runtime_evidence_replay_checker",
@@ -38,11 +34,7 @@
     {
       "artifact_id": "pareto_regret_controller",
       "path": "crates/frankenlibc-membrane/src/runtime_math/pareto.rs",
-      "required_needles": [
-        "counterfactual",
-        "cumulative_regret_milli",
-        "regret_cap_milli"
-      ]
+      "required_needles": ["counterfactual", "cumulative_regret_milli", "regret_cap_milli"]
     },
     {
       "artifact_id": "proof_carrying_policy_audit",
@@ -69,12 +61,7 @@
     "max_latency_regression_ns": 20,
     "max_risk_regression_ppm": 0,
     "max_regret_ppm": 0,
-    "required_terminal_decisions": [
-      "Allow",
-      "FullValidate",
-      "Repair",
-      "Deny"
-    ],
+    "required_terminal_decisions": ["Allow", "FullValidate", "Repair", "Deny"],
     "required_failure_signatures": [
       "none",
       "missing_counterfactual_dossier",
@@ -200,9 +187,7 @@
       },
       "expected_promotion_decision": "block_promotion",
       "expected_failure_signature": "strict_repair_candidate",
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/policy_table.rs"
-      ]
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/policy_table.rs"]
     },
     {
       "case_id": "stdio-latency-regression-blocked",
@@ -292,9 +277,7 @@
       },
       "expected_promotion_decision": "block_promotion",
       "expected_failure_signature": "regret_budget_exceeded",
-      "artifact_refs": [
-        "crates/frankenlibc-membrane/src/runtime_math/pareto.rs"
-      ]
+      "artifact_refs": ["crates/frankenlibc-membrane/src/runtime_math/pareto.rs"]
     }
   ],
   "negative_cases": [
@@ -327,10 +310,7 @@
     "bead": "bd-26xb.5.1",
     "original_bead": "bd-26xb.5",
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"],
     "unit_primary": {
       "test_source": "crates/frankenlibc-harness/tests/counterfactual_policy_simulator_completion_contract_test.rs",
       "required_test_names": [

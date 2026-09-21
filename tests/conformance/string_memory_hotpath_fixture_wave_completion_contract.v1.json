@@ -109,25 +109,9 @@
       "__strsep_1c",
       "__strsep_2c"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
-    "forbidden_ambient_output_tokens": [
-      "0x",
-      "ptr=",
-      "address",
-      "locale_t",
-      "errno_buf",
-      "/tmp"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
+    "forbidden_ambient_output_tokens": ["0x", "ptr=", "address", "locale_t", "errno_buf", "/tmp"],
     "coverage_accounting": {
       "campaign_target_covered_min": 49,
       "campaign_target_uncovered_max": 97,

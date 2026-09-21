@@ -7,54 +7,42 @@
       "review_policies": [
         "ABI support owner review required whenever symbol classification or parity narratives change"
       ],
-      "surfaces": [
-        "API"
-      ]
+      "surfaces": ["API"]
     },
     {
       "owner": "docs.architecture",
       "review_policies": [
         "membrane owner review required for boundary, mode, or validation-order changes"
       ],
-      "surfaces": [
-        "ARCHITECTURE"
-      ]
+      "surfaces": ["ARCHITECTURE"]
     },
     {
       "owner": "docs.conformance",
       "review_policies": [
         "conformance owner review required when fixture families or traceability coverage change"
       ],
-      "surfaces": [
-        "API"
-      ]
+      "surfaces": ["API"]
     },
     {
       "owner": "docs.deployment",
       "review_policies": [
         "release-packaging review required when install commands, artifact names, or preload flows change"
       ],
-      "surfaces": [
-        "DEPLOYMENT"
-      ]
+      "surfaces": ["DEPLOYMENT"]
     },
     {
       "owner": "docs.gentoo",
       "review_policies": [
         "Gentoo workflow owner reviews any change to Portage hooks, runner behavior, or validation report schema"
       ],
-      "surfaces": [
-        "DEPLOYMENT"
-      ]
+      "surfaces": ["DEPLOYMENT"]
     },
     {
       "owner": "docs.governance",
       "review_policies": [
         "docs-governance owner reviews mapping changes and confirms regenerated artifacts before merge"
       ],
-      "surfaces": [
-        "TROUBLESHOOTING"
-      ]
+      "surfaces": ["TROUBLESHOOTING"]
     },
     {
       "owner": "docs.release",
@@ -62,45 +50,35 @@
         "release-integrity review required when README smoke status, checked artifact counts, or replacement-level readiness claims change",
         "release-integrity review required when support taxonomy, replacement level, or packaging claims change"
       ],
-      "surfaces": [
-        "README"
-      ]
+      "surfaces": ["README"]
     },
     {
       "owner": "docs.runtime_math",
       "review_policies": [
         "runtime-math owner review required for controller inventory, policy-table, or proof-linkage changes"
       ],
-      "surfaces": [
-        "ARCHITECTURE"
-      ]
+      "surfaces": ["ARCHITECTURE"]
     },
     {
       "owner": "docs.security",
       "review_policies": [
         "security owner review required for threat-model language, hardened actions, or CVE evidence changes"
       ],
-      "surfaces": [
-        "SECURITY"
-      ]
+      "surfaces": ["SECURITY"]
     },
     {
       "owner": "docs.triage",
       "review_policies": [
         "release-integrity owner reviews operator guidance when gate signatures or remediation steps change"
       ],
-      "surfaces": [
-        "TROUBLESHOOTING"
-      ]
+      "surfaces": ["TROUBLESHOOTING"]
     },
     {
       "owner": "docs.verification",
       "review_policies": [
         "harness owner reviews command examples and failure triage whenever gates or replay flows change"
       ],
-      "surfaces": [
-        "README"
-      ]
+      "surfaces": ["README"]
     }
   ],
   "schema_version": "v1",
@@ -118,10 +96,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "README.md",
-            "FEATURE_PARITY.md"
-          ],
+          "backing_paths": ["README.md", "FEATURE_PARITY.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.release",
@@ -141,9 +116,7 @@
           ]
         },
         {
-          "backing_paths": [
-            "README.md"
-          ],
+          "backing_paths": ["README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.release",
@@ -161,9 +134,7 @@
           ]
         },
         {
-          "backing_paths": [
-            "README.md"
-          ],
+          "backing_paths": ["README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.verification",
@@ -176,10 +147,7 @@
             "scripts/ci.sh",
             "scripts/e2e_suite.sh"
           ],
-          "update_triggers": [
-            "scripts/check_docs_env_mismatch.sh",
-            "scripts/check_e2e_suite.sh"
-          ]
+          "update_triggers": ["scripts/check_docs_env_mismatch.sh", "scripts/check_e2e_suite.sh"]
         }
       ],
       "split_status": "materialized",
@@ -193,11 +161,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "PROPOSED_ARCHITECTURE.md",
-            "AGENTS.md",
-            "README.md"
-          ],
+          "backing_paths": ["PROPOSED_ARCHITECTURE.md", "AGENTS.md", "README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.architecture",
@@ -215,10 +179,7 @@
           ]
         },
         {
-          "backing_paths": [
-            "PROPOSED_ARCHITECTURE.md",
-            "README.md"
-          ],
+          "backing_paths": ["PROPOSED_ARCHITECTURE.md", "README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.runtime_math",
@@ -247,10 +208,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "DEPLOYMENT.md",
-            "README.md"
-          ],
+          "backing_paths": ["DEPLOYMENT.md", "README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.deployment",
@@ -263,10 +221,7 @@
             "scripts/ld_preload_smoke.sh",
             "scripts/e2e_suite.sh"
           ],
-          "update_triggers": [
-            "scripts/check_packaging.sh",
-            "scripts/check_replacement_levels.sh"
-          ]
+          "update_triggers": ["scripts/check_packaging.sh", "scripts/check_replacement_levels.sh"]
         },
         {
           "backing_paths": [
@@ -287,10 +242,7 @@
             "scripts/gentoo/validate-docs.py",
             "tests/conformance/reality_report.v1.json"
           ],
-          "update_triggers": [
-            "scripts/gentoo/validate-docs.py",
-            "scripts/check_structured_logs.sh"
-          ]
+          "update_triggers": ["scripts/gentoo/validate-docs.py", "scripts/check_structured_logs.sh"]
         }
       ],
       "split_status": "materialized",
@@ -304,11 +256,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "README.md",
-            "AGENTS.md",
-            "docs/proofs/hardened_mode_safety.md"
-          ],
+          "backing_paths": ["README.md", "AGENTS.md", "docs/proofs/hardened_mode_safety.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.security",
@@ -337,10 +285,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "FEATURE_PARITY.md",
-            "README.md"
-          ],
+          "backing_paths": ["FEATURE_PARITY.md", "README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.api",
@@ -358,9 +303,7 @@
           ]
         },
         {
-          "backing_paths": [
-            "FEATURE_PARITY.md"
-          ],
+          "backing_paths": ["FEATURE_PARITY.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.conformance",
@@ -389,10 +332,7 @@
       "missing_inputs": [],
       "sections": [
         {
-          "backing_paths": [
-            "README.md",
-            "tests/conformance/release_gate_runner_runbook.md"
-          ],
+          "backing_paths": ["README.md", "tests/conformance/release_gate_runner_runbook.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.triage",
@@ -410,9 +350,7 @@
           ]
         },
         {
-          "backing_paths": [
-            "README.md"
-          ],
+          "backing_paths": ["README.md"],
           "freshness_status": "fresh",
           "missing_inputs": [],
           "owner": "docs.governance",

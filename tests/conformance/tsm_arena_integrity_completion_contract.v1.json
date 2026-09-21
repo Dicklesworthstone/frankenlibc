@@ -21,23 +21,14 @@
     "completion_unit_test": "crates/frankenlibc-harness/tests/tsm_arena_integrity_completion_contract_test.rs"
   },
   "implementation_contract": {
-    "stage_labels": [
-      "arena_lookup",
-      "fingerprint",
-      "canary",
-      "bounds"
-    ],
+    "stage_labels": ["arena_lookup", "fingerprint", "canary", "bounds"],
     "stage_paths": [
       "pipeline::stage4::arena",
       "pipeline::stage5::fingerprint",
       "pipeline::stage6::canary",
       "pipeline::stage7::bounds"
     ],
-    "required_outcomes": [
-      "Validated",
-      "TemporalViolation",
-      "Invalid"
-    ],
+    "required_outcomes": ["Validated", "TemporalViolation", "Invalid"],
     "ptr_validator_needles": [
       "CheckStage::Arena => \"arena_lookup\"",
       "CheckStage::Fingerprint => \"fingerprint\"",
@@ -84,20 +75,23 @@
   "unit_primary": {
     "missing_item_id": "tests.unit.primary",
     "required_test_refs": [
-      {"source": "arena", "name": "lookup_finds_allocation"},
-      {"source": "arena", "name": "lookup_into_middle_of_allocation"},
-      {"source": "arena", "name": "canary_corruption_detected"},
-      {"source": "arena", "name": "proof_foreign_pointers_always_rejected"},
-      {"source": "fingerprint", "name": "fingerprint_roundtrip"},
-      {"source": "fingerprint", "name": "fingerprint_verify_fails_for_wrong_addr"},
-      {"source": "fingerprint", "name": "proof_fingerprint_single_bit_sensitivity"},
-      {"source": "fingerprint", "name": "proof_canary_detects_all_single_byte_corruptions"},
-      {"source": "ptr_validator", "name": "allocated_pointer_validates"},
-      {"source": "ptr_validator", "name": "interior_pointer_on_owned_page_is_not_misclassified_as_foreign"},
-      {"source": "ptr_validator", "name": "canary_corruption_detected_via_pipeline_free"},
-      {"source": "ptr_validator", "name": "one_past_end_pointer_is_denied_as_invalid"},
-      {"source": "ptr_validator", "name": "header_pointer_is_denied_as_invalid"},
-      {"source": "ptr_validator", "name": "dependency_safe_order_property_holds"}
+      { "source": "arena", "name": "lookup_finds_allocation" },
+      { "source": "arena", "name": "lookup_into_middle_of_allocation" },
+      { "source": "arena", "name": "canary_corruption_detected" },
+      { "source": "arena", "name": "proof_foreign_pointers_always_rejected" },
+      { "source": "fingerprint", "name": "fingerprint_roundtrip" },
+      { "source": "fingerprint", "name": "fingerprint_verify_fails_for_wrong_addr" },
+      { "source": "fingerprint", "name": "proof_fingerprint_single_bit_sensitivity" },
+      { "source": "fingerprint", "name": "proof_canary_detects_all_single_byte_corruptions" },
+      { "source": "ptr_validator", "name": "allocated_pointer_validates" },
+      {
+        "source": "ptr_validator",
+        "name": "interior_pointer_on_owned_page_is_not_misclassified_as_foreign"
+      },
+      { "source": "ptr_validator", "name": "canary_corruption_detected_via_pipeline_free" },
+      { "source": "ptr_validator", "name": "one_past_end_pointer_is_denied_as_invalid" },
+      { "source": "ptr_validator", "name": "header_pointer_is_denied_as_invalid" },
+      { "source": "ptr_validator", "name": "dependency_safe_order_property_holds" }
     ],
     "required_commands": [
       "rch cargo test -p frankenlibc-membrane allocated_pointer_validates --lib -- --nocapture",
@@ -108,14 +102,14 @@
   "e2e_primary": {
     "missing_item_id": "tests.e2e.primary",
     "required_test_refs": [
-      {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
-      {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
-      {"source": "tsm_pipeline_e2e", "name": "small_allocation_validated"},
-      {"source": "tsm_pipeline_e2e", "name": "large_allocation_validated"},
-      {"source": "tsm_pipeline_e2e", "name": "rapid_alloc_free_cycles"},
-      {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
-      {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"},
-      {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"}
+      { "source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle" },
+      { "source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent" },
+      { "source": "tsm_pipeline_e2e", "name": "small_allocation_validated" },
+      { "source": "tsm_pipeline_e2e", "name": "large_allocation_validated" },
+      { "source": "tsm_pipeline_e2e", "name": "rapid_alloc_free_cycles" },
+      { "source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload" },
+      { "source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload" },
+      { "source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields" }
     ],
     "required_commands": [
       "rch cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test alloc_validate_free_lifecycle -- --nocapture",

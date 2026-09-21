@@ -12,11 +12,7 @@
     "invariants_coverage": "4/5",
     "total_gaps": 3,
     "high_severity_gaps": 1,
-    "cwe_targets": [
-      "CWE-476",
-      "CWE-824",
-      "CWE-825"
-    ]
+    "cwe_targets": ["CWE-476", "CWE-824", "CWE-825"]
   },
   "source_analysis": {
     "source_file": "fuzz_membrane.rs",

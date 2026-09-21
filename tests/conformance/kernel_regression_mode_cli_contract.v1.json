@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary 'kernel-regression-mode' subcommand which exposes frankenlibc_harness::kernel_regression_report::collect_mode_metrics as a CLI. The subcommand exists as a separate process boundary because FRANKENLIBC_MODE is process-immutable; collect_mode_metrics enforces that the cached SafetyLevel at process start matches the --mode flag. The parent 'kernel-regression-report' command spawns one of these per mode (strict + hardened) and aggregates them. Emits single pretty JSON KernelModeMetrics record to stdout (microbench latency stats, action/risk/family diagnostics, snapshot key, pareto trend).",
   "subcommand_name": "kernel-regression-mode",
   "binary_target": "harness",
-  "required_flags": [
-    "--mode"
-  ],
+  "required_flags": ["--mode"],
   "optional_flags": [
     "--seed",
     "--steps",
@@ -40,10 +38,7 @@
       "notes"
     ]
   },
-  "mode_enum": [
-    "strict",
-    "hardened"
-  ],
+  "mode_enum": ["strict", "hardened"],
   "default_seed_hex": "0xDEAD_BEEF",
   "default_steps": 256,
   "default_warmup_iters": 10000,

@@ -17,10 +17,7 @@
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-libm-with-errno-bridge",
     "accepted_host_symbols": [
       "<dynamic>",

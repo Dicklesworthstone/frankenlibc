@@ -22,10 +22,7 @@
         "GlibcCallThrough",
         "Stub"
       ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "replacement_levels": ["L0", "L1"],
       "cargo_features": [],
       "cargo_profile": "release",
       "crate_type": "cdylib",
@@ -44,17 +41,9 @@
         "hardened": "FRANKENLIBC_MODE=hardened with direct link or LD_PRELOAD"
       },
       "host_glibc_required": false,
-      "allowed_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
-      "replacement_levels": [
-        "L2",
-        "L3"
-      ],
-      "cargo_features": [
-        "standalone"
-      ],
+      "allowed_statuses": ["Implemented", "RawSyscall"],
+      "replacement_levels": ["L2", "L3"],
+      "cargo_features": ["standalone"],
       "cargo_profile": "release",
       "crate_type": "cdylib",
       "version_script": "crates/frankenlibc-abi/version_scripts/libc.map",
@@ -168,24 +157,18 @@
     },
     "standalone": {
       "description": "Future feature gate for Replace artifact. When enabled, GlibcCallThrough symbols must have native implementations and Stub symbols must be eliminated.",
-      "features": [
-        "standalone"
-      ],
+      "features": ["standalone"],
       "compile_time_enforcement": "cfg(feature = \"standalone\") gates should reject GlibcCallThrough dispatch at compile time",
       "status": "planned"
     },
     "runtime-math-production": {
       "description": "Enables production-tier runtime_math modules (barrier, bandit, control, risk, etc.).",
-      "features": [
-        "runtime-math-production"
-      ],
+      "features": ["runtime-math-production"],
       "applies_to": "both"
     },
     "runtime-math-research": {
       "description": "Enables research-tier runtime_math modules (alien artifact modules).",
-      "features": [
-        "runtime-math-research"
-      ],
+      "features": ["runtime-math-research"],
       "applies_to": "both"
     }
   },

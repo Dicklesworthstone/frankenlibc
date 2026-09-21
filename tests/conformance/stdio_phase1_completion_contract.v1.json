@@ -20,11 +20,7 @@
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-2vv.3.1/scorecard.md",
     "audit_score": 470,
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
   },
   "target_symbols": [
     "fopen",
@@ -93,15 +89,8 @@
   "e2e_primary": {
     "fixture_id": "fixture_stdio",
     "fixture_source": "tests/integration/fixture_stdio.c",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_artifacts": [
-      "c_fixture_spec",
-      "e2e_runner",
-      "e2e_stdio_fixture"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_artifacts": ["c_fixture_spec", "e2e_runner", "e2e_stdio_fixture"],
     "required_commands": [
       "rch exec -- env BEAD_ID=bd-2vv.3.1.1 FIXTURE_FILTER=fixture_stdio.c bash scripts/c_fixture_suite.sh"
     ],
@@ -117,10 +106,7 @@
       "stdio_phase1_completion.telemetry_contract",
       "stdio_phase1_completion.completion_contract_validated"
     ],
-    "required_fixture_events": [
-      "fixture_result",
-      "run_summary"
-    ],
+    "required_fixture_events": ["fixture_result", "run_summary"],
     "required_log_fields": [
       "trace_id",
       "mode",

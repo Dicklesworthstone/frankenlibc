@@ -8,11 +8,7 @@
   "subcommand_name": "runtime-math-divergence-bounds",
   "binary_target": "harness",
   "required_flags": [],
-  "optional_flags": [
-    "--workspace-root",
-    "--log",
-    "--report"
-  ],
+  "optional_flags": ["--workspace-root", "--log", "--report"],
   "underlying_lib_functions": [
     "frankenlibc_harness::runtime_math_divergence_bounds::run_and_write"
   ],

@@ -4,17 +4,9 @@
   "bead": "bd-iu3fb.2",
   "workstream": "anti-recurrence",
   "issues_source": ".beads/issues.jsonl",
-  "forbidden_sources": [
-    ".beads/beads.db",
-    ".beads/issues.db",
-    "br",
-    "bv"
-  ],
+  "forbidden_sources": [".beads/beads.db", ".beads/issues.db", "br", "bv"],
   "queue_empty_definition": {
-    "active_statuses": [
-      "open",
-      "in_progress"
-    ],
+    "active_statuses": ["open", "in_progress"],
     "empty_when_active_count": 0,
     "rationale": "Open and in_progress beads are the only states that represent outstanding work. A queue with zero of both is 'empty' and triggers the mandatory reality check."
   },
@@ -42,10 +34,7 @@
       "evidence",
       "attested_by"
     ],
-    "verdicts": [
-      "vision_incomplete",
-      "vision_delivered"
-    ],
+    "verdicts": ["vision_incomplete", "vision_delivered"],
     "evidence_min_count": 1,
     "freshness": {
       "commit_pinned": true,

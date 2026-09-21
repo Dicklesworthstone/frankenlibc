@@ -13,70 +13,45 @@
       "gate_name": "lint",
       "depends_on": [],
       "command": "cargo fmt --check && cargo check --workspace --all-targets && cargo clippy --workspace --all-targets -- -D warnings",
-      "inputs": [
-        "Cargo.toml",
-        "Cargo.lock",
-        "scripts/ci.sh"
-      ],
-      "outputs": [
-        "target/"
-      ],
+      "inputs": ["Cargo.toml", "Cargo.lock", "scripts/ci.sh"],
+      "outputs": ["target/"],
       "report_artifact": null,
       "critical": true
     },
     {
       "gate_name": "unit",
-      "depends_on": [
-        "lint"
-      ],
+      "depends_on": ["lint"],
       "command": "cargo test --workspace",
-      "inputs": [
-        "crates/",
-        "tests/"
-      ],
-      "outputs": [
-        "target/"
-      ],
+      "inputs": ["crates/", "tests/"],
+      "outputs": ["target/"],
       "report_artifact": null,
       "critical": true
     },
     {
       "gate_name": "conformance",
-      "depends_on": [
-        "unit"
-      ],
+      "depends_on": ["unit"],
       "command": "scripts/conformance_golden_gate.sh",
-      "inputs": [
-        "tests/conformance/golden/"
-      ],
-      "outputs": [
-        "tests/conformance/golden/sha256sums.txt"
-      ],
+      "inputs": ["tests/conformance/golden/"],
+      "outputs": ["tests/conformance/golden/sha256sums.txt"],
       "report_artifact": "tests/conformance/golden/sha256sums.txt",
       "critical": true
     },
     {
       "gate_name": "conformance_coverage",
-      "depends_on": [
-        "conformance"
-      ],
+      "depends_on": ["conformance"],
       "command": "scripts/check_conformance_coverage.sh",
       "inputs": [
         "tests/conformance/fixtures/",
         "tests/conformance/conformance_coverage_baseline.v1.json",
         "support_matrix.json"
       ],
-      "outputs": [
-        "tests/conformance/conformance_coverage_snapshot.v1.json"
-      ],
+      "outputs": ["tests/conformance/conformance_coverage_snapshot.v1.json"],
       "report_artifact": "tests/conformance/conformance_coverage_snapshot.v1.json",
       "critical": true
     },
     {
       "gate_name": "claim_reconciliation",
-      "depends_on": [
-        "conformance_coverage"
-      ],
+      "depends_on": ["conformance_coverage"],
       "command": "scripts/check_claim_reconciliation.sh",
       "inputs": [
         "FEATURE_PARITY.md",
@@ -85,49 +60,31 @@
         "tests/conformance/reality_report.v1.json",
         "tests/conformance/replacement_levels.json"
       ],
-      "outputs": [
-        "tests/conformance/claim_reconciliation_report.v1.json"
-      ],
+      "outputs": ["tests/conformance/claim_reconciliation_report.v1.json"],
       "report_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
       "critical": true
     },
     {
       "gate_name": "e2e",
-      "depends_on": [
-        "claim_reconciliation"
-      ],
+      "depends_on": ["claim_reconciliation"],
       "command": "scripts/check_e2e_suite.sh",
-      "inputs": [
-        "scripts/e2e_suite.sh",
-        "tests/conformance/e2e_suite.json"
-      ],
-      "outputs": [
-        "tests/cve_arena/results/"
-      ],
+      "inputs": ["scripts/e2e_suite.sh", "tests/conformance/e2e_suite.json"],
+      "outputs": ["tests/cve_arena/results/"],
       "report_artifact": null,
       "critical": true
     },
     {
       "gate_name": "perf",
-      "depends_on": [
-        "e2e"
-      ],
+      "depends_on": ["e2e"],
       "command": "scripts/perf_gate.sh",
-      "inputs": [
-        "scripts/perf_gate.sh",
-        "scripts/perf_baseline.json"
-      ],
-      "outputs": [
-        "target/criterion/"
-      ],
+      "inputs": ["scripts/perf_gate.sh", "scripts/perf_baseline.json"],
+      "outputs": ["target/criterion/"],
       "report_artifact": null,
       "critical": true
     },
     {
       "gate_name": "docs_reports",
-      "depends_on": [
-        "perf"
-      ],
+      "depends_on": ["perf"],
       "command": "scripts/check_support_matrix_drift.sh && scripts/check_replacement_levels.sh && scripts/check_closure_contract.sh",
       "inputs": [
         "README.md",
@@ -135,25 +92,19 @@
         "tests/conformance/replacement_levels.json",
         "tests/conformance/closure_contract.v1.json"
       ],
-      "outputs": [
-        "tests/conformance/reality_report.v1.json"
-      ],
+      "outputs": ["tests/conformance/reality_report.v1.json"],
       "report_artifact": "tests/conformance/reality_report.v1.json",
       "critical": true
     },
     {
       "gate_name": "release_dossier",
-      "depends_on": [
-        "docs_reports"
-      ],
+      "depends_on": ["docs_reports"],
       "command": "scripts/check_closure_gate.sh",
       "inputs": [
         "tests/conformance/verification_matrix.json",
         "tests/conformance/closure_evidence_schema.json"
       ],
-      "outputs": [
-        "/tmp/frankenlibc_release_dry_run_dossier.json"
-      ],
+      "outputs": ["/tmp/frankenlibc_release_dry_run_dossier.json"],
       "report_artifact": null,
       "critical": true
     }

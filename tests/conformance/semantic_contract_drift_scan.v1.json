@@ -12,13 +12,8 @@
     "readme": "README.md",
     "feature_parity": "FEATURE_PARITY.md"
   },
-  "source_scan_roots": [
-    "crates/frankenlibc-abi/src",
-    "crates/frankenlibc-core/src"
-  ],
-  "source_scan_suffixes": [
-    ".rs"
-  ],
+  "source_scan_roots": ["crates/frankenlibc-abi/src", "crates/frankenlibc-core/src"],
+  "source_scan_suffixes": [".rs"],
   "source_marker_radius_lines": 80,
   "scanner_rules": [
     {
@@ -49,45 +44,27 @@
   "contract_terms": [
     {
       "id": "compat_noop",
-      "patterns": [
-        "no-op",
-        "noop"
-      ]
+      "patterns": ["no-op", "noop"]
     },
     {
       "id": "deterministic_fallback",
-      "patterns": [
-        "fallback",
-        "safe-default"
-      ]
+      "patterns": ["fallback", "safe-default"]
     },
     {
       "id": "unsupported_platform_contract",
-      "patterns": [
-        "unsupported",
-        "enosys",
-        "not implemented"
-      ]
+      "patterns": ["unsupported", "enosys", "not implemented"]
     },
     {
       "id": "limited_bootstrap",
-      "patterns": [
-        "bootstrap",
-        "phase-1"
-      ]
+      "patterns": ["bootstrap", "phase-1"]
     },
     {
       "id": "abort_only",
-      "patterns": [
-        "abort-only",
-        "fail-stop"
-      ]
+      "patterns": ["abort-only", "fail-stop"]
     },
     {
       "id": "stub",
-      "patterns": [
-        "stub"
-      ]
+      "patterns": ["stub"]
     }
   ],
   "annotation_markers": [
@@ -142,11 +119,7 @@
       "kind": "allowlisted",
       "command": "FLC_SEMANTIC_DRIFT_ARTIFACT=<fixture-with-explicit-allowlist> scripts/check_semantic_contract_drift.sh",
       "expected_status": "pass",
-      "required_allowlist_fields": [
-        "symbol",
-        "file_path",
-        "evidence_reason"
-      ]
+      "required_allowlist_fields": ["symbol", "file_path", "evidence_reason"]
     }
   ],
   "claim_blocking_policy": {

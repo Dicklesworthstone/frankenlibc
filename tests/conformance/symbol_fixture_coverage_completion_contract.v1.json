@@ -75,10 +75,7 @@
       "minimum_fixture_json_files": 50,
       "minimum_fixture_json_cases": 1200,
       "minimum_c_fixture_spec_fixtures": 10,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
+      "target_statuses": ["Implemented", "RawSyscall"],
       "required_top_level_keys": [
         "schema_version",
         "bead",
@@ -139,9 +136,7 @@
         "symbol_fixture_coverage_generator_roundtrip",
         "symbol_fixture_coverage_completion_summary"
       ],
-      "forbidden_completion_log_events": [
-        "symbol_fixture_coverage_completion_contract_failed"
-      ]
+      "forbidden_completion_log_events": ["symbol_fixture_coverage_completion_contract_failed"]
     },
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",

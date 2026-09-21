@@ -5,20 +5,9 @@
   "parent_bead": "bd-38x82",
   "title": "[RC-WS8.E2E] End-to-end L3 standalone verification",
   "scope": {
-    "architectures": [
-      "x86_64",
-      "aarch64"
-    ],
-    "workload_battery": [
-      "string_pipeline",
-      "memory_lifecycle",
-      "format_stdio"
-    ],
-    "coverage_classes": [
-      "happy_path",
-      "edge_cases",
-      "error_handling"
-    ],
+    "architectures": ["x86_64", "aarch64"],
+    "workload_battery": ["string_pipeline", "memory_lifecycle", "format_stdio"],
+    "coverage_classes": ["happy_path", "edge_cases", "error_handling"],
     "companion_beads": [
       {
         "bead_id": "bd-38x82.1",

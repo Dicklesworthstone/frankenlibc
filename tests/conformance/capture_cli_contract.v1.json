@@ -7,11 +7,7 @@
   "purpose": "Pin the harness binary `capture` subcommand that refreshes fixture templates from host-glibc observations before later verification. The command must read fixture JSON templates, filter by family or filename stem, create the output directory, refresh strict and mode=both cases from host capture, stamp the run capture timestamp plus capture-host fingerprint, preserve hardened-only cases, write refreshed fixture JSON with the original filename, emit deterministic summary diagnostics, surface unsupported-case warnings, and fail closed when no valid templates match.",
   "subcommand_name": "capture",
   "binary_target": "harness",
-  "required_flags": [
-    "--input",
-    "--output",
-    "--family"
-  ],
+  "required_flags": ["--input", "--output", "--family"],
   "optional_flags": [],
   "io_pattern": "fixture_template_directory_to_refreshed_fixture_directory",
   "underlying_lib_functions": [
@@ -25,19 +21,8 @@
   "output_contract": {
     "format": "fixture_set_json",
     "filename_rule": "preserve_input_fixture_filename",
-    "required_fixture_fields": [
-      "version",
-      "family",
-      "captured_at",
-      "capture_host",
-      "cases"
-    ],
-    "required_capture_host_fields": [
-      "kernel",
-      "glibc_version",
-      "arch",
-      "fingerprint"
-    ],
+    "required_fixture_fields": ["version", "family", "captured_at", "capture_host", "cases"],
+    "required_capture_host_fields": ["kernel", "glibc_version", "arch", "fingerprint"],
     "required_case_fields": [
       "name",
       "function",

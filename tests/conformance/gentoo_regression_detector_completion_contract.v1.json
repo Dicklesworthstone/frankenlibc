@@ -179,11 +179,7 @@
   },
   "release_gate_contract": {
     "config": "configs/gentoo/release-gates.json",
-    "required_tiers": [
-      "tier1",
-      "top20",
-      "top100"
-    ],
+    "required_tiers": ["tier1", "top20", "top100"],
     "required_thresholds": [
       "build_success_rate_pct",
       "test_pass_rate_pct",

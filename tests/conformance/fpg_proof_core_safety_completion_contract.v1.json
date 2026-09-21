@@ -22,10 +22,7 @@
     "original_bead": "bd-bp8fl.3.8",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.8/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.conformance.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.conformance.primary"]
   },
   "completion_debt_evidence": {
     "unit_primary": {
@@ -100,11 +97,7 @@
         {
           "artifact": "source_test",
           "name": "proof_binder_validation_remains_green_for_all_cited_obligations",
-          "covers": [
-            "binder_valid true",
-            "total_violations zero",
-            "all cited obligations valid"
-          ]
+          "covers": ["binder_valid true", "total_violations zero", "all cited obligations valid"]
         }
       ],
       "required_artifacts": [
@@ -173,18 +166,9 @@
     },
     "claim_policy": {
       "default_decision": "block_until_proof_witness_current",
-      "allow_status": [
-        "IN_PROGRESS",
-        "PLANNED"
-      ],
-      "block_status_without_evidence": [
-        "DONE"
-      ],
-      "block_replacement_levels_without_evidence": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "allow_status": ["IN_PROGRESS", "PLANNED"],
+      "block_status_without_evidence": ["DONE"],
+      "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
       "rejected_evidence_kinds": [
         "prose_only",
         "tracker_closure_only",
@@ -218,10 +202,7 @@
         "robust-radius guarantee",
         "conformal decision validity"
       ],
-      "owner_family_groups": [
-        "fpg-proof-core-safety",
-        "bd-bp8fl.3.8"
-      ]
+      "owner_family_groups": ["fpg-proof-core-safety", "bd-bp8fl.3.8"]
     }
   }
 }

@@ -184,9 +184,7 @@
       "verify_suite_skipped": 0
     },
     "required_gate_markers": {
-      "fixture_schema_gate": [
-        "PASS: fixture schema validation files=127 cases=2787 structured=1"
-      ],
+      "fixture_schema_gate": ["PASS: fixture schema validation files=127 cases=2787 structured=1"],
       "fixture_executor_golden_gate": [
         "PASS: fixture executor ownership and golden manifest validated cases=7"
       ]

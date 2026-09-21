@@ -16,9 +16,7 @@
     "in_progress_source": "bd-zt1pq.3 close_reason validation window",
     "closed_at_source": ".beads/issues.jsonl"
   },
-  "artifact_refs": [
-    "crates/frankenlibc-harness/tests/memcpy_strict_conformance_test.rs"
-  ],
+  "artifact_refs": ["crates/frankenlibc-harness/tests/memcpy_strict_conformance_test.rs"],
   "validation": [
     "rch cargo test -p frankenlibc-harness --test memcpy_strict_conformance_test memcpy_strict_metamorphic_relations_hold_without_golden_outputs -- --nocapture",
     "rch cargo test -p frankenlibc-harness --test memcpy_strict_conformance_test -- --nocapture",

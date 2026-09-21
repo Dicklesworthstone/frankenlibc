@@ -155,30 +155,12 @@
       "test_name": "syslog_heap_overflow_suite",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
-      "vulnerability_classes": [
-        "heap_overflow",
-        "integer_overflow",
-        "size_miscalculation"
-      ],
-      "cwe_ids": [
-        "CWE-787",
-        "CWE-131",
-        "CWE-190"
-      ],
+      "vulnerability_classes": ["heap_overflow", "integer_overflow", "size_miscalculation"],
+      "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
       "cvss_score": 8.4,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "TruncateWithNull"
-      ],
-      "tsm_features": [
-        "canary",
-        "bounds_checking",
-        "clamp_size",
-        "truncate_with_null"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["ClampSize", "TruncateWithNull"],
+      "tsm_features": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
       "manifest_valid": true,
       "issues": [],
       "normalization_changes": [
@@ -188,9 +170,7 @@
       ],
       "replay": {
         "replay_key": "f0de8ab154ac1184",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -199,27 +179,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "TruncateWithNull"
-          ]
+          "healing_actions": ["ClampSize", "TruncateWithNull"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:f0de8ab154ac1184",
         "seed_sha256": "350245dcfe8e1f999ef41d9003462470fe3c0028bcb1e499950c285adb47562a",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -242,24 +210,12 @@
       "test_name": "iconv_iso2022cn_ext_buffer_overflow",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
-      "vulnerability_classes": [
-        "heap_overflow"
-      ],
-      "cwe_ids": [
-        "CWE-787"
-      ],
+      "vulnerability_classes": ["heap_overflow"],
+      "cwe_ids": ["CWE-787"],
       "cvss_score": 8.8,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "ClampSize"
-      ],
-      "tsm_features": [
-        "canary",
-        "bounds_checking",
-        "clamp_size"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["ClampSize"],
+      "tsm_features": ["canary", "bounds_checking", "clamp_size"],
       "manifest_valid": true,
       "issues": [],
       "normalization_changes": [
@@ -269,9 +225,7 @@
       ],
       "replay": {
         "replay_key": "b46ab43e83076b06",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -280,26 +234,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize"
-          ]
+          "healing_actions": ["ClampSize"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:b46ab43e83076b06",
         "seed_sha256": "b143eab2e1bf60a330f9f4f07408b002b202db758711cfb525b335007eb7c136",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -328,20 +271,10 @@
         "stack_overflow",
         "uninitialized_memory"
       ],
-      "cwe_ids": [
-        "CWE-121",
-        "CWE-476",
-        "CWE-787",
-        "CWE-908"
-      ],
+      "cwe_ids": ["CWE-121", "CWE-476", "CWE-787", "CWE-908"],
       "cvss_score": 7.6,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "ReturnSafeDefault"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["ClampSize", "ReturnSafeDefault"],
       "tsm_features": [
         "canary",
         "bounds_checking",
@@ -358,9 +291,7 @@
       ],
       "replay": {
         "replay_key": "c8d97a4a36bfdb74",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -369,27 +300,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "ReturnSafeDefault"
-          ]
+          "healing_actions": ["ClampSize", "ReturnSafeDefault"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:c8d97a4a36bfdb74",
         "seed_sha256": "6d756219fc57e8e69409e7ad9deeff55d93e50ad6eba206583538648a58a2f75",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -412,19 +331,11 @@
       "test_name": "regcomp_double_free_on_alloc_failure",
       "category_raw": "glibc-internal",
       "category_canonical": "glibc-internal",
-      "vulnerability_classes": [
-        "double_free"
-      ],
-      "cwe_ids": [
-        "CWE-415"
-      ],
+      "vulnerability_classes": ["double_free"],
+      "cwe_ids": ["CWE-415"],
       "cvss_score": 5.5,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "IgnoreDoubleFree"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["IgnoreDoubleFree"],
       "tsm_features": [
         "generational_arena",
         "quarantine",
@@ -440,9 +351,7 @@
       ],
       "replay": {
         "replay_key": "b065a2c95f4fd38e",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGABRT",
@@ -451,26 +360,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "IgnoreDoubleFree"
-          ]
+          "healing_actions": ["IgnoreDoubleFree"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:b065a2c95f4fd38e",
         "seed_sha256": "8750fc28112c6d093d4b0e868809588ec22db0900f19e6af2296fd604a25eefc",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -493,20 +391,11 @@
       "test_name": "dcerpc_heap_overflow_cve_2024_38812",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
-      "vulnerability_classes": [
-        "heap_overflow"
-      ],
-      "cwe_ids": [
-        "CWE-122"
-      ],
+      "vulnerability_classes": ["heap_overflow"],
+      "cwe_ids": ["CWE-122"],
       "cvss_score": 9.8,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "FreedWithCanaryCorruption"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["ClampSize", "FreedWithCanaryCorruption"],
       "tsm_features": [
         "ClampSize",
         "TrailingCanary",
@@ -522,9 +411,7 @@
       ],
       "replay": {
         "replay_key": "7a62a6eb0f64f0df",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGABRT",
@@ -533,27 +420,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "FreedWithCanaryCorruption"
-          ]
+          "healing_actions": ["ClampSize", "FreedWithCanaryCorruption"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:7a62a6eb0f64f0df",
         "seed_sha256": "e9cecb66a8aed876c875385f7aa851e1977d3bc545e6875c0a7d76ae0529fa7a",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -576,22 +451,12 @@
       "test_name": "format_string_cve_2024_23113",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
-      "vulnerability_classes": [
-        "format_string"
-      ],
-      "cwe_ids": [
-        "CWE-134"
-      ],
+      "vulnerability_classes": ["format_string"],
+      "cwe_ids": ["CWE-134"],
       "cvss_score": 9.8,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "UpgradeToSafeVariant"
-      ],
-      "tsm_features": [
-        "UpgradeToSafeVariant"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["UpgradeToSafeVariant"],
+      "tsm_features": ["UpgradeToSafeVariant"],
       "manifest_valid": true,
       "issues": [],
       "normalization_changes": [
@@ -601,9 +466,7 @@
       ],
       "replay": {
         "replay_key": "f9059bd70cf9d6a8",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -612,26 +475,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "UpgradeToSafeVariant"
-          ]
+          "healing_actions": ["UpgradeToSafeVariant"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:f9059bd70cf9d6a8",
         "seed_sha256": "f6cb8806db4306ba7f0d124415a8cc0ebfe8dad19e57cf07521ffcf20b77857d",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -654,20 +506,11 @@
       "test_name": "quic_uaf_cve_2024_24990",
       "category_raw": "synthetic",
       "category_canonical": "synthetic",
-      "vulnerability_classes": [
-        "use_after_free"
-      ],
-      "cwe_ids": [
-        "CWE-416"
-      ],
+      "vulnerability_classes": ["use_after_free"],
+      "cwe_ids": ["CWE-416"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.c"
-      ],
-      "healing_actions": [
-        "ReturnSafeDefault",
-        "IgnoreDoubleFree"
-      ],
+      "trigger_files": ["trigger.c"],
+      "healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"],
       "tsm_features": [
         "GenerationalArena",
         "QuarantineQueue",
@@ -685,9 +528,7 @@
       ],
       "replay": {
         "replay_key": "b0724e5311311951",
-        "preconditions": [
-          "c_compiler"
-        ],
+        "preconditions": ["c_compiler"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -696,27 +537,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ReturnSafeDefault",
-            "IgnoreDoubleFree"
-          ]
+          "healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:b0724e5311311951",
         "seed_sha256": "2191633ad50a8c30387ad1b184e2787a184903f5b0c26aabc1343c114c0dbe39",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -739,21 +568,11 @@
       "test_name": "curl_asn1_stack_use_after_free",
       "category_raw": "external",
       "category_canonical": "external",
-      "vulnerability_classes": [
-        "expired_pointer",
-        "use_after_free"
-      ],
-      "cwe_ids": [
-        "CWE-416",
-        "CWE-825"
-      ],
+      "vulnerability_classes": ["expired_pointer", "use_after_free"],
+      "cwe_ids": ["CWE-416", "CWE-825"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.sh"
-      ],
-      "healing_actions": [
-        "IgnoreForeignFree"
-      ],
+      "trigger_files": ["trigger.sh"],
+      "healing_actions": ["IgnoreForeignFree"],
       "tsm_features": [
         "bloom_filter_precheck",
         "page_oracle",
@@ -770,10 +589,7 @@
       ],
       "replay": {
         "replay_key": "31d335f5302082a7",
-        "preconditions": [
-          "c_compiler",
-          "software:curl"
-        ],
+        "preconditions": ["c_compiler", "software:curl"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -782,26 +598,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "IgnoreForeignFree"
-          ]
+          "healing_actions": ["IgnoreForeignFree"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:31d335f5302082a7",
         "seed_sha256": "ccf2625e5389803cabcfbca4521aa805e09ce9397d8397d60777289410c12719",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -824,22 +629,11 @@
       "test_name": "perl_tr_transliteration_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
-      "vulnerability_classes": [
-        "heap_overflow"
-      ],
-      "cwe_ids": [
-        "CWE-122",
-        "CWE-787"
-      ],
+      "vulnerability_classes": ["heap_overflow"],
+      "cwe_ids": ["CWE-122", "CWE-787"],
       "cvss_score": 8.6,
-      "trigger_files": [
-        "trigger.sh",
-        "trigger.pl"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "TruncateWithNull"
-      ],
+      "trigger_files": ["trigger.sh", "trigger.pl"],
+      "healing_actions": ["ClampSize", "TruncateWithNull"],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -856,10 +650,7 @@
       ],
       "replay": {
         "replay_key": "6902f7733d05bea7",
-        "preconditions": [
-          "c_compiler",
-          "software:perl"
-        ],
+        "preconditions": ["c_compiler", "software:perl"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -868,27 +659,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "TruncateWithNull"
-          ]
+          "healing_actions": ["ClampSize", "TruncateWithNull"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:6902f7733d05bea7",
         "seed_sha256": "cb4d9197f26dcb71c79b8102a5de4b7c49304238adfad34add8089544216c4ce",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -911,21 +690,11 @@
       "test_name": "redis_lua_gc_use_after_free",
       "category_raw": "external",
       "category_canonical": "external",
-      "vulnerability_classes": [
-        "use_after_free"
-      ],
-      "cwe_ids": [
-        "CWE-416"
-      ],
+      "vulnerability_classes": ["use_after_free"],
+      "cwe_ids": ["CWE-416"],
       "cvss_score": 10.0,
-      "trigger_files": [
-        "trigger.sh",
-        "trigger.py"
-      ],
-      "healing_actions": [
-        "IgnoreDoubleFree",
-        "ReturnSafeDefault"
-      ],
+      "trigger_files": ["trigger.sh", "trigger.py"],
+      "healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"],
       "tsm_features": [
         "generational_arena",
         "quarantine_queue",
@@ -942,10 +711,7 @@
       ],
       "replay": {
         "replay_key": "3ba35bb272fdda76",
-        "preconditions": [
-          "c_compiler",
-          "software:redis"
-        ],
+        "preconditions": ["c_compiler", "software:redis"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -954,27 +720,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "IgnoreDoubleFree",
-            "ReturnSafeDefault"
-          ]
+          "healing_actions": ["IgnoreDoubleFree", "ReturnSafeDefault"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:3ba35bb272fdda76",
         "seed_sha256": "5a062b4376fab00a55e73692a7330ea9cfe37bf405ff209b7c75bb431dd58b7c",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -997,21 +751,11 @@
       "test_name": "sudo_baron_samedit_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
-      "vulnerability_classes": [
-        "heap_overflow"
-      ],
-      "cwe_ids": [
-        "CWE-122",
-        "CWE-787"
-      ],
+      "vulnerability_classes": ["heap_overflow"],
+      "cwe_ids": ["CWE-122", "CWE-787"],
       "cvss_score": 7.8,
-      "trigger_files": [
-        "trigger.sh"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "TruncateWithNull"
-      ],
+      "trigger_files": ["trigger.sh"],
+      "healing_actions": ["ClampSize", "TruncateWithNull"],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -1028,10 +772,7 @@
       ],
       "replay": {
         "replay_key": "0ba895e09c823da3",
-        "preconditions": [
-          "c_compiler",
-          "software:sudo"
-        ],
+        "preconditions": ["c_compiler", "software:sudo"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -1040,27 +781,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "TruncateWithNull"
-          ]
+          "healing_actions": ["ClampSize", "TruncateWithNull"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:0ba895e09c823da3",
         "seed_sha256": "c3ce9fd173f427520aff5e407810d0098bf4431cef955c36358b90cd77a787d3",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -1083,22 +812,11 @@
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "category_raw": "external",
       "category_canonical": "external",
-      "vulnerability_classes": [
-        "heap_overflow",
-        "integer_overflow"
-      ],
-      "cwe_ids": [
-        "CWE-190",
-        "CWE-122"
-      ],
+      "vulnerability_classes": ["heap_overflow", "integer_overflow"],
+      "cwe_ids": ["CWE-190", "CWE-122"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.sh"
-      ],
-      "healing_actions": [
-        "ClampSize",
-        "ReallocAsMalloc"
-      ],
+      "trigger_files": ["trigger.sh"],
+      "healing_actions": ["ClampSize", "ReallocAsMalloc"],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -1115,10 +833,7 @@
       ],
       "replay": {
         "replay_key": "1d73a74140226a9d",
-        "preconditions": [
-          "c_compiler",
-          "software:vlc"
-        ],
+        "preconditions": ["c_compiler", "software:vlc"],
         "expected_strict": {
           "crashes": true,
           "signal": "SIGSEGV",
@@ -1127,27 +842,15 @@
         "expected_hardened": {
           "crashes": false,
           "exit_code": 0,
-          "healing_actions": [
-            "ClampSize",
-            "ReallocAsMalloc"
-          ]
+          "healing_actions": ["ClampSize", "ReallocAsMalloc"]
         }
       },
       "fuzz_replay_seed": {
         "seed_payload_schema": "cve-arena-fuzz-seed/v1",
         "seed_id": "cve_arena:1d73a74140226a9d",
         "seed_sha256": "ad75359fdca8e584e3e9489c94e4ae35a1583ef5b3f476ee92ac56e34398ae7f",
-        "mutation_axes": [
-          "mode",
-          "category",
-          "cwe_ids",
-          "trigger_files",
-          "healing_actions"
-        ],
-        "replay_modes": [
-          "strict",
-          "hardened"
-        ],
+        "mutation_axes": ["mode", "category", "cwe_ids", "trigger_files", "healing_actions"],
+        "replay_modes": ["strict", "hardened"],
         "source_manifest_fields": [
           "cve_id",
           "test_name",
@@ -1226,10 +929,7 @@
         "structured_log_contains_dual_mode_expectations",
         "normalization_checker_accepts_completion_debt_bindings"
       ],
-      "required_events": [
-        "scenario_expectation",
-        "corpus_summary"
-      ],
+      "required_events": ["scenario_expectation", "corpus_summary"],
       "required_fields": [
         "timestamp",
         "trace_id",

@@ -83,13 +83,7 @@
         "bead": "bd-gtf.4",
         "status": "pass",
         "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes.",
-        "required_log_fields": [
-          "trace_id",
-          "level",
-          "obligation_id",
-          "outcome",
-          "artifact_ref"
-        ],
+        "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
           "log_path": "target/conformance/replacement_levels_l1_gate.log.jsonl",

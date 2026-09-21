@@ -91,10 +91,7 @@
       "conformance_matrix",
       "pass_rate"
     ],
-    "conformance_matrix_harness": [
-      "conformance_matrix",
-      "summary_counts_match_case_rows"
-    ],
+    "conformance_matrix_harness": ["conformance_matrix", "summary_counts_match_case_rows"],
     "perf_regression_prevention": [
       "\"total_suites_in_spec\": 5",
       "\"suites_with_full_baselines\": 5",
@@ -108,10 +105,7 @@
       "Gate wiring (perf_gate.sh)",
       "check_perf_regression_prevention"
     ],
-    "perf_regression_harness": [
-      "perf_regression_prevention",
-      "regression"
-    ],
+    "perf_regression_harness": ["perf_regression_prevention", "regression"],
     "perf_budget_policy": [
       "\"strict_mode_ns\": 20",
       "\"hardened_mode_ns\": 200",
@@ -125,15 +119,8 @@
       "\"quality_score_pct\": 100.0",
       "\"total_seed_corpus\": 23199"
     ],
-    "fuzz_harness_gate": [
-      "fuzz_harness_architecture",
-      "Fuzz targets:",
-      "corpus"
-    ],
-    "fuzz_harness_test": [
-      "fuzz_harness_architecture",
-      "quality"
-    ],
+    "fuzz_harness_gate": ["fuzz_harness_architecture", "Fuzz targets:", "corpus"],
+    "fuzz_harness_test": ["fuzz_harness_architecture", "quality"],
     "raw_syscall_tls_contract": [
       "\"completion_debt_bead\": \"bd-1gg.3.1\"",
       "\"required_arch\": \"aarch64\"",
@@ -155,14 +142,8 @@
   },
   "aarch64_conformance_perf_matrix_contract": {
     "required_target": "aarch64-unknown-linux-gnu",
-    "required_crosscompile_checks": [
-      "frankenlibc-core",
-      "frankenlibc-abi"
-    ],
-    "required_architectures": [
-      "x86_64",
-      "aarch64"
-    ],
+    "required_crosscompile_checks": ["frankenlibc-core", "frankenlibc-abi"],
+    "required_architectures": ["x86_64", "aarch64"],
     "required_aarch64_reason_code": "aarch64_bringup_missing",
     "required_support_claim_allowed": false,
     "required_conformance_summary": {

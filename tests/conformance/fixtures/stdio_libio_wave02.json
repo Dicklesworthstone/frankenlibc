@@ -27,13 +27,7 @@
     ],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "isoc99_sscanf_controlled_int_strict",

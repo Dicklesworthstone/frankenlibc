@@ -18,9 +18,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "IgnoreForeignFree"
-    ],
+    "healing_actions": ["IgnoreForeignFree"],
     "description": "Bloom filter pre-check identifies the stack address as not belonging to any arena allocation; IgnoreForeignFree healing silently drops the invalid free() call; page oracle confirms address is in stack region not heap"
   },
   "tsm_features_tested": [

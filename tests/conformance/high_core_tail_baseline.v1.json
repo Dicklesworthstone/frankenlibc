@@ -17,11 +17,31 @@
     "regenerator_must_record_seed": true
   },
   "thread_profiles": [
-    {"profile_id": "single", "thread_count": 1, "rationale": "Per-symbol service-time floor with no contention; serves as the reference against which every concurrent profile attributes its overhead."},
-    {"profile_id": "multi_8", "thread_count": 8, "rationale": "Mid-contention profile: typical user shell + small daemon set."},
-    {"profile_id": "multi_32", "thread_count": 32, "rationale": "Higher-contention profile typical of build/test farms; surfaces lock-spillover effects on shared registries."},
-    {"profile_id": "multi_64", "thread_count": 64, "rationale": "Swarm-realistic profile (matches the 64-core target node); surfaces the tails that strict <20ns / hardened <200ns budgets must hold under."},
-    {"profile_id": "multi_oversub", "thread_count": 128, "rationale": "Oversubscribed profile: 2x core count to reveal scheduler queueing and futex wakeup tails."}
+    {
+      "profile_id": "single",
+      "thread_count": 1,
+      "rationale": "Per-symbol service-time floor with no contention; serves as the reference against which every concurrent profile attributes its overhead."
+    },
+    {
+      "profile_id": "multi_8",
+      "thread_count": 8,
+      "rationale": "Mid-contention profile: typical user shell + small daemon set."
+    },
+    {
+      "profile_id": "multi_32",
+      "thread_count": 32,
+      "rationale": "Higher-contention profile typical of build/test farms; surfaces lock-spillover effects on shared registries."
+    },
+    {
+      "profile_id": "multi_64",
+      "thread_count": 64,
+      "rationale": "Swarm-realistic profile (matches the 64-core target node); surfaces the tails that strict <20ns / hardened <200ns budgets must hold under."
+    },
+    {
+      "profile_id": "multi_oversub",
+      "thread_count": 128,
+      "rationale": "Oversubscribed profile: 2x core count to reveal scheduler queueing and futex wakeup tails."
+    }
   ],
   "hot_path_catalog": [
     {
@@ -66,10 +86,22 @@
     }
   ],
   "cost_decomposition_rows": [
-    {"row_id": "service_time", "definition": "Time spent in the symbol's pure service path (no waiting on locks, no allocator pressure)."},
-    {"row_id": "queueing_synchronization", "definition": "Time spent waiting on shared locks, futexes, RCU read-side, or other synchronization primitives."},
-    {"row_id": "allocator_membrane_overhead", "definition": "Allocator-level overhead introduced by the membrane: pointer-validation, arena bookkeeping, allocation tracking."},
-    {"row_id": "evidence_emission", "definition": "Time spent writing decision cards, structured logs, or evidence ring entries — must remain bounded even under high-volume emission."}
+    {
+      "row_id": "service_time",
+      "definition": "Time spent in the symbol's pure service path (no waiting on locks, no allocator pressure)."
+    },
+    {
+      "row_id": "queueing_synchronization",
+      "definition": "Time spent waiting on shared locks, futexes, RCU read-side, or other synchronization primitives."
+    },
+    {
+      "row_id": "allocator_membrane_overhead",
+      "definition": "Allocator-level overhead introduced by the membrane: pointer-validation, arena bookkeeping, allocation tracking."
+    },
+    {
+      "row_id": "evidence_emission",
+      "definition": "Time spent writing decision cards, structured logs, or evidence ring entries — must remain bounded even under high-volume emission."
+    }
   ],
   "required_jsonl_fields": [
     "trace_id",

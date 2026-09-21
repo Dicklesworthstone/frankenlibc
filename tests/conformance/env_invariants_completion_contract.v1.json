@@ -61,17 +61,8 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
-    "required_symbols": [
-      "getenv",
-      "secure_getenv",
-      "setenv",
-      "unsetenv"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
+    "required_symbols": ["getenv", "secure_getenv", "setenv", "unsetenv"],
     "required_unit_tests": [
       "valid_name_normal",
       "invalid_name_empty",
@@ -160,12 +151,8 @@
         "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
         "scripts/check_env_invariants_completion_contract.sh"
       ],
-      "test_refs": [
-        "crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs"
-      ],
-      "runtime_validation": [
-        "bash scripts/check_env_invariants_completion_contract.sh"
-      ]
+      "test_refs": ["crates/frankenlibc-harness/tests/env_invariants_completion_contract_test.rs"],
+      "runtime_validation": ["bash scripts/check_env_invariants_completion_contract.sh"]
     }
   ],
   "required_validation_commands": [

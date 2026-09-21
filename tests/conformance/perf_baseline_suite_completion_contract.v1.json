@@ -118,9 +118,7 @@
       },
       "dashboard_harness_test": {
         "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
-        "required_test_refs": [
-          "perf_baseline_spec_rows_are_explicit"
-        ]
+        "required_test_refs": ["perf_baseline_spec_rows_are_explicit"]
       },
       "completion_harness_test": {
         "path": "crates/frankenlibc-harness/tests/perf_baseline_suite_completion_contract_test.rs",
@@ -152,22 +150,9 @@
       "baseline_slot_fill_pct": 100.0,
       "enforced_baseline_slot_fill_pct": 100.0
     },
-    "required_suites": [
-      "runtime_math",
-      "membrane",
-      "string",
-      "malloc",
-      "errno"
-    ],
-    "required_enforced_suites": [
-      "runtime_math",
-      "membrane",
-      "errno"
-    ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_suites": ["runtime_math", "membrane", "string", "malloc", "errno"],
+    "required_enforced_suites": ["runtime_math", "membrane", "errno"],
+    "required_modes": ["strict", "hardened"],
     "required_output_prefixes": [
       "RUNTIME_MATH_BENCH",
       "MEMBRANE_BENCH",

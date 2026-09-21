@@ -42,10 +42,7 @@
     "crates/frankenlibc-harness/tests/matrix_dashboard_export_completion_contract_test.rs:1"
   ],
   "dashboard_contract": {
-    "required_formats": [
-      "text",
-      "json"
-    ],
+    "required_formats": ["text", "json"],
     "required_text_needles": [
       "Verification Matrix Dashboard",
       "Total beads:",
@@ -53,30 +50,10 @@
       "Legend:",
       "Gaps:"
     ],
-    "required_json_top_keys": [
-      "generated_utc",
-      "bead",
-      "summary",
-      "by_priority",
-      "rows"
-    ],
-    "required_summary_fields": [
-      "total",
-      "complete",
-      "partial",
-      "missing"
-    ],
-    "required_priority_buckets": [
-      "P0",
-      "P1",
-      "P2"
-    ],
-    "required_priority_fields": [
-      "total",
-      "complete",
-      "partial",
-      "missing"
-    ],
+    "required_json_top_keys": ["generated_utc", "bead", "summary", "by_priority", "rows"],
+    "required_summary_fields": ["total", "complete", "partial", "missing"],
+    "required_priority_buckets": ["P0", "P1", "P2"],
+    "required_priority_fields": ["total", "complete", "partial", "missing"],
     "required_row_fields": [
       "bead_id",
       "priority",

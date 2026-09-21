@@ -10,21 +10,10 @@
     "wave_id": "wave-09-string-memory-hotpaths",
     "source_artifact": "tests/conformance/symbol_fixture_coverage.v1.json",
     "ambient_state_policy": "forbid_pointer_locale_or_process_buffer_capture",
-    "first_wave_symbols": [
-      "__argz_count",
-      "__argz_next",
-      "__argz_stringify",
-      "__bzero"
-    ],
+    "first_wave_symbols": ["__argz_count", "__argz_next", "__argz_stringify", "__bzero"],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "__argz_count_three_entries_strict",

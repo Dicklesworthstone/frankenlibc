@@ -69,17 +69,8 @@
       "failure_signature",
       "user_diagnostic"
     ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ],
-    "schedule_required_fields": [
-      "mode",
-      "seed",
-      "control_token",
-      "max_steps"
-    ]
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"],
+    "schedule_required_fields": ["mode", "seed", "control_token", "max_steps"]
   },
   "required_scenario_kinds": [
     "cancellation_blocking_call",
@@ -97,10 +88,7 @@
     "pthread_key_destructor",
     "pthread_cond_timedwait"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
   "required_timeout_classifications": [
     "not_applicable",
     "bounded_wait_pass",
@@ -493,9 +481,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "tests/conformance/fixtures/pthread_tls_keys.json"
-        ]
+        "artifact_refs": ["tests/conformance/fixtures/pthread_tls_keys.json"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",

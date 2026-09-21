@@ -4,10 +4,7 @@
   "mode": "validate_only",
   "canonical_command": "scripts/check_support_reality_regeneration.sh --validate-only",
   "regeneration_command": "scripts/check_support_reality_regeneration.sh --regenerate",
-  "supported_modes": [
-    "validate_only",
-    "regenerate"
-  ],
+  "supported_modes": ["validate_only", "regenerate"],
   "source_commit": "current",
   "source_commit_policy": {
     "committed_contract_token": "current",
@@ -48,10 +45,7 @@
     }
   ],
   "paired_update_policy": {
-    "required_artifact_ids": [
-      "support_matrix",
-      "reality_report"
-    ],
+    "required_artifact_ids": ["support_matrix", "reality_report"],
     "single_artifact_update": "forbidden",
     "canonical_artifact_writes": "forbidden_in_validate_only",
     "failure_signature": "paired_artifacts_missing"

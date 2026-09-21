@@ -68,11 +68,21 @@
       "generated_artifact": "tests/conformance/feature_parity_claim_evidence_gate.v1.json",
       "gate_script": "scripts/check_feature_parity_claim_evidence.sh",
       "harness_test": "crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs",
-      "claim_surfaces": ["README.md", "FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json"],
+      "claim_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
         "generated_artifact": ["tests/conformance/feature_parity_claim_evidence_gate.v1.json"],
-        "user_visible_claim_type": ["readme", "feature_parity", "support_taxonomy", "replacement_level"],
+        "user_visible_claim_type": [
+          "readme",
+          "feature_parity",
+          "support_taxonomy",
+          "replacement_level"
+        ],
         "replacement_level": ["L1", "L2"],
         "runtime_mode": ["strict", "hardened"],
         "oracle_kind": ["claim_surface_binding", "support_taxonomy", "semantic_overlay"],
@@ -94,7 +104,10 @@
           "expected_decision": "allow",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/support_matrix_maintenance_report.v1.json", "tests/conformance/reality_report.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/support_matrix_maintenance_report.v1.json",
+            "tests/conformance/reality_report.v1.json"
+          ],
           "freshness_state": "current"
         }
       ],
@@ -142,21 +155,28 @@
           "harness_test_anchor": "gate_script_passes_and_emits_report_and_jsonl_log",
           "expected_decision": "block",
           "failure_signature": "claim_gate_skipped_runtime_mode",
-          "evidence_refs": ["crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"]
+          "evidence_refs": [
+            "crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"
+          ]
         },
         "unsupported_workload": {
           "scenario_id": "feature-parity-runtime-workload-unsupported",
           "harness_test_anchor": "gate_fails_closed_when_claim_advances_without_required_evidence",
           "expected_decision": "block",
           "failure_signature": "claim_gate_unsupported_workload",
-          "evidence_refs": ["crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"]
+          "evidence_refs": [
+            "crates/frankenlibc-harness/tests/feature_parity_claim_evidence_gate_test.rs"
+          ]
         },
         "prose_only_advancement": {
           "scenario_id": "feature-parity-prose-only-done-claim",
           "source_scenario_id": "feature-parity-done-without-claim-gate",
           "expected_decision": "block",
           "failure_signature": "claim_gate_prose_only_advancement",
-          "evidence_refs": ["FEATURE_PARITY.md", "tests/conformance/feature_parity_claim_evidence_gate.v1.json"]
+          "evidence_refs": [
+            "FEATURE_PARITY.md",
+            "tests/conformance/feature_parity_claim_evidence_gate.v1.json"
+          ]
         }
       }
     },
@@ -167,7 +187,11 @@
       "generated_artifact": "tests/conformance/fpg_claim_control_gate.v1.json",
       "gate_script": "scripts/check_fpg_claim_control_gate.sh",
       "harness_test": "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs",
-      "claim_surfaces": ["FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json"],
+      "claim_surfaces": [
+        "FEATURE_PARITY.md",
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/fpg_claim_control_gate.v1.json"],
         "generated_artifact": ["tests/conformance/fpg_claim_control_gate.v1.json"],
@@ -193,7 +217,10 @@
           "expected_decision": "allow",
           "runtime_modes": ["hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/hardened_repair_deny_matrix.v1.json", "support_matrix.json"],
+          "evidence_refs": [
+            "tests/conformance/hardened_repair_deny_matrix.v1.json",
+            "support_matrix.json"
+          ],
           "freshness_state": "current"
         }
       ],
@@ -266,11 +293,19 @@
       "generated_artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
       "gate_script": "scripts/check_release_readme_example_workload_gate.sh",
       "harness_test": "crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs",
-      "claim_surfaces": ["README.md", "tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+      "claim_surfaces": [
+        "README.md",
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/release_readme_example_workload_gate.v1.json"],
         "generated_artifact": ["tests/conformance/release_readme_example_workload_gate.v1.json"],
-        "user_visible_claim_type": ["quickstart_example", "smoke_matrix_example", "known_limitation"],
+        "user_visible_claim_type": [
+          "quickstart_example",
+          "smoke_matrix_example",
+          "known_limitation"
+        ],
         "replacement_level": ["L0", "L2"],
         "runtime_mode": ["strict", "hardened"],
         "oracle_kind": ["direct_process_replay", "workload_matrix", "smoke_summary"],
@@ -283,7 +318,10 @@
           "expected_decision": "allow",
           "runtime_modes": ["strict"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/user_workload_acceptance_matrix.v1.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json"
+          ],
           "freshness_state": "current"
         },
         {
@@ -326,7 +364,9 @@
           "expected_decision": "block",
           "failure_signature": "claim_gate_wrong_source_commit",
           "freshness_state": "wrong_source_commit",
-          "evidence_refs": ["crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs"]
+          "evidence_refs": [
+            "crates/frankenlibc-harness/tests/release_readme_example_workload_gate_test.rs"
+          ]
         },
         "insufficient_replacement_level": {
           "scenario_id": "unsupported-l2-support-claim-blocked",
@@ -354,7 +394,10 @@
           "harness_test_anchor": "gate_fails_closed_for_stale_or_overlevel_supported_examples",
           "expected_decision": "block",
           "failure_signature": "claim_gate_prose_only_advancement",
-          "evidence_refs": ["README.md", "tests/conformance/release_readme_example_workload_gate.v1.json"]
+          "evidence_refs": [
+            "README.md",
+            "tests/conformance/release_readme_example_workload_gate.v1.json"
+          ]
         }
       }
     },
@@ -365,7 +408,11 @@
       "generated_artifact": "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
       "gate_script": "scripts/check_replacement_levels.sh",
       "harness_test": "crates/frankenlibc-harness/tests/replacement_levels_test.rs",
-      "claim_surfaces": ["README.md", "tests/conformance/replacement_levels.json", "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"],
+      "claim_surfaces": [
+        "README.md",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/replacement_levels.json"],
         "generated_artifact": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"],
@@ -382,7 +429,10 @@
           "expected_decision": "satisfied",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/claim_reconciliation_report.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/claim_reconciliation_report.v1.json"
+          ],
           "freshness_state": "current"
         },
         {
@@ -392,7 +442,10 @@
           "expected_decision": "satisfied",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L1",
-          "evidence_refs": ["tests/conformance/fixtures/startup_ops.json", "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"],
+          "evidence_refs": [
+            "tests/conformance/fixtures/startup_ops.json",
+            "crates/frankenlibc-harness/tests/startup_ops_conformance_test.rs"
+          ],
           "freshness_state": "current"
         }
       ],
@@ -468,7 +521,11 @@
       "generated_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
       "gate_script": "scripts/check_user_workload_acceptance_matrix.sh",
       "harness_test": "crates/frankenlibc-harness/tests/user_workload_acceptance_matrix_test.rs",
-      "claim_surfaces": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "README.md", "tests/conformance/workload_matrix.json"],
+      "claim_surfaces": [
+        "tests/conformance/user_workload_acceptance_matrix.v1.json",
+        "README.md",
+        "tests/conformance/workload_matrix.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/user_workload_acceptance_matrix.v1.json"],
         "generated_artifact": ["tests/conformance/user_workload_acceptance_matrix.v1.json"],
@@ -485,7 +542,10 @@
           "expected_decision": "allow",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/user_workload_acceptance_matrix.v1.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json"
+          ],
           "freshness_state": "current"
         },
         {
@@ -494,7 +554,10 @@
           "expected_decision": "allow",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/user_workload_acceptance_matrix.v1.json", "tests/conformance/hard_parts_e2e_catalog.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/user_workload_acceptance_matrix.v1.json",
+            "tests/conformance/hard_parts_e2e_catalog.v1.json"
+          ],
           "freshness_state": "current"
         }
       ],
@@ -567,14 +630,28 @@
       "generated_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
       "gate_script": "scripts/check_claim_reconciliation.sh",
       "harness_test": "crates/frankenlibc-harness/tests/claim_reconciliation_test.rs",
-      "claim_surfaces": ["README.md", "FEATURE_PARITY.md", "support_matrix.json", "tests/conformance/replacement_levels.json", "tests/conformance/ld_preload_smoke_summary.v1.json"],
+      "claim_surfaces": [
+        "README.md",
+        "FEATURE_PARITY.md",
+        "support_matrix.json",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/ld_preload_smoke_summary.v1.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/claim_reconciliation_report.v1.json"],
         "generated_artifact": ["tests/conformance/claim_reconciliation_report.v1.json"],
-        "user_visible_claim_type": ["readme_claim", "feature_parity_claim", "replacement_smoke_claim"],
+        "user_visible_claim_type": [
+          "readme_claim",
+          "feature_parity_claim",
+          "replacement_smoke_claim"
+        ],
         "replacement_level": ["L0", "L1"],
         "runtime_mode": ["strict", "hardened"],
-        "oracle_kind": ["claim_reconciliation", "readme_drift_detector", "replacement_level_blocker"],
+        "oracle_kind": [
+          "claim_reconciliation",
+          "readme_drift_detector",
+          "replacement_level_blocker"
+        ],
         "owner_bead": ["bd-w2c3.10.1"]
       },
       "positive_tests": [
@@ -625,7 +702,10 @@
           "harness_test_anchor": "claim_reconciliation_detects_replacement_level_smoke_drift_and_routes_owner",
           "expected_decision": "block",
           "failure_signature": "claim_gate_insufficient_replacement_level",
-          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/ld_preload_smoke_summary.v1.json"]
+          "evidence_refs": [
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/ld_preload_smoke_summary.v1.json"
+          ]
         },
         "skipped_runtime_mode": {
           "scenario_id": "claim-reconciliation-skipped-mode-pair",
@@ -657,14 +737,31 @@
       "generated_artifact": "tests/conformance/replacement_claim_doc_audit.v1.json",
       "gate_script": "scripts/release/check_replacement_claim_evidence.sh",
       "harness_test": "crates/frankenlibc-harness/tests/release_claim_gate_test.rs",
-      "claim_surfaces": ["README.md", "RELEASE.md", "tests/conformance/replacement_levels.json", "tests/conformance/l1_dry_run_readiness_dashboard.v1.json", "tests/conformance/replacement_claim_doc_audit.v1.json"],
+      "claim_surfaces": [
+        "README.md",
+        "RELEASE.md",
+        "tests/conformance/replacement_levels.json",
+        "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+        "tests/conformance/replacement_claim_doc_audit.v1.json"
+      ],
       "evidence_categories": {
         "source_artifact": ["tests/conformance/replacement_levels.json"],
         "generated_artifact": ["tests/conformance/replacement_claim_doc_audit.v1.json"],
-        "user_visible_claim_type": ["readme_claim", "release_doc_claim", "standalone_readiness_claim"],
+        "user_visible_claim_type": [
+          "readme_claim",
+          "release_doc_claim",
+          "standalone_readiness_claim"
+        ],
         "replacement_level": ["L0", "L1", "L2", "L3"],
         "runtime_mode": ["strict", "hardened"],
-        "oracle_kind": ["l1_dry_run_dashboard", "forged_artifact", "direct_link", "real_program", "dlfcn", "perf"],
+        "oracle_kind": [
+          "l1_dry_run_dashboard",
+          "forged_artifact",
+          "direct_link",
+          "real_program",
+          "dlfcn",
+          "perf"
+        ],
         "owner_bead": ["bd-5unc9"]
       },
       "positive_tests": [
@@ -674,7 +771,11 @@
           "expected_decision": "allow",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L0",
-          "evidence_refs": ["tests/conformance/replacement_levels.json", "tests/conformance/replacement_claim_doc_audit.v1.json", "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"],
+          "evidence_refs": [
+            "tests/conformance/replacement_levels.json",
+            "tests/conformance/replacement_claim_doc_audit.v1.json",
+            "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"
+          ],
           "freshness_state": "current"
         },
         {
@@ -683,7 +784,10 @@
           "expected_decision": "satisfied",
           "runtime_modes": ["strict", "hardened"],
           "replacement_level": "L1",
-          "evidence_refs": ["tests/conformance/l1_dry_run_readiness_dashboard.v1.json", "tests/conformance/perf_regression_prevention.v1.json"],
+          "evidence_refs": [
+            "tests/conformance/l1_dry_run_readiness_dashboard.v1.json",
+            "tests/conformance/perf_regression_prevention.v1.json"
+          ],
           "freshness_state": "current"
         }
       ],
@@ -745,7 +849,10 @@
           "harness_test_anchor": "release_doc_standalone_readiness_without_l1_dashboard_fails_closed",
           "expected_decision": "block",
           "failure_signature": "claim_gate_prose_only_advancement",
-          "evidence_refs": ["README.md", "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"]
+          "evidence_refs": [
+            "README.md",
+            "crates/frankenlibc-harness/tests/release_claim_gate_test.rs"
+          ]
         }
       }
     }

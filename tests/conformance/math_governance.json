@@ -21,79 +21,283 @@
   },
   "classifications": {
     "production_core": [
-      {"module": "barrier", "rationale": "Safety admissibility filter; constant-time guard for safe set enforcement"},
-      {"module": "bandit", "rationale": "Constrained bandit router for validation depth selection; hot-path caching"},
-      {"module": "control", "rationale": "Primal-dual runtime controller adjusting latency/safety thresholds"},
-      {"module": "risk", "rationale": "Conformal online risk envelope; conservative upper-bound ppm estimator"},
-      {"module": "fusion", "rationale": "Runtime robust signal fusion controller; aggregates 64+ monitor outputs"},
-      {"module": "evidence", "rationale": "Runtime evidence symbol record format; systematic ring buffer for logging"},
-      {"module": "policy_table", "rationale": "Proof-carrying policy table loader/verifier; deterministic init-time"},
-      {"module": "loss_minimizer", "rationale": "Decision-theoretic expected-loss minimization; per-family loss matrices"},
-      {"module": "conformal", "rationale": "Split conformal prediction for finite-sample decision guarantees"},
-      {"module": "redundancy_tuner", "rationale": "Adaptive redundancy tuner; anytime-valid loss/corruption monitoring"},
-      {"module": "commitment_audit", "rationale": "Tamper-evident hash-chain session traces; commitment algebra"},
-      {"module": "provenance_info", "rationale": "Information-theoretic provenance tag design with collision bounds"}
+      {
+        "module": "barrier",
+        "rationale": "Safety admissibility filter; constant-time guard for safe set enforcement"
+      },
+      {
+        "module": "bandit",
+        "rationale": "Constrained bandit router for validation depth selection; hot-path caching"
+      },
+      {
+        "module": "control",
+        "rationale": "Primal-dual runtime controller adjusting latency/safety thresholds"
+      },
+      {
+        "module": "risk",
+        "rationale": "Conformal online risk envelope; conservative upper-bound ppm estimator"
+      },
+      {
+        "module": "fusion",
+        "rationale": "Runtime robust signal fusion controller; aggregates 64+ monitor outputs"
+      },
+      {
+        "module": "evidence",
+        "rationale": "Runtime evidence symbol record format; systematic ring buffer for logging"
+      },
+      {
+        "module": "policy_table",
+        "rationale": "Proof-carrying policy table loader/verifier; deterministic init-time"
+      },
+      {
+        "module": "loss_minimizer",
+        "rationale": "Decision-theoretic expected-loss minimization; per-family loss matrices"
+      },
+      {
+        "module": "conformal",
+        "rationale": "Split conformal prediction for finite-sample decision guarantees"
+      },
+      {
+        "module": "redundancy_tuner",
+        "rationale": "Adaptive redundancy tuner; anytime-valid loss/corruption monitoring"
+      },
+      {
+        "module": "commitment_audit",
+        "rationale": "Tamper-evident hash-chain session traces; commitment algebra"
+      },
+      {
+        "module": "provenance_info",
+        "rationale": "Information-theoretic provenance tag design with collision bounds"
+      }
     ],
     "production_monitor": [
-      {"module": "changepoint", "rationale": "Bayesian online change-point detection; eliminates threshold drift"},
-      {"module": "eprocess", "rationale": "Anytime-valid e-process monitor for online drift alarms"},
-      {"module": "cvar", "rationale": "Distributionally-robust CVaR tail controller; heavy-tail protection"},
-      {"module": "azuma_hoeffding", "rationale": "Martingale concentration monitor; detects noise exceeding bounds"},
-      {"module": "alpha_investing", "rationale": "Alpha-Investing FDR controller; wealth-based alarm acceptance"},
-      {"module": "pareto", "rationale": "Latency-risk Pareto controller with online regret accounting"},
-      {"module": "sobol", "rationale": "Low-discrepancy probe scheduling for validation coverage"},
-      {"module": "covering_array", "rationale": "t-wise interaction coverage for conformance scheduling"},
-      {"module": "submodular_coverage", "rationale": "Submodular validation stage coverage; greedy approximation"},
-      {"module": "dispersion_index", "rationale": "Dispersion index for monitoring variance-to-mean ratio"},
-      {"module": "borel_cantelli", "rationale": "Recurrence monitor; classifies transient vs recurrent exceedances"},
-      {"module": "doob_decomposition", "rationale": "Separates systematic drift from pure noise in monitoring"},
-      {"module": "renewal_theory", "rationale": "Inter-arrival time monitoring for recovery capability tracking"}
+      {
+        "module": "changepoint",
+        "rationale": "Bayesian online change-point detection; eliminates threshold drift"
+      },
+      {
+        "module": "eprocess",
+        "rationale": "Anytime-valid e-process monitor for online drift alarms"
+      },
+      {
+        "module": "cvar",
+        "rationale": "Distributionally-robust CVaR tail controller; heavy-tail protection"
+      },
+      {
+        "module": "azuma_hoeffding",
+        "rationale": "Martingale concentration monitor; detects noise exceeding bounds"
+      },
+      {
+        "module": "alpha_investing",
+        "rationale": "Alpha-Investing FDR controller; wealth-based alarm acceptance"
+      },
+      {
+        "module": "pareto",
+        "rationale": "Latency-risk Pareto controller with online regret accounting"
+      },
+      {
+        "module": "sobol",
+        "rationale": "Low-discrepancy probe scheduling for validation coverage"
+      },
+      {
+        "module": "covering_array",
+        "rationale": "t-wise interaction coverage for conformance scheduling"
+      },
+      {
+        "module": "submodular_coverage",
+        "rationale": "Submodular validation stage coverage; greedy approximation"
+      },
+      {
+        "module": "dispersion_index",
+        "rationale": "Dispersion index for monitoring variance-to-mean ratio"
+      },
+      {
+        "module": "borel_cantelli",
+        "rationale": "Recurrence monitor; classifies transient vs recurrent exceedances"
+      },
+      {
+        "module": "doob_decomposition",
+        "rationale": "Separates systematic drift from pure noise in monitoring"
+      },
+      {
+        "module": "renewal_theory",
+        "rationale": "Inter-arrival time monitoring for recovery capability tracking"
+      }
     ],
     "research": [
-      {"module": "grothendieck_glue", "rationale": "Topos theory descent/stackification; local-to-global coherence"},
-      {"module": "higher_topos", "rationale": "Higher-topos internal logic descent; locale fallback chain"},
-      {"module": "serre_spectral", "rationale": "Serre spectral sequence invariant lifting; cross-layer consistency"},
-      {"module": "microlocal", "rationale": "Kashiwara-Schapira microlocal sheaf propagation; fault-surface control"},
-      {"module": "ktheory", "rationale": "K-theory transport ABI compatibility; topological obstruction detection"},
-      {"module": "clifford", "rationale": "Clifford/geometric algebra SIMD alignment; Spin/Pin symmetry"},
-      {"module": "derived_tstructure", "rationale": "Derived-category t-structure bootstrap ordering"},
-      {"module": "hodge_decomposition", "rationale": "Combinatorial Hodge decomposition; gradient/curl/harmonic separation"},
-      {"module": "nerve_complex", "rationale": "Cech nerve theorem; Betti numbers for structural fragmentation"},
-      {"module": "cohomology", "rationale": "Incremental overlap-consistency monitor; cocycle-like constraints"},
-      {"module": "equivariant", "rationale": "Equivariant transport controller; representation stability"},
-      {"module": "atiyah_bott", "rationale": "Atiyah-Bott fixed-point localization; hot path compression"},
-      {"module": "localization_chooser", "rationale": "Localization-based policy arm selection; fixed-point weights"},
-      {"module": "grobner_normalizer", "rationale": "Grobner-basis constraint normalization; confluent polynomial division"},
-      {"module": "sos_barrier", "rationale": "SOS polynomial evaluator for pre-computed barrier certificates"},
-      {"module": "sos_invariant", "rationale": "SOS polynomial invariant guard for nonlinear cross-controller invariants"},
-      {"module": "birkhoff_ergodic", "rationale": "Birkhoff ergodic convergence; detects non-ergodic state trapping"},
-      {"module": "ornstein_uhlenbeck", "rationale": "OU mean-reversion estimator; loss of equilibrium tendency"},
-      {"module": "lyapunov_stability", "rationale": "Maximal Lyapunov exponent; chaotic/divergent ensemble dynamics"},
-      {"module": "operator_norm", "rationale": "Online power iteration for spectral radius; emergent instability"},
-      {"module": "spectral_gap", "rationale": "Spectral gap via Cheeger inequality; slow mixing/metastability"},
-      {"module": "hurst_exponent", "rationale": "Rescaled range (R/S); persistent trends vs independence"},
-      {"module": "entropy_rate", "rationale": "Shannon entropy rate for stationary Markov chains"},
-      {"module": "lempel_ziv", "rationale": "LZ76 complexity; compressibility analysis for anomalous patterns"},
-      {"module": "fano_bound", "rationale": "Fano inequality; information-theoretic prediction error lower bound"},
-      {"module": "transfer_entropy", "rationale": "Schreiber transfer entropy; directed causality between controllers"},
-      {"module": "info_geometry", "rationale": "Fisher-Rao geodesic distance; structural regime shift detection"},
-      {"module": "kernel_mmd", "rationale": "Maximum Mean Discrepancy; universal nonparametric two-sample test"},
-      {"module": "matrix_concentration", "rationale": "Matrix Bernstein inequality; spectral bounds on ensemble covariance"},
-      {"module": "coupling", "rationale": "Optimal probabilistic coupling; strict/hardened decision alignment"},
-      {"module": "pac_bayes", "rationale": "PAC-Bayes generalization bound; finite-sample ensemble prediction error"},
-      {"module": "rademacher_complexity", "rationale": "Data-dependent generalization bound; capacity of severity space"},
-      {"module": "wasserstein_drift", "rationale": "1-Wasserstein distance for distributional shift detection"},
-      {"module": "stein_discrepancy", "rationale": "Kernelized Stein Discrepancy; distribution-free goodness-of-fit"},
-      {"module": "bifurcation_detector", "rationale": "Critical slowing down; universal early warning for bifurcations"},
-      {"module": "ito_quadratic_variation", "rationale": "Ito quadratic variation; realized volatility tracking"},
-      {"module": "malliavin_sensitivity", "rationale": "Discrete Malliavin calculus; sensitivity to state perturbations"},
-      {"module": "dobrushin_contraction", "rationale": "Dobrushin contraction coefficient; Markov chain ergodicity loss"},
-      {"module": "pomdp_repair", "rationale": "Constrained POMDP repair policy; point-based value iteration"},
-      {"module": "sparse", "rationale": "Online L1-regularized sparse recovery (ISTA); latent fault inference"},
-      {"module": "design", "rationale": "Runtime optimal experimental design; budget-feasible probe selection"},
-      {"module": "admm_budget", "rationale": "Online ADMM for joint resource optimization"},
-      {"module": "approachability", "rationale": "Blackwell approachability; multi-objective routing convergence"},
-      {"module": "obstruction_detector", "rationale": "Spectral-sequence obstruction detector; cross-layer defects"}
+      {
+        "module": "grothendieck_glue",
+        "rationale": "Topos theory descent/stackification; local-to-global coherence"
+      },
+      {
+        "module": "higher_topos",
+        "rationale": "Higher-topos internal logic descent; locale fallback chain"
+      },
+      {
+        "module": "serre_spectral",
+        "rationale": "Serre spectral sequence invariant lifting; cross-layer consistency"
+      },
+      {
+        "module": "microlocal",
+        "rationale": "Kashiwara-Schapira microlocal sheaf propagation; fault-surface control"
+      },
+      {
+        "module": "ktheory",
+        "rationale": "K-theory transport ABI compatibility; topological obstruction detection"
+      },
+      {
+        "module": "clifford",
+        "rationale": "Clifford/geometric algebra SIMD alignment; Spin/Pin symmetry"
+      },
+      {
+        "module": "derived_tstructure",
+        "rationale": "Derived-category t-structure bootstrap ordering"
+      },
+      {
+        "module": "hodge_decomposition",
+        "rationale": "Combinatorial Hodge decomposition; gradient/curl/harmonic separation"
+      },
+      {
+        "module": "nerve_complex",
+        "rationale": "Cech nerve theorem; Betti numbers for structural fragmentation"
+      },
+      {
+        "module": "cohomology",
+        "rationale": "Incremental overlap-consistency monitor; cocycle-like constraints"
+      },
+      {
+        "module": "equivariant",
+        "rationale": "Equivariant transport controller; representation stability"
+      },
+      {
+        "module": "atiyah_bott",
+        "rationale": "Atiyah-Bott fixed-point localization; hot path compression"
+      },
+      {
+        "module": "localization_chooser",
+        "rationale": "Localization-based policy arm selection; fixed-point weights"
+      },
+      {
+        "module": "grobner_normalizer",
+        "rationale": "Grobner-basis constraint normalization; confluent polynomial division"
+      },
+      {
+        "module": "sos_barrier",
+        "rationale": "SOS polynomial evaluator for pre-computed barrier certificates"
+      },
+      {
+        "module": "sos_invariant",
+        "rationale": "SOS polynomial invariant guard for nonlinear cross-controller invariants"
+      },
+      {
+        "module": "birkhoff_ergodic",
+        "rationale": "Birkhoff ergodic convergence; detects non-ergodic state trapping"
+      },
+      {
+        "module": "ornstein_uhlenbeck",
+        "rationale": "OU mean-reversion estimator; loss of equilibrium tendency"
+      },
+      {
+        "module": "lyapunov_stability",
+        "rationale": "Maximal Lyapunov exponent; chaotic/divergent ensemble dynamics"
+      },
+      {
+        "module": "operator_norm",
+        "rationale": "Online power iteration for spectral radius; emergent instability"
+      },
+      {
+        "module": "spectral_gap",
+        "rationale": "Spectral gap via Cheeger inequality; slow mixing/metastability"
+      },
+      {
+        "module": "hurst_exponent",
+        "rationale": "Rescaled range (R/S); persistent trends vs independence"
+      },
+      {
+        "module": "entropy_rate",
+        "rationale": "Shannon entropy rate for stationary Markov chains"
+      },
+      {
+        "module": "lempel_ziv",
+        "rationale": "LZ76 complexity; compressibility analysis for anomalous patterns"
+      },
+      {
+        "module": "fano_bound",
+        "rationale": "Fano inequality; information-theoretic prediction error lower bound"
+      },
+      {
+        "module": "transfer_entropy",
+        "rationale": "Schreiber transfer entropy; directed causality between controllers"
+      },
+      {
+        "module": "info_geometry",
+        "rationale": "Fisher-Rao geodesic distance; structural regime shift detection"
+      },
+      {
+        "module": "kernel_mmd",
+        "rationale": "Maximum Mean Discrepancy; universal nonparametric two-sample test"
+      },
+      {
+        "module": "matrix_concentration",
+        "rationale": "Matrix Bernstein inequality; spectral bounds on ensemble covariance"
+      },
+      {
+        "module": "coupling",
+        "rationale": "Optimal probabilistic coupling; strict/hardened decision alignment"
+      },
+      {
+        "module": "pac_bayes",
+        "rationale": "PAC-Bayes generalization bound; finite-sample ensemble prediction error"
+      },
+      {
+        "module": "rademacher_complexity",
+        "rationale": "Data-dependent generalization bound; capacity of severity space"
+      },
+      {
+        "module": "wasserstein_drift",
+        "rationale": "1-Wasserstein distance for distributional shift detection"
+      },
+      {
+        "module": "stein_discrepancy",
+        "rationale": "Kernelized Stein Discrepancy; distribution-free goodness-of-fit"
+      },
+      {
+        "module": "bifurcation_detector",
+        "rationale": "Critical slowing down; universal early warning for bifurcations"
+      },
+      {
+        "module": "ito_quadratic_variation",
+        "rationale": "Ito quadratic variation; realized volatility tracking"
+      },
+      {
+        "module": "malliavin_sensitivity",
+        "rationale": "Discrete Malliavin calculus; sensitivity to state perturbations"
+      },
+      {
+        "module": "dobrushin_contraction",
+        "rationale": "Dobrushin contraction coefficient; Markov chain ergodicity loss"
+      },
+      {
+        "module": "pomdp_repair",
+        "rationale": "Constrained POMDP repair policy; point-based value iteration"
+      },
+      {
+        "module": "sparse",
+        "rationale": "Online L1-regularized sparse recovery (ISTA); latent fault inference"
+      },
+      {
+        "module": "design",
+        "rationale": "Runtime optimal experimental design; budget-feasible probe selection"
+      },
+      { "module": "admm_budget", "rationale": "Online ADMM for joint resource optimization" },
+      {
+        "module": "approachability",
+        "rationale": "Blackwell approachability; multi-objective routing convergence"
+      },
+      {
+        "module": "obstruction_detector",
+        "rationale": "Spectral-sequence obstruction detector; cross-layer defects"
+      }
     ]
   },
   "summary": {
@@ -106,28 +310,53 @@
   },
   "bead_classifications": {
     "production": [
-      {"bead": "bd-35a", "title": "Expected-loss policy", "status": "closed"},
-      {"bead": "bd-rqn", "title": "Production kernel manifest", "status": "in_progress"}
+      { "bead": "bd-35a", "title": "Expected-loss policy", "status": "closed" },
+      { "bead": "bd-rqn", "title": "Production kernel manifest", "status": "in_progress" }
     ],
     "research": [
-      {"bead": "bd-182", "title": "Anytime-valid monitor standard (e-process)", "note": "e-process module is production_monitor but the bead scope is research-grade"},
-      {"bead": "bd-3tc", "title": "Change-point drift policy (BOCPD)", "note": "changepoint module is production_monitor; bead extends to research scope"},
-      {"bead": "bd-3tp", "title": "Math value proof (A/B benchmark)", "note": "Meta-governance bead, research methodology"},
-      {"bead": "bd-545", "title": "Math retirement gate", "note": "Meta-governance bead, research methodology"}
+      {
+        "bead": "bd-182",
+        "title": "Anytime-valid monitor standard (e-process)",
+        "note": "e-process module is production_monitor but the bead scope is research-grade"
+      },
+      {
+        "bead": "bd-3tc",
+        "title": "Change-point drift policy (BOCPD)",
+        "note": "changepoint module is production_monitor; bead extends to research scope"
+      },
+      {
+        "bead": "bd-3tp",
+        "title": "Math value proof (A/B benchmark)",
+        "note": "Meta-governance bead, research methodology"
+      },
+      {
+        "bead": "bd-545",
+        "title": "Math retirement gate",
+        "note": "Meta-governance bead, research methodology"
+      }
     ],
     "governance": [
-      {"bead": "bd-kan", "title": "EPIC: Math Kernel Rebuild", "note": "EPIC governing the production/research split"},
-      {"bead": "bd-2yx", "title": "Math governance classification", "note": "This bead — produces the classification artifact"},
-      {"bead": "bd-24x", "title": "Math relevance ledger", "note": "Closed — mapped modules to runtime surfaces"}
+      {
+        "bead": "bd-kan",
+        "title": "EPIC: Math Kernel Rebuild",
+        "note": "EPIC governing the production/research split"
+      },
+      {
+        "bead": "bd-2yx",
+        "title": "Math governance classification",
+        "note": "This bead — produces the classification artifact"
+      },
+      {
+        "bead": "bd-24x",
+        "title": "Math relevance ledger",
+        "note": "Closed — mapped modules to runtime surfaces"
+      }
     ]
   },
   "telemetry_contract": {
     "report_path": "target/conformance/math_governance.report.json",
     "log_path": "target/conformance/math_governance.log.jsonl",
-    "required_log_events": [
-      "math_governance_tier",
-      "math_governance_summary"
-    ],
+    "required_log_events": ["math_governance_tier", "math_governance_summary"],
     "required_log_fields": [
       "timestamp",
       "trace_id",
@@ -173,9 +402,7 @@
     "migrations_primary": {
       "missing_item_id": "migrations.primary",
       "description": "Research-tier modules are migrated out of the production manifest and require the runtime-math-research feature path.",
-      "required_test_names": [
-        "migration_contract_routes_research_modules_out_of_production"
-      ],
+      "required_test_names": ["migration_contract_routes_research_modules_out_of_production"],
       "manifest_refs": [
         "tests/runtime_math/production_kernel_manifest.v1.json#/production_modules",
         "tests/runtime_math/production_kernel_manifest.v1.json#/research_only_modules",

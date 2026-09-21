@@ -52,10 +52,7 @@
       "failure_signature"
     ],
     "freshness_state_policy": {
-      "pass_states": [
-        "fresh",
-        "archived"
-      ],
+      "pass_states": ["fresh", "archived"],
       "fail_states": [
         "missing_artifact",
         "stale_commit",
@@ -84,10 +81,13 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ledger_harness", "name": "done_rows_have_evidence_audit_records"},
-        {"source": "ledger_harness", "name": "generator_self_tests_pass"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_audit_field"}
+        { "source": "ledger_harness", "name": "done_rows_have_evidence_audit_records" },
+        { "source": "ledger_harness", "name": "generator_self_tests_pass" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_required_audit_field" }
       ],
       "required_commands": [
         "python3 scripts/generate_feature_parity_gap_ledger.py --self-test",
@@ -98,10 +98,10 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ledger_harness", "name": "gate_script_exists_and_succeeds"},
-        {"source": "ledger_harness", "name": "gate_script_emits_done_evidence_log_and_report"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_ledger_binding"}
+        { "source": "ledger_harness", "name": "gate_script_exists_and_succeeds" },
+        { "source": "ledger_harness", "name": "gate_script_emits_done_evidence_log_and_report" },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_ledger_binding" }
       ],
       "required_commands": [
         "bash scripts/check_feature_parity_gap_ledger.sh",
@@ -113,9 +113,9 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ledger_harness", "name": "artifact_exists_and_valid"},
-        {"source": "ledger_harness", "name": "done_rows_have_evidence_audit_records"},
-        {"source": "completion_harness", "name": "checker_validates_canonical_ledger_summary"}
+        { "source": "ledger_harness", "name": "artifact_exists_and_valid" },
+        { "source": "ledger_harness", "name": "done_rows_have_evidence_audit_records" },
+        { "source": "completion_harness", "name": "checker_validates_canonical_ledger_summary" }
       ],
       "required_commands": [
         "python3 scripts/generate_feature_parity_gap_ledger.py --output tests/conformance/feature_parity_gap_ledger.v1.json --check",
@@ -128,9 +128,9 @@
       "default_report_path": "target/conformance/feature_parity_done_audit_completion_contract.report.json",
       "default_log_path": "target/conformance/feature_parity_done_audit_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "ledger_harness", "name": "gate_script_emits_done_evidence_log_and_report"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_audit_field"}
+        { "source": "ledger_harness", "name": "gate_script_emits_done_evidence_log_and_report" },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_required_audit_field" }
       ],
       "required_events": [
         "feature_parity_done_audit_completion_contract_validated",

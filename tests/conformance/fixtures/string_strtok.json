@@ -9,7 +9,10 @@
       "name": "strtok_basic_first",
       "function": "strtok",
       "spec_section": "POSIX.1-2017 strtok",
-      "inputs": { "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "delim": [32, 0] },
+      "inputs": {
+        "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0],
+        "delim": [32, 0]
+      },
       "expected_output": "hello",
       "expected_errno": 0,
       "mode": "strict"
@@ -54,7 +57,11 @@
       "name": "strtok_r_basic_first",
       "function": "strtok_r",
       "spec_section": "POSIX.1-2017 strtok_r",
-      "inputs": { "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "delim": [32, 0], "save_ptr": 0 },
+      "inputs": {
+        "s": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0],
+        "delim": [32, 0],
+        "save_ptr": 0
+      },
       "expected_output": "hello",
       "expected_errno": 0,
       "mode": "strict"

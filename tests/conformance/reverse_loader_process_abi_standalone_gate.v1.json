@@ -46,11 +46,7 @@
     "missing_positive_smoke_result": "claim_blocked",
     "missing_negative_claim_row": "claim_blocked",
     "missing_or_stale_standalone_artifact_result": "claim_blocked",
-    "replacement_levels_blocked_until_current": [
-      "L1",
-      "L2",
-      "L3"
-    ],
+    "replacement_levels_blocked_until_current": ["L1", "L2", "L3"],
     "rejected_evidence_kinds": [
       "ld_preload_only",
       "version_script_only",
@@ -82,15 +78,9 @@
       "symbol": "dlopen,dlsym,memcpy,getauxval",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.loader_symbol_bootstrap"
-      ],
+      "positive_smoke_ids": ["standalone.loader_symbol_bootstrap"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -149,15 +139,9 @@
       "symbol": "__libc_start_main,time_t,getauxval",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.loader_symbol_bootstrap"
-      ],
+      "positive_smoke_ids": ["standalone.loader_symbol_bootstrap"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -212,15 +196,9 @@
       "symbol": "mmap,munmap,mprotect",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.vm_syscall_ipc"
-      ],
+      "positive_smoke_ids": ["standalone.vm_syscall_ipc"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -280,15 +258,9 @@
       "symbol": "__libc_start_main,getauxval,AT_SECURE",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.loader_symbol_bootstrap"
-      ],
+      "positive_smoke_ids": ["standalone.loader_symbol_bootstrap"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -343,15 +315,9 @@
       "symbol": "syscall,getpid,clone,execve",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.vm_syscall_ipc"
-      ],
+      "positive_smoke_ids": ["standalone.vm_syscall_ipc"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -414,15 +380,9 @@
       "symbol": "ftok,semget,semop",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.vm_syscall_ipc"
-      ],
+      "positive_smoke_ids": ["standalone.vm_syscall_ipc"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -481,15 +441,9 @@
       "symbol": "backtrace,backtrace_symbols,backtrace_symbols_fd",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.diagnostics_session"
-      ],
+      "positive_smoke_ids": ["standalone.diagnostics_session"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -549,15 +503,9 @@
       "symbol": "getutxent,setutxent,endutxent,utmpxname",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.diagnostics_session"
-      ],
+      "positive_smoke_ids": ["standalone.diagnostics_session"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -616,15 +564,9 @@
       "symbol": "profil",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.profiling_fenv"
-      ],
+      "positive_smoke_ids": ["standalone.profiling_fenv"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {
@@ -675,15 +617,9 @@
       "symbol": "feclearexcept,feraiseexcept,fetestexcept",
       "source_status": "PLANNED",
       "replacement_level": "L2",
-      "claim_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "claim_replacement_levels": ["L1", "L2", "L3"],
       "evidence_kind": "standalone_link_run_and_versioned_symbol_gate",
-      "positive_smoke_ids": [
-        "standalone.profiling_fenv"
-      ],
+      "positive_smoke_ids": ["standalone.profiling_fenv"],
       "negative_smoke_id": "standalone.loader_process_negative_missing_obligation",
       "versioned_symbol_requirements": [
         {

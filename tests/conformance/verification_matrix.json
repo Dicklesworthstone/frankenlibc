@@ -41,31 +41,16 @@
       "bead_id": "bd-xxxx",
       "stream": "docs|e2e|syscall|stubs|math|perf",
       "status": "missing|partial|complete",
-      "unit_cmds": [
-        "cargo test ..."
-      ],
-      "e2e_cmds": [
-        "scripts/...sh"
-      ],
-      "expected_assertions": [
-        "all required checks pass"
-      ],
-      "log_schema_refs": [
-        "tests/conformance/log_schema.json"
-      ],
+      "unit_cmds": ["cargo test ..."],
+      "e2e_cmds": ["scripts/...sh"],
+      "expected_assertions": ["all required checks pass"],
+      "log_schema_refs": ["tests/conformance/log_schema.json"],
       "artifact_paths": [
         "tests/cve_arena/results/.../trace.jsonl",
         "tests/cve_arena/results/.../artifact_index.json"
       ],
-      "perf_proof_refs": [
-        "scripts/perf_gate.sh"
-      ],
-      "close_blockers": [
-        "missing_unit",
-        "missing_e2e",
-        "missing_logs",
-        "missing_perf_proof"
-      ],
+      "perf_proof_refs": ["scripts/perf_gate.sh"],
+      "close_blockers": ["missing_unit", "missing_e2e", "missing_logs", "missing_perf_proof"],
       "notes": "Status is derived via row_status_transitions."
     },
     "stream_examples": [
@@ -73,21 +58,11 @@
         "bead_id": "bd-3rf",
         "stream": "docs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test parity_report_drift_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_support_matrix_drift.sh"
-        ],
-        "expected_assertions": [
-          "README and FEATURE_PARITY snapshots match reality_report.v1.json"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
-        "artifact_paths": [
-          "tests/conformance/reality_report.v1.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test parity_report_drift_test"],
+        "e2e_cmds": ["scripts/check_support_matrix_drift.sh"],
+        "expected_assertions": ["README and FEATURE_PARITY snapshots match reality_report.v1.json"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
+        "artifact_paths": ["tests/conformance/reality_report.v1.json"],
         "perf_proof_refs": [],
         "close_blockers": [],
         "notes": "Docs/reality drift guard example row."
@@ -96,19 +71,12 @@
         "bead_id": "bd-2ez",
         "stream": "e2e",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test e2e_suite_test"
-        ],
-        "e2e_cmds": [
-          "scripts/e2e_suite.sh smoke",
-          "scripts/e2e_suite.sh stress hardened"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test e2e_suite_test"],
+        "e2e_cmds": ["scripts/e2e_suite.sh smoke", "scripts/e2e_suite.sh stress hardened"],
         "expected_assertions": [
           "strict and hardened scenario runs emit case_pass/case_fail records with trace IDs"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "target/e2e_suite/<run_id>/trace.jsonl",
           "target/e2e_suite/<run_id>/artifact_index.json"
@@ -121,25 +89,15 @@
         "bead_id": "bd-2cr",
         "stream": "syscall",
         "status": "partial",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
         "expected_assertions": [
           "core binaries execute under LD_PRELOAD in strict and hardened modes"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
-        "artifact_paths": [
-          "target/e2e_smoke/<run_id>/trace.jsonl"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
+        "artifact_paths": ["target/e2e_smoke/<run_id>/trace.jsonl"],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_golden_artifacts"],
         "notes": "Syscall/interposition smoke row with explicit remaining blocker."
       },
       {
@@ -150,16 +108,9 @@
           "cargo test -p frankenlibc-harness --test stub_contract_test",
           "cargo test -p frankenlibc-harness --test stub_guard_test"
         ],
-        "e2e_cmds": [
-          "scripts/check_stub_contracts.sh",
-          "scripts/check_stub_guard.sh"
-        ],
-        "expected_assertions": [
-          "stub fallback contracts and guard checks pass"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_stub_contracts.sh", "scripts/check_stub_guard.sh"],
+        "expected_assertions": ["stub fallback contracts and guard checks pass"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/stub_contracts.json",
           "tests/conformance/stub_census.json"
@@ -176,9 +127,7 @@
           "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture",
           "cargo test -p frankenlibc-membrane runtime_math::evidence::tests::encode_decision_payload_embeds_loss_evidence_block -- --exact"
         ],
-        "e2e_cmds": [
-          "scripts/bd35a_evidence_run.sh"
-        ],
+        "e2e_cmds": ["scripts/bd35a_evidence_run.sh"],
         "expected_assertions": [
           "expected-loss matrix checks and evidence payload checks pass in strict and hardened modes"
         ],
@@ -190,9 +139,7 @@
           "tests/cve_arena/results/bd-35a/<run_id>/trace.jsonl",
           "tests/cve_arena/results/bd-35a/<run_id>/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/check_expected_loss_matrix.sh"
-        ],
+        "perf_proof_refs": ["scripts/check_expected_loss_matrix.sh"],
         "close_blockers": [],
         "notes": "Runtime-math expected-loss policy row."
       },
@@ -200,29 +147,15 @@
         "bead_id": "bd-2wp",
         "stream": "perf",
         "status": "partial",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-bench --no-run"
-        ],
-        "e2e_cmds": [
-          "scripts/perf_gate.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-bench --no-run"],
+        "e2e_cmds": ["scripts/perf_gate.sh"],
         "expected_assertions": [
           "strict<20ns and hardened<200ns envelope checks remain within budget"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
-        "artifact_paths": [
-          "target/criterion",
-          "scripts/perf_gate.sh"
-        ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh",
-          "scripts/profile_pipeline.sh"
-        ],
-        "close_blockers": [
-          "missing_perf_proof"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
+        "artifact_paths": ["target/criterion", "scripts/perf_gate.sh"],
+        "perf_proof_refs": ["scripts/perf_gate.sh", "scripts/profile_pipeline.sh"],
+        "close_blockers": ["missing_perf_proof"],
         "notes": "Performance-proof row for benchmark gate stream."
       }
     ]
@@ -337,9 +270,7 @@
       "harness_integration_tests": [
         "/data/projects/frankenlibc/crates/frankenlibc-harness/tests/stub_guard_test.rs"
       ],
-      "c_integration_tests": [
-        "/data/projects/frankenlibc/tests/integration/link_test.c"
-      ]
+      "c_integration_tests": ["/data/projects/frankenlibc/tests/integration/link_test.c"]
     },
     "scripts": {
       "ci_gates": [
@@ -359,9 +290,7 @@
         "/data/projects/frankenlibc/scripts/abi_audit.sh",
         "/data/projects/frankenlibc/scripts/stub_census.sh"
       ],
-      "e2e_smoke": [
-        "/data/projects/frankenlibc/scripts/ld_preload_smoke.sh"
-      ],
+      "e2e_smoke": ["/data/projects/frankenlibc/scripts/ld_preload_smoke.sh"],
       "update_and_utility": [
         "/data/projects/frankenlibc/scripts/extract_symbols.sh",
         "/data/projects/frankenlibc/scripts/compare_abi.sh",
@@ -408,13 +337,7 @@
     ],
     "cve_arena": {
       "glibc_internal": [],
-      "targets": [
-        "redis",
-        "sudo",
-        "curl",
-        "perl",
-        "vlc"
-      ]
+      "targets": ["redis", "sudo", "curl", "perl", "vlc"]
     }
   },
   "entries": [
@@ -496,26 +419,18 @@
         "bead_id": "bd-10pq",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-10pq/trace.jsonl",
           "tests/cve_arena/results/bd-10pq/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-10pq; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -525,13 +440,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "startup",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "implementation", "startup", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -595,18 +504,12 @@
         "bead_id": "bd-11nb",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-11nb/trace.jsonl",
           "tests/cve_arena/results/bd-11nb/artifact_index.json"
@@ -628,13 +531,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "tls"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -697,18 +594,12 @@
         "bead_id": "bd-122j",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-122j/trace.jsonl",
           "tests/cve_arena/results/bd-122j/artifact_index.json"
@@ -729,13 +620,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "build",
-        "critique",
-        "iconv",
-        "testing",
-        "verification"
-      ],
+      "labels": ["build", "critique", "iconv", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -797,26 +682,18 @@
         "bead_id": "bd-13ya",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-13ya/trace.jsonl",
           "tests/cve_arena/results/bd-13ya/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-13ya; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -826,14 +703,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "frankenlibc",
-        "security",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "frankenlibc", "security", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -897,25 +767,17 @@
         "bead_id": "bd-13zp",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-13zp/trace.jsonl",
           "tests/cve_arena/results/bd-13zp/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -932,13 +794,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "setjmp",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "implementation", "setjmp", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1000,26 +856,18 @@
         "bead_id": "bd-146t",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-146t/trace.jsonl",
           "tests/cve_arena/results/bd-146t/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-146t; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -1029,13 +877,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "tls"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1098,18 +940,12 @@
         "bead_id": "bd-14gj",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-14gj/trace.jsonl",
           "tests/cve_arena/results/bd-14gj/artifact_index.json"
@@ -1130,12 +966,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "conformance",
-        "critique",
-        "e2e",
-        "testing"
-      ],
+      "labels": ["conformance", "critique", "e2e", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1212,9 +1043,7 @@
           "trace.jsonl carries fixture_id,symbol,spec_ref,mode,expected_vs_actual fields for each test_result event",
           "c_fixture_spec metadata includes spec_traceability + strict/hardened expectations for high-risk fixture packs"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-15n.2/trace.jsonl",
           "tests/cve_arena/results/bd-15n.2/artifact_index.json",
@@ -1222,9 +1051,7 @@
           "tests/conformance/c_fixture_spec.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_golden_artifacts"],
         "notes": "bd-15n.2 fixture gap-fill evidence landed for ctype/math/socket; parent bd-15n still awaits golden artifact closure path."
       }
     },
@@ -1234,12 +1061,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math",
-        "monitoring"
-      ],
+      "labels": ["alien", "critique", "math", "monitoring"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1304,15 +1126,11 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test anytime_valid_monitor_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_anytime_valid_monitor.sh"
-        ],
+        "e2e_cmds": ["scripts/check_anytime_valid_monitor.sh"],
         "expected_assertions": [
           "e-process thresholds, alpha-wealth FDR contracts, companion monitor governance all pass"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/anytime_valid_monitor_spec.json",
           "scripts/check_anytime_valid_monitor.sh"
@@ -1328,14 +1146,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "frankenlibc",
-        "security",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "frankenlibc", "security", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1399,18 +1210,12 @@
         "bead_id": "bd-18qq",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-18qq/trace.jsonl",
           "tests/cve_arena/results/bd-18qq/artifact_index.json"
@@ -1432,17 +1237,8 @@
       "priority": 1,
       "status": "closed",
       "assignee": "CopperCliff",
-      "labels": [
-        "critique",
-        "e2e",
-        "frankenlibc",
-        "logging",
-        "testing",
-        "verification"
-      ],
-      "dependencies": [
-        "bd-18qq"
-      ],
+      "labels": ["critique", "e2e", "frankenlibc", "logging", "testing", "verification"],
+      "dependencies": ["bd-18qq"],
       "obligations": {
         "unit_tests": {
           "required": true,
@@ -1515,9 +1311,7 @@
           "strict and hardened matrix runs report zero false negatives",
           "fault-injection matrix and trace artifacts are emitted deterministically"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "target/fault_injection/bd-18qq.1_fault_injection_matrix_strict.json",
           "target/fault_injection/bd-18qq.1_fault_injection_trace_strict.jsonl",
@@ -1535,13 +1329,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "optimization",
-        "perf",
-        "pthread",
-        "verification"
-      ],
+      "labels": ["critique", "optimization", "perf", "pthread", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1604,23 +1392,17 @@
         "bead_id": "bd-18rq",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-18rq/trace.jsonl",
           "tests/cve_arena/results/bd-18rq/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -1636,13 +1418,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "futex",
-        "implementation",
-        "pthread",
-        "testing"
-      ],
+      "labels": ["critique", "futex", "implementation", "pthread", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1705,18 +1481,12 @@
         "bead_id": "bd-19j",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-19j/trace.jsonl",
           "tests/cve_arena/results/bd-19j/artifact_index.json"
@@ -1737,13 +1507,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "diagnostics",
-        "e2e",
-        "startup",
-        "testing"
-      ],
+      "labels": ["critique", "diagnostics", "e2e", "startup", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1807,18 +1571,12 @@
         "bead_id": "bd-1ah8",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1ah8/trace.jsonl",
           "tests/cve_arena/results/bd-1ah8/artifact_index.json"
@@ -1840,13 +1598,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "logging",
-        "pthread",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "logging", "pthread", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -1909,18 +1661,12 @@
         "bead_id": "bd-1f35",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1f35/trace.jsonl",
           "tests/cve_arena/results/bd-1f35/artifact_index.json"
@@ -1941,13 +1687,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "hard-parts",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "hard-parts", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2010,16 +1750,12 @@
         "bead_id": "bd-1ff3",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1ff3/trace.jsonl",
           "tests/cve_arena/results/bd-1ff3/artifact_index.json"
@@ -2040,13 +1776,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "SilverLake",
-      "labels": [
-        "critique",
-        "math",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "math", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2112,18 +1842,14 @@
           "cargo test -p frankenlibc-harness --test runtime_math_determinism_proofs_test -- --nocapture",
           "cargo test -p frankenlibc-membrane runtime_kernel_snapshot_schema_doc_matches_constant -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_determinism_proofs.sh"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_determinism_proofs.sh"],
         "expected_assertions": [
           "two fresh kernels driven identically must yield identical per-step decisions and final RuntimeKernelSnapshot (strict and hardened)",
           "observe_validation_result path determinism is exercised (decide+observe integration), not only decide()",
           "snapshot invariants hold (schema version, monotone counters, ppm/action bounds, no NaN/Inf in f64 fields)",
           "gate emits structured JSONL logs plus a machine-readable JSON report"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-membrane/src/runtime_math/mod.rs",
           "crates/frankenlibc-membrane/src/ptr_validator.rs",
@@ -2148,12 +1874,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "pthread",
-        "stubs",
-        "tls"
-      ],
+      "labels": ["critique", "pthread", "stubs", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2217,18 +1938,10 @@
         "bead_id": "bd-1gh",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test stub_contract_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_stub_guard.sh"
-        ],
-        "expected_assertions": [
-          "stub contract and guard checks pass deterministically"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test stub_contract_test"],
+        "e2e_cmds": ["scripts/check_stub_guard.sh"],
+        "expected_assertions": ["stub contract and guard checks pass deterministically"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1gh/trace.jsonl",
           "tests/cve_arena/results/bd-1gh/artifact_index.json"
@@ -2250,11 +1963,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "perf",
-        "planning"
-      ],
+      "labels": ["critique", "perf", "planning"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2320,22 +2029,14 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test opportunity_matrix_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_opportunity_matrix.sh"
-        ],
-        "expected_assertions": [
-          "scoring dimensions, threshold enforcement, formula consistency"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_opportunity_matrix.sh"],
+        "expected_assertions": ["scoring dimensions, threshold enforcement, formula consistency"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/opportunity_matrix_spec.json",
           "scripts/check_opportunity_matrix.sh"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 7 harness tests + gate script pass."
       }
@@ -2346,13 +2047,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "Codex",
-      "labels": [
-        "build",
-        "ci",
-        "critique",
-        "math",
-        "verification"
-      ],
+      "labels": ["build", "ci", "critique", "math", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2417,17 +2112,13 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test runtime_math_profile_gates_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_profile_gates.sh"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_profile_gates.sh"],
         "expected_assertions": [
           "production build refuses to compile without runtime-math-production",
           "research feature can be enabled explicitly without breaking the build",
           "gate emits structured JSONL evidence + summary report"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "scripts/check_runtime_math_profile_gates.sh",
           "crates/frankenlibc-harness/tests/runtime_math_profile_gates_test.rs",
@@ -2446,13 +2137,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "tls"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2514,26 +2199,18 @@
         "bead_id": "bd-1j2u",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1j2u/trace.jsonl",
           "tests/cve_arena/results/bd-1j2u/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-1j2u; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -2543,13 +2220,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "locale",
-        "nss",
-        "resolver",
-        "rtld"
-      ],
+      "labels": ["critique", "locale", "nss", "resolver", "rtld"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2614,25 +2285,15 @@
         "bead_id": "bd-1j4",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1j4/trace.jsonl",
           "tests/cve_arena/results/bd-1j4/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_e2e",
@@ -2650,11 +2311,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "RusticCastle",
-      "labels": [
-        "ci",
-        "critique",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2731,9 +2388,7 @@
           "all open/in_progress critique beads have verification matrix rows",
           "verification matrix dashboard stats are internally consistent"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/verification_matrix.json",
           "scripts/sync_verification_matrix.py",
@@ -2754,13 +2409,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "governance",
-        "stubs",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "governance", "stubs", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2823,16 +2472,12 @@
         "bead_id": "bd-1p5v",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1p5v/trace.jsonl",
           "tests/cve_arena/results/bd-1p5v/artifact_index.json"
@@ -2853,13 +2498,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "docs",
-        "stubs",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "docs", "stubs", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -2921,26 +2560,18 @@
         "bead_id": "bd-1pbw",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1pbw/trace.jsonl",
           "tests/cve_arena/results/bd-1pbw/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-1pbw; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -2950,13 +2581,7 @@
       "priority": 1,
       "status": "open",
       "assignee": "RusticCastle",
-      "labels": [
-        "critique",
-        "e2e",
-        "logging",
-        "pthread",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "logging", "pthread", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3024,17 +2649,13 @@
           "cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture --test-threads=1",
           "scripts/check_c_fixture_suite.sh"
         ],
-        "e2e_cmds": [
-          "scripts/check_bd1qy_mutex_fixture.sh"
-        ],
+        "e2e_cmds": ["scripts/check_bd1qy_mutex_fixture.sh"],
         "expected_assertions": [
           "strict and hardened runs execute deterministic mutex common+adversarial scenarios",
           "JSONL trace rows include trace_id, mode, symbol, outcome, errno, latency, artifact_refs",
           "artifact index/report enumerate scenario evidence for localization on failure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1qy/trace.jsonl",
           "tests/cve_arena/results/bd-1qy/artifact_index.json",
@@ -3051,11 +2672,7 @@
       "priority": 2,
       "status": "open",
       "assignee": "SageCreek",
-      "labels": [
-        "critique",
-        "nss",
-        "resolver"
-      ],
+      "labels": ["critique", "nss", "resolver"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3117,26 +2734,16 @@
         "bead_id": "bd-1rf",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1rf/trace.jsonl",
           "tests/cve_arena/results/bd-1rf/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-1rf; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -3146,13 +2753,7 @@
       "priority": 0,
       "status": "in_progress",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math",
-        "perf",
-        "verification"
-      ],
+      "labels": ["alien", "critique", "math", "perf", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3216,25 +2817,17 @@
         "bead_id": "bd-1rxj",
         "stream": "math",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1rxj/trace.jsonl",
           "tests/cve_arena/results/bd-1rxj/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -3251,13 +2844,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "pthread",
-        "syscall",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "pthread", "syscall", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3320,16 +2907,12 @@
         "bead_id": "bd-1uc",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1uc/trace.jsonl",
           "tests/cve_arena/results/bd-1uc/artifact_index.json"
@@ -3350,10 +2933,7 @@
       "priority": 1,
       "status": "in_progress",
       "assignee": "BrightBrook",
-      "labels": [
-        "critique",
-        "stubs"
-      ],
+      "labels": ["critique", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3418,25 +2998,15 @@
         "bead_id": "bd-1x3",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test stub_contract_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_stub_guard.sh"
-        ],
-        "expected_assertions": [
-          "stub contract and guard checks pass deterministically"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test stub_contract_test"],
+        "e2e_cmds": ["scripts/check_stub_guard.sh"],
+        "expected_assertions": ["stub contract and guard checks pass deterministically"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1x3/trace.jsonl",
           "tests/cve_arena/results/bd-1x3/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_e2e",
@@ -3454,11 +3024,7 @@
       "priority": 2,
       "status": "open",
       "assignee": "opus-tsm",
-      "labels": [
-        "critique",
-        "dns",
-        "resolver"
-      ],
+      "labels": ["critique", "dns", "resolver"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3520,26 +3086,16 @@
         "bead_id": "bd-1y7",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1y7/trace.jsonl",
           "tests/cve_arena/results/bd-1y7/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-1y7; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -3549,10 +3105,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "OliveBeacon",
-      "labels": [
-        "critique",
-        "docs"
-      ],
+      "labels": ["critique", "docs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3617,25 +3170,15 @@
         "bead_id": "bd-1zd",
         "stream": "docs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test parity_report_drift_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_support_matrix_drift.sh"
-        ],
-        "expected_assertions": [
-          "docs snapshots and support-matrix report remain aligned"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test parity_report_drift_test"],
+        "e2e_cmds": ["scripts/check_support_matrix_drift.sh"],
+        "expected_assertions": ["docs snapshots and support-matrix report remain aligned"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-1zd/trace.jsonl",
           "tests/cve_arena/results/bd-1zd/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "All 9 child beads closed. Support matrix (230 symbols), reality report, README, FEATURE_PARITY aligned. Drift gates in CI. Verified by SageCreek 2026-02-11."
       }
@@ -3646,13 +3189,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "logging",
-        "pthread",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "logging", "pthread", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3716,18 +3253,12 @@
         "bead_id": "bd-21k",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-21k/trace.jsonl",
           "tests/cve_arena/results/bd-21k/artifact_index.json"
@@ -3749,12 +3280,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "release",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "release", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3819,25 +3345,17 @@
         "bead_id": "bd-226",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-226/trace.jsonl",
           "tests/cve_arena/results/bd-226/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -3855,11 +3373,7 @@
       "priority": 2,
       "status": "closed",
       "assignee": "CrimsonCove",
-      "labels": [
-        "critique",
-        "perf",
-        "process"
-      ],
+      "labels": ["critique", "perf", "process"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -3923,21 +3437,15 @@
         "bead_id": "bd-22p",
         "stream": "perf",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test one_lever_discipline_test"
-        ],
-        "e2e_cmds": [
-          "bash scripts/check_one_lever_discipline.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test one_lever_discipline_test"],
+        "e2e_cmds": ["bash scripts/check_one_lever_discipline.sh"],
         "expected_assertions": [
           "all 12 entries have valid lever_category",
           "no multi-lever beads",
           "8 categories defined",
           "taxonomy covers standard types"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/one_lever_discipline.json",
           "tests/conformance/opportunity_matrix.json",
@@ -3955,13 +3463,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "abi",
-        "critique",
-        "setjmp",
-        "testing",
-        "verification"
-      ],
+      "labels": ["abi", "critique", "setjmp", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4023,26 +3525,18 @@
         "bead_id": "bd-24b6",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-24b6/trace.jsonl",
           "tests/cve_arena/results/bd-24b6/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-24b6; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -4052,13 +3546,7 @@
       "priority": 1,
       "status": "closed",
       "assignee": "RedLotus",
-      "labels": [
-        "callthrough",
-        "critique",
-        "implementation",
-        "stdio",
-        "testing"
-      ],
+      "labels": ["callthrough", "critique", "implementation", "stdio", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4132,9 +3620,7 @@
           "migration phases are strictly ordered, non-overlapping, and fully cover stdio_abi symbols",
           "gate emits schema-conformant structured logs and report/index evidence under target/conformance and tests/cve_arena/results/bd-24ug"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/stdio_phase_strategy.v1.json",
           "scripts/check_stdio_phase_strategy.sh",
@@ -4155,12 +3641,7 @@
       "priority": 0,
       "status": "open",
       "assignee": "BronzeTower",
-      "labels": [
-        "critique",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4223,18 +3704,10 @@
         "bead_id": "bd-25n",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-25n/trace.jsonl",
           "tests/cve_arena/results/bd-25n/artifact_index.json"
@@ -4255,13 +3728,7 @@
       "priority": 0,
       "status": "in_progress",
       "assignee": "IcyCat",
-      "labels": [
-        "ci",
-        "critique",
-        "governance",
-        "math",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "governance", "math", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4324,16 +3791,12 @@
         "bead_id": "bd-25pf",
         "stream": "math",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-25pf/trace.jsonl",
           "tests/cve_arena/results/bd-25pf/artifact_index.json"
@@ -4354,13 +3817,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "SilverLake",
-      "labels": [
-        "critique",
-        "modes",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "modes", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4425,17 +3882,13 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test runtime_math_divergence_bounds_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_divergence_bounds.sh"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_divergence_bounds.sh"],
         "expected_assertions": [
           "forbidden strict-vs-hardened divergence patterns do not occur across evaluation cases",
           "required strict/hardened decision pairs remain stable (profile+action)",
           "gate emits structured JSONL logs and a machine-readable JSON report"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/runtime_math/runtime_math_divergence_bounds.v1.json",
           "crates/frankenlibc-harness/src/runtime_math_divergence_bounds.rs",
@@ -4456,13 +3909,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "callthrough",
-        "ci",
-        "critique",
-        "e2e",
-        "verification"
-      ],
+      "labels": ["callthrough", "ci", "critique", "e2e", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4526,18 +3973,12 @@
         "bead_id": "bd-27kh",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-27kh/trace.jsonl",
           "tests/cve_arena/results/bd-27kh/artifact_index.json"
@@ -4559,11 +4000,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "docs"
-      ],
+      "labels": ["ci", "critique", "docs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4629,19 +4066,12 @@
           "cargo test -p frankenlibc-harness --test symbol_drift_test -- --nocapture",
           "cargo test -p frankenlibc-harness --test parity_report_drift_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_symbol_drift.sh"
-        ],
+        "e2e_cmds": ["scripts/check_symbol_drift.sh"],
         "expected_assertions": [
           "all ABI source fns have matrix entries, matrix symbols exist in source, docs counts match"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
-        "artifact_paths": [
-          "support_matrix.json",
-          "scripts/check_symbol_drift.sh"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
+        "artifact_paths": ["support_matrix.json", "scripts/check_symbol_drift.sh"],
         "perf_proof_refs": [],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 8 tests pass (6 symbol_drift + 2 parity_report). CI gate detects new symbols without classification and docs drift."
@@ -4653,12 +4083,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "config",
-        "critique",
-        "docs",
-        "verification"
-      ],
+      "labels": ["config", "critique", "docs", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4721,18 +4146,12 @@
         "bead_id": "bd-29b",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-29b/trace.jsonl",
           "tests/cve_arena/results/bd-29b/artifact_index.json"
@@ -4753,11 +4172,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "perf",
-        "proof"
-      ],
+      "labels": ["critique", "perf", "proof"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4823,22 +4238,14 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test isomorphism_proof_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_isomorphism_proof.sh"
-        ],
-        "expected_assertions": [
-          "proof template, categories, applicable modules, examples"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_isomorphism_proof.sh"],
+        "expected_assertions": ["proof template, categories, applicable modules, examples"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/isomorphism_proof_protocol.json",
           "scripts/check_isomorphism_proof.sh"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 7 harness tests + gate script pass."
       }
@@ -4849,11 +4256,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "docs",
-        "roadmap"
-      ],
+      "labels": ["critique", "docs", "roadmap"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -4918,15 +4321,11 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test replacement_levels_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_replacement_levels.sh"
-        ],
+        "e2e_cmds": ["scripts/check_replacement_levels.sh"],
         "expected_assertions": [
           "replacement level claim drift guard, maturity assessment, and README alignment all pass"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/replacement_levels.json",
           "scripts/check_replacement_levels.sh"
@@ -4942,10 +4341,7 @@
       "priority": 0,
       "status": "in_progress",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e"
-      ],
+      "labels": ["critique", "e2e"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5008,19 +4404,10 @@
         "bead_id": "bd-2cr",
         "stream": "e2e",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test e2e_suite_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/e2e_suite.sh smoke",
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "strict and hardened runs complete with structured logs"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test e2e_suite_test -- --nocapture"],
+        "e2e_cmds": ["scripts/e2e_suite.sh smoke", "scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["strict and hardened runs complete with structured logs"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/e2e_artifact_index.json",
           "scripts/e2e_suite.sh",
@@ -5037,11 +4424,7 @@
       "priority": 2,
       "status": "closed",
       "assignee": "OrangeGlacier",
-      "labels": [
-        "critique",
-        "iconv",
-        "stubs"
-      ],
+      "labels": ["critique", "iconv", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5105,19 +4488,12 @@
         "bead_id": "bd-2j9",
         "stream": "stubs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc_conformance execute_iconv_case"
-        ],
-        "e2e_cmds": [
-          "scripts/update_conformance_golden.sh",
-          "scripts/conformance_golden_gate.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc_conformance execute_iconv_case"],
+        "e2e_cmds": ["scripts/update_conformance_golden.sh", "scripts/conformance_golden_gate.sh"],
         "expected_assertions": [
           "iconv phase-1 conformance fixtures pass for UTF-8/Latin-1/UTF-16LE conversions and error paths"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/fixtures/iconv_phase1.json",
           "tests/conformance/golden/fixture_verify_strict_hardened.v1.json",
@@ -5134,13 +4510,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "Codex",
-      "labels": [
-        "alien",
-        "critique",
-        "governance",
-        "math",
-        "verification"
-      ],
+      "labels": ["alien", "critique", "governance", "math", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5205,16 +4575,12 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test runtime_math_classification_matrix_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_classification_matrix.sh"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_classification_matrix.sh"],
         "expected_assertions": [
           "classification matrix covers governance+linkage+manifest module union",
           "gate emits structured per-module classification logs"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/runtime_math/runtime_math_classification_matrix.v1.json",
           "scripts/check_runtime_math_classification_matrix.sh",
@@ -5233,13 +4599,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "hard-parts",
-        "logging",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "hard-parts", "logging", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5302,18 +4662,12 @@
         "bead_id": "bd-2mwc",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-2mwc/trace.jsonl",
           "tests/cve_arena/results/bd-2mwc/artifact_index.json"
@@ -5334,13 +4688,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "optimization",
-        "perf",
-        "pthread",
-        "verification"
-      ],
+      "labels": ["critique", "optimization", "perf", "pthread", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5403,23 +4751,17 @@
         "bead_id": "bd-2nzx",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-2nzx/trace.jsonl",
           "tests/cve_arena/results/bd-2nzx/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -5435,11 +4777,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "perf"
-      ],
+      "labels": ["ci", "critique", "perf"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5502,25 +4840,15 @@
         "bead_id": "bd-2r0",
         "stream": "perf",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test perf_budget_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_perf_budget.sh"
-        ],
-        "expected_assertions": [
-          "performance budgets and regression gates remain satisfied"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test perf_budget_test -- --nocapture"],
+        "e2e_cmds": ["scripts/check_perf_budget.sh"],
+        "expected_assertions": ["performance budgets and regression gates remain satisfied"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/perf_budget_policy.json",
           "scripts/check_perf_budget.sh"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 8 harness tests + gate script pass."
       }
@@ -5531,12 +4859,7 @@
       "priority": 2,
       "status": "in_progress",
       "assignee": "OliveBeacon",
-      "labels": [
-        "critique",
-        "setjmp",
-        "signal",
-        "stubs"
-      ],
+      "labels": ["critique", "setjmp", "signal", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5600,18 +4923,10 @@
         "bead_id": "bd-2ry",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test stub_contract_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_stub_guard.sh"
-        ],
-        "expected_assertions": [
-          "stub contract and guard checks pass deterministically"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test stub_contract_test"],
+        "e2e_cmds": ["scripts/check_stub_guard.sh"],
+        "expected_assertions": ["stub contract and guard checks pass deterministically"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-2ry/trace.jsonl",
           "tests/cve_arena/results/bd-2ry/artifact_index.json"
@@ -5633,11 +4948,7 @@
       "priority": 0,
       "status": "in_progress",
       "assignee": null,
-      "labels": [
-        "baseline",
-        "critique",
-        "perf"
-      ],
+      "labels": ["baseline", "critique", "perf"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5700,25 +5011,15 @@
         "bead_id": "bd-2wp",
         "stream": "perf",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test perf_baseline_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_perf_baseline.sh"
-        ],
-        "expected_assertions": [
-          "performance budgets and regression gates remain satisfied"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test perf_baseline_test -- --nocapture"],
+        "e2e_cmds": ["scripts/check_perf_baseline.sh"],
+        "expected_assertions": ["performance budgets and regression gates remain satisfied"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/perf_baseline_spec.json",
           "scripts/check_perf_baseline.sh"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 8 harness tests + gate script pass."
       }
@@ -5729,13 +5030,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "setjmp",
-        "spec",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "setjmp", "spec", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5797,26 +5092,18 @@
         "bead_id": "bd-2xp3",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-2xp3/trace.jsonl",
           "tests/cve_arena/results/bd-2xp3/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-2xp3; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -5826,13 +5113,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "nss",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "implementation", "nss", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5895,16 +5176,12 @@
         "bead_id": "bd-2yhf",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-2yhf/trace.jsonl",
           "tests/cve_arena/results/bd-2yhf/artifact_index.json"
@@ -5925,12 +5202,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math",
-        "roadmap"
-      ],
+      "labels": ["alien", "critique", "math", "roadmap"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -5995,15 +5267,11 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test math_governance_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_math_governance.sh"
-        ],
+        "e2e_cmds": ["scripts/check_math_governance.sh"],
         "expected_assertions": [
           "all modules classified, tiers defined, no duplicates, every entry has rationale"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/math_governance.json",
           "scripts/check_math_governance.sh"
@@ -6019,13 +5287,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "optimization",
-        "perf",
-        "pthread",
-        "verification"
-      ],
+      "labels": ["critique", "optimization", "perf", "pthread", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6088,23 +5350,17 @@
         "bead_id": "bd-300",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-300/trace.jsonl",
           "tests/cve_arena/results/bd-300/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -6120,10 +5376,7 @@
       "priority": 1,
       "status": "closed",
       "assignee": "BronzeTower",
-      "labels": [
-        "critique",
-        "docs"
-      ],
+      "labels": ["critique", "docs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6196,9 +5449,7 @@
           "support_matrix artifact applicability map matches packaging contracts",
           "packaging harness tests pass"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "README.md",
           "support_matrix.json",
@@ -6217,12 +5468,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "optimization",
-        "perf",
-        "verification"
-      ],
+      "labels": ["critique", "optimization", "perf", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6286,25 +5532,17 @@
         "bead_id": "bd-30o",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-30o/trace.jsonl",
           "tests/cve_arena/results/bd-30o/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -6321,13 +5559,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "logging",
-        "startup",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "logging", "startup", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6391,18 +5623,12 @@
         "bead_id": "bd-320s",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-320s/trace.jsonl",
           "tests/cve_arena/results/bd-320s/artifact_index.json"
@@ -6424,13 +5650,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "futex",
-        "pthread",
-        "spec",
-        "testing"
-      ],
+      "labels": ["critique", "futex", "pthread", "spec", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6493,23 +5713,17 @@
         "bead_id": "bd-327",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-327/trace.jsonl",
           "tests/cve_arena/results/bd-327/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -6525,12 +5739,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "diagnostics",
-        "logging",
-        "verification"
-      ],
+      "labels": ["critique", "diagnostics", "logging", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6595,25 +5804,17 @@
         "bead_id": "bd-33p",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-33p/trace.jsonl",
           "tests/cve_arena/results/bd-33p/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -6631,13 +5832,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "callthrough",
-        "critique",
-        "dlfcn",
-        "docs",
-        "verification"
-      ],
+      "labels": ["callthrough", "critique", "dlfcn", "docs", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6700,18 +5895,12 @@
         "bead_id": "bd-33zg",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-33zg/trace.jsonl",
           "tests/cve_arena/results/bd-33zg/artifact_index.json"
@@ -6732,12 +5921,7 @@
       "priority": 1,
       "status": "closed",
       "assignee": "CrimsonCove",
-      "labels": [
-        "ci",
-        "critique",
-        "testing",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6800,20 +5984,14 @@
         "bead_id": "bd-34w",
         "stream": "docs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test matrix_drift_test"
-        ],
-        "e2e_cmds": [
-          "scripts/check_matrix_drift.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test matrix_drift_test"],
+        "e2e_cmds": ["scripts/check_matrix_drift.sh"],
         "expected_assertions": [
           "all_open_critique_beads_have_matrix_rows",
           "dashboard_coverage_stats_consistent",
           "no_duplicate_bead_entries"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-harness/tests/matrix_drift_test.rs",
           "scripts/check_matrix_drift.sh"
@@ -6829,12 +6007,7 @@
       "priority": 1,
       "status": "closed",
       "assignee": null,
-      "labels": [
-        "critique",
-        "logging",
-        "reporting",
-        "verification"
-      ],
+      "labels": ["critique", "logging", "reporting", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6897,20 +6070,14 @@
         "bead_id": "bd-38s",
         "stream": "docs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test matrix_dashboard_test"
-        ],
-        "e2e_cmds": [
-          "scripts/matrix_dashboard.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test matrix_dashboard_test"],
+        "e2e_cmds": ["scripts/matrix_dashboard.sh"],
         "expected_assertions": [
           "json_output_is_valid",
           "json_rows_match_matrix_entries",
           "text_output_has_expected_structure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-harness/tests/matrix_dashboard_test.rs",
           "scripts/matrix_dashboard.sh"
@@ -6926,11 +6093,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "iconv",
-        "tooling"
-      ],
+      "labels": ["critique", "iconv", "tooling"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -6992,26 +6155,16 @@
         "bead_id": "bd-3bg",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3bg/trace.jsonl",
           "tests/cve_arena/results/bd-3bg/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-3bg; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -7021,13 +6174,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "spec",
-        "startup",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "spec", "startup", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7090,18 +6237,12 @@
         "bead_id": "bd-3bvo",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3bvo/trace.jsonl",
           "tests/cve_arena/results/bd-3bvo/artifact_index.json"
@@ -7122,13 +6263,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "reporting",
-        "testing",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "reporting", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7191,18 +6326,12 @@
         "bead_id": "bd-3cco",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3cco/trace.jsonl",
           "tests/cve_arena/results/bd-3cco/artifact_index.json"
@@ -7223,13 +6352,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "nss",
-        "resolver",
-        "spec",
-        "testing"
-      ],
+      "labels": ["critique", "nss", "resolver", "spec", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7291,26 +6414,18 @@
         "bead_id": "bd-3ehb",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3ehb/trace.jsonl",
           "tests/cve_arena/results/bd-3ehb/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-3ehb; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -7320,10 +6435,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "SageCreek",
-      "labels": [
-        "critique",
-        "perf"
-      ],
+      "labels": ["critique", "perf"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7388,25 +6500,15 @@
         "bead_id": "bd-3fb",
         "stream": "perf",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-bench --no-run"
-        ],
-        "e2e_cmds": [
-          "scripts/perf_gate.sh"
-        ],
-        "expected_assertions": [
-          "performance budgets and regression gates remain satisfied"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-bench --no-run"],
+        "e2e_cmds": ["scripts/perf_gate.sh"],
+        "expected_assertions": ["performance budgets and regression gates remain satisfied"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3fb/trace.jsonl",
           "tests/cve_arena/results/bd-3fb/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "All 8 child beads closed. Perf baselines, profiling pipeline, golden outputs, isomorphism proofs operational. Verified by SageCreek 2026-02-11."
       }
@@ -7417,13 +6519,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "threading"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "threading"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7485,26 +6581,18 @@
         "bead_id": "bd-3hud",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3hud/trace.jsonl",
           "tests/cve_arena/results/bd-3hud/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-3hud; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -7514,11 +6602,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "conformance",
-        "critique",
-        "e2e"
-      ],
+      "labels": ["conformance", "critique", "e2e"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7585,15 +6669,9 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test c_fixture_suite_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_c_fixture_suite.sh"
-        ],
-        "expected_assertions": [
-          "strict and hardened runs complete with structured logs"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_c_fixture_suite.sh"],
+        "expected_assertions": ["strict and hardened runs complete with structured logs"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/c_fixture_suite_spec.json",
           "scripts/check_c_fixture_suite.sh"
@@ -7609,13 +6687,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "roadmap",
-        "stubs",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "roadmap", "stubs", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7678,18 +6750,12 @@
         "bead_id": "bd-3mam",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3mam/trace.jsonl",
           "tests/cve_arena/results/bd-3mam/artifact_index.json"
@@ -7710,13 +6776,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "WhiteMeadow",
-      "labels": [
-        "critique",
-        "e2e",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7779,23 +6839,15 @@
         "bead_id": "bd-3n0",
         "stream": "docs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test verification_matrix_test"
-        ],
-        "e2e_cmds": [
-          "cargo test -p frankenlibc-harness --test matrix_drift_test"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test verification_matrix_test"],
+        "e2e_cmds": ["cargo test -p frankenlibc-harness --test matrix_drift_test"],
         "expected_assertions": [
           "all entries have valid schema",
           "dashboard stats consistent",
           "all open critique beads have rows"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
-        "artifact_paths": [
-          "tests/conformance/verification_matrix.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
+        "artifact_paths": ["tests/conformance/verification_matrix.json"],
         "perf_proof_refs": [],
         "close_blockers": [],
         "notes": "Verification matrix backfill complete. All 49 open critique beads have matrix rows with obligation/coverage tracking."
@@ -7807,12 +6859,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math",
-        "verification"
-      ],
+      "labels": ["alien", "critique", "math", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7875,18 +6922,12 @@
         "bead_id": "bd-3ot",
         "stream": "math",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3ot/trace.jsonl",
           "tests/cve_arena/results/bd-3ot/artifact_index.json"
@@ -7907,10 +6948,7 @@
       "priority": 2,
       "status": "closed",
       "assignee": "CrimsonCove",
-      "labels": [
-        "critique",
-        "locale"
-      ],
+      "labels": ["critique", "locale"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -7980,18 +7018,14 @@
           "cargo test -p frankenlibc-harness --test packaging_test",
           "cargo test -p frankenlibc-harness --test replacement_levels_test"
         ],
-        "e2e_cmds": [
-          "cargo test -p frankenlibc-harness"
-        ],
+        "e2e_cmds": ["cargo test -p frankenlibc-harness"],
         "expected_assertions": [
           "14 core locale tests pass",
           "Zero stubs in support_matrix",
           "packaging_test: assessment matches matrix (93 Implemented, 0 Stub)",
           "stub_priority_test: T1_critical empty"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-core/src/locale/mod.rs",
           "crates/frankenlibc-abi/src/locale_abi.rs",
@@ -8011,9 +7045,7 @@
       "priority": 0,
       "status": "open",
       "assignee": "CrimsonCove",
-      "labels": [
-        "critique"
-      ],
+      "labels": ["critique"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8078,25 +7110,15 @@
         "bead_id": "bd-3qq",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3qq/trace.jsonl",
           "tests/cve_arena/results/bd-3qq/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_e2e",
@@ -8114,13 +7136,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "logging",
-        "nss",
-        "stress",
-        "testing"
-      ],
+      "labels": ["critique", "logging", "nss", "stress", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8182,26 +7198,18 @@
         "bead_id": "bd-3rag",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3rag/trace.jsonl",
           "tests/cve_arena/results/bd-3rag/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-3rag; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -8211,11 +7219,7 @@
       "priority": 2,
       "status": "open",
       "assignee": "opus-tsm",
-      "labels": [
-        "critique",
-        "elf",
-        "rtld"
-      ],
+      "labels": ["critique", "elf", "rtld"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8277,26 +7281,16 @@
         "bead_id": "bd-3rn",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3rn/trace.jsonl",
           "tests/cve_arena/results/bd-3rn/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-3rn; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -8306,12 +7300,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "drift",
-        "math"
-      ],
+      "labels": ["alien", "critique", "drift", "math"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8376,15 +7365,11 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test changepoint_drift_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_changepoint_drift.sh"
-        ],
+        "e2e_cmds": ["scripts/check_changepoint_drift.sh"],
         "expected_assertions": [
           "BOCPD parameter consistency, routing escalation, false-positive control all pass"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/changepoint_drift_spec.json",
           "scripts/check_changepoint_drift.sh"
@@ -8400,12 +7385,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math",
-        "perf"
-      ],
+      "labels": ["alien", "critique", "math", "perf"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8471,22 +7451,16 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test math_value_proof_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_math_value_proof.sh"
-        ],
+        "e2e_cmds": ["scripts/check_math_value_proof.sh"],
         "expected_assertions": [
           "score formula, retained module threshold, core/monitor governance alignment"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/math_value_proof_spec.json",
           "scripts/check_math_value_proof.sh"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "Closed by CrimsonCove. 8 harness tests + gate script pass."
       }
@@ -8497,11 +7471,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "roadmap"
-      ],
+      "labels": ["critique", "e2e", "roadmap"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8567,15 +7537,9 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test workload_matrix_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_workload_matrix.sh"
-        ],
-        "expected_assertions": [
-          "strict and hardened runs complete with structured logs"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_workload_matrix.sh"],
+        "expected_assertions": ["strict and hardened runs complete with structured logs"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/workload_matrix.json",
           "scripts/check_workload_matrix.sh"
@@ -8591,13 +7555,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "nss",
-        "resolver",
-        "testing"
-      ],
+      "labels": ["critique", "implementation", "nss", "resolver", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8660,16 +7618,12 @@
         "bead_id": "bd-3vtx",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-3vtx/trace.jsonl",
           "tests/cve_arena/results/bd-3vtx/artifact_index.json"
@@ -8690,11 +7644,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "stubs"
-      ],
+      "labels": ["critique", "e2e", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8758,18 +7708,10 @@
         "bead_id": "bd-4ia",
         "stream": "e2e",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test stub_priority_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_stub_priority.sh"
-        ],
-        "expected_assertions": [
-          "strict and hardened runs complete with structured logs"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test stub_priority_test -- --nocapture"],
+        "e2e_cmds": ["scripts/check_stub_priority.sh"],
+        "expected_assertions": ["strict and hardened runs complete with structured logs"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/stub_priority_ranking.json",
           "scripts/check_stub_priority.sh"
@@ -8785,13 +7727,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "ci",
-        "critique",
-        "logging",
-        "testing",
-        "verification"
-      ],
+      "labels": ["ci", "critique", "logging", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8854,18 +7790,12 @@
         "bead_id": "bd-4rl",
         "stream": "syscall",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test closure_gate_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_closure_gate.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test closure_gate_test -- --nocapture"],
+        "e2e_cmds": ["scripts/check_closure_gate.sh"],
         "expected_assertions": [
           "all non-exempt closed critique beads have evidence, diagnostics for missing evidence"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/closure_evidence_schema.json",
           "tests/conformance/verification_matrix.json",
@@ -8882,12 +7812,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "ci",
-        "critique",
-        "math"
-      ],
+      "labels": ["alien", "ci", "critique", "math"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -8952,15 +7877,9 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test math_retirement_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_math_retirement.sh"
-        ],
-        "expected_assertions": [
-          "runtime math gates and targeted tests pass"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_math_retirement.sh"],
+        "expected_assertions": ["runtime math gates and targeted tests pass"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/math_retirement_policy.json",
           "scripts/check_math_retirement.sh"
@@ -8976,12 +7895,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "release",
-        "roadmap",
-        "verification"
-      ],
+      "labels": ["critique", "release", "roadmap", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9046,25 +7960,17 @@
         "bead_id": "bd-5fw",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-5fw/trace.jsonl",
           "tests/cve_arena/results/bd-5fw/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -9082,12 +7988,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "proof",
-        "release",
-        "verification"
-      ],
+      "labels": ["critique", "proof", "release", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9152,25 +8053,17 @@
         "bead_id": "bd-5fw.4",
         "stream": "math",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-5fw.4/trace.jsonl",
           "tests/cve_arena/results/bd-5fw.4/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -9188,11 +8081,7 @@
       "priority": 1,
       "status": "closed",
       "assignee": "CrimsonCove",
-      "labels": [
-        "critique",
-        "resolver",
-        "stubs"
-      ],
+      "labels": ["critique", "resolver", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9262,18 +8151,14 @@
           "cargo test -p frankenlibc-harness --test packaging_test",
           "cargo test -p frankenlibc-harness --test replacement_levels_test"
         ],
-        "e2e_cmds": [
-          "cargo test -p frankenlibc-harness"
-        ],
+        "e2e_cmds": ["cargo test -p frankenlibc-harness"],
         "expected_assertions": [
           "35 core resolv unit tests pass",
           "stub_priority_test: ranked symbols match matrix (56 non-implemented)",
           "packaging_test: assessment matches matrix (91 Implemented, 2 Stub)",
           "replacement_levels_test: assessment matches support matrix"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-core/src/resolv/mod.rs",
           "support_matrix.json",
@@ -9292,13 +8177,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "allocator",
-        "critique",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["allocator", "critique", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9360,26 +8239,18 @@
         "bead_id": "bd-66wz",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-66wz/trace.jsonl",
           "tests/cve_arena/results/bd-66wz/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-66wz; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -9389,11 +8260,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "diagnostics"
-      ],
+      "labels": ["alien", "critique", "diagnostics"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9455,18 +8322,12 @@
         "bead_id": "bd-6yd",
         "stream": "math",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test crash_bundle_test -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_crash_bundle.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test crash_bundle_test -- --nocapture"],
+        "e2e_cmds": ["scripts/check_crash_bundle.sh"],
         "expected_assertions": [
           "artifact filenames, bounds, determinism rules, reproduction checklist"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/crash_bundle_spec.json",
           "scripts/check_crash_bundle.sh"
@@ -9482,11 +8343,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "env",
-        "stubs"
-      ],
+      "labels": ["critique", "env", "stubs"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9546,17 +8403,13 @@
         "bead_id": "bd-747",
         "stream": "stubs",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-core -- stdlib::env"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-core -- stdlib::env"],
         "e2e_cmds": [],
         "expected_assertions": [
           "11 unit tests pass for env validation and parsing",
           "getenv/setenv/unsetenv ABI wrappers compile with membrane validation"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-core/src/stdlib/env.rs",
           "crates/frankenlibc-abi/src/stdlib_abi.rs",
@@ -9573,13 +8426,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "iconv",
-        "locale",
-        "spec",
-        "verification"
-      ],
+      "labels": ["critique", "iconv", "locale", "spec", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9641,26 +8488,18 @@
         "bead_id": "bd-7cba",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-7cba/trace.jsonl",
           "tests/cve_arena/results/bd-7cba/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-7cba; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -9670,13 +8509,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "Codex",
-      "labels": [
-        "critique",
-        "math",
-        "runtime",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "math", "runtime", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9741,17 +8574,13 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test runtime_math_linkage_proofs_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_linkage_proofs.sh"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_linkage_proofs.sh"],
         "expected_assertions": [
           "every production module listed in production_kernel_manifest has provable decision-law influence (direct decide read OR fusion-input linkage)",
           "gate emits structured JSONL logs (one line per module) and a machine-readable JSON report with per-module diagnostics",
           "extended CI runs the linkage-proof gate deterministically"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/runtime_math/production_kernel_manifest.v1.json",
           "tests/runtime_math/runtime_math_linkage.v1.json",
@@ -9775,13 +8604,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "callthrough",
-        "critique",
-        "docs",
-        "syscall",
-        "verification"
-      ],
+      "labels": ["callthrough", "critique", "docs", "syscall", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9843,26 +8666,18 @@
         "bead_id": "bd-7ef9",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-7ef9/trace.jsonl",
           "tests/cve_arena/results/bd-7ef9/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-7ef9; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -9872,13 +8687,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "docs",
-        "drift",
-        "hard-parts",
-        "verification"
-      ],
+      "labels": ["critique", "docs", "drift", "hard-parts", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -9941,16 +8750,12 @@
         "bead_id": "bd-8sho",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-8sho/trace.jsonl",
           "tests/cve_arena/results/bd-8sho/artifact_index.json"
@@ -9971,13 +8776,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "logging",
-        "setjmp",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "logging", "setjmp", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10041,18 +8840,12 @@
         "bead_id": "bd-ahjd",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-ahjd/trace.jsonl",
           "tests/cve_arena/results/bd-ahjd/artifact_index.json"
@@ -10074,12 +8867,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10144,25 +8932,17 @@
         "bead_id": "bd-b5a",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-b5a/trace.jsonl",
           "tests/cve_arena/results/bd-b5a/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_logs",
@@ -10180,13 +8960,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "futex",
-        "pthread",
-        "spec",
-        "testing"
-      ],
+      "labels": ["critique", "futex", "pthread", "spec", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10248,26 +9022,18 @@
         "bead_id": "bd-blg",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-blg/trace.jsonl",
           "tests/cve_arena/results/bd-blg/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-blg; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -10277,13 +9043,7 @@
       "priority": 2,
       "status": "in_progress",
       "assignee": "ScarletBasin",
-      "labels": [
-        "critique",
-        "iconv",
-        "implementation",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "iconv", "implementation", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10345,26 +9105,18 @@
         "bead_id": "bd-by8c",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-by8c/trace.jsonl",
           "tests/cve_arena/results/bd-by8c/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-by8c; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -10374,11 +9126,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "futex",
-        "pthread"
-      ],
+      "labels": ["critique", "futex", "pthread"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10442,18 +9190,10 @@
         "bead_id": "bd-c1x",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-c1x/trace.jsonl",
           "tests/cve_arena/results/bd-c1x/artifact_index.json"
@@ -10475,11 +9215,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "p0-path",
-        "syscall"
-      ],
+      "labels": ["critique", "p0-path", "syscall"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10544,12 +9280,8 @@
           "cargo test -p frankenlibc-core --test syscall_veneer_test"
         ],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "13 unit tests + 12 integration tests for raw syscall veneer pass"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["13 unit tests + 12 integration tests for raw syscall veneer pass"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-core/src/syscall/mod.rs",
           "crates/frankenlibc-core/src/syscall/raw.rs",
@@ -10566,11 +9298,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "io",
-        "syscall"
-      ],
+      "labels": ["critique", "io", "syscall"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10630,17 +9358,10 @@
         "bead_id": "bd-ef2",
         "stream": "syscall",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-core",
-          "cargo check -p frankenlibc-abi"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-core", "cargo check -p frankenlibc-abi"],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "17 ABI functions migrated from libc::syscall to raw veneer"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["17 ABI functions migrated from libc::syscall to raw veneer"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "crates/frankenlibc-abi/src/unistd_abi.rs",
           "crates/frankenlibc-abi/src/io_abi.rs",
@@ -10657,13 +9378,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "futex",
-        "implementation",
-        "pthread",
-        "testing"
-      ],
+      "labels": ["critique", "futex", "implementation", "pthread", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10725,26 +9440,18 @@
         "bead_id": "bd-gcy",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-gcy/trace.jsonl",
           "tests/cve_arena/results/bd-gcy/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-gcy; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -10754,13 +9461,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "pthread",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "pthread", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10824,18 +9525,12 @@
         "bead_id": "bd-gtid",
         "stream": "stubs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-gtid/trace.jsonl",
           "tests/cve_arena/results/bd-gtid/artifact_index.json"
@@ -10857,11 +9552,7 @@
       "priority": 1,
       "status": "open",
       "assignee": "BlueLake",
-      "labels": [
-        "critique",
-        "pthread",
-        "syscall"
-      ],
+      "labels": ["critique", "pthread", "syscall"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -10926,25 +9617,15 @@
         "bead_id": "bd-h5x",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-h5x/trace.jsonl",
           "tests/cve_arena/results/bd-h5x/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_e2e",
@@ -10962,11 +9643,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "alien",
-        "critique",
-        "math"
-      ],
+      "labels": ["alien", "critique", "math"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11034,22 +9711,14 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_runtime_math_linkage.sh"
-        ],
-        "expected_assertions": [
-          "runtime math gates and targeted tests pass"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "e2e_cmds": ["scripts/check_runtime_math_linkage.sh"],
+        "expected_assertions": ["runtime math gates and targeted tests pass"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-kan/trace.jsonl",
           "tests/cve_arena/results/bd-kan/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [
           "missing_unit",
           "missing_e2e",
@@ -11067,13 +9736,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "threading"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "threading"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11135,26 +9798,18 @@
         "bead_id": "bd-mjon",
         "stream": "perf",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-mjon/trace.jsonl",
           "tests/cve_arena/results/bd-mjon/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-mjon; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -11164,11 +9819,7 @@
       "priority": 0,
       "status": "closed",
       "assignee": "SageCreek",
-      "labels": [
-        "abi",
-        "critique",
-        "e2e"
-      ],
+      "labels": ["abi", "critique", "e2e"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11233,25 +9884,15 @@
         "bead_id": "bd-mtj",
         "stream": "e2e",
         "status": "complete",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --test e2e_suite_test"
-        ],
-        "e2e_cmds": [
-          "scripts/e2e_suite.sh smoke"
-        ],
-        "expected_assertions": [
-          "strict and hardened runs complete with structured logs"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --test e2e_suite_test"],
+        "e2e_cmds": ["scripts/e2e_suite.sh smoke"],
+        "expected_assertions": ["strict and hardened runs complete with structured logs"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-mtj/trace.jsonl",
           "tests/cve_arena/results/bd-mtj/artifact_index.json"
         ],
-        "perf_proof_refs": [
-          "scripts/perf_gate.sh"
-        ],
+        "perf_proof_refs": ["scripts/perf_gate.sh"],
         "close_blockers": [],
         "notes": "All 7 child beads closed. CI gate, LD_PRELOAD smoke, ABI audit, crash bundles, C fixtures, E2E scripts operational. Verified by SageCreek 2026-02-11."
       }
@@ -11262,11 +9903,7 @@
       "priority": 2,
       "status": "in_progress",
       "assignee": "SwiftLark",
-      "labels": [
-        "critique",
-        "crt",
-        "rtld"
-      ],
+      "labels": ["critique", "crt", "rtld"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11340,9 +9977,7 @@
           "startup fixture logs deterministic strict+hardened pass outcomes with trace_id and artifact refs",
           "fixture_startup exits 0 and prints PASS in strict and hardened modes"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "target/conformance/bd-11nb_startup_phase0.log.jsonl",
           "tests/cve_arena/results/bd-qwm/trace.jsonl",
@@ -11363,11 +9998,7 @@
       "priority": 0,
       "status": "in_progress",
       "assignee": "WhiteMeadow",
-      "labels": [
-        "alien",
-        "critique",
-        "math"
-      ],
+      "labels": ["alien", "critique", "math"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11433,22 +10064,14 @@
           "cargo test -p frankenlibc-membrane runtime_math::loss_minimizer::tests:: -- --nocapture"
         ],
         "e2e_cmds": [],
-        "expected_assertions": [
-          "runtime math gates and targeted tests pass"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "expected_assertions": ["runtime math gates and targeted tests pass"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-rqn/trace.jsonl",
           "tests/cve_arena/results/bd-rqn/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-rqn; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -11458,13 +10081,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "implementation",
-        "pthread",
-        "testing",
-        "tls"
-      ],
+      "labels": ["critique", "implementation", "pthread", "testing", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11527,18 +10144,12 @@
         "bead_id": "bd-rth1",
         "stream": "e2e",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-rth1/trace.jsonl",
           "tests/cve_arena/results/bd-rth1/artifact_index.json"
@@ -11559,11 +10170,7 @@
       "priority": 1,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "docs",
-        "semantics"
-      ],
+      "labels": ["critique", "docs", "semantics"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11628,15 +10235,11 @@
         "unit_cmds": [
           "cargo test -p frankenlibc-harness --test mode_semantics_test -- --nocapture"
         ],
-        "e2e_cmds": [
-          "scripts/check_mode_semantics.sh"
-        ],
+        "e2e_cmds": ["scripts/check_mode_semantics.sh"],
         "expected_assertions": [
           "heals_call_sites match source, families cover all ABI modules, behavior scenarios present"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/conformance/mode_semantics_matrix.json",
           "scripts/check_mode_semantics.sh"
@@ -11652,13 +10255,7 @@
       "priority": 2,
       "status": "in_progress",
       "assignee": "IcyCat",
-      "labels": [
-        "critique",
-        "e2e",
-        "nss",
-        "testing",
-        "verification"
-      ],
+      "labels": ["critique", "e2e", "nss", "testing", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11722,18 +10319,12 @@
         "bead_id": "bd-x2sq",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-x2sq/trace.jsonl",
           "tests/cve_arena/results/bd-x2sq/artifact_index.json"
@@ -11755,13 +10346,7 @@
       "priority": 0,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "pthread",
-        "testing",
-        "unit",
-        "verification"
-      ],
+      "labels": ["critique", "pthread", "testing", "unit", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11823,26 +10408,18 @@
         "bead_id": "bd-xxd9",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-xxd9/trace.jsonl",
           "tests/cve_arena/results/bd-xxd9/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-xxd9; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -11852,13 +10429,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "docs",
-        "hard-parts",
-        "roadmap",
-        "verification"
-      ],
+      "labels": ["critique", "docs", "hard-parts", "roadmap", "verification"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -11920,26 +10491,18 @@
         "bead_id": "bd-y45u",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
         "e2e_cmds": [],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-y45u/trace.jsonl",
           "tests/cve_arena/results/bd-y45u/artifact_index.json"
         ],
         "perf_proof_refs": [],
-        "close_blockers": [
-          "missing_unit",
-          "missing_logs",
-          "missing_golden_artifacts"
-        ],
+        "close_blockers": ["missing_unit", "missing_logs", "missing_golden_artifacts"],
         "notes": "Auto-backfilled row for bd-y45u; refine commands/artifacts as implementation evidence lands."
       }
     },
@@ -11949,11 +10512,7 @@
       "priority": 1,
       "status": "in_progress",
       "assignee": "WhiteMeadow",
-      "labels": [
-        "critique",
-        "pthread",
-        "tls"
-      ],
+      "labels": ["critique", "pthread", "tls"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -12017,18 +10576,10 @@
         "bead_id": "bd-yos",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-yos/trace.jsonl",
           "tests/cve_arena/results/bd-yos/artifact_index.json"
@@ -12050,13 +10601,7 @@
       "priority": 2,
       "status": "open",
       "assignee": null,
-      "labels": [
-        "critique",
-        "e2e",
-        "iconv",
-        "logging",
-        "testing"
-      ],
+      "labels": ["critique", "e2e", "iconv", "logging", "testing"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -12120,18 +10665,12 @@
         "bead_id": "bd-z7gt",
         "stream": "docs",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test -p frankenlibc-harness --tests -- --nocapture"
-        ],
-        "e2e_cmds": [
-          "scripts/check_e2e_suite.sh"
-        ],
+        "unit_cmds": ["cargo test -p frankenlibc-harness --tests -- --nocapture"],
+        "e2e_cmds": ["scripts/check_e2e_suite.sh"],
         "expected_assertions": [
           "matrix row exists and will be refined with bead-specific evidence before closure"
         ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-z7gt/trace.jsonl",
           "tests/cve_arena/results/bd-z7gt/artifact_index.json"
@@ -12153,11 +10692,7 @@
       "priority": 1,
       "status": "in_progress",
       "assignee": "WhiteMeadow",
-      "labels": [
-        "critique",
-        "futex",
-        "pthread"
-      ],
+      "labels": ["critique", "futex", "pthread"],
       "dependencies": [],
       "obligations": {
         "unit_tests": {
@@ -12221,18 +10756,10 @@
         "bead_id": "bd-z84",
         "stream": "syscall",
         "status": "missing",
-        "unit_cmds": [
-          "cargo test --test e2e_link_test"
-        ],
-        "e2e_cmds": [
-          "scripts/ld_preload_smoke.sh"
-        ],
-        "expected_assertions": [
-          "syscall/interposition fixtures run under LD_PRELOAD"
-        ],
-        "log_schema_refs": [
-          "tests/conformance/log_schema.json"
-        ],
+        "unit_cmds": ["cargo test --test e2e_link_test"],
+        "e2e_cmds": ["scripts/ld_preload_smoke.sh"],
+        "expected_assertions": ["syscall/interposition fixtures run under LD_PRELOAD"],
+        "log_schema_refs": ["tests/conformance/log_schema.json"],
         "artifact_paths": [
           "tests/cve_arena/results/bd-z84/trace.jsonl",
           "tests/cve_arena/results/bd-z84/artifact_index.json"

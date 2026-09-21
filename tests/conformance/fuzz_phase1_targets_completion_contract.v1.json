@@ -133,18 +133,8 @@
       "crash_severity_classes": 12,
       "triage_steps": 6
     },
-    "required_targets": [
-      "fuzz_string",
-      "fuzz_malloc",
-      "fuzz_membrane",
-      "fuzz_printf"
-    ],
-    "required_families": [
-      "malloc",
-      "membrane",
-      "stdio",
-      "string"
-    ],
+    "required_targets": ["fuzz_string", "fuzz_malloc", "fuzz_membrane", "fuzz_printf"],
+    "required_families": ["malloc", "membrane", "stdio", "string"],
     "required_cwe_targets": [
       "CWE-120",
       "CWE-122",
@@ -167,11 +157,7 @@
       "required_status": "functional",
       "required_smoke_viable": true,
       "min_readiness_score": 70,
-      "required_cwe_targets": [
-        "CWE-120",
-        "CWE-125",
-        "CWE-787"
-      ],
+      "required_cwe_targets": ["CWE-120", "CWE-125", "CWE-787"],
       "required_symbols": [
         "strlen",
         "strcmp",
@@ -200,12 +186,7 @@
       "required_status": "functional",
       "required_smoke_viable": true,
       "min_readiness_score": 80,
-      "required_cwe_targets": [
-        "CWE-415",
-        "CWE-416",
-        "CWE-122",
-        "CWE-131"
-      ],
+      "required_cwe_targets": ["CWE-415", "CWE-416", "CWE-122", "CWE-131"],
       "required_symbols": [
         "malloc",
         "free",
@@ -223,14 +204,8 @@
       "required_status": "functional",
       "required_smoke_viable": true,
       "min_readiness_score": 70,
-      "required_cwe_targets": [
-        "CWE-476",
-        "CWE-824",
-        "CWE-825"
-      ],
-      "required_symbols": [
-        "__membrane_validate"
-      ]
+      "required_cwe_targets": ["CWE-476", "CWE-824", "CWE-825"],
+      "required_symbols": ["__membrane_validate"]
     },
     {
       "target": "fuzz_printf",
@@ -239,16 +214,8 @@
       "required_status": "functional",
       "required_smoke_viable": true,
       "min_readiness_score": 70,
-      "required_cwe_targets": [
-        "CWE-134",
-        "CWE-787"
-      ],
-      "required_symbols": [
-        "printf",
-        "fprintf",
-        "sprintf",
-        "snprintf"
-      ]
+      "required_cwe_targets": ["CWE-134", "CWE-787"],
+      "required_symbols": ["printf", "fprintf", "sprintf", "snprintf"]
     }
   ],
   "crash_triage_contract": {
@@ -261,14 +228,7 @@
     ],
     "dedup_method": "stack-hash",
     "frame_depth_min": 5,
-    "required_flow_actions": [
-      "capture",
-      "classify",
-      "minimize",
-      "dedup",
-      "file",
-      "assess"
-    ]
+    "required_flow_actions": ["capture", "classify", "minimize", "dedup", "file", "assess"]
   },
   "unit_primary": {
     "missing_item_id": "tests.unit.primary",
@@ -317,40 +277,26 @@
         "scenario_id": "validate_crash_triage_contract",
         "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
         "expected_exit": 0,
-        "expected_output_needles": [
-          "crash_triage_contract"
-        ]
+        "expected_output_needles": ["crash_triage_contract"]
       },
       {
         "scenario_id": "completion_checker_runs_fail_closed",
         "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
         "expected_exit": 0,
-        "expected_output_needles": [
-          "fuzz_phase1_targets_completion_contract: PASS"
-        ]
+        "expected_output_needles": ["fuzz_phase1_targets_completion_contract: PASS"]
       }
     ]
   },
   "fuzz_primary": {
     "missing_item_id": "tests.fuzz.primary",
-    "required_targets": [
-      "fuzz_string",
-      "fuzz_malloc",
-      "fuzz_membrane",
-      "fuzz_printf"
-    ],
+    "required_targets": ["fuzz_string", "fuzz_malloc", "fuzz_membrane", "fuzz_printf"],
     "required_target_sources": [
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_string.rs",
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_malloc.rs",
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_membrane.rs",
       "crates/frankenlibc-fuzz/fuzz_targets/fuzz_printf.rs"
     ],
-    "required_smoke_config_targets": [
-      "fuzz_string",
-      "fuzz_malloc",
-      "fuzz_membrane",
-      "fuzz_printf"
-    ],
+    "required_smoke_config_targets": ["fuzz_string", "fuzz_malloc", "fuzz_membrane", "fuzz_printf"],
     "required_test_names": [
       "target_contracts_bind_phase1_report",
       "checker_rejects_missing_phase1_target_binding",

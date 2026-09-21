@@ -3,36 +3,28 @@
   "chain_verification": {
     "bd-w2c3.1": {
       "available": true,
-      "chain_ids": [
-        "bd-w2c3.1"
-      ],
+      "chain_ids": ["bd-w2c3.1"],
       "chain_length": 0,
       "is_blocked": false,
       "root_blockers": []
     },
     "bd-w2c3.10": {
       "available": true,
-      "chain_ids": [
-        "bd-w2c3.10"
-      ],
+      "chain_ids": ["bd-w2c3.10"],
       "chain_length": 0,
       "is_blocked": false,
       "root_blockers": []
     },
     "bd-w2c3.4": {
       "available": true,
-      "chain_ids": [
-        "bd-w2c3.4"
-      ],
+      "chain_ids": ["bd-w2c3.4"],
       "chain_length": 0,
       "is_blocked": false,
       "root_blockers": []
     },
     "bd-w2c3.6": {
       "available": true,
-      "chain_ids": [
-        "bd-w2c3.6"
-      ],
+      "chain_ids": ["bd-w2c3.6"],
       "chain_length": 0,
       "is_blocked": false,
       "root_blockers": []
@@ -41,10 +33,7 @@
   "critical_blockers": [
     {
       "assignee": "BoldFox",
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "gap_count": 45,
       "owner_bead": "bd-w2c3.6",
       "owner_status": "closed",
@@ -52,10 +41,7 @@
     },
     {
       "assignee": null,
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "gap_count": 38,
       "owner_bead": "bd-w2c3.10",
       "owner_status": "closed",
@@ -63,13 +49,7 @@
     },
     {
       "assignee": null,
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "gap_count": 20,
       "owner_bead": "bd-w2c3.4",
       "owner_status": "closed",
@@ -77,10 +57,7 @@
     },
     {
       "assignee": null,
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "gap_count": 7,
       "owner_bead": "bd-w2c3.1",
       "owner_status": "closed",
@@ -135,17 +112,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -172,17 +144,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -209,17 +176,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -246,17 +208,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -283,17 +240,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -320,17 +272,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -357,17 +304,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.1"
-        ],
+        "chain_ids": ["bd-w2c3.1"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.1",
-        "bd-w2c3"
-      ],
+      "dependency_path": ["bd-w2c3.1", "bd-w2c3"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -394,17 +336,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -431,17 +368,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -468,17 +400,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -505,17 +432,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -542,17 +464,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -579,17 +496,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -616,17 +528,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -653,17 +560,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -690,17 +592,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -727,17 +624,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -764,17 +656,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -801,17 +688,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -838,17 +720,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -875,17 +752,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -912,17 +784,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -949,17 +816,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -986,17 +848,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1023,17 +880,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1060,17 +912,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1097,17 +944,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1134,17 +976,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1171,17 +1008,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1208,17 +1040,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1245,17 +1072,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1282,17 +1104,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1319,17 +1136,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1356,17 +1168,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1393,17 +1200,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1430,17 +1232,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1467,17 +1264,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1504,17 +1296,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1541,17 +1328,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1578,17 +1360,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1615,17 +1392,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1652,17 +1424,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1689,17 +1456,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1726,17 +1488,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1763,17 +1520,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.10"
-        ],
+        "chain_ids": ["bd-w2c3.10"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.10",
-        "bd-29b"
-      ],
+      "dependency_path": ["bd-w2c3.10", "bd-29b"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1800,20 +1552,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -1840,20 +1584,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -1880,20 +1616,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -1920,20 +1648,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -1960,20 +1680,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2000,20 +1712,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2040,20 +1744,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2080,20 +1776,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2120,20 +1808,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2160,20 +1840,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2200,20 +1872,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2240,20 +1904,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2280,20 +1936,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2320,20 +1968,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2360,20 +2000,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2400,20 +2032,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2440,20 +2064,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2480,20 +2096,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2520,20 +2128,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2560,20 +2160,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.4"
-        ],
+        "chain_ids": ["bd-w2c3.4"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.4",
-        "bd-1j4",
-        "bd-144",
-        "bd-id3",
-        "bd-1s7"
-      ],
+      "dependency_path": ["bd-w2c3.4", "bd-1j4", "bd-144", "bd-id3", "bd-1s7"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2600,17 +2192,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2637,17 +2224,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2674,17 +2256,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2711,17 +2288,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2748,17 +2320,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2785,17 +2352,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2822,17 +2384,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2859,17 +2416,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -2896,17 +2448,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2933,17 +2480,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -2970,17 +2512,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3007,17 +2544,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3044,17 +2576,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3081,17 +2608,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3118,17 +2640,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3155,17 +2672,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3192,17 +2704,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3229,17 +2736,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3266,17 +2768,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3303,17 +2800,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3340,17 +2832,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3377,17 +2864,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3414,17 +2896,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3451,17 +2928,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3488,17 +2960,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3525,17 +2992,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3562,17 +3024,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3599,17 +3056,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3636,17 +3088,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3673,17 +3120,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3710,17 +3152,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3747,17 +3184,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3784,17 +3216,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3821,17 +3248,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -3858,17 +3280,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3895,17 +3312,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3932,17 +3344,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -3969,17 +3376,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -4006,17 +3408,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -4043,17 +3440,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -4080,17 +3472,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -4117,17 +3504,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "IN_PROGRESS"
@@ -4154,17 +3536,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -4191,17 +3568,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"
@@ -4228,17 +3600,12 @@
       "blocking_dependencies": [],
       "bv_blocker_chain": {
         "available": true,
-        "chain_ids": [
-          "bd-w2c3.6"
-        ],
+        "chain_ids": ["bd-w2c3.6"],
         "chain_length": 0,
         "is_blocked": false,
         "root_blockers": []
       },
-      "dependency_path": [
-        "bd-w2c3.6",
-        "bd-5fw"
-      ],
+      "dependency_path": ["bd-w2c3.6", "bd-5fw"],
       "expected_vs_actual": {
         "actual": {
           "status": "PLANNED"

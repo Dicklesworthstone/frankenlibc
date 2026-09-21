@@ -18,10 +18,7 @@
     "decision_artifact": "tests/conformance/proof_program_owner_decision.v1.json",
     "minimum_obligations": 24,
     "required_deferred_target_bead": "bd-e4phe.2",
-    "allowed_statuses": [
-      "deferred",
-      "discharged"
-    ],
+    "allowed_statuses": ["deferred", "discharged"],
     "expected_reframe_status": "deferred"
   },
   "required_source_phrases": [

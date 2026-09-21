@@ -118,17 +118,8 @@
       "__strtok_r_1c",
       "__strtol_internal"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
     "forbidden_ambient_output_tokens": [
       "0x",
       "ptr=",

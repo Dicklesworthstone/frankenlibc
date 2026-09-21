@@ -150,11 +150,7 @@
     },
     {
       "path": "scripts/check_fuzz_phase1_targets_completion_contract.sh",
-      "markers": [
-        "REQUIRED_TARGETS",
-        "fuzz_phase1_e2e",
-        "fuzz_phase1_summary"
-      ]
+      "markers": ["REQUIRED_TARGETS", "fuzz_phase1_e2e", "fuzz_phase1_summary"]
     }
   ],
   "base_gates": [
@@ -169,23 +165,17 @@
     {
       "id": "claim_reconciliation_gate",
       "command": "bash scripts/check_claim_reconciliation.sh <out_dir>/claim_reconciliation_report.v1.json",
-      "expected_stdout": [
-        "PASS: No contradictions detected across canonical artifacts."
-      ]
+      "expected_stdout": ["PASS: No contradictions detected across canonical artifacts."]
     },
     {
       "id": "release_dossier_completion_gate",
       "command": "bash scripts/check_release_dossier_validator_completion_contract.sh",
-      "expected_stdout": [
-        "PASS: release dossier validator completion contract"
-      ]
+      "expected_stdout": ["PASS: release dossier validator completion contract"]
     },
     {
       "id": "fuzz_phase1_completion_gate",
       "command": "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
-      "expected_stdout": [
-        "fuzz_phase1_targets_completion_contract: PASS"
-      ]
+      "expected_stdout": ["fuzz_phase1_targets_completion_contract: PASS"]
     }
   ],
   "missing_item_bindings": [

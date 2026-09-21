@@ -158,10 +158,7 @@
           "diff_inet_pton_v6_cases",
           "arpa_inet_diff_coverage_report"
         ],
-        "required_terms": [
-          "divergences",
-          "reference"
-        ]
+        "required_terms": ["divergences", "reference"]
       },
       {
         "path": "crates/frankenlibc-harness/tests/symbol_universe_normalization_test.rs",
@@ -170,10 +167,7 @@
           "normalization_schema_complete",
           "normalization_telemetry_log_covers_every_symbol"
         ],
-        "required_terms": [
-          "symbol_universe_normalization.log.v1",
-          "symbol_universe_classification"
-        ]
+        "required_terms": ["symbol_universe_normalization.log.v1", "symbol_universe_classification"]
       }
     ]
   },

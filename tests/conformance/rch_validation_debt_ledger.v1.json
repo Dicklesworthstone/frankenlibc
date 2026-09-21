@@ -11,10 +11,7 @@
   "local_fallback_policy": {
     "accept_local_cargo": false,
     "required_remote_env": "RCH_REQUIRE_REMOTE=1",
-    "rejected_markers": [
-      "[RCH] local",
-      "remote required; refusing local fallback"
-    ]
+    "rejected_markers": ["[RCH] local", "remote required; refusing local fallback"]
   },
   "report_contract": {
     "output_path": "target/conformance/rch_validation_debt_ledger.report.json",
@@ -94,9 +91,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_trait_decl_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_trait_decl_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_trait_decl_test.rs",
@@ -121,9 +116,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "dd0b245151f4782e66fa553531a1eb43ee8a7fcb",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_const_fn_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_const_fn_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_const_fn_test.rs",
@@ -175,9 +168,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_async_fn_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_async_fn_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_async_fn_test.rs",
@@ -197,9 +188,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_panic_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_panic_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_panic_test.rs",
@@ -219,9 +208,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "b85ef7f304a9881ee136c402557527733102d753",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_unsafe_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_unsafe_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_unsafe_test.rs",
@@ -263,9 +250,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_anyhow_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_anyhow_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_anyhow_test.rs",
@@ -285,9 +270,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_tokio_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_tokio_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_tokio_test.rs",
@@ -307,9 +290,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_mpsc_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_mpsc_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_mpsc_test.rs",
@@ -329,9 +310,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "ff99ff059439c5191eaca106e4525b9c3077f785",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_macro_rules_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_macro_rules_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_macro_rules_test.rs",
@@ -351,9 +330,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sleep_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sleep_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_sleep_test.rs",
@@ -395,9 +372,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_ffi_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_ffi_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_ffi_test.rs",
@@ -417,9 +392,7 @@
       "blocker_bead": "bd-716tv",
       "source_commit": "75ea0a387899e44534b2368422920f04f7138a99",
       "replay_status": "pending_rch_admissibility",
-      "files": [
-        "crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_os_test.rs"
-      ],
+      "files": ["crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_os_test.rs"],
       "static_checks": [
         {
           "command": "rustfmt --edition 2024 --check crates/frankenlibc-harness/tests/cli_contract_paired_gate_no_std_os_test.rs",

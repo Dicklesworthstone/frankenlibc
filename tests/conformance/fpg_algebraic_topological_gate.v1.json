@@ -81,7 +81,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 262, "line_contains": "sheaf consistency detection"},
+      "feature_parity_provenance": { "line": 262, "line_contains": "sheaf consistency detection" },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -99,14 +99,27 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "algebraic_topology", "module": "cohomology"},
-        {"family": "grothendieck_serre", "module": "higher_topos"},
-        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+        { "family": "algebraic_topology", "module": "cohomology" },
+        { "family": "grothendieck_serre", "module": "higher_topos" },
+        { "family": "abstract_algebra", "module": "grobner_normalizer" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/sheaf_coverage.v1.json", "kind": "json_field_equals", "field": "cohomology.h1_zero", "expected_value": true},
-        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_array_contains", "field": "obligations.*.obligation_id", "expected_value": "PO-11"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/sheaf_coverage.v1.json",
+          "kind": "json_field_equals",
+          "field": "cohomology.h1_zero",
+          "expected_value": true
+        },
+        {
+          "artifact": "tests/conformance/proof_traceability_check.json",
+          "kind": "json_array_contains",
+          "field": "obligations.*.obligation_id",
+          "expected_value": "PO-11"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/cohomology.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -118,7 +131,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 267, "line_contains": "SOS invariant synthesis"},
+      "feature_parity_provenance": { "line": 267, "line_contains": "SOS invariant synthesis" },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -136,14 +149,27 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "polynomial_optimization", "module": "sos_invariant"},
-        {"family": "algebraic_topology", "module": "cohomology"},
-        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+        { "family": "polynomial_optimization", "module": "sos_invariant" },
+        { "family": "algebraic_topology", "module": "cohomology" },
+        { "family": "abstract_algebra", "module": "grobner_normalizer" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/proof_traceability_check.json", "kind": "json_array_contains", "field": "obligations.*.obligation_id", "expected_value": "PO-15"},
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "sos_invariant"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/proof_traceability_check.json",
+          "kind": "json_array_contains",
+          "field": "obligations.*.obligation_id",
+          "expected_value": "PO-15"
+        },
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "sos_invariant"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/sos_invariant.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -155,7 +181,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/large_deviations.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 268, "line_contains": "large-deviation catastrophe bounds"},
+      "feature_parity_provenance": {
+        "line": 268,
+        "line_contains": "large-deviation catastrophe bounds"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -173,14 +202,23 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "concentration_bounds", "module": "large_deviations"},
-        {"family": "algebraic_topology", "module": "obstruction_detector"},
-        {"family": "grothendieck_serre", "module": "higher_topos"}
+        { "family": "concentration_bounds", "module": "large_deviations" },
+        { "family": "algebraic_topology", "module": "obstruction_detector" },
+        { "family": "grothendieck_serre", "module": "higher_topos" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/branch_diversity_spec.v1.json", "kind": "json_array_contains", "field": "math_families.concentration_bounds.modules", "expected_value": "large_deviations"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/large_deviations.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/large_deviations.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/branch_diversity_spec.v1.json",
+          "kind": "json_array_contains",
+          "field": "math_families.concentration_bounds.modules",
+          "expected_value": "large_deviations"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/large_deviations.rs"
+        },
+        { "artifact": "crates/frankenlibc-membrane/src/large_deviations.rs", "kind": "path_exists" }
       ]
     },
     {
@@ -192,7 +230,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/persistence.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 269, "line_contains": "topological anomaly detection"},
+      "feature_parity_provenance": {
+        "line": 269,
+        "line_contains": "topological anomaly detection"
+      },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -210,14 +251,23 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "algebraic_topology", "module": "persistence"},
-        {"family": "abstract_algebra", "module": "clifford"},
-        {"family": "grothendieck_serre", "module": "higher_topos"}
+        { "family": "algebraic_topology", "module": "persistence" },
+        { "family": "abstract_algebra", "module": "clifford" },
+        { "family": "grothendieck_serre", "module": "higher_topos" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/branch_diversity_spec.v1.json", "kind": "json_array_contains", "field": "math_families.algebraic_topology.modules", "expected_value": "persistence"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/persistence.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/persistence.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/branch_diversity_spec.v1.json",
+          "kind": "json_array_contains",
+          "field": "math_families.algebraic_topology.modules",
+          "expected_value": "persistence"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/persistence.rs"
+        },
+        { "artifact": "crates/frankenlibc-membrane/src/persistence.rs", "kind": "path_exists" }
       ]
     },
     {
@@ -229,7 +279,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/rough_path.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 270, "line_contains": "rough-signature feature stability"},
+      "feature_parity_provenance": {
+        "line": 270,
+        "line_contains": "rough-signature feature stability"
+      },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -247,13 +300,17 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "algebraic_topology", "module": "persistence"},
-        {"family": "abstract_algebra", "module": "clifford"},
-        {"family": "concentration_bounds", "module": "large_deviations"}
+        { "family": "algebraic_topology", "module": "persistence" },
+        { "family": "abstract_algebra", "module": "clifford" },
+        { "family": "concentration_bounds", "module": "large_deviations" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/rough_path.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/rough_path.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/rough_path.rs"
+        },
+        { "artifact": "crates/frankenlibc-membrane/src/rough_path.rs", "kind": "path_exists" }
       ]
     },
     {
@@ -265,7 +322,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 273, "line_contains": "coalgebraic stream bisimulation"},
+      "feature_parity_provenance": {
+        "line": 273,
+        "line_contains": "coalgebraic stream bisimulation"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -283,14 +343,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "grothendieck_serre", "module": "higher_topos"},
-        {"family": "abstract_algebra", "module": "derived_tstructure"},
-        {"family": "algebraic_topology", "module": "cohomology"}
+        { "family": "grothendieck_serre", "module": "higher_topos" },
+        { "family": "abstract_algebra", "module": "derived_tstructure" },
+        { "family": "algebraic_topology", "module": "cohomology" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "higher_topos"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "higher_topos"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/higher_topos.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -302,7 +374,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 274, "line_contains": "Krohn-Rhodes codec factorization"},
+      "feature_parity_provenance": {
+        "line": 274,
+        "line_contains": "Krohn-Rhodes codec factorization"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -320,14 +395,22 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "abstract_algebra", "module": "grobner_normalizer"},
-        {"family": "grothendieck_serre", "module": "ktheory"},
-        {"family": "algebraic_topology", "module": "obstruction_detector"}
+        { "family": "abstract_algebra", "module": "grobner_normalizer" },
+        { "family": "grothendieck_serre", "module": "ktheory" },
+        { "family": "algebraic_topology", "module": "obstruction_detector" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/iconv_codec_scope_ledger.v1.json", "kind": "path_exists"},
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grobner_normalizer"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs", "kind": "path_exists"}
+        { "artifact": "tests/conformance/iconv_codec_scope_ledger.v1.json", "kind": "path_exists" },
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "grobner_normalizer"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -339,7 +422,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 278, "line_contains": "loader namespace sheaf consistency"},
+      "feature_parity_provenance": {
+        "line": 278,
+        "line_contains": "loader namespace sheaf consistency"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -357,14 +443,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "grothendieck_serre", "module": "grothendieck_glue"},
-        {"family": "algebraic_topology", "module": "cohomology"},
-        {"family": "abstract_algebra", "module": "derived_tstructure"}
+        { "family": "grothendieck_serre", "module": "grothendieck_glue" },
+        { "family": "algebraic_topology", "module": "cohomology" },
+        { "family": "abstract_algebra", "module": "derived_tstructure" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grothendieck_glue"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "grothendieck_glue"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -376,7 +474,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 284, "line_contains": "spectral-sequence obstruction convergence"},
+      "feature_parity_provenance": {
+        "line": 284,
+        "line_contains": "spectral-sequence obstruction convergence"
+      },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -394,14 +495,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "algebraic_topology", "module": "serre_spectral"},
-        {"family": "grothendieck_serre", "module": "higher_topos"},
-        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+        { "family": "algebraic_topology", "module": "serre_spectral" },
+        { "family": "grothendieck_serre", "module": "higher_topos" },
+        { "family": "abstract_algebra", "module": "grobner_normalizer" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "obstruction_detector"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "obstruction_detector"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/obstruction_detector.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -413,7 +526,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 285, "line_contains": "algebraic normal-form uniqueness"},
+      "feature_parity_provenance": {
+        "line": 285,
+        "line_contains": "algebraic normal-form uniqueness"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -431,14 +547,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "abstract_algebra", "module": "grobner_normalizer"},
-        {"family": "grothendieck_serre", "module": "ktheory"},
-        {"family": "algebraic_topology", "module": "obstruction_detector"}
+        { "family": "abstract_algebra", "module": "grobner_normalizer" },
+        { "family": "grothendieck_serre", "module": "ktheory" },
+        { "family": "algebraic_topology", "module": "obstruction_detector" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grobner_normalizer"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "grobner_normalizer"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/grobner_normalizer.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -450,7 +578,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 288, "line_contains": "Serre spectral convergence integrity"},
+      "feature_parity_provenance": {
+        "line": 288,
+        "line_contains": "Serre spectral convergence integrity"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -468,14 +599,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "algebraic_topology", "module": "serre_spectral"},
-        {"family": "grothendieck_serre", "module": "higher_topos"},
-        {"family": "abstract_algebra", "module": "derived_tstructure"}
+        { "family": "algebraic_topology", "module": "serre_spectral" },
+        { "family": "grothendieck_serre", "module": "higher_topos" },
+        { "family": "abstract_algebra", "module": "derived_tstructure" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "serre_spectral"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "serre_spectral"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/serre_spectral.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -487,7 +630,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 289, "line_contains": "Grothendieck descent coherence"},
+      "feature_parity_provenance": {
+        "line": 289,
+        "line_contains": "Grothendieck descent coherence"
+      },
       "claimed_status": "PLANNED",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -505,14 +651,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "grothendieck_serre", "module": "grothendieck_glue"},
-        {"family": "algebraic_topology", "module": "cohomology"},
-        {"family": "abstract_algebra", "module": "grobner_normalizer"}
+        { "family": "grothendieck_serre", "module": "grothendieck_glue" },
+        { "family": "algebraic_topology", "module": "cohomology" },
+        { "family": "abstract_algebra", "module": "grobner_normalizer" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "grothendieck_glue"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "grothendieck_glue"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/grothendieck_glue.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -524,7 +682,7 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 290, "line_contains": "families-index nullity"},
+      "feature_parity_provenance": { "line": 290, "line_contains": "families-index nullity" },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -542,14 +700,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "atiyah_singer_ktheory", "module": "ktheory"},
-        {"family": "grothendieck_serre", "module": "ktheory"},
-        {"family": "abstract_algebra", "module": "clifford"}
+        { "family": "atiyah_singer_ktheory", "module": "ktheory" },
+        { "family": "grothendieck_serre", "module": "ktheory" },
+        { "family": "abstract_algebra", "module": "clifford" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "ktheory"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "ktheory"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/ktheory.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -561,7 +731,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 291, "line_contains": "Atiyah-Bott localization conservativity"},
+      "feature_parity_provenance": {
+        "line": 291,
+        "line_contains": "Atiyah-Bott localization conservativity"
+      },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -579,14 +752,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "atiyah_singer_ktheory", "module": "atiyah_bott"},
-        {"family": "grothendieck_serre", "module": "ktheory"},
-        {"family": "abstract_algebra", "module": "clifford"}
+        { "family": "atiyah_singer_ktheory", "module": "atiyah_bott" },
+        { "family": "grothendieck_serre", "module": "ktheory" },
+        { "family": "abstract_algebra", "module": "clifford" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "atiyah_bott"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "atiyah_bott"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/atiyah_bott.rs",
+          "kind": "path_exists"
+        }
       ]
     },
     {
@@ -598,7 +783,10 @@
       "monitor_path": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs",
       "runtime_mode": "strict+hardened",
       "expected_decision": "keep_visible_block_promotion",
-      "feature_parity_provenance": {"line": 293, "line_contains": "derived t-structure bootstrap ordering"},
+      "feature_parity_provenance": {
+        "line": 293,
+        "line_contains": "derived t-structure bootstrap ordering"
+      },
       "claimed_status": "IN_PROGRESS",
       "replacement_level": "L0",
       "monitor_fixture": {
@@ -616,14 +804,26 @@
         "blocked_when_missing": true
       },
       "branch_obligations": [
-        {"family": "abstract_algebra", "module": "derived_tstructure"},
-        {"family": "grothendieck_serre", "module": "higher_topos"},
-        {"family": "algebraic_topology", "module": "serre_spectral"}
+        { "family": "abstract_algebra", "module": "derived_tstructure" },
+        { "family": "grothendieck_serre", "module": "higher_topos" },
+        { "family": "algebraic_topology", "module": "serre_spectral" }
       ],
       "evidence_anchors": [
-        {"artifact": "tests/conformance/math_governance.json", "kind": "json_array_contains", "field": "classifications.research.*.module", "expected_value": "derived_tstructure"},
-        {"artifact": "tests/conformance/reverse_round_contracts.v1.json", "kind": "text_contains", "expected_value": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs"},
-        {"artifact": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs", "kind": "path_exists"}
+        {
+          "artifact": "tests/conformance/math_governance.json",
+          "kind": "json_array_contains",
+          "field": "classifications.research.*.module",
+          "expected_value": "derived_tstructure"
+        },
+        {
+          "artifact": "tests/conformance/reverse_round_contracts.v1.json",
+          "kind": "text_contains",
+          "expected_value": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs"
+        },
+        {
+          "artifact": "crates/frankenlibc-membrane/src/runtime_math/derived_tstructure.rs",
+          "kind": "path_exists"
+        }
       ]
     }
   ]

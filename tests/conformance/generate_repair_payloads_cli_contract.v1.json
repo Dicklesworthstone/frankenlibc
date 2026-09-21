@@ -7,12 +7,7 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1(epoch_seed, &[[u8;128]], overhead_percent) -> Vec<(u16,[u8;128])>. Generates ALL repair payloads for an epoch by iterating esi over k_source..k_source+R-1 where R = derive_repair_symbol_count_v1(k_source, overhead_percent). Each repair payload is XOR-encoded via encode_xor_repair_payload_v1 using the per-esi schedule from derive_repair_schedule_v1. Reads source payloads from a binary file (K concatenated 128-byte symbols). Emits R per-repair records + one summary record. Pairs with bd-3nygl encode-xor-repair-payload (single repair) and bd-qxh1x derive-repair-math (sizing).",
   "subcommand_name": "generate-repair-payloads",
   "binary_target": "harness",
-  "required_flags": [
-    "--epoch-seed",
-    "--source-payloads",
-    "--overhead-percent",
-    "--output"
-  ],
+  "required_flags": ["--epoch-seed", "--source-payloads", "--overhead-percent", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::evidence::generate_repair_payloads_v1",
   "underlying_lib_functions": [

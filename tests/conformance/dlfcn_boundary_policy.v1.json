@@ -5,25 +5,11 @@
   "captured_at": "2026-02-13T00:00:00Z",
   "surface_classification": {
     "module": "dlfcn_abi",
-    "symbols": [
-      "dlopen",
-      "dlsym",
-      "dlclose",
-      "dlerror"
-    ],
+    "symbols": ["dlopen", "dlsym", "dlclose", "dlerror"],
     "interpose_profile": {
       "status": "WrapsHostLibc",
-      "host_callthrough_symbols": [
-        "dlopen",
-        "dlsym",
-        "dlclose"
-      ],
-      "local_symbols": [
-        "dlopen",
-        "dlsym",
-        "dlclose",
-        "dlerror"
-      ],
+      "host_callthrough_symbols": ["dlopen", "dlsym", "dlclose"],
+      "local_symbols": ["dlopen", "dlsym", "dlclose", "dlerror"],
       "allowed_fallbacks": [
         {
           "symbol": "dlopen",
@@ -61,10 +47,7 @@
       "status": "forbid_host_fallback",
       "host_callthrough_allowed": false,
       "gate_failure_on_unapproved_fallback": true,
-      "required_target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
+      "required_target_statuses": ["Implemented", "RawSyscall"],
       "transition_requirement": "dlfcn_abi must remove host-resolve dlopen/dlsym/dlclose delegation before L2 replacement claims"
     }
   },

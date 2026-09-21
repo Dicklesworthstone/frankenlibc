@@ -215,20 +215,11 @@
   "family_coverage": {
     "allocator": {
       "function_count": 4,
-      "functions": [
-        "calloc",
-        "free",
-        "malloc",
-        "realloc"
-      ]
+      "functions": ["calloc", "free", "malloc", "realloc"]
     },
     "backtrace": {
       "function_count": 3,
-      "functions": [
-        "backtrace",
-        "backtrace_symbols",
-        "backtrace_symbols_fd"
-      ]
+      "functions": ["backtrace", "backtrace_symbols", "backtrace_symbols_fd"]
     },
     "c11threads": {
       "function_count": 24,
@@ -277,26 +268,11 @@
     },
     "dirent": {
       "function_count": 7,
-      "functions": [
-        "closedir",
-        "dirfd",
-        "opendir",
-        "readdir",
-        "rewinddir",
-        "seekdir",
-        "telldir"
-      ]
+      "functions": ["closedir", "dirfd", "opendir", "readdir", "rewinddir", "seekdir", "telldir"]
     },
     "dlfcn": {
       "function_count": 6,
-      "functions": [
-        "dl_iterate_phdr",
-        "dlclose",
-        "dlerror",
-        "dlopen",
-        "dlsym",
-        "dlvsym"
-      ]
+      "functions": ["dl_iterate_phdr", "dlclose", "dlerror", "dlopen", "dlsym", "dlvsym"]
     },
     "elf": {
       "function_count": 7,
@@ -438,32 +414,15 @@
     },
     "grp": {
       "function_count": 4,
-      "functions": [
-        "endgrent",
-        "getgrgid",
-        "getgrnam",
-        "setgrent"
-      ]
+      "functions": ["endgrent", "getgrgid", "getgrnam", "setgrent"]
     },
     "iconv": {
       "function_count": 3,
-      "functions": [
-        "iconv",
-        "iconv_close",
-        "iconv_open"
-      ]
+      "functions": ["iconv", "iconv_close", "iconv_open"]
     },
     "inet": {
       "function_count": 7,
-      "functions": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ]
+      "functions": ["htonl", "htons", "inet_addr", "inet_ntop", "inet_pton", "ntohl", "ntohs"]
     },
     "io": {
       "function_count": 28,
@@ -510,13 +469,7 @@
     },
     "loader": {
       "function_count": 5,
-      "functions": [
-        "dladdr",
-        "dlclose",
-        "dlinfo",
-        "dlopen",
-        "dlsym"
-      ]
+      "functions": ["dladdr", "dlclose", "dlinfo", "dlopen", "dlsym"]
     },
     "locale": {
       "function_count": 16,
@@ -623,33 +576,19 @@
     },
     "membrane": {
       "function_count": 2,
-      "functions": [
-        "memcpy",
-        "strlen"
-      ]
+      "functions": ["memcpy", "strlen"]
     },
     "memcpy": {
       "function_count": 1,
-      "functions": [
-        "memcpy"
-      ]
+      "functions": ["memcpy"]
     },
     "memory": {
       "function_count": 5,
-      "functions": [
-        "memchr",
-        "memcmp",
-        "memcpy",
-        "memmove",
-        "memset"
-      ]
+      "functions": ["memchr", "memcmp", "memcpy", "memmove", "memset"]
     },
     "mntent": {
       "function_count": 2,
-      "functions": [
-        "getmntent_r",
-        "hasmntopt"
-      ]
+      "functions": ["getmntent_r", "hasmntopt"]
     },
     "poll": {
       "function_count": 15,
@@ -673,17 +612,11 @@
     },
     "pressure": {
       "function_count": 2,
-      "functions": [
-        "PressureSensor::observe",
-        "SystemRegime::degradation_active"
-      ]
+      "functions": ["PressureSensor::observe", "SystemRegime::degradation_active"]
     },
     "printf": {
       "function_count": 2,
-      "functions": [
-        "snprintf",
-        "sprintf"
-      ]
+      "functions": ["snprintf", "sprintf"]
     },
     "process": {
       "function_count": 30,
@@ -815,22 +748,11 @@
     },
     "pwd": {
       "function_count": 4,
-      "functions": [
-        "endpwent",
-        "getpwnam",
-        "getpwuid",
-        "setpwent"
-      ]
+      "functions": ["endpwent", "getpwnam", "getpwuid", "setpwent"]
     },
     "regex": {
       "function_count": 5,
-      "functions": [
-        "fnmatch",
-        "glob",
-        "regcomp",
-        "regexec",
-        "wordexp"
-      ]
+      "functions": ["fnmatch", "glob", "regcomp", "regexec", "wordexp"]
     },
     "resolver": {
       "function_count": 16,
@@ -855,9 +777,7 @@
     },
     "resource": {
       "function_count": 1,
-      "functions": [
-        "getrlimit"
-      ]
+      "functions": ["getrlimit"]
     },
     "rpc": {
       "function_count": 36,
@@ -902,9 +822,7 @@
     },
     "scanf": {
       "function_count": 1,
-      "functions": [
-        "sscanf"
-      ]
+      "functions": ["sscanf"]
     },
     "search": {
       "function_count": 10,
@@ -923,26 +841,15 @@
     },
     "session": {
       "function_count": 4,
-      "functions": [
-        "getlogin",
-        "getlogin_r",
-        "getsid",
-        "setsid"
-      ]
+      "functions": ["getlogin", "getlogin_r", "getsid", "setsid"]
     },
     "setjmp": {
       "function_count": 3,
-      "functions": [
-        "_setjmp",
-        "longjmp",
-        "setjmp"
-      ]
+      "functions": ["_setjmp", "longjmp", "setjmp"]
     },
     "setjmp_nested_edges": {
       "function_count": 1,
-      "functions": [
-        "setjmp_nested_edges"
-      ]
+      "functions": ["setjmp_nested_edges"]
     },
     "signal": {
       "function_count": 30,
@@ -1004,11 +911,7 @@
     },
     "spawn": {
       "function_count": 3,
-      "functions": [
-        "execve",
-        "posix_spawn",
-        "system"
-      ]
+      "functions": ["execve", "posix_spawn", "system"]
     },
     "startup": {
       "function_count": 3,
@@ -1210,15 +1113,7 @@
     },
     "stdlib": {
       "function_count": 7,
-      "functions": [
-        "atoi",
-        "atol",
-        "bsearch",
-        "getbsize",
-        "qsort",
-        "strtol",
-        "strtoul"
-      ]
+      "functions": ["atoi", "atol", "bsearch", "getbsize", "qsort", "strtol", "strtoul"]
     },
     "string": {
       "function_count": 142,
@@ -1369,31 +1264,15 @@
     },
     "strlen": {
       "function_count": 1,
-      "functions": [
-        "strlen"
-      ]
+      "functions": ["strlen"]
     },
     "sysv": {
       "function_count": 7,
-      "functions": [
-        "msgget",
-        "semctl",
-        "semget",
-        "semop",
-        "shmat",
-        "shmdt",
-        "shmget"
-      ]
+      "functions": ["msgget", "semctl", "semget", "semop", "shmat", "shmdt", "shmget"]
     },
     "termios": {
       "function_count": 5,
-      "functions": [
-        "cfgetispeed",
-        "cfgetospeed",
-        "cfsetispeed",
-        "cfsetospeed",
-        "tcgetattr"
-      ]
+      "functions": ["cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "tcgetattr"]
     },
     "time": {
       "function_count": 26,
@@ -1615,12 +1494,7 @@
     },
     "virtual": {
       "function_count": 4,
-      "functions": [
-        "madvise",
-        "mmap",
-        "mprotect",
-        "munmap"
-      ]
+      "functions": ["madvise", "mmap", "mprotect", "munmap"]
     },
     "wchar": {
       "function_count": 39,
@@ -1695,28 +1569,15 @@
       "file": "allocator.json",
       "sha256": "83d01e46032b363e8b47654c0478b02ae277f2e4aacfbdf9b55d5164b948d40f",
       "case_count": 5,
-      "functions": [
-        "calloc",
-        "free",
-        "malloc",
-        "realloc"
-      ],
-      "families": [
-        "allocator"
-      ]
+      "functions": ["calloc", "free", "malloc", "realloc"],
+      "families": ["allocator"]
     },
     "backtrace_ops": {
       "file": "backtrace_ops.json",
       "sha256": "1ba6ae75f916aef584e03df4e4a50c59c975bb59d2fd40f792532472a1ee28d3",
       "case_count": 5,
-      "functions": [
-        "backtrace",
-        "backtrace_symbols",
-        "backtrace_symbols_fd"
-      ],
-      "families": [
-        "backtrace"
-      ]
+      "functions": ["backtrace", "backtrace_symbols", "backtrace_symbols_fd"],
+      "families": ["backtrace"]
     },
     "c11threads_ops": {
       "file": "c11threads_ops.json",
@@ -1748,9 +1609,7 @@
         "tss_get",
         "tss_set"
       ],
-      "families": [
-        "c11threads"
-      ]
+      "families": ["c11threads"]
     },
     "ctype_ops": {
       "file": "ctype_ops.json",
@@ -1769,42 +1628,21 @@
         "tolower",
         "toupper"
       ],
-      "families": [
-        "ctype"
-      ]
+      "families": ["ctype"]
     },
     "dirent_ops": {
       "file": "dirent_ops.json",
       "sha256": "e0d8da1faf520cfad8c2ece4175c39e85f2cf89aff3fbff3a96ce2925e30e440",
       "case_count": 13,
-      "functions": [
-        "closedir",
-        "dirfd",
-        "opendir",
-        "readdir",
-        "rewinddir",
-        "seekdir",
-        "telldir"
-      ],
-      "families": [
-        "dirent"
-      ]
+      "functions": ["closedir", "dirfd", "opendir", "readdir", "rewinddir", "seekdir", "telldir"],
+      "families": ["dirent"]
     },
     "dlfcn_ops": {
       "file": "dlfcn_ops.json",
       "sha256": "74aae81a1f681a65c316cc13163aed31d9276bd15b2deb159fd5a792002cdffa",
       "case_count": 13,
-      "functions": [
-        "dl_iterate_phdr",
-        "dlclose",
-        "dlerror",
-        "dlopen",
-        "dlsym",
-        "dlvsym"
-      ],
-      "families": [
-        "dlfcn"
-      ]
+      "functions": ["dl_iterate_phdr", "dlclose", "dlerror", "dlopen", "dlsym", "dlvsym"],
+      "families": ["dlfcn"]
     },
     "elf_loader": {
       "file": "elf_loader.json",
@@ -1819,9 +1657,7 @@
         "elf_hash",
         "gnu_hash"
       ],
-      "families": [
-        "elf"
-      ]
+      "families": ["elf"]
     },
     "err_ops": {
       "file": "err_ops.json",
@@ -1841,9 +1677,7 @@
         "warnc",
         "warnx"
       ],
-      "families": [
-        "err"
-      ]
+      "families": ["err"]
     },
     "errno_ops": {
       "file": "errno_ops.json",
@@ -1858,9 +1692,7 @@
         "strerror_l",
         "strerror_r"
       ],
-      "families": [
-        "errno"
-      ]
+      "families": ["errno"]
     },
     "fenv_ops": {
       "file": "fenv_ops.json",
@@ -1879,9 +1711,7 @@
         "fetestexcept",
         "feupdateenv"
       ],
-      "families": [
-        "fenv"
-      ]
+      "families": ["fenv"]
     },
     "fortify_checked_wrapper_wave01": {
       "file": "fortify_checked_wrapper_wave01.json",
@@ -1901,9 +1731,7 @@
         "__fortify_fail",
         "__fprintf_chk"
       ],
-      "families": [
-        "fortify"
-      ]
+      "families": ["fortify"]
     },
     "fortify_checked_wrapper_wave02": {
       "file": "fortify_checked_wrapper_wave02.json",
@@ -1923,9 +1751,7 @@
         "__longjmp_chk",
         "__mbsnrtowcs_chk"
       ],
-      "families": [
-        "fortify"
-      ]
+      "families": ["fortify"]
     },
     "fortify_checked_wrapper_wave03": {
       "file": "fortify_checked_wrapper_wave03.json",
@@ -1945,9 +1771,7 @@
         "__ppoll_chk",
         "__pread64_chk"
       ],
-      "families": [
-        "fortify"
-      ]
+      "families": ["fortify"]
     },
     "glibc_internal_bootstrap_wave01": {
       "file": "glibc_internal_bootstrap_wave01.json",
@@ -1966,9 +1790,7 @@
         "pthread_kill_other_threads_np",
         "tr_break"
       ],
-      "families": [
-        "glibc"
-      ]
+      "families": ["glibc"]
     },
     "glibc_internal_compat_wave02": {
       "file": "glibc_internal_compat_wave02.json",
@@ -1988,9 +1810,7 @@
         "__backtrace_symbols_fd",
         "__bsd_getpgrp"
       ],
-      "families": [
-        "glibc"
-      ]
+      "families": ["glibc"]
     },
     "glibc_internal_compat_wave03": {
       "file": "glibc_internal_compat_wave03.json",
@@ -2010,53 +1830,28 @@
         "__ctype32_b",
         "__ctype32_tolower"
       ],
-      "families": [
-        "glibc"
-      ]
+      "families": ["glibc"]
     },
     "grp_ops": {
       "file": "grp_ops.json",
       "sha256": "e8c6079adeac9771b71afd2285a3f7908db19369666f75d91050631b5edba51b",
       "case_count": 12,
-      "functions": [
-        "endgrent",
-        "getgrgid",
-        "getgrnam",
-        "setgrent"
-      ],
-      "families": [
-        "grp"
-      ]
+      "functions": ["endgrent", "getgrgid", "getgrnam", "setgrent"],
+      "families": ["grp"]
     },
     "iconv_phase1": {
       "file": "iconv_phase1.json",
       "sha256": "0a268ade0e41fafd54dc63b486909cc0dda48f8ab9e777afb7d4eafb3fdeb515",
       "case_count": 18,
-      "functions": [
-        "iconv",
-        "iconv_close",
-        "iconv_open"
-      ],
-      "families": [
-        "iconv"
-      ]
+      "functions": ["iconv", "iconv_close", "iconv_open"],
+      "families": ["iconv"]
     },
     "inet_ops": {
       "file": "inet_ops.json",
       "sha256": "0e09aec820aab9735cf0336b801e50b9355b25e8284e2ff796d4c692ca8768f4",
       "case_count": 15,
-      "functions": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ],
-      "families": [
-        "inet"
-      ]
+      "functions": ["htonl", "htons", "inet_addr", "inet_ntop", "inet_pton", "ntohl", "ntohs"],
+      "families": ["inet"]
     },
     "io_internal_ops": {
       "file": "io_internal_ops.json",
@@ -2092,9 +1887,7 @@
         "_IO_wfile_sync",
         "dlinfo"
       ],
-      "families": [
-        "io"
-      ]
+      "families": ["io"]
     },
     "isoc_wide_scanf_ops": {
       "file": "isoc_wide_scanf_ops.json",
@@ -2107,24 +1900,14 @@
         "__isoc99_vswscanf",
         "__isoc99_vwscanf"
       ],
-      "families": [
-        "isoc"
-      ]
+      "families": ["isoc"]
     },
     "loader_edges": {
       "file": "loader_edges.json",
       "sha256": "277c497e7b928eb9b74a8aba24609f9b5fc09074bade73f620b3b99854ba69a4",
       "case_count": 7,
-      "functions": [
-        "dladdr",
-        "dlclose",
-        "dlinfo",
-        "dlopen",
-        "dlsym"
-      ],
-      "families": [
-        "loader"
-      ]
+      "functions": ["dladdr", "dlclose", "dlinfo", "dlopen", "dlsym"],
+      "families": ["loader"]
     },
     "locale_catalog_wave01": {
       "file": "locale_catalog_wave01.json",
@@ -2140,9 +1923,7 @@
         "ngettext",
         "textdomain"
       ],
-      "families": [
-        "locale"
-      ]
+      "families": ["locale"]
     },
     "locale_ops": {
       "file": "locale_ops.json",
@@ -2158,9 +1939,7 @@
         "setlocale",
         "uselocale"
       ],
-      "families": [
-        "locale"
-      ]
+      "families": ["locale"]
     },
     "malloc_membrane_wave01": {
       "file": "malloc_membrane_wave01.json",
@@ -2180,24 +1959,14 @@
         "malloc_trim",
         "malloc_usable_size"
       ],
-      "families": [
-        "malloc"
-      ]
+      "families": ["malloc"]
     },
     "malloc_membrane_wave02": {
       "file": "malloc_membrane_wave02.json",
       "sha256": "d2a056c682980273861eed34ef2d3c4c69d840b023425d99bc8370153f0de5ab",
       "case_count": 10,
-      "functions": [
-        "mallopt",
-        "memalign",
-        "posix_memalign",
-        "pvalloc",
-        "valloc"
-      ],
-      "families": [
-        "malloc"
-      ]
+      "functions": ["mallopt", "memalign", "posix_memalign", "pvalloc", "valloc"],
+      "families": ["malloc"]
     },
     "math_finite_special_wave02": {
       "file": "math_finite_special_wave02.json",
@@ -2217,9 +1986,7 @@
         "__asinf128_finite",
         "__asinf_finite"
       ],
-      "families": [
-        "math"
-      ]
+      "families": ["math"]
     },
     "math_finite_special_wave03": {
       "file": "math_finite_special_wave03.json",
@@ -2239,9 +2006,7 @@
         "__clog10f",
         "__clog10l"
       ],
-      "families": [
-        "math"
-      ]
+      "families": ["math"]
     },
     "math_ops": {
       "file": "math_ops.json",
@@ -2280,59 +2045,35 @@
         "tan",
         "tgamma"
       ],
-      "families": [
-        "math"
-      ]
+      "families": ["math"]
     },
     "membrane_mode_split": {
       "file": "membrane_mode_split.json",
       "sha256": "8190c7325933ead7074271921de229d5d58647d5391a20578d3888fcb42abf4f",
       "case_count": 4,
-      "functions": [
-        "memcpy",
-        "strlen"
-      ],
-      "families": [
-        "membrane"
-      ]
+      "functions": ["memcpy", "strlen"],
+      "families": ["membrane"]
     },
     "memcpy_strict": {
       "file": "memcpy_strict.json",
       "sha256": "6bdd6fb00bff508d07eb985bdc7c258a1a10f8ea96de72cf7e392483e886c233",
       "case_count": 9,
-      "functions": [
-        "memcpy"
-      ],
-      "families": [
-        "memcpy"
-      ]
+      "functions": ["memcpy"],
+      "families": ["memcpy"]
     },
     "memory_ops": {
       "file": "memory_ops.json",
       "sha256": "c2e63ee0140a27b9ad8286edc115eebade440e1c06040ebdc21dea8ee285a1dc",
       "case_count": 11,
-      "functions": [
-        "memchr",
-        "memcmp",
-        "memcpy",
-        "memmove",
-        "memset"
-      ],
-      "families": [
-        "memory"
-      ]
+      "functions": ["memchr", "memcmp", "memcpy", "memmove", "memset"],
+      "families": ["memory"]
     },
     "mntent_ops": {
       "file": "mntent_ops.json",
       "sha256": "03e449ee6c8407c77d1faad27f71834ad515d6562cd5ca6db52aa3aca842990f",
       "case_count": 6,
-      "functions": [
-        "getmntent_r",
-        "hasmntopt"
-      ],
-      "families": [
-        "mntent"
-      ]
+      "functions": ["getmntent_r", "hasmntopt"],
+      "families": ["mntent"]
     },
     "poll_event_loop_wave01": {
       "file": "poll_event_loop_wave01.json",
@@ -2352,82 +2093,49 @@
         "timerfd_create",
         "timerfd_gettime"
       ],
-      "families": [
-        "poll"
-      ]
+      "families": ["poll"]
     },
     "poll_event_loop_wave02": {
       "file": "poll_event_loop_wave02.json",
       "sha256": "502403d6c3eea5bc0e7bd7a56a4254d3cb3a0d714d4ce46d1efa4565468eaf17",
       "case_count": 4,
-      "functions": [
-        "timerfd_settime"
-      ],
-      "families": [
-        "poll"
-      ]
+      "functions": ["timerfd_settime"],
+      "families": ["poll"]
     },
     "poll_ops": {
       "file": "poll_ops.json",
       "sha256": "38ee1d80774e814a0be3d2dfd012c11e2e193a7684c0e03fe65156e0aa8fec74",
       "case_count": 6,
-      "functions": [
-        "poll",
-        "select"
-      ],
-      "families": [
-        "poll"
-      ]
+      "functions": ["poll", "select"],
+      "families": ["poll"]
     },
     "pressure_sensing": {
       "file": "pressure_sensing.json",
       "sha256": "2682b7cc38cc7766b90365248250c991ad58dc066796d1408b8c4245a5332cff",
       "case_count": 9,
-      "functions": [
-        "PressureSensor::observe",
-        "SystemRegime::degradation_active"
-      ],
-      "families": [
-        "pressure"
-      ]
+      "functions": ["PressureSensor::observe", "SystemRegime::degradation_active"],
+      "families": ["pressure"]
     },
     "printf_conformance": {
       "file": "printf_conformance.json",
       "sha256": "b8657a70042071e59636fe167d7ffdfb6ae25dab77a173056cec1465ae27c6ad",
       "case_count": 186,
-      "functions": [
-        "snprintf",
-        "sprintf"
-      ],
-      "families": [
-        "printf"
-      ]
+      "functions": ["snprintf", "sprintf"],
+      "families": ["printf"]
     },
     "process_ops": {
       "file": "process_ops.json",
       "sha256": "c02beb9656197f29b1fbc1b0c4b805ed627e4a37e523c5846d19a4a933f5d231",
       "case_count": 7,
-      "functions": [
-        "fork",
-        "getpid",
-        "getppid",
-        "waitpid"
-      ],
-      "families": [
-        "process"
-      ]
+      "functions": ["fork", "getpid", "getppid", "waitpid"],
+      "families": ["process"]
     },
     "process_spawn_wait_tail": {
       "file": "process_spawn_wait_tail.json",
       "sha256": "c790f387c96df810df81cd4e62bee448647d00124a35344753ffc2573e57f924",
       "case_count": 12,
-      "functions": [
-        "wait4",
-        "waitid"
-      ],
-      "families": [
-        "process"
-      ]
+      "functions": ["wait4", "waitid"],
+      "families": ["process"]
     },
     "process_spawn_wave01": {
       "file": "process_spawn_wave01.json",
@@ -2447,9 +2155,7 @@
         "posix_spawn_file_actions_addclose",
         "posix_spawn_file_actions_adddup2"
       ],
-      "families": [
-        "process"
-      ]
+      "families": ["process"]
     },
     "process_spawn_wave02": {
       "file": "process_spawn_wave02.json",
@@ -2469,9 +2175,7 @@
         "wait",
         "wait3"
       ],
-      "families": [
-        "process"
-      ]
+      "families": ["process"]
     },
     "pthread_attribute_wave03": {
       "file": "pthread_attribute_wave03.json",
@@ -2491,9 +2195,7 @@
         "pthread_attr_getstack",
         "pthread_attr_getstackaddr"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_attribute_wave04": {
       "file": "pthread_attribute_wave04.json",
@@ -2513,9 +2215,7 @@
         "pthread_attr_setstack",
         "pthread_attr_setstackaddr"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_cond": {
       "file": "pthread_cond.json",
@@ -2529,9 +2229,7 @@
         "pthread_cond_timedwait",
         "pthread_cond_wait"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_gnu_extensions": {
       "file": "pthread_gnu_extensions.json",
@@ -2544,9 +2242,7 @@
         "pthread_timedjoin_np",
         "pthread_tryjoin_np"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_mutex": {
       "file": "pthread_mutex.json",
@@ -2561,9 +2257,7 @@
         "pthread_mutex_trylock",
         "pthread_mutex_unlock"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_sync_wave01": {
       "file": "pthread_sync_wave01.json",
@@ -2583,9 +2277,7 @@
         "__pthread_once",
         "__pthread_register_cancel"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_sync_wave02": {
       "file": "pthread_sync_wave02.json",
@@ -2605,9 +2297,7 @@
         "__pthread_unregister_cancel_restore",
         "__pthread_unwind_next"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_sync_wave05": {
       "file": "pthread_sync_wave05.json",
@@ -2627,9 +2317,7 @@
         "pthread_condattr_getclock",
         "pthread_condattr_getpshared"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_thread": {
       "file": "pthread_thread.json",
@@ -2642,9 +2330,7 @@
         "pthread_join",
         "pthread_self"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_tls_keys": {
       "file": "pthread_tls_keys.json",
@@ -2657,38 +2343,21 @@
         "pthread_setspecific",
         "teardown_thread_tls"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pwd_ops": {
       "file": "pwd_ops.json",
       "sha256": "0aeff07220053c27647e932c6dc6ef75de4fa0bed53d0d44ea926489a53db5d1",
       "case_count": 12,
-      "functions": [
-        "endpwent",
-        "getpwnam",
-        "getpwuid",
-        "setpwent"
-      ],
-      "families": [
-        "pwd"
-      ]
+      "functions": ["endpwent", "getpwnam", "getpwuid", "setpwent"],
+      "families": ["pwd"]
     },
     "regex_glob_ops": {
       "file": "regex_glob_ops.json",
       "sha256": "62ed158d973dede9b2da6d37d8964b93ff114246ee46acc783f0ae858108f47d",
       "case_count": 11,
-      "functions": [
-        "fnmatch",
-        "glob",
-        "regcomp",
-        "regexec",
-        "wordexp"
-      ],
-      "families": [
-        "regex"
-      ]
+      "functions": ["fnmatch", "glob", "regcomp", "regexec", "wordexp"],
+      "families": ["regex"]
     },
     "resolver": {
       "file": "resolver.json",
@@ -2704,9 +2373,7 @@
         "gethostbyname",
         "lookup_hosts"
       ],
-      "families": [
-        "resolver"
-      ]
+      "families": ["resolver"]
     },
     "resolver_nss_core_wave01": {
       "file": "resolver_nss_core_wave01.json",
@@ -2722,20 +2389,14 @@
         "getservbyname",
         "getservbyport"
       ],
-      "families": [
-        "resolver"
-      ]
+      "families": ["resolver"]
     },
     "resource_ops": {
       "file": "resource_ops.json",
       "sha256": "6a355933fbac0abf6b7b3f0cc3233df5fad0440925ed892c7a9dfceeb1d11ac9",
       "case_count": 11,
-      "functions": [
-        "getrlimit"
-      ],
-      "families": [
-        "resource"
-      ]
+      "functions": ["getrlimit"],
+      "families": ["resource"]
     },
     "rpc_legacy_network": {
       "file": "rpc_legacy_network.json",
@@ -2755,9 +2416,7 @@
         "authdes_pk_create",
         "authnone_create"
       ],
-      "families": [
-        "rpc"
-      ]
+      "families": ["rpc"]
     },
     "rpc_legacy_network_wave02": {
       "file": "rpc_legacy_network_wave02.json",
@@ -2777,9 +2436,7 @@
         "clnt_spcreateerror",
         "clnt_sperrno"
       ],
-      "families": [
-        "rpc"
-      ]
+      "families": ["rpc"]
     },
     "rpc_legacy_network_wave03": {
       "file": "rpc_legacy_network_wave03.json",
@@ -2799,20 +2456,14 @@
         "getpublickey",
         "getrpcport"
       ],
-      "families": [
-        "rpc"
-      ]
+      "families": ["rpc"]
     },
     "scanf_conformance": {
       "file": "scanf_conformance.json",
       "sha256": "baacafbf89c39cef0d3c62a835f03cc43ba18ece8021834ed8fa3880d2580ccb",
       "case_count": 106,
-      "functions": [
-        "sscanf"
-      ],
-      "families": [
-        "scanf"
-      ]
+      "functions": ["sscanf"],
+      "families": ["scanf"]
     },
     "search_ops": {
       "file": "search_ops.json",
@@ -2830,45 +2481,28 @@
         "tsearch",
         "twalk"
       ],
-      "families": [
-        "search"
-      ]
+      "families": ["search"]
     },
     "session_ops": {
       "file": "session_ops.json",
       "sha256": "9ec86c91f2efc7185a7bb806530e42964fa36f0cc3b79d87207c51d8c45c51c9",
       "case_count": 6,
-      "functions": [
-        "getlogin",
-        "getlogin_r",
-        "getsid",
-        "setsid"
-      ],
-      "families": [
-        "session"
-      ]
+      "functions": ["getlogin", "getlogin_r", "getsid", "setsid"],
+      "families": ["session"]
     },
     "setjmp_nested_edges": {
       "file": "setjmp_nested_edges.json",
       "sha256": "27c0eeaccad717ccce8293ca35f2c6c3efe0b5d9cc7faa159fe1484e0371be8e",
       "case_count": 1,
       "functions": [],
-      "families": [
-        "setjmp_nested_edges"
-      ]
+      "families": ["setjmp_nested_edges"]
     },
     "setjmp_ops": {
       "file": "setjmp_ops.json",
       "sha256": "6c2a3a4e0cd8a7ac65c6d040de52ff638a6f19018a642597704398033ee70d5a",
       "case_count": 7,
-      "functions": [
-        "_setjmp",
-        "longjmp",
-        "setjmp"
-      ],
-      "families": [
-        "setjmp"
-      ]
+      "functions": ["_setjmp", "longjmp", "setjmp"],
+      "families": ["setjmp"]
     },
     "signal_async_wave01": {
       "file": "signal_async_wave01.json",
@@ -2888,9 +2522,7 @@
         "sigignore",
         "siginterrupt"
       ],
-      "families": [
-        "signal"
-      ]
+      "families": ["signal"]
     },
     "signal_async_wave02": {
       "file": "signal_async_wave02.json",
@@ -2905,9 +2537,7 @@
         "sigsuspend",
         "sigwait"
       ],
-      "families": [
-        "signal"
-      ]
+      "families": ["signal"]
     },
     "signal_ops": {
       "file": "signal_ops.json",
@@ -2926,9 +2556,7 @@
         "signal",
         "ssignal"
       ],
-      "families": [
-        "signal"
-      ]
+      "families": ["signal"]
     },
     "socket_network_wave01": {
       "file": "socket_network_wave01.json",
@@ -2946,9 +2574,7 @@
         "setsockopt",
         "socketpair"
       ],
-      "families": [
-        "socket"
-      ]
+      "families": ["socket"]
     },
     "socket_ops": {
       "file": "socket_ops.json",
@@ -2964,22 +2590,14 @@
         "shutdown",
         "socket"
       ],
-      "families": [
-        "socket"
-      ]
+      "families": ["socket"]
     },
     "spawn_exec_ops": {
       "file": "spawn_exec_ops.json",
       "sha256": "49b90ed9954554b61b755984e692d11a768dade059a14c3fd9a3dd95c4321603",
       "case_count": 7,
-      "functions": [
-        "execve",
-        "posix_spawn",
-        "system"
-      ],
-      "families": [
-        "spawn"
-      ]
+      "functions": ["execve", "posix_spawn", "system"],
+      "families": ["spawn"]
     },
     "startup_ops": {
       "file": "startup_ops.json",
@@ -2990,9 +2608,7 @@
         "__frankenlibc_startup_snapshot",
         "__libc_start_main"
       ],
-      "families": [
-        "startup"
-      ]
+      "families": ["startup"]
     },
     "stdbit_ops": {
       "file": "stdbit_ops.json",
@@ -3070,9 +2686,7 @@
         "stdc_trailing_zeros_ull",
         "stdc_trailing_zeros_us"
       ],
-      "families": [
-        "stdbit"
-      ]
+      "families": ["stdbit"]
     },
     "stdio_file_ops": {
       "file": "stdio_file_ops.json",
@@ -3106,9 +2720,7 @@
         "vsnprintf",
         "vsprintf"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_symbols": {
       "file": "stdio_libio_symbols.json",
@@ -3128,9 +2740,7 @@
         "_IO_peekc_locked",
         "_IO_putc"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave01": {
       "file": "stdio_libio_wave01.json",
@@ -3150,9 +2760,7 @@
         "__isoc99_fscanf",
         "__isoc99_scanf"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave02": {
       "file": "stdio_libio_wave02.json",
@@ -3172,9 +2780,7 @@
         "ferror_unlocked",
         "fflush_unlocked"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave03": {
       "file": "stdio_libio_wave03.json",
@@ -3194,9 +2800,7 @@
         "fopencookie",
         "fputc_unlocked"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave04": {
       "file": "stdio_libio_wave04.json",
@@ -3216,9 +2820,7 @@
         "fsetpos64",
         "ftello"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave05": {
       "file": "stdio_libio_wave05.json",
@@ -3238,9 +2840,7 @@
         "getw",
         "mktemp"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdio_libio_wave06": {
       "file": "stdio_libio_wave06.json",
@@ -3260,48 +2860,28 @@
         "rewind",
         "scanf"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdlib_conversion": {
       "file": "stdlib_conversion.json",
       "sha256": "0b1b179b05e6feb21042d9e1ac1a62631b1bce46b6fb4f8a1e849a26ad85a4fb",
       "case_count": 7,
-      "functions": [
-        "atoi",
-        "strtol"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["atoi", "strtol"],
+      "families": ["stdlib"]
     },
     "stdlib_numeric": {
       "file": "stdlib_numeric.json",
       "sha256": "1177550d12d64974bc36009cee622695a24483334f6f4c7b22c1d01bdfff41a8",
       "case_count": 22,
-      "functions": [
-        "atoi",
-        "atol",
-        "getbsize",
-        "strtol",
-        "strtoul"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["atoi", "atol", "getbsize", "strtol", "strtoul"],
+      "families": ["stdlib"]
     },
     "stdlib_sort": {
       "file": "stdlib_sort.json",
       "sha256": "ff7eb36ea363367e78b7287e53ecbd28ef43f0fed8337c864d446ae166be71b6",
       "case_count": 12,
-      "functions": [
-        "bsearch",
-        "qsort"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["bsearch", "qsort"],
+      "families": ["stdlib"]
     },
     "string_memory_full": {
       "file": "string_memory_full.json",
@@ -3321,9 +2901,7 @@
         "strrchr",
         "strstr"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths": {
       "file": "string_memory_hotpaths.json",
@@ -3343,9 +2921,7 @@
         "__strsep_1c",
         "__strsep_2c"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave05": {
       "file": "string_memory_hotpaths_wave05.json",
@@ -3365,9 +2941,7 @@
         "__strtok_r_1c",
         "__strtol_internal"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave06": {
       "file": "string_memory_hotpaths_wave06.json",
@@ -3387,9 +2961,7 @@
         "__strxfrm_l",
         "argz_add"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave07": {
       "file": "string_memory_hotpaths_wave07.json",
@@ -3407,9 +2979,7 @@
         "argz_replace",
         "argz_stringify"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave08": {
       "file": "string_memory_hotpaths_wave08.json",
@@ -3423,23 +2993,14 @@
         "envz_remove",
         "envz_strip"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave09": {
       "file": "string_memory_hotpaths_wave09.json",
       "sha256": "db8fde4b43d5007e73d29e7367be2c18ef6bdd66dddd90dd8ed06b7ae72a7300",
       "case_count": 8,
-      "functions": [
-        "__argz_count",
-        "__argz_next",
-        "__argz_stringify",
-        "__bzero"
-      ],
-      "families": [
-        "string"
-      ]
+      "functions": ["__argz_count", "__argz_next", "__argz_stringify", "__bzero"],
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave10": {
       "file": "string_memory_hotpaths_wave10.json",
@@ -3459,9 +3020,7 @@
         "memccpy",
         "memmem"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave11": {
       "file": "string_memory_hotpaths_wave11.json",
@@ -3481,9 +3040,7 @@
         "timingsafe_bcmp",
         "timingsafe_memcmp"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave12": {
       "file": "string_memory_hotpaths_wave12.json",
@@ -3503,9 +3060,7 @@
         "re_set_syntax",
         "regerror"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave13": {
       "file": "string_memory_hotpaths_wave13.json",
@@ -3525,9 +3080,7 @@
         "strncasecmp_l",
         "strncmp"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_memory_hotpaths_wave14": {
       "file": "string_memory_hotpaths_wave14.json",
@@ -3544,9 +3097,7 @@
         "strverscmp",
         "strxfrm"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_ops": {
       "file": "string_ops.json",
@@ -3580,64 +3131,35 @@
         "strrchr",
         "strstr"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_strtok": {
       "file": "string_strtok.json",
       "sha256": "a104f228b944aa5ce550f57ed00f772acb02178b98bac753b22c6ecb017c5d4a",
       "case_count": 8,
-      "functions": [
-        "strtok",
-        "strtok_r"
-      ],
-      "families": [
-        "string"
-      ]
+      "functions": ["strtok", "strtok_r"],
+      "families": ["string"]
     },
     "strlen_strict": {
       "file": "strlen_strict.json",
       "sha256": "b5509edb2fc90403daf10fbef4944369aff58e26569d6a03b77b6317c646667f",
       "case_count": 9,
-      "functions": [
-        "strlen"
-      ],
-      "families": [
-        "strlen"
-      ]
+      "functions": ["strlen"],
+      "families": ["strlen"]
     },
     "sysv_ipc_ops": {
       "file": "sysv_ipc_ops.json",
       "sha256": "c865a7ead77ca54ea6266d31ada4e0d665f8c37df4b5f8e5379c6a9ab248a9f5",
       "case_count": 9,
-      "functions": [
-        "msgget",
-        "semctl",
-        "semget",
-        "semop",
-        "shmat",
-        "shmdt",
-        "shmget"
-      ],
-      "families": [
-        "sysv"
-      ]
+      "functions": ["msgget", "semctl", "semget", "semop", "shmat", "shmdt", "shmget"],
+      "families": ["sysv"]
     },
     "termios_ops": {
       "file": "termios_ops.json",
       "sha256": "e6d94ee61fef47d89b07d2f44aeebc6c1e9697ecd95ce333c487d888f2bf77d3",
       "case_count": 8,
-      "functions": [
-        "cfgetispeed",
-        "cfgetospeed",
-        "cfsetispeed",
-        "cfsetospeed",
-        "tcgetattr"
-      ],
-      "families": [
-        "termios"
-      ]
+      "functions": ["cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "tcgetattr"],
+      "families": ["termios"]
     },
     "time_clock_calendar_wave02": {
       "file": "time_clock_calendar_wave02.json",
@@ -3655,9 +3177,7 @@
         "timezone",
         "tzset"
       ],
-      "families": [
-        "time"
-      ]
+      "families": ["time"]
     },
     "time_clock_wave01": {
       "file": "time_clock_wave01.json",
@@ -3677,23 +3197,14 @@
         "gettimeofday",
         "gmtime"
       ],
-      "families": [
-        "time"
-      ]
+      "families": ["time"]
     },
     "time_ops": {
       "file": "time_ops.json",
       "sha256": "8d74cf08ab984e541dad57609e7db0b589d025998eb11a1f10699fd414986b1a",
       "case_count": 8,
-      "functions": [
-        "clock",
-        "clock_gettime",
-        "localtime_r",
-        "time"
-      ],
-      "families": [
-        "time"
-      ]
+      "functions": ["clock", "clock_gettime", "localtime_r", "time"],
+      "families": ["time"]
     },
     "unistd_ops": {
       "file": "unistd_ops.json",
@@ -3715,9 +3226,7 @@
         "read",
         "write"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem": {
       "file": "unistd_process_filesystem.json",
@@ -3737,9 +3246,7 @@
         "__lxstat64",
         "__progname"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave01": {
       "file": "unistd_process_filesystem_wave01.json",
@@ -3759,9 +3266,7 @@
         "crypt_gensalt_ra",
         "crypt_gensalt_rn"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave02": {
       "file": "unistd_process_filesystem_wave02.json",
@@ -3781,9 +3286,7 @@
         "add_key",
         "addmntent"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave03": {
       "file": "unistd_process_filesystem_wave03.json",
@@ -3803,9 +3306,7 @@
         "aio_read64",
         "aio_return"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave04": {
       "file": "unistd_process_filesystem_wave04.json",
@@ -3825,9 +3326,7 @@
         "argp_failure",
         "argp_help"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave05": {
       "file": "unistd_process_filesystem_wave05.json",
@@ -3847,9 +3346,7 @@
         "chdir",
         "chmod"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave06": {
       "file": "unistd_process_filesystem_wave06.json",
@@ -3869,9 +3366,7 @@
         "dn_expand",
         "dn_skipname"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave07": {
       "file": "unistd_process_filesystem_wave07.json",
@@ -3891,9 +3386,7 @@
         "endprotoent",
         "endrpcent"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave08": {
       "file": "unistd_process_filesystem_wave08.json",
@@ -3913,9 +3406,7 @@
         "ether_ntoa_r",
         "ether_ntohost"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave09": {
       "file": "unistd_process_filesystem_wave09.json",
@@ -3935,9 +3426,7 @@
         "fallocate",
         "fallocate64"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave10": {
       "file": "unistd_process_filesystem_wave10.json",
@@ -3957,9 +3446,7 @@
         "fgetgrent",
         "fgetgrent_r"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave11": {
       "file": "unistd_process_filesystem_wave11.json",
@@ -3979,9 +3466,7 @@
         "freeifaddrs",
         "fremovexattr"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave12": {
       "file": "unistd_process_filesystem_wave12.json",
@@ -4001,9 +3486,7 @@
         "fstatfs64",
         "fstatvfs"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "unistd_process_filesystem_wave13": {
       "file": "unistd_process_filesystem_wave13.json",
@@ -4023,36 +3506,21 @@
         "fts_children",
         "fts_close"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "virtual_memory_ops": {
       "file": "virtual_memory_ops.json",
       "sha256": "3857f2a26dc451c81dcfe253662a82d2c8cea175924194ccf02add0e9deb97b0",
       "case_count": 8,
-      "functions": [
-        "madvise",
-        "mmap",
-        "mprotect",
-        "munmap"
-      ],
-      "families": [
-        "virtual"
-      ]
+      "functions": ["madvise", "mmap", "mprotect", "munmap"],
+      "families": ["virtual"]
     },
     "wchar_abi_promotion_tranche": {
       "file": "wchar_abi_promotion_tranche.json",
       "sha256": "d4721f88e87d52e6bd05845f40454675416cc57b85c00099f3fa61bfa7ca072e",
       "case_count": 6,
-      "functions": [
-        "mbrtoc16",
-        "open_wmemstream",
-        "wcsdup"
-      ],
-      "families": [
-        "wchar"
-      ]
+      "functions": ["mbrtoc16", "open_wmemstream", "wcsdup"],
+      "families": ["wchar"]
     },
     "wchar_locale_encoding_wave01": {
       "file": "wchar_locale_encoding_wave01.json",
@@ -4072,9 +3540,7 @@
         "__isoc23_wcstoll_l",
         "__isoc23_wcstoul"
       ],
-      "families": [
-        "wchar"
-      ]
+      "families": ["wchar"]
     },
     "wchar_locale_encoding_wave02": {
       "file": "wchar_locale_encoding_wave02.json",
@@ -4094,9 +3560,7 @@
         "__iswdigit_l",
         "__iswgraph_l"
       ],
-      "families": [
-        "wchar"
-      ]
+      "families": ["wchar"]
     },
     "wchar_locale_encoding_wave03": {
       "file": "wchar_locale_encoding_wave03.json",
@@ -4116,24 +3580,14 @@
         "__towlower_l",
         "__towupper_l"
       ],
-      "families": [
-        "wchar"
-      ]
+      "families": ["wchar"]
     },
     "wide_memory": {
       "file": "wide_memory.json",
       "sha256": "3c1412d07055b66747c4b8a9ee92e25993334c2b02e26c6ce073a845c4dfeb30",
       "case_count": 6,
-      "functions": [
-        "wmemchr",
-        "wmemcmp",
-        "wmemcpy",
-        "wmemmove",
-        "wmemset"
-      ],
-      "families": [
-        "wide"
-      ]
+      "functions": ["wmemchr", "wmemcmp", "wmemcpy", "wmemmove", "wmemset"],
+      "families": ["wide"]
     },
     "wide_string": {
       "file": "wide_string.json",
@@ -4159,9 +3613,7 @@
         "wmemmove",
         "wmemset"
       ],
-      "families": [
-        "wide"
-      ]
+      "families": ["wide"]
     },
     "wide_string_ops": {
       "file": "wide_string_ops.json",
@@ -4178,9 +3630,7 @@
         "wcsrchr",
         "wcsstr"
       ],
-      "families": [
-        "wide"
-      ]
+      "families": ["wide"]
     }
   }
 }

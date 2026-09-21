@@ -84,20 +84,9 @@
       "minimum_fixture_gate_count": 3,
       "minimum_claim_gate_count": 4,
       "minimum_negative_test_count": 4,
-      "required_path_kinds": [
-        "direct",
-        "isolated"
-      ],
-      "required_runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "required_replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "required_path_kinds": ["direct", "isolated"],
+      "required_runtime_modes": ["strict", "hardened"],
+      "required_replacement_levels": ["L0", "L1", "L2", "L3"],
       "required_negative_test_ids": [
         "missing_selected_workload",
         "stale_source_commit",

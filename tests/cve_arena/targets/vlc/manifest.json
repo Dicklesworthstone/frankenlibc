@@ -18,10 +18,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "ClampSize",
-      "ReallocAsMalloc"
-    ],
+    "healing_actions": ["ClampSize", "ReallocAsMalloc"],
     "description": "Allocation fingerprint detects the write past the canary boundary after the undersized malloc; ClampSize healing prevents the overflow from corrupting adjacent memory; the membrane's size validation catches the suspicious allocation pattern (very small alloc followed by very large write)"
   },
   "tsm_features_tested": [

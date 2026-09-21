@@ -87,7 +87,21 @@
     },
     "oracle_kind": {
       "type": "string",
-      "enum": ["unit", "fixture", "host_glibc", "golden", "metamorphic", "e2e", "smoke", "benchmark", "proof", "snapshot", "static_analysis", "manual", "not_applicable"],
+      "enum": [
+        "unit",
+        "fixture",
+        "host_glibc",
+        "golden",
+        "metamorphic",
+        "e2e",
+        "smoke",
+        "benchmark",
+        "proof",
+        "snapshot",
+        "static_analysis",
+        "manual",
+        "not_applicable"
+      ],
       "description": "Oracle used to decide expected behavior for this row"
     },
     "expected": {
@@ -298,9 +312,7 @@
       "target_dir": "target/rch/bd-bp8fl.7.5",
       "failure_signature": "none",
       "outcome": "pass",
-      "artifact_refs": [
-        "tests/conformance/log_schema.json"
-      ]
+      "artifact_refs": ["tests/conformance/log_schema.json"]
     },
     "test_failure": {
       "timestamp": "2026-02-11T06:00:01.000Z",
@@ -331,9 +343,7 @@
         "expected": "non-null",
         "actual": "null"
       },
-      "artifact_refs": [
-        "tests/conformance/logs/bd-144-run-001.backtrace"
-      ]
+      "artifact_refs": ["tests/conformance/logs/bd-144-run-001.backtrace"]
     },
     "artifact_index": {
       "index_version": 1,

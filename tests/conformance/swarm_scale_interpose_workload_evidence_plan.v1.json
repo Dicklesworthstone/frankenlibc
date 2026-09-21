@@ -16,12 +16,7 @@
   "execution_policy": {
     "no_broad_local_stress": true,
     "required_launcher": "rch",
-    "required_command_prefix": [
-      "RCH_FORCE_REMOTE=true",
-      "rch",
-      "exec",
-      "--"
-    ],
+    "required_command_prefix": ["RCH_FORCE_REMOTE=true", "rch", "exec", "--"],
     "forbidden_evidence_markers": [
       "[RCH] local",
       "local fallback",
@@ -37,10 +32,7 @@
       "isolation_pattern": "/data/tmp/rch_target_frankenlibc_${AGENT_NAME}_swarm_interpose_<run_id>"
     }
   },
-  "runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "runtime_modes": ["strict", "hardened"],
   "required_log_fields": [
     "trace_id",
     "bead_id",
@@ -111,22 +103,14 @@
     {
       "id": "fork_exec_coreutils_fanout",
       "description": "High-process-count coreutils fanout for startup, env, stdio, malloc, and exit paths.",
-      "domains": [
-        "coreutils",
-        "process",
-        "stdio",
-        "malloc"
-      ],
+      "domains": ["coreutils", "process", "stdio", "malloc"],
       "command_kind": "argv_matrix",
       "parallelism": {
         "process_count": 256,
         "thread_count": 1,
         "requires_min_cpu_cores": 64
       },
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "structured_logs": true,
       "timeout_ms": 60000,
       "expected_failure_signatures": [
@@ -145,22 +129,14 @@
     {
       "id": "threaded_allocator_contention",
       "description": "Thread-heavy allocator and stdio contention workload for hardened membrane overhead and lock behavior.",
-      "domains": [
-        "malloc",
-        "pthread",
-        "stdio",
-        "membrane"
-      ],
+      "domains": ["malloc", "pthread", "stdio", "membrane"],
       "command_kind": "fixture_binary",
       "parallelism": {
         "process_count": 32,
         "thread_count": 128,
         "requires_min_cpu_cores": 64
       },
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "structured_logs": true,
       "timeout_ms": 90000,
       "expected_failure_signatures": [
@@ -178,22 +154,14 @@
     {
       "id": "dynamic_runtime_script_mix",
       "description": "Mixed Python/shell dynamic runtime smoke under LD_PRELOAD for symbol lookup, locale, resolver, and filesystem churn.",
-      "domains": [
-        "dynamic_runtime",
-        "locale",
-        "resolver",
-        "filesystem"
-      ],
+      "domains": ["dynamic_runtime", "locale", "resolver", "filesystem"],
       "command_kind": "dynamic_runtime_matrix",
       "parallelism": {
         "process_count": 128,
         "thread_count": 8,
         "requires_min_cpu_cores": 64
       },
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "structured_logs": true,
       "timeout_ms": 120000,
       "expected_failure_signatures": [
@@ -212,22 +180,14 @@
     {
       "id": "c_fixture_matrix_replay",
       "description": "Compiled C fixture matrix replay for ABI edge cases that must stay deterministic under strict and hardened interpose modes.",
-      "domains": [
-        "c_fixture",
-        "abi",
-        "string",
-        "unistd"
-      ],
+      "domains": ["c_fixture", "abi", "string", "unistd"],
       "command_kind": "compiled_c_fixture",
       "parallelism": {
         "process_count": 192,
         "thread_count": 4,
         "requires_min_cpu_cores": 64
       },
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "structured_logs": true,
       "timeout_ms": 90000,
       "expected_failure_signatures": [
@@ -238,10 +198,7 @@
         "swarm_interpose_performance_regression",
         "swarm_interpose_local_execution"
       ],
-      "artifact_refs": [
-        "tests/conformance/workload_matrix.json",
-        "tests/integration/link_test.c"
-      ]
+      "artifact_refs": ["tests/conformance/workload_matrix.json", "tests/integration/link_test.c"]
     }
   ],
   "evidence_outputs": {

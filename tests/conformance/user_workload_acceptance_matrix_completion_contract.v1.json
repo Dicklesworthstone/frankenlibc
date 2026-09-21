@@ -216,9 +216,7 @@
         "target/conformance/user_workload_acceptance_matrix.report.json",
         "target/conformance/user_workload_acceptance_matrix.log.jsonl"
       ],
-      "required_test_refs": [
-        "checker_validates_source_gate_and_emits_completion_report"
-      ]
+      "required_test_refs": ["checker_validates_source_gate_and_emits_completion_report"]
     },
     {
       "id": "telemetry.primary",

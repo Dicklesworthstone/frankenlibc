@@ -7,12 +7,7 @@
   "purpose": "Pin the harness binary subcommand that validates a live-measurement p99_delta JSONL row against tail_stats::validate_p99_delta_against_budget. live-measurement already emits a P99Delta row, but CI shell gates previously needed Rust glue to apply the canonical budget validator. This CLI bridge makes the budget check invokable from scripts and rch cargo runs.",
   "subcommand_name": "validate-p99-delta",
   "binary_target": "harness",
-  "required_flags": [
-    "--jsonl",
-    "--allowed-budget-ns",
-    "--amplification-threshold",
-    "--output"
-  ],
+  "required_flags": ["--jsonl", "--allowed-budget-ns", "--amplification-threshold", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_harness::tail_stats::validate_p99_delta_against_budget",
   "underlying_lib_functions": [

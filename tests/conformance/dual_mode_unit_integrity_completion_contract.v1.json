@@ -92,10 +92,7 @@
   },
   "dual_mode_unit_contract": {
     "env_key": "FRANKENLIBC_MODE",
-    "allowed_modes": [
-      "strict",
-      "hardened"
-    ],
+    "allowed_modes": ["strict", "hardened"],
     "mode_immutable_after_first_resolution": true,
     "snapshot_schema_min_field_count": 154,
     "snapshot_range_validation_required": true,
@@ -103,14 +100,8 @@
     "decision_card_json_roundtrip_required": true,
     "deterministic_replay_required": true,
     "raptorq_redundancy_verification_required": true,
-    "snapshot_golden_modes": [
-      "strict",
-      "hardened"
-    ],
-    "snapshot_golden_redundancy_fields": [
-      "redundancy_overhead_ppm",
-      "redundancy_loss_rate_ppm"
-    ]
+    "snapshot_golden_modes": ["strict", "hardened"],
+    "snapshot_golden_redundancy_fields": ["redundancy_overhead_ppm", "redundancy_loss_rate_ppm"]
   },
   "missing_item_bindings": [
     {

@@ -15,10 +15,7 @@
         "pub unsafe extern \"C\" fn euidaccess",
         "unsafe { eaccess(path, mode) }"
       ],
-      "forbidden_needles": [
-        "RTLD_NEXT, c\"eaccess\"",
-        "RTLD_NEXT, c\"euidaccess\""
-      ]
+      "forbidden_needles": ["RTLD_NEXT, c\"eaccess\"", "RTLD_NEXT, c\"euidaccess\""]
     },
     {
       "artifact_id": "abi_unistd_unit_tests",
@@ -53,24 +50,15 @@
     {
       "artifact_id": "support_matrix_status",
       "path": "tests/conformance/support_matrix_maintenance_report.v1.json",
-      "required_needles": [
-        "\"eaccess\": \"RawSyscall\"",
-        "\"euidaccess\": \"RawSyscall\""
-      ]
+      "required_needles": ["\"eaccess\": \"RawSyscall\"", "\"euidaccess\": \"RawSyscall\""]
     }
   ],
   "raw_path_expectations": {
-    "symbols": [
-      "eaccess",
-      "euidaccess"
-    ],
+    "symbols": ["eaccess", "euidaccess"],
     "expected_support_status": "RawSyscall",
     "eaccess_route": "faccessat(AT_FDCWD, path, mode, AT_EACCESS)",
     "euidaccess_route": "eaccess(path, mode)",
-    "forbidden_runtime_delegation": [
-      "dlsym(RTLD_NEXT, eaccess)",
-      "dlsym(RTLD_NEXT, euidaccess)"
-    ],
+    "forbidden_runtime_delegation": ["dlsym(RTLD_NEXT, eaccess)", "dlsym(RTLD_NEXT, euidaccess)"],
     "errno_contract": {
       "null_path": "EFAULT",
       "missing_path": "ENOENT",
@@ -81,9 +69,7 @@
     "bead": "bd-2vv.26.1",
     "original_bead": "bd-2vv.26",
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary"],
     "unit_primary": {
       "required_test_refs": [
         {

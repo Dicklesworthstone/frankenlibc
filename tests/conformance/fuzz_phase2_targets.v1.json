@@ -19,11 +19,7 @@
       "family": "resolver",
       "transition_family": "resolver",
       "attack_surface": "dns-packet, name-compression, resolv-conf, parser-state",
-      "cwe_targets": [
-        "CWE-20",
-        "CWE-400",
-        "CWE-787"
-      ],
+      "cwe_targets": ["CWE-20", "CWE-400", "CWE-787"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 394,
@@ -38,12 +34,7 @@
         "ready": true
       },
       "symbol_coverage": {
-        "target_symbols": [
-          "res_mkquery",
-          "res_nclose",
-          "res_ninit",
-          "res_send"
-        ],
+        "target_symbols": ["res_mkquery", "res_nclose", "res_ninit", "res_send"],
         "available_symbols": [
           "__h_errno_location",
           "freeaddrinfo",
@@ -117,11 +108,7 @@
       "family": "resolver",
       "transition_family": "resolver",
       "attack_surface": "hosts-services parsing, addrinfo branching, lookup determinism",
-      "cwe_targets": [
-        "CWE-20",
-        "CWE-125",
-        "CWE-400"
-      ],
+      "cwe_targets": ["CWE-20", "CWE-125", "CWE-400"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 289,
@@ -136,12 +123,7 @@
         "ready": true
       },
       "symbol_coverage": {
-        "target_symbols": [
-          "getaddrinfo",
-          "getnameinfo",
-          "lookup_hosts",
-          "lookup_service"
-        ],
+        "target_symbols": ["getaddrinfo", "getnameinfo", "lookup_hosts", "lookup_service"],
         "available_symbols": [
           "__h_errno_location",
           "freeaddrinfo",
@@ -213,11 +195,7 @@
       "family": "locale",
       "transition_family": "locale",
       "attack_surface": "codec dispatch, invalid descriptors, conversion-state drift",
-      "cwe_targets": [
-        "CWE-190",
-        "CWE-400",
-        "CWE-787"
-      ],
+      "cwe_targets": ["CWE-190", "CWE-400", "CWE-787"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 239,
@@ -232,11 +210,7 @@
         "ready": true
       },
       "symbol_coverage": {
-        "target_symbols": [
-          "iconv",
-          "iconv_close",
-          "iconv_open"
-        ],
+        "target_symbols": ["iconv", "iconv_close", "iconv_open"],
         "available_symbols": [
           "bindtextdomain",
           "catclose",
@@ -289,11 +263,7 @@
       "family": "runtime_math",
       "transition_family": "runtime-math",
       "attack_surface": "mode switching, risk thresholds, controller-state transitions",
-      "cwe_targets": [
-        "CWE-670",
-        "CWE-682",
-        "CWE-835"
-      ],
+      "cwe_targets": ["CWE-670", "CWE-682", "CWE-835"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 342,
@@ -355,17 +325,8 @@
     "runs_per_target": 1000000,
     "timeout_seconds": 1800,
     "max_crashes": 0,
-    "required_targets": [
-      "fuzz_resolver",
-      "fuzz_resolv",
-      "fuzz_iconv",
-      "fuzz_runtime_math"
-    ],
-    "required_transition_families": [
-      "resolver",
-      "locale",
-      "runtime-math"
-    ],
+    "required_targets": ["fuzz_resolver", "fuzz_resolv", "fuzz_iconv", "fuzz_runtime_math"],
+    "required_transition_families": ["resolver", "locale", "runtime-math"],
     "risk_thresholds": {
       "crash_regression": "fail_on_any_new_crash",
       "missing_target_execution": "fail",
@@ -409,11 +370,7 @@
       "CWE-787",
       "CWE-835"
     ],
-    "transition_families": [
-      "locale",
-      "resolver",
-      "runtime-math"
-    ]
+    "transition_families": ["locale", "resolver", "runtime-math"]
   },
   "validation_hash": "115832a589e103b0"
 }

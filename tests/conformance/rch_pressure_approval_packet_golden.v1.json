@@ -13,9 +13,7 @@
       "head_commit": "0000000000000000000000000000000000000000",
       "origin_main_commit": "0000000000000000000000000000000000000000",
       "origin_master_commit": "0000000000000000000000000000000000000000",
-      "worktree_list": [
-        "/data/projects/frankenlibc  0000000 [main]"
-      ],
+      "worktree_list": ["/data/projects/frankenlibc  0000000 [main]"],
       "dirty_summary": [],
       "untracked_summary": []
     },
@@ -26,10 +24,7 @@
       "worker_selection_status": "skipped",
       "skip_reason": "no admissible workers: critical_pressure=6",
       "required_remote_env": "RCH_REQUIRE_REMOTE=1",
-      "fallback_markers_rejected": [
-        "[RCH] local",
-        "remote required; refusing local fallback"
-      ]
+      "fallback_markers_rejected": ["[RCH] local", "remote required; refusing local fallback"]
     },
     "non_deletion_recovery": {
       "summary": "Read-only recovery checks ran before requesting deletion-level cleanup approval.",
@@ -151,9 +146,7 @@
         "sbh_snapshot": null,
         "ballast_snapshot": null,
         "bounded_du_findings": [],
-        "collection_errors": [
-          "SSH connection failed for ubuntu@109.205.181.92"
-        ]
+        "collection_errors": ["SSH connection failed for ubuntu@109.205.181.92"]
       }
     ],
     "cleanup_candidates": [
@@ -301,10 +294,7 @@
         "read_only_check_results_passed": 0,
         "read_only_checks_passed": false,
         "approval_state": "needs_read_only_precheck_results",
-        "blocked_by": [
-          "read_only_precheck_results_missing",
-          "explicit_user_approval_required"
-        ],
+        "blocked_by": ["read_only_precheck_results_missing", "explicit_user_approval_required"],
         "safe_to_run_without_user_approval": false,
         "exact_user_approval_required": true,
         "cleanup_executed": false,
@@ -324,10 +314,7 @@
         "read_only_check_results_passed": 0,
         "read_only_checks_passed": false,
         "approval_state": "needs_read_only_precheck_results",
-        "blocked_by": [
-          "read_only_precheck_results_missing",
-          "explicit_user_approval_required"
-        ],
+        "blocked_by": ["read_only_precheck_results_missing", "explicit_user_approval_required"],
         "safe_to_run_without_user_approval": false,
         "exact_user_approval_required": true,
         "cleanup_executed": false,
@@ -349,17 +336,10 @@
       "status": "candidates_identified",
       "candidate_count": 2,
       "critical_worker_count": 2,
-      "workers_with_bounded_du_findings": [
-        "vmi1264463",
-        "vmi1149989"
-      ],
+      "workers_with_bounded_du_findings": ["vmi1264463", "vmi1149989"],
       "critical_workers_without_candidates": [],
-      "probe_failure_workers": [
-        "vmi1152480"
-      ],
-      "collection_error_workers": [
-        "vmi1152480"
-      ],
+      "probe_failure_workers": ["vmi1152480"],
+      "collection_error_workers": ["vmi1152480"],
       "candidate_rejection_summary": {
         "bounded_du_finding_count": 3,
         "rejected_finding_count": 0,
@@ -371,10 +351,7 @@
     },
     "approval_request": {
       "operator_summary": "rch cannot select an admissible remote worker for the focused cargo validation lane.",
-      "exact_worker_ids": [
-        "vmi1149989",
-        "vmi1264463"
-      ],
+      "exact_worker_ids": ["vmi1149989", "vmi1264463"],
       "exact_candidate_paths": [
         "/data/projects/franken_engine/target_PearlTower_focused",
         "/data/projects/frankensqlite/.rch-target-vmi1149989-job-29845309030924474-1778961159622825209-0/debug/incremental/fsqlite_core-1rvlt2m24nvr9"

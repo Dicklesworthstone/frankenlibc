@@ -66,10 +66,7 @@
       "fn pthread_mutex_fixture_executes_via_isolated_harness",
       "fn pthread_mutex_alias_symbols_match_canonical_behavior"
     ],
-    "e2e_fixture": [
-      "fixture_pthread_mutex_adversarial",
-      "PASS (4 tests)"
-    ],
+    "e2e_fixture": ["fixture_pthread_mutex_adversarial", "PASS (4 tests)"],
     "e2e_gate": [
       "fixture_pthread_mutex_adversarial",
       "c_fixture_pthread_mutex_adversarial",
@@ -99,10 +96,7 @@
       "checker_passes_and_emits_report_log",
       "checker_rejects_missing_golden_transition"
     ],
-    "completion_contract": [
-      "pthread_mutex_futex_core_completion_contract.v1",
-      "bd-z84.1"
-    ],
+    "completion_contract": ["pthread_mutex_futex_core_completion_contract.v1", "bd-z84.1"],
     "completion_gate": [
       "pthread_mutex_futex_core.completion_contract_validated",
       "pthread_mutex_futex_core.prior_gates_replayed"
@@ -113,11 +107,7 @@
     ]
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "required_mutex_symbols": [
       "pthread_mutex_destroy",
       "pthread_mutex_init",

@@ -5,15 +5,9 @@
   "issues_source": ".beads/issues.jsonl",
   "sqlite_access_policy": {
     "sqlite_accessed": false,
-    "allowed_sources": [
-      ".beads/issues.jsonl",
-      "checked-in evidence manifests"
-    ]
+    "allowed_sources": [".beads/issues.jsonl", "checked-in evidence manifests"]
   },
-  "proof_status_values": [
-    "successful_proof",
-    "blocker_evidence"
-  ],
+  "proof_status_values": ["successful_proof", "blocker_evidence"],
   "required_entry_fields": [
     "bead_id",
     "artifact_path",

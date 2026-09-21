@@ -11,11 +11,7 @@
     "approval_packet_generator": "scripts/generate_rch_pressure_approval_packet.sh"
   },
   "preflight_contract": {
-    "allowed_statuses": [
-      "admissible",
-      "blocked",
-      "diagnose_failed"
-    ],
+    "allowed_statuses": ["admissible", "blocked", "diagnose_failed"],
     "admissible_status": "admissible",
     "blocked_status": "blocked",
     "diagnose_failed_status": "diagnose_failed",

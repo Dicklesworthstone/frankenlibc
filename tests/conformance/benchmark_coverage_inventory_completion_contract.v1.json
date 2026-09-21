@@ -33,21 +33,9 @@
     "required_log_field_count": 20,
     "required_inventory_row_field_count": 15,
     "prioritized_hot_path_count": 25,
-    "fully_baselined_families": [
-      "string",
-      "malloc",
-      "membrane",
-      "runtime_math"
-    ],
-    "missing_required_baseline_families": [
-      "stdio",
-      "pthread",
-      "syscall"
-    ],
-    "follow_up_beads": [
-      "bd-bp8fl.8.2",
-      "bd-bp8fl.8.3"
-    ]
+    "fully_baselined_families": ["string", "malloc", "membrane", "runtime_math"],
+    "missing_required_baseline_families": ["stdio", "pthread", "syscall"],
+    "follow_up_beads": ["bd-bp8fl.8.2", "bd-bp8fl.8.3"]
   },
   "source_artifacts": [
     {
@@ -182,9 +170,7 @@
       "required_commands": [
         "rch exec -- cargo test -p frankenlibc-harness --test benchmark_coverage_inventory_test -- --nocapture"
       ],
-      "required_completion_events": [
-        "benchmark_coverage_inventory.unit_binding_validated"
-      ]
+      "required_completion_events": ["benchmark_coverage_inventory.unit_binding_validated"]
     },
     {
       "missing_item_id": "tests.e2e.primary",
@@ -199,9 +185,7 @@
         "bash scripts/check_benchmark_coverage_inventory.sh",
         "bash scripts/check_benchmark_coverage_inventory_completion_contract.sh"
       ],
-      "required_completion_events": [
-        "benchmark_coverage_inventory.e2e_binding_validated"
-      ]
+      "required_completion_events": ["benchmark_coverage_inventory.e2e_binding_validated"]
     },
     {
       "missing_item_id": "tests.conformance.primary",
@@ -221,9 +205,7 @@
         "python3 scripts/generate_benchmark_coverage_inventory.py --self-test",
         "python3 scripts/generate_benchmark_coverage_inventory.py --check --output tests/conformance/benchmark_coverage_inventory.v1.json --target-dir target/conformance"
       ],
-      "required_completion_events": [
-        "benchmark_coverage_inventory.conformance_binding_validated"
-      ]
+      "required_completion_events": ["benchmark_coverage_inventory.conformance_binding_validated"]
     },
     {
       "missing_item_id": "telemetry.primary",

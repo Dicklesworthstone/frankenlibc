@@ -78,29 +78,17 @@
     {
       "id": "symbol_universe_checker",
       "path": "scripts/check_symbol_universe_normalization.sh",
-      "required_needles": [
-        "unknown_action_list",
-        "native",
-        "syscall-passthrough"
-      ]
+      "required_needles": ["unknown_action_list", "native", "syscall-passthrough"]
     },
     {
       "id": "support_matrix_checker",
       "path": "scripts/check_support_matrix_maintenance.sh",
-      "required_needles": [
-        "status_validated",
-        "status_invalid",
-        "fixture_linked"
-      ]
+      "required_needles": ["status_validated", "status_invalid", "fixture_linked"]
     },
     {
       "id": "conformance_matrix_checker",
       "path": "scripts/check_conformance_matrix.sh",
-      "required_needles": [
-        "symbol_matrix",
-        "pass_rate_percent",
-        "fail_count"
-      ]
+      "required_needles": ["symbol_matrix", "pass_rate_percent", "fail_count"]
     },
     {
       "id": "symbol_fixture_coverage_checker",
@@ -166,10 +154,7 @@
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
       "expected_target_total_symbols": 4119,
       "min_covered_exported_symbols": 405,
-      "required_target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
+      "required_target_statuses": ["Implemented", "RawSyscall"],
       "min_coverage_pct": 9.8
     }
   },

@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::alien_cs_metrics::{compute_contention_score, compute_contention_breakdown} as a standalone CLI. The CLI accepts optional JSON diagnostic snapshots for SeqLockDiagnostics, EbrDiagnostics, and FlatCombinerDiagnostics, then emits the mean contention score over present components plus the per-concept breakdown fields.",
   "subcommand_name": "compute-contention-score",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
-  "optional_flags": [
-    "--seqlock-diag",
-    "--ebr-diag",
-    "--fc-diag"
-  ],
+  "required_flags": ["--output"],
+  "optional_flags": ["--seqlock-diag", "--ebr-diag", "--fc-diag"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_functions": [
     "frankenlibc_membrane::alien_cs_metrics::compute_contention_score",
@@ -23,12 +17,7 @@
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "contention_score",
-    "required_fields": [
-      "kind",
-      "score",
-      "breakdown",
-      "concepts_present"
-    ],
+    "required_fields": ["kind", "score", "breakdown", "concepts_present"],
     "breakdown_required_fields": [
       "seqlock_cache_miss_ratio",
       "seqlock_contention_per_write",

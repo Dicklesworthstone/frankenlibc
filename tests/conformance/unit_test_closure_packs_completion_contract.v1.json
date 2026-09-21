@@ -6,11 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.9.1/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "artifacts": {
       "fixture_dir": "tests/conformance/fixtures",
       "existing_gate": "scripts/check_unit_test_packs.sh",
@@ -76,10 +72,7 @@
       "minimum_fixture_files": 48,
       "minimum_total_cases": 470,
       "strict_hardened_required_for_new_packs": true,
-      "gate_success_markers": [
-        "All 12 required families present",
-        "check_unit_test_packs: PASS"
-      ]
+      "gate_success_markers": ["All 12 required families present", "check_unit_test_packs: PASS"]
     },
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",

@@ -1,11 +1,7 @@
 {
   "schema_version": "top_blocker_symbol_coverage_wave_plan.v1",
   "generated_by_bead": "bd-0agsk.18",
-  "source_todo_ids": [
-    "TODO-0601",
-    "TODO-0602",
-    "TODO-0603"
-  ],
+  "source_todo_ids": ["TODO-0601", "TODO-0602", "TODO-0603"],
   "canonical_command": "scripts/check_top_blocker_symbol_coverage_wave_plan.sh --validate-only",
   "purpose": "Plan the next implementation and fixture-proof waves from live support/reality drift, replacement readiness thresholds, family coverage thresholds, and fixture coverage prioritizer evidence without promoting support status in this bead.",
   "input_artifacts": [
@@ -24,10 +20,7 @@
     "coverage_wave_count": 8,
     "coverage_wave_order": "campaign rank ascending",
     "export_parity_precedes_coverage_waves": true,
-    "allowed_candidate_statuses": [
-      "Implemented",
-      "RawSyscall"
-    ],
+    "allowed_candidate_statuses": ["Implemented", "RawSyscall"],
     "status_target_rule": "Preserve the current support_matrix status for first-wave symbols. Future implementation beads may only advance a symbol to Implemented or RawSyscall after code, version-script, fixture, expected-output, and strict+hardened evidence are updated together.",
     "readiness_blocker_inputs": [
       "version_script_missing_exports",
@@ -41,10 +34,7 @@
     "family_fail_count": 38,
     "family_coverage_fail_count": 37,
     "missing_export_count": 5,
-    "families_with_missing_exports": [
-      "glibc_internal_abi",
-      "stdio_abi"
-    ],
+    "families_with_missing_exports": ["glibc_internal_abi", "stdio_abi"],
     "residual_forbidden_callthrough_count": 0,
     "hardened_coverage_gap_group_count": 4
   },
@@ -52,10 +42,7 @@
     "wave_id": "wave-00-version-script-export-parity",
     "rank": 0,
     "blocker_id": "version_script_missing_exports",
-    "module_families": [
-      "stdio_abi",
-      "glibc_internal_abi"
-    ],
+    "module_families": ["stdio_abi", "glibc_internal_abi"],
     "symbols": [
       "_IO_2_1_stderr_",
       "_IO_2_1_stdin_",
@@ -457,12 +444,8 @@
   "hardened_gap_prerequisites": [
     {
       "risk_group_id": "allocator_anomaly_repairs",
-      "support_modules": [
-        "malloc_abi"
-      ],
-      "missing_hardened_families": [
-        "allocator"
-      ],
+      "support_modules": ["malloc_abi"],
+      "missing_hardened_families": ["allocator"],
       "paired_wave_ids": [],
       "next_action": "Add direct hardened allocator anomaly fixtures before allocator wave completion; allocator is not in the current top-eight prioritizer wave."
     },
@@ -477,30 +460,15 @@
         "string_abi",
         "wchar_abi"
       ],
-      "missing_hardened_families": [
-        "scanf_conformance"
-      ],
-      "paired_wave_ids": [
-        "wave-02-stdio-libio",
-        "wave-04-wchar-locale-encoding"
-      ],
+      "missing_hardened_families": ["scanf_conformance"],
+      "paired_wave_ids": ["wave-02-stdio-libio", "wave-04-wchar-locale-encoding"],
       "next_action": "Add hardened scanf/parser boundary fixtures before parser coverage claims advance."
     },
     {
       "risk_group_id": "memory_pointer_hot_path",
-      "support_modules": [
-        "malloc_abi",
-        "mmap_abi",
-        "string_abi",
-        "wchar_abi"
-      ],
-      "missing_hardened_families": [
-        "string/memory",
-        "string/wide_memory"
-      ],
-      "paired_wave_ids": [
-        "wave-04-wchar-locale-encoding"
-      ],
+      "support_modules": ["malloc_abi", "mmap_abi", "string_abi", "wchar_abi"],
+      "missing_hardened_families": ["string/memory", "string/wide_memory"],
+      "paired_wave_ids": ["wave-04-wchar-locale-encoding"],
       "next_action": "Add hardened string-memory and wide-memory fixtures before high-risk family thresholds are met; string and malloc are deferred by the current top-eight prioritizer wave."
     },
     {
@@ -523,10 +491,7 @@
         "dlfcn_abi",
         "startup_abi"
       ],
-      "missing_hardened_families": [
-        "allocator",
-        "scanf_conformance"
-      ],
+      "missing_hardened_families": ["allocator", "scanf_conformance"],
       "paired_wave_ids": [
         "wave-02-stdio-libio",
         "wave-03-pthread-sync",

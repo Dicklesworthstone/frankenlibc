@@ -80,10 +80,7 @@
   },
   "support_taxonomy_guard": {
     "rationale": "FrankenLibC distinguishes (1) reachability claims — 'works under preload', 'links cleanly under standalone' — from (2) semantic-parity claims — 'behaves identically to glibc on the workload set'. Only the semantic_overlay artifact backs (2). The dossier MUST refuse a 'passes' / 'ready' support claim unless a non-empty semantic_overlay artifact_ref is paired with it.",
-    "promotion_words": [
-      "passes",
-      "ready"
-    ],
+    "promotion_words": ["passes", "ready"],
     "required_paired_artifact_kind": "semantic_overlay"
   },
   "deterministic_output_contract": {

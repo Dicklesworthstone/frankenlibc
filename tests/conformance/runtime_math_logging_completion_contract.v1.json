@@ -140,12 +140,27 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Runtime-math unit tests exercise kernel evaluation trace rows, calibration rows, certificate outcomes, pressure/degradation telemetry, regret alerts, drift alerts, and the lower-level evidence JSONL schema.",
       "required_test_refs": [
-        {"source": "runtime_math_mod", "name": "runtime_math_log_jsonl_export_contains_required_runtime_decision_fields"},
-        {"source": "runtime_math_mod", "name": "runtime_math_log_jsonl_exports_pressure_and_overload_policy_events"},
-        {"source": "runtime_math_mod", "name": "runtime_math_log_jsonl_export_reports_certificate_load_outcomes"},
-        {"source": "runtime_math_mod", "name": "runtime_math_log_jsonl_exports_snapshot_regret_and_drift_alerts"},
-        {"source": "runtime_evidence", "name": "runtime_evidence_jsonl_export_covers_required_schema_fields"},
-        {"source": "completion_harness", "name": "manifest_binds_runtime_math_logging_evidence"}
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_math_log_jsonl_export_contains_required_runtime_decision_fields"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_math_log_jsonl_exports_pressure_and_overload_policy_events"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_math_log_jsonl_export_reports_certificate_load_outcomes"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_math_log_jsonl_exports_snapshot_regret_and_drift_alerts"
+        },
+        {
+          "source": "runtime_evidence",
+          "name": "runtime_evidence_jsonl_export_covers_required_schema_fields"
+        },
+        { "source": "completion_harness", "name": "manifest_binds_runtime_math_logging_evidence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_math_log_jsonl_export_contains_required_runtime_decision_fields -- --nocapture",
@@ -157,10 +172,16 @@
       "missing_item_id": "tests.e2e.primary",
       "description": "The runtime-math exporter is consumed by the observability capture path, and this completion checker writes deterministic report/JSONL artifacts suitable for CI and audit replay.",
       "required_test_refs": [
-        {"source": "observability_dashboard", "name": "capture_bundle_seeds_real_exporters"},
-        {"source": "completion_harness", "name": "checker_emits_runtime_math_logging_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_runtime_log_event"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_observability_export_anchor"}
+        { "source": "observability_dashboard", "name": "capture_bundle_seeds_real_exporters" },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_runtime_math_logging_report_and_jsonl"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_runtime_log_event" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_observability_export_anchor"
+        }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness observability_dashboard::tests::capture_bundle_seeds_real_exporters -- --nocapture",
@@ -200,8 +221,11 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_runtime_math_logging_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_runtime_log_event"}
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_runtime_math_logging_report_and_jsonl"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_runtime_log_event" }
       ]
     }
   }

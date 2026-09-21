@@ -34,11 +34,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_admm_budget_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_admm_budget_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -55,15 +51,8 @@
       "decision_hook": "RuntimeMathKernel::observe_validation_result sequential FDR wealth update",
       "invariant": "Safety monotonicity: alpha_investing may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat alpha_investing signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "significance budget update",
-        "alarm gating pressure"
-      ],
-      "evidence_inputs": [
-        "alarm outcomes",
-        "wealth state",
-        "test stream"
-      ],
+      "action_outputs": ["significance budget update", "alarm gating pressure"],
+      "evidence_inputs": ["alarm outcomes", "wealth state", "test stream"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -90,15 +79,8 @@
       "decision_hook": "RuntimeMathKernel::decide multi-objective safe-set projection",
       "invariant": "Safety monotonicity: approachability may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat approachability signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "projected routing vector",
-        "profile/action pressure"
-      ],
-      "evidence_inputs": [
-        "current objective vector",
-        "safe-set distance",
-        "mode"
-      ],
+      "action_outputs": ["projected routing vector", "profile/action pressure"],
+      "evidence_inputs": ["current objective vector", "safe-set distance", "mode"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -120,11 +102,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_atiyah_bott_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_atiyah_bott_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -177,15 +155,8 @@
       "decision_hook": "RuntimeMathKernel::decide constrained routing of Fast vs Full validation",
       "invariant": "Bandit policy cannot bypass barrier/policy-table hard constraints.",
       "fallback_when_data_missing": "Treat bandit signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "validation profile selection",
-        "exploration debt telemetry"
-      ],
-      "evidence_inputs": [
-        "ApiFamily",
-        "historical reward/latency",
-        "contention_hint"
-      ],
+      "action_outputs": ["validation profile selection", "exploration debt telemetry"],
+      "evidence_inputs": ["ApiFamily", "historical reward/latency", "contention_hint"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -212,15 +183,8 @@
       "decision_hook": "RuntimeMathKernel::decide admissibility gate",
       "invariant": "Barrier is one-way: inadmissible states escalate to FullValidate or Deny.",
       "fallback_when_data_missing": "Fail closed to FullValidate (strict) or Deny (hardened) when admissibility inputs are unavailable.",
-      "action_outputs": [
-        "admissibility boolean",
-        "deny escalation"
-      ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "risk_ppm",
-        "mode"
-      ],
+      "action_outputs": ["admissibility boolean", "deny escalation"],
+      "evidence_inputs": ["RuntimeContext", "risk_ppm", "mode"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -304,11 +268,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_borel_cantelli_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_borel_cantelli_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -340,11 +300,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_changepoint_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_changepoint_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -376,11 +332,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_clifford_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_clifford_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -397,14 +349,8 @@
       "decision_hook": "RuntimeMathKernel::decide overlap-consistency fault budget",
       "invariant": "Safety monotonicity: cohomology may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat cohomology signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "consistency penalty",
-        "escalation pressure"
-      ],
-      "evidence_inputs": [
-        "shard overlap observations",
-        "consistency fault counters"
-      ],
+      "action_outputs": ["consistency penalty", "escalation pressure"],
+      "evidence_inputs": ["shard overlap observations", "consistency fault counters"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -462,11 +408,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_conformal_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_conformal_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -493,16 +435,8 @@
       "decision_hook": "RuntimeMathKernel::decide primal-dual trigger control for full-check and repair",
       "invariant": "Safety monotonicity: control may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat control signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "full_validation trigger",
-        "repair trigger",
-        "threshold updates"
-      ],
-      "evidence_inputs": [
-        "risk_ppm",
-        "latency_budget_ns",
-        "violation counters"
-      ],
+      "action_outputs": ["full_validation trigger", "repair trigger", "threshold updates"],
+      "evidence_inputs": ["risk_ppm", "latency_budget_ns", "violation counters"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -534,11 +468,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_coupling_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_coupling_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -560,11 +490,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_covering_array_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_covering_array_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -596,11 +522,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_cvar_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_cvar_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -653,16 +575,8 @@
       "decision_hook": "RuntimeMathKernel::resample_high_order_kernels D-optimal probe scheduling",
       "invariant": "Safety monotonicity: design may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat design signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "probe plan",
-        "probe cadence",
-        "coverage pressure"
-      ],
-      "evidence_inputs": [
-        "identifiability state",
-        "sobol sample",
-        "budget headroom"
-      ],
+      "action_outputs": ["probe plan", "probe cadence", "coverage pressure"],
+      "evidence_inputs": ["identifiability state", "sobol sample", "budget headroom"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -782,11 +696,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_entropy_rate_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_entropy_rate_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -808,11 +718,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_eprocess_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_eprocess_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -844,11 +750,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_equivariant_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_equivariant_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -865,16 +767,8 @@
       "decision_hook": "RuntimeMathKernel::decide and observe_validation_result evidence emission",
       "invariant": "Evidence logging is append-only and cannot mutate routing decisions.",
       "fallback_when_data_missing": "If evidence buffers are unavailable, continue with routing decision and increment drop counters.",
-      "action_outputs": [
-        "bd-kom event record",
-        "audit telemetry"
-      ],
-      "evidence_inputs": [
-        "RuntimeDecision",
-        "policy_id",
-        "risk upper bound",
-        "healing action"
-      ],
+      "action_outputs": ["bd-kom event record", "audit telemetry"],
+      "evidence_inputs": ["RuntimeDecision", "policy_id", "risk upper bound", "healing action"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -906,11 +800,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_fano_bound_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_fano_bound_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -927,15 +817,8 @@
       "decision_hook": "RuntimeMathKernel::decide robust fusion over severity channels",
       "invariant": "Fusion output is bounded and cannot reduce hard barrier/deny outcomes.",
       "fallback_when_data_missing": "Treat fusion signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "fused severity bonus",
-        "confidence telemetry"
-      ],
-      "evidence_inputs": [
-        "severity vector",
-        "trust weights",
-        "drift indicators"
-      ],
+      "action_outputs": ["fused severity bonus", "confidence telemetry"],
+      "evidence_inputs": ["severity vector", "trust weights", "drift indicators"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -1019,11 +902,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_higher_topos_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_higher_topos_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1071,11 +950,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_hurst_exponent_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_hurst_exponent_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1097,11 +972,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_info_geometry_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_info_geometry_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1149,11 +1020,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_kernel_mmd_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_kernel_mmd_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1170,15 +1037,8 @@
       "decision_hook": "RuntimeMathKernel::decide ABI transport compatibility pressure",
       "invariant": "Safety monotonicity: ktheory may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat ktheory signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "compatibility penalty",
-        "escalation pressure"
-      ],
-      "evidence_inputs": [
-        "family transport state",
-        "compatibility drift",
-        "index witness"
-      ],
+      "action_outputs": ["compatibility penalty", "escalation pressure"],
+      "evidence_inputs": ["family transport state", "compatibility drift", "index witness"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1200,11 +1060,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_lempel_ziv_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_lempel_ziv_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1221,15 +1077,8 @@
       "decision_hook": "RuntimeMathKernel::decide localization policy selection for concentrated anomaly regimes",
       "invariant": "Safety monotonicity: localization_chooser may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat localization_chooser signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "localization policy choice",
-        "escalation pressure"
-      ],
-      "evidence_inputs": [
-        "fixed-point concentration",
-        "regime persistence",
-        "chooser state"
-      ],
+      "action_outputs": ["localization policy choice", "escalation pressure"],
+      "evidence_inputs": ["fixed-point concentration", "regime persistence", "chooser state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1371,11 +1220,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_microlocal_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_microlocal_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1397,11 +1242,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_nerve_complex_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_nerve_complex_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1449,11 +1290,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_operator_norm_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_operator_norm_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1501,11 +1338,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_pac_bayes_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_pac_bayes_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1522,16 +1355,8 @@
       "decision_hook": "RuntimeMathKernel::decide latency/risk Pareto selector",
       "invariant": "Safety monotonicity: pareto may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat pareto signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "frontier point selection",
-        "regret updates",
-        "profile pressure"
-      ],
-      "evidence_inputs": [
-        "latency estimate",
-        "risk estimate",
-        "mode budget"
-      ],
+      "action_outputs": ["frontier point selection", "regret updates", "profile pressure"],
+      "evidence_inputs": ["latency estimate", "risk estimate", "mode budget"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1558,12 +1383,7 @@
       "decision_hook": "RuntimeMathKernel::decide proof-carrying policy table lookup",
       "invariant": "Policy table override is deterministic and keyed by mode/family/risk/budget/consistency buckets.",
       "fallback_when_data_missing": "Use built-in conservative table defaults when policy artifact or bucket data is unavailable.",
-      "action_outputs": [
-        "profile override",
-        "action override",
-        "repair override",
-        "policy_id"
-      ],
+      "action_outputs": ["profile override", "action override", "repair override", "policy_id"],
       "evidence_inputs": [
         "mode",
         "ApiFamily",
@@ -1603,11 +1423,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_pomdp_repair_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_pomdp_repair_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1686,15 +1502,8 @@
       "decision_hook": "RuntimeMathKernel::observe_validation_result evidence redundancy overhead tuning",
       "invariant": "Safety monotonicity: redundancy_tuner may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat redundancy_tuner signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "redundancy target",
-        "overhead control signal"
-      ],
-      "evidence_inputs": [
-        "e-process updates",
-        "overhead budget",
-        "recent alarm rate"
-      ],
+      "action_outputs": ["redundancy target", "overhead control signal"],
+      "evidence_inputs": ["e-process updates", "overhead budget", "recent alarm rate"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -1726,11 +1535,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_renewal_theory_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_renewal_theory_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1757,16 +1562,8 @@
       "decision_hook": "RuntimeMathKernel::decide sampled risk envelope computation",
       "invariant": "Risk envelope remains conservative (upper-bound) across updates.",
       "fallback_when_data_missing": "Treat risk signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "risk_ppm baseline",
-        "profile escalation pressure",
-        "deny pressure"
-      ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "RiskEngine sample",
-        "recent validation outcomes"
-      ],
+      "action_outputs": ["risk_ppm baseline", "profile escalation pressure", "deny pressure"],
+      "evidence_inputs": ["RuntimeContext", "RiskEngine sample", "recent validation outcomes"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": 20,
         "hardened_hot_path_ns_max": 200,
@@ -1798,11 +1595,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_serre_spectral_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_serre_spectral_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1819,15 +1612,8 @@
       "decision_hook": "RuntimeMathKernel::resample_high_order_kernels deterministic low-discrepancy sequencing",
       "invariant": "Sequence generation remains deterministic for identical seeds and counters.",
       "fallback_when_data_missing": "Fall back to deterministic fixed-step probe schedule when Sobol state is unavailable.",
-      "action_outputs": [
-        "deterministic probe sample",
-        "design scheduler input"
-      ],
-      "evidence_inputs": [
-        "sobol seed",
-        "dimension",
-        "counter"
-      ],
+      "action_outputs": ["deterministic probe sample", "design scheduler input"],
+      "evidence_inputs": ["sobol seed", "dimension", "counter"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1854,15 +1640,8 @@
       "decision_hook": "RuntimeMathKernel::decide polynomial barrier certificate evaluation",
       "invariant": "Safety monotonicity: sos_barrier may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Use static conservative barrier margin floor when certificate state is unavailable.",
-      "action_outputs": [
-        "barrier margin",
-        "deny/full-validate pressure"
-      ],
-      "evidence_inputs": [
-        "state vector",
-        "certificate coefficients",
-        "mode"
-      ],
+      "action_outputs": ["barrier margin", "deny/full-validate pressure"],
+      "evidence_inputs": ["state vector", "certificate coefficients", "mode"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1884,11 +1663,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_sos_invariant_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_sos_invariant_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1905,15 +1680,8 @@
       "decision_hook": "RuntimeMathKernel::observe_validation_result latent fault-source concentration updates",
       "invariant": "Safety monotonicity: sparse may only preserve or tighten validation/repair/deny outcomes.",
       "fallback_when_data_missing": "Treat sparse signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
-      "action_outputs": [
-        "concentration bonus",
-        "targeted escalation pressure"
-      ],
-      "evidence_inputs": [
-        "probe anomalies",
-        "family-level severities",
-        "sparse state"
-      ],
+      "action_outputs": ["concentration bonus", "targeted escalation pressure"],
+      "evidence_inputs": ["probe anomalies", "family-level severities", "sparse state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,
@@ -1935,11 +1703,7 @@
         "validation profile escalation",
         "membrane action escalation"
       ],
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_spectral_gap_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_spectral_gap_state"],
       "runtime_cost_target": {
         "strict_hot_path_ns_max": null,
         "hardened_hot_path_ns_max": null,

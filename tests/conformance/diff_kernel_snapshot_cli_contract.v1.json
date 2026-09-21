@@ -7,16 +7,8 @@
   "purpose": "Pin the harness binary subcommand that compares runtime_math kernel snapshot fixtures produced by snapshot-kernel. The command reads a golden RuntimeKernelSnapshotFixtureV1 and either reads or synthesizes a current fixture, selects strict or hardened mode, diffs key snapshot fields by default, optionally expands to all fields, and renders a deterministic plain/FTUI report for review.",
   "subcommand_name": "diff-kernel-snapshot",
   "binary_target": "harness",
-  "required_flags": [
-    "--golden",
-    "--current"
-  ],
-  "optional_flags": [
-    "--mode",
-    "--all",
-    "--ansi",
-    "--width"
-  ],
+  "required_flags": ["--golden", "--current"],
+  "optional_flags": ["--mode", "--all", "--ansi", "--width"],
   "underlying_lib_functions": [
     "frankenlibc_harness::snapshot_diff::diff_kernel_snapshots",
     "frankenlibc_harness::snapshot_diff::DiffMode::from_str_loose",
@@ -27,18 +19,8 @@
   "io_pattern": "stdout_plain_report_no_output_file",
   "plain_report_contract": {
     "header_prefix": "runtime_math snapshot diff",
-    "required_columns": [
-      "field",
-      "golden",
-      "current",
-      "delta",
-      "status"
-    ],
-    "status_markers": [
-      "OK",
-      "CHG",
-      "ALERT"
-    ],
+    "required_columns": ["field", "golden", "current", "delta", "status"],
+    "status_markers": ["OK", "CHG", "ALERT"],
     "default_key_field_sample": [
       "schema_version",
       "full_validation_trigger_ppm",
@@ -46,10 +28,7 @@
       "hji_safety_value"
     ]
   },
-  "mode_enum": [
-    "strict",
-    "hardened"
-  ],
+  "mode_enum": ["strict", "hardened"],
   "default_mode": "strict",
   "policy": {
     "identical_fixtures_must_render_ok_rows": true,

@@ -16,15 +16,8 @@
     "stale_failure_signature": "workload_replay_stale_source_commit"
   },
   "runtime_mode_policy": {
-    "required_modes": [
-      "baseline",
-      "strict",
-      "hardened"
-    ],
-    "baseline_env_forbidden": [
-      "LD_PRELOAD",
-      "FRANKENLIBC_MODE"
-    ],
+    "required_modes": ["baseline", "strict", "hardened"],
+    "baseline_env_forbidden": ["LD_PRELOAD", "FRANKENLIBC_MODE"],
     "strict_env_required": {
       "LD_PRELOAD": "${FRANKENLIBC_ABI_LIB}",
       "FRANKENLIBC_MODE": "strict"
@@ -47,12 +40,7 @@
       "c_fixture",
       "optional_tool"
     ],
-    "command_kinds": [
-      "argv",
-      "pipeline",
-      "dynamic_runtime",
-      "c_fixture"
-    ],
+    "command_kinds": ["argv", "pipeline", "dynamic_runtime", "c_fixture"],
     "optional_skip_prefix": "optional_tool_missing",
     "fail_closed_signatures": [
       "workload_replay_invalid_command_argv",
@@ -90,10 +78,7 @@
       "description": "Small coreutils stdout write path with deterministic bytes.",
       "command": {
         "kind": "argv",
-        "argv": [
-          "/bin/echo",
-          "frankenlibc-replay"
-        ]
+        "argv": ["/bin/echo", "frankenlibc-replay"]
       },
       "timeout_ms": 3000,
       "mode_expectations": {
@@ -159,16 +144,10 @@
         "kind": "pipeline",
         "stages": [
           {
-            "argv": [
-              "/usr/bin/printf",
-              "alpha\nbeta\n"
-            ]
+            "argv": ["/usr/bin/printf", "alpha\nbeta\n"]
           },
           {
-            "argv": [
-              "/usr/bin/wc",
-              "-l"
-            ]
+            "argv": ["/usr/bin/wc", "-l"]
           }
         ]
       },
@@ -234,11 +213,7 @@
       "description": "Language-runtime startup, dynamic loading, stdio, and libm smoke row.",
       "command": {
         "kind": "dynamic_runtime",
-        "argv": [
-          "python3",
-          "-c",
-          "import math; print(int(math.sqrt(81)))"
-        ]
+        "argv": ["python3", "-c", "import math; print(int(math.sqrt(81)))"]
       },
       "timeout_ms": 7000,
       "mode_expectations": {
@@ -309,9 +284,7 @@
           "-o",
           "target/conformance/user_workload_link_test"
         ],
-        "argv": [
-          "target/conformance/user_workload_link_test"
-        ]
+        "argv": ["target/conformance/user_workload_link_test"]
       },
       "timeout_ms": 7000,
       "mode_expectations": {
@@ -372,10 +345,7 @@
       "description": "Optional tool probe that must skip deterministically when sqlite3 is unavailable.",
       "command": {
         "kind": "argv",
-        "argv": [
-          "sqlite3",
-          "--version"
-        ]
+        "argv": ["sqlite3", "--version"]
       },
       "timeout_ms": 3000,
       "mode_expectations": {

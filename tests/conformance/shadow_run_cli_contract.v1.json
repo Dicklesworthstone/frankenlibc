@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary `shadow-run` subcommand that executes manifest-driven real-workload differential runs against host glibc and FrankenLibC candidate environments.",
   "subcommand_name": "shadow-run",
   "binary_target": "harness",
-  "required_flags": [
-    "--manifest"
-  ],
+  "required_flags": ["--manifest"],
   "optional_flags": [
     "--workspace-root",
     "--out-dir",
@@ -31,11 +29,7 @@
   "input_contract": {
     "manifest_schema": "frankenlibc_harness::shadow_run::ShadowRunManifest",
     "scenario_selector": "shadow_scenarios filters descriptions/labels/classes that identify shadow-run scenarios",
-    "mode_values": [
-      "strict",
-      "hardened",
-      "both"
-    ],
+    "mode_values": ["strict", "hardened", "both"],
     "default_mode": "both",
     "default_reference": "glibc"
   },
@@ -50,13 +44,7 @@
       "summary",
       "scenarios"
     ],
-    "summary_required_fields": [
-      "total_runs",
-      "passed",
-      "diverged",
-      "skipped",
-      "errors"
-    ],
+    "summary_required_fields": ["total_runs", "passed", "diverged", "skipped", "errors"],
     "scenario_required_fields": [
       "trace_id",
       "scenario_id",

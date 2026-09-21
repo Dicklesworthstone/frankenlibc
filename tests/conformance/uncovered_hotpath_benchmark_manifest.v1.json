@@ -93,9 +93,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/mutex_bench.rs",
       "suite_id": "pthread_threads",
       "plan_kind": "extend_existing_thread_benches",
-      "coverage_blockers": [
-        "missing_pthread_baseline_spec_suite"
-      ],
+      "coverage_blockers": ["missing_pthread_baseline_spec_suite"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Add c11 thread lifecycle cases to the pthread benchmark suite and collect strict/hardened baselines."
     },
@@ -106,9 +104,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/ctype_bench.rs",
       "suite_id": "ctype",
       "plan_kind": "new_benchmark_family",
-      "coverage_blockers": [
-        "missing_benchmark_target_and_spec_suite"
-      ],
+      "coverage_blockers": ["missing_benchmark_target_and_spec_suite"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Create a table/classification benchmark target for ctype lookup-table and locale-free paths."
     },
@@ -119,12 +115,8 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/resolver_bench.rs",
       "suite_id": "resolver",
       "plan_kind": "new_hermetic_benchmark_family",
-      "coverage_blockers": [
-        "requires_hermetic_resolver_lab_before_benchmark_target"
-      ],
-      "unsafe_benchmark_blockers": [
-        "real_dns_network_io_disallowed"
-      ],
+      "coverage_blockers": ["requires_hermetic_resolver_lab_before_benchmark_target"],
+      "unsafe_benchmark_blockers": ["real_dns_network_io_disallowed"],
       "next_action": "Use the hermetic NSS/resolver lab before timing resolver paths; real network/DNS is not an acceptable benchmark dependency."
     },
     {
@@ -134,9 +126,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/search_bench.rs",
       "suite_id": "search",
       "plan_kind": "new_benchmark_family",
-      "coverage_blockers": [
-        "missing_benchmark_target_and_spec_suite"
-      ],
+      "coverage_blockers": ["missing_benchmark_target_and_spec_suite"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Create hash/tree search hot-path benchmarks with deterministic table contents and lookup actions."
     },
@@ -147,9 +137,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/stdio_bench.rs",
       "suite_id": "stdio",
       "plan_kind": "extend_existing_benchmark_family",
-      "coverage_blockers": [
-        "missing_stdio_perf_baseline_spec_suite"
-      ],
+      "coverage_blockers": ["missing_stdio_perf_baseline_spec_suite"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Add unlocked stream-operation cases to stdio_bench and wire the stdio suite into perf_baseline_spec."
     },
@@ -160,9 +148,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/stdlib_bench.rs",
       "suite_id": "stdlib",
       "plan_kind": "new_benchmark_family",
-      "coverage_blockers": [
-        "missing_benchmark_target_and_spec_suite"
-      ],
+      "coverage_blockers": ["missing_benchmark_target_and_spec_suite"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Create conversion/search/random hot-path benchmarks with deterministic inputs and no process-global mutation leaks."
     },
@@ -173,12 +159,8 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/time_bench.rs",
       "suite_id": "time",
       "plan_kind": "new_controlled_time_benchmark_family",
-      "coverage_blockers": [
-        "requires_time_fixture_before_wall_clock_sensitive_benchmarks"
-      ],
-      "unsafe_benchmark_blockers": [
-        "wall_clock_discontinuity_must_be_isolated"
-      ],
+      "coverage_blockers": ["requires_time_fixture_before_wall_clock_sensitive_benchmarks"],
+      "unsafe_benchmark_blockers": ["wall_clock_discontinuity_must_be_isolated"],
       "next_action": "Benchmark pure conversion paths directly and gate wall-clock-sensitive paths behind controlled fixtures."
     },
     {
@@ -188,9 +170,7 @@
       "benchmark_file": "crates/frankenlibc-bench/benches/string_bench.rs",
       "suite_id": "string",
       "plan_kind": "extend_existing_string_benchmark_family",
-      "coverage_blockers": [
-        "missing_wchar_symbol_specific_benchmarks"
-      ],
+      "coverage_blockers": ["missing_wchar_symbol_specific_benchmarks"],
       "unsafe_benchmark_blockers": [],
       "next_action": "Extend string_bench with wchar/wctype symbol-specific cases and baselines."
     }

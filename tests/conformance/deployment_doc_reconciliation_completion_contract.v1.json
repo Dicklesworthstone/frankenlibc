@@ -16,11 +16,7 @@
     "in_progress_source": "bd-as0w2.1 implementation window",
     "closed_at_source": ".beads/issues.jsonl"
   },
-  "artifact_refs": [
-    "DEPLOYMENT.md",
-    "replacement_levels.json",
-    "README.md"
-  ],
+  "artifact_refs": ["DEPLOYMENT.md", "replacement_levels.json", "README.md"],
   "validation": [
     "DEPLOYMENT.md now reports L1 consistently with replacement_levels.json and README",
     "commit 34fe884b65b22b9d7cc5791016194ba144fef849 contains the doc reconciliation"

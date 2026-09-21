@@ -7,9 +7,7 @@
   "audit_score": 470,
   "score_threshold": 700,
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.conformance.primary"
-    ],
+    "missing_items_closed": ["tests.conformance.primary"],
     "next_audit_score_threshold": 700
   },
   "source_artifacts": {
@@ -25,9 +23,7 @@
     },
     "conformance_diff": {
       "path": "crates/frankenlibc-abi/tests/conformance_diff_string_mut.rs",
-      "required_functions": [
-        "diff_strtok_r_cases"
-      ],
+      "required_functions": ["diff_strtok_r_cases"],
       "required_markers": [
         "fn tokenize_with(",
         "let fl_toks = tokenize_with(fl::strtok_r, src, delim);",
@@ -59,10 +55,7 @@
     "fixture": {
       "path": "tests/conformance/fixtures/string_strtok.json",
       "required_family": "string/strtok",
-      "required_functions": [
-        "strtok",
-        "strtok_r"
-      ],
+      "required_functions": ["strtok", "strtok_r"],
       "required_case_ids": [
         "strtok_all_delims",
         "strtok_basic_first",

@@ -7,11 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.5/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.golden.primary",
-      "tests.conformance.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.golden.primary", "tests.conformance.primary"]
   },
   "source_paths": {
     "generator": "scripts/generate_per_symbol_fixture_tests.py",
@@ -242,12 +238,7 @@
       "total_quality_issues",
       "uncovered_action_count"
     ],
-    "required_case_fields": [
-      "name",
-      "function",
-      "inputs",
-      "mode"
-    ],
+    "required_case_fields": ["name", "function", "inputs", "mode"],
     "expected_result_contract_fields": [
       "expected_hex",
       "expected_n_value",
@@ -257,18 +248,8 @@
       "expected_return",
       "expected_values"
     ],
-    "valid_modes": [
-      "strict",
-      "hardened",
-      "both"
-    ],
-    "edge_case_categories": [
-      "null_input",
-      "zero_length",
-      "max_int",
-      "negative",
-      "boundary"
-    ],
+    "valid_modes": ["strict", "hardened", "both"],
+    "edge_case_categories": ["null_input", "zero_length", "max_int", "negative", "boundary"],
     "valid_symbol_statuses": [
       "Implemented",
       "RawSyscall",

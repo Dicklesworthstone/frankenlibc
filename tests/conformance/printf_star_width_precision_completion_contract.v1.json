@@ -11,9 +11,7 @@
     "score_threshold": 800
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.conformance.primary"
-    ],
+    "missing_items_closed": ["tests.conformance.primary"],
     "next_audit_score_threshold": 800,
     "non_claim": "This contract binds the already-shipped negative star width/precision conformance evidence; it does not change printf formatting behavior."
   },

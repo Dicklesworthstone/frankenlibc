@@ -128,9 +128,7 @@
             "status": "Implemented"
           }
         ],
-        "absent_modules": [
-          "nss_abi"
-        ]
+        "absent_modules": ["nss_abi"]
       },
       "doc_line": "- `nss`: `IMPLEMENTED_PARTIAL` \u2014 passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure."
     },

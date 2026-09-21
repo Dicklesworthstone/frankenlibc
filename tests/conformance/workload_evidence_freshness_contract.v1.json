@@ -4,48 +4,30 @@
   "generated_at_utc": "2026-05-08T04:30:22Z",
   "source_commit": "current",
   "purpose": "Inventory every current user-facing workload, replay, smoke, compatibility, release, and replacement-readiness evidence source that backs README.md or FEATURE_PARITY.md claims outside the already-owned support/reality drift gates.",
-  "claim_surfaces": [
-    "README.md",
-    "FEATURE_PARITY.md"
-  ],
+  "claim_surfaces": ["README.md", "FEATURE_PARITY.md"],
   "claim_refs": [
     {
       "id": "readme-claim-field-contract",
       "path": "README.md",
-      "line_refs": [
-        "README.md:53",
-        "README.md:64",
-        "README.md:66"
-      ],
+      "line_refs": ["README.md:53", "README.md:64", "README.md:66"],
       "claim": "Support, parity, and replacement-readiness claims require evidence_artifact, freshness_state, and user_recommendation fields."
     },
     {
       "id": "readme-interpose-many-workloads",
       "path": "README.md",
-      "line_refs": [
-        "README.md:48",
-        "README.md:211",
-        "README.md:215"
-      ],
+      "line_refs": ["README.md:48", "README.md:211", "README.md:215"],
       "claim": "The current interpose shared library is usable for a meaningful but incomplete workload set, with broader hardening and non-curated workload stability tracked separately."
     },
     {
       "id": "readme-smoke-summary",
       "path": "README.md",
-      "line_refs": [
-        "README.md:214",
-        "README.md:471"
-      ],
+      "line_refs": ["README.md:214", "README.md:471"],
       "claim": "The canonical checked LD_PRELOAD smoke battery is green across strict and hardened modes with optional probes skipped."
     },
     {
       "id": "readme-not-standalone",
       "path": "README.md",
-      "line_refs": [
-        "README.md:192",
-        "README.md:212",
-        "README.md:612"
-      ],
+      "line_refs": ["README.md:192", "README.md:212", "README.md:612"],
       "claim": "The declared current level is L0 interpose; full standalone replacement is not claimed today."
     },
     {
@@ -123,10 +105,7 @@
       "id": "claim-field-contract",
       "owner_family": "documentation_claim_control",
       "claim_scope": "README and FEATURE_PARITY traceability contract for workload, support, parity, and replacement claims.",
-      "claim_refs": [
-        "readme-claim-field-contract",
-        "feature-parity-field-contract"
-      ],
+      "claim_refs": ["readme-claim-field-contract", "feature-parity-field-contract"],
       "source_artifact": "tests/conformance/user_compatibility_report.v1.json",
       "artifact_refs": [
         "README.md",
@@ -166,13 +145,8 @@
         "uwm-startup-linking",
         "uwm-performance-hotpaths"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_compatibility_report_evidence",
       "next_safe_action": "Regenerate the user compatibility report and fail closed on missing, stale, contradictory, unsupported, or prose-only claims."
@@ -181,10 +155,7 @@
       "id": "ld-preload-smoke-summary",
       "owner_family": "real_binary_smoke",
       "claim_scope": "Curated LD_PRELOAD strict and hardened real-binary smoke claim in README current state.",
-      "claim_refs": [
-        "readme-interpose-many-workloads",
-        "readme-smoke-summary"
-      ],
+      "claim_refs": ["readme-interpose-many-workloads", "readme-smoke-summary"],
       "source_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "artifact_refs": [
         "tests/conformance/ld_preload_smoke_summary.v1.json",
@@ -214,14 +185,8 @@
         "optional-redis-cli",
         "optional-nginx"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "bounded_snapshot",
       "stale_failure_signature": "stale_ld_preload_smoke_evidence",
       "next_safe_action": "Rerun the smoke script through the prescribed build path and regenerate any compatibility report that consumes the smoke summary before advancing user-facing claims."
@@ -230,10 +195,7 @@
       "id": "user-workload-acceptance-matrix",
       "owner_family": "workload_acceptance",
       "claim_scope": "Persona/domain workload acceptance matrix covering shell, build, runtime, package-manager, threaded-service, resolver/NSS, locale/iconv, stdio/libio, allocator, startup/linking, and performance-sensitive claims.",
-      "claim_refs": [
-        "readme-interpose-many-workloads",
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["readme-interpose-many-workloads", "feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/user_workload_acceptance_matrix.v1.json",
       "artifact_refs": [
         "tests/conformance/user_workload_acceptance_matrix.v1.json",
@@ -268,16 +230,8 @@
         "uwm-startup-linking",
         "uwm-performance-hotpaths"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_user_workload_acceptance_matrix",
       "next_safe_action": "Run the acceptance matrix checker and treat missing artifact paths, incomplete domains, or missing structured log fields as claim blockers."
@@ -286,10 +240,7 @@
       "id": "user-workload-replay-manifest",
       "owner_family": "workload_replay",
       "claim_scope": "Safe replay manifest for baseline, strict, and hardened comparisons over coreutils, shell pipelines, dynamic runtime startup, C fixtures, and optional-tool probes.",
-      "claim_refs": [
-        "readme-interpose-many-workloads",
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["readme-interpose-many-workloads", "feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/user_workload_replay_manifest.v1.json",
       "artifact_refs": [
         "tests/conformance/user_workload_replay_manifest.v1.json",
@@ -322,15 +273,8 @@
         "c_fixture_link_test",
         "optional_sqlite_version_probe"
       ],
-      "runtime_modes": [
-        "baseline",
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["baseline", "strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_user_workload_replay_manifest",
       "next_safe_action": "Validate the manifest first, then run or validate trace replay; missing preload artifacts and optional tools must become structured blocked or skipped rows rather than support claims."
@@ -377,14 +321,8 @@
         "stdio_file_roundtrip_l0_strict",
         "stdio_file_roundtrip_l1_hardened"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_real_program_smoke_suite",
       "next_safe_action": "Run the real-program smoke checker and block claims if required domains, modes, failure-bundle rows, or standalone-future non-support rows drift."
@@ -393,10 +331,7 @@
       "id": "readme-example-workload-gate",
       "owner_family": "readme_example_gate",
       "claim_scope": "README quick-start and workload examples remain executable only as bounded interpose examples, not broad support claims.",
-      "claim_refs": [
-        "readme-interpose-many-workloads",
-        "readme-not-standalone"
-      ],
+      "claim_refs": ["readme-interpose-many-workloads", "readme-not-standalone"],
       "source_artifact": "tests/conformance/release_readme_example_workload_gate.v1.json",
       "artifact_refs": [
         "tests/conformance/release_readme_example_workload_gate.v1.json",
@@ -424,13 +359,8 @@
         "readme-legacy-binary-hardened",
         "readme-ld-preload-smoke"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_readme_example_workload_gate",
       "next_safe_action": "Run the README example workload gate before accepting changed README examples or broadening user recommendations."
@@ -439,10 +369,7 @@
       "id": "replacement-level-current-claim",
       "owner_family": "replacement_claim_control",
       "claim_scope": "Current release level is L0 interpose; L1/L2/L3 promotion remains blocked until claim-control and proof obligations pass.",
-      "claim_refs": [
-        "readme-not-standalone",
-        "feature-parity-field-contract"
-      ],
+      "claim_refs": ["readme-not-standalone", "feature-parity-field-contract"],
       "source_artifact": "tests/conformance/replacement_levels.json",
       "artifact_refs": [
         "tests/conformance/replacement_levels.json",
@@ -473,16 +400,8 @@
         "l2-standalone-future",
         "l3-full-replacement-future"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1", "L2", "L3"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_replacement_level_claim_evidence",
       "next_safe_action": "Keep user-facing guidance at L0 unless both current_level and release_tag_policy.current_release_level promote together with all objective gates passing."
@@ -491,10 +410,7 @@
       "id": "release-gate-dag",
       "owner_family": "release_gate",
       "claim_scope": "Release readiness depends on ordered evidence gates rather than README prose.",
-      "claim_refs": [
-        "readme-claim-field-contract",
-        "feature-parity-field-contract"
-      ],
+      "claim_refs": ["readme-claim-field-contract", "feature-parity-field-contract"],
       "source_artifact": "tests/conformance/release_gate_dag.v1.json",
       "artifact_refs": [
         "tests/conformance/release_gate_dag.v1.json",
@@ -523,13 +439,8 @@
         "claim-gate-negative-scenarios",
         "compatibility-dossier-inputs"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_release_gate_evidence",
       "next_safe_action": "Run the release gate and block any release claim whose dependency artifact is stale, missing, or prose-only."
@@ -538,9 +449,7 @@
       "id": "runtime-evidence-replay-gate",
       "owner_family": "runtime_evidence",
       "claim_scope": "Runtime evidence replay records protect strict/hardened mode semantics and generated evidence from stale or mismatched source commits.",
-      "claim_refs": [
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/runtime_evidence_replay_gate.v1.json",
       "artifact_refs": [
         "tests/conformance/runtime_evidence_replay_gate.v1.json",
@@ -568,14 +477,8 @@
         "negative-stale-source-commit",
         "negative-missing-artifact"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_runtime_evidence_replay",
       "next_safe_action": "Replay runtime evidence gates after any mode-policy or runtime-evidence schema change before using generated rows in compatibility guidance."
@@ -584,9 +487,7 @@
       "id": "workload-performance-budget",
       "owner_family": "performance_evidence",
       "claim_scope": "Strict/hardened workload latency and performance claims trace to perf regression prevention and perf budget policy artifacts.",
-      "claim_refs": [
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/perf_regression_prevention.v1.json",
       "artifact_refs": [
         "tests/conformance/perf_regression_prevention.v1.json",
@@ -617,14 +518,8 @@
         "hardened-latency-budget",
         "overload-waiver-policy"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_workload_performance_evidence",
       "next_safe_action": "Run perf prevention and budget checks before allowing workload-level latency or no-regression recommendations."
@@ -633,10 +528,7 @@
       "id": "standalone-link-run-smoke",
       "owner_family": "standalone_readiness",
       "claim_scope": "Standalone direct-link and future replacement rows are tracked as readiness evidence, not current user support claims.",
-      "claim_refs": [
-        "readme-not-standalone",
-        "feature-parity-field-contract"
-      ],
+      "claim_refs": ["readme-not-standalone", "feature-parity-field-contract"],
       "source_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
       "artifact_refs": [
         "tests/conformance/standalone_link_run_smoke.v1.json",
@@ -663,14 +555,8 @@
         "standalone-future-policy",
         "expected-failure-classifications"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L2",
-        "L3"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L2", "L3"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_standalone_link_run_smoke_evidence",
       "next_safe_action": "Keep standalone rows as blocked or future evidence unless the standalone checker and replacement promotion gates are both current and passing."
@@ -679,10 +565,7 @@
       "id": "workload-failure-dashboard",
       "owner_family": "failure_signature_inventory",
       "claim_scope": "Workload failure classes and hidden skip policies are normalized for downstream freshness, reproducer, and dossier gates.",
-      "claim_refs": [
-        "readme-smoke-summary",
-        "feature-parity-field-contract"
-      ],
+      "claim_refs": ["readme-smoke-summary", "feature-parity-field-contract"],
       "source_artifact": "tests/conformance/workload_failure_dashboard.v1.json",
       "artifact_refs": [
         "tests/conformance/workload_failure_dashboard.v1.json",
@@ -713,14 +596,8 @@
         "unsupported_workload",
         "missing_binary"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_workload_failure_dashboard",
       "next_safe_action": "Refresh the dashboard before downstream reproducer or compatibility dossier gates classify failures."
@@ -729,9 +606,7 @@
       "id": "high-core-tail-baseline",
       "owner_family": "high_core_tail_evidence",
       "claim_scope": "64+ core membrane hot-path tail and contention baseline contract for future high-core workload evidence.",
-      "claim_refs": [
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/high_core_tail_baseline.v1.json",
       "artifact_refs": [
         "tests/conformance/high_core_tail_baseline.v1.json",
@@ -766,14 +641,8 @@
         "high-core-tail-multi-64",
         "high-core-tail-oversub"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_high_core_tail_baseline",
       "next_safe_action": "Refresh high-core report, rows JSONL, and environment fingerprint remotely before using tail evidence in workload or performance claims."
@@ -782,9 +651,7 @@
       "id": "workload-latency-budget-join",
       "owner_family": "high_core_latency_budget_evidence",
       "claim_scope": "Join strict and hardened workload latency rows to perf budgets before workload compatibility or high-core latency claims advance.",
-      "claim_refs": [
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/workload_latency_budget_join.v1.json",
       "artifact_refs": [
         "tests/conformance/workload_latency_budget_join.v1.json",
@@ -817,14 +684,8 @@
         "workload-latency-hardened",
         "workload-latency-overload-policy"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_workload_latency_budget_join",
       "next_safe_action": "Regenerate latency join report/log rows with remote validation before accepting workload latency evidence."
@@ -833,9 +694,7 @@
       "id": "synthetic-workload-composer",
       "owner_family": "high_core_synthetic_workload_evidence",
       "claim_scope": "Synthetic workload motif/composition evidence must stay replayable, source-bound, and strict+hardened before rare-edge coverage claims advance.",
-      "claim_refs": [
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/synthetic_workload_composer.v1.json",
       "artifact_refs": [
         "tests/conformance/synthetic_workload_composer.v1.json",
@@ -867,14 +726,8 @@
         "synthetic-resolver-network",
         "synthetic-allocator-event-loop"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_synthetic_workload_composer",
       "next_safe_action": "Refresh composer report/log rows remotely before using synthetic workload motifs as compatibility or coverage evidence."
@@ -883,10 +736,7 @@
       "id": "swarm-scale-interpose-workload-evidence-plan",
       "owner_family": "swarm_scale_interpose_evidence",
       "claim_scope": "64+ core LD_PRELOAD swarm-scale workload evidence plan must reject local execution and require remote report/log outputs before any swarm claim advances.",
-      "claim_refs": [
-        "readme-interpose-many-workloads",
-        "feature-parity-strict-hardened-evidence"
-      ],
+      "claim_refs": ["readme-interpose-many-workloads", "feature-parity-strict-hardened-evidence"],
       "source_artifact": "tests/conformance/swarm_scale_interpose_workload_evidence_plan.v1.json",
       "artifact_refs": [
         "tests/conformance/swarm_scale_interpose_workload_evidence_plan.v1.json",
@@ -921,14 +771,8 @@
         "swarm-dynamic-runtime-script-mix",
         "swarm-c-fixture-matrix-replay"
       ],
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
-      "replacement_levels": [
-        "L0",
-        "L1"
-      ],
+      "runtime_modes": ["strict", "hardened"],
+      "replacement_levels": ["L0", "L1"],
       "freshness_state": "contracted",
       "stale_failure_signature": "stale_swarm_scale_interpose_evidence",
       "next_safe_action": "Discard local fallback output and regenerate remote report/log/run-manifest evidence before citing swarm-scale workload support."

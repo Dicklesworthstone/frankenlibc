@@ -147,11 +147,23 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"},
-        {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
-        {"source": "release_dossier_harness", "name": "dossier_validator_produces_valid_report"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_claim_log_field_binding"}
+        {
+          "source": "release_claim_harness",
+          "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "l3_release_tag_without_standalone_matrix_fails_closed"
+        },
+        { "source": "release_dossier_harness", "name": "dossier_validator_produces_valid_report" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_fuzz_conformance_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_claim_log_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/l3_full_replace_claim_control_completion_contract.v1.json",
@@ -163,11 +175,23 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
-        {"source": "release_dossier_harness", "name": "dossier_validator_release_notes_hook_tracks_closed_beads"},
-        {"source": "standalone_readiness_harness", "name": "replacement_levels_remain_blocked_for_l2_l3"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_current_l1_and_blocks_l3_overclaim"}
+        {
+          "source": "release_claim_harness",
+          "name": "l3_release_tag_without_standalone_matrix_fails_closed"
+        },
+        {
+          "source": "release_dossier_harness",
+          "name": "dossier_validator_release_notes_hook_tracks_closed_beads"
+        },
+        {
+          "source": "standalone_readiness_harness",
+          "name": "replacement_levels_remain_blocked_for_l2_l3"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_current_l1_and_blocks_l3_overclaim"
+        }
       ],
       "required_commands": [
         "scripts/release/check_replacement_claim_evidence.sh --report <current-report> --log <current-log>",
@@ -180,12 +204,27 @@
       "missing_item_id": "tests.fuzz.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "malformed_claims_json_without_claims_array_fails"},
-        {"source": "release_claim_harness", "name": "stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim"},
-        {"source": "release_claim_harness", "name": "l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim"},
-        {"source": "release_dossier_harness", "name": "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_l3_release_claim_signature_binding"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_fuzz_binding"}
+        {
+          "source": "release_claim_harness",
+          "name": "malformed_claims_json_without_claims_array_fails"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "stale_l1_dry_run_dashboard_fixture_blocks_release_doc_claim"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "l1_dry_run_dashboard_wrong_source_commit_blocks_release_doc_claim"
+        },
+        {
+          "source": "release_dossier_harness",
+          "name": "dossier_validator_release_notes_hook_invalid_limit_falls_back_to_default"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_l3_release_claim_signature_binding"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_fuzz_binding" }
       ],
       "required_commands": [
         "bash scripts/check_l3_full_replace_claim_control_completion_contract.sh",
@@ -198,11 +237,23 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
-        {"source": "standalone_readiness_harness", "name": "replacement_levels_remain_blocked_for_l2_l3"},
-        {"source": "standalone_readiness_harness", "name": "proof_rows_cover_standalone_surfaces_and_fail_closed"},
-        {"source": "completion_harness", "name": "checker_preserves_l3_roadmap_and_standalone_blockers"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_l3_obligation_binding"}
+        {
+          "source": "release_claim_harness",
+          "name": "l3_release_tag_without_standalone_matrix_fails_closed"
+        },
+        {
+          "source": "standalone_readiness_harness",
+          "name": "replacement_levels_remain_blocked_for_l2_l3"
+        },
+        {
+          "source": "standalone_readiness_harness",
+          "name": "proof_rows_cover_standalone_surfaces_and_fail_closed"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_preserves_l3_roadmap_and_standalone_blockers"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_l3_obligation_binding" }
       ],
       "required_commands": [
         "bash scripts/check_standalone_readiness_matrix.sh",
@@ -217,10 +268,19 @@
       "default_report_path": "target/conformance/l3_full_replace_claim_control_completion_contract.report.json",
       "default_log_path": "target/conformance/l3_full_replace_claim_control_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "release_claim_harness", "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"},
-        {"source": "release_claim_harness", "name": "l3_release_tag_without_standalone_matrix_fails_closed"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_claim_log_field_binding"}
+        {
+          "source": "release_claim_harness",
+          "name": "current_l1_release_policy_passes_with_objective_evidence_bundle"
+        },
+        {
+          "source": "release_claim_harness",
+          "name": "l3_release_tag_without_standalone_matrix_fails_closed"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_claim_log_field_binding"
+        }
       ],
       "required_commands": [
         "bash scripts/check_l3_full_replace_claim_control_completion_contract.sh",

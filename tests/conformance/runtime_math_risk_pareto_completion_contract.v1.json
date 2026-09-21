@@ -7,10 +7,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.5.1/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind the risk/pareto calibration artifact, generator drift check, regression gate, and harness fail-closed coverage to explicit unit and e2e completion evidence.",
   "source_artifacts": {
@@ -38,10 +35,7 @@
         "iters": 2000,
         "trend_stride": 32
       },
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_modes": ["strict", "hardened"],
       "required_mode_fields": [
         "mode",
         "seed",
@@ -86,10 +80,7 @@
       ]
     },
     "regression_tests": {
-      "pareto": [
-        "regret_saturates_at_cap",
-        "budget_enforcement_count_increases_when_saturated"
-      ],
+      "pareto": ["regret_saturates_at_cap", "budget_enforcement_count_increases_when_saturated"],
       "risk": [
         "family_counters_are_isolated",
         "higher_adverse_rate_yields_higher_bound_for_same_volume"

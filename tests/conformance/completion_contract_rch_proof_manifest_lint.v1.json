@@ -5,27 +5,12 @@
   "policy": {
     "required_remote_env": "RCH_FORCE_REMOTE=true",
     "fail_closed_remote_env": "RCH_REQUIRE_REMOTE=1",
-    "legacy_remote_env_markers": [
-      "RCH_FORCE_REMOTE=true"
-    ],
-    "required_launcher_tokens": [
-      "rch",
-      "exec"
-    ],
+    "legacy_remote_env_markers": ["RCH_FORCE_REMOTE=true"],
+    "required_launcher_tokens": ["rch", "exec"],
     "required_target_dir_env": "CARGO_TARGET_DIR=",
-    "forbidden_target_dir_values": [
-      "<target>",
-      ""
-    ],
-    "forbidden_proof_markers": [
-      "[RCH] local",
-      "remote execution failed"
-    ],
-    "required_completion_test_lanes": [
-      "test",
-      "check",
-      "clippy"
-    ],
+    "forbidden_target_dir_values": ["<target>", ""],
+    "forbidden_proof_markers": ["[RCH] local", "remote execution failed"],
+    "required_completion_test_lanes": ["test", "check", "clippy"],
     "required_surface_lane": "test"
   },
   "contract_paths": [
@@ -53,9 +38,7 @@
   "fail_closed_contract_paths": [
     "tests/conformance/completion_contract_rch_proof_manifest_lint.v1.json"
   ],
-  "expected_fail_closed_contracts": [
-    "completion_contract_rch_proof_manifest_lint"
-  ],
+  "expected_fail_closed_contracts": ["completion_contract_rch_proof_manifest_lint"],
   "required_failure_signatures": [
     "bare_cargo_command",
     "missing_remote_env",

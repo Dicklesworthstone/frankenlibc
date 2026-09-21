@@ -3,37 +3,28 @@
   "patterns": [
     {
       "healing_action": "ClampSize",
-      "packages_affected": [
-        "dev-db/redis",
-        "net-misc/curl"
-      ],
+      "packages_affected": ["dev-db/redis", "net-misc/curl"],
       "pattern": "oversized allocation requests",
       "potential_cve_prevention": true,
       "total_occurrences": 2
     },
     {
       "healing_action": "IgnoreDoubleFree",
-      "packages_affected": [
-        "net-misc/curl"
-      ],
+      "packages_affected": ["net-misc/curl"],
       "pattern": "double free cleanup/retry patterns",
       "potential_cve_prevention": true,
       "total_occurrences": 1
     },
     {
       "healing_action": "ReallocAsMalloc",
-      "packages_affected": [
-        "sys-apps/coreutils"
-      ],
+      "packages_affected": ["sys-apps/coreutils"],
       "pattern": "realloc(NULL, n) legacy compatibility flows",
       "potential_cve_prevention": false,
       "total_occurrences": 1
     },
     {
       "healing_action": "TruncateWithNull",
-      "packages_affected": [
-        "dev-db/redis"
-      ],
+      "packages_affected": ["dev-db/redis"],
       "pattern": "unterminated string boundary handling",
       "potential_cve_prevention": true,
       "total_occurrences": 1

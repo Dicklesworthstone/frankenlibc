@@ -7,10 +7,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.3/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"],
     "acceptance_criteria": [
       "Produce guarantee reports (miscoverage/tail risk/regret/divergence) and define emergency rollback triggers.",
       "Comprehensive unit tests are required for all touched logic.",
@@ -146,16 +143,8 @@
     "overload_campaign": {
       "compute_pressure_original_bead": "bd-w2c3.7",
       "compute_pressure_completion_bead": "bd-w2c3.7.4",
-      "required_regimes": [
-        "Nominal",
-        "Pressured",
-        "Overloaded",
-        "Recovery"
-      ],
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_regimes": ["Nominal", "Pressured", "Overloaded", "Recovery"],
+      "required_modes": ["strict", "hardened"],
       "required_scenario_ids": [
         "steady_state_nominal",
         "escalation_calm_to_overloaded",
@@ -163,30 +152,13 @@
         "hysteresis_oscillation",
         "recovery_spike"
       ],
-      "required_overload_events": [
-        "runtime_pressure_sensor",
-        "runtime_overload_policy_applied"
-      ],
+      "required_overload_events": ["runtime_pressure_sensor", "runtime_overload_policy_applied"],
       "required_backpressure_ring_count": 5
     },
     "formal_guarantees": {
-      "required_metrics": [
-        "miscoverage",
-        "tail_risk",
-        "regret",
-        "divergence"
-      ],
-      "required_monitors": [
-        "eprocess",
-        "changepoint",
-        "cvar",
-        "conformal",
-        "risk"
-      ],
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_metrics": ["miscoverage", "tail_risk", "regret", "divergence"],
+      "required_monitors": ["eprocess", "changepoint", "cvar", "conformal", "risk"],
+      "required_modes": ["strict", "hardened"],
       "allowed_false_positive_count": 0,
       "allowed_false_negative_count": 0,
       "required_risk_check_ids": [

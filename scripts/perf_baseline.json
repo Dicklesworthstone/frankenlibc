@@ -57,7 +57,7 @@
         "stage_tls_cache_hit": 7.885,
         "stage_bloom_hit": 9.174,
         "stage_arena_lookup": 10.258,
-        "stage_fingerprint_verify": 13.930,
+        "stage_fingerprint_verify": 13.93,
         "stage_canary_verify": 0.507,
         "stage_bounds_check": 0.611,
         "validate_null": 4274.183,
@@ -66,7 +66,7 @@
       },
       "hardened": {
         "stage_null_check": 0.392,
-        "stage_tls_cache_hit": 5.370,
+        "stage_tls_cache_hit": 5.37,
         "stage_bloom_hit": 9.985,
         "stage_arena_lookup": 17.491,
         "stage_fingerprint_verify": 14.382,
@@ -82,7 +82,7 @@
         "memcpy_16": 3.843,
         "memcpy_64": 3.447,
         "memcpy_256": 3.831,
-        "memcpy_1024": 11.400,
+        "memcpy_1024": 11.4,
         "memcpy_4096": 37.262,
         "memcpy_65536": 1069.142,
         "strlen_16": 7.226,
@@ -102,10 +102,10 @@
     "malloc": {
       "strict": {
         "alloc_free_cycle": 37.627,
-        "alloc_burst": 23781.500
+        "alloc_burst": 23781.5
       },
       "hardened": {
-        "alloc_free_cycle": 37.350,
+        "alloc_free_cycle": 37.35,
         "alloc_burst": 24760.258
       }
     },

@@ -9,12 +9,7 @@
     {
       "artifact_id": "reverse_round_report",
       "path": "tests/conformance/reverse_round_contracts.v1.json",
-      "required_needles": [
-        "\"round_results\"",
-        "\"golden_output\"",
-        "\"R7\"",
-        "\"R11\""
-      ]
+      "required_needles": ["\"round_results\"", "\"golden_output\"", "\"R7\"", "\"R11\""]
     },
     {
       "artifact_id": "reverse_round_generator",
@@ -46,13 +41,7 @@
     }
   ],
   "round_scope": {
-    "required_rounds": [
-      "R7",
-      "R8",
-      "R9",
-      "R10",
-      "R11"
-    ],
+    "required_rounds": ["R7", "R8", "R9", "R10", "R11"],
     "minimum_math_families_per_round": 4,
     "minimum_math_classes_per_round": 3,
     "required_round_fields": [
@@ -122,10 +111,7 @@
     "bead": "bd-2a2.4.1",
     "original_bead": "bd-2a2.4",
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.golden.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.golden.primary"],
     "required_events": [
       "reverse_round_unit_source",
       "reverse_round_unit_round",

@@ -124,9 +124,7 @@
     "required_unit_test_groups": [
       {
         "path": "crates/frankenlibc-core/src/resource/mod.rs",
-        "tests": [
-          "test_valid_resource"
-        ],
+        "tests": ["test_valid_resource"],
         "required_terms": [
           "RLIMIT_RSS",
           "RLIMIT_NPROC",
@@ -164,9 +162,7 @@
       },
       {
         "path": "crates/frankenlibc-abi/tests/conformance_diff_prlimit.rs",
-        "tests": [
-          "diff_prlimit_query_self"
-        ],
+        "tests": ["diff_prlimit_query_self"],
         "required_terms": [
           "RLIMIT_RSS",
           "RLIMIT_NPROC",

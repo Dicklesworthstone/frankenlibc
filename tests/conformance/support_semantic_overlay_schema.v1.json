@@ -51,10 +51,7 @@
     "unsupported_platform_contract",
     "proof_gap"
   ],
-  "extra_support_statuses": [
-    "not_symbol_level",
-    "mixed_or_not_listed_by_exact_name"
-  ],
+  "extra_support_statuses": ["not_symbol_level", "mixed_or_not_listed_by_exact_name"],
   "allowed_oracle_kinds": [
     "host_glibc_fixture",
     "posix_linux_contract",
@@ -70,14 +67,9 @@
     "unsupported_platform_contract": "unsupported_platform_contract",
     "proof_gap": "intentional_safe_divergence"
   },
-  "runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "runtime_modes": ["strict", "hardened"],
   "default_replacement_level": "L0",
-  "blocked_semantic_replacement_levels": [
-    "L0"
-  ],
+  "blocked_semantic_replacement_levels": ["L0"],
   "standalone_claim_guard_contract": {
     "required_guard_fields": [
       "purpose",
@@ -87,14 +79,8 @@
       "failure_signature",
       "user_visible_claim"
     ],
-    "required_row_ids": [
-      "sem-nss-files-plugin",
-      "sem-nss-configure-lookup"
-    ],
-    "required_blocked_replacement_levels": [
-      "L2",
-      "L3"
-    ],
+    "required_row_ids": ["sem-nss-files-plugin", "sem-nss-configure-lookup"],
+    "required_blocked_replacement_levels": ["L2", "L3"],
     "required_evidence_artifacts": [
       "tests/conformance/resolver_nss_hard_parts.v1.json",
       "tests/conformance/hermetic_nss_resolver_lab.v1.json",

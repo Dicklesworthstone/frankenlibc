@@ -22,18 +22,10 @@
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-yos/scorecard.md",
     "audit_score": 470,
     "next_audit_score_threshold": 800,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
   },
   "pthread_bootstrap_surface": {
-    "required_symbols": [
-      "pthread_create",
-      "pthread_join",
-      "pthread_detach"
-    ],
+    "required_symbols": ["pthread_create", "pthread_join", "pthread_detach"],
     "required_behaviors": [
       "create_join_return_value",
       "detach_consumes_handle",
@@ -53,10 +45,7 @@
         "mixed_detach_join",
         "c_fixture_pthread_common_adversarial"
       ],
-      "required_modes": [
-        "strict",
-        "hardened"
-      ]
+      "required_modes": ["strict", "hardened"]
     }
   },
   "completion_debt_evidence": {
@@ -88,30 +77,22 @@
         {
           "artifact": "abi_lifecycle_test",
           "name": "pthread_join_and_detach_unknown_thread_are_esrch",
-          "covers": [
-            "unknown handles fail closed with ESRCH"
-          ]
+          "covers": ["unknown handles fail closed with ESRCH"]
         },
         {
           "artifact": "abi_lifecycle_test",
           "name": "pthread_detach_makes_subsequent_join_fail_with_esrch",
-          "covers": [
-            "pthread_detach consumes the live handle"
-          ]
+          "covers": ["pthread_detach consumes the live handle"]
         },
         {
           "artifact": "abi_lifecycle_test",
           "name": "pthread_join_then_reuse_handle_is_esrch",
-          "covers": [
-            "pthread_join consumes the live handle"
-          ]
+          "covers": ["pthread_join consumes the live handle"]
         },
         {
           "artifact": "abi_lifecycle_test",
           "name": "pthread_self_join_is_rejected_with_edeadlk",
-          "covers": [
-            "self-join deadlock rejection"
-          ]
+          "covers": ["self-join deadlock rejection"]
         }
       ],
       "required_commands": [
@@ -126,44 +107,32 @@
         {
           "artifact": "harness_conformance_test",
           "name": "pthread_thread_covers_create",
-          "covers": [
-            "fixture has create cases"
-          ]
+          "covers": ["fixture has create cases"]
         },
         {
           "artifact": "harness_conformance_test",
           "name": "pthread_thread_covers_join",
-          "covers": [
-            "fixture has join cases"
-          ]
+          "covers": ["fixture has join cases"]
         },
         {
           "artifact": "harness_conformance_test",
           "name": "pthread_thread_covers_detach",
-          "covers": [
-            "fixture has detach cases"
-          ]
+          "covers": ["fixture has detach cases"]
         },
         {
           "artifact": "harness_conformance_test",
           "name": "pthread_thread_function_distribution",
-          "covers": [
-            "fixture preserves create/join/detach distribution"
-          ]
+          "covers": ["fixture preserves create/join/detach distribution"]
         },
         {
           "artifact": "harness_conformance_test",
           "name": "pthread_thread_error_codes_valid",
-          "covers": [
-            "fixture errno values are bounded to POSIX/Linux thread outcomes"
-          ]
+          "covers": ["fixture errno values are bounded to POSIX/Linux thread outcomes"]
         },
         {
           "artifact": "stress_artifacts_test",
           "name": "thread_stress_gate_emits_valid_bd1f35_artifacts",
-          "covers": [
-            "strict+hardened stress gate telemetry remains replayable"
-          ]
+          "covers": ["strict+hardened stress gate telemetry remains replayable"]
         }
       ],
       "required_commands": [
@@ -179,23 +148,17 @@
         {
           "artifact": "completion_test",
           "name": "checker_validates_contract_and_emits_report_log",
-          "covers": [
-            "completion checker emits deterministic report and JSONL events"
-          ]
+          "covers": ["completion checker emits deterministic report and JSONL events"]
         },
         {
           "artifact": "completion_test",
           "name": "checker_rejects_missing_required_symbol",
-          "covers": [
-            "checker fails closed when a required symbol binding is removed"
-          ]
+          "covers": ["checker fails closed when a required symbol binding is removed"]
         },
         {
           "artifact": "completion_test",
           "name": "checker_rejects_missing_unit_ref",
-          "covers": [
-            "checker fails closed when unit evidence is removed"
-          ]
+          "covers": ["checker fails closed when unit evidence is removed"]
         }
       ],
       "required_events": [

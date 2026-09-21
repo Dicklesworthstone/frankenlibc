@@ -58,16 +58,8 @@
   "symbol_logging_contract": {
     "runtime_event": "runtime_decision",
     "minimum_sample_rows": 2,
-    "required_symbols": [
-      "malloc",
-      "free"
-    ],
-    "decision_action_vocabulary": [
-      "Allow",
-      "FullValidate",
-      "Repair",
-      "Deny"
-    ],
+    "required_symbols": ["malloc", "free"],
+    "decision_action_vocabulary": ["Allow", "FullValidate", "Repair", "Deny"],
     "required_runtime_decision_fields": [
       "timestamp",
       "trace_id",
@@ -84,10 +76,7 @@
       "decision_action",
       "risk_inputs"
     ],
-    "required_risk_input_fields": [
-      "requested_bytes",
-      "bloom_negative"
-    ],
+    "required_risk_input_fields": ["requested_bytes", "bloom_negative"],
     "expected_controller_id": "runtime_math_kernel.v1"
   },
   "sample_runtime_decision_rows": [
@@ -140,13 +129,7 @@
       "symbol_logging_telemetry_gate",
       "symbol_logging_completion_contract_validated"
     ],
-    "required_log_fields": [
-      "timestamp",
-      "trace_id",
-      "event",
-      "status",
-      "artifact_refs"
-    ]
+    "required_log_fields": ["timestamp", "trace_id", "event", "status", "artifact_refs"]
   },
   "validation_commands": [
     "bash scripts/check_symbol_logging_completion_contract.sh",

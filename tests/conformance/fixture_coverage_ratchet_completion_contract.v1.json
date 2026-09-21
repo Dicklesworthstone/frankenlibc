@@ -24,10 +24,7 @@
       "fortify_abi",
       "stdio_abi"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_proof_classes": [
       "documented_downgrade_required",
       "documented_no_fixture_rationale",

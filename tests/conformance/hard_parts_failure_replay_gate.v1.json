@@ -8,10 +8,7 @@
     "required_source_commit": "current",
     "source_commit_policy": "gate must compare this marker to git rev-parse HEAD and fail stale artifacts when pinned to any other commit"
   },
-  "supported_architectures": [
-    "x86_64",
-    "aarch64"
-  ],
+  "supported_architectures": ["x86_64", "aarch64"],
   "sources": {
     "hard_parts_truth_table": "tests/conformance/hard_parts_truth_table.v1.json",
     "hard_parts_e2e_catalog": "tests/conformance/hard_parts_e2e_catalog.v1.json",
@@ -57,17 +54,8 @@
       "direct_runner",
       "isolated_runner"
     ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ],
-    "expected_required_fields": [
-      "outcome",
-      "errno",
-      "status",
-      "decision_path"
-    ]
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"],
+    "expected_required_fields": ["outcome", "errno", "status", "decision_path"]
   },
   "required_failure_families": [
     "resolver_nss",
@@ -131,10 +119,7 @@
         "nsswitch_conf": "hosts: files dns",
         "network_state": "loopback_only"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "environment_probe",
       "expected": {
@@ -185,10 +170,7 @@
         "GCONV_PATH": "unset",
         "codec_state": "stateful_invalid_sequence"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": {
@@ -239,10 +221,7 @@
         "LD_AUDIT": "unset",
         "symbol_version": "GLIBC_PRIVATE"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L1",
       "oracle_kind": "frankenlibc_contract",
       "expected": {
@@ -293,10 +272,7 @@
         "stdio_buffering": "line_buffered",
         "pipe_peer": "closed_before_flush"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "posix_text",
       "expected": {
@@ -347,10 +323,7 @@
         "cancelability": "deferred",
         "scheduler": "bounded_join_timeout"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "posix_text",
       "expected": {
@@ -401,10 +374,7 @@
         "fenv_access": "on",
         "exception_flags": "FE_INVALID|FE_DIVBYZERO"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": {
@@ -455,10 +425,7 @@
         "handler": "sigsetjmp_guarded",
         "alternate_stack": "disabled"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "hardened_safety_policy",
       "expected": {
@@ -501,10 +468,7 @@
   "summary": {
     "scenario_count": 7,
     "required_family_count": 7,
-    "runner_kinds": [
-      "direct",
-      "isolated"
-    ],
+    "runner_kinds": ["direct", "isolated"],
     "known_tracker_limitations": [
       "bd-bp8fl.2.8 remains the tracker-repair follow-up for wiring bd-bp8fl.5.3 through bd-bp8fl.5.8 to this replay gate after exact-ID dependency writes are repaired"
     ]

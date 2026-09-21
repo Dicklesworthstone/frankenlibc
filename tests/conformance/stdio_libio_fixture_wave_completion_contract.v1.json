@@ -142,17 +142,8 @@
       "_IO_peekc_locked",
       "_IO_putc"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
     "forbidden_ambient_output_tokens": [
       "0x",
       "fd=",
@@ -236,9 +227,7 @@
         "tests/conformance/fixtures/stdio_libio_symbols.json",
         "crates/frankenlibc_conformance/src/lib.rs"
       ],
-      "test_refs": [
-        "crates/frankenlibc-harness/tests/stdio_libio_symbols_conformance_test.rs"
-      ],
+      "test_refs": ["crates/frankenlibc-harness/tests/stdio_libio_symbols_conformance_test.rs"],
       "runtime_validation": [
         "RCH_FORCE_REMOTE=true RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- env CARGO_TARGET_DIR=/tmp/rch_target_frankenlibc_browntern_stdio_libio_symbols cargo test -p frankenlibc-harness --test stdio_libio_symbols_conformance_test -- --nocapture"
       ]
@@ -252,9 +241,7 @@
       "test_refs": [
         "crates/frankenlibc-harness/tests/stdio_libio_fixture_wave_completion_contract_test.rs"
       ],
-      "runtime_validation": [
-        "bash scripts/check_stdio_libio_fixture_wave_completion_contract.sh"
-      ]
+      "runtime_validation": ["bash scripts/check_stdio_libio_fixture_wave_completion_contract.sh"]
     }
   ]
 }

@@ -7,10 +7,7 @@
   "purpose": "Pin the harness binary `traceability` subcommand that transforms the bd-2tq.4 POSIX obligation report inputs into paired markdown and JSON TraceabilityMatrix artifacts. The command must read support_matrix.json, fixture JSON, conformance_matrix.v1.json, and c_fixture_spec.json; build PosixObligationMatrixReport; convert it with TraceabilityMatrix::from_posix_obligation_report; create output parent directories; write markdown and pretty JSON; keep artifact references repo-relative; and fail closed for missing required inputs.",
   "subcommand_name": "traceability",
   "binary_target": "harness",
-  "required_flags": [
-    "--output-md",
-    "--output-json"
-  ],
+  "required_flags": ["--output-md", "--output-json"],
   "optional_flags": [],
   "default_inputs": {
     "support_matrix": "support_matrix.json",

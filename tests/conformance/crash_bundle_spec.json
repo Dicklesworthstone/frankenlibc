@@ -175,7 +175,14 @@
       {
         "script": "scripts/ld_preload_smoke.sh",
         "status": "partial",
-        "captures": ["bundle.meta", "env.txt", "proc_self_maps.txt", "command.shline", "stdout.txt", "stderr.txt"],
+        "captures": [
+          "bundle.meta",
+          "env.txt",
+          "proc_self_maps.txt",
+          "command.shline",
+          "stdout.txt",
+          "stderr.txt"
+        ],
         "missing": ["backtrace.txt", "evidence_snapshot.jsonl", "allocator_stats.json"],
         "note": "Existing record_failure_bundle() captures 6/9 required artifacts. Needs RUST_BACKTRACE=1 env and evidence/allocator stubs."
       },
@@ -183,7 +190,15 @@
         "script": "scripts/c_fixture_suite.sh",
         "status": "partial",
         "captures": ["stdout.txt", "stderr.txt"],
-        "missing": ["bundle.meta", "env.txt", "proc_self_maps.txt", "backtrace.txt", "evidence_snapshot.jsonl", "allocator_stats.json", "command.shline"],
+        "missing": [
+          "bundle.meta",
+          "env.txt",
+          "proc_self_maps.txt",
+          "backtrace.txt",
+          "evidence_snapshot.jsonl",
+          "allocator_stats.json",
+          "command.shline"
+        ],
         "note": "Currently captures only stdout/stderr. Needs full bundle emission on failure."
       }
     ],

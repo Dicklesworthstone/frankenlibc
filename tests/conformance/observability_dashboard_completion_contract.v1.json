@@ -11,11 +11,7 @@
     "spec_path": "beads_compliance_audit/passes/2026-05-10T-pass3-cumulative-patches/beads/bd-282v/spec.json",
     "score_before": 680,
     "score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"]
   },
   "runtime_target": {
     "max_seconds": 30,
@@ -137,9 +133,7 @@
       "binding_id": "unit_primary",
       "missing_item_id": "tests.unit.primary",
       "description": "Library-level tests prove the seeded exporter path and allocator JSONL metrics snapshot used by the dashboard without invoking the harness binary.",
-      "required_artifact_ids": [
-        "dashboard_unit_test"
-      ],
+      "required_artifact_ids": ["dashboard_unit_test"],
       "required_test_refs": [
         {
           "source_artifact_id": "dashboard_unit_test",
@@ -154,10 +148,7 @@
       "binding_id": "e2e_primary",
       "missing_item_id": "tests.e2e.primary",
       "description": "Harness CLI e2e coverage runs observability-capture, writes the raw JSONL inputs, and verifies every rendered dashboard output format.",
-      "required_artifact_ids": [
-        "cli_capture_command",
-        "dashboard_e2e_test"
-      ],
+      "required_artifact_ids": ["cli_capture_command", "dashboard_e2e_test"],
       "required_test_refs": [
         {
           "source_artifact_id": "dashboard_e2e_test",

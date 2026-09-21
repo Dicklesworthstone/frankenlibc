@@ -79,19 +79,8 @@
       "required_rounds": {
         "R7": {
           "name": "Loader / Symbol / IFUNC",
-          "legacy_surfaces": [
-            "elf",
-            "dl-*",
-            "IFUNC",
-            "hwcaps",
-            "tunables"
-          ],
-          "math_families": [
-            "ktheory",
-            "regret_bounds",
-            "sheaf_cohomology",
-            "tropical"
-          ],
+          "legacy_surfaces": ["elf", "dl-*", "IFUNC", "hwcaps", "tunables"],
+          "math_families": ["ktheory", "regret_bounds", "sheaf_cohomology", "tropical"],
           "verification_paths": [
             "scripts/check_reverse_round_contracts.sh",
             "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
@@ -100,18 +89,8 @@
         },
         "R8": {
           "name": "Allocator / nptl",
-          "legacy_surfaces": [
-            "malloc",
-            "nptl",
-            "futex",
-            "pthread"
-          ],
-          "math_families": [
-            "coupling",
-            "mean_field_game",
-            "rough_path",
-            "sos_barrier"
-          ],
+          "legacy_surfaces": ["malloc", "nptl", "futex", "pthread"],
+          "math_families": ["coupling", "mean_field_game", "rough_path", "sos_barrier"],
           "verification_paths": [
             "scripts/check_reverse_round_contracts.sh",
             "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
@@ -122,19 +101,8 @@
         },
         "R9": {
           "name": "Format / Locale",
-          "legacy_surfaces": [
-            "stdio-common",
-            "libio",
-            "locale",
-            "iconv",
-            "wcsmbs"
-          ],
-          "math_families": [
-            "conformal",
-            "eprocess",
-            "grobner",
-            "higher_topos"
-          ],
+          "legacy_surfaces": ["stdio-common", "libio", "locale", "iconv", "wcsmbs"],
+          "math_families": ["conformal", "eprocess", "grobner", "higher_topos"],
           "verification_paths": [
             "scripts/check_reverse_round_contracts.sh",
             "crates/frankenlibc-harness/tests/stdio_phase_strategy_test.rs",
@@ -144,18 +112,8 @@
         },
         "R10": {
           "name": "NSS / resolv",
-          "legacy_surfaces": [
-            "nss",
-            "resolv",
-            "nscd",
-            "sunrpc"
-          ],
-          "math_families": [
-            "changepoint",
-            "pomdp",
-            "serre_spectral",
-            "wasserstein"
-          ],
+          "legacy_surfaces": ["nss", "resolv", "nscd", "sunrpc"],
+          "math_families": ["changepoint", "pomdp", "serre_spectral", "wasserstein"],
           "verification_paths": [
             "scripts/check_reverse_round_contracts.sh",
             "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
@@ -166,18 +124,8 @@
         },
         "R11": {
           "name": "libm / fenv",
-          "legacy_surfaces": [
-            "math",
-            "soft-fp",
-            "ieee754",
-            "fenv"
-          ],
-          "math_families": [
-            "clifford",
-            "design",
-            "loss_minimizer",
-            "padic"
-          ],
+          "legacy_surfaces": ["math", "soft-fp", "ieee754", "fenv"],
+          "math_families": ["clifford", "design", "loss_minimizer", "padic"],
           "verification_paths": [
             "scripts/check_reverse_round_contracts.sh",
             "crates/frankenlibc-harness/tests/reverse_round_contracts_test.rs",
@@ -203,10 +151,7 @@
         "loader_resolver",
         "loader_time64_bridge"
       ],
-      "required_milestones": [
-        "bootstrap_surface",
-        "loader_temporal_policy_surface"
-      ]
+      "required_milestones": ["bootstrap_surface", "loader_temporal_policy_surface"]
     },
     "implementation_refs": [
       {

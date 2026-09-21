@@ -8,13 +8,7 @@
   "subcommand_name": "verify-membrane",
   "binary_target": "harness",
   "required_flags": ["--library", "--probe"],
-  "optional_flags": [
-    "--mode",
-    "--output",
-    "--log",
-    "--campaign",
-    "--fail-on-mismatch"
-  ],
+  "optional_flags": ["--mode", "--output", "--log", "--campaign", "--fail-on-mismatch"],
   "underlying_lib_functions": [
     "frankenlibc_harness::healing_oracle::HealingOracleMode::from_str_loose",
     "frankenlibc_harness::healing_oracle::HealingOracleSuite::canonical",
@@ -67,11 +61,7 @@
       "exit_code"
     ]
   },
-  "mode_enum": [
-    "strict",
-    "hardened",
-    "both"
-  ],
+  "mode_enum": ["strict", "hardened", "both"],
   "default_mode": "both",
   "default_output_path": "target/conformance/healing_oracle.current.v1.json",
   "default_log_path": "target/conformance/healing_oracle.log.jsonl",

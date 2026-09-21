@@ -54,12 +54,7 @@
       "required_manifest_id": "bd-b5a.1-e2e-scenario-catalog",
       "required_schema_version": "v1",
       "total_scenario_min": 19,
-      "required_classes": [
-        "smoke",
-        "stress",
-        "fault",
-        "stability"
-      ],
+      "required_classes": ["smoke", "stress", "fault", "stability"],
       "class_minimums": {
         "smoke": 13,
         "stress": 2,
@@ -90,15 +85,8 @@
         "artifact_policy",
         "replay"
       ],
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
-      "required_expectation_keys": [
-        "expected_outcome",
-        "pass_condition",
-        "allowed_exit_codes"
-      ],
+      "required_modes": ["strict", "hardened"],
+      "required_expectation_keys": ["expected_outcome", "pass_condition", "allowed_exit_codes"],
       "required_artifact_policy_keys": [
         "capture_stdout",
         "capture_stderr",
@@ -106,11 +94,7 @@
         "capture_bundle_on_failure",
         "required_artifacts"
       ],
-      "required_replay_keys": [
-        "seed_key",
-        "env_keys",
-        "deterministic_inputs"
-      ],
+      "required_replay_keys": ["seed_key", "env_keys", "deterministic_inputs"],
       "replay_defaults": {
         "seed_key": "FRANKENLIBC_E2E_SEED",
         "required_env_keys": [
@@ -124,11 +108,7 @@
     },
     "validator_contract": {
       "source": "manifest_validator",
-      "required_commands": [
-        "validate",
-        "list",
-        "metadata"
-      ],
+      "required_commands": ["validate", "list", "metadata"],
       "required_tokens": [
         "ALLOWED_CLASSES = {\"smoke\", \"stress\", \"fault\", \"stability\"}",
         "REQUIRED_ROOT_KEYS",

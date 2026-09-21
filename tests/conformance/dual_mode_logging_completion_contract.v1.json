@@ -145,13 +145,7 @@
     }
   ],
   "logging_contract": {
-    "required_levels": [
-      "trace",
-      "debug",
-      "info",
-      "warn",
-      "error"
-    ],
+    "required_levels": ["trace", "debug", "info", "warn", "error"],
     "required_events": [
       "runtime_mode_startup_selection",
       "runtime_mode_switch_attempt",

@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary `explainability-workbench` subcommand that joins structured log rows with optional artifact-index metadata and renders an operator-facing explainability report.",
   "subcommand_name": "explainability-workbench",
   "binary_target": "harness",
-  "required_flags": [
-    "--log"
-  ],
+  "required_flags": ["--log"],
   "optional_flags": [
     "--artifact-index",
     "--trace-id",
@@ -27,32 +25,14 @@
   "input_contract": {
     "structured_log_schema": "structured_log::LogEntry JSONL",
     "artifact_index_schema": "structured_log::ArtifactIndex JSON",
-    "filters": [
-      "trace_id",
-      "scenario_id"
-    ]
+    "filters": ["trace_id", "scenario_id"]
   },
   "output_contract": {
-    "supported_formats": [
-      "json",
-      "plain",
-      "ftui"
-    ],
+    "supported_formats": ["json", "plain", "ftui"],
     "default_format": "json",
-    "json_required_fields": [
-      "bead",
-      "scenarios",
-      "tooling_contract"
-    ],
-    "scenario_required_fields": [
-      "scenario_id",
-      "mode_divergence",
-      "artifact_links"
-    ],
-    "plain_output_must_include": [
-      "Scenario",
-      "Mode divergence"
-    ],
+    "json_required_fields": ["bead", "scenarios", "tooling_contract"],
+    "scenario_required_fields": ["scenario_id", "mode_divergence", "artifact_links"],
+    "plain_output_must_include": ["Scenario", "Mode divergence"],
     "unknown_format_fails_closed": true
   },
   "policy": {

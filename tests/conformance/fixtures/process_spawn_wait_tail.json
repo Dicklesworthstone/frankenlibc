@@ -10,19 +10,10 @@
     "wave_id": "wave-03-process-spawn-wait-tail",
     "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "ambient_state_policy": "forbid_ambient_pid_uid_gid_fd_path_argv_envp_resource_status_or_timing_capture",
-    "first_wave_symbols": [
-      "wait4",
-      "waitid"
-    ],
+    "first_wave_symbols": ["wait4", "waitid"],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "wait4_child_status_rusage_strict",

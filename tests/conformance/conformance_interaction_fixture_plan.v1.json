@@ -16,8 +16,8 @@
     "failure_signature"
   ],
   "scheduler_inputs": {
-      "symbols": [
-        "fts_open",
+    "symbols": [
+      "fts_open",
       "stdin",
       "stdout",
       "__ctype_init",
@@ -28,10 +28,7 @@
       "pthread_kill",
       "__dn_expand"
     ],
-    "modes": [
-      "strict",
-      "hardened"
-    ],
+    "modes": ["strict", "hardened"],
     "locale_env_thread_state": [
       "c_posix_single_thread",
       "c_posix_multi_thread",
@@ -49,10 +46,7 @@
       "dns_negative",
       "invalid_encoding"
     ],
-    "replacement_levels": [
-      "L0",
-      "L1"
-    ],
+    "replacement_levels": ["L0", "L1"],
     "risk_weights": {
       "semantic_divergence": 9,
       "hard_parts": 8,
@@ -257,16 +251,7 @@
       "reason": "Kept as a visible blocked internal-compat interaction until standalone loader evidence is available."
     }
   ],
-  "selected_plan": [
-    "ca-001",
-    "ca-002",
-    "ca-003",
-    "ca-004",
-    "ca-005",
-    "ca-006",
-    "ca-007",
-    "ca-008"
-  ],
+  "selected_plan": ["ca-001", "ca-002", "ca-003", "ca-004", "ca-005", "ca-006", "ca-007", "ca-008"],
   "blocked_combinations": [
     {
       "candidate_id": "ca-009",
@@ -289,134 +274,54 @@
   ],
   "required_pairwise_interactions": [
     {
-      "axes": [
-        "symbol_family",
-        "runtime_mode"
-      ],
-      "values": [
-        "unistd_process",
-        "hardened"
-      ]
+      "axes": ["symbol_family", "runtime_mode"],
+      "values": ["unistd_process", "hardened"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "runtime_mode"
-      ],
-      "values": [
-        "stdio_libio",
-        "strict"
-      ]
+      "axes": ["symbol_family", "runtime_mode"],
+      "values": ["stdio_libio", "strict"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "runtime_mode"
-      ],
-      "values": [
-        "stdio_libio",
-        "hardened"
-      ]
+      "axes": ["symbol_family", "runtime_mode"],
+      "values": ["stdio_libio", "hardened"]
     },
     {
-      "axes": [
-        "runtime_mode",
-        "replacement_level"
-      ],
-      "values": [
-        "strict",
-        "L1"
-      ]
+      "axes": ["runtime_mode", "replacement_level"],
+      "values": ["strict", "L1"]
     },
     {
-      "axes": [
-        "locale_env_thread_state",
-        "invalid_input_class"
-      ],
-      "values": [
-        "c_locale_multi_thread",
-        "stdio_error_state"
-      ]
+      "axes": ["locale_env_thread_state", "invalid_input_class"],
+      "values": ["c_locale_multi_thread", "stdio_error_state"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "invalid_input_class"
-      ],
-      "values": [
-        "rpc_legacy",
-        "dns_negative"
-      ]
+      "axes": ["symbol_family", "invalid_input_class"],
+      "values": ["rpc_legacy", "dns_negative"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "invalid_input_class"
-      ],
-      "values": [
-        "locale_iconv",
-        "invalid_encoding"
-      ]
+      "axes": ["symbol_family", "invalid_input_class"],
+      "values": ["locale_iconv", "invalid_encoding"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "replacement_level"
-      ],
-      "values": [
-        "filesystem_metadata",
-        "L0"
-      ]
+      "axes": ["symbol_family", "replacement_level"],
+      "values": ["filesystem_metadata", "L0"]
     }
   ],
   "required_twise_interactions": [
     {
-      "axes": [
-        "symbol_family",
-        "runtime_mode",
-        "invalid_input_class"
-      ],
-      "values": [
-        "unistd_process",
-        "hardened",
-        "invalid_pointer"
-      ]
+      "axes": ["symbol_family", "runtime_mode", "invalid_input_class"],
+      "values": ["unistd_process", "hardened", "invalid_pointer"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "locale_env_thread_state",
-        "runtime_mode"
-      ],
-      "values": [
-        "stdio_libio",
-        "c_locale_multi_thread",
-        "hardened"
-      ]
+      "axes": ["symbol_family", "locale_env_thread_state", "runtime_mode"],
+      "values": ["stdio_libio", "c_locale_multi_thread", "hardened"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "invalid_input_class",
-        "replacement_level"
-      ],
-      "values": [
-        "glibc_internal",
-        "symbol_version_failure",
-        "L1"
-      ]
+      "axes": ["symbol_family", "invalid_input_class", "replacement_level"],
+      "values": ["glibc_internal", "symbol_version_failure", "L1"]
     },
     {
-      "axes": [
-        "symbol_family",
-        "invalid_input_class",
-        "runtime_mode"
-      ],
-      "values": [
-        "pthread_sync",
-        "cancellation_race",
-        "strict"
-      ]
+      "axes": ["symbol_family", "invalid_input_class", "runtime_mode"],
+      "values": ["pthread_sync", "cancellation_race", "strict"]
     }
   ],
   "follow_up_fixture_beads": [

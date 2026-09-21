@@ -7,15 +7,8 @@
     "required_remote_env": "RCH_REQUIRE_REMOTE=1",
     "required_launcher": "rch exec -- env",
     "required_target_dir_env": "CARGO_TARGET_DIR=",
-    "protected_subcommands": [
-      "build",
-      "check",
-      "clippy",
-      "test"
-    ],
-    "allowed_local_cargo_subcommands": [
-      "fmt"
-    ]
+    "protected_subcommands": ["build", "check", "clippy", "test"],
+    "allowed_local_cargo_subcommands": ["fmt"]
   },
   "negative_controls": [
     {

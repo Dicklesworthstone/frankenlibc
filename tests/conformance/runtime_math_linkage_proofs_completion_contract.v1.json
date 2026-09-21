@@ -21,9 +21,7 @@
     "original_bead": "bd-7dw2",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-7dw2/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.integration.primary"
-    ]
+    "missing_items_closed": ["tests.integration.primary"]
   },
   "completion_debt_evidence": {
     "integration_primary": {
@@ -31,10 +29,7 @@
         {
           "artifact": "linkage_proofs_test",
           "name": "gate_script_exists_and_executable",
-          "covers": [
-            "gate script presence",
-            "gate script executable mode"
-          ]
+          "covers": ["gate script presence", "gate script executable mode"]
         },
         {
           "artifact": "linkage_proofs_test",
@@ -76,11 +71,7 @@
       "summary",
       "modules"
     ],
-    "required_summary_fields": [
-      "total_modules",
-      "passed",
-      "failed"
-    ],
+    "required_summary_fields": ["total_modules", "passed", "failed"],
     "required_module_fields": [
       "module",
       "linkage_status",
@@ -121,13 +112,8 @@
         "runtime_math.linkage_proof.step",
         "runtime_math.linkage_proof.boundary_assumption"
       ],
-      "harness_cli": [
-        "RuntimeMathLinkageProofs",
-        "runtime_math_linkage_proofs::run_and_write"
-      ],
-      "ci_script": [
-        "scripts/check_runtime_math_linkage_proofs.sh"
-      ],
+      "harness_cli": ["RuntimeMathLinkageProofs", "runtime_math_linkage_proofs::run_and_write"],
+      "ci_script": ["scripts/check_runtime_math_linkage_proofs.sh"],
       "required_module_gate": [
         "runtime_math_linkage_proofs",
         "production module decision-law proof rows",

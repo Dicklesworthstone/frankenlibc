@@ -15,37 +15,88 @@
     "--c4-numeric",
     "--c5-admissibility"
   ],
-  "required_flags": [
-    "--output"
-  ],
+  "required_flags": ["--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::grobner::canonical_class_from_support",
-  "underlying_lib_functions": [
-    "frankenlibc_membrane::grobner::canonical_class_from_support"
-  ],
+  "underlying_lib_functions": ["frankenlibc_membrane::grobner::canonical_class_from_support"],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "canonical_class_from_support",
-    "required_fields": [
-      "kind",
-      "active",
-      "class_id",
-      "class_label"
-    ]
+    "required_fields": ["kind", "active", "class_id", "class_label"]
   },
   "expected_class_table": [
-    {"case": "none", "active": [false, false, false, false, false, false], "class_id": 0, "class_label": "none"},
-    {"case": "temporal", "active": [true, false, false, false, false, false], "class_id": 1, "class_label": "temporal"},
-    {"case": "congestion", "active": [false, true, false, false, false, false], "class_id": 2, "class_label": "congestion"},
-    {"case": "topological", "active": [false, false, true, false, false, false], "class_id": 3, "class_label": "topological"},
-    {"case": "regime", "active": [false, false, false, true, false, false], "class_id": 4, "class_label": "regime"},
-    {"case": "numeric", "active": [false, false, false, false, true, false], "class_id": 5, "class_label": "numeric"},
-    {"case": "admissibility", "active": [false, false, false, false, false, true], "class_id": 6, "class_label": "admissibility"},
-    {"case": "temporal_regime_reduces_to_regime", "active": [true, false, false, true, false, false], "class_id": 4, "class_label": "regime"},
-    {"case": "congestion_numeric_reduces_to_congestion", "active": [false, true, false, false, true, false], "class_id": 2, "class_label": "congestion"},
-    {"case": "topological_admissibility_reduces_to_admissibility", "active": [false, false, true, false, false, true], "class_id": 6, "class_label": "admissibility"},
-    {"case": "unreduced_pair_is_compound", "active": [true, true, false, false, false, false], "class_id": 7, "class_label": "compound"},
-    {"case": "full_support_is_compound", "active": [true, true, true, true, true, true], "class_id": 7, "class_label": "compound"}
+    {
+      "case": "none",
+      "active": [false, false, false, false, false, false],
+      "class_id": 0,
+      "class_label": "none"
+    },
+    {
+      "case": "temporal",
+      "active": [true, false, false, false, false, false],
+      "class_id": 1,
+      "class_label": "temporal"
+    },
+    {
+      "case": "congestion",
+      "active": [false, true, false, false, false, false],
+      "class_id": 2,
+      "class_label": "congestion"
+    },
+    {
+      "case": "topological",
+      "active": [false, false, true, false, false, false],
+      "class_id": 3,
+      "class_label": "topological"
+    },
+    {
+      "case": "regime",
+      "active": [false, false, false, true, false, false],
+      "class_id": 4,
+      "class_label": "regime"
+    },
+    {
+      "case": "numeric",
+      "active": [false, false, false, false, true, false],
+      "class_id": 5,
+      "class_label": "numeric"
+    },
+    {
+      "case": "admissibility",
+      "active": [false, false, false, false, false, true],
+      "class_id": 6,
+      "class_label": "admissibility"
+    },
+    {
+      "case": "temporal_regime_reduces_to_regime",
+      "active": [true, false, false, true, false, false],
+      "class_id": 4,
+      "class_label": "regime"
+    },
+    {
+      "case": "congestion_numeric_reduces_to_congestion",
+      "active": [false, true, false, false, true, false],
+      "class_id": 2,
+      "class_label": "congestion"
+    },
+    {
+      "case": "topological_admissibility_reduces_to_admissibility",
+      "active": [false, false, true, false, false, true],
+      "class_id": 6,
+      "class_label": "admissibility"
+    },
+    {
+      "case": "unreduced_pair_is_compound",
+      "active": [true, true, false, false, false, false],
+      "class_id": 7,
+      "class_label": "compound"
+    },
+    {
+      "case": "full_support_is_compound",
+      "active": [true, true, true, true, true, true],
+      "class_id": 7,
+      "class_label": "compound"
+    }
   ],
   "policy": {
     "must_emit_exactly_one_jsonl_record": true,

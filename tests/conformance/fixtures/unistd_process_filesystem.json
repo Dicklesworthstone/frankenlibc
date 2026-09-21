@@ -26,13 +26,7 @@
     "ambient_state_policy": "forbid_exact_process_or_filesystem_metadata",
     "oracle_source": "FrankenLibC deterministic behavior classes executed through the conformance-matrix-case harness"
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "capital_exit_status_42_strict",

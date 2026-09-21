@@ -1,10 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-fp4tm.3",
-  "source_beads": [
-    "bd-b92jd.3.2",
-    "bd-3rw.5.1"
-  ],
+  "source_beads": ["bd-b92jd.3.2", "bd-3rw.5.1"],
   "generated_at_utc": "2026-05-08T04:55:00Z",
   "purpose": "Define the fail-closed contract for converting workload replay and LD_PRELOAD smoke failure rows into compact reproducible artifacts.",
   "inputs": {
@@ -228,9 +225,7 @@
       "default_report_path": "target/conformance/workload_reproducer_manifest.report.json",
       "default_manifest_path": "target/conformance/workload_reproducer_manifest.v1.json",
       "default_log_path": "target/conformance/workload_reproducer_manifest.log.jsonl",
-      "required_events": [
-        "workload_reproducer_manifest_row"
-      ],
+      "required_events": ["workload_reproducer_manifest_row"],
       "required_log_fields": [
         "trace_id",
         "bead_id",
@@ -246,9 +241,7 @@
         "source_commit",
         "next_safe_action"
       ],
-      "required_test_names": [
-        "gate_emits_compact_reproducer_manifest_and_jsonl_log"
-      ]
+      "required_test_names": ["gate_emits_compact_reproducer_manifest_and_jsonl_log"]
     }
   },
   "artifact_refs": [

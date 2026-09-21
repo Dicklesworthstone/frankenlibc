@@ -159,12 +159,42 @@
     "calls_todo": 0,
     "all_deterministic": true,
     "matrix_corrections_needed": [
-      {"symbol": "setlocale", "from": "Stub", "to": "Implemented", "evidence": "locale_abi.rs has full C-locale implementation"},
-      {"symbol": "localeconv", "from": "Stub", "to": "Implemented", "evidence": "locale_abi.rs returns static LCONV struct"},
-      {"symbol": "getaddrinfo", "from": "Stub", "to": "Implemented", "evidence": "resolv_abi.rs has full numeric resolution"},
-      {"symbol": "freeaddrinfo", "from": "Stub", "to": "Implemented", "evidence": "resolv_abi.rs frees addrinfo chain"},
-      {"symbol": "getnameinfo", "from": "Stub", "to": "Implemented", "evidence": "resolv_abi.rs has numeric reverse resolution"},
-      {"symbol": "gai_strerror", "from": "Stub", "to": "Implemented", "evidence": "resolv_abi.rs has EAI error string lookup"}
+      {
+        "symbol": "setlocale",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "locale_abi.rs has full C-locale implementation"
+      },
+      {
+        "symbol": "localeconv",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "locale_abi.rs returns static LCONV struct"
+      },
+      {
+        "symbol": "getaddrinfo",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "resolv_abi.rs has full numeric resolution"
+      },
+      {
+        "symbol": "freeaddrinfo",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "resolv_abi.rs frees addrinfo chain"
+      },
+      {
+        "symbol": "getnameinfo",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "resolv_abi.rs has numeric reverse resolution"
+      },
+      {
+        "symbol": "gai_strerror",
+        "from": "Stub",
+        "to": "Implemented",
+        "evidence": "resolv_abi.rs has EAI error string lookup"
+      }
     ]
   }
 }

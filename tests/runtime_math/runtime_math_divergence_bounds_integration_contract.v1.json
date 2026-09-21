@@ -51,10 +51,7 @@
   "integration_contract": {
     "missing_item_id": "tests.integration.primary",
     "test_kind": "rust_integration_test",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_matrix_counts": {
       "evaluation_cases_min": 4,
       "required_cases_min": 3,

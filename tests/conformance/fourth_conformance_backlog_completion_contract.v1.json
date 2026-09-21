@@ -75,7 +75,12 @@
         "status": "closed",
         "commit_refs": ["24f50e57", "1d7c944d"],
         "fixture": "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
-        "evidence_fragments": ["scripts/check_symbol_fixture_coverage.sh", "scripts/check_per_symbol_fixture_tests.sh --validate-only", "scripts/check_fixture_coverage_prioritizer.sh", "RCH remote"]
+        "evidence_fragments": [
+          "scripts/check_symbol_fixture_coverage.sh",
+          "scripts/check_per_symbol_fixture_tests.sh --validate-only",
+          "scripts/check_fixture_coverage_prioritizer.sh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-gmbqy.2",
@@ -110,21 +115,33 @@
         "status": "closed",
         "commit_refs": ["b6f69d1d"],
         "fixture": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json",
-        "evidence_fragments": ["fortify checked-wrapper wave-03", "covered_count=1073", "RCH remote"]
+        "evidence_fragments": [
+          "fortify checked-wrapper wave-03",
+          "covered_count=1073",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-gmbqy.7",
         "status": "closed",
         "commit_refs": ["35e6cf57"],
         "fixture": "tests/conformance/fixtures/time_clock_calendar_wave02.json",
-        "evidence_fragments": ["time clock calendar wave-02", "coverage artifacts refreshed", "RCH remote"]
+        "evidence_fragments": [
+          "time clock calendar wave-02",
+          "coverage artifacts refreshed",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-gmbqy.8",
         "status": "closed",
         "commit_refs": ["abca131f"],
         "fixture": "tests/conformance/fixtures/math_finite_special_wave03.json",
-        "evidence_fragments": ["math finite special wave-03", "coverage artifacts refreshed", "RCH remote"]
+        "evidence_fragments": [
+          "math finite special wave-03",
+          "coverage artifacts refreshed",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-gmbqy.9",
@@ -138,7 +155,11 @@
         "status": "closed",
         "commit_refs": ["cf3b2dcd", "8b54c5e2"],
         "fixture": "tests/conformance/fixtures/glibc_internal_compat_wave03.json",
-        "evidence_fragments": ["glibc internal compatibility wave-03", "coverage artifact refresh", "RCH remote"]
+        "evidence_fragments": [
+          "glibc internal compatibility wave-03",
+          "coverage artifact refresh",
+          "RCH remote"
+        ]
       },
       {
         "id": "bd-gmbqy.11",
@@ -185,19 +206,58 @@
       "bead": "bd-gmbqy.1",
       "campaign_id": "fcq-unistd-process-filesystem",
       "path": "tests/conformance/fixtures/unistd_process_filesystem_wave10.json",
-      "completed_symbols": ["fchdir", "fchmod", "fchmodat", "fchmodat2", "fchown", "fchownat", "fcntl64", "fcrypt", "fdatasync", "fexecve", "fgetgrent", "fgetgrent_r"]
+      "completed_symbols": [
+        "fchdir",
+        "fchmod",
+        "fchmodat",
+        "fchmodat2",
+        "fchown",
+        "fchownat",
+        "fcntl64",
+        "fcrypt",
+        "fdatasync",
+        "fexecve",
+        "fgetgrent",
+        "fgetgrent_r"
+      ]
     },
     {
       "bead": "bd-gmbqy.2",
       "campaign_id": "fcq-stdio-libio",
       "path": "tests/conformance/fixtures/stdio_libio_wave06.json",
-      "completed_symbols": ["open_memstream", "pclose", "popen", "putc", "putc_unlocked", "putchar", "putchar_unlocked", "puts", "putw", "remove", "rewind", "scanf"]
+      "completed_symbols": [
+        "open_memstream",
+        "pclose",
+        "popen",
+        "putc",
+        "putc_unlocked",
+        "putchar",
+        "putchar_unlocked",
+        "puts",
+        "putw",
+        "remove",
+        "rewind",
+        "scanf"
+      ]
     },
     {
       "bead": "bd-gmbqy.3",
       "campaign_id": "fcq-pthread-sync",
       "path": "tests/conformance/fixtures/pthread_sync_wave05.json",
-      "completed_symbols": ["pthread_attr_setstacksize", "pthread_barrier_destroy", "pthread_barrier_init", "pthread_barrier_wait", "pthread_barrierattr_destroy", "pthread_barrierattr_getpshared", "pthread_barrierattr_init", "pthread_barrierattr_setpshared", "pthread_cancel", "pthread_condattr_destroy", "pthread_condattr_getclock", "pthread_condattr_getpshared"]
+      "completed_symbols": [
+        "pthread_attr_setstacksize",
+        "pthread_barrier_destroy",
+        "pthread_barrier_init",
+        "pthread_barrier_wait",
+        "pthread_barrierattr_destroy",
+        "pthread_barrierattr_getpshared",
+        "pthread_barrierattr_init",
+        "pthread_barrierattr_setpshared",
+        "pthread_cancel",
+        "pthread_condattr_destroy",
+        "pthread_condattr_getclock",
+        "pthread_condattr_getpshared"
+      ]
     },
     {
       "bead": "bd-gmbqy.4",
@@ -209,56 +269,149 @@
       "bead": "bd-gmbqy.5",
       "campaign_id": "fcq-wchar-locale-encoding",
       "path": "tests/conformance/fixtures/wchar_locale_encoding_wave03.json",
-      "completed_symbols": ["__iswlower_l", "__iswprint_l", "__iswpunct_l", "__iswspace_l", "__iswupper_l", "__iswxdigit_l", "__toascii_l", "__tolower_l", "__toupper_l", "__towctrans_l", "__towlower_l", "__towupper_l"]
+      "completed_symbols": [
+        "__iswlower_l",
+        "__iswprint_l",
+        "__iswpunct_l",
+        "__iswspace_l",
+        "__iswupper_l",
+        "__iswxdigit_l",
+        "__toascii_l",
+        "__tolower_l",
+        "__toupper_l",
+        "__towctrans_l",
+        "__towlower_l",
+        "__towupper_l"
+      ]
     },
     {
       "bead": "bd-gmbqy.6",
       "campaign_id": "fcq-fortify-bounds",
       "path": "tests/conformance/fixtures/fortify_checked_wrapper_wave03.json",
-      "completed_symbols": ["__mbsrtowcs_chk", "__mbstowcs_chk", "__memcpy_chk", "__memmove_chk", "__memset_chk", "__open64_2", "__open_2", "__openat64_2", "__openat_2", "__poll_chk", "__ppoll_chk", "__pread64_chk"]
+      "completed_symbols": [
+        "__mbsrtowcs_chk",
+        "__mbstowcs_chk",
+        "__memcpy_chk",
+        "__memmove_chk",
+        "__memset_chk",
+        "__open64_2",
+        "__open_2",
+        "__openat64_2",
+        "__openat_2",
+        "__poll_chk",
+        "__ppoll_chk",
+        "__pread64_chk"
+      ]
     },
     {
       "bead": "bd-gmbqy.7",
       "campaign_id": "fcq-time-clock-calendar",
       "path": "tests/conformance/fixtures/time_clock_calendar_wave02.json",
-      "completed_symbols": ["gmtime_r", "localtime", "mktime", "nanosleep", "strptime", "timegm", "timespec_get", "timespec_getres", "timezone", "tzset"]
+      "completed_symbols": [
+        "gmtime_r",
+        "localtime",
+        "mktime",
+        "nanosleep",
+        "strptime",
+        "timegm",
+        "timespec_get",
+        "timespec_getres",
+        "timezone",
+        "tzset"
+      ]
     },
     {
       "bead": "bd-gmbqy.8",
       "campaign_id": "fcq-math-special",
       "path": "tests/conformance/fixtures/math_finite_special_wave03.json",
-      "completed_symbols": ["__asinl_finite", "__atan2_finite", "__atan2f128_finite", "__atan2f_finite", "__atan2l_finite", "__atanh_finite", "__atanhf128_finite", "__atanhf_finite", "__atanhl_finite", "__clog10", "__clog10f", "__clog10l"]
+      "completed_symbols": [
+        "__asinl_finite",
+        "__atan2_finite",
+        "__atan2f128_finite",
+        "__atan2f_finite",
+        "__atan2l_finite",
+        "__atanh_finite",
+        "__atanhf128_finite",
+        "__atanhf_finite",
+        "__atanhl_finite",
+        "__clog10",
+        "__clog10f",
+        "__clog10l"
+      ]
     },
     {
       "bead": "bd-gmbqy.9",
       "campaign_id": "fcq-signal-async",
       "path": "tests/conformance/fixtures/signal_async_wave02.json",
-      "completed_symbols": ["sigisemptyset", "sigorset", "sigpending", "sigprocmask", "sigrelse", "sigsuspend", "sigwait"]
+      "completed_symbols": [
+        "sigisemptyset",
+        "sigorset",
+        "sigpending",
+        "sigprocmask",
+        "sigrelse",
+        "sigsuspend",
+        "sigwait"
+      ]
     },
     {
       "bead": "bd-gmbqy.10",
       "campaign_id": "fcq-glibc-internal-compat",
       "path": "tests/conformance/fixtures/glibc_internal_compat_wave03.json",
-      "completed_symbols": ["__call_tls_dtors", "__check_rhosts_file", "__clock_gettime", "__clone", "__close", "__close_nocancel", "__close_nocancel_nostatus", "__cmsg_nxthdr", "__connect", "__copy_grp", "__ctype32_b", "__ctype32_tolower"]
+      "completed_symbols": [
+        "__call_tls_dtors",
+        "__check_rhosts_file",
+        "__clock_gettime",
+        "__clone",
+        "__close",
+        "__close_nocancel",
+        "__close_nocancel_nostatus",
+        "__cmsg_nxthdr",
+        "__connect",
+        "__copy_grp",
+        "__ctype32_b",
+        "__ctype32_tolower"
+      ]
     },
     {
       "bead": "bd-gmbqy.11",
       "campaign_id": "fcq-rpc-legacy-network",
       "path": "tests/conformance/fixtures/rpc_legacy_network_wave03.json",
-      "completed_symbols": ["clnt_sperror", "clntraw_create", "clnttcp_create", "clntudp_bufcreate", "clntudp_create", "clntunix_create", "des_setparity", "ecb_crypt", "get_myaddress", "getnetname", "getpublickey", "getrpcport"]
+      "completed_symbols": [
+        "clnt_sperror",
+        "clntraw_create",
+        "clnttcp_create",
+        "clntudp_bufcreate",
+        "clntudp_create",
+        "clntunix_create",
+        "des_setparity",
+        "ecb_crypt",
+        "get_myaddress",
+        "getnetname",
+        "getpublickey",
+        "getrpcport"
+      ]
     }
   ],
   "prioritizer_advancement": {
     "completed_wave_symbol_count": 115,
-    "retired_campaign_ids": [
-      "fcq-process-spawn",
-      "fcq-time-clock-calendar",
-      "fcq-signal-async"
-    ],
+    "retired_campaign_ids": ["fcq-process-spawn", "fcq-time-clock-calendar", "fcq-signal-async"],
     "current_campaign_first_wave": [
       {
         "campaign_id": "fcq-unistd-process-filesystem",
-        "first_wave_symbols": ["fanotify_init", "fanotify_mark", "fts_open", "fts_read", "fts_set", "ftw64", "futex", "futex_requeue", "futex_wait", "futex_waitv", "futex_wake", "gai_cancel"],
+        "first_wave_symbols": [
+          "fanotify_init",
+          "fanotify_mark",
+          "fts_open",
+          "fts_read",
+          "fts_set",
+          "ftw64",
+          "futex",
+          "futex_requeue",
+          "futex_wait",
+          "futex_waitv",
+          "futex_wake",
+          "gai_cancel"
+        ],
         "current_coverage_pct": 28.2,
         "target_covered": 194,
         "target_uncovered": 494
@@ -272,42 +425,120 @@
       },
       {
         "campaign_id": "fcq-pthread-sync",
-        "first_wave_symbols": ["pthread_condattr_init", "pthread_condattr_setclock", "pthread_condattr_setpshared", "pthread_getaffinity_np", "pthread_getattr_default_np", "pthread_getconcurrency", "pthread_getcpuclockid", "pthread_getname_np", "pthread_gettid_np", "pthread_kill", "pthread_mutex_consistent", "pthread_mutexattr_destroy"],
+        "first_wave_symbols": [
+          "pthread_condattr_init",
+          "pthread_condattr_setclock",
+          "pthread_condattr_setpshared",
+          "pthread_getaffinity_np",
+          "pthread_getattr_default_np",
+          "pthread_getconcurrency",
+          "pthread_getcpuclockid",
+          "pthread_getname_np",
+          "pthread_gettid_np",
+          "pthread_kill",
+          "pthread_mutex_consistent",
+          "pthread_mutexattr_destroy"
+        ],
         "current_coverage_pct": 64.6,
         "target_covered": 73,
         "target_uncovered": 40
       },
       {
         "campaign_id": "fcq-wchar-locale-encoding",
-        "first_wave_symbols": ["__wcscasecmp_l", "__wcscoll_l", "__wcsftime_l", "__wcsncasecmp_l", "__wcstod_internal", "__wcstod_l", "__wcstof_internal", "__wcstof_l", "__wcstold_internal", "__wcstold_l", "__wcsxfrm_l", "btowc"],
+        "first_wave_symbols": [
+          "__wcscasecmp_l",
+          "__wcscoll_l",
+          "__wcsftime_l",
+          "__wcsncasecmp_l",
+          "__wcstod_internal",
+          "__wcstod_l",
+          "__wcstof_internal",
+          "__wcstof_l",
+          "__wcstold_internal",
+          "__wcstold_l",
+          "__wcsxfrm_l",
+          "btowc"
+        ],
         "current_coverage_pct": 43.48,
         "target_covered": 40,
         "target_uncovered": 52
       },
       {
         "campaign_id": "fcq-fortify-bounds",
-        "first_wave_symbols": ["__ptsname_r_chk", "__stpcpy_chk", "__stpncpy_chk", "__strcat_chk", "__strcpy_chk", "__strncat_chk", "__strncpy_chk", "__swprintf_chk", "__ttyname_r_chk", "__vswprintf_chk", "__wcscat_chk", "__wcscpy_chk"],
+        "first_wave_symbols": [
+          "__ptsname_r_chk",
+          "__stpcpy_chk",
+          "__stpncpy_chk",
+          "__strcat_chk",
+          "__strcpy_chk",
+          "__strncat_chk",
+          "__strncpy_chk",
+          "__swprintf_chk",
+          "__ttyname_r_chk",
+          "__vswprintf_chk",
+          "__wcscat_chk",
+          "__wcscpy_chk"
+        ],
         "current_coverage_pct": 32.0,
         "target_covered": 8,
         "target_uncovered": 17
       },
       {
         "campaign_id": "fcq-math-special",
-        "first_wave_symbols": ["__cosh_finite", "__coshf128_finite", "__coshf_finite", "__coshl_finite", "__exp10_finite", "__exp10f128_finite", "__exp10f_finite", "__exp10l_finite", "__exp2_finite", "__exp2f128_finite", "__exp2f_finite", "__exp2l_finite"],
+        "first_wave_symbols": [
+          "__cosh_finite",
+          "__coshf128_finite",
+          "__coshf_finite",
+          "__coshl_finite",
+          "__exp10_finite",
+          "__exp10f128_finite",
+          "__exp10f_finite",
+          "__exp10l_finite",
+          "__exp2_finite",
+          "__exp2f128_finite",
+          "__exp2f_finite",
+          "__exp2l_finite"
+        ],
         "current_coverage_pct": 6.88,
         "target_covered": 52,
         "target_uncovered": 704
       },
       {
         "campaign_id": "fcq-glibc-internal-compat",
-        "first_wave_symbols": ["__ctype32_toupper", "__ctype_init", "__curbrk", "__daylight", "__dcgettext", "__default_morecore", "__dgettext", "__dn_comp", "__dn_expand", "__dn_skipname", "__duplocale", "__endmntent"],
+        "first_wave_symbols": [
+          "__ctype32_toupper",
+          "__ctype_init",
+          "__curbrk",
+          "__daylight",
+          "__dcgettext",
+          "__default_morecore",
+          "__dgettext",
+          "__dn_comp",
+          "__dn_expand",
+          "__dn_skipname",
+          "__duplocale",
+          "__endmntent"
+        ],
         "current_coverage_pct": 8.91,
         "target_covered": 32,
         "target_uncovered": 327
       },
       {
         "campaign_id": "fcq-rpc-legacy-network",
-        "first_wave_symbols": ["getsecretkey", "key_decryptsession", "key_decryptsession_pk", "key_encryptsession", "key_encryptsession_pk", "key_gendes", "key_get_conv", "key_secretkey_is_set", "key_setnet", "key_setsecret", "netname2host", "netname2user"],
+        "first_wave_symbols": [
+          "getsecretkey",
+          "key_decryptsession",
+          "key_decryptsession_pk",
+          "key_encryptsession",
+          "key_encryptsession_pk",
+          "key_gendes",
+          "key_get_conv",
+          "key_secretkey_is_set",
+          "key_setnet",
+          "key_setsecret",
+          "netname2host",
+          "netname2user"
+        ],
         "current_coverage_pct": 25.56,
         "target_covered": 34,
         "target_uncovered": 99
@@ -334,7 +565,18 @@
       "fourth_conformance_backlog.completion_contract_validated"
     ],
     "failure_event": "fourth_conformance_backlog.completion_contract_failed",
-    "required_log_fields": ["schema_version", "timestamp", "trace_id", "event", "status", "bead_id", "parent_bead", "source_commit", "artifact_refs", "failure_signature"]
+    "required_log_fields": [
+      "schema_version",
+      "timestamp",
+      "trace_id",
+      "event",
+      "status",
+      "bead_id",
+      "parent_bead",
+      "source_commit",
+      "artifact_refs",
+      "failure_signature"
+    ]
   },
   "required_test_functions": {
     "positive": [

@@ -61,29 +61,19 @@
         "id": "support_symbols_missing_version_exports_stdio_abi",
         "classification": "missing_export",
         "min_symbol_count": 3,
-        "required_symbols": [
-          "_IO_2_1_stderr_",
-          "_IO_2_1_stdin_",
-          "_IO_2_1_stdout_"
-        ]
+        "required_symbols": ["_IO_2_1_stderr_", "_IO_2_1_stdin_", "_IO_2_1_stdout_"]
       },
       {
         "id": "support_symbols_missing_version_exports_glibc_internal_abi",
         "classification": "missing_export",
         "min_symbol_count": 2,
-        "required_symbols": [
-          "__ns_name_uncompressed_p",
-          "__ns_samename"
-        ]
+        "required_symbols": ["__ns_name_uncompressed_p", "__ns_samename"]
       },
       {
         "id": "version_exports_outside_support_matrix",
         "classification": "expected_unsupported_surface",
         "min_symbol_count": 70,
-        "required_symbols": [
-          "__cxa_bad_cast",
-          "strtonum"
-        ]
+        "required_symbols": ["__cxa_bad_cast", "strtonum"]
       }
     ],
     "allowed_classifications": [

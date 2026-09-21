@@ -7,19 +7,11 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::grobner::{reduce_mask, reduce_mask_with_limit} (table-driven Gröbner-style monomial reduction over u128 bitset masks; deterministic, bounded-time, allocation-free) as a standalone CLI. Accepts the input mask (u128), a rules table (JSON array of {lhs, rhs} u128 pairs), and a step limit (safety belt; default 1024). Emits a single JSONL record { kind: 'reduce_mask', input_mask, rule_count, step_limit, reduced_mask, steps, reached_fixpoint, error } where reduced_mask is the input on step_limit_exceeded. The CLI bridge lets CI validate Gröbner-basis rewrite rules and policy compaction without compiling.",
   "subcommand_name": "reduce-mask",
   "binary_target": "harness",
-  "required_flags": [
-    "--mask",
-    "--rules",
-    "--output"
-  ],
-  "optional_flags": [
-    "--step-limit"
-  ],
+  "required_flags": ["--mask", "--rules", "--output"],
+  "optional_flags": ["--step-limit"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::grobner::reduce_mask_with_limit",
-  "underlying_lib_functions": [
-    "frankenlibc_membrane::grobner::reduce_mask_with_limit"
-  ],
+  "underlying_lib_functions": ["frankenlibc_membrane::grobner::reduce_mask_with_limit"],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "reduce_mask",

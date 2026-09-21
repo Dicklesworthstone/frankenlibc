@@ -7,10 +7,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.5.2/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind the cohomology cross-family stage-outcome wiring, strict+hardened replay gate, sheaf coverage artifact, and source tests to explicit unit and e2e completion evidence.",
   "source_artifacts": {
@@ -85,26 +82,15 @@
         "cohomology_overlap_replay_detects_corrupted_witness",
         "cohomology_overlap_replay_detects_corrupted_witness_hardened"
       ],
-      "required_family_refs": [
-        "ApiFamily::StringMemory",
-        "ApiFamily::Resolver"
-      ],
+      "required_family_refs": ["ApiFamily::StringMemory", "ApiFamily::Resolver"],
       "required_observer_call": "note_cross_family_overlap(k, family, ordering_used, aligned, recent_page, exit_stage)"
     },
     "runtime_kernel": {
-      "required_functions": [
-        "set_overlap_section_hash"
-      ],
-      "required_calls": [
-        "self.cohomology.set_section_hash(shard, hash)"
-      ]
+      "required_functions": ["set_overlap_section_hash"],
+      "required_calls": ["self.cohomology.set_section_hash(shard, hash)"]
     },
     "cohomology_monitor": {
-      "required_functions": [
-        "set_section_hash",
-        "note_overlap",
-        "fault_count"
-      ],
+      "required_functions": ["set_section_hash", "note_overlap", "fault_count"],
       "required_unit_tests": [
         "zero_initialized_sections_accept_zero_witness",
         "detects_inconsistent_overlap",

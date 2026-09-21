@@ -7,12 +7,8 @@
   "purpose": "Pin the harness binary `reality-report` subcommand that exposes the support-matrix taxonomy report used by support_reality_regeneration. The command must read a support_matrix JSON file, produce a pretty v1 RealityReport JSON document, support stdout and --output modes, create the output parent directory, sort stub symbols, and fail closed when the support matrix is missing or malformed.",
   "subcommand_name": "reality-report",
   "binary_target": "harness",
-  "required_flags": [
-    "--support-matrix"
-  ],
-  "optional_flags": [
-    "--output"
-  ],
+  "required_flags": ["--support-matrix"],
+  "optional_flags": ["--output"],
   "default_inputs": {
     "support_matrix": "support_matrix.json"
   },

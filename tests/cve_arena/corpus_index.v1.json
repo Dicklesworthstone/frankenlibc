@@ -145,7 +145,13 @@
         "healing_actions": ["ClampSize", "ReturnSafeDefault"],
         "description": "TSM detects stack overflow via canary, clamps recursive depth, returns safe default for missing cache entries, and quarantines corrupted allocations"
       },
-      "tsm_features_tested": ["canary", "bounds_checking", "clamp_size", "return_safe_default", "quarantine"],
+      "tsm_features_tested": [
+        "canary",
+        "bounds_checking",
+        "clamp_size",
+        "return_safe_default",
+        "quarantine"
+      ],
       "replay_deterministic": true,
       "timeout_seconds": 10
     },
@@ -173,7 +179,12 @@
         "healing_actions": ["IgnoreDoubleFree"],
         "description": "Generational arena detects the double-free via generation counter mismatch; IgnoreDoubleFree healing action silently discards the second free; quarantine prevents the freed memory from being reused during the vulnerable window"
       },
-      "tsm_features_tested": ["generational_arena", "quarantine", "ignore_double_free", "allocation_fingerprints"],
+      "tsm_features_tested": [
+        "generational_arena",
+        "quarantine",
+        "ignore_double_free",
+        "allocation_fingerprints"
+      ],
       "replay_deterministic": true,
       "timeout_seconds": 5
     }

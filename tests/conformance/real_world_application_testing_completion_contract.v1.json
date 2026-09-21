@@ -172,13 +172,7 @@
       "evidence_summary": "E2E evidence pins the LD_PRELOAD smoke harness, e2e suite structured JSONL, canonical telemetry run directory, and fail-closed completion checker for real-world application scope drift."
     },
     "real_world_contract": {
-      "required_tier1_applications": [
-        "bash",
-        "coreutils",
-        "python3",
-        "curl",
-        "git"
-      ],
+      "required_tier1_applications": ["bash", "coreutils", "python3", "curl", "git"],
       "required_tier2_applications": [
         "nginx",
         "postgresql",
@@ -199,10 +193,7 @@
         "stability_no_crash_or_hang",
         "memory_bounded_overhead"
       ],
-      "required_runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_runtime_modes": ["strict", "hardened"],
       "required_infrastructure": [
         "docker_or_isolated_process_replay_plan",
         "automated_test_scripts",
@@ -224,10 +215,7 @@
           "workload_matrix_binary": "bash",
           "workload_matrix_id": "wl-006",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -255,10 +243,7 @@
           "workload_matrix_binary": "coreutils",
           "workload_matrix_id": "wl-001",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -286,10 +271,7 @@
           "workload_matrix_binary": "python3",
           "workload_matrix_id": "wl-002",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -317,10 +299,7 @@
           "workload_matrix_binary": "curl",
           "workload_matrix_id": "wl-004",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -348,10 +327,7 @@
           "workload_matrix_binary": "git",
           "workload_matrix_id": "wl-003",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -379,10 +355,7 @@
           "workload_matrix_binary": "nginx",
           "workload_matrix_id": "wl-005",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -411,10 +384,7 @@
           "workload_matrix_id": null,
           "proxy_workload_id": "uwm-threaded-service",
           "claim_status": "claim_blocked_gap",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -443,10 +413,7 @@
           "workload_matrix_binary": "redis-server",
           "workload_matrix_id": "wl-008",
           "claim_status": "evidence_bound",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -475,10 +442,7 @@
           "workload_matrix_id": null,
           "proxy_workload_id": "uwm-language-runtime",
           "claim_status": "claim_blocked_gap",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",
@@ -508,10 +472,7 @@
           "workload_matrix_id": null,
           "proxy_workload_id": "uwm-build-toolchain",
           "claim_status": "claim_blocked_gap",
-          "runtime_modes": [
-            "strict",
-            "hardened"
-          ],
+          "runtime_modes": ["strict", "hardened"],
           "scenarios": [
             "basic_functionality",
             "long_running_operation",

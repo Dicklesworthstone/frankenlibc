@@ -18,10 +18,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "ClampSize",
-      "TruncateWithNull"
-    ],
+    "healing_actions": ["ClampSize", "TruncateWithNull"],
     "description": "Allocation fingerprint canary detects heap corruption past chunk boundary; ClampSize prevents the overflow write; TruncateWithNull ensures the overlong argument is safely terminated"
   },
   "tsm_features_tested": [

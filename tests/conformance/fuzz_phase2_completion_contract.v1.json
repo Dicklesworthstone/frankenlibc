@@ -67,17 +67,8 @@
       "scripts/fuzz_nightly.sh:226"
     ],
     "phase2_policy": {
-      "required_targets": [
-        "fuzz_resolver",
-        "fuzz_resolv",
-        "fuzz_iconv",
-        "fuzz_runtime_math"
-      ],
-      "required_transition_families": [
-        "resolver",
-        "locale",
-        "runtime-math"
-      ],
+      "required_targets": ["fuzz_resolver", "fuzz_resolv", "fuzz_iconv", "fuzz_runtime_math"],
+      "required_transition_families": ["resolver", "locale", "runtime-math"],
       "minimum_phase2_targets": 4,
       "minimum_functional_targets": 4,
       "minimum_smoke_viable_targets": 4,
@@ -159,12 +150,7 @@
     },
     "fuzz_primary": {
       "missing_item_id": "tests.fuzz.primary",
-      "required_targets": [
-        "fuzz_resolver",
-        "fuzz_resolv",
-        "fuzz_iconv",
-        "fuzz_runtime_math"
-      ],
+      "required_targets": ["fuzz_resolver", "fuzz_resolv", "fuzz_iconv", "fuzz_runtime_math"],
       "required_cargo_fuzz_command": "cargo fuzz run --fuzz-dir crates/frankenlibc-fuzz <target> -- -runs=1000000 -print_final_stats=1",
       "required_ci_log_glob": "artifacts/ci/fuzz-runs/*.log",
       "max_crashes": 0

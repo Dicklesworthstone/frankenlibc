@@ -50,11 +50,7 @@
       "function": "fread",
       "spec_section": "C11 7.21.8.1",
       "description": "Reads nmemb elements of size bytes each from stream into buf",
-      "pre_conditions": [
-        "in_registry(fp)",
-        "buf != NULL",
-        "size * nmemb <= SSIZE_MAX"
-      ],
+      "pre_conditions": ["in_registry(fp)", "buf != NULL", "size * nmemb <= SSIZE_MAX"],
       "post_conditions": [
         "return <= nmemb",
         "return < nmemb => (fp.eof || fp.err)",
@@ -90,10 +86,7 @@
       "function": "fseek",
       "spec_section": "C11 7.21.9.2",
       "description": "Sets file position indicator; clears EOF and ungetc on success",
-      "pre_conditions": [
-        "in_registry(fp)",
-        "whence in {SEEK_SET, SEEK_CUR, SEEK_END}"
-      ],
+      "pre_conditions": ["in_registry(fp)", "whence in {SEEK_SET, SEEK_CUR, SEEK_END}"],
       "post_conditions": [
         "(return == 0 && fp.eof == false && fp.ungetc == None) || (return == -1 && errno != 0)"
       ],
@@ -106,9 +99,7 @@
       "function": "ftell",
       "spec_section": "C11 7.21.9.4",
       "description": "Returns current file position or -1 on error",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
       "post_conditions": [
         "(return >= 0) || (return == -1 && errno != 0)",
         "return >= 0 => return == lseek(fp.fd, 0, SEEK_CUR) - buffered_unread + ungetc_adjustment"
@@ -121,9 +112,7 @@
       "function": "fclose",
       "spec_section": "C11 7.21.5.1",
       "description": "Flushes and closes stream; removes from registry",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
       "post_conditions": [
         "!in_registry(fp)",
         "fp.fd closed (if not stdin/stdout/stderr)",
@@ -138,9 +127,7 @@
       "function": "ungetc",
       "spec_section": "C11 7.21.7.10",
       "description": "Pushes character back onto stream; clears EOF",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
       "post_conditions": [
         "(return == c && c != EOF && fp.ungetc == Some(c) && fp.eof == false) || (return == EOF)"
       ],
@@ -153,9 +140,7 @@
       "function": "fflush",
       "spec_section": "C11 7.21.5.2",
       "description": "Flushes output buffer(s); clears ungetc on non-NULL stream",
-      "pre_conditions": [
-        "fp == NULL || in_registry(fp)"
-      ],
+      "pre_conditions": ["fp == NULL || in_registry(fp)"],
       "post_conditions": [
         "fp == NULL => all writable streams flushed",
         "fp != NULL && return == 0 => dirty bytes committed && fp.ungetc == None",
@@ -170,9 +155,7 @@
       "function": "fileno",
       "spec_section": "POSIX.1-2017",
       "description": "Returns underlying file descriptor or -1 for memory streams",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
       "post_conditions": [
         "fp.fd >= 0 => return == fp.fd",
         "fp.fd == -1 => return == -1 && errno == EBADF"
@@ -185,12 +168,8 @@
       "function": "feof",
       "spec_section": "C11 7.21.10.1",
       "description": "Tests EOF indicator; no side effects",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
-      "post_conditions": [
-        "return == (fp.eof ? nonzero : 0)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
+      "post_conditions": ["return == (fp.eof ? nonzero : 0)"],
       "lattice_transition": {
         "any": "* -> * (no state change)"
       }
@@ -199,12 +178,8 @@
       "function": "ferror",
       "spec_section": "C11 7.21.10.3",
       "description": "Tests error indicator; no side effects",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
-      "post_conditions": [
-        "return == (fp.err ? nonzero : 0)"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
+      "post_conditions": ["return == (fp.err ? nonzero : 0)"],
       "lattice_transition": {
         "any": "* -> * (no state change)"
       }
@@ -213,13 +188,8 @@
       "function": "clearerr",
       "spec_section": "C11 7.21.10.1",
       "description": "Clears both EOF and error indicators",
-      "pre_conditions": [
-        "in_registry(fp)"
-      ],
-      "post_conditions": [
-        "fp.eof == false",
-        "fp.err == false"
-      ],
+      "pre_conditions": ["in_registry(fp)"],
+      "post_conditions": ["fp.eof == false", "fp.err == false"],
       "lattice_transition": {
         "any": "Eof|Err -> Open"
       }

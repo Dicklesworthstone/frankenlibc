@@ -16,16 +16,11 @@
       "bench_symbol_map": [
         {
           "bench": "lock_unlock",
-          "symbols": [
-            "pthread_mutex_lock",
-            "pthread_mutex_unlock"
-          ]
+          "symbols": ["pthread_mutex_lock", "pthread_mutex_unlock"]
         },
         {
           "bench": "try_lock",
-          "symbols": [
-            "pthread_mutex_trylock"
-          ]
+          "symbols": ["pthread_mutex_trylock"]
         }
       ]
     },
@@ -42,25 +37,15 @@
       "bench_symbol_map": [
         {
           "bench": "fanout_fanin_single",
-          "symbols": [
-            "pthread_create",
-            "pthread_join"
-          ]
+          "symbols": ["pthread_create", "pthread_join"]
         },
         {
           "bench": "create_join_churn",
-          "symbols": [
-            "pthread_create",
-            "pthread_join"
-          ]
+          "symbols": ["pthread_create", "pthread_join"]
         },
         {
           "bench": "mixed_detach_join",
-          "symbols": [
-            "pthread_create",
-            "pthread_detach",
-            "pthread_join"
-          ]
+          "symbols": ["pthread_create", "pthread_detach", "pthread_join"]
         }
       ]
     },
@@ -77,40 +62,27 @@
       "bench_symbol_map": [
         {
           "bench": "init_destroy",
-          "symbols": [
-            "pthread_cond_init",
-            "pthread_cond_destroy"
-          ]
+          "symbols": ["pthread_cond_init", "pthread_cond_destroy"]
         },
         {
           "bench": "signal_no_waiters",
-          "symbols": [
-            "pthread_cond_signal"
-          ]
+          "symbols": ["pthread_cond_signal"]
         },
         {
           "bench": "broadcast_no_waiters",
-          "symbols": [
-            "pthread_cond_broadcast"
-          ]
+          "symbols": ["pthread_cond_broadcast"]
         },
         {
           "bench": "timedwait_past_deadline",
-          "symbols": [
-            "pthread_cond_timedwait"
-          ]
+          "symbols": ["pthread_cond_timedwait"]
         },
         {
           "bench": "wait_signal_roundtrip",
-          "symbols": [
-            "pthread_cond_wait"
-          ]
+          "symbols": ["pthread_cond_wait"]
         },
         {
           "bench": "broadcast_4_waiters",
-          "symbols": [
-            "pthread_cond_broadcast"
-          ]
+          "symbols": ["pthread_cond_broadcast"]
         }
       ]
     },
@@ -127,40 +99,27 @@
       "bench_symbol_map": [
         {
           "bench": "init_destroy",
-          "symbols": [
-            "pthread_cond_init",
-            "pthread_cond_destroy"
-          ]
+          "symbols": ["pthread_cond_init", "pthread_cond_destroy"]
         },
         {
           "bench": "signal_no_waiters",
-          "symbols": [
-            "pthread_cond_signal"
-          ]
+          "symbols": ["pthread_cond_signal"]
         },
         {
           "bench": "broadcast_no_waiters",
-          "symbols": [
-            "pthread_cond_broadcast"
-          ]
+          "symbols": ["pthread_cond_broadcast"]
         },
         {
           "bench": "timedwait_past_deadline",
-          "symbols": [
-            "pthread_cond_timedwait"
-          ]
+          "symbols": ["pthread_cond_timedwait"]
         },
         {
           "bench": "wait_signal_roundtrip",
-          "symbols": [
-            "pthread_cond_wait"
-          ]
+          "symbols": ["pthread_cond_wait"]
         },
         {
           "bench": "broadcast_4_waiters",
-          "symbols": [
-            "pthread_cond_broadcast"
-          ]
+          "symbols": ["pthread_cond_broadcast"]
         }
       ]
     },
@@ -177,129 +136,87 @@
       "bench_symbol_map": [
         {
           "bench": "memcpy_16",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "memcpy_64",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "memcpy_256",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "memcpy_1024",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "memcpy_4096",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "memcpy_65536",
-          "symbols": [
-            "memcpy"
-          ]
+          "symbols": ["memcpy"]
         },
         {
           "bench": "strlen_16",
-          "symbols": [
-            "strlen"
-          ]
+          "symbols": ["strlen"]
         },
         {
           "bench": "strlen_64",
-          "symbols": [
-            "strlen"
-          ]
+          "symbols": ["strlen"]
         },
         {
           "bench": "strlen_256",
-          "symbols": [
-            "strlen"
-          ]
+          "symbols": ["strlen"]
         },
         {
           "bench": "strlen_1024",
-          "symbols": [
-            "strlen"
-          ]
+          "symbols": ["strlen"]
         },
         {
           "bench": "strlen_4096",
-          "symbols": [
-            "strlen"
-          ]
+          "symbols": ["strlen"]
         },
         {
           "bench": "memcmp_16",
-          "symbols": [
-            "memcmp"
-          ]
+          "symbols": ["memcmp"]
         },
         {
           "bench": "memcmp_64",
-          "symbols": [
-            "memcmp"
-          ]
+          "symbols": ["memcmp"]
         },
         {
           "bench": "memcmp_256",
-          "symbols": [
-            "memcmp"
-          ]
+          "symbols": ["memcmp"]
         },
         {
           "bench": "memcmp_1024",
-          "symbols": [
-            "memcmp"
-          ]
+          "symbols": ["memcmp"]
         },
         {
           "bench": "memcmp_4096",
-          "symbols": [
-            "memcmp"
-          ]
+          "symbols": ["memcmp"]
         },
         {
           "bench": "strcmp_16",
-          "symbols": [
-            "strcmp"
-          ]
+          "symbols": ["strcmp"]
         },
         {
           "bench": "strcmp_64",
-          "symbols": [
-            "strcmp"
-          ]
+          "symbols": ["strcmp"]
         },
         {
           "bench": "strcmp_256",
-          "symbols": [
-            "strcmp"
-          ]
+          "symbols": ["strcmp"]
         },
         {
           "bench": "strcmp_1024",
-          "symbols": [
-            "strcmp"
-          ]
+          "symbols": ["strcmp"]
         },
         {
           "bench": "strcmp_4096",
-          "symbols": [
-            "strcmp"
-          ]
+          "symbols": ["strcmp"]
         }
       ]
     }

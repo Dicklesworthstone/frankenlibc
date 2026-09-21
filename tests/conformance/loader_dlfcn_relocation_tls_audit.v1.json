@@ -54,17 +54,8 @@
       "direct_runner",
       "isolated_runner"
     ],
-    "expected_required_fields": [
-      "status",
-      "errno",
-      "loader_error",
-      "user_diagnostic"
-    ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ]
+    "expected_required_fields": ["status", "errno", "loader_error", "user_diagnostic"],
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"]
   },
   "required_fixture_kinds": [
     "dlopen_success",
@@ -86,13 +77,8 @@
     "relocation_startup",
     "ld_audit"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
-  "required_replacement_levels": [
-    "L0"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
+  "required_replacement_levels": ["L0"],
   "required_loader_error_classes": [
     "none",
     "object_not_found",
@@ -241,7 +227,10 @@
       "version_node": "GLIBC_PRIVATE",
       "relocation_kind": "tls_desc",
       "tls_use": "thread_local_destructor_slot",
-      "dl_sequence": ["dlsym(RTLD_DEFAULT, __call_tls_dtors)", "invoke registered TLS destructor list"],
+      "dl_sequence": [
+        "dlsym(RTLD_DEFAULT, __call_tls_dtors)",
+        "invoke registered TLS destructor list"
+      ],
       "runtime_mode": "hardened",
       "replacement_level": "L0",
       "oracle_kind": "documented_frankenlibc_contract",

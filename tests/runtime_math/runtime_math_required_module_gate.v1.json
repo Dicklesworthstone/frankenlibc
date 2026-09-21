@@ -1,13 +1,7 @@
 {
   "schema_version": "runtime_math_required_module_gate.v1",
   "generated_by_bead": "bd-0agsk.12",
-  "source_todo_ids": [
-    "TODO-0801",
-    "TODO-0802",
-    "TODO-0803",
-    "TODO-0804",
-    "TODO-0805"
-  ],
+  "source_todo_ids": ["TODO-0801", "TODO-0802", "TODO-0803", "TODO-0804", "TODO-0805"],
   "canonical_command": "scripts/check_runtime_math_required_module_gate.sh --validate-only",
   "purpose": "Reconcile AGENTS.md runtime_math requirements with the live runtime_math source tree, linkage ledger, classification matrix, production manifest, and prior gates without duplicating the already-closed linkage/classification artifacts.",
   "input_artifacts": [
@@ -60,14 +54,8 @@
       "bead": "bd-7dw2",
       "artifact": "target/conformance/runtime_math_linkage_proofs.report.json",
       "checker": "scripts/check_runtime_math_linkage_proofs.sh",
-      "covers": [
-        "production module decision-law proof rows",
-        "structured proof logs"
-      ],
-      "current_gate_adds": [
-        "required-module source-of-truth join",
-        "stale-doc classification"
-      ],
+      "covers": ["production module decision-law proof rows", "structured proof logs"],
+      "current_gate_adds": ["required-module source-of-truth join", "stale-doc classification"],
       "duplicates_current_gate": false
     }
   ],
@@ -189,11 +177,7 @@
       "stale_doc_note": "AGENTS mandatory table names this as runtime_math, but the live module is a standalone membrane module."
     }
   ],
-  "required_failure_signatures": [
-    "missing_module",
-    "unlinked_module",
-    "retired_module_leakage"
-  ],
+  "required_failure_signatures": ["missing_module", "unlinked_module", "retired_module_leakage"],
   "negative_tests": [
     {
       "id": "missing_module",

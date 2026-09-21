@@ -53,10 +53,7 @@
       "source": "tests/conformance/standalone_tls_blocker_diagnostics.v1.json#current_forge_evidence",
       "build_status": "not_rerun",
       "build_exit_code": 0,
-      "build_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
+      "build_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
       "tls_model": "default",
       "env": {},
       "artifact_status": "current",
@@ -64,16 +61,10 @@
       "claim_status": "claim_blocked",
       "report_only": true,
       "artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
-      "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "host_version_requirements": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3"
-      ],
+      "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
+      "host_version_requirements": ["ld-linux-x86-64.so.2:GLIBC_2.3"],
       "version_needs": {
-        "ld-linux-x86-64.so.2": [
-          "GLIBC_2.3"
-        ]
+        "ld-linux-x86-64.so.2": ["GLIBC_2.3"]
       },
       "blocking_reasons": [
         "undefined_tls_symbols",
@@ -107,21 +98,11 @@
       "claim_status": "report_only",
       "report_only": true,
       "artifact_sha256": "50a52eefd2c168c70c9b5e4673188904c0544d775b945ecff0856fdb6bd419b6",
-      "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "host_version_requirements": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3"
-      ],
+      "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
+      "host_version_requirements": ["ld-linux-x86-64.so.2:GLIBC_2.3"],
       "version_needs": {
-        "ld-linux-x86-64.so.2": [
-          "GLIBC_2.3"
-        ],
-        "libgcc_s.so.1": [
-          "GCC_3.0",
-          "GCC_3.3",
-          "GCC_4.2.0"
-        ]
+        "ld-linux-x86-64.so.2": ["GLIBC_2.3"],
+        "libgcc_s.so.1": ["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]
       },
       "blocking_reasons": [
         "undefined_tls_symbols",
@@ -156,15 +137,10 @@
       "report_only": true,
       "artifact_produced": false,
       "failure_signature": "non_pic_tls_relocation_in_shared_dependency",
-      "diagnostic_snippets": [
-        "relocation R_X86_64_TPOFF32",
-        "cannot be used with -shared"
-      ],
+      "diagnostic_snippets": ["relocation R_X86_64_TPOFF32", "cannot be used with -shared"],
       "undefined_tls_symbols": [],
       "host_version_requirements": [],
-      "blocking_reasons": [
-        "tls_model_not_viable_for_cdylib_workspace"
-      ]
+      "blocking_reasons": ["tls_model_not_viable_for_cdylib_workspace"]
     }
   ],
   "comparison": {

@@ -50,23 +50,35 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "null_pointer_detected"},
-        {"source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free"},
-        {"source": "ptr_validator_unit", "name": "foreign_free_reported"},
-        {"source": "ptr_validator_unit", "name": "double_free_reported"},
-        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
-        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
-        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
-        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"},
-        {"source": "arena_unit", "name": "generation_increases"},
-        {"source": "arena_unit", "name": "free_promotes_slot_to_quarantined_with_new_generation"},
-        {"source": "arena_unit", "name": "foreign_pointer_detected"},
-        {"source": "arena_unit", "name": "proof_uaf_detection_probability_one"},
-        {"source": "arena_unit", "name": "proof_double_free_always_detected"},
-        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
-        {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"},
-        {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_load_dimensions"}
+        { "source": "ptr_validator_unit", "name": "null_pointer_detected" },
+        { "source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free" },
+        { "source": "ptr_validator_unit", "name": "foreign_free_reported" },
+        { "source": "ptr_validator_unit", "name": "double_free_reported" },
+        { "source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free" },
+        { "source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live" },
+        {
+          "source": "ptr_validator_unit",
+          "name": "freed_pointer_property_becomes_temporal_violation"
+        },
+        { "source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds" },
+        { "source": "arena_unit", "name": "generation_increases" },
+        { "source": "arena_unit", "name": "free_promotes_slot_to_quarantined_with_new_generation" },
+        { "source": "arena_unit", "name": "foreign_pointer_detected" },
+        { "source": "arena_unit", "name": "proof_uaf_detection_probability_one" },
+        { "source": "arena_unit", "name": "proof_double_free_always_detected" },
+        {
+          "source": "allocator_sequences",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "concurrent_double_free_detection_basic_10k_16t_10pct"
+        },
+        {
+          "source": "allocator_sequences",
+          "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+        },
+        { "source": "completion_harness", "name": "manifest_binds_unit_e2e_and_load_dimensions" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane null_pointer_detected -- --nocapture",
@@ -80,23 +92,23 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
-        {"source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid"},
-        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_is_allowed_with_unknown_state"},
-        {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
-        {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
-        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
-        {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
-        {"source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity"},
-        {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
-        {"source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer"},
-        {"source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget"},
-        {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
-        {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
-        {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
-        {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"},
-        {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows"}
+        { "source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null" },
+        { "source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid" },
+        { "source": "tsm_pipeline_e2e", "name": "foreign_pointer_is_allowed_with_unknown_state" },
+        { "source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle" },
+        { "source": "tsm_pipeline_e2e", "name": "double_free_detected" },
+        { "source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected" },
+        { "source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent" },
+        { "source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity" },
+        { "source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline" },
+        { "source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer" },
+        { "source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget" },
+        { "source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic" },
+        { "source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload" },
+        { "source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation" },
+        { "source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload" },
+        { "source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields" },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --nocapture",
@@ -111,9 +123,12 @@
       "default_report_path": "target/conformance/tsm_full_pipeline_load_completion_contract.report.json",
       "default_log_path": "target/conformance/tsm_full_pipeline_load_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "validation_log_export_includes_trace_and_decision_ids"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_concurrency_dimension"}
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl_scenario_rows" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_concurrency_dimension" }
       ],
       "required_events": [
         "tsm_full_pipeline_load_completion_contract_validated",
@@ -189,10 +204,13 @@
             "pipeline_metrics"
           ],
           "test_refs": [
-            {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
-            {"source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid"},
-            {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_is_allowed_with_unknown_state"},
-            {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"}
+            { "source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null" },
+            { "source": "tsm_pipeline_e2e", "name": "low_addresses_validate_as_null_or_invalid" },
+            {
+              "source": "tsm_pipeline_e2e",
+              "name": "foreign_pointer_is_allowed_with_unknown_state"
+            },
+            { "source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload" }
           ],
           "artifact_refs": [
             "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
@@ -217,12 +235,12 @@
             "monotone_lattice_transition"
           ],
           "test_refs": [
-            {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
-            {"source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent"},
-            {"source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity"},
-            {"source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget"},
-            {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
-            {"source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields"}
+            { "source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle" },
+            { "source": "tsm_pipeline_e2e", "name": "multiple_allocations_independent" },
+            { "source": "tsm_pipeline_e2e", "name": "safety_state_lattice_monotonicity" },
+            { "source": "tsm_pipeline_e2e", "name": "validation_latency_within_budget" },
+            { "source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation" },
+            { "source": "tsm_pipeline_e2e", "name": "validation_outcome_abstraction_fields" }
           ],
           "artifact_refs": [
             "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",
@@ -246,10 +264,16 @@
             "monotone_lattice_transition"
           ],
           "test_refs": [
-            {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
-            {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
-            {"source": "allocator_sequences", "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"},
-            {"source": "allocator_sequences", "name": "concurrent_double_free_detection_basic_10k_16t_10pct"}
+            { "source": "tsm_pipeline_e2e", "name": "double_free_detected" },
+            { "source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected" },
+            {
+              "source": "allocator_sequences",
+              "name": "adversarial_pointer_fault_injection_matrix_has_zero_false_negatives"
+            },
+            {
+              "source": "allocator_sequences",
+              "name": "concurrent_double_free_detection_basic_10k_16t_10pct"
+            }
           ],
           "artifact_refs": [
             "crates/frankenlibc-membrane/tests/allocator_membrane_invariants_sequences_test.rs",
@@ -274,11 +298,14 @@
             "adversarial_fault_matrix"
           ],
           "test_refs": [
-            {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
-            {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
-            {"source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer"},
-            {"source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload"},
-            {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"}
+            { "source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic" },
+            { "source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline" },
+            { "source": "tsm_pipeline_e2e", "name": "concurrent_read_validate_live_pointer" },
+            { "source": "tsm_pipeline_e2e", "name": "concurrent_mixed_workload" },
+            {
+              "source": "allocator_sequences",
+              "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+            }
           ],
           "artifact_refs": [
             "crates/frankenlibc-membrane/tests/tsm_pipeline_e2e_test.rs",

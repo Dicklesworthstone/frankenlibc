@@ -31,103 +31,66 @@
     "original_bead": "bd-ldj.1",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-ldj.1/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "tests.conformance.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "tests.conformance.primary"]
   },
-  "target_symbols": [
-    "fopen",
-    "fclose",
-    "fread",
-    "fwrite",
-    "fprintf",
-    "fscanf",
-    "fseek",
-    "fflush"
-  ],
+  "target_symbols": ["fopen", "fclose", "fread", "fwrite", "fprintf", "fscanf", "fseek", "fflush"],
   "completion_debt_evidence": {
     "unit_primary": {
       "required_test_refs": [
         {
           "artifact": "core_stdio_file",
           "name": "test_parse_mode_invalid",
-          "covers": [
-            "invalid fopen mode rejection",
-            "mode parser boundary behavior"
-          ]
+          "covers": ["invalid fopen mode rejection", "mode parser boundary behavior"]
         },
         {
           "artifact": "core_stdio_file",
           "name": "test_stream_offset_tracks_reads_and_writes",
-          "covers": [
-            "buffered fread/fwrite offset accounting"
-          ]
+          "covers": ["buffered fread/fwrite offset accounting"]
         },
         {
           "artifact": "core_stdio_file",
           "name": "test_prepare_seek_flushes_pending_writes_and_clears_read_state",
-          "covers": [
-            "fseek flush-before-seek preparation",
-            "read buffer and ungetc state reset"
-          ]
+          "covers": ["fseek flush-before-seek preparation", "read buffer and ungetc state reset"]
         },
         {
           "artifact": "core_printf",
           "name": "test_parse_width_precision",
-          "covers": [
-            "fprintf printf-format width and precision parser"
-          ]
+          "covers": ["fprintf printf-format width and precision parser"]
         },
         {
           "artifact": "core_printf",
           "name": "test_format_float_basic",
-          "covers": [
-            "fprintf numeric rendering"
-          ]
+          "covers": ["fprintf numeric rendering"]
         },
         {
           "artifact": "core_scanf",
           "name": "test_scan_width_limit",
-          "covers": [
-            "fscanf shared scanner width handling"
-          ]
+          "covers": ["fscanf shared scanner width handling"]
         },
         {
           "artifact": "core_scanf",
           "name": "test_scan_string_with_width",
-          "covers": [
-            "fscanf shared scanner string bounds"
-          ]
+          "covers": ["fscanf shared scanner string bounds"]
         },
         {
           "artifact": "abi_stdio_test",
           "name": "fopen_fputs_fflush_fclose_round_trip",
-          "covers": [
-            "ABI fopen/fclose/fflush lifecycle"
-          ]
+          "covers": ["ABI fopen/fclose/fflush lifecycle"]
         },
         {
           "artifact": "abi_stdio_test",
           "name": "fwrite_then_fread_round_trip_matches_bytes",
-          "covers": [
-            "ABI fread/fwrite round-trip"
-          ]
+          "covers": ["ABI fread/fwrite round-trip"]
         },
         {
           "artifact": "abi_stdio_test",
           "name": "fprintf_formats_and_persists_to_stream",
-          "covers": [
-            "ABI fprintf formatted output"
-          ]
+          "covers": ["ABI fprintf formatted output"]
         },
         {
           "artifact": "abi_stdio_test",
           "name": "isoc99_fscanf_from_file",
-          "covers": [
-            "ABI fscanf stream scanning"
-          ]
+          "covers": ["ABI fscanf stream scanning"]
         }
       ],
       "required_commands": [
@@ -166,80 +129,57 @@
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_fixture_valid_schema",
-          "covers": [
-            "fixture schema"
-          ]
+          "covers": ["fixture schema"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fopen",
-          "covers": [
-            "fopen fixture coverage"
-          ]
+          "covers": ["fopen fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fclose",
-          "covers": [
-            "fclose fixture coverage"
-          ]
+          "covers": ["fclose fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fread",
-          "covers": [
-            "fread fixture coverage"
-          ]
+          "covers": ["fread fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fwrite",
-          "covers": [
-            "fwrite fixture coverage"
-          ]
+          "covers": ["fwrite fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_formatted_io",
-          "covers": [
-            "fprintf fixture coverage"
-          ]
+          "covers": ["fprintf fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fseek",
-          "covers": [
-            "fseek fixture coverage"
-          ]
+          "covers": ["fseek fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_covers_fflush",
-          "covers": [
-            "fflush fixture coverage"
-          ]
+          "covers": ["fflush fixture coverage"]
         },
         {
           "artifact": "conformance_fixture_test",
           "name": "stdio_file_ops_fixture_executes_via_isolated_harness",
-          "covers": [
-            "isolated harness execution",
-            "host parity"
-          ]
+          "covers": ["isolated harness execution", "host parity"]
         },
         {
           "artifact": "conformance_executor",
           "name": "stdio_file_ops_fixture_cases_match_execute_fixture_case",
-          "covers": [
-            "frankenlibc_conformance fixture execution dispatch"
-          ]
+          "covers": ["frankenlibc_conformance fixture execution dispatch"]
         },
         {
           "artifact": "conformance_executor",
           "name": "scanf_conformance_fixture_cases_match_execute_fixture_case",
-          "covers": [
-            "shared scanf parser conformance used by fscanf"
-          ]
+          "covers": ["shared scanf parser conformance used by fscanf"]
         }
       ],
       "required_artifacts": [
@@ -297,26 +237,13 @@
     "stdio_fixture": {
       "expected_family": "stdio_file_ops",
       "expected_min_cases": 12,
-      "required_functions": [
-        "fopen",
-        "fclose",
-        "fread",
-        "fwrite",
-        "fprintf",
-        "fseek",
-        "fflush"
-      ],
-      "required_modes": [
-        "strict",
-        "hardened"
-      ]
+      "required_functions": ["fopen", "fclose", "fread", "fwrite", "fprintf", "fseek", "fflush"],
+      "required_modes": ["strict", "hardened"]
     },
     "scanf_fixture": {
       "expected_family": "scanf_conformance",
       "expected_min_cases": 50,
-      "required_functions": [
-        "sscanf"
-      ]
+      "required_functions": ["sscanf"]
     },
     "e2e_checker_markers": [
       "LD_PRELOAD",
@@ -387,10 +314,7 @@
         "fseek",
         "fflush"
       ],
-      "e2e_stdio_printf_fixture": [
-        "test_fprintf_contracts",
-        "fixture_stdio_printf: PASS"
-      ],
+      "e2e_stdio_printf_fixture": ["test_fprintf_contracts", "fixture_stdio_printf: PASS"],
       "stdio_evidence_schema_test": [
         "ring_buffer_persists_jsonl_and_parser_reads_all_rows",
         "serializer_keeps_schema_prefix_stable",

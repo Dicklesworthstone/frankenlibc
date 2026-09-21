@@ -12,7 +12,7 @@
         "rationale": "Membrane should produce < 2% adverse outcomes under normal workloads."
       },
       "alternative_q1": {
-        "value": 0.20,
+        "value": 0.2,
         "description": "Adverse rate under the alternative hypothesis (20%).",
         "rationale": "Elevated regime where remediation is needed."
       },
@@ -33,10 +33,19 @@
       }
     },
     "states": [
-      {"state": "Calibrating", "description": "Insufficient data (calls < warmup_calls)."},
-      {"state": "Normal", "description": "E-value below warning threshold; operating within budget."},
-      {"state": "Warning", "description": "E-value >= 100; evidence of elevated adverse rate accumulating."},
-      {"state": "Alarm", "description": "E-value >= 10,000; strong evidence of persistent adverse outcomes."}
+      { "state": "Calibrating", "description": "Insufficient data (calls < warmup_calls)." },
+      {
+        "state": "Normal",
+        "description": "E-value below warning threshold; operating within budget."
+      },
+      {
+        "state": "Warning",
+        "description": "E-value >= 100; evidence of elevated adverse rate accumulating."
+      },
+      {
+        "state": "Alarm",
+        "description": "E-value >= 10,000; strong evidence of persistent adverse outcomes."
+      }
     ],
     "mathematical_properties": {
       "anytime_validity": "E-process is a non-negative supermartingale under H0; valid at any stopping time.",
@@ -48,10 +57,26 @@
     },
     "api_families_monitored": 20,
     "api_family_list": [
-      "PointerValidation", "Allocator", "StringMemory", "Stdio", "Threading",
-      "Resolver", "MathFenv", "Loader", "Stdlib", "Ctype",
-      "Time", "Signal", "IoFd", "Socket", "Locale",
-      "Termios", "Inet", "Process", "VirtualMemory", "Poll"
+      "PointerValidation",
+      "Allocator",
+      "StringMemory",
+      "Stdio",
+      "Threading",
+      "Resolver",
+      "MathFenv",
+      "Loader",
+      "Stdlib",
+      "Ctype",
+      "Time",
+      "Signal",
+      "IoFd",
+      "Socket",
+      "Locale",
+      "Termios",
+      "Inet",
+      "Process",
+      "VirtualMemory",
+      "Poll"
     ]
   },
   "alpha_investing_policy": {
@@ -99,10 +124,10 @@
       }
     },
     "states": [
-      {"state": "Calibrating", "description": "Insufficient data."},
-      {"state": "Normal", "description": "Wealth healthy; standard FDR control."},
-      {"state": "Generous", "description": "Wealth >= 300 milli; permissive alarm acceptance."},
-      {"state": "Depleted", "description": "Wealth <= 10 milli; all alarms suppressed."}
+      { "state": "Calibrating", "description": "Insufficient data." },
+      { "state": "Normal", "description": "Wealth healthy; standard FDR control." },
+      { "state": "Generous", "description": "Wealth >= 300 milli; permissive alarm acceptance." },
+      { "state": "Depleted", "description": "Wealth <= 10 milli; all alarms suppressed." }
     ],
     "fdr_guarantee": {
       "description": "Under the null, expected number of false discoveries <= W(0)/reward = 50.",
@@ -161,19 +186,25 @@
   "companion_monitors": {
     "description": "Production monitor modules that integrate with the e-process + alpha-investing framework.",
     "modules": [
-      {"module": "eprocess", "role": "Primary anytime-valid drift detector per API family."},
-      {"module": "alpha_investing", "role": "FDR controller for compound alarm acceptance."},
-      {"module": "changepoint", "role": "Bayesian online change-point detection (Adams & MacKay 2007)."},
-      {"module": "cvar", "role": "Distributionally-robust CVaR tail controller for latency."},
-      {"module": "azuma_hoeffding", "role": "Martingale concentration monitor for noise bounds."},
-      {"module": "pareto", "role": "Latency-risk Pareto controller with online regret."},
-      {"module": "sobol", "role": "Low-discrepancy probe scheduling for validation coverage."},
-      {"module": "covering_array", "role": "t-wise interaction coverage for conformance scheduling."},
-      {"module": "submodular_coverage", "role": "Submodular validation stage coverage."},
-      {"module": "dispersion_index", "role": "Variance-to-mean ratio monitoring."},
-      {"module": "borel_cantelli", "role": "Recurrence monitor (transient vs recurrent)."},
-      {"module": "doob_decomposition", "role": "Drift/noise separation."},
-      {"module": "renewal_theory", "role": "Inter-arrival time monitoring for recovery tracking."}
+      { "module": "eprocess", "role": "Primary anytime-valid drift detector per API family." },
+      { "module": "alpha_investing", "role": "FDR controller for compound alarm acceptance." },
+      {
+        "module": "changepoint",
+        "role": "Bayesian online change-point detection (Adams & MacKay 2007)."
+      },
+      { "module": "cvar", "role": "Distributionally-robust CVaR tail controller for latency." },
+      { "module": "azuma_hoeffding", "role": "Martingale concentration monitor for noise bounds." },
+      { "module": "pareto", "role": "Latency-risk Pareto controller with online regret." },
+      { "module": "sobol", "role": "Low-discrepancy probe scheduling for validation coverage." },
+      {
+        "module": "covering_array",
+        "role": "t-wise interaction coverage for conformance scheduling."
+      },
+      { "module": "submodular_coverage", "role": "Submodular validation stage coverage." },
+      { "module": "dispersion_index", "role": "Variance-to-mean ratio monitoring." },
+      { "module": "borel_cantelli", "role": "Recurrence monitor (transient vs recurrent)." },
+      { "module": "doob_decomposition", "role": "Drift/noise separation." },
+      { "module": "renewal_theory", "role": "Inter-arrival time monitoring for recovery tracking." }
     ],
     "total_production_monitors": 13,
     "governance_ref": "tests/conformance/math_governance.json"
@@ -205,15 +236,51 @@
   "diagnostics_integration": {
     "description": "How monitor states integrate with the crash bundle and structured logging pipeline.",
     "snapshot_fields_exported": [
-      {"field": "anytime_max_e_value", "source": "eprocess", "description": "Maximum e-process value across families."},
-      {"field": "anytime_alarmed_families", "source": "eprocess", "description": "Families in alarm state."},
-      {"field": "alpha_investing_wealth_milli", "source": "alpha_investing", "description": "Current FDR controller wealth."},
-      {"field": "alpha_investing_empirical_fdr", "source": "alpha_investing", "description": "Empirical false discovery rate."},
-      {"field": "cvar_max_robust_ns", "source": "cvar", "description": "Maximum CVaR latency estimate."},
-      {"field": "cvar_alarmed_families", "source": "cvar", "description": "Families in CVaR alarm."},
-      {"field": "changepoint_count", "source": "changepoint", "description": "Bayesian change-point detections."},
-      {"field": "spectral_phase_transition", "source": "spectral_monitor", "description": "Phase transition active."},
-      {"field": "spectral_edge_ratio", "source": "spectral_monitor", "description": "Eigenvalue edge ratio."}
+      {
+        "field": "anytime_max_e_value",
+        "source": "eprocess",
+        "description": "Maximum e-process value across families."
+      },
+      {
+        "field": "anytime_alarmed_families",
+        "source": "eprocess",
+        "description": "Families in alarm state."
+      },
+      {
+        "field": "alpha_investing_wealth_milli",
+        "source": "alpha_investing",
+        "description": "Current FDR controller wealth."
+      },
+      {
+        "field": "alpha_investing_empirical_fdr",
+        "source": "alpha_investing",
+        "description": "Empirical false discovery rate."
+      },
+      {
+        "field": "cvar_max_robust_ns",
+        "source": "cvar",
+        "description": "Maximum CVaR latency estimate."
+      },
+      {
+        "field": "cvar_alarmed_families",
+        "source": "cvar",
+        "description": "Families in CVaR alarm."
+      },
+      {
+        "field": "changepoint_count",
+        "source": "changepoint",
+        "description": "Bayesian change-point detections."
+      },
+      {
+        "field": "spectral_phase_transition",
+        "source": "spectral_monitor",
+        "description": "Phase transition active."
+      },
+      {
+        "field": "spectral_edge_ratio",
+        "source": "spectral_monitor",
+        "description": "Eigenvalue edge ratio."
+      }
     ],
     "crash_bundle_ref": "tests/conformance/crash_bundle_spec.json",
     "log_schema_ref": "tests/conformance/log_schema.json",

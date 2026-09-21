@@ -65,14 +65,7 @@
       "test_refs",
       "gap_reasons"
     ],
-    "required_execution_fields": [
-      "total",
-      "pass",
-      "fail",
-      "error",
-      "timeout",
-      "crash"
-    ],
+    "required_execution_fields": ["total", "pass", "fail", "error", "timeout", "crash"],
     "obligations_must_be_non_empty_for_canonical_inputs": true,
     "obligations_must_be_sorted_by_symbol_then_posix_ref": true,
     "test_refs_must_be_non_empty": true,

@@ -29,10 +29,7 @@
       "schema.tables",
       "jsonl.parse"
     ],
-    "accepted_degraded_checks": [
-      "db.recovery_artifacts",
-      "db.sidecars"
-    ],
+    "accepted_degraded_checks": ["db.recovery_artifacts", "db.sidecars"],
     "required_sync_status": {
       "dirty_count": 0,
       "jsonl_newer": false,
@@ -48,10 +45,7 @@
         "status": "closed"
       }
     ],
-    "required_jsonl_ids": [
-      "bd-yaiw",
-      "bd-yaiw.1"
-    ]
+    "required_jsonl_ids": ["bd-yaiw", "bd-yaiw.1"]
   },
   "read_only_probe_contract": {
     "allowed_commands": [
@@ -76,9 +70,7 @@
     "preserved_recovery_artifacts_are_audit_history": true
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.golden.primary"
-    ],
+    "missing_items_closed": ["tests.golden.primary"],
     "implementation_refs": [
       ".beads/issues.jsonl:1942",
       ".beads/issues.jsonl:1943",

@@ -66,11 +66,17 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free"},
-        {"source": "ptr_validator_unit", "name": "double_free_reported"},
-        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
-        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
-        {"source": "contract_harness", "name": "manifest_binds_deterministic_sequence_unit_and_property_evidence"}
+        { "source": "ptr_validator_unit", "name": "tls_cache_does_not_allow_uaf_after_free" },
+        { "source": "ptr_validator_unit", "name": "double_free_reported" },
+        { "source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free" },
+        {
+          "source": "allocator_sequences",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        {
+          "source": "contract_harness",
+          "name": "manifest_binds_deterministic_sequence_unit_and_property_evidence"
+        }
       ],
       "required_commands": [
         "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane --test allocator_membrane_invariants_sequences_test deterministic_allocator_membrane_sequences_hold_core_invariants -- --nocapture"
@@ -81,11 +87,17 @@
       "missing_item_id": "tests.property.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
-        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
-        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"},
-        {"source": "allocator_sequences", "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"},
-        {"source": "contract_harness", "name": "checker_rejects_missing_sequence_property_marker"}
+        { "source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live" },
+        {
+          "source": "ptr_validator_unit",
+          "name": "freed_pointer_property_becomes_temporal_violation"
+        },
+        { "source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds" },
+        {
+          "source": "allocator_sequences",
+          "name": "deterministic_allocator_membrane_sequences_hold_core_invariants"
+        },
+        { "source": "contract_harness", "name": "checker_rejects_missing_sequence_property_marker" }
       ],
       "required_commands": [
         "RCH_ENV_ALLOWLIST=CARGO_TARGET_DIR rch exec -- cargo test -p frankenlibc-membrane allocated_pointer_property_validates_as_live -- --nocapture",

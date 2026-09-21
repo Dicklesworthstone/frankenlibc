@@ -172,10 +172,7 @@
       "minimum_fixture_json_unique_functions": 1181,
       "minimum_fixture_schema_standard_cases": 1284,
       "minimum_expected_errno_required_cases": 2745,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
+      "target_statuses": ["Implemented", "RawSyscall"],
       "required_source_gates": [
         "scripts/check_symbol_fixture_coverage.sh",
         "scripts/check_fixture_schema_validation.sh --validate-only",
@@ -253,8 +250,6 @@
       "per_symbol_fixture_conformance_bindings",
       "per_symbol_fixture_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "per_symbol_fixture_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["per_symbol_fixture_completion_contract_fail"]
   }
 }

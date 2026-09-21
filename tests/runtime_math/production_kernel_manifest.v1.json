@@ -4,17 +4,13 @@
     "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
     "cargo bench -p frankenlibc-bench --bench membrane_bench"
   ],
-  "default_feature_set": [
-    "runtime-math-production"
-  ],
+  "default_feature_set": ["runtime-math-production"],
   "generated_at": "2026-02-19T16:29:48Z",
   "latency_budgets_ns": {
     "hardened_hot_path_max": 200,
     "strict_hot_path_max": 20
   },
-  "optional_feature_set": [
-    "runtime-math-research"
-  ],
+  "optional_feature_set": ["runtime-math-research"],
   "production_modules": [
     "alpha_investing",
     "azuma_hoeffding",

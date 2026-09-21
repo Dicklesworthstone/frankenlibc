@@ -107,12 +107,7 @@
       "duplicate_gap_count": 0,
       "unbatched_gap_count": 0
     },
-    "required_sections": [
-      "gap_summary",
-      "macro_targets",
-      "proof_math",
-      "reverse_core"
-    ],
+    "required_sections": ["gap_summary", "macro_targets", "proof_math", "reverse_core"],
     "required_batches": [
       "fpg-claim-control",
       "fpg-reverse-runtime-core",
@@ -193,11 +188,7 @@
       "regenerated_group_artifact",
       "source_commit"
     ],
-    "required_generated_outputs": [
-      "report",
-      "log_jsonl",
-      "regenerated_groups"
-    ]
+    "required_generated_outputs": ["report", "log_jsonl", "regenerated_groups"]
   },
   "missing_item_bindings": [
     {

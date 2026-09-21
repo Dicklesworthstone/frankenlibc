@@ -97,12 +97,18 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "levels_exists_and_valid"},
-        {"source": "replacement_harness", "name": "assessment_matches_support_matrix"},
-        {"source": "replacement_harness", "name": "blocker_text_does_not_reference_resolved_numeric_counts"},
-        {"source": "callthrough_harness", "name": "artifact_exists_and_has_required_shape"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_integration_e2e_and_migration_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_stale_file_line_binding"}
+        { "source": "replacement_harness", "name": "levels_exists_and_valid" },
+        { "source": "replacement_harness", "name": "assessment_matches_support_matrix" },
+        {
+          "source": "replacement_harness",
+          "name": "blocker_text_does_not_reference_resolved_numeric_counts"
+        },
+        { "source": "callthrough_harness", "name": "artifact_exists_and_has_required_shape" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_integration_e2e_and_migration_evidence"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_stale_file_line_binding" }
       ],
       "required_commands": [
         "jq empty tests/conformance/replacement_surface_completion_contract.v1.json",
@@ -114,10 +120,16 @@
       "missing_item_id": "tests.integration.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "residual_harness", "name": "checker_passes_with_live_replacement_guard_reports"},
-        {"source": "residual_harness", "name": "checker_rejects_nonzero_replacement_report"},
-        {"source": "residual_harness", "name": "checker_rejects_nonzero_interpose_report"},
-        {"source": "completion_harness", "name": "checker_replays_replacement_gates_and_preserves_l1_claim_control"}
+        {
+          "source": "residual_harness",
+          "name": "checker_passes_with_live_replacement_guard_reports"
+        },
+        { "source": "residual_harness", "name": "checker_rejects_nonzero_replacement_report" },
+        { "source": "residual_harness", "name": "checker_rejects_nonzero_interpose_report" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_replacement_gates_and_preserves_l1_claim_control"
+        }
       ],
       "required_commands": [
         "bash scripts/check_residual_replacement_callthrough_blockers.sh --validate-only",
@@ -129,10 +141,13 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "gate_script_refreshes_l1_objective_gate_artifacts"},
-        {"source": "callthrough_harness", "name": "gate_script_passes_and_emits_artifacts"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_event_binding"}
+        {
+          "source": "replacement_harness",
+          "name": "gate_script_refreshes_l1_objective_gate_artifacts"
+        },
+        { "source": "callthrough_harness", "name": "gate_script_passes_and_emits_artifacts" },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_required_event_binding" }
       ],
       "required_commands": [
         "FLC_REPLACEMENT_LEVELS_REPORT_PATH=<report> FLC_REPLACEMENT_LEVELS_LOG_PATH=<log> bash scripts/check_replacement_levels.sh",
@@ -145,10 +160,13 @@
       "missing_item_id": "migrations.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "replacement_harness", "name": "status_progression_consistent"},
-        {"source": "replacement_harness", "name": "claim_drift_guard_consistent_with_readme_and_release_policy"},
-        {"source": "callthrough_harness", "name": "artifact_summary_counts_match_rows"},
-        {"source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command"}
+        { "source": "replacement_harness", "name": "status_progression_consistent" },
+        {
+          "source": "replacement_harness",
+          "name": "claim_drift_guard_consistent_with_readme_and_release_policy"
+        },
+        { "source": "callthrough_harness", "name": "artifact_summary_counts_match_rows" },
+        { "source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command" }
       ],
       "required_commands": [
         "bash scripts/check_replacement_levels.sh",

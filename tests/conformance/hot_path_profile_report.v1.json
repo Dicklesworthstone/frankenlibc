@@ -75,31 +75,15 @@
     "profile_record_count": 102,
     "measured_profile_record_count": 52,
     "missing_profile_record_count": 50,
-    "families": [
-      "malloc",
-      "membrane",
-      "pthread",
-      "string",
-      "syscall"
-    ],
+    "families": ["malloc", "membrane", "pthread", "string", "syscall"],
     "host_comparison_available_count": 32,
     "host_comparison_limited_count": 70,
     "parity_proofed_record_count": 102,
     "tail_attributed_profile_count": 52,
-    "tail_attributed_families": [
-      "membrane",
-      "pthread",
-      "string"
-    ],
-    "tail_attributed_modes": [
-      "hardened",
-      "strict"
-    ],
+    "tail_attributed_families": ["membrane", "pthread", "string"],
+    "tail_attributed_modes": ["hardened", "strict"],
     "libc_tail_attributed_family_count": 2,
-    "libc_tail_attributed_families": [
-      "pthread",
-      "string"
-    ],
+    "libc_tail_attributed_families": ["pthread", "string"],
     "top_hotness_score": 2980.216,
     "top_hot_paths": [
       {
@@ -2426,17 +2410,8 @@
           "workload_count": 4,
           "critical_symbol_workload_count": 3,
           "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
+          "workload_ids": ["wl-002", "wl-003", "wl-005", "wl-010"],
           "user_workload_ids": [
             "uwm-language-runtime",
             "uwm-threaded-service",
@@ -2523,17 +2498,8 @@
           "workload_count": 4,
           "critical_symbol_workload_count": 3,
           "user_workload_count": 4,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
-          "workload_ids": [
-            "wl-002",
-            "wl-003",
-            "wl-005",
-            "wl-010"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
+          "workload_ids": ["wl-002", "wl-003", "wl-005", "wl-010"],
           "user_workload_ids": [
             "uwm-language-runtime",
             "uwm-threaded-service",
@@ -3314,11 +3280,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3404,11 +3366,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3494,11 +3452,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3584,11 +3538,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3674,11 +3624,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3764,11 +3710,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3854,11 +3796,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -3944,11 +3882,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4034,11 +3968,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4124,11 +4054,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4214,11 +4140,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4304,11 +4226,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4394,11 +4312,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4484,11 +4398,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4574,11 +4484,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4664,11 +4570,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4754,11 +4656,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4844,11 +4742,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -4934,11 +4828,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5024,11 +4914,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5114,11 +5000,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5204,11 +5086,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5294,11 +5172,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5384,11 +5258,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5474,11 +5344,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5564,11 +5430,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5654,11 +5516,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5744,11 +5602,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5834,11 +5688,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -5924,11 +5774,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6014,11 +5860,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6104,11 +5946,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6194,11 +6032,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6284,11 +6118,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6374,11 +6204,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6464,11 +6290,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6554,11 +6376,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6644,11 +6462,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6734,11 +6548,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6824,11 +6634,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -6914,11 +6720,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7004,11 +6806,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7094,11 +6892,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7184,11 +6978,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7274,11 +7064,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7364,11 +7150,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 0,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7454,11 +7236,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 6,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7552,11 +7330,7 @@
           "workload_count": 10,
           "critical_symbol_workload_count": 0,
           "user_workload_count": 1,
-          "top_priority_impacts": [
-            "critical",
-            "high",
-            "medium"
-          ],
+          "top_priority_impacts": ["critical", "high", "medium"],
           "workload_ids": [
             "wl-001",
             "wl-002",
@@ -7567,9 +7341,7 @@
             "wl-007",
             "wl-008"
           ],
-          "user_workload_ids": [
-            "uwm-performance-hotpaths"
-          ],
+          "user_workload_ids": ["uwm-performance-hotpaths"],
           "artifact_refs": [
             "tests/conformance/workload_matrix.json",
             "tests/conformance/user_workload_acceptance_matrix.v1.json"

@@ -116,10 +116,7 @@
   "completion_debt_evidence": {
     "bead": "bd-5vr.2.1",
     "original_bead": "bd-5vr.2",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"],
     "test_sources": {
       "galois": "crates/frankenlibc-membrane/src/galois.rs",
       "runtime_barrier": "crates/frankenlibc-membrane/src/runtime_math/barrier.rs",
@@ -137,25 +134,40 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Kernel unit and proof tests cover Galois validity/healing, runtime barrier admissibility, SOS certificate integrity, SOS invariant stress states, and HJI Bellman/viability invariants.",
       "required_test_refs": [
-        {"source": "galois", "name": "proof_galois_connection_valid_operations_never_denied"},
-        {"source": "galois", "name": "proof_healing_never_exceeds_remaining"},
-        {"source": "galois", "name": "proof_unknown_pointers_always_proceed_with_full_size"},
-        {"source": "runtime_barrier", "name": "proof_admissibility_monotone_in_risk"},
-        {"source": "runtime_barrier", "name": "proof_size_guard_is_necessary"},
-        {"source": "runtime_barrier", "name": "proof_full_profile_at_least_as_permissive_as_fast"},
-        {"source": "sos_barrier", "name": "certificate_hash_matches_static_fragmentation_artifact"},
-        {"source": "sos_barrier", "name": "certificate_tamper_is_detected"},
-        {"source": "sos_barrier", "name": "size_class_fast_path_matches_generic_certificate_eval"},
-        {"source": "sos_barrier", "name": "build_time_soundness_report_covers_all_certificates"},
-        {"source": "sos_barrier", "name": "fragmentation_sawtooth_10k_cycles_stays_within_envelope"},
-        {"source": "sos_invariant", "name": "nominal_state_satisfies_invariants"},
-        {"source": "sos_invariant", "name": "severe_structural_incoherence_violates"},
-        {"source": "sos_invariant", "name": "quadratic_form_evaluation_correctness"},
-        {"source": "hji_reachability", "name": "proof_value_function_is_bellman_fixed_point"},
-        {"source": "hji_reachability", "name": "proof_viability_kernel_is_maximal"},
-        {"source": "hji_reachability", "name": "proof_every_viable_state_has_winning_strategy"},
-        {"source": "hji_reachability", "name": "proof_kernel_forward_invariant_under_optimal_play"},
-        {"source": "hji_reachability", "name": "proof_value_iteration_convergence"}
+        { "source": "galois", "name": "proof_galois_connection_valid_operations_never_denied" },
+        { "source": "galois", "name": "proof_healing_never_exceeds_remaining" },
+        { "source": "galois", "name": "proof_unknown_pointers_always_proceed_with_full_size" },
+        { "source": "runtime_barrier", "name": "proof_admissibility_monotone_in_risk" },
+        { "source": "runtime_barrier", "name": "proof_size_guard_is_necessary" },
+        {
+          "source": "runtime_barrier",
+          "name": "proof_full_profile_at_least_as_permissive_as_fast"
+        },
+        {
+          "source": "sos_barrier",
+          "name": "certificate_hash_matches_static_fragmentation_artifact"
+        },
+        { "source": "sos_barrier", "name": "certificate_tamper_is_detected" },
+        {
+          "source": "sos_barrier",
+          "name": "size_class_fast_path_matches_generic_certificate_eval"
+        },
+        { "source": "sos_barrier", "name": "build_time_soundness_report_covers_all_certificates" },
+        {
+          "source": "sos_barrier",
+          "name": "fragmentation_sawtooth_10k_cycles_stays_within_envelope"
+        },
+        { "source": "sos_invariant", "name": "nominal_state_satisfies_invariants" },
+        { "source": "sos_invariant", "name": "severe_structural_incoherence_violates" },
+        { "source": "sos_invariant", "name": "quadratic_form_evaluation_correctness" },
+        { "source": "hji_reachability", "name": "proof_value_function_is_bellman_fixed_point" },
+        { "source": "hji_reachability", "name": "proof_viability_kernel_is_maximal" },
+        { "source": "hji_reachability", "name": "proof_every_viable_state_has_winning_strategy" },
+        {
+          "source": "hji_reachability",
+          "name": "proof_kernel_forward_invariant_under_optimal_play"
+        },
+        { "source": "hji_reachability", "name": "proof_value_iteration_convergence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane proof_galois_connection_valid_operations_never_denied --lib -- --nocapture",
@@ -173,10 +185,13 @@
         "scripts/check_safety_kernels_completion_contract.sh"
       ],
       "required_test_refs": [
-        {"source": "hji_gate", "name": "gate_script_emits_logs_and_report"},
-        {"source": "linkage_gate", "name": "gate_script_emits_logs_and_report"},
-        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_artifacts"},
-        {"source": "completion_harness", "name": "checker_rejects_stale_kernel_test_binding"}
+        { "source": "hji_gate", "name": "gate_script_emits_logs_and_report" },
+        { "source": "linkage_gate", "name": "gate_script_emits_logs_and_report" },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_report_log_and_validates_artifacts"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_stale_kernel_test_binding" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test runtime_math_hji_viability_proofs_test -- --nocapture",
@@ -188,9 +203,7 @@
     },
     "telemetry_primary": {
       "description": "The completion checker writes structured telemetry naming the completion-debt bead, original bead, kernels, tests, artifacts, and failure signature.",
-      "required_events": [
-        "safety_kernels_completion_contract_validated"
-      ],
+      "required_events": ["safety_kernels_completion_contract_validated"],
       "required_fields": [
         "timestamp",
         "trace_id",
@@ -206,7 +219,10 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_artifacts"}
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_report_log_and_validates_artifacts"
+        }
       ]
     }
   }

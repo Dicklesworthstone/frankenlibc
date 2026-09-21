@@ -21,22 +21,10 @@
       "no_admissible_workers",
       "worker_selection_skipped"
     ],
-    "active_statuses": [
-      "open",
-      "in_progress"
-    ],
+    "active_statuses": ["open", "in_progress"],
     "blocked_issue_dependency_type": "blocks",
-    "dirty_validation_path_prefixes": [
-      "crates/",
-      "scripts/",
-      "tests/"
-    ],
-    "dirty_validation_path_files": [
-      "Cargo.lock",
-      "Cargo.toml",
-      "build.rs",
-      "rust-toolchain.toml"
-    ],
+    "dirty_validation_path_prefixes": ["crates/", "scripts/", "tests/"],
+    "dirty_validation_path_files": ["Cargo.lock", "Cargo.toml", "build.rs", "rust-toolchain.toml"],
     "decision_when_stale_in_progress_exists": "recover_stale_in_progress_before_new_discovery",
     "decision_when_safe_ready_exists": "claim_safe_ready_before_new_discovery",
     "decision_when_rch_admissible": "resume_cargo_validation_queue",

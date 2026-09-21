@@ -87,17 +87,8 @@
       "jump_result",
       "failure_signature"
     ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ],
-    "schedule_required_fields": [
-      "mode",
-      "seed",
-      "control_token",
-      "max_steps"
-    ]
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"],
+    "schedule_required_fields": ["mode", "seed", "control_token", "max_steps"]
   },
   "required_scenario_kinds": [
     "signal_mask_change",
@@ -110,10 +101,7 @@
     "negative_timeout",
     "unsupported_async_boundary"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
   "required_timeout_classifications": [
     "not_applicable",
     "bounded_wait_pass",
@@ -252,9 +240,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test signal_abi_test sigprocmask_block_and_unblock_sigusr1 -- --exact --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/signal_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/signal_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -403,9 +389,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test signal_abi_test signal_delivery_is_deferred_inside_critical_section -- --exact --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/signal_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/signal_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -438,12 +422,7 @@
       "expected": {
         "status": "pass",
         "errno": "0",
-        "order": [
-          "handler_installed",
-          "signal_delivered",
-          "write_completed",
-          "handler_returned"
-        ],
+        "order": ["handler_installed", "signal_delivered", "write_completed", "handler_returned"],
         "signal_result": "async_safe_ok",
         "mask_result": "not_applicable",
         "jump_result": "no_jump",
@@ -477,9 +456,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test signal_abi_test signal_delivery_remains_immediate_for_safe_classification -- --exact --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/signal_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/signal_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",

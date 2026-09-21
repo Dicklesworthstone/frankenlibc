@@ -8,19 +8,14 @@
     "fixture": "tests/conformance/fixtures/resolver_nss_core_wave01.json",
     "host_delegation_census": "tests/conformance/host_delegation_census.v1.json",
     "abi_source": "crates/frankenlibc-abi/src/resolv_abi.rs",
-    "core_sources": [
-      "crates/frankenlibc-core/src/resolv.rs"
-    ],
+    "core_sources": ["crates/frankenlibc-core/src/resolv.rs"],
     "harness_tests": [
       "crates/frankenlibc-harness/tests/resolver_nss_core_wave01_conformance_test.rs"
     ]
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-protocol-database-with-errno-bridge",
     "accepted_host_symbols": [
       "<dynamic>",

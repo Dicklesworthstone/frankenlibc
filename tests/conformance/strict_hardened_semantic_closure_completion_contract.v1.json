@@ -7,10 +7,7 @@
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind Track 2 strict/hardened semantic closure to explicit unit, e2e, and structured telemetry evidence so the closed parent track is not relying on a prose closeout alone.",
   "source_artifacts": {
@@ -45,10 +42,7 @@
   "required_source_truth": {
     "mode_semantics": {
       "schema_version_min": 1,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_modes": ["strict", "hardened"],
       "total_families": 20,
       "families_with_healing": 19,
       "total_heals_call_sites": 139
@@ -60,19 +54,11 @@
       "repair_entries": 9,
       "deny_entries": 6,
       "min_claimed_api_families": 10,
-      "required_healing_actions": [
-        "ClampSize",
-        "TruncateWithNull",
-        "ReturnSafeDefault",
-        "None"
-      ]
+      "required_healing_actions": ["ClampSize", "TruncateWithNull", "ReturnSafeDefault", "None"]
     },
     "mode_contract_lock": {
       "env_key": "FRANKENLIBC_MODE",
-      "allowed_values": [
-        "strict",
-        "hardened"
-      ],
+      "allowed_values": ["strict", "hardened"],
       "default_value": "strict",
       "unknown_value_behavior": "fallback_to_strict",
       "mutability_fragment": "immutable",
@@ -94,17 +80,8 @@
     },
     "strict_hardened_e2e": {
       "schema_version": "v1",
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
-      "required_api_families": [
-        "string",
-        "malloc",
-        "stdio",
-        "pthread",
-        "resolver"
-      ],
+      "required_modes": ["strict", "hardened"],
+      "required_api_families": ["string", "malloc", "stdio", "pthread", "resolver"],
       "scenario_count": 10,
       "negative_case_count": 6,
       "structured_log_rows": 16,
@@ -132,10 +109,7 @@
       "canonical_command": "scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
       "coverage_rows": 7,
       "startup_evidence_rows": 7,
-      "allowed_modes": [
-        "strict",
-        "hardened"
-      ],
+      "allowed_modes": ["strict", "hardened"],
       "ambient_tz_dependency_allowed": false,
       "subprocess_rows_must_override_inherited_mode": true
     },
@@ -627,8 +601,6 @@
       "failure_signature",
       "details"
     ],
-    "forbidden_pass_events": [
-      "strict_hardened_completion_failed"
-    ]
+    "forbidden_pass_events": ["strict_hardened_completion_failed"]
   }
 }

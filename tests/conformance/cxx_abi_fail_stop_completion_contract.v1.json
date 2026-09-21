@@ -16,10 +16,7 @@
   "completion_debt_evidence": {
     "bead": "bd-cxafv.1",
     "original_bead": "bd-cxafv",
-    "covered_symbols": [
-      "__cxa_pure_virtual",
-      "__cxa_deleted_virtual"
-    ],
+    "covered_symbols": ["__cxa_pure_virtual", "__cxa_deleted_virtual"],
     "tracked_but_not_completion_bound_symbols": [
       "__cxa_throw_bad_array_new_length",
       "__cxa_call_unexpected"
@@ -96,11 +93,7 @@
       {
         "id": "cxx-fail-stop-fixtures-prove-sigabrt",
         "source": "unistd_abi_tests",
-        "must_contain": [
-          "libc::WIFSIGNALED(status)",
-          "libc::WTERMSIG(status)",
-          "libc::SIGABRT"
-        ],
+        "must_contain": ["libc::WIFSIGNALED(status)", "libc::WTERMSIG(status)", "libc::SIGABRT"],
         "must_not_contain": []
       },
       {
@@ -114,21 +107,28 @@
           "\"__cxa_throw_bad_array_new_length\"",
           "\"__cxa_call_unexpected\""
         ],
-        "must_not_contain": [
-          "\"semantic_parity_status\": \"implemented\""
-        ]
+        "must_not_contain": ["\"semantic_parity_status\": \"implemented\""]
       }
     ],
     "conformance_primary": {
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "unistd_abi_tests", "name": "assert_cxa_fail_stop_hook_aborts_with_stderr"},
-        {"source": "unistd_abi_tests", "name": "cxa_pure_virtual_aborts_child_process"},
-        {"source": "unistd_abi_tests", "name": "cxa_deleted_virtual_aborts_child_process"},
-        {"source": "completion_harness", "name": "manifest_binds_cxx_abi_fail_stop_completion_evidence"},
-        {"source": "completion_harness", "name": "checker_accepts_current_cxx_abi_fail_stop_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_deleted_virtual_stderr_probe"}
+        { "source": "unistd_abi_tests", "name": "assert_cxa_fail_stop_hook_aborts_with_stderr" },
+        { "source": "unistd_abi_tests", "name": "cxa_pure_virtual_aborts_child_process" },
+        { "source": "unistd_abi_tests", "name": "cxa_deleted_virtual_aborts_child_process" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_cxx_abi_fail_stop_completion_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_accepts_current_cxx_abi_fail_stop_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_deleted_virtual_stderr_probe"
+        }
       ],
       "required_commands": [
         "bash scripts/check_cxx_abi_fail_stop_completion_contract.sh",
@@ -137,10 +137,7 @@
         "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo check -p frankenlibc-harness --test cxx_abi_fail_stop_completion_contract_test",
         "RCH_REQUIRE_REMOTE=1 rch exec -- env CARGO_TARGET_DIR=<target> cargo clippy -p frankenlibc-harness --test cxx_abi_fail_stop_completion_contract_test -- -D warnings"
       ],
-      "forbidden_output_markers": [
-        "[RCH] local (remote execution failed)",
-        "local fallback"
-      ],
+      "forbidden_output_markers": ["[RCH] local (remote execution failed)", "local fallback"],
       "required_events": [
         "cxx_abi_fail_stop_completion_contract_validated",
         "cxx_abi_fail_stop_source_invariant"

@@ -60,12 +60,8 @@
   "progress_categories": [
     {
       "category_id": "runtime_linkage",
-      "owner_surfaces": [
-        "runtime_linkage"
-      ],
-      "source_blocking_reasons": [
-        "host_needed_libraries_present"
-      ],
+      "owner_surfaces": ["runtime_linkage"],
+      "source_blocking_reasons": ["host_needed_libraries_present"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -74,12 +70,8 @@
     },
     {
       "category_id": "direct_dynamic_dependencies",
-      "owner_surfaces": [
-        "direct_dynamic_dependencies"
-      ],
-      "source_blocking_reasons": [
-        "host_direct_needed_libraries_present"
-      ],
+      "owner_surfaces": ["direct_dynamic_dependencies"],
+      "source_blocking_reasons": ["host_direct_needed_libraries_present"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -88,12 +80,8 @@
     },
     {
       "category_id": "loader_resolution",
-      "owner_surfaces": [
-        "loader_resolution"
-      ],
-      "source_blocking_reasons": [
-        "host_resolved_libraries_present"
-      ],
+      "owner_surfaces": ["loader_resolution"],
+      "source_blocking_reasons": ["host_resolved_libraries_present"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -102,12 +90,8 @@
     },
     {
       "category_id": "loader_startup",
-      "owner_surfaces": [
-        "loader_startup"
-      ],
-      "source_blocking_reasons": [
-        "host_loader_dependency"
-      ],
+      "owner_surfaces": ["loader_startup"],
+      "source_blocking_reasons": ["host_loader_dependency"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -116,12 +100,8 @@
     },
     {
       "category_id": "libc_surface",
-      "owner_surfaces": [
-        "libc_surface"
-      ],
-      "source_blocking_reasons": [
-        "host_libc_dependency"
-      ],
+      "owner_surfaces": ["libc_surface"],
+      "source_blocking_reasons": ["host_libc_dependency"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -130,12 +110,8 @@
     },
     {
       "category_id": "compiler_runtime",
-      "owner_surfaces": [
-        "compiler_runtime"
-      ],
-      "source_blocking_reasons": [
-        "libgcc_runtime_dependency"
-      ],
+      "owner_surfaces": ["compiler_runtime"],
+      "source_blocking_reasons": ["libgcc_runtime_dependency"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -144,12 +120,8 @@
     },
     {
       "category_id": "unwind_runtime",
-      "owner_surfaces": [
-        "unwind_runtime"
-      ],
-      "source_blocking_reasons": [
-        "undefined_unwind_symbols"
-      ],
+      "owner_surfaces": ["unwind_runtime"],
+      "source_blocking_reasons": ["undefined_unwind_symbols"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -158,12 +130,8 @@
     },
     {
       "category_id": "glibc_symbol_surface",
-      "owner_surfaces": [
-        "glibc_symbol_surface"
-      ],
-      "source_blocking_reasons": [
-        "undefined_glibc_symbols"
-      ],
+      "owner_surfaces": ["glibc_symbol_surface"],
+      "source_blocking_reasons": ["undefined_glibc_symbols"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -172,12 +140,8 @@
     },
     {
       "category_id": "tls_startup",
-      "owner_surfaces": [
-        "tls_startup"
-      ],
-      "source_blocking_reasons": [
-        "undefined_tls_symbols"
-      ],
+      "owner_surfaces": ["tls_startup"],
+      "source_blocking_reasons": ["undefined_tls_symbols"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -186,12 +150,8 @@
     },
     {
       "category_id": "symbol_versioning",
-      "owner_surfaces": [
-        "symbol_versioning"
-      ],
-      "source_blocking_reasons": [
-        "host_version_requirements"
-      ],
+      "owner_surfaces": ["symbol_versioning"],
+      "source_blocking_reasons": ["host_version_requirements"],
       "current_reason_count": 1,
       "last_known_value_count": 0,
       "value_source": "standalone_host_dependency_probe_plan.current_forge_blocker_projection.blocker_action_required_rows.current_blocker_values",
@@ -202,9 +162,7 @@
   "version_provider_rollup": [
     {
       "provider_library": "ld-linux-x86-64.so.2",
-      "source_requirement_ids": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3"
-      ],
+      "source_requirement_ids": ["ld-linux-x86-64.so.2:GLIBC_2.3"],
       "requirement_count": 1,
       "source_matrix": "standalone_host_version_requirement_burndown.version_requirement_matrix",
       "mapped_progress_categories": [

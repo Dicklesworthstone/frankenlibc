@@ -35,10 +35,7 @@
       ],
       "env_key": "FRANKENLIBC_BENCH_PIN",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "0",
         "mode_impact": "benchmark-only CPU pinning control; no semantic libc behavior change",
         "mutability": "read_per_process_start",
@@ -91,9 +88,7 @@
       ],
       "env_key": "FRANKENLIBC_CLOSURE_CONTRACT_PATH",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "tests/conformance/closure_contract.v1.json",
         "mode_impact": "tooling-only gate input path",
         "mutability": "per-invocation",
@@ -139,13 +134,7 @@
       ],
       "env_key": "FRANKENLIBC_CLOSURE_LEVEL",
       "metadata": {
-        "allowed_values": [
-          "L0",
-          "L1",
-          "L2",
-          "L3",
-          "empty"
-        ],
+        "allowed_values": ["L0", "L1", "L2", "L3", "empty"],
         "default_value": "empty (auto-select from contract)",
         "mode_impact": "tooling-only release target-level override",
         "mutability": "per-invocation",
@@ -212,9 +201,7 @@
       ],
       "env_key": "FRANKENLIBC_CLOSURE_LOG",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "/tmp/frankenlibc_closure_contract.log.jsonl",
         "mode_impact": "tooling-only evidence log destination",
         "mutability": "per-invocation",
@@ -491,9 +478,7 @@
       ],
       "env_key": "FRANKENLIBC_E2E_SEED",
       "metadata": {
-        "allowed_values": [
-          "integer >= 0"
-        ],
+        "allowed_values": ["integer >= 0"],
         "default_value": "42",
         "mode_impact": "deterministic scenario replay only",
         "mutability": "per-e2e-run",
@@ -525,9 +510,7 @@
       ],
       "env_key": "FRANKENLIBC_E2E_STRESS_ITERS",
       "metadata": {
-        "allowed_values": [
-          "integer >= 1"
-        ],
+        "allowed_values": ["integer >= 1"],
         "default_value": "5",
         "mode_impact": "stress workload duration only",
         "mutability": "per-e2e-run",
@@ -566,10 +549,7 @@
       ],
       "env_key": "FRANKENLIBC_EXTENDED_GATES",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "0",
         "mode_impact": "enables extended policy/perf/snapshot gates",
         "mutability": "per-ci-run",
@@ -601,10 +581,7 @@
       ],
       "env_key": "FRANKENLIBC_HOOKS_LOADED",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "0",
         "mode_impact": "Portage hook bootstrap guard only",
         "mutability": "per-shell-session",
@@ -755,9 +732,7 @@
       ],
       "env_key": "FRANKENLIBC_LIB",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "auto-detected target/release/libfrankenlibc_abi.so",
         "mode_impact": "tooling library path override for CVE arena and Gentoo LD_PRELOAD hooks",
         "mutability": "per-runner-invocation",
@@ -831,9 +806,7 @@
       ],
       "env_key": "FRANKENLIBC_LOG",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "unset",
         "mode_impact": "runtime evidence log destination",
         "mutability": "per-process-start",
@@ -942,9 +915,7 @@
       ],
       "env_key": "FRANKENLIBC_LOG_DIR",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "/var/log/frankenlibc/portage",
         "mode_impact": "Portage hook directory root for FRANKENLIBC_LOG files",
         "mutability": "per-ebuild-run",
@@ -1067,9 +1038,7 @@
       ],
       "env_key": "FRANKENLIBC_LOG_FILE",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "unset (aliases FRANKENLIBC_LOG when provided by Gentoo tooling)",
         "mode_impact": "tooling-friendly log path variable for Gentoo runners and hooks",
         "mutability": "per-build-or-test-invocation",
@@ -2802,15 +2771,7 @@
       ],
       "env_key": "FRANKENLIBC_MODE",
       "metadata": {
-        "allowed_values": [
-          "strict",
-          "hardened",
-          "default",
-          "abi",
-          "repair",
-          "tsm",
-          "full"
-        ],
+        "allowed_values": ["strict", "hardened", "default", "abi", "repair", "tsm", "full"],
         "default_value": "strict",
         "mode_impact": "selects strict ABI mode vs hardened repair mode",
         "mutability": "process-immutable after first resolution",
@@ -2842,9 +2803,7 @@
       ],
       "env_key": "FRANKENLIBC_PACKAGE",
       "metadata": {
-        "allowed_values": [
-          "Gentoo atom string (<category>/<package-version>)"
-        ],
+        "allowed_values": ["Gentoo atom string (<category>/<package-version>)"],
         "default_value": "unset",
         "mode_impact": "observability context only for hook/session logs",
         "mutability": "per-phase",
@@ -2876,9 +2835,7 @@
       ],
       "env_key": "FRANKENLIBC_PACKAGE_BLOCKLIST",
       "metadata": {
-        "allowed_values": [
-          "whitespace-delimited package atom list"
-        ],
+        "allowed_values": ["whitespace-delimited package atom list"],
         "default_value": "sys-libs/glibc sys-apps/shadow",
         "mode_impact": "blocks LD_PRELOAD injection for sensitive packages",
         "mutability": "per-ebuild-run",
@@ -2938,10 +2895,7 @@
       ],
       "env_key": "FRANKENLIBC_PERF_ALLOW_TARGET_VIOLATION",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "1",
         "mode_impact": "policy for perf target budget enforcement strictness",
         "mutability": "per-perf-gate-run",
@@ -2994,10 +2948,7 @@
       ],
       "env_key": "FRANKENLIBC_PERF_ENABLE_KERNEL_SUITE",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "0",
         "mode_impact": "enables additional kernel perf suite branch",
         "mutability": "per-perf-gate-run",
@@ -3029,9 +2980,7 @@
       ],
       "env_key": "FRANKENLIBC_PERF_MAX_LOAD_FACTOR",
       "metadata": {
-        "allowed_values": [
-          "float > 0"
-        ],
+        "allowed_values": ["float > 0"],
         "default_value": "0.85",
         "mode_impact": "host load cutoff for overloaded-run skipping",
         "mutability": "per-perf-gate-run",
@@ -3084,9 +3033,7 @@
       ],
       "env_key": "FRANKENLIBC_PERF_MAX_REGRESSION_PCT",
       "metadata": {
-        "allowed_values": [
-          "integer/float >= 0"
-        ],
+        "allowed_values": ["integer/float >= 0"],
         "default_value": "15",
         "mode_impact": "perf regression fail threshold",
         "mutability": "per-perf-gate-run",
@@ -3153,10 +3100,7 @@
       ],
       "env_key": "FRANKENLIBC_PERF_SKIP_OVERLOADED",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "1",
         "mode_impact": "whether perf gate skips on overloaded hosts",
         "mutability": "per-perf-gate-run",
@@ -3188,9 +3132,7 @@
       ],
       "env_key": "FRANKENLIBC_PHASE",
       "metadata": {
-        "allowed_values": [
-          "Portage phase identifier (e.g. src_test, pkg_test)"
-        ],
+        "allowed_values": ["Portage phase identifier (e.g. src_test, pkg_test)"],
         "default_value": "unset",
         "mode_impact": "observability context only for hook/session logs",
         "mutability": "per-phase",
@@ -3229,10 +3171,7 @@
       ],
       "env_key": "FRANKENLIBC_PHASE_ACTIVE",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "unset/0",
         "mode_impact": "ensures balanced teardown for temporary preload/log environment",
         "mutability": "per-hook-invocation",
@@ -3278,9 +3217,7 @@
       ],
       "env_key": "FRANKENLIBC_PHASE_ALLOWLIST",
       "metadata": {
-        "allowed_values": [
-          "whitespace-delimited phase names"
-        ],
+        "allowed_values": ["whitespace-delimited phase names"],
         "default_value": "src_test pkg_test",
         "mode_impact": "limits which Portage phases activate FrankenLibC",
         "mutability": "per-ebuild-run",
@@ -3396,10 +3333,7 @@
       ],
       "env_key": "FRANKENLIBC_PORTAGE_ENABLE",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "1",
         "mode_impact": "global kill-switch for Gentoo Portage hooks",
         "mutability": "per-ebuild-run",
@@ -3480,9 +3414,7 @@
       ],
       "env_key": "FRANKENLIBC_PORTAGE_LOG",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "/tmp/frankenlibc-portage-hooks.log",
         "mode_impact": "records hook enable/skip decisions for troubleshooting",
         "mutability": "per-ebuild-run",
@@ -3542,10 +3474,7 @@
       ],
       "env_key": "FRANKENLIBC_RELEASE_SIMULATE_FAIL_GATE",
       "metadata": {
-        "allowed_values": [
-          "gate name string",
-          "empty"
-        ],
+        "allowed_values": ["gate name string", "empty"],
         "default_value": "empty",
         "mode_impact": "injects deterministic release-gate failure for test paths",
         "mutability": "per-release-dry-run",
@@ -3668,14 +3597,7 @@
       ],
       "env_key": "FRANKENLIBC_RUNTIME_MATH",
       "metadata": {
-        "allowed_values": [
-          "on",
-          "off",
-          "1",
-          "true",
-          "unset",
-          "other"
-        ],
+        "allowed_values": ["on", "off", "1", "true", "unset", "other"],
         "default_value": "on",
         "mode_impact": "enables or skips runtime-math kernel consultation before ABI decisions",
         "mutability": "process-immutable after first runtime-policy resolution",
@@ -3700,10 +3622,7 @@
       ],
       "env_key": "FRANKENLIBC_SKIP_STATIC",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "1",
         "mode_impact": "skips preload for static-libs builds that cannot use dynamic interposition",
         "mutability": "per-ebuild-run",
@@ -3756,12 +3675,7 @@
       ],
       "env_key": "FRANKENLIBC_STARTUP_DELEGATE",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1",
-          "unset",
-          "other"
-        ],
+        "allowed_values": ["0", "1", "unset", "other"],
         "default_value": "0",
         "mode_impact": "opts out of owned startup path for compatibility debugging",
         "mutability": "process-startup-time",
@@ -3821,10 +3735,7 @@
       ],
       "env_key": "FRANKENLIBC_STARTUP_PHASE0",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1"
-        ],
+        "allowed_values": ["0", "1"],
         "default_value": "0",
         "mode_impact": "gates phase-0 startup path in __libc_start_main",
         "mutability": "process-startup-time",
@@ -3884,12 +3795,7 @@
       ],
       "env_key": "FRANKENLIBC_THREAD_DELEGATE",
       "metadata": {
-        "allowed_values": [
-          "0",
-          "1",
-          "unset",
-          "other"
-        ],
+        "allowed_values": ["0", "1", "unset", "other"],
         "default_value": "0",
         "mode_impact": "opts out of native pthread lifecycle implementation for compatibility debugging",
         "mutability": "process-startup-time prewarm policy",
@@ -3921,9 +3827,7 @@
       ],
       "env_key": "FRANKENLIBC_TMPDIR",
       "metadata": {
-        "allowed_values": [
-          "filesystem path"
-        ],
+        "allowed_values": ["filesystem path"],
         "default_value": "unset (fallback to TMPDIR then /tmp)",
         "mode_impact": "tooling artifact temp-root location",
         "mutability": "per-release-dry-run",
@@ -3940,16 +3844,8 @@
   "summary": {
     "keys_with_reads": 26,
     "keys_with_writes": 29,
-    "scanned_extensions": [
-      ".py",
-      ".rs",
-      ".sh"
-    ],
-    "scanned_roots": [
-      "crates",
-      "scripts",
-      "tests"
-    ],
+    "scanned_extensions": [".py", ".rs", ".sh"],
+    "scanned_roots": ["crates", "scripts", "tests"],
     "total_keys": 32,
     "unknown_or_ambiguous_count": 0
   },

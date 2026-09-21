@@ -8,10 +8,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.5/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind Track 4 runtime-math closure evidence to explicit unit and e2e completion proof for the audit-debt bead.",
   "source_artifacts": {
@@ -39,17 +36,8 @@
         "title": "T4.1 Risk + Pareto Calibration and Regret-Cap Completion",
         "gate": "scripts/check_runtime_math_risk_pareto_calibration.sh",
         "harness": "crates/frankenlibc-harness/tests/runtime_math_risk_pareto_calibration_test.rs",
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
-        "required_report_keys": [
-          "schema_version",
-          "bead",
-          "checks",
-          "results",
-          "summary"
-        ],
+        "required_modes": ["strict", "hardened"],
+        "required_report_keys": ["schema_version", "bead", "checks", "results", "summary"],
         "required_log_event": "runtime_math_risk_pareto_calibration_gate"
       },
       {
@@ -57,10 +45,7 @@
         "title": "T4.2 Cohomology + Cross-Family Integration Completion",
         "gate": "scripts/check_runtime_math_cohomology_cross_family.sh",
         "harness": "crates/frankenlibc-harness/tests/runtime_math_cohomology_cross_family_test.rs",
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "required_report_checks": [
           "strict_cross_family_consistency",
           "strict_corruption_replay_detection",
@@ -83,12 +68,7 @@
           "frankentui_feature_present",
           "frankentui_dependency_set_complete"
         ],
-        "required_summary_fields": [
-          "total_modules",
-          "admitted",
-          "retired",
-          "blocked"
-        ]
+        "required_summary_fields": ["total_modules", "admitted", "retired", "blocked"]
       }
     ],
     "epic_closure": {

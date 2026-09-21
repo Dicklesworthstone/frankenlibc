@@ -78,9 +78,7 @@
       },
       "dashboard_harness_test": {
         "path": "crates/frankenlibc-harness/tests/l1_dry_run_readiness_dashboard_test.rs",
-        "required_test_refs": [
-          "perf_regression_prevention_rows_are_explicit"
-        ]
+        "required_test_refs": ["perf_regression_prevention_rows_are_explicit"]
       },
       "completion_harness_test": {
         "path": "crates/frankenlibc-harness/tests/perf_regression_prevention_completion_contract_test.rs",
@@ -123,11 +121,7 @@
       "event_logging",
       "injection_support"
     ],
-    "required_enforced_suites": [
-      "runtime_math",
-      "membrane",
-      "errno"
-    ],
+    "required_enforced_suites": ["runtime_math", "membrane", "errno"],
     "required_config_fields": [
       "baseline_version",
       "regression_max_pct",
@@ -175,9 +169,7 @@
         "checker_validates_generated_perf_report",
         "checker_rejects_missing_gate_feature_binding"
       ],
-      "required_commands": [
-        "bash scripts/check_perf_regression_prevention_completion_contract.sh"
-      ]
+      "required_commands": ["bash scripts/check_perf_regression_prevention_completion_contract.sh"]
     },
     {
       "id": "telemetry.primary",

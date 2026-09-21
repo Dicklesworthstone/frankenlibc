@@ -135,21 +135,42 @@
   "applicable_modules": {
     "description": "Modules where optimization levers are most likely and proofs most critical.",
     "high_priority": [
-      {"module": "malloc_abi", "reason": "Allocator hot path; memory semantics + side effects critical"},
-      {"module": "string_abi", "reason": "String ops hot path; memory semantics + ordering critical"},
-      {"module": "wchar_abi", "reason": "Wide char hot path; memory semantics critical"},
-      {"module": "math_abi", "reason": "Math functions; fp_behavior proofs mandatory"},
-      {"module": "ctype_abi", "reason": "Character classification; ordering + locale sensitivity"},
-      {"module": "stdlib_abi", "reason": "qsort/bsearch; ordering + tie_breaking proofs required"}
+      {
+        "module": "malloc_abi",
+        "reason": "Allocator hot path; memory semantics + side effects critical"
+      },
+      {
+        "module": "string_abi",
+        "reason": "String ops hot path; memory semantics + ordering critical"
+      },
+      { "module": "wchar_abi", "reason": "Wide char hot path; memory semantics critical" },
+      { "module": "math_abi", "reason": "Math functions; fp_behavior proofs mandatory" },
+      {
+        "module": "ctype_abi",
+        "reason": "Character classification; ordering + locale sensitivity"
+      },
+      { "module": "stdlib_abi", "reason": "qsort/bsearch; ordering + tie_breaking proofs required" }
     ],
     "medium_priority": [
-      {"module": "pthread_abi", "reason": "Threading; side_effects + memory_semantics for synchronization"},
-      {"module": "errno_abi", "reason": "Error state; side_effects proof required"}
+      {
+        "module": "pthread_abi",
+        "reason": "Threading; side_effects + memory_semantics for synchronization"
+      },
+      { "module": "errno_abi", "reason": "Error state; side_effects proof required" }
     ],
     "low_priority": [
-      {"module": "stdio_abi", "reason": "Currently GlibcCallThrough; proofs needed when migrated"},
-      {"module": "socket_abi", "reason": "RawSyscall; proofs needed if syscall batching optimized"},
-      {"module": "unistd_abi", "reason": "RawSyscall; proofs needed if argument marshaling optimized"}
+      {
+        "module": "stdio_abi",
+        "reason": "Currently GlibcCallThrough; proofs needed when migrated"
+      },
+      {
+        "module": "socket_abi",
+        "reason": "RawSyscall; proofs needed if syscall batching optimized"
+      },
+      {
+        "module": "unistd_abi",
+        "reason": "RawSyscall; proofs needed if argument marshaling optimized"
+      }
     ]
   },
   "existing_proofs": [

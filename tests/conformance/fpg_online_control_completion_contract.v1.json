@@ -26,10 +26,7 @@
     "original_bead": "bd-bp8fl.3.9",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.3.9/scorecard.md",
     "audit_score": 585,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.conformance.primary"
-    ]
+    "missing_items_closed": ["tests.unit.primary", "tests.conformance.primary"]
   },
   "completion_debt_evidence": {
     "unit_primary": {
@@ -48,24 +45,17 @@
         {
           "artifact": "source_test",
           "name": "gate_rejects_premature_done_claim",
-          "covers": [
-            "DONE promotion block",
-            "claim policy fail-closed behavior"
-          ]
+          "covers": ["DONE promotion block", "claim policy fail-closed behavior"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_stale_gate_source_commit",
-          "covers": [
-            "stale source commit rejection"
-          ]
+          "covers": ["stale source commit rejection"]
         },
         {
           "artifact": "source_test",
           "name": "gate_rejects_stale_feature_parity_binding",
-          "covers": [
-            "FEATURE_PARITY line drift rejection"
-          ]
+          "covers": ["FEATURE_PARITY line drift rejection"]
         }
       ],
       "required_commands": [
@@ -87,9 +77,7 @@
         {
           "artifact": "source_test",
           "name": "gate_rejects_missing_online_control_anchor",
-          "covers": [
-            "missing evidence anchor fail-closed behavior"
-          ]
+          "covers": ["missing evidence anchor fail-closed behavior"]
         }
       ],
       "required_artifacts": [
@@ -180,18 +168,9 @@
     },
     "claim_policy": {
       "default_decision": "block_done_until_online_control_evidence_current",
-      "allow_status_without_full_closure": [
-        "PLANNED",
-        "IN_PROGRESS"
-      ],
-      "block_status_without_all_anchors": [
-        "DONE"
-      ],
-      "block_replacement_levels_without_evidence": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "allow_status_without_full_closure": ["PLANNED", "IN_PROGRESS"],
+      "block_status_without_all_anchors": ["DONE"],
+      "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
       "missing_or_stale_result": "claim_blocked"
     },
     "required_source_markers": {
@@ -222,10 +201,7 @@
         "bd-bp8fl.3.9",
         "runtime_math_replay_and_budget_gate"
       ],
-      "gap_groups": [
-        "fpg-proof-online-control",
-        "runtime_math_replay_and_budget_gate"
-      ]
+      "gap_groups": ["fpg-proof-online-control", "runtime_math_replay_and_budget_gate"]
     }
   }
 }

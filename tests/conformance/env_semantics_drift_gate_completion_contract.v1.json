@@ -85,10 +85,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary"],
     "required_drift_summary": {
       "missing_in_docs_count": 0,
       "missing_in_code_count": 0,
@@ -99,17 +96,11 @@
       "total_families": 20,
       "families_with_healing_min": 19,
       "total_heals_call_sites_min": 100,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ]
+      "required_modes": ["strict", "hardened"]
     },
     "required_mode_contract": {
       "env_key": "FRANKENLIBC_MODE",
-      "allowed_values": [
-        "strict",
-        "hardened"
-      ],
+      "allowed_values": ["strict", "hardened"],
       "default_value": "strict",
       "mutability_contains": "immutable",
       "required_anchors": [
@@ -123,9 +114,7 @@
         "PASS: docs/code mismatch report reconciled",
         "PASS: docs source-of-truth map validated"
       ],
-      "mode_semantics_gate": [
-        "check_mode_semantics: PASS"
-      ],
+      "mode_semantics_gate": ["check_mode_semantics: PASS"],
       "mode_contract_gate": [
         "PASS: mode contract lock validated",
         "PASS: wrote structured provenance log"

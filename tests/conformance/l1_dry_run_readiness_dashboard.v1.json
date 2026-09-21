@@ -820,10 +820,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/standalone_link_run_smoke.v1.json",
       "field": "current_claim_policy.current_levels_allowed_without_standalone_claim",
-      "expected_value": [
-        "L0",
-        "L1"
-      ],
+      "expected_value": ["L0", "L1"],
       "rationale": "Standalone link-run smoke may support current interpose levels but must not claim L2."
     },
     {
@@ -5052,9 +5049,5 @@
     "gate_meta",
     "promotion_state"
   ],
-  "consuming_gates": [
-    "tests/conformance/replacement_levels.json",
-    "FEATURE_PARITY.md",
-    "README.md"
-  ]
+  "consuming_gates": ["tests/conformance/replacement_levels.json", "FEATURE_PARITY.md", "README.md"]
 }

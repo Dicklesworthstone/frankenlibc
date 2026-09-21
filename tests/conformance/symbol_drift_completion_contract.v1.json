@@ -35,16 +35,8 @@
     "completion_harness": "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs"
   },
   "source_anchors": {
-    "support_matrix": [
-      "\"symbols\"",
-      "\"Implemented\"",
-      "\"RawSyscall\""
-    ],
-    "reality_report": [
-      "\"schema_version\": \"v1\"",
-      "\"total_exported\": 4119",
-      "\"stub\": 0"
-    ],
+    "support_matrix": ["\"symbols\"", "\"Implemented\"", "\"RawSyscall\""],
+    "reality_report": ["\"schema_version\": \"v1\"", "\"total_exported\": 4119", "\"stub\": 0"],
     "symbol_drift_gate": [
       "check_symbol_drift.sh",
       "Matrix symbols",
@@ -166,9 +158,7 @@
         "scripts/check_symbol_drift_completion_contract.sh:1",
         "tests/conformance/symbol_drift_completion_contract.v1.json:1"
       ],
-      "test_refs": [
-        "crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs:1"
-      ],
+      "test_refs": ["crates/frankenlibc-harness/tests/symbol_drift_completion_contract_test.rs:1"],
       "telemetry_refs": [
         "scripts/check_symbol_drift_completion_contract.sh:1",
         "tests/conformance/symbol_drift_completion_contract.v1.json:1"

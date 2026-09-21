@@ -88,9 +88,7 @@
       "pub unsafe extern \"C\" fn gsignal",
       "crate::signal_abi::raise(sig)"
     ],
-    "required_unit_tests": [
-      "ssignal_and_gsignal_deliver_signal"
-    ],
+    "required_unit_tests": ["ssignal_and_gsignal_deliver_signal"],
     "required_unit_test_terms": [
       "SIGNAL_HIT.store(0, Ordering::SeqCst)",
       "ssignal(",

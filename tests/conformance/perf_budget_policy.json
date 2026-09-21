@@ -173,11 +173,7 @@
         "passing user workload behavior proof",
         "fresh compatibility report"
       ],
-      "present_evidence": [
-        "workload selection",
-        "smoke-suite binding",
-        "claim-block policy"
-      ],
+      "present_evidence": ["workload selection", "smoke-suite binding", "claim-block policy"],
       "missing_evidence": [
         "current host baseline sample",
         "strict-mode timing sample",
@@ -257,11 +253,7 @@
         "stable variance sample set",
         "current support semantic overlay"
       ],
-      "present_evidence": [
-        "budget threshold",
-        "benchmark script binding",
-        "artifact inventory"
-      ],
+      "present_evidence": ["budget threshold", "benchmark script binding", "artifact inventory"],
       "missing_evidence": [
         "current membrane baseline sample",
         "strict-mode membrane timing",
@@ -304,12 +296,7 @@
   ],
   "waiver_policy": {
     "description": "Budget exceptions require explicit temporary waiver beads. Each waiver must specify affected symbols, justification, and expiry.",
-    "required_fields": [
-      "bead_id",
-      "symbols",
-      "justification",
-      "expires_at"
-    ],
+    "required_fields": ["bead_id", "symbols", "justification", "expires_at"],
     "max_waiver_duration_days": 90,
     "review_cadence": "Monthly review of all active waivers"
   },
@@ -317,14 +304,8 @@
     {
       "bead_id": "bd-242",
       "owner": "bd-b92jd.5",
-      "suite_ids": [
-        "string",
-        "malloc"
-      ],
-      "symbols": [
-        "string::*",
-        "malloc::*"
-      ],
+      "suite_ids": ["string", "malloc"],
+      "symbols": ["string::*", "malloc::*"],
       "justification": "Reviewed on 2026-06-02 during the gauntlet pass. ABI-level string and malloc benchmarks are present but still not wired to perf_gate.sh enforcement (see perf_regression_prevention.v1.json#bench_file_inventory: enforced_in_gate=false for both). Narrowed from symbols=[*] (bd-b92jd.2.3) to the two enforced=false suite_ids only; runtime_math, membrane, and errno suites remain enforced.",
       "expires_at": "2026-08-31",
       "scope": "target_violation_only",
@@ -356,21 +337,9 @@
       "WrapsHostLibc": 38
     },
     "benchmark_coverage": {
-      "internal_benches": [
-        "runtime_math_bench",
-        "membrane_bench",
-        "runtime_math_kernels_bench"
-      ],
-      "abi_symbol_benches": [
-        "string_bench",
-        "malloc_bench"
-      ],
-      "not_yet_benched": [
-        "ctype_abi",
-        "errno_abi",
-        "wchar_abi",
-        "pthread_abi"
-      ],
+      "internal_benches": ["runtime_math_bench", "membrane_bench", "runtime_math_kernels_bench"],
+      "abi_symbol_benches": ["string_bench", "malloc_bench"],
+      "not_yet_benched": ["ctype_abi", "errno_abi", "wchar_abi", "pthread_abi"],
       "note": "ABI-level symbol benchmarks exist for string/malloc but are not yet wired to perf_gate.sh enforcement"
     }
   },

@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes asupersync_lab_replay::{validate_replay, classify_outcome} (bd-juvqm.15) plus detect_asupersync_available (bd-qfbhc) as a standalone CLI. Previously these were reachable only via Rust callers in the conformance suite; the replay-classify subcommand makes the validation+classification pipeline invokable from rch cargo run and CI without writing Rust.",
   "subcommand_name": "replay-classify",
   "binary_target": "harness",
-  "required_flags": [
-    "--input",
-    "--observed",
-    "--output"
-  ],
-  "optional_flags": [
-    "--override-var"
-  ],
+  "required_flags": ["--input", "--observed", "--output"],
+  "optional_flags": ["--override-var"],
   "underlying_lib_functions": [
     "frankenlibc_harness::asupersync_lab_replay::validate_replay",
     "frankenlibc_harness::asupersync_lab_replay::detect_asupersync_available",
@@ -31,9 +25,7 @@
     "artifact_refs",
     "source_commit"
   ],
-  "observed_record_required_fields": [
-    "observed_outputs"
-  ],
+  "observed_record_required_fields": ["observed_outputs"],
   "output_record_required_fields": [
     "kind",
     "outcome",
@@ -54,17 +46,9 @@
       "trace_class",
       "source_commit"
     ],
-    "outcome_enum": [
-      "pass",
-      "code_failure",
-      "tool_failure"
-    ]
+    "outcome_enum": ["pass", "code_failure", "tool_failure"]
   },
-  "valid_outcomes": [
-    "pass",
-    "code_failure",
-    "tool_failure"
-  ],
+  "valid_outcomes": ["pass", "code_failure", "tool_failure"],
   "policy": {
     "must_emit_exactly_one_jsonl_record": true,
     "fail_closed_when_input_record_missing_required_field": true,

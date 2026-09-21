@@ -85,9 +85,7 @@
           "gate_script_passes_and_emits_report_and_jsonl_rows",
           "checker_validates_user_workload_replay_manifest_completion_contract"
         ],
-        "required_negative_tests": [
-          "checker_rejects_missing_required_log_field"
-        ],
+        "required_negative_tests": ["checker_rejects_missing_required_log_field"],
         "required_commands": [
           "bash scripts/check_user_workload_replay_manifest.sh --dry-run",
           "bash scripts/check_user_workload_replay_manifest_completion_contract.sh"
@@ -108,9 +106,7 @@
           "gate_script_passes_and_emits_report_and_jsonl_rows",
           "checker_validates_user_workload_replay_manifest_completion_contract"
         ],
-        "required_negative_tests": [
-          "checker_rejects_missing_required_log_field"
-        ],
+        "required_negative_tests": ["checker_rejects_missing_required_log_field"],
         "required_commands": [
           "bash scripts/check_user_workload_replay_manifest_completion_contract.sh",
           "jq -c 'select(has(\"trace_id\") | not)' target/conformance/user_workload_replay_manifest_completion_contract.source.log.jsonl"
@@ -123,11 +119,7 @@
     "source_checker_path": "scripts/check_user_workload_replay_manifest.sh",
     "source_harness_test_path": "crates/frankenlibc-harness/tests/user_workload_replay_manifest_test.rs",
     "source_bead": "bd-b92jd.3.1",
-    "required_modes": [
-      "baseline",
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["baseline", "strict", "hardened"],
     "required_categories": [
       "coreutils",
       "shell_pipeline",

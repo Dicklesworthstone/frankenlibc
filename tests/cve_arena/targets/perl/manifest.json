@@ -18,10 +18,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "ClampSize",
-      "TruncateWithNull"
-    ],
+    "healing_actions": ["ClampSize", "TruncateWithNull"],
     "description": "Allocation fingerprint canary at end of buffer detects the overflow write; ClampSize healing prevents the write from exceeding the allocated region; TruncateWithNull ensures string termination at the clamped boundary"
   },
   "tsm_features_tested": [

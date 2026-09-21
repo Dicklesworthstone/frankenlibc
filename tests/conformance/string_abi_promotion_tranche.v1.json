@@ -27,59 +27,38 @@
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave05_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave06_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave07_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave08_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave10_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "string_memory_hotpaths_wave12_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
     "classification": "native-string-conversion-argz-envz-glob-regex-allocator-errno-bridge",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_host_symbols": [
       "<dynamic>",
       "__errno_location",

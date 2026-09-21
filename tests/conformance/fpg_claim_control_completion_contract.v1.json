@@ -142,18 +142,9 @@
     ],
     "required_claim_policy": {
       "default_decision": "block_until_evidence_current",
-      "allow_status": [
-        "IN_PROGRESS",
-        "PLANNED"
-      ],
-      "block_status_without_evidence": [
-        "DONE"
-      ],
-      "block_replacement_levels_without_evidence": [
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "allow_status": ["IN_PROGRESS", "PLANNED"],
+      "block_status_without_evidence": ["DONE"],
+      "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
       "stale_result": "block_claim_control_gate_evidence",
       "claim_control_evidence_allowed_when_stale": false,
       "rejected_evidence_kind": "stale_source_commit"

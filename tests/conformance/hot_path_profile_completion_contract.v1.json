@@ -141,10 +141,7 @@
       "captured_percentiles": 3,
       "profile_required_files": 6
     },
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_profile_run_files": [
       "manifest.txt",
       "commands.log",
@@ -173,18 +170,8 @@
       "entries",
       "summary"
     ],
-    "required_opportunity_dimensions": [
-      "impact",
-      "confidence",
-      "effort"
-    ],
-    "required_profile_families": [
-      "malloc",
-      "membrane",
-      "pthread",
-      "string",
-      "syscall"
-    ],
+    "required_opportunity_dimensions": ["impact", "confidence", "effort"],
+    "required_profile_families": ["malloc", "membrane", "pthread", "string", "syscall"],
     "required_profile_summary_min": {
       "profile_record_count": 1,
       "measured_profile_record_count": 1,

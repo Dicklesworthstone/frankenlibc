@@ -90,9 +90,9 @@
       "id": "tests.unit.primary",
       "kind": "unit",
       "required_test_refs": [
-        {"source": "report_lib_tests", "name": "parses_valid_support_matrix"},
-        {"source": "report_lib_tests", "name": "rejects_missing_required_fields"},
-        {"source": "completion_harness", "name": "manifest_binds_live_docs_generation_evidence"}
+        { "source": "report_lib_tests", "name": "parses_valid_support_matrix" },
+        { "source": "report_lib_tests", "name": "rejects_missing_required_fields" },
+        { "source": "completion_harness", "name": "manifest_binds_live_docs_generation_evidence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness report::tests:: -- --nocapture",
@@ -103,8 +103,8 @@
       "id": "tests.e2e.primary",
       "kind": "e2e",
       "required_test_refs": [
-        {"source": "drift_harness", "name": "support_matrix_docs_drift_guard_passes"},
-        {"source": "completion_harness", "name": "checker_validates_contract_and_emits_report"}
+        { "source": "drift_harness", "name": "support_matrix_docs_drift_guard_passes" },
+        { "source": "completion_harness", "name": "checker_validates_contract_and_emits_report" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test parity_report_drift_test support_matrix_docs_drift_guard_passes -- --nocapture",
@@ -115,8 +115,8 @@
       "id": "tests.fuzz.primary",
       "kind": "fuzz",
       "required_test_refs": [
-        {"source": "report_lib_tests", "name": "rejects_unknown_status"},
-        {"source": "completion_harness", "name": "checker_rejects_fuzzed_unknown_support_status"}
+        { "source": "report_lib_tests", "name": "rejects_unknown_status" },
+        { "source": "completion_harness", "name": "checker_rejects_fuzzed_unknown_support_status" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness report::tests::rejects_unknown_status -- --nocapture",
@@ -127,8 +127,8 @@
       "id": "tests.conformance.primary",
       "kind": "conformance",
       "required_test_refs": [
-        {"source": "drift_harness", "name": "canonical_reality_report_schema_is_valid"},
-        {"source": "completion_harness", "name": "checker_rejects_reality_snapshot_drift"}
+        { "source": "drift_harness", "name": "canonical_reality_report_schema_is_valid" },
+        { "source": "completion_harness", "name": "checker_rejects_reality_snapshot_drift" }
       ],
       "required_commands": [
         "jq empty tests/conformance/api_support_docs_generation_completion_contract.v1.json",
@@ -140,9 +140,12 @@
       "id": "telemetry.primary",
       "kind": "telemetry",
       "required_test_refs": [
-        {"source": "docs_semantic_harness", "name": "gate_passes_current_docs_and_emits_report_and_log"},
-        {"source": "completion_harness", "name": "checker_emits_jsonl_rows_with_required_fields"},
-        {"source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command"}
+        {
+          "source": "docs_semantic_harness",
+          "name": "gate_passes_current_docs_and_emits_report_and_log"
+        },
+        { "source": "completion_harness", "name": "checker_emits_jsonl_rows_with_required_fields" },
+        { "source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command" }
       ],
       "required_commands": [
         "bash scripts/check_api_support_docs_generation_completion_contract.sh",

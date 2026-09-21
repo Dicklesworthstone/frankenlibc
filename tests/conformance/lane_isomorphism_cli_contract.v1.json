@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes read_mostly_fast_path_prototype::isomorphism_witness as a standalone CLI. The function is the deterministic isomorphism proof for the read_mostly fast path: it drives conservative + seqlock lanes through the same write history and asserts both lanes observed identical value sequences. Previously this was reachable only via Rust unit tests; the CLI surface lets CI run the proof without linking.",
   "subcommand_name": "lane-isomorphism",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
-  "optional_flags": [
-    "--initial",
-    "--writes",
-    "--reads-per-phase"
-  ],
+  "required_flags": ["--output"],
+  "optional_flags": ["--initial", "--writes", "--reads-per-phase"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::read_mostly_fast_path_prototype::isomorphism_witness",
   "underlying_lib_functions": [

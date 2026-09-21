@@ -74,9 +74,7 @@
     "canonical_install_dir": "/dp/asupersync",
     "binary_name_searched_on_path": "asupersync",
     "fail_closed_when_detection_reason_unknown": true,
-    "rejected_evidence_kinds_added": [
-      "unknown_detection_reason"
-    ]
+    "rejected_evidence_kinds_added": ["unknown_detection_reason"]
   },
   "downstream_consumers": [
     {

@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary `fault-inject` subcommand that loads the canonical fault-injection scenario catalog, executes deterministic memory/time/concurrency fault scenarios through frankenlibc_harness::fault_injection, writes a JSON report, structured JSONL log, and artifact index, and fails closed when requested scenarios are unknown or --fail-on-mismatch observes failed cases.",
   "subcommand_name": "fault-inject",
   "binary_target": "harness",
-  "required_flags": [
-    "--manifest"
-  ],
+  "required_flags": ["--manifest"],
   "optional_flags": [
     "--scenario",
     "--out-dir",
@@ -62,18 +60,11 @@
     "gate": "fault_injection",
     "stream": "conformance",
     "single_scenario_row_count": 4,
-    "single_scenario_required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "single_scenario_required_modes": ["strict", "hardened"],
     "single_scenario_required_outcome": "pass"
   },
   "artifact_index_contract": {
-    "required_artifact_kinds": [
-      "log",
-      "report",
-      "manifest"
-    ],
+    "required_artifact_kinds": ["log", "report", "manifest"],
     "must_include_trace_join_keys": true
   },
   "policy": {

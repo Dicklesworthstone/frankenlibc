@@ -112,11 +112,7 @@
   "single_lever_optimization": {
     "candidate_id": "thread-bootstrap-fastpath-nochange-v1",
     "lever_category": "callthrough_removal",
-    "target_symbols": [
-      "pthread_create",
-      "pthread_join",
-      "pthread_detach"
-    ],
+    "target_symbols": ["pthread_create", "pthread_join", "pthread_detach"],
     "change_summary": "No code-level optimization landed in this wave; preserve current behavior while collecting hotspot evidence and proof artifacts.",
     "isomorphism_proof_template": {
       "statement": "Semantics are preserved because implementation behavior was unchanged in this optimization wave and replay checks stayed green.",

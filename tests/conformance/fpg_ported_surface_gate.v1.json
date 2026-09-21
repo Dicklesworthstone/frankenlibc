@@ -68,9 +68,23 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-core/src/malloc", "kind": "path_exists", "rationale": "Allocator core implementation must exist."},
-        {"artifact": "tests/conformance/fixtures/allocator.json", "kind": "path_exists", "rationale": "Allocator fixture evidence must exist."},
-        {"artifact": "tests/conformance/per_symbol_fixture_tests.v1.json", "kind": "json_field_min", "field": "summary.total_cases", "expected_value_min": 1, "rationale": "Per-symbol fixture evidence must contain executable cases."}
+        {
+          "artifact": "crates/frankenlibc-core/src/malloc",
+          "kind": "path_exists",
+          "rationale": "Allocator core implementation must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/allocator.json",
+          "kind": "path_exists",
+          "rationale": "Allocator fixture evidence must exist."
+        },
+        {
+          "artifact": "tests/conformance/per_symbol_fixture_tests.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.total_cases",
+          "expected_value_min": 1,
+          "rationale": "Per-symbol fixture evidence must contain executable cases."
+        }
       ]
     },
     {
@@ -89,10 +103,26 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-core/src/stdlib", "kind": "path_exists", "rationale": "Stdlib core implementation must exist."},
-        {"artifact": "tests/conformance/fixtures/stdlib_conversion.json", "kind": "path_exists", "rationale": "Stdlib conversion fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/stdlib_numeric.json", "kind": "path_exists", "rationale": "Stdlib numeric fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/stdlib_sort.json", "kind": "path_exists", "rationale": "Stdlib sort fixtures must exist."}
+        {
+          "artifact": "crates/frankenlibc-core/src/stdlib",
+          "kind": "path_exists",
+          "rationale": "Stdlib core implementation must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/stdlib_conversion.json",
+          "kind": "path_exists",
+          "rationale": "Stdlib conversion fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/stdlib_numeric.json",
+          "kind": "path_exists",
+          "rationale": "Stdlib numeric fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/stdlib_sort.json",
+          "kind": "path_exists",
+          "rationale": "Stdlib sort fixtures must exist."
+        }
       ]
     },
     {
@@ -111,10 +141,28 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-core/src/string", "kind": "path_exists", "rationale": "String core implementation must exist."},
-        {"artifact": "tests/conformance/fixtures/string_memory_full.json", "kind": "path_exists", "rationale": "Full string/memory fixture evidence must exist."},
-        {"artifact": "tests/conformance/fixtures/string_ops.json", "kind": "path_exists", "rationale": "String operation fixtures must exist."},
-        {"artifact": "tests/conformance/per_symbol_fixture_tests.v1.json", "kind": "json_field_min", "field": "summary.symbols_with_edge_cases", "expected_value_min": 1, "rationale": "String claims need edge-case fixture coverage."}
+        {
+          "artifact": "crates/frankenlibc-core/src/string",
+          "kind": "path_exists",
+          "rationale": "String core implementation must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/string_memory_full.json",
+          "kind": "path_exists",
+          "rationale": "Full string/memory fixture evidence must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/string_ops.json",
+          "kind": "path_exists",
+          "rationale": "String operation fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/per_symbol_fixture_tests.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.symbols_with_edge_cases",
+          "expected_value_min": 1,
+          "rationale": "String claims need edge-case fixture coverage."
+        }
       ]
     },
     {
@@ -133,9 +181,25 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/string_abi.rs", "kind": "path_exists", "rationale": "String ABI implementation must exist."},
-        {"artifact": "tests/conformance/symbol_fixture_coverage.v1.json", "kind": "json_field_min", "field": "summary.target_covered_symbols", "expected_value_min": 1, "rationale": "Symbol fixture coverage must cover at least one target symbol."},
-        {"artifact": "tests/conformance/per_symbol_fixture_tests.v1.json", "kind": "json_field_equals", "field": "summary.total_format_issues", "expected_value": 0, "rationale": "Per-symbol fixtures must remain format-clean."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/string_abi.rs",
+          "kind": "path_exists",
+          "rationale": "String ABI implementation must exist."
+        },
+        {
+          "artifact": "tests/conformance/symbol_fixture_coverage.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.target_covered_symbols",
+          "expected_value_min": 1,
+          "rationale": "Symbol fixture coverage must cover at least one target symbol."
+        },
+        {
+          "artifact": "tests/conformance/per_symbol_fixture_tests.v1.json",
+          "kind": "json_field_equals",
+          "field": "summary.total_format_issues",
+          "expected_value": 0,
+          "rationale": "Per-symbol fixtures must remain format-clean."
+        }
       ]
     },
     {
@@ -154,9 +218,23 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-core/src/math", "kind": "path_exists", "rationale": "Math core implementation must exist."},
-        {"artifact": "tests/conformance/fixtures/math_ops.json", "kind": "path_exists", "rationale": "Math fixture evidence must exist."},
-        {"artifact": "tests/conformance/per_symbol_fixture_tests.v1.json", "kind": "json_field_min", "field": "summary.symbols_with_errno_checks", "expected_value_min": 1, "rationale": "Math and fenv surfaces need errno/exception-style fixture evidence."}
+        {
+          "artifact": "crates/frankenlibc-core/src/math",
+          "kind": "path_exists",
+          "rationale": "Math core implementation must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/math_ops.json",
+          "kind": "path_exists",
+          "rationale": "Math fixture evidence must exist."
+        },
+        {
+          "artifact": "tests/conformance/per_symbol_fixture_tests.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.symbols_with_errno_checks",
+          "expected_value_min": 1,
+          "rationale": "Math and fenv surfaces need errno/exception-style fixture evidence."
+        }
       ]
     },
     {
@@ -175,9 +253,23 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/math_abi.rs", "kind": "path_exists", "rationale": "Math ABI implementation must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/fenv_abi.rs", "kind": "path_exists", "rationale": "Fenv ABI implementation must exist."},
-        {"artifact": "tests/runtime_math/runtime_math_linkage.v1.json", "kind": "json_object_min", "field": "modules", "expected_value_min": 1, "rationale": "Runtime math linkage evidence must remain non-empty."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/math_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Math ABI implementation must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/fenv_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Fenv ABI implementation must exist."
+        },
+        {
+          "artifact": "tests/runtime_math/runtime_math_linkage.v1.json",
+          "kind": "json_object_min",
+          "field": "modules",
+          "expected_value_min": 1,
+          "rationale": "Runtime math linkage evidence must remain non-empty."
+        }
       ]
     },
     {
@@ -196,13 +288,41 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/unistd_abi.rs", "kind": "path_exists", "rationale": "Unistd ABI source must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/socket_abi.rs", "kind": "path_exists", "rationale": "Socket ABI source must exist."},
-        {"artifact": "tests/conformance/fixtures/unistd_ops.json", "kind": "path_exists", "rationale": "Unistd fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/socket_ops.json", "kind": "path_exists", "rationale": "Socket fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/inet_ops.json", "kind": "path_exists", "rationale": "Inet fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/locale_ops.json", "kind": "path_exists", "rationale": "Locale fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/termios_ops.json", "kind": "path_exists", "rationale": "Termios fixtures must exist."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/unistd_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Unistd ABI source must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/socket_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Socket ABI source must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/unistd_ops.json",
+          "kind": "path_exists",
+          "rationale": "Unistd fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/socket_ops.json",
+          "kind": "path_exists",
+          "rationale": "Socket fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/inet_ops.json",
+          "kind": "path_exists",
+          "rationale": "Inet fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/locale_ops.json",
+          "kind": "path_exists",
+          "rationale": "Locale fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/termios_ops.json",
+          "kind": "path_exists",
+          "rationale": "Termios fixtures must exist."
+        }
       ]
     },
     {
@@ -221,10 +341,30 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/dlfcn_abi.rs", "kind": "path_exists", "rationale": "dlfcn ABI source must exist."},
-        {"artifact": "tests/conformance/fixtures/dlfcn_ops.json", "kind": "path_exists", "rationale": "dlfcn fixture evidence must exist."},
-        {"artifact": "tests/conformance/dlfcn_boundary_policy.v1.json", "kind": "json_field_min", "field": "summary.symbol_count", "expected_value_min": 4, "rationale": "dlfcn policy must cover the four phase-1 symbols."},
-        {"artifact": "tests/conformance/dlfcn_boundary_policy.v1.json", "kind": "json_field_equals", "field": "summary.approved_host_call_sites", "expected_value": 0, "rationale": "dlfcn replacement claims must not rely on approved host call-through sites."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
+          "kind": "path_exists",
+          "rationale": "dlfcn ABI source must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/dlfcn_ops.json",
+          "kind": "path_exists",
+          "rationale": "dlfcn fixture evidence must exist."
+        },
+        {
+          "artifact": "tests/conformance/dlfcn_boundary_policy.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.symbol_count",
+          "expected_value_min": 4,
+          "rationale": "dlfcn policy must cover the four phase-1 symbols."
+        },
+        {
+          "artifact": "tests/conformance/dlfcn_boundary_policy.v1.json",
+          "kind": "json_field_equals",
+          "field": "summary.approved_host_call_sites",
+          "expected_value": 0,
+          "rationale": "dlfcn replacement claims must not rely on approved host call-through sites."
+        }
       ]
     },
     {
@@ -243,17 +383,61 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/stdio_abi.rs", "kind": "path_exists", "rationale": "Stdio ABI source must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/process_abi.rs", "kind": "path_exists", "rationale": "Process ABI source must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/mmap_abi.rs", "kind": "path_exists", "rationale": "Virtual-memory ABI source must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/pthread_abi.rs", "kind": "path_exists", "rationale": "Pthread ABI source must exist."},
-        {"artifact": "crates/frankenlibc-abi/src/poll_abi.rs", "kind": "path_exists", "rationale": "Poll ABI source must exist."},
-        {"artifact": "tests/conformance/fixtures/stdio_file_ops.json", "kind": "path_exists", "rationale": "Stdio file fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/process_ops.json", "kind": "path_exists", "rationale": "Process fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/virtual_memory_ops.json", "kind": "path_exists", "rationale": "Virtual-memory fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/pthread_mutex.json", "kind": "path_exists", "rationale": "Pthread mutex fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/pthread_cond.json", "kind": "path_exists", "rationale": "Pthread condvar fixtures must exist."},
-        {"artifact": "tests/conformance/fixtures/poll_ops.json", "kind": "path_exists", "rationale": "Poll fixtures must exist."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/stdio_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Stdio ABI source must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/process_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Process ABI source must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/mmap_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Virtual-memory ABI source must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/pthread_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Pthread ABI source must exist."
+        },
+        {
+          "artifact": "crates/frankenlibc-abi/src/poll_abi.rs",
+          "kind": "path_exists",
+          "rationale": "Poll ABI source must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/stdio_file_ops.json",
+          "kind": "path_exists",
+          "rationale": "Stdio file fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/process_ops.json",
+          "kind": "path_exists",
+          "rationale": "Process fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/virtual_memory_ops.json",
+          "kind": "path_exists",
+          "rationale": "Virtual-memory fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/pthread_mutex.json",
+          "kind": "path_exists",
+          "rationale": "Pthread mutex fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/pthread_cond.json",
+          "kind": "path_exists",
+          "rationale": "Pthread condvar fixtures must exist."
+        },
+        {
+          "artifact": "tests/conformance/fixtures/poll_ops.json",
+          "kind": "path_exists",
+          "rationale": "Poll fixtures must exist."
+        }
       ]
     },
     {
@@ -272,10 +456,30 @@
       "replacement_level": "L0",
       "owner_bead": "bd-w2c3.10",
       "evidence_anchors": [
-        {"artifact": "crates/frankenlibc-abi/src/htm_fast_path.rs", "kind": "path_exists", "rationale": "HTM fast-path source must exist."},
-        {"artifact": "scripts/check_htm_fast_path.sh", "kind": "path_exists", "rationale": "HTM fast-path evidence gate must exist."},
-        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.total_candidates", "expected_value_min": 1, "rationale": "Optimization proof ledger must enumerate candidates."},
-        {"artifact": "tests/conformance/optimization_proof_ledger.v1.json", "kind": "json_field_min", "field": "summary.verified", "expected_value_min": 1, "rationale": "At least one optimization proof candidate must be verified."}
+        {
+          "artifact": "crates/frankenlibc-abi/src/htm_fast_path.rs",
+          "kind": "path_exists",
+          "rationale": "HTM fast-path source must exist."
+        },
+        {
+          "artifact": "scripts/check_htm_fast_path.sh",
+          "kind": "path_exists",
+          "rationale": "HTM fast-path evidence gate must exist."
+        },
+        {
+          "artifact": "tests/conformance/optimization_proof_ledger.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.total_candidates",
+          "expected_value_min": 1,
+          "rationale": "Optimization proof ledger must enumerate candidates."
+        },
+        {
+          "artifact": "tests/conformance/optimization_proof_ledger.v1.json",
+          "kind": "json_field_min",
+          "field": "summary.verified",
+          "expected_value_min": 1,
+          "rationale": "At least one optimization proof candidate must be verified."
+        }
       ]
     }
   ]

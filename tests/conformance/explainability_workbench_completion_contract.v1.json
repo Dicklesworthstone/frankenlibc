@@ -59,22 +59,9 @@
       "minimum_traces": 2,
       "minimum_artifact_links": 1,
       "minimum_mode_divergences": 1,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
-      "required_render_formats": [
-        "json",
-        "plain",
-        "ftui"
-      ],
-      "required_cli_flags": [
-        "--log",
-        "--artifact-index",
-        "--scenario-id",
-        "--format",
-        "--output"
-      ],
+      "required_modes": ["strict", "hardened"],
+      "required_render_formats": ["json", "plain", "ftui"],
+      "required_cli_flags": ["--log", "--artifact-index", "--scenario-id", "--format", "--output"],
       "required_tooling_contract_fields": [
         "has_asupersync_dependency",
         "asupersync_feature_present",
@@ -143,9 +130,7 @@
     },
     "e2e_primary": {
       "missing_item_id": "tests.e2e.primary",
-      "required_scripts": [
-        "scripts/check_explainability_workbench_completion_contract.sh"
-      ],
+      "required_scripts": ["scripts/check_explainability_workbench_completion_contract.sh"],
       "required_test_refs": [
         {
           "source": "existing_integration_test",

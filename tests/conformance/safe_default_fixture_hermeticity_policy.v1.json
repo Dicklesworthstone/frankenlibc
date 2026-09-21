@@ -4,25 +4,14 @@
   "gate_id": "safe-default-fixture-hermeticity-v1",
   "description": "Policy for deterministic safe-default conformance fixture logs. Safe-default fixture rows must remain hermetic: they may record classified outcomes and local contract labels, but must not capture ambient process, host, resolver, network, path, pointer, stderr, or address details unless the row explicitly declares an intentional host-differential oracle.",
   "fixture_glob": "tests/conformance/fixtures/*.json",
-  "safe_default_markers": [
-    "safe-default",
-    "safe_default",
-    "native_safe_default"
-  ],
+  "safe_default_markers": ["safe-default", "safe_default", "native_safe_default"],
   "required_case_fields": [
     "expected_output",
     "inputs.safe_default_rationale",
     "inputs.oracle_source"
   ],
-  "recommended_case_fields": [
-    "inputs.oracle_kind",
-    "inputs.divergence_policy"
-  ],
-  "required_output_tokens": [
-    "symbol=",
-    "mode=",
-    "failure_signature="
-  ],
+  "recommended_case_fields": ["inputs.oracle_kind", "inputs.divergence_policy"],
+  "required_output_tokens": ["symbol=", "mode=", "failure_signature="],
   "forbidden_expected_output_tokens": [
     "address=",
     "pid=",
@@ -72,10 +61,7 @@
     }
   ],
   "host_differential_exemption": {
-    "required_oracle_kinds": [
-      "host_differential",
-      "host_glibc_differential"
-    ],
+    "required_oracle_kinds": ["host_differential", "host_glibc_differential"],
     "required_divergence_policy_prefix": "allow_ambient_capture:"
   }
 }

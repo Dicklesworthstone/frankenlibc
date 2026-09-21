@@ -37,10 +37,7 @@
     "missing_row_source_commit_result": "claim_blocked",
     "missing_row_artifact_refs_result": "claim_blocked",
     "host_glibc_dependency_result": "claim_blocked",
-    "host_dependency_probe_tools": [
-      "readelf -d",
-      "ldd"
-    ],
+    "host_dependency_probe_tools": ["readelf -d", "ldd"],
     "current_claim_status": "claim_blocked",
     "direct_link_evidence_cannot_be_inferred_from_ld_preload": true
   },
@@ -114,14 +111,8 @@
     "env_ownership",
     "secure_mode_diagnostics"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
-  "required_execution_models": [
-    "direct_link_run",
-    "replace_mode_simulated"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
+  "required_execution_models": ["direct_link_run", "replace_mode_simulated"],
   "diagnostic_signatures": [
     {
       "id": "missing_field",
@@ -284,9 +275,7 @@
         "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs",
         "tests/integration/fixture_startup.c"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
@@ -331,9 +320,7 @@
         "crates/frankenlibc-core/src/pthread/tls.rs",
         "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
@@ -377,9 +364,7 @@
         "tests/conformance/fixtures/pthread_tls_keys.json",
         "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/pthread_cancellation_robust_tls_fixture_pack.v1.json",
         "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
@@ -394,22 +379,13 @@
       "execution_model": "direct_link_run",
       "source_commit": "current",
       "runtime_modes": ["strict", "hardened"],
-      "expected_order": [
-        "preinit_array",
-        "init_array",
-        "main",
-        "fini_array",
-        "rtld_fini"
-      ],
+      "expected_order": ["preinit_array", "init_array", "main", "fini_array", "rtld_fini"],
       "actual_order": [],
       "expected_status": "required",
       "actual_status": "blocked",
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
-      "missing_evidence": [
-        "direct-link init/fini replay binary",
-        "current replacement artifact"
-      ],
+      "missing_evidence": ["direct-link init/fini replay binary", "current replacement artifact"],
       "strict_expectation": {
         "ordering_policy": "glibc-compatible init/fini sequence",
         "repair": "none"
@@ -422,9 +398,7 @@
         "tests/integration/fixture_startup.c",
         "crates/frankenlibc-abi/tests/startup_abi_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "tests/integration/fixture_startup.c"
@@ -467,9 +441,7 @@
         "crates/frankenlibc-abi/src/startup_abi.rs",
         "crates/frankenlibc-abi/tests/startup_abi_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "crates/frankenlibc-abi/src/startup_abi.rs"
@@ -512,9 +484,7 @@
         "crates/frankenlibc-core/src/errno/mod.rs",
         "crates/frankenlibc-abi/tests/errno_abi_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "crates/frankenlibc-abi/tests/errno_abi_test.rs",
@@ -559,9 +529,7 @@
         "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
         "tests/conformance/fixtures/startup_ops.json"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "crates/frankenlibc-core/src/stdlib/env.rs",
         "crates/frankenlibc-abi/tests/metamorphic_getenv.rs",
@@ -606,9 +574,7 @@
         "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",
         "crates/frankenlibc-abi/tests/startup_abi_contract_test.rs"
       ],
-      "target_artifacts": [
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "target_artifacts": ["target/release/libfrankenlibc_replace.so"],
       "artifact_refs": [
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "crates/frankenlibc-abi/tests/conformance_diff_secure_getenv.rs",

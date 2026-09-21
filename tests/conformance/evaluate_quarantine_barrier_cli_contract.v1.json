@@ -7,13 +7,7 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_quarantine_barrier(depth, contention, adverse_ppm, lambda_latency) -> i64 as a standalone CLI. The lib API evaluates Invariant A (Quarantine Depth Admissibility) via an SOS quadratic form: deeper quarantine improves headroom; higher contention degrades it; extreme adverse_ppm always violates regardless of depth. Returns barrier value in milli-units where negative => violation. Previously reachable only from Rust callers; the CLI bridge lets CI verify quarantine-depth invariants without compiling.",
   "subcommand_name": "evaluate-quarantine-barrier",
   "binary_target": "harness",
-  "required_flags": [
-    "--depth",
-    "--contention",
-    "--adverse-ppm",
-    "--lambda-latency",
-    "--output"
-  ],
+  "required_flags": ["--depth", "--contention", "--adverse-ppm", "--lambda-latency", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_quarantine_barrier",
   "underlying_lib_functions": [

@@ -67,28 +67,28 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Native SafetyState unit and property tests cover lattice algebra, absorption laws, bounds, monotonic safety, and permission consistency.",
       "required_test_refs": [
-        {"source": "lattice", "name": "join_is_commutative"},
-        {"source": "lattice", "name": "join_is_associative"},
-        {"source": "lattice", "name": "join_is_idempotent"},
-        {"source": "lattice", "name": "meet_is_commutative"},
-        {"source": "lattice", "name": "meet_is_associative"},
-        {"source": "lattice", "name": "meet_is_idempotent"},
-        {"source": "lattice", "name": "absorption_laws_hold"},
-        {"source": "lattice", "name": "proof_lattice_bounds"},
-        {"source": "lattice", "name": "proof_join_never_increases_permissiveness"},
-        {"source": "lattice", "name": "proof_permission_consistency_with_lattice"},
-        {"source": "lattice", "name": "prop_join_commutative"},
-        {"source": "lattice", "name": "prop_absorption_join"},
-        {"source": "lattice", "name": "prop_join_never_grants_new_read_permission"},
-        {"source": "lattice", "name": "prop_join_never_grants_new_write_permission"}
+        { "source": "lattice", "name": "join_is_commutative" },
+        { "source": "lattice", "name": "join_is_associative" },
+        { "source": "lattice", "name": "join_is_idempotent" },
+        { "source": "lattice", "name": "meet_is_commutative" },
+        { "source": "lattice", "name": "meet_is_associative" },
+        { "source": "lattice", "name": "meet_is_idempotent" },
+        { "source": "lattice", "name": "absorption_laws_hold" },
+        { "source": "lattice", "name": "proof_lattice_bounds" },
+        { "source": "lattice", "name": "proof_join_never_increases_permissiveness" },
+        { "source": "lattice", "name": "proof_permission_consistency_with_lattice" },
+        { "source": "lattice", "name": "prop_join_commutative" },
+        { "source": "lattice", "name": "prop_absorption_join" },
+        { "source": "lattice", "name": "prop_join_never_grants_new_read_permission" },
+        { "source": "lattice", "name": "prop_join_never_grants_new_write_permission" }
       ]
     },
     "e2e_primary": {
       "missing_item_id": "tests.e2e.primary",
       "description": "The region lattice checker validates the full contract and emits deterministic report/log artifacts.",
       "required_test_refs": [
-        {"source": "harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "harness", "name": "checker_rejects_stale_lattice_test_binding"}
+        { "source": "harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "harness", "name": "checker_rejects_stale_lattice_test_binding" }
       ],
       "required_commands": [
         "bash scripts/check_region_lattice_completion_contract.sh",
@@ -98,9 +98,7 @@
     "telemetry_primary": {
       "missing_item_id": "telemetry.primary",
       "description": "The checker writes structured telemetry that names the completion-debt bead, original bead, tested laws, artifacts, and failure signature.",
-      "required_events": [
-        "region_lattice_completion_contract_validated"
-      ],
+      "required_events": ["region_lattice_completion_contract_validated"],
       "required_fields": [
         "timestamp",
         "trace_id",
@@ -114,9 +112,7 @@
         "artifact_refs",
         "failure_signature"
       ],
-      "required_test_refs": [
-        {"source": "harness", "name": "checker_emits_report_and_jsonl"}
-      ]
+      "required_test_refs": [{ "source": "harness", "name": "checker_emits_report_and_jsonl" }]
     }
   }
 }

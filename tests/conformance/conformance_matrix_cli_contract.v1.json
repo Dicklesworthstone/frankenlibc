@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary `conformance-matrix` subcommand that turns fixture JSON directories into differential host-vs-FrankenLibC report artifacts and structured conformance JSONL logs.",
   "subcommand_name": "conformance-matrix",
   "binary_target": "harness",
-  "required_flags": [
-    "--fixture"
-  ],
+  "required_flags": ["--fixture"],
   "optional_flags": [
     "--output",
     "--log",
@@ -28,11 +26,7 @@
   "input_contract": {
     "fixture_source": "directory containing fixture JSON files",
     "fixture_schema": "frankenlibc_harness::FixtureSet",
-    "mode_values": [
-      "strict",
-      "hardened",
-      "both"
-    ],
+    "mode_values": ["strict", "hardened", "both"],
     "default_mode": "both",
     "default_campaign": "franken_shadow"
   },
@@ -49,13 +43,7 @@
       "symbol_matrix",
       "cases"
     ],
-    "summary_required_fields": [
-      "total_cases",
-      "passed",
-      "failed",
-      "errors",
-      "pass_rate_percent"
-    ],
+    "summary_required_fields": ["total_cases", "passed", "failed", "errors", "pass_rate_percent"],
     "case_required_fields": [
       "trace_id",
       "family",

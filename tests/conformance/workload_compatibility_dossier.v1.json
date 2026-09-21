@@ -1,13 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-fp4tm.5",
-  "source_beads": [
-    "bd-fp4tm.2",
-    "bd-fp4tm.3",
-    "bd-fp4tm.4",
-    "bd-bp8fl.10.1",
-    "bd-bp8fl.10.8"
-  ],
+  "source_beads": ["bd-fp4tm.2", "bd-fp4tm.3", "bd-fp4tm.4", "bd-bp8fl.10.1", "bd-bp8fl.10.8"],
   "generated_at_utc": "2026-05-08T05:22:00Z",
   "purpose": "Generate a user-facing workload compatibility dossier only from fresh workload evidence, replay reproducers, latency-budget joins, smoke summaries, replacement levels, release gates, and compatibility reports.",
   "inputs": {
@@ -85,14 +79,8 @@
     "strict_required_status": "pass",
     "hardened_required_status": "pass",
     "freshness_required_state": "current",
-    "perf_allowed_states": [
-      "within_budget",
-      "overloaded_skip"
-    ],
-    "prose_only_refs": [
-      "README.md",
-      "CHANGELOG.md"
-    ],
+    "perf_allowed_states": ["within_budget", "overloaded_skip"],
+    "prose_only_refs": ["README.md", "CHANGELOG.md"],
     "minimum_concrete_evidence_refs": 2
   },
   "artifact_refs": [

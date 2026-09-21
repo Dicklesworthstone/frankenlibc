@@ -29,13 +29,7 @@
     "diagnostic_output": "local_pipe_classification_only",
     "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected_class",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected_class", "actual", "failure_signature"],
   "cases": [
     {
       "name": "authunix_create_safe_default_strict",

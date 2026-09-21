@@ -12,10 +12,7 @@
     "completion_harness": "crates/frankenlibc-harness/tests/verification_matrix_schema_completion_contract_test.rs"
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.e2e.primary",
-      "tests.conformance.primary"
-    ],
+    "missing_items_closed": ["tests.e2e.primary", "tests.conformance.primary"],
     "e2e_primary": {
       "missing_item_id": "tests.e2e.primary",
       "description": "E2E evidence is the executable verification-matrix gate that validates the matrix file, schema structure, row contract, per-stream examples, open critique bead coverage, and dashboard summary.",
@@ -63,9 +60,7 @@
     "conformance_primary": {
       "missing_item_id": "tests.conformance.primary",
       "description": "Conformance evidence pins verification_matrix.json as the canonical versioned row-schema artifact and verifies required statuses, obligation types, row template fields, transitions, and stream examples.",
-      "required_artifacts": [
-        "tests/conformance/verification_matrix.json"
-      ],
+      "required_artifacts": ["tests/conformance/verification_matrix.json"],
       "required_test_refs": [
         {
           "source": "verification_matrix_harness",
@@ -110,12 +105,7 @@
   "required_schema_contract": {
     "matrix_version": 1,
     "row_schema_version": "v1",
-    "required_coverage_statuses": [
-      "complete",
-      "partial",
-      "missing",
-      "not_required"
-    ],
+    "required_coverage_statuses": ["complete", "partial", "missing", "not_required"],
     "required_obligation_types": [
       "unit_tests",
       "e2e_scripts",
@@ -124,16 +114,8 @@
       "conformance_fixtures",
       "golden_artifacts"
     ],
-    "required_row_status_states": [
-      "missing",
-      "partial",
-      "complete"
-    ],
-    "required_transition_targets": [
-      "missing",
-      "partial",
-      "complete"
-    ],
+    "required_row_status_states": ["missing", "partial", "complete"],
+    "required_transition_targets": ["missing", "partial", "complete"],
     "required_row_template_keys": [
       "bead_id",
       "stream",
@@ -147,14 +129,7 @@
       "close_blockers",
       "notes"
     ],
-    "required_stream_examples": [
-      "docs",
-      "e2e",
-      "syscall",
-      "stubs",
-      "math",
-      "perf"
-    ],
+    "required_stream_examples": ["docs", "e2e", "syscall", "stubs", "math", "perf"],
     "required_source_text": {
       "verification_matrix_gate": [
         "row_schema_version",
@@ -205,8 +180,6 @@
       "verification_matrix_schema_contract_verified",
       "verification_matrix_schema_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "verification_matrix_schema_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["verification_matrix_schema_completion_contract_fail"]
   }
 }

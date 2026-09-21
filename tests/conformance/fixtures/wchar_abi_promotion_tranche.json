@@ -10,20 +10,10 @@
     "wave_id": "wchar-abi-promotion-tranche-wave-01",
     "source_artifact": "target/conformance/support_matrix_maintenance.generated.json",
     "ambient_state_policy": "forbid_raw_pointer_file_handle_allocator_path_fd_stdout_stderr_pid_or_wall_clock_capture",
-    "first_wave_symbols": [
-      "mbrtoc16",
-      "open_wmemstream",
-      "wcsdup"
-    ],
+    "first_wave_symbols": ["mbrtoc16", "open_wmemstream", "wcsdup"],
     "residual_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "mbrtoc16_ascii_x_strict",

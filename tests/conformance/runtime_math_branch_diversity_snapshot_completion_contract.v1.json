@@ -19,11 +19,7 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/runtime_math_branch_diversity_snapshot_completion_contract_test.rs"
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "tests.golden.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "tests.golden.primary"],
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",
       "description": "Unit evidence pins this completion contract and its fail-closed checker so stale source bindings, missing E2E/golden tests, and non-rch cargo evidence cannot silently pass.",
@@ -139,21 +135,14 @@
   },
   "required_runtime_math_branch_snapshot_contract": {
     "scenario_id": "bd-5vr.7-runtime-math-branch-diversity-snapshot-e2e",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "branch_diversity": {
       "minimum_active_families": 3,
       "healthy_dominant_share_max_ppm": 350000,
       "near_violation_min_ppm": 350000,
       "violation_min_ppm": 400000,
       "single_family_violation_ppm": 1000000,
-      "required_states": [
-        "Healthy",
-        "NearViolation",
-        "Violation"
-      ],
+      "required_states": ["Healthy", "NearViolation", "Violation"],
       "required_source_tokens": [
         "RuntimeReverseRoundDiversityState::Healthy",
         "RuntimeReverseRoundDiversityState::NearViolation",
@@ -191,10 +180,7 @@
       "expected_scenario": "runtime_math_kernel_snapshot_smoke",
       "expected_seed": 3735928559,
       "expected_steps": 512,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_modes": ["strict", "hardened"],
       "required_source_tokens": [
         "golden-snapshot replay must produce identical JSON under deterministic inputs",
         "snapshot JSON must contain field",
@@ -236,8 +222,6 @@
       "runtime_math_branch_snapshot_golden_verified",
       "runtime_math_branch_snapshot_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "runtime_math_branch_snapshot_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["runtime_math_branch_snapshot_completion_contract_fail"]
   }
 }

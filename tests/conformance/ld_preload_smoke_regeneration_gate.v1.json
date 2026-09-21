@@ -77,10 +77,6 @@
       "report",
       "trace"
     ],
-    "case_events": [
-      "smoke_case_pass",
-      "smoke_case_fail",
-      "smoke_case_skip"
-    ]
+    "case_events": ["smoke_case_pass", "smoke_case_fail", "smoke_case_skip"]
   }
 }

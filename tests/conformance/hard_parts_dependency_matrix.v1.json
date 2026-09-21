@@ -3,14 +3,7 @@
   "bead": "bd-y45u",
   "trace_id": "hard-parts-matrix-bd-y45u-v1",
   "generated_at": "2026-02-13T08:37:00Z",
-  "subsystems": [
-    "startup",
-    "threading",
-    "resolver",
-    "nss",
-    "locale",
-    "iconv"
-  ],
+  "subsystems": ["startup", "threading", "resolver", "nss", "locale", "iconv"],
   "dependency_matrix": [
     {
       "from_subsystem": "startup",
@@ -18,10 +11,7 @@
       "interface": "bootstrap->thread trampoline invariants",
       "reason": "pthread bootstrap requires stable startup ordering and TLS bootstrap preconditions",
       "blocking_beads": ["bd-qwm", "bd-11nb", "bd-mjon", "bd-rth1"],
-      "contract_refs": [
-        "POSIX pthread_create",
-        "tests/conformance/fixtures/startup_phase0.json"
-      ]
+      "contract_refs": ["POSIX pthread_create", "tests/conformance/fixtures/startup_phase0.json"]
     },
     {
       "from_subsystem": "startup",
@@ -29,10 +19,7 @@
       "interface": "secure-mode/env contract propagation",
       "reason": "resolver config and retry policy must honor process-level mode/secure startup contracts",
       "blocking_beads": ["bd-qwm", "bd-11nb", "bd-1y7"],
-      "contract_refs": [
-        "resolver(5)",
-        "crates/frankenlibc-abi/src/startup_abi.rs"
-      ]
+      "contract_refs": ["resolver(5)", "crates/frankenlibc-abi/src/startup_abi.rs"]
     },
     {
       "from_subsystem": "resolver",
@@ -40,10 +27,7 @@
       "interface": "lookup fallback ordering and cache boundary",
       "reason": "files-backed NSS lookup must compose with resolver policy and timeout/backoff behavior",
       "blocking_beads": ["bd-1y7", "bd-1rf", "bd-3vtx", "bd-x2sq"],
-      "contract_refs": [
-        "POSIX getaddrinfo",
-        "tests/conformance/fixtures/resolver.json"
-      ]
+      "contract_refs": ["POSIX getaddrinfo", "tests/conformance/fixtures/resolver.json"]
     },
     {
       "from_subsystem": "threading",
@@ -51,10 +35,7 @@
       "interface": "concurrent lookup and cache coherence",
       "reason": "parallel passwd/group/hosts lookups must remain deterministic and race-free",
       "blocking_beads": ["bd-3rag", "bd-xxd9", "bd-rth1"],
-      "contract_refs": [
-        "POSIX pthread",
-        "tests/conformance/runtime_math_divergence_bounds.v1.json"
-      ]
+      "contract_refs": ["POSIX pthread", "tests/conformance/runtime_math_divergence_bounds.v1.json"]
     },
     {
       "from_subsystem": "locale",
@@ -62,10 +43,7 @@
       "interface": "codeset normalization and transliteration policy",
       "reason": "iconv codec selection and behavior contracts depend on locale category resolution",
       "blocking_beads": ["bd-3pe", "bd-3bg", "bd-7cba", "bd-by8c", "bd-z7gt"],
-      "contract_refs": [
-        "POSIX iconv",
-        "tests/conformance/fixtures/iconv_phase1.json"
-      ]
+      "contract_refs": ["POSIX iconv", "tests/conformance/fixtures/iconv_phase1.json"]
     },
     {
       "from_subsystem": "threading",
@@ -73,10 +51,7 @@
       "interface": "thread-local locale state handoff",
       "reason": "locale isolation and teardown semantics rely on thread lifecycle correctness",
       "blocking_beads": ["bd-rth1", "bd-3pe", "bd-1f35"],
-      "contract_refs": [
-        "POSIX setlocale",
-        "POSIX pthread_key_create"
-      ]
+      "contract_refs": ["POSIX setlocale", "POSIX pthread_key_create"]
     },
     {
       "from_subsystem": "iconv",
@@ -84,10 +59,7 @@
       "interface": "IDN/encoding normalization boundary",
       "reason": "resolver names containing non-ASCII labels require deterministic conversion guardrails",
       "blocking_beads": ["bd-by8c", "bd-z7gt", "bd-1y7"],
-      "contract_refs": [
-        "RFC 3490",
-        "tests/conformance/fixtures/resolver.json"
-      ]
+      "contract_refs": ["RFC 3490", "tests/conformance/fixtures/resolver.json"]
     },
     {
       "from_subsystem": "startup",
@@ -95,10 +67,7 @@
       "interface": "process bootstrap locale defaults",
       "reason": "initial locale category defaults and mode parsing must be fixed before locale/iconv assertions",
       "blocking_beads": ["bd-qwm", "bd-11nb", "bd-3pe"],
-      "contract_refs": [
-        "POSIX locale",
-        "crates/frankenlibc-abi/src/startup_helpers.rs"
-      ]
+      "contract_refs": ["POSIX locale", "crates/frankenlibc-abi/src/startup_helpers.rs"]
     }
   ],
   "risk_register": [
@@ -184,7 +153,15 @@
       "title": "Resolver/NSS deterministic lookup semantics",
       "subsystems": ["resolver", "nss", "threading"],
       "depends_on_milestones": ["M1"],
-      "depends_on_beads": ["bd-1y7", "bd-1rf", "bd-3vtx", "bd-3rag", "bd-x2sq", "bd-2yhf", "bd-3ehb"],
+      "depends_on_beads": [
+        "bd-1y7",
+        "bd-1rf",
+        "bd-3vtx",
+        "bd-3rag",
+        "bd-x2sq",
+        "bd-2yhf",
+        "bd-3ehb"
+      ],
       "parallelizable": true,
       "outcome_gate": "lookup parity + cache coherence under deterministic stress"
     },

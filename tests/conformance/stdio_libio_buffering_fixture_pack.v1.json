@@ -67,11 +67,7 @@
       "position",
       "user_diagnostic"
     ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ]
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"]
   },
   "required_scenario_kinds": [
     "stream_open_close",
@@ -87,17 +83,8 @@
     "cookie_stream",
     "internal_io_helper"
   ],
-  "required_buffering_modes": [
-    "not_applicable",
-    "full",
-    "line",
-    "unbuffered"
-  ],
-  "required_orientations": [
-    "undecided",
-    "byte",
-    "wide"
-  ],
+  "required_buffering_modes": ["not_applicable", "full", "line", "unbuffered"],
+  "required_orientations": ["undecided", "byte", "wide"],
   "required_state_transitions": [
     "Open->Closed",
     "Open->Open",
@@ -144,10 +131,7 @@
       "fixture_id": "stdio.stream.open_close.devnull.strict",
       "scenario_kind": "stream_open_close",
       "operation": "fopen>fclose",
-      "symbols": [
-        "fopen",
-        "fclose"
-      ],
+      "symbols": ["fopen", "fclose"],
       "buffering_mode": "not_applicable",
       "orientation": "undecided",
       "file_kind": "device_null",
@@ -166,10 +150,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "fopen_valid_mode_strict",
-        "fclose_valid_strict"
-      ],
+      "source_case_refs": ["fopen_valid_mode_strict", "fclose_valid_strict"],
       "state_transition": {
         "from": "Open",
         "to": "Closed",
@@ -200,12 +181,7 @@
       "fixture_id": "stdio.buffering.setvbuf.unbuffered.strict",
       "scenario_kind": "buffering_mode_control",
       "operation": "setvbuf",
-      "symbols": [
-        "setvbuf",
-        "setbuf",
-        "setbuffer",
-        "setlinebuf"
-      ],
+      "symbols": ["setvbuf", "setbuf", "setbuffer", "setlinebuf"],
       "buffering_mode": "unbuffered",
       "orientation": "byte",
       "file_kind": "device_null",
@@ -262,25 +238,13 @@
       "fixture_id": "stdio.buffered_write.fwrite_devnull.strict",
       "scenario_kind": "buffered_write",
       "operation": "fwrite",
-      "symbols": [
-        "fwrite",
-        "fputs",
-        "fputc"
-      ],
+      "symbols": ["fwrite", "fputs", "fputc"],
       "buffering_mode": "full",
       "orientation": "byte",
       "file_kind": "device_null",
-      "initial_contents": [
-        65,
-        66,
-        67
-      ],
+      "initial_contents": [65, 66, 67],
       "expected": {
-        "bytes": [
-          65,
-          66,
-          67
-        ],
+        "bytes": [65, 66, 67],
         "text": "WRITE_ACCEPTED",
         "status": "pass",
         "errno": "0",
@@ -293,11 +257,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "fwrite_devnull_strict",
-        "fputs_devnull_strict",
-        "fputc_devnull_strict"
-      ],
+      "source_case_refs": ["fwrite_devnull_strict", "fputs_devnull_strict", "fputc_devnull_strict"],
       "state_transition": {
         "from": "Open",
         "to": "Open",
@@ -329,27 +289,13 @@
       "fixture_id": "stdio.buffered_read.fread_devzero.hardened",
       "scenario_kind": "buffered_read",
       "operation": "fread",
-      "symbols": [
-        "fread",
-        "fgetc",
-        "fgets"
-      ],
+      "symbols": ["fread", "fgetc", "fgets"],
       "buffering_mode": "full",
       "orientation": "byte",
       "file_kind": "device_zero",
-      "initial_contents": [
-        0,
-        0,
-        0,
-        0
-      ],
+      "initial_contents": [0, 0, 0, 0],
       "expected": {
-        "bytes": [
-          0,
-          0,
-          0,
-          0
-        ],
+        "bytes": [0, 0, 0, 0],
         "text": "READ_ZERO_BYTES",
         "status": "pass",
         "errno": "0",
@@ -397,11 +343,7 @@
       "fixture_id": "stdio.eof_state.feof_after_devnull.strict",
       "scenario_kind": "eof_state",
       "operation": "fgets>feof",
-      "symbols": [
-        "fgets",
-        "feof",
-        "clearerr"
-      ],
+      "symbols": ["fgets", "feof", "clearerr"],
       "buffering_mode": "line",
       "orientation": "byte",
       "file_kind": "device_null",
@@ -456,11 +398,7 @@
       "fixture_id": "stdio.error_state.invalid_stream.blocked.hardened",
       "scenario_kind": "error_state",
       "operation": "invalid_stream_guard",
-      "symbols": [
-        "fread",
-        "fwrite",
-        "ferror"
-      ],
+      "symbols": ["fread", "fwrite", "ferror"],
       "buffering_mode": "not_applicable",
       "orientation": "byte",
       "file_kind": "invalid_stream",
@@ -495,9 +433,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test rejects_invalid_open_mode_and_null_stream_handles -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/stdio_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/stdio_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -512,11 +448,7 @@
       "fixture_id": "stdio.seek_tell.ftell_after_seek.strict",
       "scenario_kind": "seek_tell",
       "operation": "fseek>ftell",
-      "symbols": [
-        "fseek",
-        "ftell",
-        "rewind"
-      ],
+      "symbols": ["fseek", "ftell", "rewind"],
       "buffering_mode": "full",
       "orientation": "byte",
       "file_kind": "device_null",
@@ -633,13 +565,7 @@
       "fixture_id": "stdio.wide_io.orientation.blocked.strict",
       "scenario_kind": "wide_io_orientation",
       "operation": "fwide>fputwc>fgetwc",
-      "symbols": [
-        "fwide",
-        "fputwc",
-        "fgetwc",
-        "fputws",
-        "fgetws"
-      ],
+      "symbols": ["fwide", "fputwc", "fgetwc", "fputws", "fgetws"],
       "buffering_mode": "line",
       "orientation": "wide",
       "file_kind": "temporary_file",
@@ -694,22 +620,13 @@
       "fixture_id": "stdio.memory_stream.open_memstream.hardened",
       "scenario_kind": "memory_stream",
       "operation": "open_memstream>fwrite>fflush>fclose",
-      "symbols": [
-        "open_memstream",
-        "fmemopen",
-        "fflush",
-        "fclose"
-      ],
+      "symbols": ["open_memstream", "fmemopen", "fflush", "fclose"],
       "buffering_mode": "full",
       "orientation": "byte",
       "file_kind": "memory_stream",
       "initial_contents": [],
       "expected": {
-        "bytes": [
-          120,
-          120,
-          120
-        ],
+        "bytes": [120, 120, 120],
         "text": "MEMORY_STREAM_SYNCED",
         "status": "pass",
         "errno": "0",
@@ -738,9 +655,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test open_memstream_grows_and_syncs_on_flush_and_close -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/stdio_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/stdio_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -755,33 +670,13 @@
       "fixture_id": "stdio.cookie_stream.fopencookie.strict",
       "scenario_kind": "cookie_stream",
       "operation": "fopencookie>fread>fwrite>fseek>fclose",
-      "symbols": [
-        "fopencookie",
-        "fread",
-        "fwrite",
-        "fseek",
-        "fclose"
-      ],
+      "symbols": ["fopencookie", "fread", "fwrite", "fseek", "fclose"],
       "buffering_mode": "full",
       "orientation": "byte",
       "file_kind": "cookie_stream",
-      "initial_contents": [
-        99,
-        111,
-        111,
-        107,
-        105,
-        101
-      ],
+      "initial_contents": [99, 111, 111, 107, 105, 101],
       "expected": {
-        "bytes": [
-          99,
-          111,
-          111,
-          107,
-          105,
-          101
-        ],
+        "bytes": [99, 111, 111, 107, 105, 101],
         "text": "COOKIE_CALLBACKS_ROUTED",
         "status": "pass",
         "errno": "0",
@@ -811,9 +706,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test fopencookie_routes_io_callbacks_for_read_write_seek_close -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/stdio_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/stdio_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -828,22 +721,13 @@
       "fixture_id": "stdio.internal_io_helpers.feof_ferror.strict",
       "scenario_kind": "internal_io_helper",
       "operation": "_IO_feof>_IO_ferror",
-      "symbols": [
-        "_IO_feof",
-        "_IO_ferror",
-        "_IO_getc",
-        "_IO_putc"
-      ],
+      "symbols": ["_IO_feof", "_IO_ferror", "_IO_getc", "_IO_putc"],
       "buffering_mode": "not_applicable",
       "orientation": "byte",
       "file_kind": "temporary_file",
-      "initial_contents": [
-        65
-      ],
+      "initial_contents": [65],
       "expected": {
-        "bytes": [
-          65
-        ],
+        "bytes": [65],
         "text": "INTERNAL_HELPER_STATE_MATCHES_PUBLIC_STATE",
         "status": "pass",
         "errno": "0",
@@ -856,10 +740,7 @@
       "replacement_level": "L0",
       "oracle_kind": "frankenlibc_contract",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:io_feof_at_end",
-        "test:io_ferror_on_good_stream"
-      ],
+      "source_case_refs": ["test:io_feof_at_end", "test:io_ferror_on_good_stream"],
       "state_transition": {
         "from": "Open",
         "to": "Eof",
@@ -872,9 +753,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test stdio_abi_test io_feof_at_end -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/stdio_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/stdio_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",

@@ -15,9 +15,7 @@
     "completion_harness": "crates/frankenlibc-harness/tests/stdio_abi_teardown_completion_contract_test.rs"
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.conformance.primary"
-    ],
+    "missing_item_ids": ["tests.conformance.primary"],
     "implementation_markers": {
       "stdio_abi": [
         "static HOST_LIBIO_EXIT_PATCHED: AtomicBool = AtomicBool::new(false);",
@@ -91,8 +89,6 @@
       "stdio_abi_teardown.bindings_validated",
       "stdio_abi_teardown.completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "stdio_abi_teardown.completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["stdio_abi_teardown.completion_contract_fail"]
   }
 }

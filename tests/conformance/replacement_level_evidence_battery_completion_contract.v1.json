@@ -7,10 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.2.3/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "source_paths": {
     "replacement_levels": "tests/conformance/replacement_levels.json",
@@ -269,12 +266,7 @@
   },
   "policy_requirements": {
     "replacement_levels": {
-      "expected_levels": [
-        "L0",
-        "L1",
-        "L2",
-        "L3"
-      ],
+      "expected_levels": ["L0", "L1", "L2", "L3"],
       "current_level": "L1",
       "current_release_level": "L1",
       "expected_status_by_level": {
@@ -288,9 +280,7 @@
         "stub": 0
       },
       "l1_objective_gate_status": "pass",
-      "l1_required_objective_outcomes": [
-        "pass"
-      ],
+      "l1_required_objective_outcomes": ["pass"],
       "l2_required_blocker_substring": "Standalone artifact packaging/deployment proof remains pending",
       "stale_blocker_forbidden_substrings": [
         "Standalone dependency policy gate (bd-w2c3.2.2) remains incomplete"

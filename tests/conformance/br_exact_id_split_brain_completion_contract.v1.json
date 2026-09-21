@@ -28,12 +28,7 @@
         "cycle_report_disagreement",
         "missing_issue_record"
       ],
-      "required_state_classes": [
-        "healthy",
-        "tracker_failure",
-        "tool_timeout",
-        "split_brain"
-      ],
+      "required_state_classes": ["healthy", "tracker_failure", "tool_timeout", "split_brain"],
       "checker": "scripts/check_tracker_health_report.sh",
       "checker_mode": "--fixture-replay"
     },
@@ -58,35 +53,15 @@
     }
   ],
   "live_read_only_probe_contract": {
-    "required_probe_ids": [
-      "bd-bp8fl.2.1",
-      "bd-bp8fl.10",
-      "bd-bp8fl.2.7",
-      "bd-rm999"
-    ],
-    "exact_id_probe_commands": [
-      "br show <id> --json",
-      "br --no-db show <id> --json"
-    ],
-    "graph_probe_commands": [
-      "br dep cycles --json",
-      "br --no-db dep cycles --json"
-    ],
-    "health_probe_commands": [
-      "br doctor --json",
-      "br sync --status --json",
-      "br ready --json"
-    ],
+    "required_probe_ids": ["bd-bp8fl.2.1", "bd-bp8fl.10", "bd-bp8fl.2.7", "bd-rm999"],
+    "exact_id_probe_commands": ["br show <id> --json", "br --no-db show <id> --json"],
+    "graph_probe_commands": ["br dep cycles --json", "br --no-db dep cycles --json"],
+    "health_probe_commands": ["br doctor --json", "br sync --status --json", "br ready --json"],
     "required_status_agreement": true,
     "required_zero_cycles": true,
     "required_sync_clean": true,
-    "allowed_doctor_health": [
-      "ok",
-      "degraded"
-    ],
-    "allowed_doctor_anomalies": [
-      "stale_recovery_artifacts"
-    ]
+    "allowed_doctor_health": ["ok", "degraded"],
+    "allowed_doctor_anomalies": ["stale_recovery_artifacts"]
   },
   "missing_item_bindings": [
     {

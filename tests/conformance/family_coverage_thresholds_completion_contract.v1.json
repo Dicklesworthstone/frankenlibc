@@ -325,12 +325,7 @@
       "l2_replacement_pct",
       "l3_replacement_pct"
     ],
-    "required_replacement_levels": [
-      "L0",
-      "L1",
-      "L2",
-      "L3"
-    ],
+    "required_replacement_levels": ["L0", "L1", "L2", "L3"],
     "required_log_fields": [
       "trace_id",
       "bead_id",

@@ -16,14 +16,10 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "UpgradeToSafeVariant"
-    ],
+    "healing_actions": ["UpgradeToSafeVariant"],
     "description": "UpgradeToSafeVariant detects untrusted format string in printf-family call; rewrites the call to treat user input as a plain string argument (snprintf(buf, sz, \"%s\", input)); all three attack vectors are neutralized without crash"
   },
-  "tsm_features_tested": [
-    "UpgradeToSafeVariant"
-  ],
+  "tsm_features_tested": ["UpgradeToSafeVariant"],
   "attack_vectors": [
     {
       "name": "info_leak",

@@ -64,11 +64,7 @@
       "execution_policy": {
         "required_launcher": "rch",
         "requires_remote": true,
-        "forbidden_markers": [
-          "[RCH] local",
-          "public_readiness",
-          "large_host_release_candidate"
-        ],
+        "forbidden_markers": ["[RCH] local", "public_readiness", "large_host_release_candidate"],
         "thread_count_max": 8,
         "duration_ms_max": 1000,
         "host_profile": {
@@ -97,17 +93,8 @@
           "FFS_ENABLE_PERMISSIONED_SWARM_WORKLOAD": "1",
           "FFS_TSM_CONTENTION_REAL_RUN_ACK": "tsm-contention-may-use-permissioned-large-host"
         },
-        "required_command_prefix": [
-          "RCH_REQUIRE_REMOTE=1",
-          "rch",
-          "exec",
-          "--"
-        ],
-        "forbidden_markers": [
-          "[RCH] local",
-          "local fallback",
-          "smoke_shape_only"
-        ],
+        "required_command_prefix": ["RCH_REQUIRE_REMOTE=1", "rch", "exec", "--"],
+        "forbidden_markers": ["[RCH] local", "local fallback", "smoke_shape_only"],
         "thread_count_min": 64,
         "duration_ms_min": 10000,
         "host_profile": {
@@ -166,12 +153,8 @@
     "runtime_decision_count": 16,
     "source_commit": "shape-only",
     "target_dir": "target/conformance/tsm_contention_e2e_lane_smoke",
-    "raw_log_paths": [
-      "target/conformance/tsm_contention_e2e_lane_smoke.log.jsonl"
-    ],
-    "artifact_refs": [
-      "tests/conformance/tsm_contention_e2e_lane.v1.json"
-    ],
+    "raw_log_paths": ["target/conformance/tsm_contention_e2e_lane_smoke.log.jsonl"],
+    "artifact_refs": ["tests/conformance/tsm_contention_e2e_lane.v1.json"],
     "readiness_claim": "shape_only"
   },
   "evidence_outputs": {

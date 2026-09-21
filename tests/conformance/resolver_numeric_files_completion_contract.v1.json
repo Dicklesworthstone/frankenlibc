@@ -79,10 +79,7 @@
           "crates/frankenlibc-core/src/resolv/mod.rs:538",
           "crates/frankenlibc-core/src/resolv/mod.rs:645"
         ],
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "fixture_cases": [
           "getaddrinfo_hosts_file_subset",
           "getaddrinfo_hosts_file_subset_hardened",
@@ -127,20 +124,10 @@
       {
         "symbol": "getnameinfo",
         "family": "resolver",
-        "evidence_kinds": [
-          "numeric_ipv4",
-          "numeric_ipv6",
-          "invalid_family",
-          "overflow_guards"
-        ],
+        "evidence_kinds": ["numeric_ipv4", "numeric_ipv6", "invalid_family", "overflow_guards"],
         "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1391",
-        "core_refs": [
-          "crates/frankenlibc-core/src/resolv/mod.rs:656"
-        ],
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "core_refs": ["crates/frankenlibc-core/src/resolv/mod.rs:656"],
+        "required_modes": ["strict", "hardened"],
         "unit_test_refs": [
           {
             "source": "core_resolver",
@@ -259,14 +246,8 @@
         }
       ],
       "fixture_id": "fixture_nss",
-      "required_covered_symbols": [
-        "getaddrinfo",
-        "freeaddrinfo"
-      ],
-      "required_mode_expectations": [
-        "strict",
-        "hardened"
-      ],
+      "required_covered_symbols": ["getaddrinfo", "freeaddrinfo"],
+      "required_mode_expectations": ["strict", "hardened"],
       "validation_commands": [
         "bash scripts/check_resolver_numeric_files_completion_contract.sh",
         "rch exec -- cargo test -p frankenlibc-harness --test resolver_numeric_files_completion_contract_test -- --nocapture",
@@ -294,9 +275,7 @@
           "resolver_numeric_files_symbol_bound",
           "resolver_numeric_files_completion_summary"
         ],
-        "forbidden_events": [
-          "resolver_numeric_files_completion_contract_failed"
-        ],
+        "forbidden_events": ["resolver_numeric_files_completion_contract_failed"],
         "required_fields": [
           "timestamp",
           "trace_id",

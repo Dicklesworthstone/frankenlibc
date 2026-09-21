@@ -43,43 +43,29 @@
     "latest_probe_failure_signature": "host_glibc_dependency",
     "latest_probe_artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
     "observed_artifact_symbols": {
-      "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "undefined_glibc_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "host_version_requirements": [
-        "ld-linux-x86-64.so.2:GLIBC_2.3"
-      ],
+      "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
+      "undefined_glibc_symbols": ["__tls_get_addr@GLIBC_2.3"],
+      "host_version_requirements": ["ld-linux-x86-64.so.2:GLIBC_2.3"],
       "version_needs": {
-        "ld-linux-x86-64.so.2": [
-          "GLIBC_2.3"
-        ]
+        "ld-linux-x86-64.so.2": ["GLIBC_2.3"]
       }
     },
     "evidence_command_results": {
       "nm_dynamic": {
         "command": "nm -D libfrankenlibc_replace.so",
         "exit_code": 0,
-        "observed_undefined_tls_symbols": [
-          "__tls_get_addr@GLIBC_2.3"
-        ]
+        "observed_undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"]
       },
       "readelf_symbols": {
         "command": "readelf -Ws libfrankenlibc_replace.so",
         "exit_code": 0,
-        "observed_undefined_tls_symbols": [
-          "__tls_get_addr@GLIBC_2.3"
-        ]
+        "observed_undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"]
       },
       "readelf_version": {
         "command": "readelf --version-info libfrankenlibc_replace.so",
         "exit_code": 0,
         "observed_tls_version_needs": {
-          "ld-linux-x86-64.so.2": [
-            "GLIBC_2.3"
-          ]
+          "ld-linux-x86-64.so.2": ["GLIBC_2.3"]
         }
       }
     },
@@ -87,16 +73,12 @@
       "source": "bd-zyck1.88 live compiler-runtime experiment",
       "baseline_release_standalone": {
         "artifact_sha256": "0caf2f836d1fff38afcdb7d5b5f56b46f2f9e23e7c1dc7af434325e0a1406275",
-        "undefined_tls_symbols": [
-          "__tls_get_addr@GLIBC_2.3"
-        ],
+        "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
         "nm_dynamic_line": 1010
       },
       "panic_abort_compiler_runtime_minimized": {
         "artifact_sha256": "01b97378034eefec1b11382862c79786e67b10018c022d117cb58a68dec2b21e",
-        "undefined_tls_symbols": [
-          "__tls_get_addr@GLIBC_2.3"
-        ],
+        "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
         "nm_dynamic_line": 1008
       },
       "classification": "compiler-runtime panic-abort experiment improves unwind blockers but leaves the TLS relocation unchanged, so __tls_get_addr needs a TLS/source-surface follow-up instead of a panic-profile follow-up."
@@ -110,16 +92,10 @@
     "latest_probe_artifact": ".rch-target-ts1-job-29848695897850382-1779209824027169071-0/release/libfrankenlibc_abi.so",
     "latest_probe_artifact_sha256": "3835d533174f44c19066f03fc71162e52d61806259d8986f888f2935627ba3b1",
     "observed_artifact_symbols": {
-      "undefined_tls_symbols": [
-        "__tls_get_addr@GLIBC_2.3"
-      ],
-      "needed_libraries": [
-        "ld-linux-x86-64.so.2"
-      ],
+      "undefined_tls_symbols": ["__tls_get_addr@GLIBC_2.3"],
+      "needed_libraries": ["ld-linux-x86-64.so.2"],
       "version_needs": {
-        "ld-linux-x86-64.so.2": [
-          "GLIBC_2.3"
-        ]
+        "ld-linux-x86-64.so.2": ["GLIBC_2.3"]
       }
     },
     "tls_relocation_summary": {
@@ -131,37 +107,27 @@
       {
         "descriptor_offset": "symbol:std_panicking_local_panic_count",
         "owner_bucket": "rust_std_panic_local_panic_count",
-        "observed_call_site_examples": [
-          "std::panicking::panic_count::LOCAL_PANIC_COUNT"
-        ]
+        "observed_call_site_examples": ["std::panicking::panic_count::LOCAL_PANIC_COUNT"]
       },
       {
         "descriptor_offset": "symbol:std_io_output_capture",
         "owner_bucket": "rust_std_io_output_capture",
-        "observed_call_site_examples": [
-          "std::io::stdio::OUTPUT_CAPTURE"
-        ]
+        "observed_call_site_examples": ["std::io::stdio::OUTPUT_CAPTURE"]
       },
       {
         "descriptor_offset": "symbol:std_thread_local_destructors",
         "owner_bucket": "rust_std_thread_local_destructors",
-        "observed_call_site_examples": [
-          "std::sys::thread_local::destructors::list::DTORS"
-        ]
+        "observed_call_site_examples": ["std::sys::thread_local::destructors::list::DTORS"]
       },
       {
         "descriptor_offset": "symbol:std_thread_current_id",
         "owner_bucket": "rust_std_thread_current_id",
-        "observed_call_site_examples": [
-          "std::thread::current::id::ID"
-        ]
+        "observed_call_site_examples": ["std::thread::current::id::ID"]
       },
       {
         "descriptor_offset": "symbol:std_thread_current_handle",
         "owner_bucket": "rust_std_thread_current_handle",
-        "observed_call_site_examples": [
-          "std::thread::current::CURRENT"
-        ]
+        "observed_call_site_examples": ["std::thread::current::CURRENT"]
       }
     ],
     "residual_tls_callsite_evidence": {
@@ -179,12 +145,7 @@
         "std::sys::thread_local::guard::key::enable",
         "std::sys::thread_local::guard::key::enable::run"
       ],
-      "relocation_offsets": [
-        "0x3136b8",
-        "0x316388",
-        "0x3163d0",
-        "0x3167f8"
-      ],
+      "relocation_offsets": ["0x3136b8", "0x316388", "0x3163d0", "0x3167f8"],
       "blocked_owner_surfaces": [
         "panic local panic count",
         "stdio output capture",
@@ -324,30 +285,8 @@
         "owner_surface": "abi_unistd_reentrant_buffers_and_lookup_state",
         "thread_local_macro_count": 24,
         "line_numbers": [
-          7164,
-          7546,
-          8123,
-          8326,
-          10212,
-          10509,
-          12580,
-          13499,
-          14703,
-          16470,
-          16591,
-          16662,
-          16830,
-          17030,
-          17215,
-          19164,
-          19753,
-          20120,
-          20386,
-          20757,
-          22522,
-          22806,
-          22996,
-          25377
+          7164, 7546, 8123, 8326, 10212, 10509, 12580, 13499, 14703, 16470, 16591, 16662, 16830,
+          17030, 17215, 19164, 19753, 20120, 20386, 20757, 22522, 22806, 22996, 25377
         ]
       },
       {
@@ -355,251 +294,164 @@
         "owner_surface": "abi_resolver_tls_and_h_errno_state",
         "thread_local_macro_count": 14,
         "line_numbers": [
-          313,
-          830,
-          2113,
-          2166,
-          2747,
-          3439,
-          4553,
-          4596,
-          4744,
-          4774,
-          4956,
-          5093,
-          5613,
-          5955
+          313, 830, 2113, 2166, 2747, 3439, 4553, 4596, 4744, 4774, 4956, 5093, 5613, 5955
         ]
       },
       {
         "path": "crates/frankenlibc-abi/src/rpc_abi.rs",
         "owner_surface": "abi_rpc_thread_local_buffers",
         "thread_local_macro_count": 7,
-        "line_numbers": [
-          1403,
-          2379,
-          2425,
-          2590,
-          2628,
-          2664,
-          2700
-        ]
+        "line_numbers": [1403, 2379, 2425, 2590, 2628, 2664, 2700]
       },
       {
         "path": "crates/frankenlibc-abi/src/glibc_internal_abi.rs",
         "owner_surface": "abi_glibc_internal_process_and_tls_shims",
         "thread_local_macro_count": 6,
-        "line_numbers": [
-          196,
-          1273,
-          3568,
-          6541,
-          6989,
-          7920
-        ]
+        "line_numbers": [196, 1273, 3568, 6541, 6989, 7920]
       },
       {
         "path": "crates/frankenlibc-abi/src/string_abi.rs",
         "owner_surface": "abi_string_membrane_recursion_and_scratch_state",
         "thread_local_macro_count": 4,
-        "line_numbers": [
-          32,
-          2792,
-          4065,
-          4118
-        ]
+        "line_numbers": [32, 2792, 4065, 4118]
       },
       {
         "path": "crates/frankenlibc-abi/src/stdlib_abi.rs",
         "owner_surface": "abi_stdlib_conversion_and_random_state",
         "thread_local_macro_count": 3,
-        "line_numbers": [
-          4001,
-          4828,
-          4842
-        ]
+        "line_numbers": [4001, 4828, 4842]
       },
       {
         "path": "crates/frankenlibc-abi/src/pwd_abi.rs",
         "owner_surface": "abi_passwd_reentrant_storage",
         "thread_local_macro_count": 3,
-        "line_numbers": [
-          300,
-          773,
-          1089
-        ]
+        "line_numbers": [300, 773, 1089]
       },
       {
         "path": "crates/frankenlibc-abi/src/wchar_abi.rs",
         "owner_surface": "abi_wchar_locale_and_scan_state",
         "thread_local_macro_count": 2,
-        "line_numbers": [
-          4368,
-          4883
-        ]
+        "line_numbers": [4368, 4883]
       },
       {
         "path": "crates/frankenlibc-abi/src/stdio_abi.rs",
         "owner_surface": "abi_stdio_error_and_parser_state",
         "thread_local_macro_count": 2,
-        "line_numbers": [
-          5667,
-          7213
-        ]
+        "line_numbers": [5667, 7213]
       },
       {
         "path": "crates/frankenlibc-abi/src/startup_abi.rs",
         "owner_surface": "abi_startup_tls_destructor_state",
         "thread_local_macro_count": 2,
-        "line_numbers": [
-          940,
-          966
-        ]
+        "line_numbers": [940, 966]
       },
       {
         "path": "crates/frankenlibc-membrane/src/tls_cache.rs",
         "owner_surface": "membrane_validation_tls_cache",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          251
-        ]
+        "line_numbers": [251]
       },
       {
         "path": "crates/frankenlibc-membrane/src/ptr_validator.rs",
         "owner_surface": "membrane_validator_thread_local_ebr",
         "thread_local_macro_count": 2,
-        "line_numbers": [
-          260,
-          274
-        ]
+        "line_numbers": [260, 274]
       },
       {
         "path": "crates/frankenlibc-membrane/src/evidence.rs",
         "owner_surface": "membrane_evidence_thread_local_guard",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          228
-        ]
+        "line_numbers": [228]
       },
       {
         "path": "crates/frankenlibc-membrane/src/bravo.rs",
         "owner_surface": "membrane_bravo_reader_bias_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          41
-        ]
+        "line_numbers": [41]
       },
       {
         "path": "crates/frankenlibc-core/src/setjmp/mod.rs",
         "owner_surface": "core_setjmp_thread_local_jmpbuf_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          25
-        ]
+        "line_numbers": [25]
       },
       {
         "path": "crates/frankenlibc-core/src/pthread/tls.rs",
         "owner_surface": "core_pthread_tls_key_storage",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          126
-        ]
+        "line_numbers": [126]
       },
       {
         "path": "crates/frankenlibc-core/src/malloc/elimination.rs",
         "owner_surface": "core_malloc_thread_local_elimination_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          23
-        ]
+        "line_numbers": [23]
       },
       {
         "path": "crates/frankenlibc-core/src/errno/mod.rs",
         "owner_surface": "core_errno_thread_local_slot",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          7
-        ]
+        "line_numbers": [7]
       },
       {
         "path": "crates/frankenlibc-abi/src/time_abi.rs",
         "owner_surface": "abi_time_reentrant_storage",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          791
-        ]
+        "line_numbers": [791]
       },
       {
         "path": "crates/frankenlibc-abi/src/signal_abi.rs",
         "owner_surface": "abi_signal_thread_local_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          379
-        ]
+        "line_numbers": [379]
       },
       {
         "path": "crates/frankenlibc-abi/src/runtime_policy.rs",
         "owner_surface": "abi_runtime_policy_thread_local_depth",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          827
-        ]
+        "line_numbers": [827]
       },
       {
         "path": "crates/frankenlibc-abi/src/pthread_abi.rs",
         "owner_surface": "abi_pthread_thread_local_handles",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          212
-        ]
+        "line_numbers": [212]
       },
       {
         "path": "crates/frankenlibc-abi/src/inet_abi.rs",
         "owner_surface": "abi_inet_thread_local_result_buffers",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          80
-        ]
+        "line_numbers": [80]
       },
       {
         "path": "crates/frankenlibc-abi/src/grp_abi.rs",
         "owner_surface": "abi_group_reentrant_storage",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          312
-        ]
+        "line_numbers": [312]
       },
       {
         "path": "crates/frankenlibc-abi/src/errno_abi.rs",
         "owner_surface": "abi_errno_location_tls_slot",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          23
-        ]
+        "line_numbers": [23]
       },
       {
         "path": "crates/frankenlibc-abi/src/dlfcn_abi.rs",
         "owner_surface": "abi_dlfcn_thread_local_error_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          41
-        ]
+        "line_numbers": [41]
       },
       {
         "path": "crates/frankenlibc-abi/src/dirent_abi.rs",
         "owner_surface": "abi_dirent_readdir_storage",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          95
-        ]
+        "line_numbers": [95]
       },
       {
         "path": "crates/frankenlibc-abi/src/ctype_abi.rs",
         "owner_surface": "abi_ctype_locale_thread_local_state",
         "thread_local_macro_count": 1,
-        "line_numbers": [
-          186
-        ]
+        "line_numbers": [186]
       }
     ]
   },

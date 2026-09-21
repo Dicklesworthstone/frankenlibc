@@ -80,12 +80,7 @@
       "close_blockers",
       "notes"
     ],
-    "required_coverage_statuses": [
-      "complete",
-      "partial",
-      "missing",
-      "not_required"
-    ],
+    "required_coverage_statuses": ["complete", "partial", "missing", "not_required"],
     "required_obligation_types": [
       "unit_tests",
       "e2e_scripts",
@@ -94,14 +89,7 @@
       "conformance_fixtures",
       "golden_artifacts"
     ],
-    "required_stream_examples": [
-      "docs",
-      "e2e",
-      "syscall",
-      "stubs",
-      "math",
-      "perf"
-    ],
+    "required_stream_examples": ["docs", "e2e", "syscall", "stubs", "math", "perf"],
     "required_fuzz_mutation_targets": [
       "completion_debt_evidence.required_top_level_keys",
       "completion_debt_evidence.required_row_template_fields",
@@ -129,11 +117,20 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "verification_matrix_harness", "name": "matrix_exists_and_valid_json"},
-        {"source": "verification_matrix_harness", "name": "schema_defines_required_types"},
-        {"source": "verification_matrix_harness", "name": "schema_has_row_contract_and_stream_examples"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_row_template_field_binding"}
+        { "source": "verification_matrix_harness", "name": "matrix_exists_and_valid_json" },
+        { "source": "verification_matrix_harness", "name": "schema_defines_required_types" },
+        {
+          "source": "verification_matrix_harness",
+          "name": "schema_has_row_contract_and_stream_examples"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_row_template_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/verification_matrix_completion_contract.v1.json",
@@ -145,11 +142,14 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "verification_matrix_harness", "name": "all_critique_beads_have_rows"},
-        {"source": "verification_matrix_harness", "name": "entry_coverage_counts_consistent"},
-        {"source": "verification_matrix_harness", "name": "dashboard_stats_consistent_with_entries"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_verification_matrix_gate"}
+        { "source": "verification_matrix_harness", "name": "all_critique_beads_have_rows" },
+        { "source": "verification_matrix_harness", "name": "entry_coverage_counts_consistent" },
+        {
+          "source": "verification_matrix_harness",
+          "name": "dashboard_stats_consistent_with_entries"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_replays_verification_matrix_gate" }
       ],
       "required_commands": [
         "bash scripts/check_verification_matrix.sh",
@@ -164,11 +164,14 @@
       "default_report_path": "target/conformance/verification_matrix_completion_contract.report.json",
       "default_log_path": "target/conformance/verification_matrix_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "verification_matrix_harness", "name": "entries_have_valid_coverage_statuses"},
-        {"source": "verification_matrix_harness", "name": "entries_have_non_empty_backfill_rows"},
-        {"source": "verification_matrix_harness", "name": "no_empty_bead_ids"},
-        {"source": "completion_harness", "name": "checker_validates_dashboard_and_rows"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_telemetry_field_binding"}
+        { "source": "verification_matrix_harness", "name": "entries_have_valid_coverage_statuses" },
+        { "source": "verification_matrix_harness", "name": "entries_have_non_empty_backfill_rows" },
+        { "source": "verification_matrix_harness", "name": "no_empty_bead_ids" },
+        { "source": "completion_harness", "name": "checker_validates_dashboard_and_rows" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_telemetry_field_binding"
+        }
       ],
       "required_commands": [
         "bash scripts/check_verification_matrix_completion_contract.sh",

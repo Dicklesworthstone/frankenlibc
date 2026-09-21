@@ -163,13 +163,7 @@
       "artifact_index",
       "gates"
     ],
-    "required_dossier_summary_fields": [
-      "total",
-      "passed",
-      "skipped",
-      "failed",
-      "verdict"
-    ],
+    "required_dossier_summary_fields": ["total", "passed", "skipped", "failed", "verdict"],
     "required_log_fields": [
       "trace_id",
       "gate_name",
@@ -198,9 +192,7 @@
     ],
     "fail_fast_gate": "e2e",
     "resume_token_prefix": "v1:",
-    "expected_success_statuses": [
-      "pass"
-    ],
+    "expected_success_statuses": ["pass"],
     "expected_resume_skipped_status": "resume_skip"
   },
   "telemetry_contract": {

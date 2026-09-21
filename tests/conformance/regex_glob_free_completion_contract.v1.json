@@ -14,9 +14,7 @@
     "completion_harness": "crates/frankenlibc-harness/tests/regex_glob_free_completion_contract_test.rs"
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.conformance.primary"
-    ],
+    "missing_item_ids": ["tests.conformance.primary"],
     "implementation_markers": {
       "conformance_executor": [
         "fn execute_regcomp_case(",
@@ -42,18 +40,8 @@
     },
     "test_contract": {
       "minimum_fixture_case_count": 11,
-      "required_functions": [
-        "regcomp",
-        "regexec",
-        "fnmatch",
-        "glob",
-        "wordexp"
-      ],
-      "required_modes": [
-        "strict",
-        "hardened",
-        "both"
-      ],
+      "required_functions": ["regcomp", "regexec", "fnmatch", "glob", "wordexp"],
+      "required_modes": ["strict", "hardened", "both"],
       "required_remote_commands": [
         "cargo test -p frankenlibc-harness --test regex_glob_free_completion_contract_test -- --nocapture",
         "cargo clippy -p frankenlibc-harness --test regex_glob_free_completion_contract_test -- -D warnings",
@@ -66,9 +54,7 @@
     {
       "id": "tests.conformance.primary",
       "kind": "conformance",
-      "implementation_refs": [
-        "crates/frankenlibc_conformance/src/lib.rs"
-      ],
+      "implementation_refs": ["crates/frankenlibc_conformance/src/lib.rs"],
       "test_refs": [
         "tests/conformance/fixtures/regex_glob_ops.json",
         "crates/frankenlibc-harness/tests/regex_glob_ops_conformance_test.rs",
@@ -90,8 +76,6 @@
       "regex_glob_free.bindings_validated",
       "regex_glob_free.completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "regex_glob_free.completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["regex_glob_free.completion_contract_fail"]
   }
 }

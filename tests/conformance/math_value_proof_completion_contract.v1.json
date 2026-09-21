@@ -28,11 +28,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800
   },
   "source_artifacts": [
@@ -52,21 +48,13 @@
       "id": "math_governance",
       "path": "tests/conformance/math_governance.json",
       "role": "production core and monitor classification source",
-      "required_needles": [
-        "\"production_core\"",
-        "\"production_monitor\"",
-        "\"bd-3tp\""
-      ]
+      "required_needles": ["\"production_core\"", "\"production_monitor\"", "\"bd-3tp\""]
     },
     {
       "id": "math_retirement_policy",
       "path": "tests/conformance/math_retirement_policy.json",
       "role": "research-only and no-value-evidence retirement policy",
-      "required_needles": [
-        "Module has no A/B benchmark evidence",
-        "bd-3tp",
-        "research_only"
-      ]
+      "required_needles": ["Module has no A/B benchmark evidence", "bd-3tp", "research_only"]
     },
     {
       "id": "value_gate",

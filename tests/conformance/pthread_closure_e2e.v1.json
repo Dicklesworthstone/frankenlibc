@@ -11,9 +11,20 @@
   },
   "symbol_inventory": {
     "pthread_barrier": ["pthread_barrier_init", "pthread_barrier_destroy", "pthread_barrier_wait"],
-    "pthread_spin": ["pthread_spin_init", "pthread_spin_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock"],
+    "pthread_spin": [
+      "pthread_spin_init",
+      "pthread_spin_destroy",
+      "pthread_spin_lock",
+      "pthread_spin_trylock",
+      "pthread_spin_unlock"
+    ],
     "named_semaphore": ["sem_open", "sem_close", "sem_unlink"],
-    "cleanup": ["_pthread_cleanup_push", "_pthread_cleanup_pop", "_pthread_cleanup_push_defer", "_pthread_cleanup_pop_restore"]
+    "cleanup": [
+      "_pthread_cleanup_push",
+      "_pthread_cleanup_pop",
+      "_pthread_cleanup_push_defer",
+      "_pthread_cleanup_pop_restore"
+    ]
   },
   "implementation_status": {
     "barrier": "native futex-based implementation",

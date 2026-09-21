@@ -159,10 +159,7 @@
       "expected_schema": "unit_test_closure_packs_completion_contract.v1",
       "original_bead": "bd-w2c3.9.1",
       "completion_debt_bead": "bd-w2c3.9.1.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary"],
       "required_artifact_keys": [
         "unit_completion_checker",
         "unit_completion_test",
@@ -194,10 +191,7 @@
       "expected_schema": "e2e_scenario_manifest_catalog_completion_contract.v1",
       "original_bead": "bd-b5a.1",
       "completion_debt_bead": "bd-b5a.1.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary"],
       "required_artifact_keys": [
         "e2e_manifest",
         "e2e_manifest_checker",
@@ -230,10 +224,7 @@
       "expected_schema": "replay_engine_pair_comparator_completion_contract.v1",
       "original_bead": "bd-b5a.2",
       "completion_debt_bead": "bd-b5a.2.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary"],
       "required_artifact_keys": [
         "replay_pair_checker",
         "replay_pair_test",
@@ -299,16 +290,8 @@
       "expected_schema": "v1",
       "original_bead": "bd-1oz.6",
       "completion_debt_bead": "bd-1oz.6.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.e2e.primary",
-        "tests.fuzz.primary"
-      ],
-      "required_artifact_keys": [
-        "fuzz_phase1_report",
-        "fuzz_phase1_checker",
-        "fuzz_phase1_test"
-      ],
+      "covers": ["tests.unit.primary", "tests.e2e.primary", "tests.fuzz.primary"],
+      "required_artifact_keys": ["fuzz_phase1_report", "fuzz_phase1_checker", "fuzz_phase1_test"],
       "required_test_refs": [
         {
           "source": "fuzz_phase1_test",
@@ -341,11 +324,7 @@
         "tests.fuzz.primary",
         "tests.conformance.primary"
       ],
-      "required_artifact_keys": [
-        "fuzz_phase2_report",
-        "fuzz_phase2_checker",
-        "fuzz_phase2_test"
-      ],
+      "required_artifact_keys": ["fuzz_phase2_report", "fuzz_phase2_checker", "fuzz_phase2_test"],
       "required_test_refs": [
         {
           "source": "fuzz_phase2_test",
@@ -372,15 +351,8 @@
       "expected_schema": "per_symbol_fixture_tests_completion_contract.v1",
       "original_bead": "bd-ldj.5",
       "completion_debt_bead": "bd-ldj.5.1",
-      "covers": [
-        "tests.unit.primary",
-        "tests.conformance.primary"
-      ],
-      "required_artifact_keys": [
-        "per_symbol_report",
-        "per_symbol_checker",
-        "per_symbol_test"
-      ],
+      "covers": ["tests.unit.primary", "tests.conformance.primary"],
+      "required_artifact_keys": ["per_symbol_report", "per_symbol_checker", "per_symbol_test"],
       "required_test_refs": [
         {
           "source": "per_symbol_test",
@@ -439,10 +411,7 @@
     {
       "missing_item_id": "tests.fuzz.primary",
       "status": "covered",
-      "binding_ids": [
-        "fuzz_phase1_inventory",
-        "fuzz_phase2_inventory"
-      ],
+      "binding_ids": ["fuzz_phase1_inventory", "fuzz_phase2_inventory"],
       "validation_commands": [
         "bash scripts/check_fuzz_phase1_targets_completion_contract.sh",
         "bash scripts/check_fuzz_phase2_completion_contract.sh",

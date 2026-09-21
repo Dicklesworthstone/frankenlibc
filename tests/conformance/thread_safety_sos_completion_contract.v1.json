@@ -24,11 +24,7 @@
       ],
       "source": "crates/frankenlibc-membrane/tests/sos_barrier_arch_independence_test.rs"
     },
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "original_bead": "bd-2ste.2",
     "telemetry_primary": {
       "log_path": "target/conformance/thread_safety_sos_completion_contract.log.jsonl",

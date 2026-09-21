@@ -25,12 +25,7 @@
       "purpose": "Public release claim and operational contract"
     }
   ],
-  "level_order": [
-    "L0",
-    "L1",
-    "L2",
-    "L3"
-  ],
+  "level_order": ["L0", "L1", "L2", "L3"],
   "default_target_level": {
     "source_file": "tests/conformance/replacement_levels.json",
     "source_query": "current_level"
@@ -99,9 +94,7 @@
             "path": "tests/conformance/reality_report.v1.json"
           },
           "check_cmd": "test -f tests/conformance/reality_report.v1.json",
-          "artifact_paths": [
-            "tests/conformance/reality_report.v1.json"
-          ],
+          "artifact_paths": ["tests/conformance/reality_report.v1.json"],
           "failure_message": "Reality report missing; closure cannot be evaluated deterministically."
         },
         {
@@ -152,9 +145,7 @@
             "max": 0
           },
           "check_cmd": "scripts/check_replacement_levels.sh",
-          "artifact_paths": [
-            "tests/conformance/replacement_levels.json"
-          ],
+          "artifact_paths": ["tests/conformance/replacement_levels.json"],
           "failure_message": "stub_pct exceeds L1 threshold (must be 0)."
         },
         {
@@ -179,10 +170,7 @@
             "cmd": "scripts/check_e2e_suite.sh"
           },
           "check_cmd": "scripts/check_e2e_suite.sh",
-          "artifact_paths": [
-            "tests/conformance/e2e_suite.json",
-            "scripts/check_e2e_suite.sh"
-          ],
+          "artifact_paths": ["tests/conformance/e2e_suite.json", "scripts/check_e2e_suite.sh"],
           "failure_message": "E2E suite gate failed for L1 closure."
         }
       ]
@@ -217,9 +205,7 @@
             "max": 15
           },
           "check_cmd": "scripts/check_replacement_levels.sh",
-          "artifact_paths": [
-            "tests/conformance/replacement_levels.json"
-          ],
+          "artifact_paths": ["tests/conformance/replacement_levels.json"],
           "failure_message": "callthrough_pct exceeds L2 threshold."
         },
         {
@@ -282,9 +268,7 @@
             "expected": 0
           },
           "check_cmd": "scripts/check_replacement_levels.sh",
-          "artifact_paths": [
-            "tests/conformance/replacement_levels.json"
-          ],
+          "artifact_paths": ["tests/conformance/replacement_levels.json"],
           "failure_message": "callthrough count is non-zero at L3."
         },
         {
@@ -297,9 +281,7 @@
             "expected": 0
           },
           "check_cmd": "scripts/check_replacement_levels.sh",
-          "artifact_paths": [
-            "tests/conformance/replacement_levels.json"
-          ],
+          "artifact_paths": ["tests/conformance/replacement_levels.json"],
           "failure_message": "stub count is non-zero at L3."
         },
         {
@@ -390,13 +372,8 @@
       "closed_at_utc",
       "completion_contract_path"
     ],
-    "optional_event_fields": [
-      "artifact_query"
-    ],
-    "required_artifact_freshness_fields": [
-      "generated_at_utc",
-      "chain_hash"
-    ],
+    "optional_event_fields": ["artifact_query"],
+    "required_artifact_freshness_fields": ["generated_at_utc", "chain_hash"],
     "failure_signatures": [
       "missing_completion_contract_generated_at_utc",
       "missing_completion_contract_chain_hash",
@@ -407,14 +384,7 @@
   },
   "structured_log_requirements": {
     "format": "jsonl",
-    "required_fields": [
-      "trace_id",
-      "level",
-      "invariant_id",
-      "check_cmd",
-      "result",
-      "artifact_ref"
-    ],
+    "required_fields": ["trace_id", "level", "invariant_id", "check_cmd", "result", "artifact_ref"],
     "default_log_path": "/tmp/frankenlibc_closure_contract.log.jsonl"
   }
 }

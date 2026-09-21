@@ -47,10 +47,7 @@
       "completion_gate": "scripts/check_locale_iconv_completion_contract.sh",
       "completion_harness": "crates/frankenlibc-harness/tests/locale_iconv_completion_contract_test.rs"
     },
-    "directory_artifacts": [
-      "fuzz_iconv_corpus",
-      "fuzz_locale_corpus"
-    ],
+    "directory_artifacts": ["fuzz_iconv_corpus", "fuzz_locale_corpus"],
     "implementation_refs": [
       "crates/frankenlibc-core/src/locale/mod.rs:30",
       "crates/frankenlibc-core/src/locale/mod.rs:80",
@@ -75,16 +72,8 @@
       "crates/frankenlibc-harness/tests/locale_iconv_completion_contract_test.rs:1"
     ],
     "source_needles": {
-      "core_locale": [
-        "pub fn valid_category",
-        "pub fn c_locale_conv",
-        "pub fn is_c_locale"
-      ],
-      "core_iconv": [
-        "pub fn iconv_open_detailed",
-        "pub fn iconv(",
-        "pub fn iconv_close"
-      ],
+      "core_locale": ["pub fn valid_category", "pub fn c_locale_conv", "pub fn is_c_locale"],
+      "core_iconv": ["pub fn iconv_open_detailed", "pub fn iconv(", "pub fn iconv_close"],
       "abi_locale": [
         "pub unsafe extern \"C\" fn setlocale",
         "pub unsafe extern \"C\" fn localeconv",
@@ -97,11 +86,7 @@
         "pub unsafe extern \"C\" fn iconv(",
         "pub unsafe extern \"C\" fn iconv_close"
       ],
-      "fuzz_iconv_target": [
-        "fuzz_open_close",
-        "fuzz_convert",
-        "fuzz_known_codecs"
-      ],
+      "fuzz_iconv_target": ["fuzz_open_close", "fuzz_convert", "fuzz_known_codecs"],
       "fuzz_locale_target": [
         "fuzz_core_locale_helpers",
         "fuzz_setlocale",
@@ -315,23 +300,9 @@
         "duplocale",
         "freelocale"
       ],
-      "required_iconv_functions": [
-        "iconv_open",
-        "iconv",
-        "iconv_close"
-      ],
-      "required_codecs": [
-        "UTF-8",
-        "ISO-8859-1",
-        "UTF-16LE",
-        "UTF-32"
-      ],
-      "required_errno_values": [
-        0,
-        7,
-        22,
-        84
-      ]
+      "required_iconv_functions": ["iconv_open", "iconv", "iconv_close"],
+      "required_codecs": ["UTF-8", "ISO-8859-1", "UTF-16LE", "UTF-32"],
+      "required_errno_values": [0, 7, 22, 84]
     },
     "telemetry_primary": {
       "description": "The completion checker emits deterministic report JSON and JSONL rows for source refs, missing-item bindings, fuzz corpora, conformance artifacts, table checksum validation, and final pass/fail state.",

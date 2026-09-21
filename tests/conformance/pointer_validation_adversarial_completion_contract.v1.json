@@ -5,9 +5,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-66wz.3/scorecard.md",
-    "missing_item_ids": [
-      "tests.unit.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary"],
     "closed_reason_original": "Added ptr validation adversarial tests (foreign/free/doublefree/canary) + stabilized cache-hit assertions"
   },
   "completion_debt_evidence": {
@@ -49,9 +47,7 @@
         "source": "ptr_validator_unit",
         "test": "foreign_free_reported",
         "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2226",
-        "required_tokens": [
-          "FreeResult::ForeignPointer"
-        ]
+        "required_tokens": ["FreeResult::ForeignPointer"]
       },
       {
         "id": "double_free_reported",
@@ -59,10 +55,7 @@
         "source": "ptr_validator_unit",
         "test": "double_free_reported",
         "implementation_ref": "crates/frankenlibc-membrane/src/ptr_validator.rs:2234",
-        "required_tokens": [
-          "FreeResult::Freed",
-          "FreeResult::DoubleFree"
-        ]
+        "required_tokens": ["FreeResult::Freed", "FreeResult::DoubleFree"]
       },
       {
         "id": "uaf_cache_invalidated_after_free",

@@ -93,10 +93,7 @@
         "current libfrankenlibc_replace.so direct-link startup run",
         "__libc_start_main handoff without LD_PRELOAD semantics"
       ],
-      "present_evidence": [
-        "standalone smoke manifest",
-        "L0/L1 interpose smoke rows"
-      ],
+      "present_evidence": ["standalone smoke manifest", "L0/L1 interpose smoke rows"],
       "missing_evidence": [
         "current standalone replacement artifact",
         "direct-link startup pass row"
@@ -119,14 +116,8 @@
         "crt1/crti/crtn or equivalent owned startup object contract",
         "direct-link object inventory"
       ],
-      "present_evidence": [
-        "host dependency inventory contract",
-        "L1 startup proof matrix"
-      ],
-      "missing_evidence": [
-        "owned CRT object artifact",
-        "host-glibc-free direct-link CRT proof"
-      ],
+      "present_evidence": ["host dependency inventory contract", "L1 startup proof matrix"],
+      "missing_evidence": ["owned CRT object artifact", "host-glibc-free direct-link CRT proof"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_crt_objects_missing"
@@ -145,10 +136,7 @@
         "process TLS initialization without host CRT",
         "pthread TLS destructor ordering in standalone artifact"
       ],
-      "present_evidence": [
-        "pthread TLS fixture evidence",
-        "L1 blocked TLS proof rows"
-      ],
+      "present_evidence": ["pthread TLS fixture evidence", "L1 blocked TLS proof rows"],
       "missing_evidence": [
         "standalone process TLS initialization proof",
         "standalone TLS destructor replay"
@@ -167,15 +155,9 @@
         "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json",
         "tests/integration/fixture_startup.c"
       ],
-      "required_evidence": [
-        "preinit/init/fini array ordering under direct-link replacement"
-      ],
-      "present_evidence": [
-        "L1 init/fini planned proof row"
-      ],
-      "missing_evidence": [
-        "current standalone init/fini array replay"
-      ],
+      "required_evidence": ["preinit/init/fini array ordering under direct-link replacement"],
+      "present_evidence": ["L1 init/fini planned proof row"],
+      "missing_evidence": ["current standalone init/fini array replay"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_init_fini_evidence_missing"
@@ -186,18 +168,10 @@
       "scenario_id": "standalone-destructor-order",
       "runtime_mode": "strict+hardened",
       "replacement_level": "L2",
-      "artifact_refs": [
-        "tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"
-      ],
-      "required_evidence": [
-        "fini_array, rtld_fini, atexit, on_exit, and TLS destructor order"
-      ],
-      "present_evidence": [
-        "L1 destructor proof obligations"
-      ],
-      "missing_evidence": [
-        "standalone destructor ordering artifact"
-      ],
+      "artifact_refs": ["tests/conformance/l1_crt_startup_tls_proof_matrix.v1.json"],
+      "required_evidence": ["fini_array, rtld_fini, atexit, on_exit, and TLS destructor order"],
+      "present_evidence": ["L1 destructor proof obligations"],
+      "missing_evidence": ["standalone destructor ordering artifact"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_destructor_order_missing"
@@ -215,12 +189,8 @@
       "required_evidence": [
         "AT_SECURE and environment scrubbing semantics owned by replacement artifact"
       ],
-      "present_evidence": [
-        "secure-mode L1 proof obligation"
-      ],
-      "missing_evidence": [
-        "standalone secure-execution mode replay"
-      ],
+      "present_evidence": ["secure-mode L1 proof obligation"],
+      "missing_evidence": ["standalone secure-execution mode replay"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_secure_mode_evidence_missing"
@@ -265,12 +235,8 @@
       "required_evidence": [
         "relocation, TLS relocation, dlopen, dlsym, dlvsym, dlclose, and dlinfo behavior without host fallback"
       ],
-      "present_evidence": [
-        "loader/dlfcn audit fixture pack"
-      ],
-      "missing_evidence": [
-        "standalone rtld and dlfcn replacement proof"
-      ],
+      "present_evidence": ["loader/dlfcn audit fixture pack"],
+      "missing_evidence": ["standalone rtld and dlfcn replacement proof"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_relocation_dlfcn_missing"
@@ -288,13 +254,8 @@
       "required_evidence": [
         "declared replacement syscall surface has RawSyscall or native implementations with fixtures"
       ],
-      "present_evidence": [
-        "replacement level blockers",
-        "semantic overlay"
-      ],
-      "missing_evidence": [
-        "standalone syscall coverage matrix"
-      ],
+      "present_evidence": ["replacement level blockers", "semantic overlay"],
+      "missing_evidence": ["standalone syscall coverage matrix"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_syscall_coverage_missing"
@@ -312,9 +273,7 @@
       "required_evidence": [
         "x86_64 and aarch64 replacement startup, syscall, TLS, and ABI-layout rows"
       ],
-      "present_evidence": [
-        "cross-environment matrix with aarch64 blocked row"
-      ],
+      "present_evidence": ["cross-environment matrix with aarch64 blocked row"],
       "missing_evidence": [
         "aarch64 standalone runner evidence",
         "architecture-specific replacement ABI proof"
@@ -362,13 +321,8 @@
       "required_evidence": [
         "failure bundle with replacement level, missing evidence, artifact refs, and next safe action"
       ],
-      "present_evidence": [
-        "user-visible diagnostics",
-        "vertical slice failure signature"
-      ],
-      "missing_evidence": [
-        "standalone-specific diagnostics replay"
-      ],
+      "present_evidence": ["user-visible diagnostics", "vertical slice failure signature"],
+      "missing_evidence": ["standalone-specific diagnostics replay"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_diagnostics_replay_missing"
@@ -390,9 +344,7 @@
         "standalone smoke manifest",
         "real-program smoke standalone future rows"
       ],
-      "missing_evidence": [
-        "current standalone artifact pass rows"
-      ],
+      "missing_evidence": ["current standalone artifact pass rows"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_real_program_smoke_missing"
@@ -410,12 +362,8 @@
       "required_evidence": [
         "standalone rows across architectures, resolver states, locales, filesystem permissions, thread counts, and build profiles"
       ],
-      "present_evidence": [
-        "cross-environment matrix with blocked/unsupported standalone row"
-      ],
-      "missing_evidence": [
-        "current cross-environment standalone pass evidence"
-      ],
+      "present_evidence": ["cross-environment matrix with blocked/unsupported standalone row"],
+      "missing_evidence": ["current cross-environment standalone pass evidence"],
       "expected_decision": "claim_blocked",
       "actual_decision": "claim_blocked",
       "failure_signature": "standalone_cross_environment_evidence_missing"
@@ -459,9 +407,7 @@
         "subset manifest parser rejects missing symbol families",
         "subset manifest parser rejects missing loader/TLS/secure-mode assumptions"
       ],
-      "e2e_or_smoke_required": [
-        "direct-link subset smoke with strict and hardened mode metadata"
-      ],
+      "e2e_or_smoke_required": ["direct-link subset smoke with strict and hardened mode metadata"],
       "log_fields": "required_log_fields",
       "negative_claim_tests": [
         {
@@ -521,16 +467,12 @@
         "tests/conformance/semantic_contract_inventory.v1.json",
         "tests/conformance/standalone_readiness_proof_matrix.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "dependency inventory parser rejects unapproved libc symbol dependencies",
         "dependency inventory parser rejects stale source_commit evidence"
       ],
-      "e2e_or_smoke_required": [
-        "ldd/readelf/nm-style deterministic audit for release artifact"
-      ],
+      "e2e_or_smoke_required": ["ldd/readelf/nm-style deterministic audit for release artifact"],
       "log_fields": "required_log_fields",
       "negative_claim_tests": [
         {
@@ -554,10 +496,7 @@
         "tests/conformance/user_workload_acceptance_matrix.v1.json",
         "tests/conformance/ld_preload_smoke_summary.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh",
-        "scripts/e2e_suite.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh", "scripts/e2e_suite.sh"],
       "unit_tests_required": [
         "direct-link fixture runner rejects missing stdout/stderr/status artifacts",
         "mode-pair runner rejects incomplete strict/hardened pairs"
@@ -589,16 +528,12 @@
         "tests/conformance/symbol_latency_baseline.v1.json",
         "tests/conformance/user_workload_acceptance_matrix.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "strict and hardened decision tests for every optimized subset family",
         "regression tests for boundary and adversarial optimized inputs"
       ],
-      "e2e_or_smoke_required": [
-        "budgeted subset benchmark replay with hardware metadata"
-      ],
+      "e2e_or_smoke_required": ["budgeted subset benchmark replay with hardware metadata"],
       "log_fields": "required_log_fields",
       "negative_claim_tests": [
         {
@@ -630,9 +565,7 @@
         "claim gate rejects stale evidence",
         "log schema test rejects missing failure_signature or artifact_refs"
       ],
-      "e2e_or_smoke_required": [
-        "intentional missing-evidence replay that emits claim_blocked"
-      ],
+      "e2e_or_smoke_required": ["intentional missing-evidence replay that emits claim_blocked"],
       "log_fields": "required_log_fields",
       "negative_claim_tests": [
         {
@@ -656,9 +589,7 @@
         "tests/conformance/closure_contract.v1.json",
         "tests/conformance/standalone_readiness_proof_matrix.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "startup parser tests for argv/envp/auxv",
         "TLS model tests for thread-local errno and runtime mode",
@@ -690,9 +621,7 @@
         "tests/conformance/replacement_levels.json",
         "tests/conformance/closure_contract.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "versioned symbol export tests",
         "relocation and IFUNC fixture tests",
@@ -724,9 +653,7 @@
         "tests/conformance/replacement_levels.json",
         "tests/conformance/packaging_spec.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "host dependency inventory rejects libc.so.6 and host pthread/stdio fallback",
         "host symbol resolver audit rejects replacement profile fallback"
@@ -757,9 +684,7 @@
         "tests/conformance/conformance_matrix.v1.json",
         "tests/conformance/closure_contract.v1.json"
       ],
-      "check_commands": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "check_commands": ["scripts/check_standalone_readiness_matrix.sh"],
       "unit_tests_required": [
         "errno mapping boundary tests",
         "time64 and ABI layout tests",
@@ -782,9 +707,7 @@
       "id": "l3-native-hard-parts",
       "level": "L3",
       "dimension": "resolver_nss_locale_iconv",
-      "secondary_dimensions": [
-        "pthread_stdio_native"
-      ],
+      "secondary_dimensions": ["pthread_stdio_native"],
       "title": "Native NSS, resolver, locale, iconv, stdio, and pthread ownership",
       "requirement": "Implement and prove native hard-parts behavior for NSS, resolver, locale/iconv/wcsmbs, stdio/libio FILE ownership, and pthread/futex behavior without host fallbacks.",
       "current_state": "blocked",
@@ -823,10 +746,7 @@
       "id": "l3-workload-release-gate",
       "level": "L3",
       "dimension": "real_program_standalone_smoke",
-      "secondary_dimensions": [
-        "performance_budget",
-        "failure_diagnostics"
-      ],
+      "secondary_dimensions": ["performance_budget", "failure_diagnostics"],
       "title": "Full real-program workload, performance, diagnostics, and release gate",
       "requirement": "Pass the full user workload matrix as a standalone artifact, enforce performance budgets, emit structured diagnostics, and block README/release claims unless all L3 evidence is current.",
       "current_state": "blocked",

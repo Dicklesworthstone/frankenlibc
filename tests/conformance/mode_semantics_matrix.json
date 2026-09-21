@@ -6,21 +6,12 @@
     "strict": {
       "description": "ABI-compatible, POSIX-correct semantics. No healing. Errors match libc behavior. Performance target: <20ns overhead.",
       "heals_enabled": false,
-      "env_values": [
-        "strict",
-        "default",
-        "abi"
-      ]
+      "env_values": ["strict", "default", "abi"]
     },
     "hardened": {
       "description": "TSM repair mode. Validates AND applies healing. Safety over conformance. Performance target: <200ns overhead.",
       "heals_enabled": true,
-      "env_values": [
-        "hardened",
-        "repair",
-        "tsm",
-        "full"
-      ]
+      "env_values": ["hardened", "repair", "tsm", "full"]
     }
   },
   "env_variable": "FRANKENLIBC_MODE",
@@ -291,12 +282,7 @@
       "api_family_enum": "Poll",
       "module": "poll_abi",
       "heals_call_sites": 4,
-      "symbols": [
-        "poll",
-        "ppoll",
-        "select",
-        "pselect"
-      ],
+      "symbols": ["poll", "ppoll", "select", "pselect"],
       "strict_behavior": {
         "invalid_nfds": "Returns -1, sets EINVAL",
         "invalid_select_nfds": "Returns -1, sets EINVAL"
@@ -311,14 +297,7 @@
       "api_family_enum": "VirtualMemory",
       "module": "mmap_abi",
       "heals_call_sites": 4,
-      "symbols": [
-        "mmap",
-        "munmap",
-        "mprotect",
-        "msync",
-        "madvise",
-        "mremap"
-      ],
+      "symbols": ["mmap", "munmap", "mprotect", "msync", "madvise", "mremap"],
       "strict_behavior": {
         "invalid_prot": "Returns MAP_FAILED, sets EINVAL",
         "invalid_flags": "Returns error per POSIX",
@@ -417,12 +396,7 @@
       "api_family_enum": "Loader",
       "module": "dlfcn_abi",
       "heals_call_sites": 4,
-      "symbols": [
-        "dlopen",
-        "dlclose",
-        "dlsym",
-        "dlerror"
-      ],
+      "symbols": ["dlopen", "dlclose", "dlsym", "dlerror"],
       "strict_behavior": {
         "invalid_flags": "Returns NULL, sets dlerror"
       },
@@ -435,15 +409,7 @@
       "api_family_enum": "IoFd",
       "module": "dirent_abi",
       "heals_call_sites": 3,
-      "symbols": [
-        "opendir",
-        "readdir",
-        "readdir_r",
-        "closedir",
-        "rewinddir",
-        "seekdir",
-        "telldir"
-      ],
+      "symbols": ["opendir", "readdir", "readdir_r", "closedir", "rewinddir", "seekdir", "telldir"],
       "strict_behavior": {
         "null_dir": "Returns NULL/error",
         "invalid_loc": "Proceeds as-is",
@@ -460,11 +426,7 @@
       "api_family_enum": "Stdlib",
       "module": "resource_abi",
       "heals_call_sites": 1,
-      "symbols": [
-        "getrlimit",
-        "setrlimit",
-        "getrusage"
-      ],
+      "symbols": ["getrlimit", "setrlimit", "getrusage"],
       "strict_behavior": {
         "invalid_limit": "Returns -1, sets EINVAL"
       },
@@ -477,16 +439,7 @@
       "api_family_enum": "Process",
       "module": "process_abi",
       "heals_call_sites": 2,
-      "symbols": [
-        "fork",
-        "execve",
-        "execvp",
-        "waitpid",
-        "wait",
-        "_exit",
-        "getpid",
-        "getppid"
-      ],
+      "symbols": ["fork", "execve", "execvp", "waitpid", "wait", "_exit", "getpid", "getppid"],
       "strict_behavior": {
         "invalid_envp": "Proceeds as-is (raw passthrough)",
         "invalid_wait_options": "Returns -1, sets EINVAL"
@@ -501,10 +454,7 @@
       "api_family_enum": "Locale",
       "module": "locale_abi",
       "heals_call_sites": 2,
-      "symbols": [
-        "setlocale",
-        "localeconv"
-      ],
+      "symbols": ["setlocale", "localeconv"],
       "strict_behavior": {
         "invalid_category": "Returns NULL"
       },
@@ -517,12 +467,7 @@
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
       "heals_call_sites": 4,
-      "symbols": [
-        "getaddrinfo",
-        "freeaddrinfo",
-        "getnameinfo",
-        "gai_strerror"
-      ],
+      "symbols": ["getaddrinfo", "freeaddrinfo", "getnameinfo", "gai_strerror"],
       "strict_behavior": {
         "invalid_hints": "Returns EAI_BADFLAGS/EAI_FAMILY",
         "buffer_overflow": "Proceeds as-is"

@@ -242,8 +242,6 @@
       "release_claim_current_policy_replayed",
       "release_claim_control_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "release_claim_control_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["release_claim_control_completion_contract_fail"]
   }
 }

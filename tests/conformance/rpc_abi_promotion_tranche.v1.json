@@ -15,227 +15,143 @@
     {
       "crate": "frankenlibc-abi",
       "test": "rpc_abi_test::host2netname_creates_valid_name",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "rpc_abi_test::host2netname_null_defaults",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "rpc_abi_test::user2netname_formats_correctly",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_bytes_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_string_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_wrapstring_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_array_int_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_netobj_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_opaque_auth_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_pointer_present_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_pointer_null_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_reference_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_reference_depth_limit_refuses_deep_recursive_wire_without_overflow",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_pmaplist_deep_stream_does_not_overflow_stack",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_unixcred_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_netnamestr_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdrrec_create_initializes_handle",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_accepted_reply_prog_mismatch_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_replymsg_accepted_mismatch_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_callmsg_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_authunix_parms_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_authdes_cred_fullname_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_cryptkeyarg_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_cryptkeyarg2_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_getcredres_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_key_netstarg_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "xdr_abi_test::xdr_rmtcallres_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
     "classification": "native-rpc-xdr-netname-allocator-errno-bridge",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_host_symbols": [
       "<dynamic>",
       "__errno_location",

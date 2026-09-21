@@ -257,9 +257,7 @@
       "required_e2e": [
         "record why the selected open bead is unblocked or why the blocker is a tracker artifact"
       ],
-      "artifact_refs": [
-        "target/conformance/no_db_fallback_<bead-id>.json"
-      ],
+      "artifact_refs": ["target/conformance/no_db_fallback_<bead-id>.json"],
       "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
       "failure_signature": "ready_empty_open_visible",
       "next_safe_action": "select_lowest_risk_open_unowned_bead_or_file_tracker_repair"
@@ -278,12 +276,8 @@
         "existing evidence commands from the shipped commit",
         "new tests only if the shipped evidence is stale or insufficient"
       ],
-      "required_e2e": [
-        "deterministic evidence replay if the bead is closed in this session"
-      ],
-      "artifact_refs": [
-        "target/conformance/reconciled_<dotted-bead-id>.json"
-      ],
+      "required_e2e": ["deterministic evidence replay if the bead is closed in this session"],
+      "artifact_refs": ["target/conformance/reconciled_<dotted-bead-id>.json"],
       "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<dotted-bead-id>",
       "failure_signature": "already_shipped_but_open",
       "next_safe_action": "verify_existing_evidence_then_close_or_reopen_with_current_blocker"
@@ -298,16 +292,9 @@
         "git diff --name-only",
         "git diff -- <reserved-paths>"
       ],
-      "required_tests": [
-        "tests for own changed files only",
-        "ubs <changed-files>"
-      ],
-      "required_e2e": [
-        "not applicable unless the bead changes externally visible behavior"
-      ],
-      "artifact_refs": [
-        "target/conformance/unrelated_dirty_files_<bead-id>.json"
-      ],
+      "required_tests": ["tests for own changed files only", "ubs <changed-files>"],
+      "required_e2e": ["not applicable unless the bead changes externally visible behavior"],
+      "artifact_refs": ["target/conformance/unrelated_dirty_files_<bead-id>.json"],
       "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
       "failure_signature": "unrelated_dirty_files_present",
       "next_safe_action": "ignore_peer_changes_and_do_not_revert_stash_or_delete_them"
@@ -326,12 +313,8 @@
         "targeted command proving bead-owned files are clean",
         "failure classifier for pre-existing workspace diagnostics"
       ],
-      "required_e2e": [
-        "record pre-existing failure separately from bead-owned validation"
-      ],
-      "artifact_refs": [
-        "target/conformance/pre_existing_failures_<bead-id>.json"
-      ],
+      "required_e2e": ["record pre-existing failure separately from bead-owned validation"],
+      "artifact_refs": ["target/conformance/pre_existing_failures_<bead-id>.json"],
       "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
       "failure_signature": "pre_existing_workspace_failure",
       "next_safe_action": "fix_bead_owned_failures_and_record_unrelated_workspace_failures"
@@ -350,12 +333,8 @@
         "no code tests until a blocker-clearing bead is selected",
         "tracker evidence proving why the bead is blocked"
       ],
-      "required_e2e": [
-        "not applicable until blocker is selected"
-      ],
-      "artifact_refs": [
-        "target/conformance/blocked_<bead-id>.json"
-      ],
+      "required_e2e": ["not applicable until blocker is selected"],
+      "artifact_refs": ["target/conformance/blocked_<bead-id>.json"],
       "target_dir": "/tmp/rch_target_frankenlibc_<agent>_<bead-id>",
       "failure_signature": "blocked_dependency",
       "next_safe_action": "select_blocker_or_next_ready_unowned_bead_without_editing_blocked_surface"
@@ -373,9 +352,7 @@
         "ubs <changed-files>",
         "rch exec -- cargo test -p frankenlibc-harness --test example_gate_test"
       ],
-      "required_e2e": [
-        "bash scripts/check_example_gate.sh"
-      ],
+      "required_e2e": ["bash scripts/check_example_gate.sh"],
       "artifact_refs": [
         "target/conformance/example_gate.report.json",
         "target/conformance/example_gate.log.jsonl"
@@ -421,13 +398,8 @@
       "tracker_state": "stale_db_jsonl_disagreement",
       "dependency_state": "unknown_until_no_db_show",
       "workstream": "tracker_tolerant_implementation",
-      "required_tests": [
-        "ubs <changed-files>",
-        "targeted validation for own changed files"
-      ],
-      "required_e2e": [
-        "record no-db fallback report"
-      ],
+      "required_tests": ["ubs <changed-files>", "targeted validation for own changed files"],
+      "required_e2e": ["record no-db fallback report"],
       "artifact_refs": [
         "target/conformance/tracker_state_bd-example.stale.report.json",
         "target/conformance/tracker_state_bd-example.stale.log.jsonl"

@@ -7,12 +7,7 @@
   "purpose": "Pin the harness binary subcommand that exposes the memory-pressure ppm composition pipeline: frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm(depth: u32) -> u32 (clamps depth to [64, 65536] and linearly normalizes to 0..1_000_000 ppm) AND frankenlibc_membrane::runtime_math::sos_barrier::compose_memory_pressure_ppm(depth, pressure_score_milli, pressure_raw_score_milli) -> u32 (composes depth-derived arena pressure with EWMA+raw pressure-sensor telemetry, applying a surge projection so sudden bursts are not hidden by EWMA lag). Returns max(depth_ppm, projected_pressure_ppm) clamped to [0, 1_000_000]. Previously reachable only from Rust callers; the CLI bridge lets CI verify both pipeline stages without compiling.",
   "subcommand_name": "compute-memory-pressure-ppm",
   "binary_target": "harness",
-  "required_flags": [
-    "--depth",
-    "--pressure-score-milli",
-    "--pressure-raw-score-milli",
-    "--output"
-  ],
+  "required_flags": ["--depth", "--pressure-score-milli", "--pressure-raw-score-milli", "--output"],
   "optional_flags": [],
   "underlying_lib_functions": [
     "frankenlibc_membrane::runtime_math::sos_barrier::depth_to_arena_utilization_ppm",

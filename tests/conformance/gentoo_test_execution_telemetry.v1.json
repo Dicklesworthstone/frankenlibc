@@ -32,12 +32,7 @@
       "healing_actions",
       "healing_breakdown"
     ],
-    "required_comparison_fields": [
-      "new_failures",
-      "new_passes",
-      "overhead_percent",
-      "verdict"
-    ],
+    "required_comparison_fields": ["new_failures", "new_passes", "overhead_percent", "verdict"],
     "required_telemetry_fields": [
       "schema_version",
       "package",
@@ -60,10 +55,7 @@
       "neutral_or_pass",
       "telemetry"
     ],
-    "required_summary_telemetry_fields": [
-      "schema_version",
-      "packages"
-    ],
+    "required_summary_telemetry_fields": ["schema_version", "packages"],
     "required_summary_package_fields": [
       "package",
       "frankenlibc_mode",

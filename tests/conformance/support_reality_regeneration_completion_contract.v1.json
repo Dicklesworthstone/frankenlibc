@@ -19,10 +19,7 @@
       "generated_by_bead": "bd-0agsk.3",
       "mode": "validate_only",
       "canonical_command": "scripts/check_support_reality_regeneration.sh --validate-only",
-      "required_artifact_ids": [
-        "support_matrix",
-        "reality_report"
-      ],
+      "required_artifact_ids": ["support_matrix", "reality_report"],
       "single_artifact_update": "forbidden",
       "required_checks": [
         "contract_schema_valid",

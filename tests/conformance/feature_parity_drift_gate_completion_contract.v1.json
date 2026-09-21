@@ -29,11 +29,7 @@
         "harness_test": "crates/frankenlibc-harness/tests/support_matrix_maintenance_test.rs",
         "expected_outcome": "pass_or_fail_closed",
         "allowed_failure_signature": "canonical maintenance report drift detected",
-        "required_log_events": [
-          "canonical_stable_sections",
-          "coverage_summary",
-          "status_counts"
-        ]
+        "required_log_events": ["canonical_stable_sections", "coverage_summary", "status_counts"]
       },
       "feature_parity_gap_bead_coverage": {
         "script": "scripts/check_feature_parity_gap_bead_coverage.sh",

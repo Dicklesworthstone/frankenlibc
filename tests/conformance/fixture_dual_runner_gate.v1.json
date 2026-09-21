@@ -62,10 +62,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "impl_output matches fixture expected_output and host_parity remains true or explicitly UB",
@@ -100,10 +97,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "direct and isolated fixture results normalize stdout, stderr, status, errno, and host parity",
@@ -138,10 +132,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "direct and isolated memory fixtures agree with expected_output and host parity",
@@ -176,10 +167,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "socket fixture rows preserve direct and isolated subprocess parity",
@@ -214,10 +202,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "time fixture direct and subprocess paths normalize status and output deterministically",
@@ -252,10 +237,7 @@
       "direct_runner": "frankenlibc_fixture_exec::execute_fixture_case",
       "isolated_runner": "harness conformance-matrix-case",
       "runtime_mode": "strict+hardened",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "expected": "wide string fixtures execute in-process and through harness subprocess with host parity",

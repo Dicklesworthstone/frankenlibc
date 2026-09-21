@@ -43,10 +43,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.conformance.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.conformance.primary"],
     "required_precision_cap": {
       "cap": 65535,
       "first_panicking_precision": 65536,

@@ -2,29 +2,17 @@
   "schema_version": "tracker_jsonl_degraded_readiness.v1",
   "purpose": "Provide a degraded-mode readiness and stale-in-progress report from .beads/issues.jsonl without touching SQLite, br, or bv when tracker DB paths are locked or slow. Stale in-progress detection is based on latest visible issue activity, including issue comments, so recent work evidence is not misclassified as dead.",
   "issues_source": ".beads/issues.jsonl",
-  "forbidden_sources": [
-    ".beads/beads.db",
-    ".beads/issues.db",
-    "br",
-    "bv"
-  ],
+  "forbidden_sources": [".beads/beads.db", ".beads/issues.db", "br", "bv"],
   "ready_definition": {
     "candidate_status": "open",
     "blocking_dependency_type": "blocks",
-    "nonblocking_dependency_types": [
-      "parent-child"
-    ],
+    "nonblocking_dependency_types": ["parent-child"],
     "active_epic_parent_children_exclude_ready": true,
-    "blocked_when_dependency_status_not_in": [
-      "closed"
-    ],
+    "blocked_when_dependency_status_not_in": ["closed"],
     "permissioned_ready_is_not_safe_ready": true
   },
   "stale_in_progress_after_hours": 72,
-  "stale_activity_sources": [
-    "updated_at",
-    "comments[].created_at"
-  ],
+  "stale_activity_sources": ["updated_at", "comments[].created_at"],
   "permission_required_markers": [
     "explicit approval",
     "explicit operator permission",
@@ -49,9 +37,7 @@
     "fuse_e2e",
     "permissioned large host"
   ],
-  "issue_id_prefixes": [
-    "bd"
-  ],
+  "issue_id_prefixes": ["bd"],
   "issue_id_prefix_note": "Ids whose prefix (text before the first '-') is absent from issue_id_prefixes are foreign by construction and are reported as cross-project with the evidence string 'id-prefix:<prefix>'. This is the stronger of the two evidence sources: a marker scan reads prose and misses a foreign id whose text carries no marker, which is the shape of the frankenjax rows in this tracker (bd-reality-202609-lx578q.12). Marker hits are reported verbatim alongside it.",
   "ownership_summary_fields": {
     "own_prefix_total": "records whose id prefix is in issue_id_prefixes (raw count, all statuses)",
@@ -59,13 +45,7 @@
     "ambiguous_origin_total": "records whose source_repo is missing, empty or '.', i.e. origin evidence that does not establish ownership either way; treat as unknown, never as libc or as complete",
     "cross_project_dependency_edges": "dependency edges whose two endpoints fall on opposite sides of the ownership split; reported so a scoped query cannot silently drop them"
   },
-  "artifact_reference_prefixes": [
-    "scripts/",
-    "tests/",
-    "crates/",
-    "artifacts/",
-    ".beads/"
-  ],
+  "artifact_reference_prefixes": ["scripts/", "tests/", "crates/", "artifacts/", ".beads/"],
   "required_report_fields": [
     "schema_version",
     "status",

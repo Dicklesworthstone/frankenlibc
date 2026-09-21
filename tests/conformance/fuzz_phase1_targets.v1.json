@@ -20,11 +20,7 @@
       "target": "fuzz_string",
       "family": "string",
       "attack_surface": "buffer-overflow, off-by-one, null-termination",
-      "cwe_targets": [
-        "CWE-120",
-        "CWE-125",
-        "CWE-787"
-      ],
+      "cwe_targets": ["CWE-120", "CWE-125", "CWE-787"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 597,
@@ -349,12 +345,7 @@
       "target": "fuzz_malloc",
       "family": "malloc",
       "attack_surface": "double-free, use-after-free, heap-overflow, size-overflow",
-      "cwe_targets": [
-        "CWE-415",
-        "CWE-416",
-        "CWE-122",
-        "CWE-131"
-      ],
+      "cwe_targets": ["CWE-415", "CWE-416", "CWE-122", "CWE-131"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 391,
@@ -429,11 +420,7 @@
       "target": "fuzz_membrane",
       "family": "membrane",
       "attack_surface": "null-deref, temporal-violation, foreign-ptr",
-      "cwe_targets": [
-        "CWE-476",
-        "CWE-824",
-        "CWE-825"
-      ],
+      "cwe_targets": ["CWE-476", "CWE-824", "CWE-825"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 162,
@@ -448,9 +435,7 @@
         "ready": false
       },
       "symbol_coverage": {
-        "target_symbols": [
-          "__membrane_validate"
-        ],
+        "target_symbols": ["__membrane_validate"],
         "available_symbols": [],
         "covered_count": 0,
         "available_count": 0,
@@ -465,10 +450,7 @@
       "target": "fuzz_printf",
       "family": "stdio",
       "attack_surface": "format-string, unbounded-write, stack-read",
-      "cwe_targets": [
-        "CWE-134",
-        "CWE-787"
-      ],
+      "cwe_targets": ["CWE-134", "CWE-787"],
       "source_analysis": {
         "source_exists": true,
         "total_lines": 569,
@@ -483,12 +465,7 @@
         "ready": false
       },
       "symbol_coverage": {
-        "target_symbols": [
-          "fprintf",
-          "printf",
-          "snprintf",
-          "sprintf"
-        ],
+        "target_symbols": ["fprintf", "printf", "snprintf", "sprintf"],
         "available_symbols": [
           "_IO_2_1_stderr_",
           "_IO_2_1_stdin_",
@@ -803,12 +780,7 @@
           "cwe": "CWE-457"
         }
       },
-      "priority_order": [
-        "critical",
-        "high",
-        "medium",
-        "low"
-      ]
+      "priority_order": ["critical", "high", "medium", "low"]
     },
     "minimization": {
       "tool": "cargo-fuzz tmin",
@@ -821,14 +793,7 @@
       "description": "Crashes are deduplicated by hashing the top 5 stack frames (function name + offset) after symbolization.",
       "frame_depth": 5,
       "hash_function": "sha256",
-      "ignore_frames": [
-        "libfuzzer",
-        "asan",
-        "msan",
-        "ubsan",
-        "__sanitizer",
-        "fuzzer::Fuzzer"
-      ]
+      "ignore_frames": ["libfuzzer", "asan", "msan", "ubsan", "__sanitizer", "fuzzer::Fuzzer"]
     },
     "triage_flow": [
       {
@@ -881,9 +846,7 @@
       "max_len": 4096,
       "seed_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_string/",
       "dictionary": "crates/frankenlibc-fuzz/dictionaries/fuzz_string.dict",
-      "sanitizers": [
-        "address"
-      ],
+      "sanitizers": ["address"],
       "jobs": 1,
       "runs": 10000,
       "expected_outcome": "no_crash"
@@ -893,9 +856,7 @@
       "max_len": 4096,
       "seed_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_malloc/",
       "dictionary": "crates/frankenlibc-fuzz/dictionaries/fuzz_malloc.dict",
-      "sanitizers": [
-        "address"
-      ],
+      "sanitizers": ["address"],
       "jobs": 1,
       "runs": 10000,
       "expected_outcome": "no_crash"
@@ -905,9 +866,7 @@
       "max_len": 4096,
       "seed_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_membrane/",
       "dictionary": "crates/frankenlibc-fuzz/dictionaries/fuzz_membrane.dict",
-      "sanitizers": [
-        "address"
-      ],
+      "sanitizers": ["address"],
       "jobs": 1,
       "runs": 10000,
       "expected_outcome": "no_crash"
@@ -917,9 +876,7 @@
       "max_len": 4096,
       "seed_corpus": "crates/frankenlibc-fuzz/corpus/fuzz_printf/",
       "dictionary": "crates/frankenlibc-fuzz/dictionaries/fuzz_printf.dict",
-      "sanitizers": [
-        "address"
-      ],
+      "sanitizers": ["address"],
       "jobs": 1,
       "runs": 10000,
       "expected_outcome": "no_crash"
@@ -956,15 +913,8 @@
         "posix_memalign",
         "realloc"
       ],
-      "membrane": [
-        "__membrane_validate"
-      ],
-      "stdio": [
-        "fprintf",
-        "printf",
-        "snprintf",
-        "sprintf"
-      ]
+      "membrane": ["__membrane_validate"],
+      "stdio": ["fprintf", "printf", "snprintf", "sprintf"]
     },
     "all_symbols": [
       "__membrane_validate",

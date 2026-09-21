@@ -215,20 +215,11 @@
   "family_coverage": {
     "allocator": {
       "function_count": 4,
-      "functions": [
-        "calloc",
-        "free",
-        "malloc",
-        "realloc"
-      ]
+      "functions": ["calloc", "free", "malloc", "realloc"]
     },
     "backtrace": {
       "function_count": 3,
-      "functions": [
-        "backtrace",
-        "backtrace_symbols",
-        "backtrace_symbols_fd"
-      ]
+      "functions": ["backtrace", "backtrace_symbols", "backtrace_symbols_fd"]
     },
     "ctype": {
       "function_count": 11,
@@ -248,19 +239,11 @@
     },
     "dirent": {
       "function_count": 3,
-      "functions": [
-        "closedir",
-        "opendir",
-        "readdir"
-      ]
+      "functions": ["closedir", "opendir", "readdir"]
     },
     "dlfcn": {
       "function_count": 3,
-      "functions": [
-        "dlerror",
-        "dlopen",
-        "dlsym"
-      ]
+      "functions": ["dlerror", "dlopen", "dlsym"]
     },
     "elf": {
       "function_count": 7,
@@ -276,37 +259,19 @@
     },
     "errno": {
       "function_count": 1,
-      "functions": [
-        "__errno_location"
-      ]
+      "functions": ["__errno_location"]
     },
     "grp": {
       "function_count": 3,
-      "functions": [
-        "getgrgid",
-        "getgrnam",
-        "setgrent"
-      ]
+      "functions": ["getgrgid", "getgrnam", "setgrent"]
     },
     "iconv": {
       "function_count": 3,
-      "functions": [
-        "iconv",
-        "iconv_close",
-        "iconv_open"
-      ]
+      "functions": ["iconv", "iconv_close", "iconv_open"]
     },
     "inet": {
       "function_count": 7,
-      "functions": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ]
+      "functions": ["htonl", "htons", "inet_addr", "inet_ntop", "inet_pton", "ntohl", "ntohs"]
     },
     "io": {
       "function_count": 28,
@@ -343,13 +308,7 @@
     },
     "loader": {
       "function_count": 5,
-      "functions": [
-        "dladdr",
-        "dlclose",
-        "dlinfo",
-        "dlopen",
-        "dlsym"
-      ]
+      "functions": ["dladdr", "dlclose", "dlinfo", "dlopen", "dlsym"]
     },
     "locale": {
       "function_count": 8,
@@ -390,49 +349,27 @@
     },
     "membrane": {
       "function_count": 2,
-      "functions": [
-        "memcpy",
-        "strlen"
-      ]
+      "functions": ["memcpy", "strlen"]
     },
     "memcpy": {
       "function_count": 1,
-      "functions": [
-        "memcpy"
-      ]
+      "functions": ["memcpy"]
     },
     "memory": {
       "function_count": 5,
-      "functions": [
-        "memchr",
-        "memcmp",
-        "memcpy",
-        "memmove",
-        "memset"
-      ]
+      "functions": ["memchr", "memcmp", "memcpy", "memmove", "memset"]
     },
     "poll": {
       "function_count": 2,
-      "functions": [
-        "poll",
-        "select"
-      ]
+      "functions": ["poll", "select"]
     },
     "pressure": {
       "function_count": 2,
-      "functions": [
-        "PressureSensor::observe",
-        "SystemRegime::degradation_active"
-      ]
+      "functions": ["PressureSensor::observe", "SystemRegime::degradation_active"]
     },
     "process": {
       "function_count": 4,
-      "functions": [
-        "fork",
-        "getpid",
-        "getppid",
-        "waitpid"
-      ]
+      "functions": ["fork", "getpid", "getppid", "waitpid"]
     },
     "pthread": {
       "function_count": 21,
@@ -462,20 +399,11 @@
     },
     "pwd": {
       "function_count": 3,
-      "functions": [
-        "getpwnam",
-        "getpwuid",
-        "setpwent"
-      ]
+      "functions": ["getpwnam", "getpwuid", "setpwent"]
     },
     "regex": {
       "function_count": 4,
-      "functions": [
-        "fnmatch",
-        "glob",
-        "regcomp",
-        "regexec"
-      ]
+      "functions": ["fnmatch", "glob", "regcomp", "regexec"]
     },
     "resolver": {
       "function_count": 7,
@@ -491,58 +419,31 @@
     },
     "resource": {
       "function_count": 1,
-      "functions": [
-        "getrlimit"
-      ]
+      "functions": ["getrlimit"]
     },
     "session": {
       "function_count": 4,
-      "functions": [
-        "getlogin",
-        "getlogin_r",
-        "getsid",
-        "setsid"
-      ]
+      "functions": ["getlogin", "getlogin_r", "getsid", "setsid"]
     },
     "setjmp": {
       "function_count": 3,
-      "functions": [
-        "_setjmp",
-        "longjmp",
-        "setjmp"
-      ]
+      "functions": ["_setjmp", "longjmp", "setjmp"]
     },
     "setjmp_nested_edges": {
       "function_count": 1,
-      "functions": [
-        "setjmp_nested_edges"
-      ]
+      "functions": ["setjmp_nested_edges"]
     },
     "signal": {
       "function_count": 3,
-      "functions": [
-        "kill",
-        "raise",
-        "sigaction"
-      ]
+      "functions": ["kill", "raise", "sigaction"]
     },
     "socket": {
       "function_count": 5,
-      "functions": [
-        "bind",
-        "getsockname",
-        "listen",
-        "shutdown",
-        "socket"
-      ]
+      "functions": ["bind", "getsockname", "listen", "shutdown", "socket"]
     },
     "spawn": {
       "function_count": 3,
-      "functions": [
-        "execve",
-        "posix_spawn",
-        "system"
-      ]
+      "functions": ["execve", "posix_spawn", "system"]
     },
     "startup": {
       "function_count": 3,
@@ -568,14 +469,7 @@
     },
     "stdlib": {
       "function_count": 6,
-      "functions": [
-        "atoi",
-        "atol",
-        "bsearch",
-        "qsort",
-        "strtol",
-        "strtoul"
-      ]
+      "functions": ["atoi", "atol", "bsearch", "qsort", "strtol", "strtoul"]
     },
     "string": {
       "function_count": 15,
@@ -599,40 +493,19 @@
     },
     "strlen": {
       "function_count": 1,
-      "functions": [
-        "strlen"
-      ]
+      "functions": ["strlen"]
     },
     "sysv": {
       "function_count": 7,
-      "functions": [
-        "msgget",
-        "semctl",
-        "semget",
-        "semop",
-        "shmat",
-        "shmdt",
-        "shmget"
-      ]
+      "functions": ["msgget", "semctl", "semget", "semop", "shmat", "shmdt", "shmget"]
     },
     "termios": {
       "function_count": 5,
-      "functions": [
-        "cfgetispeed",
-        "cfgetospeed",
-        "cfsetispeed",
-        "cfsetospeed",
-        "tcgetattr"
-      ]
+      "functions": ["cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "tcgetattr"]
     },
     "time": {
       "function_count": 4,
-      "functions": [
-        "clock",
-        "clock_gettime",
-        "localtime_r",
-        "time"
-      ]
+      "functions": ["clock", "clock_gettime", "localtime_r", "time"]
     },
     "unistd": {
       "function_count": 14,
@@ -655,12 +528,7 @@
     },
     "virtual": {
       "function_count": 4,
-      "functions": [
-        "madvise",
-        "mmap",
-        "mprotect",
-        "munmap"
-      ]
+      "functions": ["madvise", "mmap", "mprotect", "munmap"]
     },
     "wide": {
       "function_count": 14,
@@ -687,28 +555,15 @@
       "file": "allocator.json",
       "sha256": "3ed17b70c74892f87b87364fd9197e1f802c1f9cae0f1a045033f53c2a54bb66",
       "case_count": 5,
-      "functions": [
-        "calloc",
-        "free",
-        "malloc",
-        "realloc"
-      ],
-      "families": [
-        "allocator"
-      ]
+      "functions": ["calloc", "free", "malloc", "realloc"],
+      "families": ["allocator"]
     },
     "backtrace_ops": {
       "file": "backtrace_ops.json",
       "sha256": "674d7b701936af39c82584b4cfdfb3805a6e0d819472a2d1eef0548821bceeb0",
       "case_count": 5,
-      "functions": [
-        "backtrace",
-        "backtrace_symbols",
-        "backtrace_symbols_fd"
-      ],
-      "families": [
-        "backtrace"
-      ]
+      "functions": ["backtrace", "backtrace_symbols", "backtrace_symbols_fd"],
+      "families": ["backtrace"]
     },
     "ctype_ops": {
       "file": "ctype_ops.json",
@@ -727,35 +582,21 @@
         "tolower",
         "toupper"
       ],
-      "families": [
-        "ctype"
-      ]
+      "families": ["ctype"]
     },
     "dirent_ops": {
       "file": "dirent_ops.json",
       "sha256": "5f9902405f388675f1529743c012afebd639e9fa1afb504af001e482578fea9e",
       "case_count": 6,
-      "functions": [
-        "closedir",
-        "opendir",
-        "readdir"
-      ],
-      "families": [
-        "dirent"
-      ]
+      "functions": ["closedir", "opendir", "readdir"],
+      "families": ["dirent"]
     },
     "dlfcn_ops": {
       "file": "dlfcn_ops.json",
       "sha256": "4b378aabafc1944efd3bc5371815609f8dc34a7d8baacb27e17d005cc44f14a4",
       "case_count": 7,
-      "functions": [
-        "dlerror",
-        "dlopen",
-        "dlsym"
-      ],
-      "families": [
-        "dlfcn"
-      ]
+      "functions": ["dlerror", "dlopen", "dlsym"],
+      "families": ["dlfcn"]
     },
     "elf_loader": {
       "file": "elf_loader.json",
@@ -770,63 +611,35 @@
         "elf_hash",
         "gnu_hash"
       ],
-      "families": [
-        "elf"
-      ]
+      "families": ["elf"]
     },
     "errno_ops": {
       "file": "errno_ops.json",
       "sha256": "36f5950a8ef2acc2dc2d3392b0999dab62a23648f88ba63fc327450a0f3e3a36",
       "case_count": 3,
-      "functions": [
-        "__errno_location"
-      ],
-      "families": [
-        "errno"
-      ]
+      "functions": ["__errno_location"],
+      "families": ["errno"]
     },
     "grp_ops": {
       "file": "grp_ops.json",
       "sha256": "d024da84ffd3a64831aa394f12171fdb4f80f7644bc6123c893a12588f4d7f1e",
       "case_count": 10,
-      "functions": [
-        "getgrgid",
-        "getgrnam",
-        "setgrent"
-      ],
-      "families": [
-        "grp"
-      ]
+      "functions": ["getgrgid", "getgrnam", "setgrent"],
+      "families": ["grp"]
     },
     "iconv_phase1": {
       "file": "iconv_phase1.json",
       "sha256": "be8d3d6a8a3b1a98e078d427f2cbccb8e2c524c86502522b4ba468266e2439f7",
       "case_count": 13,
-      "functions": [
-        "iconv",
-        "iconv_close",
-        "iconv_open"
-      ],
-      "families": [
-        "iconv"
-      ]
+      "functions": ["iconv", "iconv_close", "iconv_open"],
+      "families": ["iconv"]
     },
     "inet_ops": {
       "file": "inet_ops.json",
       "sha256": "09fc34639e2c6d09b82e00856a112b879fa703c613c3fc65b5d20e20f52a91c6",
       "case_count": 15,
-      "functions": [
-        "htonl",
-        "htons",
-        "inet_addr",
-        "inet_ntop",
-        "inet_pton",
-        "ntohl",
-        "ntohs"
-      ],
-      "families": [
-        "inet"
-      ]
+      "functions": ["htonl", "htons", "inet_addr", "inet_ntop", "inet_pton", "ntohl", "ntohs"],
+      "families": ["inet"]
     },
     "io_internal_ops": {
       "file": "io_internal_ops.json",
@@ -862,24 +675,14 @@
         "_IO_wfile_sync",
         "dlinfo"
       ],
-      "families": [
-        "io"
-      ]
+      "families": ["io"]
     },
     "loader_edges": {
       "file": "loader_edges.json",
       "sha256": "9edc36e71269c8d543f896d861f505e55ca7794665627c58bcfd66463253c566",
       "case_count": 7,
-      "functions": [
-        "dladdr",
-        "dlclose",
-        "dlinfo",
-        "dlopen",
-        "dlsym"
-      ],
-      "families": [
-        "loader"
-      ]
+      "functions": ["dladdr", "dlclose", "dlinfo", "dlopen", "dlsym"],
+      "families": ["loader"]
     },
     "locale_ops": {
       "file": "locale_ops.json",
@@ -895,9 +698,7 @@
         "setlocale",
         "uselocale"
       ],
-      "families": [
-        "locale"
-      ]
+      "families": ["locale"]
     },
     "math_ops": {
       "file": "math_ops.json",
@@ -924,85 +725,49 @@
         "tan",
         "tgamma"
       ],
-      "families": [
-        "math"
-      ]
+      "families": ["math"]
     },
     "membrane_mode_split": {
       "file": "membrane_mode_split.json",
       "sha256": "8190c7325933ead7074271921de229d5d58647d5391a20578d3888fcb42abf4f",
       "case_count": 4,
-      "functions": [
-        "memcpy",
-        "strlen"
-      ],
-      "families": [
-        "membrane"
-      ]
+      "functions": ["memcpy", "strlen"],
+      "families": ["membrane"]
     },
     "memcpy_strict": {
       "file": "memcpy_strict.json",
       "sha256": "074bd9fe479197229ade85efb411a6eefefdf958c2af26c7b2bab35d5ce56d67",
       "case_count": 4,
-      "functions": [
-        "memcpy"
-      ],
-      "families": [
-        "memcpy"
-      ]
+      "functions": ["memcpy"],
+      "families": ["memcpy"]
     },
     "memory_ops": {
       "file": "memory_ops.json",
       "sha256": "c2e63ee0140a27b9ad8286edc115eebade440e1c06040ebdc21dea8ee285a1dc",
       "case_count": 11,
-      "functions": [
-        "memchr",
-        "memcmp",
-        "memcpy",
-        "memmove",
-        "memset"
-      ],
-      "families": [
-        "memory"
-      ]
+      "functions": ["memchr", "memcmp", "memcpy", "memmove", "memset"],
+      "families": ["memory"]
     },
     "poll_ops": {
       "file": "poll_ops.json",
       "sha256": "ba84351a63d246292065896dd956527d356bed899e4d7ab36ca815bb57376d47",
       "case_count": 6,
-      "functions": [
-        "poll",
-        "select"
-      ],
-      "families": [
-        "poll"
-      ]
+      "functions": ["poll", "select"],
+      "families": ["poll"]
     },
     "pressure_sensing": {
       "file": "pressure_sensing.json",
       "sha256": "2682b7cc38cc7766b90365248250c991ad58dc066796d1408b8c4245a5332cff",
       "case_count": 9,
-      "functions": [
-        "PressureSensor::observe",
-        "SystemRegime::degradation_active"
-      ],
-      "families": [
-        "pressure"
-      ]
+      "functions": ["PressureSensor::observe", "SystemRegime::degradation_active"],
+      "families": ["pressure"]
     },
     "process_ops": {
       "file": "process_ops.json",
       "sha256": "bc79f96c443c79982d5f6186a8033839d5893cd14b11adf1b98a97a5438de001",
       "case_count": 7,
-      "functions": [
-        "fork",
-        "getpid",
-        "getppid",
-        "waitpid"
-      ],
-      "families": [
-        "process"
-      ]
+      "functions": ["fork", "getpid", "getppid", "waitpid"],
+      "families": ["process"]
     },
     "pthread_cond": {
       "file": "pthread_cond.json",
@@ -1016,9 +781,7 @@
         "pthread_cond_timedwait",
         "pthread_cond_wait"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_mutex": {
       "file": "pthread_mutex.json",
@@ -1031,9 +794,7 @@
         "pthread_mutex_trylock",
         "pthread_mutex_unlock"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_thread": {
       "file": "pthread_thread.json",
@@ -1046,9 +807,7 @@
         "pthread_join",
         "pthread_self"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pthread_tls_keys": {
       "file": "pthread_tls_keys.json",
@@ -1061,36 +820,21 @@
         "pthread_setspecific",
         "teardown_thread_tls"
       ],
-      "families": [
-        "pthread"
-      ]
+      "families": ["pthread"]
     },
     "pwd_ops": {
       "file": "pwd_ops.json",
       "sha256": "85970466e3e309e11b60b045b757e166b8baee8b9986c0b7e1a9d6488f5f6194",
       "case_count": 10,
-      "functions": [
-        "getpwnam",
-        "getpwuid",
-        "setpwent"
-      ],
-      "families": [
-        "pwd"
-      ]
+      "functions": ["getpwnam", "getpwuid", "setpwent"],
+      "families": ["pwd"]
     },
     "regex_glob_ops": {
       "file": "regex_glob_ops.json",
       "sha256": "4a2633272b190540e9e84eb5aba5dd244677bf2c806d00f3bfa64373bbb5e80b",
       "case_count": 8,
-      "functions": [
-        "fnmatch",
-        "glob",
-        "regcomp",
-        "regexec"
-      ],
-      "families": [
-        "regex"
-      ]
+      "functions": ["fnmatch", "glob", "regcomp", "regexec"],
+      "families": ["regex"]
     },
     "resolver": {
       "file": "resolver.json",
@@ -1105,97 +849,56 @@
         "gethostbyname",
         "lookup_hosts"
       ],
-      "families": [
-        "resolver"
-      ]
+      "families": ["resolver"]
     },
     "resource_ops": {
       "file": "resource_ops.json",
       "sha256": "7994dd123459b2eeae898131e341278baac7d2de267766b63eea5ff3f6ee23f4",
       "case_count": 5,
-      "functions": [
-        "getrlimit"
-      ],
-      "families": [
-        "resource"
-      ]
+      "functions": ["getrlimit"],
+      "families": ["resource"]
     },
     "session_ops": {
       "file": "session_ops.json",
       "sha256": "9ec86c91f2efc7185a7bb806530e42964fa36f0cc3b79d87207c51d8c45c51c9",
       "case_count": 6,
-      "functions": [
-        "getlogin",
-        "getlogin_r",
-        "getsid",
-        "setsid"
-      ],
-      "families": [
-        "session"
-      ]
+      "functions": ["getlogin", "getlogin_r", "getsid", "setsid"],
+      "families": ["session"]
     },
     "setjmp_nested_edges": {
       "file": "setjmp_nested_edges.json",
       "sha256": "27c0eeaccad717ccce8293ca35f2c6c3efe0b5d9cc7faa159fe1484e0371be8e",
       "case_count": 1,
       "functions": [],
-      "families": [
-        "setjmp_nested_edges"
-      ]
+      "families": ["setjmp_nested_edges"]
     },
     "setjmp_ops": {
       "file": "setjmp_ops.json",
       "sha256": "6c2a3a4e0cd8a7ac65c6d040de52ff638a6f19018a642597704398033ee70d5a",
       "case_count": 7,
-      "functions": [
-        "_setjmp",
-        "longjmp",
-        "setjmp"
-      ],
-      "families": [
-        "setjmp"
-      ]
+      "functions": ["_setjmp", "longjmp", "setjmp"],
+      "families": ["setjmp"]
     },
     "signal_ops": {
       "file": "signal_ops.json",
       "sha256": "4e08bffe2c9d4c7fbd547019315e9abc0d0f32c8851d2475727fc21b0039bfd0",
       "case_count": 6,
-      "functions": [
-        "kill",
-        "raise",
-        "sigaction"
-      ],
-      "families": [
-        "signal"
-      ]
+      "functions": ["kill", "raise", "sigaction"],
+      "families": ["signal"]
     },
     "socket_ops": {
       "file": "socket_ops.json",
       "sha256": "d99b01d103d1806ed674d7a2074eed44ecbd2d60425fd656995ec645ce08567c",
       "case_count": 9,
-      "functions": [
-        "bind",
-        "getsockname",
-        "listen",
-        "shutdown",
-        "socket"
-      ],
-      "families": [
-        "socket"
-      ]
+      "functions": ["bind", "getsockname", "listen", "shutdown", "socket"],
+      "families": ["socket"]
     },
     "spawn_exec_ops": {
       "file": "spawn_exec_ops.json",
       "sha256": "49b90ed9954554b61b755984e692d11a768dade059a14c3fd9a3dd95c4321603",
       "case_count": 7,
-      "functions": [
-        "execve",
-        "posix_spawn",
-        "system"
-      ],
-      "families": [
-        "spawn"
-      ]
+      "functions": ["execve", "posix_spawn", "system"],
+      "families": ["spawn"]
     },
     "startup_ops": {
       "file": "startup_ops.json",
@@ -1206,9 +909,7 @@
         "__frankenlibc_startup_snapshot",
         "__libc_start_main"
       ],
-      "families": [
-        "startup"
-      ]
+      "families": ["startup"]
     },
     "stdio_file_ops": {
       "file": "stdio_file_ops.json",
@@ -1225,47 +926,28 @@
         "fwrite",
         "snprintf"
       ],
-      "families": [
-        "stdio"
-      ]
+      "families": ["stdio"]
     },
     "stdlib_conversion": {
       "file": "stdlib_conversion.json",
       "sha256": "0b1b179b05e6feb21042d9e1ac1a62631b1bce46b6fb4f8a1e849a26ad85a4fb",
       "case_count": 7,
-      "functions": [
-        "atoi",
-        "strtol"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["atoi", "strtol"],
+      "families": ["stdlib"]
     },
     "stdlib_numeric": {
       "file": "stdlib_numeric.json",
       "sha256": "f65c8840162502b3da2c1c9a4f196cf59c774036d82a63c7d751fcb9dfcfbd88",
       "case_count": 10,
-      "functions": [
-        "atoi",
-        "atol",
-        "strtol",
-        "strtoul"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["atoi", "atol", "strtol", "strtoul"],
+      "families": ["stdlib"]
     },
     "stdlib_sort": {
       "file": "stdlib_sort.json",
       "sha256": "a08abf1cfcca2b764897b1fa1bd3689e9b4d8634a5c3f5cbfaf1697cb3cd8da2",
       "case_count": 3,
-      "functions": [
-        "bsearch",
-        "qsort"
-      ],
-      "families": [
-        "stdlib"
-      ]
+      "functions": ["bsearch", "qsort"],
+      "families": ["stdlib"]
     },
     "string_memory_full": {
       "file": "string_memory_full.json",
@@ -1285,9 +967,7 @@
         "strrchr",
         "strstr"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_ops": {
       "file": "string_ops.json",
@@ -1307,78 +987,42 @@
         "strrchr",
         "strstr"
       ],
-      "families": [
-        "string"
-      ]
+      "families": ["string"]
     },
     "string_strtok": {
       "file": "string_strtok.json",
       "sha256": "4c6409d181230d3a8df20061e504f896e4a7f11bb6939f5cf603f7f17347e29d",
       "case_count": 8,
-      "functions": [
-        "strtok",
-        "strtok_r"
-      ],
-      "families": [
-        "string"
-      ]
+      "functions": ["strtok", "strtok_r"],
+      "families": ["string"]
     },
     "strlen_strict": {
       "file": "strlen_strict.json",
       "sha256": "61e21fe0d23f5ef974ea32882162d8aedd204770aa77b6a46bb40dfbdb8f5832",
       "case_count": 3,
-      "functions": [
-        "strlen"
-      ],
-      "families": [
-        "strlen"
-      ]
+      "functions": ["strlen"],
+      "families": ["strlen"]
     },
     "sysv_ipc_ops": {
       "file": "sysv_ipc_ops.json",
       "sha256": "c865a7ead77ca54ea6266d31ada4e0d665f8c37df4b5f8e5379c6a9ab248a9f5",
       "case_count": 9,
-      "functions": [
-        "msgget",
-        "semctl",
-        "semget",
-        "semop",
-        "shmat",
-        "shmdt",
-        "shmget"
-      ],
-      "families": [
-        "sysv"
-      ]
+      "functions": ["msgget", "semctl", "semget", "semop", "shmat", "shmdt", "shmget"],
+      "families": ["sysv"]
     },
     "termios_ops": {
       "file": "termios_ops.json",
       "sha256": "e6d94ee61fef47d89b07d2f44aeebc6c1e9697ecd95ce333c487d888f2bf77d3",
       "case_count": 8,
-      "functions": [
-        "cfgetispeed",
-        "cfgetospeed",
-        "cfsetispeed",
-        "cfsetospeed",
-        "tcgetattr"
-      ],
-      "families": [
-        "termios"
-      ]
+      "functions": ["cfgetispeed", "cfgetospeed", "cfsetispeed", "cfsetospeed", "tcgetattr"],
+      "families": ["termios"]
     },
     "time_ops": {
       "file": "time_ops.json",
       "sha256": "8d74cf08ab984e541dad57609e7db0b589d025998eb11a1f10699fd414986b1a",
       "case_count": 8,
-      "functions": [
-        "clock",
-        "clock_gettime",
-        "localtime_r",
-        "time"
-      ],
-      "families": [
-        "time"
-      ]
+      "functions": ["clock", "clock_gettime", "localtime_r", "time"],
+      "families": ["time"]
     },
     "unistd_ops": {
       "file": "unistd_ops.json",
@@ -1400,51 +1044,28 @@
         "read",
         "write"
       ],
-      "families": [
-        "unistd"
-      ]
+      "families": ["unistd"]
     },
     "virtual_memory_ops": {
       "file": "virtual_memory_ops.json",
       "sha256": "3857f2a26dc451c81dcfe253662a82d2c8cea175924194ccf02add0e9deb97b0",
       "case_count": 8,
-      "functions": [
-        "madvise",
-        "mmap",
-        "mprotect",
-        "munmap"
-      ],
-      "families": [
-        "virtual"
-      ]
+      "functions": ["madvise", "mmap", "mprotect", "munmap"],
+      "families": ["virtual"]
     },
     "wide_memory": {
       "file": "wide_memory.json",
       "sha256": "3c1412d07055b66747c4b8a9ee92e25993334c2b02e26c6ce073a845c4dfeb30",
       "case_count": 6,
-      "functions": [
-        "wmemchr",
-        "wmemcmp",
-        "wmemcpy",
-        "wmemmove",
-        "wmemset"
-      ],
-      "families": [
-        "wide"
-      ]
+      "functions": ["wmemchr", "wmemcmp", "wmemcpy", "wmemmove", "wmemset"],
+      "families": ["wide"]
     },
     "wide_string": {
       "file": "wide_string.json",
       "sha256": "b674eb31c28054f4c61e7da5234020d0839e60b21eafa9c815e8a76b6cd71d2f",
       "case_count": 4,
-      "functions": [
-        "wcscmp",
-        "wcscpy",
-        "wcslen"
-      ],
-      "families": [
-        "wide"
-      ]
+      "functions": ["wcscmp", "wcscpy", "wcslen"],
+      "families": ["wide"]
     },
     "wide_string_ops": {
       "file": "wide_string_ops.json",
@@ -1461,9 +1082,7 @@
         "wcsrchr",
         "wcsstr"
       ],
-      "families": [
-        "wide"
-      ]
+      "families": ["wide"]
     }
   }
 }

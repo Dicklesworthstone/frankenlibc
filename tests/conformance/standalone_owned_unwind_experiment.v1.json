@@ -71,15 +71,9 @@
   "live_dependency_evidence_contract": {
     "lane_id": "owned-unwind-stub-experiment",
     "expected_undefined_unwind_symbol_count": 0,
-    "forbidden_needed_libraries": [
-      "libgcc_s.so.1"
-    ],
-    "forbidden_version_providers": [
-      "libgcc_s.so.1"
-    ],
-    "forbidden_undefined_symbol_prefixes": [
-      "_Unwind_"
-    ],
+    "forbidden_needed_libraries": ["libgcc_s.so.1"],
+    "forbidden_version_providers": ["libgcc_s.so.1"],
+    "forbidden_undefined_symbol_prefixes": ["_Unwind_"],
     "status_on_violation": "fail_closed",
     "promotion_allowed_on_pass": false,
     "reason": "The owned-unwind lane is only useful as blocker-reduction evidence if live nm/readelf output proves libgcc_s and _Unwind_* edges stay absent."
@@ -148,10 +142,7 @@
         "--features=standalone,owned-unwind-stub"
       ],
       "panic_strategy": "abort",
-      "rustflags": [
-        "-C",
-        "link-arg=-Wl,--no-undefined"
-      ],
+      "rustflags": ["-C", "link-arg=-Wl,--no-undefined"],
       "env": {
         "CARGO_PROFILE_RELEASE_PANIC": "abort"
       },
@@ -161,9 +152,7 @@
       "expected_undefined_unwind_symbol_count": 0,
       "build_status_until_owned_substitute_complete": "pass",
       "observed_undefined_unwind_symbol_count": 0,
-      "observed_needed_libraries": [
-        "ld-linux-x86-64.so.2"
-      ],
+      "observed_needed_libraries": ["ld-linux-x86-64.so.2"],
       "evidence_artifact": "/data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so"
     }
   ],
@@ -196,9 +185,7 @@
       "owned_substitute_strategy": "owned stub no-ops exception cleanup; panic-abort keeps the path unreachable and nm evidence confirms no undefined symbol remains",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "panic_strategy=abort confirmed; nm -D reports no undefined _Unwind_DeleteException",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -212,9 +199,7 @@
       "owned_substitute_strategy": "owned panic_unwind stub returns 0; correct because frankenlibc emits no DWARF FDEs that read DataRel base",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetDataRelBase",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -228,9 +213,7 @@
       "owned_substitute_strategy": "owned stub returns the saved RIP from the unwind context; touched only by personality routines, which we do not call under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetIP",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -244,9 +227,7 @@
       "owned_substitute_strategy": "owned stub forwards to _Unwind_GetIP with ip_before_insn=1; correct under panic=abort where the personality routine is unreachable",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetIPInfo",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -260,9 +241,7 @@
       "owned_substitute_strategy": "owned stub returns NULL; correct because frankenlibc emits no LSDA tables under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetLanguageSpecificData",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -276,9 +255,7 @@
       "owned_substitute_strategy": "owned stub returns 0; only called by personality routines that we do not invoke under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetRegionStart",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -292,9 +269,7 @@
       "owned_substitute_strategy": "owned stub returns 0; not reached under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_GetTextRelBase",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -308,9 +283,7 @@
       "owned_substitute_strategy": "owned stub aborts immediately; panic-abort keeps exception raising unreachable and nm evidence confirms no undefined symbol remains",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "panic_strategy=abort confirmed; nm -D reports no undefined _Unwind_RaiseException",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -324,9 +297,7 @@
       "owned_substitute_strategy": "owned stub aborts via libc abort() — _Unwind_Resume is unreachable under panic=abort but the linker still emits the cleanup landing pad reference",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_Resume",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -340,9 +311,7 @@
       "owned_substitute_strategy": "owned stub aborts via libc abort() — only personality routines call this and we have none under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_SetGR",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     },
     {
@@ -356,9 +325,7 @@
       "owned_substitute_strategy": "owned stub aborts via libc abort() — only personality routines call this and we have none under panic=abort",
       "owned_surface_status": "nm_evidence_passed",
       "exit_criteria": "nm -D reports no undefined _Unwind_SetIP",
-      "evidence_commands": [
-        "nm -D --undefined-only target/.../libfrankenlibc_abi.so"
-      ],
+      "evidence_commands": ["nm -D --undefined-only target/.../libfrankenlibc_abi.so"],
       "claim_status_until_exit": "exit_evidence_passed"
     }
   ],
@@ -376,9 +343,7 @@
       "readelf -Ws /data/projects/.cargo-target-frankenlibc-JadeLynx-ownedunwind/release/libfrankenlibc_abi.so | rg '_Unwind_'"
     ],
     "observed_undefined_unwind_symbols": [],
-    "observed_needed_libraries": [
-      "ld-linux-x86-64.so.2"
-    ],
+    "observed_needed_libraries": ["ld-linux-x86-64.so.2"],
     "defined_unwind_symbol_count": 12
   },
   "summary": {

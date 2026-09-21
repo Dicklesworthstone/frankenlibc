@@ -44,10 +44,7 @@
         "scripts/check_gentoo_unit_test_contract.sh:27",
         "scripts/check_gentoo_unit_test_contract.sh:168"
       ],
-      "required_needles": [
-        "BEAD_ID = \"bd-2icq.13\"",
-        "completion_debt_evidence"
-      ]
+      "required_needles": ["BEAD_ID = \"bd-2icq.13\"", "completion_debt_evidence"]
     },
     {
       "id": "gentoo_unit_harness",
@@ -69,10 +66,7 @@
       "kind": "e2e_script",
       "path": "tests/gentoo/e2e/run_all_e2e.sh",
       "role": "Top-level Gentoo e2e suite with fast, single-package, build-wave, full-pipeline, failure-recovery, and progress-reporting modes.",
-      "line_refs": [
-        "tests/gentoo/e2e/run_all_e2e.sh:30",
-        "tests/gentoo/e2e/run_all_e2e.sh:95"
-      ],
+      "line_refs": ["tests/gentoo/e2e/run_all_e2e.sh:30", "tests/gentoo/e2e/run_all_e2e.sh:95"],
       "required_needles": [
         "single_package:test_single_package.sh:5",
         "full_pipeline:test_full_pipeline.sh:30",
@@ -89,11 +83,7 @@
         "tests/gentoo/e2e/test_full_pipeline.sh:58",
         "tests/gentoo/e2e/test_full_pipeline.sh:103"
       ],
-      "required_needles": [
-        "PIPELINE_PACKAGES=(",
-        "run_emerge",
-        "FRANKENLIBC_PORTAGE_ENABLE=1"
-      ]
+      "required_needles": ["PIPELINE_PACKAGES=(", "run_emerge", "FRANKENLIBC_PORTAGE_ENABLE=1"]
     },
     {
       "id": "gentoo_fast_validate_tests",
@@ -104,10 +94,7 @@
         "tests/gentoo/test_fast_validate.py:74",
         "tests/gentoo/test_fast_validate.py:316"
       ],
-      "required_needles": [
-        "class TestFastValidateScript",
-        "def test_dry_run_produces_summary("
-      ]
+      "required_needles": ["class TestFastValidateScript", "def test_dry_run_produces_summary("]
     },
     {
       "id": "gentoo_telemetry_contract",
@@ -221,21 +208,14 @@
         "scripts/check_resource_constraints.sh:2",
         "scripts/check_resource_constraints.sh:43"
       ],
-      "required_needles": [
-        "bd-2icq.20",
-        "Resource Constraint Testing gate"
-      ]
+      "required_needles": ["bd-2icq.20", "Resource Constraint Testing gate"]
     }
   ],
   "evidence_bindings": [
     {
       "id": "tests.unit.primary",
       "description": "Gentoo ecosystem unit evidence is file-backed by the existing unit completion contract and its Rust harness.",
-      "required_artifacts": [
-        "gentoo_unit_contract",
-        "gentoo_unit_checker",
-        "gentoo_unit_harness"
-      ],
+      "required_artifacts": ["gentoo_unit_contract", "gentoo_unit_checker", "gentoo_unit_harness"],
       "required_test_refs": [
         {
           "artifact": "gentoo_unit_harness",
@@ -286,16 +266,8 @@
     {
       "id": "tests.fuzz.primary",
       "description": "Fuzz evidence for the parent epic binds the existing phase-1 fuzz target contract and architecture inventory.",
-      "required_artifacts": [
-        "fuzz_phase1_contract",
-        "fuzz_harness_architecture_contract"
-      ],
-      "required_targets": [
-        "fuzz_string",
-        "fuzz_malloc",
-        "fuzz_membrane",
-        "fuzz_printf"
-      ],
+      "required_artifacts": ["fuzz_phase1_contract", "fuzz_harness_architecture_contract"],
+      "required_targets": ["fuzz_string", "fuzz_malloc", "fuzz_membrane", "fuzz_printf"],
       "required_test_refs": [
         {
           "artifact": "fuzz_phase1_contract",

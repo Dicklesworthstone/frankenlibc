@@ -7,9 +7,7 @@
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-zyck1.35/scorecard.md",
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.conformance.primary"
-    ]
+    "missing_items": ["tests.conformance.primary"]
   },
   "source_artifacts": {
     "probe_plan": "tests/conformance/standalone_host_dependency_probe_plan.v1.json",
@@ -148,14 +146,8 @@
       "artifact_key": "probe_plan",
       "identity_field": "bead",
       "identity_value": "bd-b92jd.1.1",
-      "covers": [
-        "tests.conformance.primary"
-      ],
-      "required_artifact_keys": [
-        "probe_checker",
-        "probe_test",
-        "standalone_artifact"
-      ],
+      "covers": ["tests.conformance.primary"],
+      "required_artifact_keys": ["probe_checker", "probe_test", "standalone_artifact"],
       "required_test_refs": [
         {
           "source": "probe_test",
@@ -192,9 +184,7 @@
     {
       "missing_item_id": "tests.conformance.primary",
       "status": "covered",
-      "binding_ids": [
-        "standalone_host_dependency_probe_stale_source_gate"
-      ],
+      "binding_ids": ["standalone_host_dependency_probe_stale_source_gate"],
       "validation_commands": [
         "bash scripts/check_standalone_host_dependency_probe_completion_contract.sh",
         "bash scripts/check_standalone_host_dependency_probe_plan.sh",

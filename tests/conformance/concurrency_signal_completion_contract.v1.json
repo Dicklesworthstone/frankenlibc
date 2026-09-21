@@ -66,12 +66,7 @@
     {
       "artifact_id": "signal_native_script",
       "path": "scripts/check_signal_native.sh",
-      "required_needles": [
-        "signal_native",
-        "trace_id",
-        "api_family\":\"signal",
-        "artifact_refs"
-      ]
+      "required_needles": ["signal_native", "trace_id", "api_family\":\"signal", "artifact_refs"]
     },
     {
       "artifact_id": "pthread_native_script",
@@ -138,10 +133,7 @@
     "fuzz_primary": {
       "missing_item_id": "tests.fuzz.primary",
       "contract_artifact_id": "fuzz_gap_contract",
-      "required_modules": [
-        "signal",
-        "pthread"
-      ],
+      "required_modules": ["signal", "pthread"],
       "required_targets": [
         "fuzz_signal",
         "fuzz_pthread_mutex",
@@ -150,17 +142,11 @@
         "fuzz_pthread_rwlock",
         "fuzz_pthread_sync_misc"
       ],
-      "required_commands": [
-        "bash scripts/check_fuzz_gap_abi_modules_completion_contract.sh"
-      ]
+      "required_commands": ["bash scripts/check_fuzz_gap_abi_modules_completion_contract.sh"]
     },
     "conformance_primary": {
       "missing_item_id": "tests.conformance.primary",
-      "artifact_ids": [
-        "signal_diff_test",
-        "signal_fixture_pack",
-        "pthread_fixture_pack"
-      ],
+      "artifact_ids": ["signal_diff_test", "signal_fixture_pack", "pthread_fixture_pack"],
       "required_commands": [
         "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_signal_helpers -- --nocapture",
         "bash scripts/check_signal_setjmp_async_cancellation_fixture_pack.sh"

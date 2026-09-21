@@ -77,27 +77,17 @@
     {
       "id": "stub_zero_full_replacement",
       "pattern": "Stub:\\s*0[^\\n]*(proves|confirms|establishes|means)[^\\n]*(full|complete|replacement|parity)",
-      "allowed_if_line_contains": [
-        "not ",
-        "block"
-      ]
+      "allowed_if_line_contains": ["not ", "block"]
     },
     {
       "id": "implemented_means_semantic_parity",
       "pattern": "Implemented[^\\n]*(means|proves|confirms|establishes)[^\\n]*(semantic|behavior)[^\\n]*parity",
-      "allowed_if_line_contains": [
-        "not ",
-        "does not"
-      ]
+      "allowed_if_line_contains": ["not ", "does not"]
     },
     {
       "id": "full_standalone_today",
       "pattern": "full standalone (libc )?replacement (today|now|profile)",
-      "allowed_if_line_contains": [
-        "not ",
-        "future",
-        "planned"
-      ]
+      "allowed_if_line_contains": ["not ", "future", "planned"]
     }
   ],
   "required_log_fields": [

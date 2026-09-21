@@ -182,9 +182,7 @@
       },
       {
         "spec_item": "tests.e2e.primary",
-        "implementation_refs": [
-          "scripts/check_bp8fl_dependency_edges_completion_contract.sh"
-        ],
+        "implementation_refs": ["scripts/check_bp8fl_dependency_edges_completion_contract.sh"],
         "test_refs": [
           "crates/frankenlibc-harness/tests/bp8fl_dependency_edges_completion_contract_test.rs"
         ],
@@ -201,10 +199,7 @@
     "required_bv_cycle_break": {
       "status_state": "available",
       "cycle_count": 0,
-      "advisory_terms": [
-        "No cycles detected",
-        "proper DAG"
-      ]
+      "advisory_terms": ["No cycles detected", "proper DAG"]
     }
   },
   "completion_output_contract": {

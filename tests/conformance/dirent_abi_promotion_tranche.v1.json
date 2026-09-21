@@ -11,10 +11,7 @@
   },
   "policy": {
     "support_matrix_status": "Implemented",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "classification": "native-dirent64-alias-with-errno-bridge",
     "accepted_host_symbols": [
       "<dynamic>",

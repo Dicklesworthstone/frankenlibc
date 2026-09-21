@@ -79,25 +79,10 @@
   },
   "wave_plan": [],
   "integration_hooks": {
-    "setjmp": [
-      "bd-1gh"
-    ],
-    "tls": [
-      "bd-rth1",
-      "bd-yos"
-    ],
-    "threading": [
-      "bd-z84",
-      "bd-yos",
-      "bd-3hud",
-      "bd-1f35"
-    ],
-    "hard_parts": [
-      "bd-24ug",
-      "bd-3rn",
-      "bd-66s",
-      "bd-3pe"
-    ]
+    "setjmp": ["bd-1gh"],
+    "tls": ["bd-rth1", "bd-yos"],
+    "threading": ["bd-z84", "bd-yos", "bd-3hud", "bd-1f35"],
+    "hard_parts": ["bd-24ug", "bd-3rn", "bd-66s", "bd-3pe"]
   },
   "summary": {
     "top_n": 0,

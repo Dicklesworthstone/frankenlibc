@@ -199,16 +199,8 @@
       "stale_ledger_reconciled",
       "followup_child_beads_not_created"
     ],
-    "required_guard_modes": [
-      "replacement",
-      "interpose"
-    ],
-    "required_stale_todo_ids": [
-      "TODO-0203f",
-      "TODO-0204",
-      "TODO-0205",
-      "TODO-0206"
-    ]
+    "required_guard_modes": ["replacement", "interpose"],
+    "required_stale_todo_ids": ["TODO-0203f", "TODO-0204", "TODO-0205", "TODO-0206"]
   },
   "missing_item_bindings": [
     {

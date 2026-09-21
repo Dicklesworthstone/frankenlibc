@@ -54,18 +54,8 @@
       "direct_runner",
       "isolated_runner"
     ],
-    "expected_required_fields": [
-      "result",
-      "errno",
-      "h_errno",
-      "status",
-      "user_diagnostic"
-    ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ]
+    "expected_required_fields": ["result", "errno", "h_errno", "status", "user_diagnostic"],
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"]
   },
   "required_query_kinds": [
     "hosts_lookup",

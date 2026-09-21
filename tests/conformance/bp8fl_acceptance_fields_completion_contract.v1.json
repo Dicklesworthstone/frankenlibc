@@ -25,10 +25,7 @@
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.2.5/scorecard.md",
     "audit_score": 590,
     "next_audit_score_threshold": 700,
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary"],
     "original_close_reason": "Attached first-class acceptance criteria to the 11 bd-bp8fl rows that were missing the field, preserving bead-specific scope while adding evidence, test, logging, artifact, and exact-closure requirements; verified all 89 bd-bp8fl rows now have acceptance criteria and no dependency cycles."
   },
   "historical_scope": {
@@ -42,120 +39,43 @@
     "required_aggregate_terms": [
       {
         "term_id": "preserve_existing_scope",
-        "any_of": [
-          [
-            "preserve"
-          ]
-        ]
+        "any_of": [["preserve"]]
       },
       {
         "term_id": "unit_test_obligations",
-        "any_of": [
-          [
-            "unit tests"
-          ],
-          [
-            "unit test"
-          ]
-        ]
+        "any_of": [["unit tests"], ["unit test"]]
       },
       {
         "term_id": "deterministic_e2e_or_harness",
-        "any_of": [
-          [
-            "deterministic e2e"
-          ],
-          [
-            "deterministic scripts"
-          ],
-          [
-            "harness"
-          ]
-        ]
+        "any_of": [["deterministic e2e"], ["deterministic scripts"], ["harness"]]
       },
       {
         "term_id": "structured_logs",
-        "any_of": [
-          [
-            "structured logs"
-          ],
-          [
-            "trace_id",
-            "failure_signature"
-          ]
-        ]
+        "any_of": [["structured logs"], ["trace_id", "failure_signature"]]
       },
       {
         "term_id": "artifact_references",
-        "any_of": [
-          [
-            "artifact"
-          ],
-          [
-            "artifacts"
-          ]
-        ]
+        "any_of": [["artifact"], ["artifacts"]]
       },
       {
         "term_id": "source_commit_freshness",
-        "any_of": [
-          [
-            "source_commit"
-          ],
-          [
-            "source-of-truth freshness"
-          ]
-        ]
+        "any_of": [["source_commit"], ["source-of-truth freshness"]]
       },
       {
         "term_id": "exact_closure_commands",
-        "any_of": [
-          [
-            "exact commands"
-          ],
-          [
-            "closure commands"
-          ]
-        ]
+        "any_of": [["exact commands"], ["closure commands"]]
       },
       {
         "term_id": "claim_gates",
-        "any_of": [
-          [
-            "claim gates"
-          ],
-          [
-            "claim"
-          ]
-        ]
+        "any_of": [["claim gates"], ["claim"]]
       },
       {
         "term_id": "no_feature_loss",
-        "any_of": [
-          [
-            "no-feature-loss"
-          ],
-          [
-            "no existing feature"
-          ],
-          [
-            "do not narrow"
-          ]
-        ]
+        "any_of": [["no-feature-loss"], ["no existing feature"], ["do not narrow"]]
       },
       {
         "term_id": "br_bv_validation",
-        "any_of": [
-          [
-            "br dep cycles"
-          ],
-          [
-            "bv robot"
-          ],
-          [
-            "bv --robot"
-          ]
-        ]
+        "any_of": [["br dep cycles"], ["bv robot"], ["bv --robot"]]
       }
     ],
     "required_tracker_checks": [
@@ -171,65 +91,47 @@
         {
           "artifact": "parent_acceptance_replay_test",
           "name": "artifact_defines_aixvz_completion_debt_contract",
-          "covers": [
-            "parent acceptance replay schema and required fields"
-          ]
+          "covers": ["parent acceptance replay schema and required fields"]
         },
         {
           "artifact": "parent_acceptance_replay_test",
           "name": "fixture_replay_proves_missing_duplicate_and_weak_rows_fail_closed",
-          "covers": [
-            "missing, duplicate, and weak acceptance rows fail closed"
-          ]
+          "covers": ["missing, duplicate, and weak acceptance rows fail closed"]
         },
         {
           "artifact": "parent_acceptance_replay_test",
           "name": "valid_parent_fixture_rows_pass_acceptance_replay",
-          "covers": [
-            "valid parent acceptance rows pass replay"
-          ]
+          "covers": ["valid parent acceptance rows pass replay"]
         },
         {
           "artifact": "parent_acceptance_replay_test",
           "name": "checker_script_is_read_only_and_names_tool_probe_contract",
-          "covers": [
-            "read-only checker and no-db tool probe contract"
-          ]
+          "covers": ["read-only checker and no-db tool probe contract"]
         },
         {
           "artifact": "reality_bridge_import_test",
           "name": "artifact_defines_import_mapping_contract",
-          "covers": [
-            "reality bridge import contract shape"
-          ]
+          "covers": ["reality bridge import contract shape"]
         },
         {
           "artifact": "reality_bridge_import_test",
           "name": "backlog_and_feature_gap_rows_are_preserved_without_rejections",
-          "covers": [
-            "zero missing acceptance targets in imported backlog and feature-gap rows"
-          ]
+          "covers": ["zero missing acceptance targets in imported backlog and feature-gap rows"]
         },
         {
           "artifact": "reality_bridge_import_test",
           "name": "fixture_replay_emits_report_logs_and_negative_cases",
-          "covers": [
-            "missing_acceptance negative case plus report/log replay"
-          ]
+          "covers": ["missing_acceptance negative case plus report/log replay"]
         },
         {
           "artifact": "ambition_graph_lint_test",
           "name": "artifact_defines_graph_readiness_contract",
-          "covers": [
-            "acceptance-contract lint schema"
-          ]
+          "covers": ["acceptance-contract lint schema"]
         },
         {
           "artifact": "ambition_graph_lint_test",
           "name": "fixture_replay_emits_actionable_findings",
-          "covers": [
-            "weak acceptance findings emit structured diagnostics"
-          ]
+          "covers": ["weak acceptance findings emit structured diagnostics"]
         }
       ],
       "required_commands": [

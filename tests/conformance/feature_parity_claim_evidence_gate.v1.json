@@ -75,10 +75,7 @@
     {
       "claim_id": "feature-parity-macro-targets",
       "claim_surface": "FEATURE_PARITY.md",
-      "required_tokens": [
-        "Macro Coverage Targets",
-        "IN_PROGRESS"
-      ],
+      "required_tokens": ["Macro Coverage Targets", "IN_PROGRESS"],
       "evidence_refs": [
         "tests/conformance/fpg_claim_control_gate.v1.json",
         "tests/conformance/feature_parity_gap_ledger.v1.json",
@@ -88,11 +85,7 @@
     {
       "claim_id": "support-taxonomy-counts",
       "claim_surface": "support_matrix.json",
-      "required_tokens": [
-        "\"summary\"",
-        "\"symbols\"",
-        "\"mode_contract\""
-      ],
+      "required_tokens": ["\"summary\"", "\"symbols\"", "\"mode_contract\""],
       "evidence_refs": [
         "support_matrix.json",
         "tests/conformance/support_matrix_maintenance_report.v1.json"
@@ -101,11 +94,7 @@
     {
       "claim_id": "semantic-overlay-blocker",
       "claim_surface": "tests/conformance/support_semantic_overlay.v1.json",
-      "required_tokens": [
-        "release_blocker",
-        "audited_entries",
-        "semantic_contract_classes"
-      ],
+      "required_tokens": ["release_blocker", "audited_entries", "semantic_contract_classes"],
       "evidence_refs": [
         "tests/conformance/support_semantic_overlay.v1.json",
         "tests/conformance/semantic_contract_symbol_join.v1.json",
@@ -129,11 +118,7 @@
     {
       "claim_id": "compatibility-reality-report",
       "claim_surface": "tests/conformance/reality_report.v1.json",
-      "required_tokens": [
-        "total_exported",
-        "implemented",
-        "raw_syscall"
-      ],
+      "required_tokens": ["total_exported", "implemented", "raw_syscall"],
       "evidence_refs": [
         "tests/conformance/reality_report.v1.json",
         "tests/conformance/conformance_matrix.v1.json",
@@ -181,9 +166,7 @@
       "simulated_advancement": true,
       "simulated_claim": "Status moves from IN_PROGRESS to DONE",
       "evidence_refs": [],
-      "required_evidence_refs": [
-        "tests/conformance/fpg_claim_control_gate.v1.json"
-      ],
+      "required_evidence_refs": ["tests/conformance/fpg_claim_control_gate.v1.json"],
       "source_commit_state": "current",
       "expected_decision": "block",
       "expected_failure_signature": "claim_advancement_missing_evidence"
@@ -194,9 +177,7 @@
       "claim_surface": "README.md",
       "simulated_advancement": true,
       "simulated_claim": "Declared replacement level claim changes from L1 to L2",
-      "evidence_refs": [
-        "README.md"
-      ],
+      "evidence_refs": ["README.md"],
       "required_evidence_refs": [
         "tests/conformance/replacement_levels.json",
         "tests/conformance/claim_reconciliation_report.v1.json"

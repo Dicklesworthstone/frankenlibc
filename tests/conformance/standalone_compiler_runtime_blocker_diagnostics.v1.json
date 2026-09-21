@@ -34,9 +34,7 @@
     "cargo_package": "frankenlibc-abi",
     "crate_type": "cdylib",
     "cargo_profile": "release",
-    "cargo_features": [
-      "standalone"
-    ],
+    "cargo_features": ["standalone"],
     "build_command": [
       "rch",
       "exec",
@@ -86,23 +84,14 @@
       "readelf_dynamic": {
         "command": "readelf -d libfrankenlibc_replace.so",
         "exit_code": 0,
-        "observed_needed_libraries": [
-          "libgcc_s.so.1",
-          "ld-linux-x86-64.so.2"
-        ]
+        "observed_needed_libraries": ["libgcc_s.so.1", "ld-linux-x86-64.so.2"]
       },
       "readelf_version": {
         "command": "readelf --version-info libfrankenlibc_replace.so",
         "exit_code": 0,
         "observed_version_needs": {
-          "libgcc_s.so.1": [
-            "GCC_3.0",
-            "GCC_3.3",
-            "GCC_4.2.0"
-          ],
-          "ld-linux-x86-64.so.2": [
-            "GLIBC_2.3"
-          ]
+          "libgcc_s.so.1": ["GCC_3.0", "GCC_3.3", "GCC_4.2.0"],
+          "ld-linux-x86-64.so.2": ["GLIBC_2.3"]
         }
       },
       "nm_dynamic": {
@@ -140,20 +129,14 @@
       "blocking_reason": "libgcc_runtime_dependency",
       "owner_surface": "compiler_runtime",
       "observed_values": {
-        "needed_libraries": [
-          "libgcc_s.so.1"
-        ],
+        "needed_libraries": ["libgcc_s.so.1"],
         "host_version_requirements": [
           "libgcc_s.so.1:GCC_3.0",
           "libgcc_s.so.1:GCC_3.3",
           "libgcc_s.so.1:GCC_4.2.0"
         ],
         "version_needs": {
-          "libgcc_s.so.1": [
-            "GCC_3.0",
-            "GCC_3.3",
-            "GCC_4.2.0"
-          ]
+          "libgcc_s.so.1": ["GCC_3.0", "GCC_3.3", "GCC_4.2.0"]
         }
       },
       "evidence": [
@@ -211,10 +194,7 @@
       "command": "rch exec -- cargo build -p frankenlibc-abi --release --features=standalone",
       "panic_strategy": "implicit-unwind",
       "expected_claim_status": "claim_blocked",
-      "expected_blockers": [
-        "libgcc_runtime_dependency",
-        "undefined_unwind_symbols"
-      ],
+      "expected_blockers": ["libgcc_runtime_dependency", "undefined_unwind_symbols"],
       "validation": [
         "scripts/check_standalone_replacement_artifact.sh --forge",
         "readelf -d libfrankenlibc_replace.so",
@@ -248,10 +228,7 @@
       "observed_link_arg": "-C link-arg=-nostdlib",
       "observed_forge_claim_status": "claim_blocked",
       "observed_delta_classification": "unchanged",
-      "observed_needed_libraries": [
-        "ld-linux-x86-64.so.2",
-        "libgcc_s.so.1"
-      ],
+      "observed_needed_libraries": ["ld-linux-x86-64.so.2", "libgcc_s.so.1"],
       "observed_host_resolved_libraries": [
         "/lib64/ld-linux-x86-64.so.2",
         "libc.so.6",

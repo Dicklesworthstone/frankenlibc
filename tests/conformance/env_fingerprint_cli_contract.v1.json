@@ -7,12 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes system_fingerprint::{detect_components, environment_fingerprint, validate_environment_fingerprint} (bd-6epxt) as a standalone CLI. Previously these were only reachable transitively via LiveMeasurement; the env-fingerprint subcommand makes them invokable for CI artifact pinning + fingerprint validation without writing Rust.",
   "subcommand_name": "env-fingerprint",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
-  "optional_flags": [
-    "--validate"
-  ],
+  "required_flags": ["--output"],
+  "optional_flags": ["--validate"],
   "underlying_lib_functions": [
     "frankenlibc_harness::system_fingerprint::detect_components",
     "frankenlibc_harness::system_fingerprint::environment_fingerprint",
@@ -42,26 +38,13 @@
       "cpus",
       "kernel_release"
     ],
-    "validate_required_fields_when_ok_false": [
-      "kind",
-      "input",
-      "ok",
-      "error"
-    ]
+    "validate_required_fields_when_ok_false": ["kind", "input", "ok", "error"]
   },
   "modes": {
     "detect": {
       "selected_when": "validate is absent",
       "record_kind_marker": "environment_fingerprint",
-      "required_fields": [
-        "kind",
-        "fingerprint",
-        "os",
-        "arch",
-        "cpus",
-        "kernel_release",
-        "source"
-      ]
+      "required_fields": ["kind", "fingerprint", "os", "arch", "cpus", "kernel_release", "source"]
     },
     "validate": {
       "selected_when": "validate is present",
@@ -75,12 +58,7 @@
         "cpus",
         "kernel_release"
       ],
-      "required_fields_when_ok_false": [
-        "kind",
-        "input",
-        "ok",
-        "error"
-      ]
+      "required_fields_when_ok_false": ["kind", "input", "ok", "error"]
     }
   },
   "policy": {

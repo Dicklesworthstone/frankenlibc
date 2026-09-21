@@ -90,10 +90,7 @@
         "fixture": "resolver_fixture",
         "fixture_function": "getaddrinfo",
         "fixture_case_min": 4,
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "unit_test_refs": [
           {
             "source": "core_resolver",
@@ -119,16 +116,11 @@
         "symbol": "gethostbyname",
         "family": "resolver",
         "abi_ref": "crates/frankenlibc-abi/src/resolv_abi.rs:1629",
-        "core_refs": [
-          "crates/frankenlibc-core/src/resolv/mod.rs:538"
-        ],
+        "core_refs": ["crates/frankenlibc-core/src/resolv/mod.rs:538"],
         "fixture": "resolver_fixture",
         "fixture_function": "gethostbyname",
         "fixture_case_min": 2,
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "unit_test_refs": [
           {
             "source": "core_resolver",
@@ -154,16 +146,11 @@
         "symbol": "getpwnam",
         "family": "nss",
         "abi_ref": "crates/frankenlibc-abi/src/pwd_abi.rs:343",
-        "core_refs": [
-          "crates/frankenlibc-core/src/pwd/mod.rs:93"
-        ],
+        "core_refs": ["crates/frankenlibc-core/src/pwd/mod.rs:93"],
         "fixture": "passwd_fixture",
         "fixture_function": "getpwnam",
         "fixture_case_min": 4,
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "unit_test_refs": [
           {
             "source": "core_passwd",
@@ -189,16 +176,11 @@
         "symbol": "getgrnam",
         "family": "nss",
         "abi_ref": "crates/frankenlibc-abi/src/grp_abi.rs:353",
-        "core_refs": [
-          "crates/frankenlibc-core/src/grp/mod.rs:76"
-        ],
+        "core_refs": ["crates/frankenlibc-core/src/grp/mod.rs:76"],
         "fixture": "group_fixture",
         "fixture_function": "getgrnam",
         "fixture_case_min": 4,
-        "required_modes": [
-          "strict",
-          "hardened"
-        ],
+        "required_modes": ["strict", "hardened"],
         "unit_test_refs": [
           {
             "source": "core_group",
@@ -351,9 +333,7 @@
         "resolver_nss_family_symbol_bound",
         "resolver_nss_family_completion_summary"
       ],
-      "forbidden_events": [
-        "resolver_nss_family_completion_contract_failed"
-      ],
+      "forbidden_events": ["resolver_nss_family_completion_contract_failed"],
       "required_fields": [
         "timestamp",
         "trace_id",

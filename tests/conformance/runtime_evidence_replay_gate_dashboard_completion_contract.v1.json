@@ -16,10 +16,7 @@
     "completion_harness": "crates/frankenlibc-harness/tests/runtime_evidence_replay_gate_dashboard_completion_contract_test.rs"
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.conformance.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.conformance.primary", "telemetry.primary"],
     "required_dashboard": {
       "schema_version": "v1",
       "total_rows_min": 619,
@@ -187,9 +184,7 @@
       "runtime_replay_dashboard.source_gates_replayed",
       "runtime_replay_dashboard.completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "runtime_replay_dashboard.completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["runtime_replay_dashboard.completion_contract_fail"]
   },
   "required_test_functions": {
     "positive": [

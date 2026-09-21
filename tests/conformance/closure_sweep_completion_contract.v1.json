@@ -7,10 +7,7 @@
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
     "scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.10.3/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "source_paths": {
     "closure_engine": "scripts/closure_sweep.py",
@@ -441,9 +438,7 @@
     "expected_open_gap_beads": 0,
     "expected_drift_gates_status": "armed",
     "expected_closure_ready": false,
-    "required_non_closure_categories": [
-      "fixture_coverage"
-    ],
+    "required_non_closure_categories": ["fixture_coverage"],
     "expected_uncovered_zero_modules": [
       "c11threads_abi",
       "err_abi",

@@ -1,11 +1,7 @@
 {
   "schema_version": "architecture_migration_state_report.v1",
   "generated_by_bead": "bd-0agsk.16",
-  "source_todo_ids": [
-    "TODO-1001",
-    "TODO-1002",
-    "TODO-1003"
-  ],
+  "source_todo_ids": ["TODO-1001", "TODO-1002", "TODO-1003"],
   "canonical_command": "scripts/check_architecture_migration_state_report.sh --validate-only",
   "purpose": "Checked evidence report tying live crate surfaces, artifact flows, replacement-readiness claims, and strict/hardened terminology to current machine artifacts.",
   "branch_reference_policy": {
@@ -136,9 +132,7 @@
       "crate": "frankenlibc-core",
       "crate_path": "crates/frankenlibc-core",
       "role": "safe Rust semantic kernels used by native ABI paths",
-      "source_paths": [
-        "crates/frankenlibc-core/src"
-      ],
+      "source_paths": ["crates/frankenlibc-core/src"],
       "evidence_artifacts": [
         "support_matrix.json",
         "tests/conformance/support_matrix_maintenance_report.v1.json",
@@ -148,9 +142,7 @@
         "scripts/check_fixture_schema_validation.sh",
         "scripts/check_support_reality_regeneration.sh"
       ],
-      "expected_outputs": [
-        "target/conformance/fixture_schema_validation.report.json"
-      ]
+      "expected_outputs": ["target/conformance/fixture_schema_validation.report.json"]
     },
     {
       "crate": "frankenlibc-membrane",
@@ -201,48 +193,31 @@
       "crate": "frankenlibc-fixture-exec",
       "crate_path": "crates/frankenlibc-fixture-exec",
       "role": "fixture execution helper for conformance case evaluation",
-      "source_paths": [
-        "crates/frankenlibc-fixture-exec/src"
-      ],
+      "source_paths": ["crates/frankenlibc-fixture-exec/src"],
       "evidence_artifacts": [
         "tests/conformance/fixture_schema_validation.v1.json",
         "tests/conformance/fixtures"
       ],
-      "scripts": [
-        "scripts/check_fixture_schema_validation.sh"
-      ],
-      "expected_outputs": [
-        "target/conformance/fixture_schema_validation.report.json"
-      ]
+      "scripts": ["scripts/check_fixture_schema_validation.sh"],
+      "expected_outputs": ["target/conformance/fixture_schema_validation.report.json"]
     },
     {
       "crate": "frankenlibc-bench",
       "crate_path": "crates/frankenlibc-bench",
       "role": "performance benchmark crate tied to strict/hardened latency budget evidence",
-      "source_paths": [
-        "crates/frankenlibc-bench/benches"
-      ],
+      "source_paths": ["crates/frankenlibc-bench/benches"],
       "evidence_artifacts": [
         "tests/conformance/replacement_levels.json",
         "tests/conformance/perf_regression_prevention.v1.json"
       ],
-      "scripts": [
-        "scripts/check_replacement_guard.sh"
-      ],
-      "expected_outputs": [
-        "target/conformance/replacement_guard.report.json"
-      ]
+      "scripts": ["scripts/check_replacement_guard.sh"],
+      "expected_outputs": ["target/conformance/replacement_guard.report.json"]
     }
   ],
   "module_family_status": [
     {
       "family": "process_startup",
-      "modules": [
-        "startup_abi",
-        "process_abi",
-        "setjmp_abi",
-        "runtime_policy"
-      ],
+      "modules": ["startup_abi", "process_abi", "setjmp_abi", "runtime_policy"],
       "total_symbols": 43,
       "status_counts": {
         "Implemented": 14,
@@ -260,12 +235,7 @@
     },
     {
       "family": "memory_string_alloc",
-      "modules": [
-        "malloc_abi",
-        "mmap_abi",
-        "fortify_abi",
-        "string_abi"
-      ],
+      "modules": ["malloc_abi", "mmap_abi", "fortify_abi", "string_abi"],
       "total_symbols": 255,
       "status_counts": {
         "Implemented": 144,
@@ -308,11 +278,7 @@
     },
     {
       "family": "math_numeric",
-      "modules": [
-        "math_abi",
-        "fenv_abi",
-        "stdbit_abi"
-      ],
+      "modules": ["math_abi", "fenv_abi", "stdbit_abi"],
       "total_symbols": 1346,
       "status_counts": {
         "Implemented": 837,
@@ -330,10 +296,7 @@
     },
     {
       "family": "threading",
-      "modules": [
-        "pthread_abi",
-        "c11threads_abi"
-      ],
+      "modules": ["pthread_abi", "c11threads_abi"],
       "total_symbols": 166,
       "status_counts": {
         "Implemented": 129,
@@ -351,12 +314,7 @@
     },
     {
       "family": "locale_encoding_text",
-      "modules": [
-        "locale_abi",
-        "iconv_abi",
-        "wchar_abi",
-        "ctype_abi"
-      ],
+      "modules": ["locale_abi", "iconv_abi", "wchar_abi", "ctype_abi"],
       "total_symbols": 214,
       "status_counts": {
         "Implemented": 160,
@@ -374,14 +332,7 @@
     },
     {
       "family": "network_identity_rpc",
-      "modules": [
-        "socket_abi",
-        "inet_abi",
-        "resolv_abi",
-        "rpc_abi",
-        "grp_abi",
-        "pwd_abi"
-      ],
+      "modules": ["socket_abi", "inet_abi", "resolv_abi", "rpc_abi", "grp_abi", "pwd_abi"],
       "total_symbols": 240,
       "status_counts": {
         "Implemented": 172,
@@ -392,10 +343,7 @@
       },
       "interpose_ready": "evidence_backed",
       "replacement_ready": "blocked_by_nss_resolver_backend",
-      "evidence_artifacts": [
-        "support_matrix.json",
-        "tests/conformance/replacement_levels.json"
-      ]
+      "evidence_artifacts": ["support_matrix.json", "tests/conformance/replacement_levels.json"]
     },
     {
       "family": "system_misc",
@@ -425,12 +373,7 @@
     },
     {
       "family": "dynamic_compat_internal",
-      "modules": [
-        "dlfcn_abi",
-        "glibc_internal_abi",
-        "isoc_abi",
-        "search_abi"
-      ],
+      "modules": ["dlfcn_abi", "glibc_internal_abi", "isoc_abi", "search_abi"],
       "total_symbols": 588,
       "status_counts": {
         "Implemented": 347,
@@ -473,18 +416,14 @@
       "display": "both modes",
       "semantics": "A fixture row applies to both strict and hardened mode when compatibility behavior is intentionally shared.",
       "fixture_semantics": "The fixture schema gate accepts mode values strict, hardened, and both.",
-      "evidence_artifacts": [
-        "tests/conformance/fixture_schema_validation.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/fixture_schema_validation.v1.json"]
     },
     {
       "term": "startup_evidence",
       "display": "startup evidence",
       "semantics": "Subprocess campaigns must log the resolved runtime mode near launch rather than inheriting ambient state silently.",
       "fixture_semantics": "Runtime-mode evidence rows require startup evidence and explicit mismatch behavior.",
-      "evidence_artifacts": [
-        "tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"
-      ]
+      "evidence_artifacts": ["tests/conformance/runtime_mode_evidence_logging_coverage.v1.json"]
     }
   ],
   "validation_commands": [

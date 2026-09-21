@@ -91,19 +91,10 @@
   "coverage_requirements": {
     "fixture_file": "unistd_process_filesystem_wave02.json",
     "fixture_family": "unistd/process-filesystem",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_case_count": 24,
     "residual_symbols": [],
-    "structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
+    "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
     "ambient_state_policy": "forbid_ambient_process_filesystem_or_key_metadata",
     "min_target_covered": 59,
     "max_target_uncovered": 683,
@@ -138,10 +129,7 @@
   "dependency_proof": {
     "command": "AGENT_NAME=BrownTern br --no-db dep cycles --json",
     "expected_empty": true,
-    "prerequisite_beads": [
-      "bd-pz1g1.1",
-      "bd-pz1g1.2"
-    ],
+    "prerequisite_beads": ["bd-pz1g1.1", "bd-pz1g1.2"],
     "tracker_closeout_commit": "7271f47e5f03af8c952a7de6faff19b4575f606f"
   },
   "validation_commands": [

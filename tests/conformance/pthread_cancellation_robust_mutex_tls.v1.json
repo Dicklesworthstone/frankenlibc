@@ -63,20 +63,9 @@
     "pthread_setspecific",
     "pthread_testcancel"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
-  "required_replacement_levels": [
-    "L0"
-  ],
-  "required_errno_classes": [
-    "none",
-    "ECANCELED",
-    "EOWNERDEAD",
-    "ETIMEDOUT",
-    "ENOSYS"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
+  "required_replacement_levels": ["L0"],
+  "required_errno_classes": ["none", "ECANCELED", "EOWNERDEAD", "ETIMEDOUT", "ENOSYS"],
   "diagnostic_signatures": [
     {
       "id": "missing_field",
@@ -129,10 +118,7 @@
       "runtime_mode": "strict",
       "replacement_level": "L0",
       "oracle_kind": "host_glibc_fixture",
-      "covered_symbols": [
-        "pthread_cancel",
-        "pthread_join"
-      ],
+      "covered_symbols": ["pthread_cancel", "pthread_join"],
       "expected": {
         "status": "blocked",
         "errno": "ENOSYS",
@@ -148,16 +134,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_pthread -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"]
       }
     },
     {
@@ -173,10 +155,7 @@
       "runtime_mode": "hardened",
       "replacement_level": "L0",
       "oracle_kind": "semantic_overlay",
-      "covered_symbols": [
-        "_pthread_cleanup_push",
-        "_pthread_cleanup_pop"
-      ],
+      "covered_symbols": ["_pthread_cleanup_push", "_pthread_cleanup_pop"],
       "expected": {
         "status": "pass",
         "errno": "none",
@@ -192,16 +171,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_abi_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"]
       }
     },
     {
@@ -237,16 +212,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_mutex_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_mutex_conformance_test.rs"]
       }
     },
     {
@@ -262,10 +233,7 @@
       "runtime_mode": "hardened",
       "replacement_level": "L0",
       "oracle_kind": "semantic_overlay",
-      "covered_symbols": [
-        "pthread_atfork",
-        "fork"
-      ],
+      "covered_symbols": ["pthread_atfork", "fork"],
       "expected": {
         "status": "pass",
         "errno": "none",
@@ -281,16 +249,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_abi_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_standalone_link_run_smoke.sh",
-        "artifact_refs": [
-          "scripts/check_standalone_link_run_smoke.sh"
-        ]
+        "artifact_refs": ["scripts/check_standalone_link_run_smoke.sh"]
       }
     },
     {
@@ -306,9 +270,7 @@
       "runtime_mode": "strict",
       "replacement_level": "L0",
       "oracle_kind": "host_glibc_fixture",
-      "covered_symbols": [
-        "pthread_cond_timedwait"
-      ],
+      "covered_symbols": ["pthread_cond_timedwait"],
       "expected": {
         "status": "timeout",
         "errno": "ETIMEDOUT",
@@ -324,16 +286,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_cond_core_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_cond_core_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_cond_core_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_cond_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_cond_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_cond_conformance_test.rs"]
       }
     },
     {
@@ -349,11 +307,7 @@
       "runtime_mode": "hardened",
       "replacement_level": "L0",
       "oracle_kind": "host_glibc_fixture",
-      "covered_symbols": [
-        "pthread_key_create",
-        "pthread_setspecific",
-        "__call_tls_dtors"
-      ],
+      "covered_symbols": ["pthread_key_create", "pthread_setspecific", "__call_tls_dtors"],
       "expected": {
         "status": "pass",
         "errno": "none",
@@ -369,16 +323,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_tsd_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_tsd_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_tsd_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_tls_keys_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_tls_keys_conformance_test.rs"]
       }
     },
     {
@@ -394,9 +344,7 @@
       "runtime_mode": "hardened",
       "replacement_level": "L0",
       "oracle_kind": "deterministic_timeout",
-      "covered_symbols": [
-        "pthread_mutex_lock"
-      ],
+      "covered_symbols": ["pthread_mutex_lock"],
       "expected": {
         "status": "timeout",
         "errno": "ETIMEDOUT",
@@ -412,16 +360,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test pthread_mutex_core_test -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/pthread_mutex_core_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_bd1f35_thread_stress.sh",
-        "artifact_refs": [
-          "scripts/check_bd1f35_thread_stress.sh"
-        ]
+        "artifact_refs": ["scripts/check_bd1f35_thread_stress.sh"]
       }
     },
     {
@@ -437,9 +381,7 @@
       "runtime_mode": "strict",
       "replacement_level": "L0",
       "oracle_kind": "semantic_overlay",
-      "covered_symbols": [
-        "pthread_testcancel"
-      ],
+      "covered_symbols": ["pthread_testcancel"],
       "expected": {
         "status": "pass",
         "errno": "none",
@@ -455,16 +397,12 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_pthread -- --nocapture --test-threads=1",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_pthread.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-harness --test pthread_thread_conformance_test -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-harness/tests/pthread_thread_conformance_test.rs"]
       }
     }
   ]

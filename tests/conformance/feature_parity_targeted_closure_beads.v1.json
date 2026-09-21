@@ -40,12 +40,8 @@
       "parent_issue_id": "bd-bp8fl.3",
       "missing_evidence_type": "claim_reconciliation_gate",
       "owner_area": "docs/conformance release-gate owners",
-      "required_unit_tests": [
-        "crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"
-      ],
-      "required_e2e_scripts": [
-        "scripts/check_fpg_claim_control_gate.sh --validate-only"
-      ],
+      "required_unit_tests": ["crates/frankenlibc-harness/tests/fpg_claim_control_gate_test.rs"],
+      "required_e2e_scripts": ["scripts/check_fpg_claim_control_gate.sh --validate-only"],
       "claim_surfaces": [
         "FEATURE_PARITY.md",
         "tests/conformance/replacement_levels.json",
@@ -66,9 +62,7 @@
         "crates/frankenlibc-harness/tests/conformance_fixture_pipeline_test.rs",
         "crates/frankenlibc-harness/tests/semantic_contract_symbol_join_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_feature_parity_gap_groups.sh"
-      ],
+      "required_e2e_scripts": ["scripts/check_feature_parity_gap_groups.sh"],
       "claim_surfaces": [
         "tests/conformance/fixtures/membrane_mode_split.json",
         "tests/conformance/symbol_fixture_coverage.v1.json",
@@ -85,12 +79,8 @@
       "parent_issue_id": "bd-bp8fl.3",
       "missing_evidence_type": "link_run_and_versioned_symbol_gate",
       "owner_area": "ABI, loader, syscall, process, and hard-parts harness owners",
-      "required_unit_tests": [
-        "crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs"
-      ],
-      "required_e2e_scripts": [
-        "scripts/check_standalone_link_run_smoke.sh --run"
-      ],
+      "required_unit_tests": ["crates/frankenlibc-harness/tests/standalone_link_run_smoke_test.rs"],
+      "required_e2e_scripts": ["scripts/check_standalone_link_run_smoke.sh --run"],
       "claim_surfaces": [
         "crates/frankenlibc-abi/version_scripts/libc.map",
         "tests/conformance/standalone_link_run_smoke.v1.json",
@@ -110,9 +100,7 @@
       "required_unit_tests": [
         "crates/frankenlibc-harness/tests/fpg_proof_core_safety_gate_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_fpg_proof_core_safety_gate.sh --validate-only"
-      ],
+      "required_e2e_scripts": ["scripts/check_fpg_proof_core_safety_gate.sh --validate-only"],
       "claim_surfaces": [
         "tests/conformance/proof_obligations_binder.v1.json",
         "tests/conformance/proof_binder_validation.v1.json",
@@ -132,9 +120,7 @@
       "required_unit_tests": [
         "crates/frankenlibc-harness/tests/runtime_math_profile_gates_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_runtime_math_profile_gates.sh"
-      ],
+      "required_e2e_scripts": ["scripts/check_runtime_math_profile_gates.sh"],
       "claim_surfaces": [
         "tests/conformance/runtime_env_inventory.v1.json",
         "tests/conformance/perf_budget_policy.json",
@@ -155,9 +141,7 @@
         "crates/frankenlibc-harness/tests/fixture_coverage_prioritizer_test.rs",
         "crates/frankenlibc-harness/tests/symbol_latency_baseline_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
+      "required_e2e_scripts": ["scripts/check_fixture_coverage_prioritizer.sh"],
       "claim_surfaces": [
         "tests/conformance/branch_diversity_spec.v1.json",
         "tests/conformance/perf_regression_prevention.v1.json",
@@ -178,9 +162,7 @@
         "crates/frankenlibc-harness/tests/runtime_math_linkage_proofs_test.rs",
         "crates/frankenlibc-harness/tests/posix_traceability_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_runtime_math_epic_closure.sh"
-      ],
+      "required_e2e_scripts": ["scripts/check_runtime_math_epic_closure.sh"],
       "claim_surfaces": [
         "tests/conformance/proof_traceability_check.json",
         "tests/conformance/sheaf_coverage.v1.json",
@@ -200,9 +182,7 @@
       "required_unit_tests": [
         "crates/frankenlibc-harness/tests/fpg_evidence_foundation_gate_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_fpg_evidence_foundation_gate.sh --validate-only"
-      ],
+      "required_e2e_scripts": ["scripts/check_fpg_evidence_foundation_gate.sh --validate-only"],
       "claim_surfaces": [
         "tests/conformance/fixtures/",
         "tests/conformance/perf_baseline_spec.json",
@@ -219,12 +199,8 @@
       "parent_issue_id": "bd-bp8fl.3",
       "missing_evidence_type": "per_symbol_fixture_and_performance_gate",
       "owner_area": "ported core/ABI family owners",
-      "required_unit_tests": [
-        "crates/frankenlibc-harness/tests/fpg_ported_surface_gate_test.rs"
-      ],
-      "required_e2e_scripts": [
-        "scripts/check_fpg_ported_surface_gate.sh --validate-only"
-      ],
+      "required_unit_tests": ["crates/frankenlibc-harness/tests/fpg_ported_surface_gate_test.rs"],
+      "required_e2e_scripts": ["scripts/check_fpg_ported_surface_gate.sh --validate-only"],
       "claim_surfaces": [
         "tests/conformance/symbol_fixture_coverage.v1.json",
         "tests/conformance/per_symbol_fixture_tests.v1.json",
@@ -245,9 +221,7 @@
         "crates/frankenlibc-harness/tests/runtime_math_profile_gates_test.rs",
         "crates/frankenlibc-harness/tests/observability_dashboard_test.rs"
       ],
-      "required_e2e_scripts": [
-        "scripts/check_runtime_math_profile_gates.sh"
-      ],
+      "required_e2e_scripts": ["scripts/check_runtime_math_profile_gates.sh"],
       "claim_surfaces": [
         "tests/conformance/runtime_env_inventory.v1.json",
         "tests/conformance/optimization_proof_ledger.v1.json",

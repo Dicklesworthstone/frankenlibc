@@ -214,9 +214,7 @@
         "crates/frankenlibc-harness/tests/replacement_guard_test.rs",
         "crates/frankenlibc-harness/tests/replacement_guard_recheck_completion_contract_test.rs"
       ],
-      "runtime_validation": [
-        "bash scripts/check_replacement_guard_recheck_completion_contract.sh"
-      ]
+      "runtime_validation": ["bash scripts/check_replacement_guard_recheck_completion_contract.sh"]
     }
   ],
   "required_validation_commands": [

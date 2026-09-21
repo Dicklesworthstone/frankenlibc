@@ -30,10 +30,7 @@
       "completion_gate": "scripts/check_resolver_nss_hardening_completion_contract.sh",
       "completion_harness": "crates/frankenlibc-harness/tests/resolver_nss_hardening_completion_contract_test.rs"
     },
-    "directory_artifacts": [
-      "fuzz_resolv_corpus",
-      "fuzz_resolver_corpus"
-    ],
+    "directory_artifacts": ["fuzz_resolv_corpus", "fuzz_resolver_corpus"],
     "implementation_refs": [
       "crates/frankenlibc-core/src/resolv/mod.rs:538",
       "crates/frankenlibc-core/src/resolv/mod.rs:645",
@@ -72,15 +69,8 @@
         "resolver_covers_gethostbyname",
         "resolver_fixture_executes_via_harness"
       ],
-      "fuzz_resolv": [
-        "fuzz_parse_hosts_line",
-        "fuzz_lookup_hosts",
-        "fuzz_getaddrinfo"
-      ],
-      "fuzz_resolver": [
-        "fuzz_resolv_conf_parse",
-        "fuzz_domain_name_roundtrip"
-      ]
+      "fuzz_resolv": ["fuzz_parse_hosts_line", "fuzz_lookup_hosts", "fuzz_getaddrinfo"],
+      "fuzz_resolver": ["fuzz_resolv_conf_parse", "fuzz_domain_name_roundtrip"]
     },
     "missing_item_bindings": [
       {
@@ -213,10 +203,7 @@
           "name": "resolver_fixture_executes_via_harness"
         }
       ],
-      "required_artifacts": [
-        "hard_parts_manifest",
-        "hard_parts_gate"
-      ]
+      "required_artifacts": ["hard_parts_manifest", "hard_parts_gate"]
     },
     "telemetry_primary": {
       "description": "The completion checker emits deterministic report JSON plus JSONL rows for source refs, missing-item bindings, fuzz corpus, golden cases, and final pass/fail state.",

@@ -35,7 +35,12 @@
       },
       "subsystem_implementation": {
         "description": "Implement a new subsystem required for replacement level transition. High effort, architectural scope.",
-        "examples": ["CRT bootstrap", "NSS files backend", "stdio FILE* implementation", "rtld ELF loader"]
+        "examples": [
+          "CRT bootstrap",
+          "NSS files backend",
+          "stdio FILE* implementation",
+          "rtld ELF loader"
+        ]
       }
     }
   },
@@ -47,11 +52,7 @@
       "rollback_instructions",
       "attribution_metadata"
     ],
-    "golden_output_verification_fields": [
-      "artifact_refs",
-      "verification_command",
-      "invariants"
-    ],
+    "golden_output_verification_fields": ["artifact_refs", "verification_command", "invariants"],
     "rollback_instruction_fields": [
       "strategy",
       "command",

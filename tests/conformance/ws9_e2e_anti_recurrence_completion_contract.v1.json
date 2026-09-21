@@ -27,42 +27,27 @@
     },
     "bead_closure_freshness_policy": {
       "path": "tests/conformance/bead_closure_freshness_policy.v1.json",
-      "required_text": [
-        "proof_carrying_contract_enforcement"
-      ]
+      "required_text": ["proof_carrying_contract_enforcement"]
     },
     "proof_carrying_completion_contract": {
       "path": "tests/conformance/proof_carrying_completion_contracts_completion_contract.v1.json",
-      "required_text": [
-        "bd-iu3fb.1"
-      ]
+      "required_text": ["bd-iu3fb.1"]
     },
     "queue_empty_trigger_script": {
       "path": "scripts/check_queue_empty_reality_trigger.sh",
-      "required_text": [
-        "queue_empty_trigger",
-        "Goodhart collapse signal"
-      ]
+      "required_text": ["queue_empty_trigger", "Goodhart collapse signal"]
     },
     "queue_empty_trigger_completion_contract": {
       "path": "tests/conformance/queue_empty_reality_trigger_completion_contract.v1.json",
-      "required_text": [
-        "bd-iu3fb.2"
-      ]
+      "required_text": ["bd-iu3fb.2"]
     },
     "milestone_closure_script": {
       "path": "scripts/check_milestone_closure.sh",
-      "required_text": [
-        "Milestone done as a sequential stopping rule",
-        "closure_allowed"
-      ]
+      "required_text": ["Milestone done as a sequential stopping rule", "closure_allowed"]
     },
     "milestone_vision_goals": {
       "path": "tests/conformance/milestone_vision_goals.v1.json",
-      "required_text": [
-        "bd-iu3fb",
-        "test-unmet-required"
-      ]
+      "required_text": ["bd-iu3fb", "test-unmet-required"]
     },
     "ws9_e2e_script": {
       "path": "scripts/check_ws9_e2e_anti_recurrence.sh",
@@ -99,20 +84,13 @@
       "id": "queue_empty_triggers_reality_check",
       "description": "Synthetic br executable returns no ready/open work; queue-empty trigger-only mode must report trigger_condition=queue_empty and outcome=trigger_condition_met.",
       "expected_exit_code": 2,
-      "required_report_fields": [
-        "trigger_condition",
-        "outcome",
-        "trigger_only_mode"
-      ]
+      "required_report_fields": ["trigger_condition", "outcome", "trigger_only_mode"]
     },
     {
       "id": "unmet_milestone_blocks_closure",
       "description": "The synthetic test-unmet-required milestone has a missing required vision goal; the sequential stopping-rule gate must refuse closure.",
       "expected_exit_code": 1,
-      "required_report_fields": [
-        "closure_allowed",
-        "e_process.all_required_met"
-      ]
+      "required_report_fields": ["closure_allowed", "e_process.all_required_met"]
     },
     {
       "id": "ws9_child_companion_tests_pass",

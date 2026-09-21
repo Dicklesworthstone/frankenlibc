@@ -8,10 +8,7 @@
     "RuntimeMathKernel::snapshot"
   ],
   "generated_at": "2026-02-11T05:45:00Z",
-  "linkage_status_enum": [
-    "Production",
-    "ResearchOnly"
-  ],
+  "linkage_status_enum": ["Production", "ResearchOnly"],
   "modules": {
     "admm_budget": {
       "action_outputs": [
@@ -20,41 +17,23 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached admm_budget controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_admm_budget_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_admm_budget_state"],
       "fallback_when_data_missing": "Treat admm_budget signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: admm_budget may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "alpha_investing": {
-      "action_outputs": [
-        "significance budget update",
-        "alarm gating pressure"
-      ],
+      "action_outputs": ["significance budget update", "alarm gating pressure"],
       "decision_target": "RuntimeMathKernel::observe_validation_result sequential FDR wealth update",
-      "evidence_inputs": [
-        "alarm outcomes",
-        "wealth state",
-        "test stream"
-      ],
+      "evidence_inputs": ["alarm outcomes", "wealth state", "test stream"],
       "fallback_when_data_missing": "Treat alpha_investing signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: alpha_investing may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "approachability": {
-      "action_outputs": [
-        "projected routing vector",
-        "profile/action pressure"
-      ],
+      "action_outputs": ["projected routing vector", "profile/action pressure"],
       "decision_target": "RuntimeMathKernel::decide multi-objective safe-set projection",
-      "evidence_inputs": [
-        "current objective vector",
-        "safe-set distance",
-        "mode"
-      ],
+      "evidence_inputs": ["current objective vector", "safe-set distance", "mode"],
       "fallback_when_data_missing": "Treat approachability signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: approachability may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -66,11 +45,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached atiyah_bott controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_atiyah_bott_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_atiyah_bott_state"],
       "fallback_when_data_missing": "Treat atiyah_bott signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: atiyah_bott may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -92,31 +67,17 @@
       "linkage_status": "Production"
     },
     "bandit": {
-      "action_outputs": [
-        "validation profile selection",
-        "exploration debt telemetry"
-      ],
+      "action_outputs": ["validation profile selection", "exploration debt telemetry"],
       "decision_target": "RuntimeMathKernel::decide constrained routing of Fast vs Full validation",
-      "evidence_inputs": [
-        "ApiFamily",
-        "historical reward/latency",
-        "contention_hint"
-      ],
+      "evidence_inputs": ["ApiFamily", "historical reward/latency", "contention_hint"],
       "fallback_when_data_missing": "Treat bandit signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Bandit policy cannot bypass barrier/policy-table hard constraints.",
       "linkage_status": "Production"
     },
     "barrier": {
-      "action_outputs": [
-        "admissibility boolean",
-        "deny escalation"
-      ],
+      "action_outputs": ["admissibility boolean", "deny escalation"],
       "decision_target": "RuntimeMathKernel::decide admissibility gate",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "risk_ppm",
-        "mode"
-      ],
+      "evidence_inputs": ["RuntimeContext", "risk_ppm", "mode"],
       "fallback_when_data_missing": "Fail closed to FullValidate (strict) or Deny (hardened) when admissibility inputs are unavailable.",
       "invariant": "Barrier is one-way: inadmissible states escalate to FullValidate or Deny.",
       "linkage_status": "Production"
@@ -160,11 +121,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached borel_cantelli controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_borel_cantelli_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_borel_cantelli_state"],
       "fallback_when_data_missing": "Treat borel_cantelli signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: borel_cantelli may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -176,11 +133,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached changepoint controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_changepoint_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_changepoint_state"],
       "fallback_when_data_missing": "Treat changepoint signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: changepoint may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -192,25 +145,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached clifford controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_clifford_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_clifford_state"],
       "fallback_when_data_missing": "Treat clifford signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: clifford may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "cohomology": {
-      "action_outputs": [
-        "consistency penalty",
-        "escalation pressure"
-      ],
+      "action_outputs": ["consistency penalty", "escalation pressure"],
       "decision_target": "RuntimeMathKernel::decide overlap-consistency fault budget",
-      "evidence_inputs": [
-        "shard overlap observations",
-        "consistency fault counters"
-      ],
+      "evidence_inputs": ["shard overlap observations", "consistency fault counters"],
       "fallback_when_data_missing": "Treat cohomology signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: cohomology may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -238,27 +181,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached conformal controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_conformal_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_conformal_state"],
       "fallback_when_data_missing": "Treat conformal signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: conformal may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "control": {
-      "action_outputs": [
-        "full_validation trigger",
-        "repair trigger",
-        "threshold updates"
-      ],
+      "action_outputs": ["full_validation trigger", "repair trigger", "threshold updates"],
       "decision_target": "RuntimeMathKernel::decide primal-dual trigger control for full-check and repair",
-      "evidence_inputs": [
-        "risk_ppm",
-        "latency_budget_ns",
-        "violation counters"
-      ],
+      "evidence_inputs": ["risk_ppm", "latency_budget_ns", "violation counters"],
       "fallback_when_data_missing": "Treat control signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: control may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -270,11 +201,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached coupling controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_coupling_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_coupling_state"],
       "fallback_when_data_missing": "Treat coupling signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: coupling may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -286,11 +213,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached covering_array controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_covering_array_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_covering_array_state"],
       "fallback_when_data_missing": "Treat covering_array signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: covering_array may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -302,11 +225,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached cvar controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_cvar_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_cvar_state"],
       "fallback_when_data_missing": "Treat cvar signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: cvar may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -328,17 +247,9 @@
       "linkage_status": "Production"
     },
     "design": {
-      "action_outputs": [
-        "probe plan",
-        "probe cadence",
-        "coverage pressure"
-      ],
+      "action_outputs": ["probe plan", "probe cadence", "coverage pressure"],
       "decision_target": "RuntimeMathKernel::resample_high_order_kernels D-optimal probe scheduling",
-      "evidence_inputs": [
-        "identifiability state",
-        "sobol sample",
-        "budget headroom"
-      ],
+      "evidence_inputs": ["identifiability state", "sobol sample", "budget headroom"],
       "fallback_when_data_missing": "Treat design signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: design may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -398,11 +309,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached entropy_rate controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_entropy_rate_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_entropy_rate_state"],
       "fallback_when_data_missing": "Treat entropy_rate signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: entropy_rate may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -414,11 +321,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached eprocess controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_eprocess_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_eprocess_state"],
       "fallback_when_data_missing": "Treat eprocess signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: eprocess may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -430,27 +333,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached equivariant controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_equivariant_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_equivariant_state"],
       "fallback_when_data_missing": "Treat equivariant signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: equivariant may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "evidence": {
-      "action_outputs": [
-        "bd-kom event record",
-        "audit telemetry"
-      ],
+      "action_outputs": ["bd-kom event record", "audit telemetry"],
       "decision_target": "RuntimeMathKernel::decide and observe_validation_result evidence emission",
-      "evidence_inputs": [
-        "RuntimeDecision",
-        "policy_id",
-        "risk upper bound",
-        "healing action"
-      ],
+      "evidence_inputs": ["RuntimeDecision", "policy_id", "risk upper bound", "healing action"],
       "fallback_when_data_missing": "If evidence buffers are unavailable, continue with routing decision and increment drop counters.",
       "invariant": "Evidence logging is append-only and cannot mutate routing decisions.",
       "linkage_status": "Production"
@@ -462,26 +353,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached fano_bound controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_fano_bound_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_fano_bound_state"],
       "fallback_when_data_missing": "Treat fano_bound signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: fano_bound may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "fusion": {
-      "action_outputs": [
-        "fused severity bonus",
-        "confidence telemetry"
-      ],
+      "action_outputs": ["fused severity bonus", "confidence telemetry"],
       "decision_target": "RuntimeMathKernel::decide robust fusion over severity channels",
-      "evidence_inputs": [
-        "severity vector",
-        "trust weights",
-        "drift indicators"
-      ],
+      "evidence_inputs": ["severity vector", "trust weights", "drift indicators"],
       "fallback_when_data_missing": "Treat fusion signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Fusion output is bounded and cannot reduce hard barrier/deny outcomes.",
       "linkage_status": "Production"
@@ -525,11 +405,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached higher_topos controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_higher_topos_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_higher_topos_state"],
       "fallback_when_data_missing": "Treat higher_topos signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: higher_topos may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -557,11 +433,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached hurst_exponent controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_hurst_exponent_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_hurst_exponent_state"],
       "fallback_when_data_missing": "Treat hurst_exponent signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: hurst_exponent may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -573,11 +445,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached info_geometry controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_info_geometry_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_info_geometry_state"],
       "fallback_when_data_missing": "Treat info_geometry signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: info_geometry may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -605,26 +473,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached kernel_mmd controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_kernel_mmd_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_kernel_mmd_state"],
       "fallback_when_data_missing": "Treat kernel_mmd signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: kernel_mmd may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "ktheory": {
-      "action_outputs": [
-        "compatibility penalty",
-        "escalation pressure"
-      ],
+      "action_outputs": ["compatibility penalty", "escalation pressure"],
       "decision_target": "RuntimeMathKernel::decide ABI transport compatibility pressure",
-      "evidence_inputs": [
-        "family transport state",
-        "compatibility drift",
-        "index witness"
-      ],
+      "evidence_inputs": ["family transport state", "compatibility drift", "index witness"],
       "fallback_when_data_missing": "Treat ktheory signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: ktheory may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -636,26 +493,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached lempel_ziv controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_lempel_ziv_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_lempel_ziv_state"],
       "fallback_when_data_missing": "Treat lempel_ziv signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: lempel_ziv may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "localization_chooser": {
-      "action_outputs": [
-        "localization policy choice",
-        "escalation pressure"
-      ],
+      "action_outputs": ["localization policy choice", "escalation pressure"],
       "decision_target": "RuntimeMathKernel::decide localization policy selection for concentrated anomaly regimes",
-      "evidence_inputs": [
-        "fixed-point concentration",
-        "regime persistence",
-        "chooser state"
-      ],
+      "evidence_inputs": ["fixed-point concentration", "regime persistence", "chooser state"],
       "fallback_when_data_missing": "Treat localization_chooser signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: localization_chooser may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -737,11 +583,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached microlocal controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_microlocal_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_microlocal_state"],
       "fallback_when_data_missing": "Treat microlocal signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: microlocal may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -753,11 +595,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached nerve_complex controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_nerve_complex_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_nerve_complex_state"],
       "fallback_when_data_missing": "Treat nerve_complex signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: nerve_complex may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -785,11 +623,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached operator_norm controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_operator_norm_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_operator_norm_state"],
       "fallback_when_data_missing": "Treat operator_norm signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: operator_norm may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -817,38 +651,21 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached pac_bayes controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_pac_bayes_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_pac_bayes_state"],
       "fallback_when_data_missing": "Treat pac_bayes signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: pac_bayes may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "pareto": {
-      "action_outputs": [
-        "frontier point selection",
-        "regret updates",
-        "profile pressure"
-      ],
+      "action_outputs": ["frontier point selection", "regret updates", "profile pressure"],
       "decision_target": "RuntimeMathKernel::decide latency/risk Pareto selector",
-      "evidence_inputs": [
-        "latency estimate",
-        "risk estimate",
-        "mode budget"
-      ],
+      "evidence_inputs": ["latency estimate", "risk estimate", "mode budget"],
       "fallback_when_data_missing": "Treat pareto signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: pareto may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "policy_table": {
-      "action_outputs": [
-        "profile override",
-        "action override",
-        "repair override",
-        "policy_id"
-      ],
+      "action_outputs": ["profile override", "action override", "repair override", "policy_id"],
       "decision_target": "RuntimeMathKernel::decide proof-carrying policy table lookup",
       "evidence_inputs": [
         "mode",
@@ -869,11 +686,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached pomdp_repair controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_pomdp_repair_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_pomdp_repair_state"],
       "fallback_when_data_missing": "Treat pomdp_repair signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: pomdp_repair may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -911,16 +724,9 @@
       "linkage_status": "Production"
     },
     "redundancy_tuner": {
-      "action_outputs": [
-        "redundancy target",
-        "overhead control signal"
-      ],
+      "action_outputs": ["redundancy target", "overhead control signal"],
       "decision_target": "RuntimeMathKernel::observe_validation_result evidence redundancy overhead tuning",
-      "evidence_inputs": [
-        "e-process updates",
-        "overhead budget",
-        "recent alarm rate"
-      ],
+      "evidence_inputs": ["e-process updates", "overhead budget", "recent alarm rate"],
       "fallback_when_data_missing": "Treat redundancy_tuner signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: redundancy_tuner may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -932,27 +738,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached renewal_theory controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_renewal_theory_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_renewal_theory_state"],
       "fallback_when_data_missing": "Treat renewal_theory signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: renewal_theory may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "risk": {
-      "action_outputs": [
-        "risk_ppm baseline",
-        "profile escalation pressure",
-        "deny pressure"
-      ],
+      "action_outputs": ["risk_ppm baseline", "profile escalation pressure", "deny pressure"],
       "decision_target": "RuntimeMathKernel::decide sampled risk envelope computation",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "RiskEngine sample",
-        "recent validation outcomes"
-      ],
+      "evidence_inputs": ["RuntimeContext", "RiskEngine sample", "recent validation outcomes"],
       "fallback_when_data_missing": "Treat risk signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Risk envelope remains conservative (upper-bound) across updates.",
       "linkage_status": "Production"
@@ -964,41 +758,23 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached serre_spectral controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_serre_spectral_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_serre_spectral_state"],
       "fallback_when_data_missing": "Treat serre_spectral signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: serre_spectral may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "sobol": {
-      "action_outputs": [
-        "deterministic probe sample",
-        "design scheduler input"
-      ],
+      "action_outputs": ["deterministic probe sample", "design scheduler input"],
       "decision_target": "RuntimeMathKernel::resample_high_order_kernels deterministic low-discrepancy sequencing",
-      "evidence_inputs": [
-        "sobol seed",
-        "dimension",
-        "counter"
-      ],
+      "evidence_inputs": ["sobol seed", "dimension", "counter"],
       "fallback_when_data_missing": "Fall back to deterministic fixed-step probe schedule when Sobol state is unavailable.",
       "invariant": "Sequence generation remains deterministic for identical seeds and counters.",
       "linkage_status": "Production"
     },
     "sos_barrier": {
-      "action_outputs": [
-        "barrier margin",
-        "deny/full-validate pressure"
-      ],
+      "action_outputs": ["barrier margin", "deny/full-validate pressure"],
       "decision_target": "RuntimeMathKernel::decide polynomial barrier certificate evaluation",
-      "evidence_inputs": [
-        "state vector",
-        "certificate coefficients",
-        "mode"
-      ],
+      "evidence_inputs": ["state vector", "certificate coefficients", "mode"],
       "fallback_when_data_missing": "Use static conservative barrier margin floor when certificate state is unavailable.",
       "invariant": "Safety monotonicity: sos_barrier may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -1010,26 +786,15 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached sos_invariant controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_sos_invariant_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_sos_invariant_state"],
       "fallback_when_data_missing": "Treat sos_invariant signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: sos_invariant may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
     },
     "sparse": {
-      "action_outputs": [
-        "concentration bonus",
-        "targeted escalation pressure"
-      ],
+      "action_outputs": ["concentration bonus", "targeted escalation pressure"],
       "decision_target": "RuntimeMathKernel::observe_validation_result latent fault-source concentration updates",
-      "evidence_inputs": [
-        "probe anomalies",
-        "family-level severities",
-        "sparse state"
-      ],
+      "evidence_inputs": ["probe anomalies", "family-level severities", "sparse state"],
       "fallback_when_data_missing": "Treat sparse signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: sparse may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"
@@ -1041,11 +806,7 @@
         "membrane action escalation"
       ],
       "decision_target": "RuntimeMathKernel::decide via cached spectral_gap controller state",
-      "evidence_inputs": [
-        "RuntimeContext",
-        "ValidationObservation",
-        "cached_spectral_gap_state"
-      ],
+      "evidence_inputs": ["RuntimeContext", "ValidationObservation", "cached_spectral_gap_state"],
       "fallback_when_data_missing": "Treat spectral_gap signal as unavailable and fall back to conservative control+barrier+policy-table defaults.",
       "invariant": "Safety monotonicity: spectral_gap may only preserve or tighten validation/repair/deny outcomes.",
       "linkage_status": "Production"

@@ -29,17 +29,8 @@
     "policy_status": "enforcing_no_waivers"
   },
   "retirement_gate_contract": {
-    "required_rule_ids": [
-      "RC-1",
-      "RC-2",
-      "RC-3"
-    ],
-    "required_stage_order": [
-      "active",
-      "deprecated",
-      "research_only",
-      "removed"
-    ],
+    "required_rule_ids": ["RC-1", "RC-2", "RC-3"],
+    "required_stage_order": ["active", "deprecated", "research_only", "removed"],
     "required_gate_markers": [
       "Math Retirement Gate (bd-545)",
       "RC-1 governance/manifest cross-reference",
@@ -49,10 +40,7 @@
       "Summary statistics consistent",
       "check_math_retirement: PASS"
     ],
-    "required_ci_markers": [
-      "--- math retirement gate ---",
-      "scripts/check_math_retirement.sh"
-    ],
+    "required_ci_markers": ["--- math retirement gate ---", "scripts/check_math_retirement.sh"],
     "required_verification_matrix_needles": [
       "\"bead_id\": \"bd-545\"",
       "cargo test -p frankenlibc-harness --test math_retirement_test -- --nocapture",
@@ -79,10 +67,13 @@
       "id": "tests.unit.primary",
       "kind": "unit",
       "required_test_refs": [
-        {"source": "retirement_harness", "name": "policy_exists_and_valid"},
-        {"source": "retirement_harness", "name": "retirement_criteria_complete"},
-        {"source": "retirement_harness", "name": "summary_consistent"},
-        {"source": "completion_harness", "name": "manifest_binds_existing_math_retirement_surfaces"}
+        { "source": "retirement_harness", "name": "policy_exists_and_valid" },
+        { "source": "retirement_harness", "name": "retirement_criteria_complete" },
+        { "source": "retirement_harness", "name": "summary_consistent" },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_existing_math_retirement_surfaces"
+        }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test math_retirement_test -- --nocapture",
@@ -93,8 +84,8 @@
       "id": "tests.e2e.primary",
       "kind": "e2e",
       "required_test_refs": [
-        {"source": "retirement_harness", "name": "gate_script_exists_and_executable"},
-        {"source": "completion_harness", "name": "checker_accepts_contract_and_emits_report"}
+        { "source": "retirement_harness", "name": "gate_script_exists_and_executable" },
+        { "source": "completion_harness", "name": "checker_accepts_contract_and_emits_report" }
       ],
       "required_commands": [
         "bash scripts/check_math_retirement.sh",
@@ -106,8 +97,8 @@
       "id": "migrations.primary",
       "kind": "migrations",
       "required_test_refs": [
-        {"source": "retirement_harness", "name": "migration_waves_cover_all_rc1"},
-        {"source": "completion_harness", "name": "checker_rejects_migration_summary_drift"}
+        { "source": "retirement_harness", "name": "migration_waves_cover_all_rc1" },
+        { "source": "completion_harness", "name": "checker_rejects_migration_summary_drift" }
       ],
       "required_commands": [
         "bash scripts/check_math_retirement.sh",
@@ -120,8 +111,8 @@
       "id": "telemetry.primary",
       "kind": "telemetry",
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_jsonl_rows_with_required_fields"},
-        {"source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command"}
+        { "source": "completion_harness", "name": "checker_emits_jsonl_rows_with_required_fields" },
+        { "source": "completion_harness", "name": "checker_rejects_bare_cargo_required_command" }
       ],
       "required_commands": [
         "bash scripts/check_math_retirement_completion_contract.sh",

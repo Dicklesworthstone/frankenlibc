@@ -18,5 +18,10 @@
     "healing_actions": ["IgnoreDoubleFree"],
     "description": "Generational arena detects freed generation; IgnoreDoubleFree absorbs the second free; allocation fingerprint confirms legitimate pointer"
   },
-  "tsm_features_tested": ["generational_arena", "quarantine", "ignore_double_free", "allocation_fingerprints"]
+  "tsm_features_tested": [
+    "generational_arena",
+    "quarantine",
+    "ignore_double_free",
+    "allocation_fingerprints"
+  ]
 }

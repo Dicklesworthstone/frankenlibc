@@ -4,9 +4,7 @@
   "purpose": "No-cargo conformance guard for the repository policy that the primary FrankenLibC checkout stays on local branch main, linked validation worktrees stay detached, and the legacy remote mirror remains synchronized with origin/main.",
   "policy": {
     "required_current_branch": "main",
-    "allowed_local_branches": [
-      "main"
-    ],
+    "allowed_local_branches": ["main"],
     "expected_primary_worktree_count": 1,
     "required_worktree_branch": "refs/heads/main",
     "allow_detached_linked_worktrees": true,
@@ -27,10 +25,7 @@
     {
       "id": "negative_extra_local_branch",
       "mutations": {
-        "local_branches": [
-          "main",
-          "feature/unsafe-worktree"
-        ]
+        "local_branches": ["main", "feature/unsafe-worktree"]
       },
       "expected_failure_signature": "local_non_main_branch"
     },

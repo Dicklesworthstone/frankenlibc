@@ -1,7 +1,7 @@
 {
   "schema_version": "ws3_taxonomy_honesty_e2e_completion_contract.v1",
   "manifest_id": "bd-smp21.5-ws3-taxonomy-honesty-e2e",
-    "generated_utc": "2026-05-25T19:48:00Z",
+  "generated_utc": "2026-05-25T19:48:00Z",
   "description": "Completion evidence binding for the WS-3 taxonomy-honesty E2E gate.",
   "bead": "bd-smp21.5",
   "source_artifacts": {

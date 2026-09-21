@@ -7,15 +7,11 @@
   "purpose": "Pin the harness binary subcommand that dumps this binary's compile-time ToolingContract (from explainability_workbench::tooling_contract) as a JSONL record so CI workflows can verify the deployed binary was built with the expected feature flags (asupersync-tooling, frankentui-ui) without linking to the Rust crate.",
   "subcommand_name": "tooling-contract",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
+  "required_flags": ["--output"],
   "optional_flags": [],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_harness::explainability_workbench::tooling_contract",
-  "underlying_lib_functions": [
-    "frankenlibc_harness::explainability_workbench::tooling_contract"
-  ],
+  "underlying_lib_functions": ["frankenlibc_harness::explainability_workbench::tooling_contract"],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "tooling_contract",

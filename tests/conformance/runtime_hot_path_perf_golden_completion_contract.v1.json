@@ -20,9 +20,7 @@
     "completion_harness_test": "crates/frankenlibc-harness/tests/runtime_hot_path_perf_golden_completion_contract_test.rs"
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.golden.primary"
-    ],
+    "missing_items_closed": ["tests.golden.primary"],
     "golden_primary": {
       "missing_item_id": "tests.golden.primary",
       "golden_source": "tests/runtime_math/golden/kernel_snapshot_smoke.v1.json",
@@ -83,10 +81,7 @@
         "time"
       ]
     },
-    "modes": [
-      "strict",
-      "hardened"
-    ],
+    "modes": ["strict", "hardened"],
     "snapshot_schema_version": 2,
     "required_snapshot_fields": [
       "schema_version",
@@ -112,11 +107,7 @@
       "stage_canary_verify": 10,
       "stage_bounds_check": 5
     },
-    "required_baseline_suites": [
-      "runtime_math",
-      "membrane",
-      "errno"
-    ],
+    "required_baseline_suites": ["runtime_math", "membrane", "errno"],
     "required_enforced_benchmarks": [
       "runtime_math/decide",
       "runtime_math/observe_fast",
@@ -154,10 +145,7 @@
         "bash scripts/perf_gate.sh",
         "FRANKENLIBC_PERF_EVENT_LOG"
       ],
-      "ci_script": [
-        "scripts/snapshot_gate.sh",
-        "run_benchmark_gate"
-      ]
+      "ci_script": ["scripts/snapshot_gate.sh", "run_benchmark_gate"]
     }
   },
   "telemetry_contract": {

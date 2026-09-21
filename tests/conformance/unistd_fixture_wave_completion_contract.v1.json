@@ -139,24 +139,9 @@
       "__lxstat64",
       "__progname"
     ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
-    "required_structured_log_fields": [
-      "symbol",
-      "mode",
-      "expected",
-      "actual",
-      "failure_signature"
-    ],
-    "forbidden_ambient_output_tokens": [
-      "/dev/null",
-      "pid=",
-      "inode",
-      "st_dev",
-      "cwd="
-    ],
+    "required_modes": ["strict", "hardened"],
+    "required_structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
+    "forbidden_ambient_output_tokens": ["/dev/null", "pid=", "inode", "st_dev", "cwd="],
     "coverage_accounting": {
       "campaign_target_covered_min": 47,
       "campaign_target_uncovered_max": 695,
@@ -247,9 +232,7 @@
       "test_refs": [
         "crates/frankenlibc-harness/tests/unistd_fixture_wave_completion_contract_test.rs"
       ],
-      "runtime_validation": [
-        "bash scripts/check_unistd_fixture_wave_completion_contract.sh"
-      ]
+      "runtime_validation": ["bash scripts/check_unistd_fixture_wave_completion_contract.sh"]
     }
   ]
 }

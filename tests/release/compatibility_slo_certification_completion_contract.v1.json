@@ -71,14 +71,8 @@
       "release_gate_dag",
       "closure_contract"
     ],
-    "allowed_missing_artifacts": [
-      "e2e_scenario_manifest"
-    ],
-    "required_policy_fields": [
-      "format",
-      "schema_versions",
-      "integrity"
-    ],
+    "allowed_missing_artifacts": ["e2e_scenario_manifest"],
+    "required_policy_fields": ["format", "schema_versions", "integrity"],
     "release_notes_hook": {
       "required_limit": 8,
       "required_selected": 8,

@@ -7,15 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes runtime_evidence_verifier::verify_runtime_evidence_jsonl as a standalone CLI. The lib API is the canonical replay-gate verifier: it consumes runtime_evidence.decision.v1 JSONL rows emitted by the membrane evidence log, applies the membrane-owned schema, then enforces replay-specific invariants (freshness, monotone timestamps, valid decision transitions, repair evidence, gate expectations). Previously reachable only from Rust callers; the CLI bridge lets CI run replay-gate verification without linking to the crate.",
   "subcommand_name": "verify-runtime-evidence",
   "binary_target": "harness",
-  "required_flags": [
-    "--jsonl",
-    "--expected-source-commit",
-    "--output"
-  ],
-  "optional_flags": [
-    "--expectations",
-    "--deny-unexpected-denials"
-  ],
+  "required_flags": ["--jsonl", "--expected-source-commit", "--output"],
+  "optional_flags": ["--expectations", "--deny-unexpected-denials"],
   "underlying_lib_function": "frankenlibc_harness::runtime_evidence_verifier::verify_runtime_evidence_jsonl",
   "underlying_lib_functions": [
     "frankenlibc_harness::runtime_evidence_verifier::verify_runtime_evidence_jsonl"
@@ -32,10 +25,7 @@
       "observed_expectations",
       "failures"
     ],
-    "status_enum": [
-      "pass",
-      "fail"
-    ]
+    "status_enum": ["pass", "fail"]
   },
   "policy": {
     "must_emit_exactly_one_jsonl_record": true,

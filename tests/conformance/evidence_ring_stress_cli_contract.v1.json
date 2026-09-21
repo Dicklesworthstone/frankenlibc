@@ -7,13 +7,7 @@
   "purpose": "Pin the harness binary subcommand that stresses the production EvidenceRingBuffer past capacity and emits a RealRingReport as JSONL. Previously bd-9nyo2 shipped lib-level run_real_ring_stress over the const-generic ring with serialize/validate helpers, but only the conformance harness test called it. The CLI subcommand makes the stress driver invokable from rch cargo run and from CI runners without writing Rust.",
   "subcommand_name": "evidence-ring-stress",
   "binary_target": "harness",
-  "required_flags": [
-    "--seed",
-    "--multiple",
-    "--cap",
-    "--source-commit",
-    "--output"
-  ],
+  "required_flags": ["--seed", "--multiple", "--cap", "--source-commit", "--output"],
   "optional_flags": [],
   "supported_cap_values": [32, 128, 1024],
   "underlying_lib_function": "frankenlibc_harness::evidence_ring_backpressure::run_real_ring_stress",

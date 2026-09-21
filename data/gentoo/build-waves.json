@@ -17,16 +17,12 @@
     {
       "wave": 1,
       "count": 1,
-      "packages": [
-        "sys-libs/glibc"
-      ]
+      "packages": ["sys-libs/glibc"]
     },
     {
       "wave": 2,
       "count": 1,
-      "packages": [
-        "sys-devel/gcc"
-      ]
+      "packages": ["sys-devel/gcc"]
     },
     {
       "wave": 3,

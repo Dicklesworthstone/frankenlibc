@@ -64,11 +64,7 @@
       "status",
       "user_diagnostic"
     ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ]
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"]
   },
   "required_scenario_kinds": [
     "valid_conversion",
@@ -610,15 +606,9 @@
       "scenario_kind": "unsupported_codec",
       "from_encoding": "BIG5-HKSCS",
       "to_encoding": "UTF-8",
-      "input_bytes": [
-        72
-      ],
+      "input_bytes": [72],
       "chunking": {
-        "chunks": [
-          [
-            72
-          ]
-        ],
+        "chunks": [[72]],
         "streaming": false
       },
       "state_reset": {
@@ -704,9 +694,7 @@
       },
       "table_provenance": {
         "required": false,
-        "artifact_refs": [
-          "tests/conformance/iconv_codec_scope_ledger.v1.json"
-        ]
+        "artifact_refs": ["tests/conformance/iconv_codec_scope_ledger.v1.json"]
       },
       "direct_runner": {
         "runner_kind": "direct",

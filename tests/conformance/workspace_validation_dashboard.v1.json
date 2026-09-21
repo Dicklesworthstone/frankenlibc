@@ -61,9 +61,7 @@
       "owner": "bd-bjask",
       "expected": "workspace check passes",
       "actual": "pass",
-      "artifact_refs": [
-        "agent-mail:bd-bjask:25304"
-      ],
+      "artifact_refs": ["agent-mail:bd-bjask:25304"],
       "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
       "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-check",
       "failure_signature": "ok"
@@ -77,9 +75,7 @@
       "owner": "bd-bp8fl.7.2",
       "expected": "no clippy error lines",
       "actual": "pass; only frankenlibc-core SMT-solver build warning emitted",
-      "artifact_refs": [
-        "agent-mail:bd-bp8fl.7.2:25306"
-      ],
+      "artifact_refs": ["agent-mail:bd-bp8fl.7.2:25306"],
       "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
       "target_dir": "/data/tmp/frankenlibc-pearlforest-bd-bjask-workspace-clippy",
       "failure_signature": "ok"
@@ -93,9 +89,7 @@
       "owner": "bd-bp8fl.7.3",
       "expected": "workspace test sweep status recorded",
       "actual": "not run in this dashboard slice; targeted tests are recorded separately",
-      "artifact_refs": [
-        "tests/conformance/workspace_validation_dashboard.v1.json"
-      ],
+      "artifact_refs": ["tests/conformance/workspace_validation_dashboard.v1.json"],
       "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
       "target_dir": "not-run",
       "failure_signature": "workspace_test_sweep_not_refreshed"
@@ -109,10 +103,7 @@
       "owner": "PearlForest",
       "expected": "changed Rust test surfaces have no UBS critical findings and no clippy warnings",
       "actual": "pass; existing test-hygiene/perf warning inventory only",
-      "artifact_refs": [
-        "agent-mail:bd-kwg77:25302",
-        "agent-mail:bd-bjask:25304"
-      ],
+      "artifact_refs": ["agent-mail:bd-kwg77:25302", "agent-mail:bd-bjask:25304"],
       "source_commit": "5845c3d16bcf986a30710b1cc68a39c0ba2f8dbb",
       "target_dir": "n/a",
       "failure_signature": "ok"
@@ -126,9 +117,7 @@
       "owner": "bd-bp8fl.7.3",
       "expected": "ready queue and dependency graph are inspectable via no-db source of truth",
       "actual": "bd-bp8fl.7.3 became ready after bd-bp8fl.7.2 closeout; dep cycles count is 0",
-      "artifact_refs": [
-        ".beads/issues.jsonl"
-      ],
+      "artifact_refs": [".beads/issues.jsonl"],
       "source_commit": "618405fa5310aa9694f5417cc887158d9c17004e",
       "target_dir": "n/a",
       "failure_signature": "ok"
@@ -144,9 +133,7 @@
       "expected": "workspace test status is current",
       "actual": "full workspace test sweep was not run in this slice",
       "next_safe_action": "run a dedicated rch workspace test sweep or create a focused test-sweep evidence bead",
-      "artifact_refs": [
-        "tests/conformance/workspace_validation_dashboard.v1.json"
-      ],
+      "artifact_refs": ["tests/conformance/workspace_validation_dashboard.v1.json"],
       "failure_signature": "workspace_test_sweep_not_refreshed"
     }
   ],

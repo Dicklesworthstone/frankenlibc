@@ -94,13 +94,7 @@
     ]
   },
   "reverse_round_logging_contract": {
-    "required_rounds": [
-      "R7",
-      "R8",
-      "R9",
-      "R10",
-      "R11"
-    ],
+    "required_rounds": ["R7", "R8", "R9", "R10", "R11"],
     "required_round_fields": [
       "name",
       "problem_focus",

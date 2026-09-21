@@ -28,11 +28,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 700
   },
   "source_artifacts": [
@@ -199,10 +195,7 @@
       "nss-hosts-files-only",
       "nss-services-files-only"
     ],
-    "required_runtime_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_runtime_modes": ["strict", "hardened"],
     "required_commands": [
       "bash scripts/run_hermetic_nss_resolver_lab.sh",
       "rch exec -- cargo test -p frankenlibc-harness --test hermetic_nss_resolver_lab_execution_test -- --nocapture"

@@ -7,23 +7,14 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::design::probe_cost_ns(probe: Probe) -> u64 as a standalone CLI. The lib API returns the design-kernel cost in nanoseconds for one of 17 runtime probes (Spectral, RoughPath, Persistence, Anytime, Cvar, Bridge, LargeDeviations, Hji, MeanField, Padic, Symplectic, HigherTopos, CommitmentAudit, Changepoint, Conformal, LossMinimizer, Coupling). The cost table is the input to the D-optimal probe-scheduling controller that maximizes Δlogdet / cost under budget. Previously reachable only from Rust callers; the CLI bridge lets CI verify the probe cost-model without compiling.",
   "subcommand_name": "probe-cost-ns",
   "binary_target": "harness",
-  "required_flags": [
-    "--probe",
-    "--output"
-  ],
+  "required_flags": ["--probe", "--output"],
   "optional_flags": [],
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::design::probe_cost_ns",
-  "underlying_lib_functions": [
-    "frankenlibc_membrane::runtime_math::design::probe_cost_ns"
-  ],
+  "underlying_lib_functions": ["frankenlibc_membrane::runtime_math::design::probe_cost_ns"],
   "jsonl_output_contract": {
     "record_count": 1,
     "record_kind_marker": "probe_cost_ns",
-    "required_fields": [
-      "kind",
-      "probe",
-      "cost_ns"
-    ]
+    "required_fields": ["kind", "probe", "cost_ns"]
   },
   "expected_costs_ns": {
     "spectral": 20,

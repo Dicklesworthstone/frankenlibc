@@ -45,10 +45,7 @@
     "delta_classification": "improvement",
     "removed_needed_libraries": [],
     "added_needed_libraries": [],
-    "needed_libraries_still_present": [
-      "ld-linux-x86-64.so.2",
-      "libgcc_s.so.1"
-    ],
+    "needed_libraries_still_present": ["ld-linux-x86-64.so.2", "libgcc_s.so.1"],
     "removed_version_requirements": [],
     "added_version_requirements": [],
     "version_requirements_still_present": [

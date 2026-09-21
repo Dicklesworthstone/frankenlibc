@@ -17,31 +17,381 @@
     "retain_rule": "confidence >= min_confidence AND (risk_reduction_ppm >= min_risk_reduction_ppm OR quality_gain >= min_quality_gain OR latency_improvement_pct >= min_latency_improvement_pct)"
   },
   "experiments": [
-    {"module":"barrier","tier":"production_core","strict":{"with":{"latency_ns":12,"risk_ppm":4,"decision_quality":0.998},"without":{"latency_ns":9,"risk_ppm":1200,"decision_quality":0.921}},"hardened":{"with":{"latency_ns":88,"risk_ppm":2,"decision_quality":0.999},"without":{"latency_ns":52,"risk_ppm":1400,"decision_quality":0.903}},"statistics":{"sample_size":260000,"confidence":0.98},"decision":"retain","justification":"Barrier enforces admissibility and sharply reduces unsafe outcomes."},
-    {"module":"bandit","tier":"production_core","strict":{"with":{"latency_ns":11,"risk_ppm":15,"decision_quality":0.974},"without":{"latency_ns":15,"risk_ppm":26,"decision_quality":0.956}},"hardened":{"with":{"latency_ns":84,"risk_ppm":9,"decision_quality":0.981},"without":{"latency_ns":96,"risk_ppm":21,"decision_quality":0.967}},"statistics":{"sample_size":240000,"confidence":0.9},"decision":"retain","justification":"Adaptive profile routing improves latency and quality versus fixed-depth fallback."},
-    {"module":"control","tier":"production_core","strict":{"with":{"latency_ns":13,"risk_ppm":10,"decision_quality":0.979},"without":{"latency_ns":12,"risk_ppm":33,"decision_quality":0.952}},"hardened":{"with":{"latency_ns":95,"risk_ppm":7,"decision_quality":0.986},"without":{"latency_ns":86,"risk_ppm":29,"decision_quality":0.959}},"statistics":{"sample_size":230000,"confidence":0.91},"decision":"retain","justification":"Threshold control lowers tail-risk and improves decision stability under drift."},
-    {"module":"risk","tier":"production_core","strict":{"with":{"latency_ns":12,"risk_ppm":9,"decision_quality":0.981},"without":{"latency_ns":11,"risk_ppm":41,"decision_quality":0.95}},"hardened":{"with":{"latency_ns":90,"risk_ppm":6,"decision_quality":0.988},"without":{"latency_ns":81,"risk_ppm":35,"decision_quality":0.963}},"statistics":{"sample_size":220000,"confidence":0.92},"decision":"retain","justification":"Calibrated risk scoring reduces over/under-escalation errors."},
-    {"module":"fusion","tier":"production_core","strict":{"with":{"latency_ns":14,"risk_ppm":8,"decision_quality":0.983},"without":{"latency_ns":10,"risk_ppm":46,"decision_quality":0.947}},"hardened":{"with":{"latency_ns":103,"risk_ppm":5,"decision_quality":0.99},"without":{"latency_ns":74,"risk_ppm":39,"decision_quality":0.954}},"statistics":{"sample_size":225000,"confidence":0.93},"decision":"retain","justification":"Multi-signal fusion detects regimes missed by single-signal decisions."},
-    {"module":"evidence","tier":"production_core","strict":{"with":{"latency_ns":13,"risk_ppm":17,"decision_quality":0.973},"without":{"latency_ns":10,"risk_ppm":25,"decision_quality":0.959}},"hardened":{"with":{"latency_ns":97,"risk_ppm":12,"decision_quality":0.981},"without":{"latency_ns":71,"risk_ppm":23,"decision_quality":0.968}},"statistics":{"sample_size":210000,"confidence":0.89},"decision":"retain","justification":"Evidence stream improves downstream decision replay and correction quality."},
-    {"module":"policy_table","tier":"production_core","strict":{"with":{"latency_ns":11,"risk_ppm":16,"decision_quality":0.975},"without":{"latency_ns":13,"risk_ppm":24,"decision_quality":0.963}},"hardened":{"with":{"latency_ns":86,"risk_ppm":11,"decision_quality":0.982},"without":{"latency_ns":95,"risk_ppm":21,"decision_quality":0.969}},"statistics":{"sample_size":205000,"confidence":0.9},"decision":"retain","justification":"Policy lookup improves route correctness and reduces fallback errors."},
-    {"module":"loss_minimizer","tier":"production_core","strict":{"with":{"latency_ns":12,"risk_ppm":18,"decision_quality":0.972},"without":{"latency_ns":13,"risk_ppm":27,"decision_quality":0.961}},"hardened":{"with":{"latency_ns":91,"risk_ppm":13,"decision_quality":0.979},"without":{"latency_ns":98,"risk_ppm":24,"decision_quality":0.966}},"statistics":{"sample_size":200000,"confidence":0.87},"decision":"retain","justification":"Dynamic loss-weighting reduces unnecessary expensive escalations."},
-    {"module":"conformal","tier":"production_core","strict":{"with":{"latency_ns":12,"risk_ppm":17,"decision_quality":0.973},"without":{"latency_ns":12,"risk_ppm":28,"decision_quality":0.959}},"hardened":{"with":{"latency_ns":89,"risk_ppm":12,"decision_quality":0.98},"without":{"latency_ns":90,"risk_ppm":23,"decision_quality":0.966}},"statistics":{"sample_size":198000,"confidence":0.88},"decision":"retain","justification":"Finite-sample calibration improves quality and reduces risk overshoot."},
-    {"module":"redundancy_tuner","tier":"production_core","strict":{"with":{"latency_ns":11,"risk_ppm":16,"decision_quality":0.975},"without":{"latency_ns":12,"risk_ppm":23,"decision_quality":0.964}},"hardened":{"with":{"latency_ns":83,"risk_ppm":11,"decision_quality":0.983},"without":{"latency_ns":89,"risk_ppm":20,"decision_quality":0.97}},"statistics":{"sample_size":202000,"confidence":0.9},"decision":"retain","justification":"Adaptive redundancy lowers error propagation with minor overhead."},
-    {"module":"commitment_audit","tier":"production_core","strict":{"with":{"latency_ns":13,"risk_ppm":17,"decision_quality":0.974},"without":{"latency_ns":11,"risk_ppm":26,"decision_quality":0.961}},"hardened":{"with":{"latency_ns":94,"risk_ppm":12,"decision_quality":0.982},"without":{"latency_ns":78,"risk_ppm":22,"decision_quality":0.968}},"statistics":{"sample_size":206000,"confidence":0.89},"decision":"retain","justification":"Commitment checks improve integrity-aware decision consistency."},
-    {"module":"provenance_info","tier":"production_core","strict":{"with":{"latency_ns":12,"risk_ppm":18,"decision_quality":0.972},"without":{"latency_ns":11,"risk_ppm":29,"decision_quality":0.958}},"hardened":{"with":{"latency_ns":90,"risk_ppm":13,"decision_quality":0.979},"without":{"latency_ns":76,"risk_ppm":24,"decision_quality":0.965}},"statistics":{"sample_size":201000,"confidence":0.88},"decision":"retain","justification":"Provenance signals improve ambiguity resolution and reduce false negatives."},
-    {"module":"eprocess","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":19,"decision_quality":0.971},"without":{"latency_ns":11,"risk_ppm":30,"decision_quality":0.956}},"hardened":{"with":{"latency_ns":80,"risk_ppm":14,"decision_quality":0.979},"without":{"latency_ns":87,"risk_ppm":25,"decision_quality":0.963}},"statistics":{"sample_size":196000,"confidence":0.91},"decision":"retain","justification":"Anytime-valid alarms improve reliability under optional stopping."},
-    {"module":"alpha_investing","tier":"production_monitor","strict":{"with":{"latency_ns":11,"risk_ppm":19,"decision_quality":0.972},"without":{"latency_ns":12,"risk_ppm":31,"decision_quality":0.955}},"hardened":{"with":{"latency_ns":82,"risk_ppm":14,"decision_quality":0.98},"without":{"latency_ns":90,"risk_ppm":26,"decision_quality":0.962}},"statistics":{"sample_size":194000,"confidence":0.9},"decision":"retain","justification":"FDR-aware updates improve signal quality over fixed-alpha baselines."},
-    {"module":"changepoint","tier":"production_monitor","strict":{"with":{"latency_ns":11,"risk_ppm":18,"decision_quality":0.973},"without":{"latency_ns":12,"risk_ppm":33,"decision_quality":0.954}},"hardened":{"with":{"latency_ns":84,"risk_ppm":13,"decision_quality":0.981},"without":{"latency_ns":91,"risk_ppm":28,"decision_quality":0.961}},"statistics":{"sample_size":193000,"confidence":0.9},"decision":"retain","justification":"Drift detection improves adaptation under regime changes."},
-    {"module":"cvar","tier":"production_monitor","strict":{"with":{"latency_ns":11,"risk_ppm":18,"decision_quality":0.972},"without":{"latency_ns":12,"risk_ppm":29,"decision_quality":0.957}},"hardened":{"with":{"latency_ns":83,"risk_ppm":13,"decision_quality":0.98},"without":{"latency_ns":89,"risk_ppm":24,"decision_quality":0.964}},"statistics":{"sample_size":192000,"confidence":0.89},"decision":"retain","justification":"Tail-risk control improves adverse-event suppression in heavy-tail cases."},
-    {"module":"azuma_hoeffding","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":20,"decision_quality":0.97},"without":{"latency_ns":11,"risk_ppm":28,"decision_quality":0.959}},"hardened":{"with":{"latency_ns":79,"risk_ppm":15,"decision_quality":0.978},"without":{"latency_ns":86,"risk_ppm":23,"decision_quality":0.966}},"statistics":{"sample_size":190000,"confidence":0.88},"decision":"retain","justification":"Concentration checks reduce drift-noise confusion."},
-    {"module":"pareto","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":21,"decision_quality":0.969},"without":{"latency_ns":11,"risk_ppm":30,"decision_quality":0.956}},"hardened":{"with":{"latency_ns":78,"risk_ppm":16,"decision_quality":0.977},"without":{"latency_ns":85,"risk_ppm":25,"decision_quality":0.963}},"statistics":{"sample_size":188000,"confidence":0.87},"decision":"retain","justification":"Pareto routing improves latency-risk tradeoff quality."},
-    {"module":"sobol","tier":"production_monitor","strict":{"with":{"latency_ns":9,"risk_ppm":20,"decision_quality":0.971},"without":{"latency_ns":11,"risk_ppm":27,"decision_quality":0.961}},"hardened":{"with":{"latency_ns":75,"risk_ppm":15,"decision_quality":0.979},"without":{"latency_ns":84,"risk_ppm":22,"decision_quality":0.968}},"statistics":{"sample_size":187000,"confidence":0.9},"decision":"retain","justification":"Low-discrepancy scheduling improves coverage efficiency and latency."},
-    {"module":"covering_array","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":21,"decision_quality":0.969},"without":{"latency_ns":11,"risk_ppm":29,"decision_quality":0.958}},"hardened":{"with":{"latency_ns":77,"risk_ppm":16,"decision_quality":0.977},"without":{"latency_ns":85,"risk_ppm":24,"decision_quality":0.965}},"statistics":{"sample_size":186000,"confidence":0.88},"decision":"retain","justification":"Interaction coverage increases decision robustness under combinatorial inputs."},
-    {"module":"submodular_coverage","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":20,"decision_quality":0.97},"without":{"latency_ns":11,"risk_ppm":28,"decision_quality":0.959}},"hardened":{"with":{"latency_ns":76,"risk_ppm":15,"decision_quality":0.978},"without":{"latency_ns":84,"risk_ppm":23,"decision_quality":0.966}},"statistics":{"sample_size":186000,"confidence":0.88},"decision":"retain","justification":"Greedy coverage selection reduces redundant checks and preserves quality."},
-    {"module":"dispersion_index","tier":"production_monitor","strict":{"with":{"latency_ns":9,"risk_ppm":21,"decision_quality":0.969},"without":{"latency_ns":10,"risk_ppm":27,"decision_quality":0.961}},"hardened":{"with":{"latency_ns":74,"risk_ppm":16,"decision_quality":0.977},"without":{"latency_ns":81,"risk_ppm":22,"decision_quality":0.969}},"statistics":{"sample_size":184000,"confidence":0.86},"decision":"retain","justification":"Dispersion monitoring reduces clustered-failure blind spots."},
-    {"module":"borel_cantelli","tier":"production_monitor","strict":{"with":{"latency_ns":9,"risk_ppm":21,"decision_quality":0.969},"without":{"latency_ns":10,"risk_ppm":28,"decision_quality":0.96}},"hardened":{"with":{"latency_ns":74,"risk_ppm":16,"decision_quality":0.977},"without":{"latency_ns":82,"risk_ppm":23,"decision_quality":0.968}},"statistics":{"sample_size":183000,"confidence":0.86},"decision":"retain","justification":"Recurrence classification improves noise/transient discrimination."},
-    {"module":"doob_decomposition","tier":"production_monitor","strict":{"with":{"latency_ns":10,"risk_ppm":20,"decision_quality":0.97},"without":{"latency_ns":11,"risk_ppm":28,"decision_quality":0.959}},"hardened":{"with":{"latency_ns":76,"risk_ppm":15,"decision_quality":0.978},"without":{"latency_ns":84,"risk_ppm":23,"decision_quality":0.966}},"statistics":{"sample_size":185000,"confidence":0.87},"decision":"retain","justification":"Drift-vs-noise decomposition improves corrective routing."},
-    {"module":"renewal_theory","tier":"production_monitor","strict":{"with":{"latency_ns":9,"risk_ppm":21,"decision_quality":0.969},"without":{"latency_ns":10,"risk_ppm":27,"decision_quality":0.96}},"hardened":{"with":{"latency_ns":74,"risk_ppm":16,"decision_quality":0.977},"without":{"latency_ns":81,"risk_ppm":22,"decision_quality":0.968}},"statistics":{"sample_size":182000,"confidence":0.86},"decision":"retain","justification":"Inter-arrival dynamics improve recovery-aware escalation behavior."}
+    {
+      "module": "barrier",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 12, "risk_ppm": 4, "decision_quality": 0.998 },
+        "without": { "latency_ns": 9, "risk_ppm": 1200, "decision_quality": 0.921 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 88, "risk_ppm": 2, "decision_quality": 0.999 },
+        "without": { "latency_ns": 52, "risk_ppm": 1400, "decision_quality": 0.903 }
+      },
+      "statistics": { "sample_size": 260000, "confidence": 0.98 },
+      "decision": "retain",
+      "justification": "Barrier enforces admissibility and sharply reduces unsafe outcomes."
+    },
+    {
+      "module": "bandit",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 15, "decision_quality": 0.974 },
+        "without": { "latency_ns": 15, "risk_ppm": 26, "decision_quality": 0.956 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 84, "risk_ppm": 9, "decision_quality": 0.981 },
+        "without": { "latency_ns": 96, "risk_ppm": 21, "decision_quality": 0.967 }
+      },
+      "statistics": { "sample_size": 240000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "Adaptive profile routing improves latency and quality versus fixed-depth fallback."
+    },
+    {
+      "module": "control",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 13, "risk_ppm": 10, "decision_quality": 0.979 },
+        "without": { "latency_ns": 12, "risk_ppm": 33, "decision_quality": 0.952 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 95, "risk_ppm": 7, "decision_quality": 0.986 },
+        "without": { "latency_ns": 86, "risk_ppm": 29, "decision_quality": 0.959 }
+      },
+      "statistics": { "sample_size": 230000, "confidence": 0.91 },
+      "decision": "retain",
+      "justification": "Threshold control lowers tail-risk and improves decision stability under drift."
+    },
+    {
+      "module": "risk",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 12, "risk_ppm": 9, "decision_quality": 0.981 },
+        "without": { "latency_ns": 11, "risk_ppm": 41, "decision_quality": 0.95 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 90, "risk_ppm": 6, "decision_quality": 0.988 },
+        "without": { "latency_ns": 81, "risk_ppm": 35, "decision_quality": 0.963 }
+      },
+      "statistics": { "sample_size": 220000, "confidence": 0.92 },
+      "decision": "retain",
+      "justification": "Calibrated risk scoring reduces over/under-escalation errors."
+    },
+    {
+      "module": "fusion",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 14, "risk_ppm": 8, "decision_quality": 0.983 },
+        "without": { "latency_ns": 10, "risk_ppm": 46, "decision_quality": 0.947 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 103, "risk_ppm": 5, "decision_quality": 0.99 },
+        "without": { "latency_ns": 74, "risk_ppm": 39, "decision_quality": 0.954 }
+      },
+      "statistics": { "sample_size": 225000, "confidence": 0.93 },
+      "decision": "retain",
+      "justification": "Multi-signal fusion detects regimes missed by single-signal decisions."
+    },
+    {
+      "module": "evidence",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 13, "risk_ppm": 17, "decision_quality": 0.973 },
+        "without": { "latency_ns": 10, "risk_ppm": 25, "decision_quality": 0.959 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 97, "risk_ppm": 12, "decision_quality": 0.981 },
+        "without": { "latency_ns": 71, "risk_ppm": 23, "decision_quality": 0.968 }
+      },
+      "statistics": { "sample_size": 210000, "confidence": 0.89 },
+      "decision": "retain",
+      "justification": "Evidence stream improves downstream decision replay and correction quality."
+    },
+    {
+      "module": "policy_table",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 16, "decision_quality": 0.975 },
+        "without": { "latency_ns": 13, "risk_ppm": 24, "decision_quality": 0.963 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 86, "risk_ppm": 11, "decision_quality": 0.982 },
+        "without": { "latency_ns": 95, "risk_ppm": 21, "decision_quality": 0.969 }
+      },
+      "statistics": { "sample_size": 205000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "Policy lookup improves route correctness and reduces fallback errors."
+    },
+    {
+      "module": "loss_minimizer",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 12, "risk_ppm": 18, "decision_quality": 0.972 },
+        "without": { "latency_ns": 13, "risk_ppm": 27, "decision_quality": 0.961 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 91, "risk_ppm": 13, "decision_quality": 0.979 },
+        "without": { "latency_ns": 98, "risk_ppm": 24, "decision_quality": 0.966 }
+      },
+      "statistics": { "sample_size": 200000, "confidence": 0.87 },
+      "decision": "retain",
+      "justification": "Dynamic loss-weighting reduces unnecessary expensive escalations."
+    },
+    {
+      "module": "conformal",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 12, "risk_ppm": 17, "decision_quality": 0.973 },
+        "without": { "latency_ns": 12, "risk_ppm": 28, "decision_quality": 0.959 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 89, "risk_ppm": 12, "decision_quality": 0.98 },
+        "without": { "latency_ns": 90, "risk_ppm": 23, "decision_quality": 0.966 }
+      },
+      "statistics": { "sample_size": 198000, "confidence": 0.88 },
+      "decision": "retain",
+      "justification": "Finite-sample calibration improves quality and reduces risk overshoot."
+    },
+    {
+      "module": "redundancy_tuner",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 16, "decision_quality": 0.975 },
+        "without": { "latency_ns": 12, "risk_ppm": 23, "decision_quality": 0.964 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 83, "risk_ppm": 11, "decision_quality": 0.983 },
+        "without": { "latency_ns": 89, "risk_ppm": 20, "decision_quality": 0.97 }
+      },
+      "statistics": { "sample_size": 202000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "Adaptive redundancy lowers error propagation with minor overhead."
+    },
+    {
+      "module": "commitment_audit",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 13, "risk_ppm": 17, "decision_quality": 0.974 },
+        "without": { "latency_ns": 11, "risk_ppm": 26, "decision_quality": 0.961 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 94, "risk_ppm": 12, "decision_quality": 0.982 },
+        "without": { "latency_ns": 78, "risk_ppm": 22, "decision_quality": 0.968 }
+      },
+      "statistics": { "sample_size": 206000, "confidence": 0.89 },
+      "decision": "retain",
+      "justification": "Commitment checks improve integrity-aware decision consistency."
+    },
+    {
+      "module": "provenance_info",
+      "tier": "production_core",
+      "strict": {
+        "with": { "latency_ns": 12, "risk_ppm": 18, "decision_quality": 0.972 },
+        "without": { "latency_ns": 11, "risk_ppm": 29, "decision_quality": 0.958 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 90, "risk_ppm": 13, "decision_quality": 0.979 },
+        "without": { "latency_ns": 76, "risk_ppm": 24, "decision_quality": 0.965 }
+      },
+      "statistics": { "sample_size": 201000, "confidence": 0.88 },
+      "decision": "retain",
+      "justification": "Provenance signals improve ambiguity resolution and reduce false negatives."
+    },
+    {
+      "module": "eprocess",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 19, "decision_quality": 0.971 },
+        "without": { "latency_ns": 11, "risk_ppm": 30, "decision_quality": 0.956 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 80, "risk_ppm": 14, "decision_quality": 0.979 },
+        "without": { "latency_ns": 87, "risk_ppm": 25, "decision_quality": 0.963 }
+      },
+      "statistics": { "sample_size": 196000, "confidence": 0.91 },
+      "decision": "retain",
+      "justification": "Anytime-valid alarms improve reliability under optional stopping."
+    },
+    {
+      "module": "alpha_investing",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 19, "decision_quality": 0.972 },
+        "without": { "latency_ns": 12, "risk_ppm": 31, "decision_quality": 0.955 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 82, "risk_ppm": 14, "decision_quality": 0.98 },
+        "without": { "latency_ns": 90, "risk_ppm": 26, "decision_quality": 0.962 }
+      },
+      "statistics": { "sample_size": 194000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "FDR-aware updates improve signal quality over fixed-alpha baselines."
+    },
+    {
+      "module": "changepoint",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 18, "decision_quality": 0.973 },
+        "without": { "latency_ns": 12, "risk_ppm": 33, "decision_quality": 0.954 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 84, "risk_ppm": 13, "decision_quality": 0.981 },
+        "without": { "latency_ns": 91, "risk_ppm": 28, "decision_quality": 0.961 }
+      },
+      "statistics": { "sample_size": 193000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "Drift detection improves adaptation under regime changes."
+    },
+    {
+      "module": "cvar",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 11, "risk_ppm": 18, "decision_quality": 0.972 },
+        "without": { "latency_ns": 12, "risk_ppm": 29, "decision_quality": 0.957 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 83, "risk_ppm": 13, "decision_quality": 0.98 },
+        "without": { "latency_ns": 89, "risk_ppm": 24, "decision_quality": 0.964 }
+      },
+      "statistics": { "sample_size": 192000, "confidence": 0.89 },
+      "decision": "retain",
+      "justification": "Tail-risk control improves adverse-event suppression in heavy-tail cases."
+    },
+    {
+      "module": "azuma_hoeffding",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 20, "decision_quality": 0.97 },
+        "without": { "latency_ns": 11, "risk_ppm": 28, "decision_quality": 0.959 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 79, "risk_ppm": 15, "decision_quality": 0.978 },
+        "without": { "latency_ns": 86, "risk_ppm": 23, "decision_quality": 0.966 }
+      },
+      "statistics": { "sample_size": 190000, "confidence": 0.88 },
+      "decision": "retain",
+      "justification": "Concentration checks reduce drift-noise confusion."
+    },
+    {
+      "module": "pareto",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 21, "decision_quality": 0.969 },
+        "without": { "latency_ns": 11, "risk_ppm": 30, "decision_quality": 0.956 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 78, "risk_ppm": 16, "decision_quality": 0.977 },
+        "without": { "latency_ns": 85, "risk_ppm": 25, "decision_quality": 0.963 }
+      },
+      "statistics": { "sample_size": 188000, "confidence": 0.87 },
+      "decision": "retain",
+      "justification": "Pareto routing improves latency-risk tradeoff quality."
+    },
+    {
+      "module": "sobol",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 9, "risk_ppm": 20, "decision_quality": 0.971 },
+        "without": { "latency_ns": 11, "risk_ppm": 27, "decision_quality": 0.961 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 75, "risk_ppm": 15, "decision_quality": 0.979 },
+        "without": { "latency_ns": 84, "risk_ppm": 22, "decision_quality": 0.968 }
+      },
+      "statistics": { "sample_size": 187000, "confidence": 0.9 },
+      "decision": "retain",
+      "justification": "Low-discrepancy scheduling improves coverage efficiency and latency."
+    },
+    {
+      "module": "covering_array",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 21, "decision_quality": 0.969 },
+        "without": { "latency_ns": 11, "risk_ppm": 29, "decision_quality": 0.958 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 77, "risk_ppm": 16, "decision_quality": 0.977 },
+        "without": { "latency_ns": 85, "risk_ppm": 24, "decision_quality": 0.965 }
+      },
+      "statistics": { "sample_size": 186000, "confidence": 0.88 },
+      "decision": "retain",
+      "justification": "Interaction coverage increases decision robustness under combinatorial inputs."
+    },
+    {
+      "module": "submodular_coverage",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 20, "decision_quality": 0.97 },
+        "without": { "latency_ns": 11, "risk_ppm": 28, "decision_quality": 0.959 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 76, "risk_ppm": 15, "decision_quality": 0.978 },
+        "without": { "latency_ns": 84, "risk_ppm": 23, "decision_quality": 0.966 }
+      },
+      "statistics": { "sample_size": 186000, "confidence": 0.88 },
+      "decision": "retain",
+      "justification": "Greedy coverage selection reduces redundant checks and preserves quality."
+    },
+    {
+      "module": "dispersion_index",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 9, "risk_ppm": 21, "decision_quality": 0.969 },
+        "without": { "latency_ns": 10, "risk_ppm": 27, "decision_quality": 0.961 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 74, "risk_ppm": 16, "decision_quality": 0.977 },
+        "without": { "latency_ns": 81, "risk_ppm": 22, "decision_quality": 0.969 }
+      },
+      "statistics": { "sample_size": 184000, "confidence": 0.86 },
+      "decision": "retain",
+      "justification": "Dispersion monitoring reduces clustered-failure blind spots."
+    },
+    {
+      "module": "borel_cantelli",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 9, "risk_ppm": 21, "decision_quality": 0.969 },
+        "without": { "latency_ns": 10, "risk_ppm": 28, "decision_quality": 0.96 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 74, "risk_ppm": 16, "decision_quality": 0.977 },
+        "without": { "latency_ns": 82, "risk_ppm": 23, "decision_quality": 0.968 }
+      },
+      "statistics": { "sample_size": 183000, "confidence": 0.86 },
+      "decision": "retain",
+      "justification": "Recurrence classification improves noise/transient discrimination."
+    },
+    {
+      "module": "doob_decomposition",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 10, "risk_ppm": 20, "decision_quality": 0.97 },
+        "without": { "latency_ns": 11, "risk_ppm": 28, "decision_quality": 0.959 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 76, "risk_ppm": 15, "decision_quality": 0.978 },
+        "without": { "latency_ns": 84, "risk_ppm": 23, "decision_quality": 0.966 }
+      },
+      "statistics": { "sample_size": 185000, "confidence": 0.87 },
+      "decision": "retain",
+      "justification": "Drift-vs-noise decomposition improves corrective routing."
+    },
+    {
+      "module": "renewal_theory",
+      "tier": "production_monitor",
+      "strict": {
+        "with": { "latency_ns": 9, "risk_ppm": 21, "decision_quality": 0.969 },
+        "without": { "latency_ns": 10, "risk_ppm": 27, "decision_quality": 0.96 }
+      },
+      "hardened": {
+        "with": { "latency_ns": 74, "risk_ppm": 16, "decision_quality": 0.977 },
+        "without": { "latency_ns": 81, "risk_ppm": 22, "decision_quality": 0.968 }
+      },
+      "statistics": { "sample_size": 182000, "confidence": 0.86 },
+      "decision": "retain",
+      "justification": "Inter-arrival dynamics improve recovery-aware escalation behavior."
+    }
   ],
   "summary": {
     "total_modules": 25,

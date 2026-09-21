@@ -72,17 +72,26 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Inline unit tests cover null, foreign, live, free, double-free, canary, bounds, dependency ordering, and structured validation logs.",
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "null_pointer_detected"},
-        {"source": "ptr_validator_unit", "name": "allocated_pointer_validates"},
-        {"source": "ptr_validator_unit", "name": "foreign_pointer_allowed"},
-        {"source": "ptr_validator_unit", "name": "foreign_free_reported"},
-        {"source": "ptr_validator_unit", "name": "double_free_reported"},
-        {"source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free"},
-        {"source": "ptr_validator_unit", "name": "one_past_end_pointer_is_denied_as_invalid"},
-        {"source": "ptr_validator_unit", "name": "header_pointer_is_denied_as_invalid"},
-        {"source": "ptr_validator_unit", "name": "null_pointer_early_exit_does_not_reach_later_stages"},
-        {"source": "ptr_validator_unit", "name": "foreign_pointer_early_exit_skips_deep_integrity_stages"},
-        {"source": "ptr_validator_unit", "name": "dependency_safe_order_delays_deep_checks_until_after_arena"}
+        { "source": "ptr_validator_unit", "name": "null_pointer_detected" },
+        { "source": "ptr_validator_unit", "name": "allocated_pointer_validates" },
+        { "source": "ptr_validator_unit", "name": "foreign_pointer_allowed" },
+        { "source": "ptr_validator_unit", "name": "foreign_free_reported" },
+        { "source": "ptr_validator_unit", "name": "double_free_reported" },
+        { "source": "ptr_validator_unit", "name": "canary_corruption_detected_via_pipeline_free" },
+        { "source": "ptr_validator_unit", "name": "one_past_end_pointer_is_denied_as_invalid" },
+        { "source": "ptr_validator_unit", "name": "header_pointer_is_denied_as_invalid" },
+        {
+          "source": "ptr_validator_unit",
+          "name": "null_pointer_early_exit_does_not_reach_later_stages"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "foreign_pointer_early_exit_skips_deep_integrity_stages"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "dependency_safe_order_delays_deep_checks_until_after_arena"
+        }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
@@ -92,14 +101,14 @@
       "missing_item_id": "tests.e2e.primary",
       "description": "The TSM e2e suite exercises full pipeline integration across null, allocation lifecycle, concurrency, cache hits, metrics, and deterministic mixed workloads.",
       "required_test_refs": [
-        {"source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null"},
-        {"source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle"},
-        {"source": "tsm_pipeline_e2e", "name": "double_free_detected"},
-        {"source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected"},
-        {"source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline"},
-        {"source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic"},
-        {"source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation"},
-        {"source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload"}
+        { "source": "tsm_pipeline_e2e", "name": "null_pointer_validates_as_null" },
+        { "source": "tsm_pipeline_e2e", "name": "alloc_validate_free_lifecycle" },
+        { "source": "tsm_pipeline_e2e", "name": "double_free_detected" },
+        { "source": "tsm_pipeline_e2e", "name": "foreign_pointer_free_detected" },
+        { "source": "tsm_pipeline_e2e", "name": "concurrent_validate_on_shared_pipeline" },
+        { "source": "tsm_pipeline_e2e", "name": "mixed_workload_deterministic" },
+        { "source": "tsm_pipeline_e2e", "name": "tls_cache_hits_on_repeated_validation" },
+        { "source": "tsm_pipeline_e2e", "name": "pipeline_metrics_after_workload" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane --test tsm_pipeline_e2e_test -- --nocapture --test-threads=1"
@@ -109,9 +118,12 @@
       "missing_item_id": "tests.property.primary",
       "description": "Property tests cover live-allocation validation, freed-pointer temporal violations, and dependency-safe stage ordering over randomized stage permutations.",
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live"},
-        {"source": "ptr_validator_unit", "name": "freed_pointer_property_becomes_temporal_violation"},
-        {"source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds"}
+        { "source": "ptr_validator_unit", "name": "allocated_pointer_property_validates_as_live" },
+        {
+          "source": "ptr_validator_unit",
+          "name": "freed_pointer_property_becomes_temporal_violation"
+        },
+        { "source": "ptr_validator_unit", "name": "dependency_safe_order_property_holds" }
       ],
       "required_commands": [
         "FRANKENLIBC_PROPTEST_CASES=10000 rch exec -- env CARGO_TARGET_DIR=<target> cargo test --locked -p frankenlibc-membrane ptr_validator --lib -- --nocapture --test-threads=1"
@@ -151,9 +163,15 @@
         "security_verdict"
       ],
       "required_test_refs": [
-        {"source": "ptr_validator_unit", "name": "validation_log_export_includes_trace_and_decision_ids"},
-        {"source": "ptr_validator_unit", "name": "validation_logging_cardinality_budget_is_bounded"},
-        {"source": "contract_harness", "name": "checker_emits_report_and_jsonl"}
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_log_export_includes_trace_and_decision_ids"
+        },
+        {
+          "source": "ptr_validator_unit",
+          "name": "validation_logging_cardinality_budget_is_bounded"
+        },
+        { "source": "contract_harness", "name": "checker_emits_report_and_jsonl" }
       ]
     }
   }

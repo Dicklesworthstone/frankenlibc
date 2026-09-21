@@ -96,13 +96,7 @@
       "prose_only": 34,
       "source_only": 25
     },
-    "required_ledger_arrays": [
-      "rows",
-      "deltas",
-      "gaps",
-      "done_evidence_audit",
-      "parse_errors"
-    ],
+    "required_ledger_arrays": ["rows", "deltas", "gaps", "done_evidence_audit", "parse_errors"],
     "required_done_log_fields": [
       "trace_id",
       "bead_id",
@@ -155,8 +149,6 @@
       "gap_ledger_completion_artifact_verified",
       "gap_ledger_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "gap_ledger_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["gap_ledger_completion_contract_fail"]
   }
 }

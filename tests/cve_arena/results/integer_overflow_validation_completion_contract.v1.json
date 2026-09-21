@@ -115,15 +115,8 @@
       "c_triggers_total": 1,
       "total_issues": 0
     },
-    "required_healing_actions": [
-      "ClampSize",
-      "ReallocAsMalloc",
-      "TruncateWithNull"
-    ],
-    "required_overflow_patterns": [
-      "integer_overflow",
-      "size_miscalculation"
-    ],
+    "required_healing_actions": ["ClampSize", "ReallocAsMalloc", "TruncateWithNull"],
+    "required_overflow_patterns": ["integer_overflow", "size_miscalculation"],
     "coverage_matrix": {
       "path": "tests/cve_arena/coverage_matrix.json",
       "required_present": true,
@@ -137,25 +130,10 @@
       "cve_id": "CVE-2023-6246",
       "manifest_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/manifest.json",
       "trigger_path": "tests/cve_arena/glibc/cve_2023_6246_syslog_suite/trigger.c",
-      "required_cwe_ids": [
-        "CWE-787",
-        "CWE-131",
-        "CWE-190"
-      ],
-      "required_healing_actions": [
-        "ClampSize",
-        "TruncateWithNull"
-      ],
-      "required_tsm_features": [
-        "canary",
-        "bounds_checking",
-        "clamp_size",
-        "truncate_with_null"
-      ],
-      "required_overflow_patterns": [
-        "integer_overflow",
-        "size_miscalculation"
-      ],
+      "required_cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
+      "required_healing_actions": ["ClampSize", "TruncateWithNull"],
+      "required_tsm_features": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
+      "required_overflow_patterns": ["integer_overflow", "size_miscalculation"],
       "expected_strict_stock": "crashes",
       "expected_tsm_outcome": "prevent_with_healing"
     },
@@ -164,14 +142,8 @@
       "cve_id": "CVE-2024-46461",
       "manifest_path": "tests/cve_arena/targets/vlc/manifest.json",
       "trigger_path": "tests/cve_arena/targets/vlc/trigger.sh",
-      "required_cwe_ids": [
-        "CWE-190",
-        "CWE-122"
-      ],
-      "required_healing_actions": [
-        "ClampSize",
-        "ReallocAsMalloc"
-      ],
+      "required_cwe_ids": ["CWE-190", "CWE-122"],
+      "required_healing_actions": ["ClampSize", "ReallocAsMalloc"],
       "required_tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -179,9 +151,7 @@
         "clamp_size_healing",
         "integer_overflow_resilience"
       ],
-      "required_overflow_patterns": [
-        "integer_overflow"
-      ],
+      "required_overflow_patterns": ["integer_overflow"],
       "expected_strict_stock": "crashes",
       "expected_tsm_outcome": "prevent_with_healing"
     }
@@ -240,9 +210,7 @@
         "scenario_id": "completion_checker_runs_fail_closed",
         "command": "bash scripts/check_cve_integer_overflow_validation_completion_contract.sh",
         "expected_exit": 0,
-        "expected_output_needles": [
-          "cve_integer_overflow_validation_completion_contract: PASS"
-        ]
+        "expected_output_needles": ["cve_integer_overflow_validation_completion_contract: PASS"]
       }
     ]
   },

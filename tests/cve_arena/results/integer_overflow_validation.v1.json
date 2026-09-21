@@ -8,15 +8,8 @@
     "with_trigger_files": 2,
     "c_triggers_compile": 1,
     "c_triggers_total": 1,
-    "unique_healing_actions": [
-      "ClampSize",
-      "ReallocAsMalloc",
-      "TruncateWithNull"
-    ],
-    "overflow_patterns_covered": [
-      "integer_overflow",
-      "size_miscalculation"
-    ],
+    "unique_healing_actions": ["ClampSize", "ReallocAsMalloc", "TruncateWithNull"],
+    "overflow_patterns_covered": ["integer_overflow", "size_miscalculation"],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -25,30 +18,13 @@
       "cve_id": "CVE-2023-6246",
       "test_name": "syslog_heap_overflow_suite",
       "category": "glibc",
-      "cwe_ids": [
-        "CWE-787",
-        "CWE-131",
-        "CWE-190"
-      ],
+      "cwe_ids": ["CWE-787", "CWE-131", "CWE-190"],
       "cvss_score": 8.4,
-      "trigger_files": [
-        "trigger.c"
-      ],
+      "trigger_files": ["trigger.c"],
       "c_compiles": true,
-      "healing_actions": [
-        "ClampSize",
-        "TruncateWithNull"
-      ],
-      "tsm_features": [
-        "canary",
-        "bounds_checking",
-        "clamp_size",
-        "truncate_with_null"
-      ],
-      "overflow_patterns": [
-        "integer_overflow",
-        "size_miscalculation"
-      ],
+      "healing_actions": ["ClampSize", "TruncateWithNull"],
+      "tsm_features": ["canary", "bounds_checking", "clamp_size", "truncate_with_null"],
+      "overflow_patterns": ["integer_overflow", "size_miscalculation"],
       "manifest_valid": true,
       "issues": []
     },
@@ -56,19 +32,11 @@
       "cve_id": "CVE-2024-46461",
       "test_name": "vlc_mms_integer_overflow_heap_overflow",
       "category": "targets",
-      "cwe_ids": [
-        "CWE-190",
-        "CWE-122"
-      ],
+      "cwe_ids": ["CWE-190", "CWE-122"],
       "cvss_score": 7.5,
-      "trigger_files": [
-        "trigger.sh"
-      ],
+      "trigger_files": ["trigger.sh"],
       "c_compiles": null,
-      "healing_actions": [
-        "ClampSize",
-        "ReallocAsMalloc"
-      ],
+      "healing_actions": ["ClampSize", "ReallocAsMalloc"],
       "tsm_features": [
         "allocation_fingerprint",
         "canary_verification",
@@ -76,9 +44,7 @@
         "clamp_size_healing",
         "integer_overflow_resilience"
       ],
-      "overflow_patterns": [
-        "integer_overflow"
-      ],
+      "overflow_patterns": ["integer_overflow"],
       "manifest_valid": true,
       "issues": []
     }

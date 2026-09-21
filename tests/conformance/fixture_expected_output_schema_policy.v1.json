@@ -17,79 +17,44 @@
   "expectation_tag_precedence": [
     {
       "tag": "expected_output",
-      "fields": [
-        "expected_output"
-      ],
+      "fields": ["expected_output"],
       "adapter": "normalize_expected_output_value",
-      "allowed_json_types": [
-        "array",
-        "boolean",
-        "null",
-        "number",
-        "object",
-        "string"
-      ],
+      "allowed_json_types": ["array", "boolean", "null", "number", "object", "string"],
       "comparison_form": "strings pass through unchanged; non-string JSON values serialize with serde_json-compatible compact JSON"
     },
     {
       "tag": "expected_return+expected_values",
-      "fields": [
-        "expected_return",
-        "expected_values"
-      ],
+      "fields": ["expected_return", "expected_values"],
       "adapter": "format_return_and_values",
-      "allowed_json_types": [
-        "array",
-        "number",
-        "object",
-        "string"
-      ],
+      "allowed_json_types": ["array", "number", "object", "string"],
       "comparison_form": "return value plus sequence values normalize to '<return>:[<values>]'"
     },
     {
       "tag": "expected_output_bytes",
-      "fields": [
-        "expected_output_bytes"
-      ],
+      "fields": ["expected_output_bytes"],
       "adapter": "normalize_expected_output_value",
-      "allowed_json_types": [
-        "array"
-      ],
+      "allowed_json_types": ["array"],
       "comparison_form": "byte arrays normalize to compact JSON arrays"
     },
     {
       "tag": "expected_output_pattern",
-      "fields": [
-        "expected_output_pattern"
-      ],
+      "fields": ["expected_output_pattern"],
       "adapter": "normalize_expected_output_value",
-      "allowed_json_types": [
-        "string"
-      ],
+      "allowed_json_types": ["string"],
       "comparison_form": "pattern text normalizes to the pattern string"
     },
     {
       "tag": "expected_return",
-      "fields": [
-        "expected_return"
-      ],
+      "fields": ["expected_return"],
       "adapter": "normalize_expected_output_value",
-      "allowed_json_types": [
-        "number",
-        "string"
-      ],
+      "allowed_json_types": ["number", "string"],
       "comparison_form": "return-only contracts normalize to their scalar text"
     },
     {
       "tag": "expected_n_value",
-      "fields": [
-        "expected_n_value"
-      ],
+      "fields": ["expected_n_value"],
       "adapter": "normalize_expected_output_value",
-      "allowed_json_types": [
-        "number",
-        "string"
-      ],
+      "allowed_json_types": ["number", "string"],
       "comparison_form": "scanf %n contracts normalize to their scalar text"
     }
   ],

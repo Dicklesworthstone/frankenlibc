@@ -39,22 +39,10 @@
   ],
   "claim_policy": {
     "default_decision": "block_done_until_all_runtime_core_gap_ids_have_strict_and_hardened_fixture_or_semantic_overlay_evidence",
-    "allow_source_status": [
-      "IN_PROGRESS",
-      "PLANNED"
-    ],
-    "block_status_without_all_gap_rows": [
-      "DONE"
-    ],
-    "block_replacement_levels_without_evidence": [
-      "L1",
-      "L2",
-      "L3"
-    ],
-    "required_runtime_modes": [
-      "strict",
-      "hardened"
-    ],
+    "allow_source_status": ["IN_PROGRESS", "PLANNED"],
+    "block_status_without_all_gap_rows": ["DONE"],
+    "block_replacement_levels_without_evidence": ["L1", "L2", "L3"],
+    "required_runtime_modes": ["strict", "hardened"],
     "rejected_evidence_kinds": [
       "summary_only",
       "prose_only",
@@ -81,9 +69,7 @@
       "symbol": "malloc",
       "source_status": "IN_PROGRESS",
       "evidence_kind": "fixture_and_semantic_overlay",
-      "fixture_files": [
-        "tests/conformance/fixtures/allocator.json"
-      ],
+      "fixture_files": ["tests/conformance/fixtures/allocator.json"],
       "semantic_contract_ids": [],
       "mode_semantics_family": "Allocator",
       "repair_deny_entry_ids": [],
@@ -185,10 +171,7 @@
         "tests/conformance/fixtures/pthread_thread.json",
         "tests/conformance/fixtures/pthread_tls_keys.json"
       ],
-      "semantic_contract_ids": [
-        "sem-pthread-cancel-private",
-        "sem-pthread-priority-protocol"
-      ],
+      "semantic_contract_ids": ["sem-pthread-cancel-private", "sem-pthread-priority-protocol"],
       "mode_semantics_family": "Threading",
       "repair_deny_entry_ids": [],
       "named_unsupported_or_fallback_cases": [
@@ -238,9 +221,7 @@
         "tests/conformance/stdio_libio_buffering_fixture_pack.v1.json",
         "tests/conformance/stdio_invariants.v1.json"
       ],
-      "semantic_contract_ids": [
-        "sem-stdio-vtable-helpers"
-      ],
+      "semantic_contract_ids": ["sem-stdio-vtable-helpers"],
       "mode_semantics_family": "Stdio",
       "repair_deny_entry_ids": [],
       "named_unsupported_or_fallback_cases": [
@@ -289,9 +270,7 @@
       ],
       "semantic_contract_ids": [],
       "mode_semantics_family": "Locale",
-      "repair_deny_entry_ids": [
-        "locale_unsupported_fallback_repair"
-      ],
+      "repair_deny_entry_ids": ["locale_unsupported_fallback_repair"],
       "named_unsupported_or_fallback_cases": [
         "missing locale data blocks promotion instead of counting as parity",
         "invalid locale names have strict rejection or hardened C-locale fallback",
@@ -339,13 +318,9 @@
         "tests/conformance/fixtures/setjmp_ops.json",
         "tests/conformance/setjmp_semantics_contract.v1.json"
       ],
-      "semantic_contract_ids": [
-        "sem-setjmp-phase1"
-      ],
+      "semantic_contract_ids": ["sem-setjmp-phase1"],
       "mode_semantics_family": null,
-      "repair_deny_entry_ids": [
-        "signal_invalid_signal_number_deny"
-      ],
+      "repair_deny_entry_ids": ["signal_invalid_signal_number_deny"],
       "named_unsupported_or_fallback_cases": [
         "setjmp phase-1 metadata capture is explicit and full stack transfer remains a proof gap",
         "signal negative timeout paths must fail closed instead of hanging",
@@ -388,9 +363,7 @@
       "symbol": "time",
       "source_status": "PLANNED",
       "evidence_kind": "fixture_and_semantic_overlay",
-      "fixture_files": [
-        "tests/conformance/fixtures/time_ops.json"
-      ],
+      "fixture_files": ["tests/conformance/fixtures/time_ops.json"],
       "semantic_contract_ids": [],
       "mode_semantics_family": "Time",
       "repair_deny_entry_ids": [],
@@ -495,13 +468,9 @@
         "tests/conformance/iconv_codec_scope_ledger.v1.json",
         "tests/conformance/locale_catalog_transliteration_fixture_pack.v1.json"
       ],
-      "semantic_contract_ids": [
-        "sem-gconv-private-internals"
-      ],
+      "semantic_contract_ids": ["sem-gconv-private-internals"],
       "mode_semantics_family": null,
-      "repair_deny_entry_ids": [
-        "iconv_unsupported_encoding_deny"
-      ],
+      "repair_deny_entry_ids": ["iconv_unsupported_encoding_deny"],
       "named_unsupported_or_fallback_cases": [
         "unsupported encodings are denied under hardened iconv policy",
         "private gconv internals expose bootstrap descriptors and null caches instead of glibc module internals",
@@ -596,9 +565,7 @@
   "direct_runner": {
     "runner_kind": "direct",
     "command": "rch exec -- cargo test -p frankenlibc-harness --test runtime_core_fixture_evidence_gate_test -- --nocapture",
-    "artifact_refs": [
-      "crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs"
-    ]
+    "artifact_refs": ["crates/frankenlibc-harness/tests/runtime_core_fixture_evidence_gate_test.rs"]
   },
   "isolated_runner": {
     "runner_kind": "isolated",

@@ -1,21 +1,10 @@
 {
   "schema_version": "v1",
   "bead": "bd-fp4tm.6",
-  "source_beads": [
-    "bd-fp4tm.2",
-    "bd-fp4tm.3",
-    "bd-fp4tm.4",
-    "bd-fp4tm.5"
-  ],
+  "source_beads": ["bd-fp4tm.2", "bd-fp4tm.3", "bd-fp4tm.4", "bd-fp4tm.5"],
   "generated_at_utc": "2026-05-08T05:45:00Z",
   "purpose": "Machine-checkable handoff and CI recipe for operating the workload evidence loop without rediscovering command order, tracker mode, or generated-artifact validators.",
-  "required_stage_ids": [
-    "freshness",
-    "reproducer",
-    "latency_join",
-    "dossier",
-    "epic_closeout"
-  ],
+  "required_stage_ids": ["freshness", "reproducer", "latency_join", "dossier", "epic_closeout"],
   "stages": [
     {
       "id": "freshness",
@@ -170,9 +159,7 @@
       "id": "epic_closeout",
       "description": "Close the workload evidence loop epic only after graph health, pushed commits, mirrored branches, and reservation release are recorded.",
       "command": "br --no-db close bd-fp4tm --reason <structured-closeout> --json",
-      "expected_outputs": [
-        ".beads/issues.jsonl"
-      ],
+      "expected_outputs": [".beads/issues.jsonl"],
       "generated_artifacts": [
         {
           "path": ".beads/issues.jsonl",

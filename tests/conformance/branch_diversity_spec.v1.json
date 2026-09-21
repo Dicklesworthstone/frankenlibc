@@ -10,7 +10,13 @@
     },
     "algebraic_topology": {
       "description": "Homology, cohomology, spectral sequences, nerve complexes, persistent homology",
-      "modules": ["cohomology", "nerve_complex", "persistence", "serre_spectral", "obstruction_detector"],
+      "modules": [
+        "cohomology",
+        "nerve_complex",
+        "persistence",
+        "serre_spectral",
+        "obstruction_detector"
+      ],
       "required_for": "all_milestones"
     },
     "abstract_algebra": {
@@ -143,9 +149,6 @@
       "abstract_algebra",
       "grothendieck_serre"
     ],
-    "required_families_simd_abi": [
-      "atiyah_singer_ktheory",
-      "clifford_geometric"
-    ]
+    "required_families_simd_abi": ["atiyah_singer_ktheory", "clifford_geometric"]
   }
 }

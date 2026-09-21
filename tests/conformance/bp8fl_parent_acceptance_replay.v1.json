@@ -43,11 +43,7 @@
   "audit_reference": {
     "pass": "2026-05-10T03-16-16Z",
     "scorecard_path": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-aixvz/scorecard.md",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "score_before": 455,
     "score_threshold": 700
   },
@@ -67,123 +63,55 @@
   "required_acceptance_terms": [
     {
       "term_id": "parent_specific_header",
-      "any_of": [
-        [
-          "Parent-specific acceptance criteria"
-        ]
-      ],
+      "any_of": [["Parent-specific acceptance criteria"]],
       "failure_signature": "missing_parent_specific_header"
     },
     {
       "term_id": "preserve_scope",
-      "any_of": [
-        [
-          "Preserve"
-        ]
-      ],
+      "any_of": [["Preserve"]],
       "failure_signature": "missing_preserve_scope"
     },
     {
       "term_id": "child_workstreams",
-      "any_of": [
-        [
-          "Closure requires",
-          "bd-bp8fl"
-        ],
-        [
-          "child workstreams"
-        ]
-      ],
+      "any_of": [["Closure requires", "bd-bp8fl"], ["child workstreams"]],
       "failure_signature": "missing_child_workstreams"
     },
     {
       "term_id": "required_unit_tests",
-      "any_of": [
-        [
-          "Required unit tests"
-        ],
-        [
-          "Required test classes"
-        ]
-      ],
+      "any_of": [["Required unit tests"], ["Required test classes"]],
       "failure_signature": "missing_unit_test_classes"
     },
     {
       "term_id": "deterministic_e2e",
-      "any_of": [
-        [
-          "Required deterministic"
-        ],
-        [
-          "deterministic scripts"
-        ],
-        [
-          "deterministic e2e"
-        ]
-      ],
+      "any_of": [["Required deterministic"], ["deterministic scripts"], ["deterministic e2e"]],
       "failure_signature": "missing_deterministic_e2e"
     },
     {
       "term_id": "structured_telemetry",
-      "any_of": [
-        [
-          "Structured logs",
-          "trace_id",
-          "source_commit",
-          "failure_signature"
-        ]
-      ],
+      "any_of": [["Structured logs", "trace_id", "source_commit", "failure_signature"]],
       "failure_signature": "missing_structured_telemetry"
     },
     {
       "term_id": "source_of_truth_freshness",
       "any_of": [
-        [
-          "Source-of-truth freshness",
-          "source_commit"
-        ],
-        [
-          "Source-of-truth freshness",
-          "DB",
-          "JSONL"
-        ]
+        ["Source-of-truth freshness", "source_commit"],
+        ["Source-of-truth freshness", "DB", "JSONL"]
       ],
       "failure_signature": "missing_source_of_truth_freshness"
     },
     {
       "term_id": "claim_gate_cases",
-      "any_of": [
-        [
-          "Claim gates",
-          "positive",
-          "negative"
-        ]
-      ],
+      "any_of": [["Claim gates", "positive", "negative"]],
       "failure_signature": "missing_claim_gate_cases"
     },
     {
       "term_id": "closure_commands",
-      "any_of": [
-        [
-          "Closure must list exact commands"
-        ],
-        [
-          "Closure must list exact",
-          "commands"
-        ]
-      ],
+      "any_of": [["Closure must list exact commands"], ["Closure must list exact", "commands"]],
       "failure_signature": "missing_closure_commands"
     },
     {
       "term_id": "no_feature_loss",
-      "any_of": [
-        [
-          "no-feature-loss"
-        ],
-        [
-          "No feature"
-        ]
-      ],
+      "any_of": [["no-feature-loss"], ["No feature"]],
       "failure_signature": "missing_no_feature_loss"
     }
   ],
@@ -223,10 +151,7 @@
   ],
   "tool_probe_contract": {
     "optional_env": "FRANKENLIBC_BP8FL_PARENT_ACCEPTANCE_PROBE_TOOLS=1",
-    "commands": [
-      "br show <parent-id> --no-db --json",
-      "br dep cycles --no-db --json"
-    ],
+    "commands": ["br show <parent-id> --no-db --json", "br dep cycles --no-db --json"],
     "failure_policy": "Tool probe failures are telemetry failures; direct JSONL validation still reports missing rows and weak acceptance criteria separately."
   },
   "fixture_replay": {

@@ -39,17 +39,9 @@
         "no_unwrap",
         "no_panic"
       ],
-      "required_attributes": [
-        "#![no_main]"
-      ],
-      "required_macros": [
-        "fuzz_target!"
-      ],
-      "required_artifact_layout_keys": [
-        "corpus",
-        "dictionary",
-        "crashes"
-      ],
+      "required_attributes": ["#![no_main]"],
+      "required_macros": ["fuzz_target!"],
+      "required_artifact_layout_keys": ["corpus", "dictionary", "crashes"],
       "required_targets": [
         "fuzz_string",
         "fuzz_malloc",

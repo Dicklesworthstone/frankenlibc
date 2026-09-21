@@ -43,10 +43,7 @@
   "unsupported_scenarios": [
     {
       "scenario_id": "cross_thread_longjmp",
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "jump_depth": 1,
       "mask_state": "unknown",
       "expected_outcome": "unsupported_deferred",
@@ -55,10 +52,7 @@
     },
     {
       "scenario_id": "corrupted_jump_buffer_restore",
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "jump_depth": 1,
       "mask_state": "unknown",
       "expected_outcome": "unsupported_deferred",
@@ -67,10 +61,7 @@
     },
     {
       "scenario_id": "siglongjmp_without_sigsetjmp",
-      "modes": [
-        "strict",
-        "hardened"
-      ],
+      "modes": ["strict", "hardened"],
       "jump_depth": 0,
       "mask_state": "none",
       "expected_outcome": "unsupported_deferred",

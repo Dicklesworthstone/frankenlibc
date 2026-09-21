@@ -138,32 +138,10 @@
     ]
   },
   "artifact_index_contract": {
-    "required_fields": [
-      "index_version",
-      "run_id",
-      "bead_id",
-      "generated_utc",
-      "artifacts"
-    ],
-    "artifact_required_fields": [
-      "path",
-      "kind",
-      "sha256"
-    ],
-    "join_key_fields": [
-      "trace_ids",
-      "span_ids",
-      "decision_ids",
-      "policy_ids",
-      "evidence_seqnos"
-    ],
-    "legacy_join_key_aliases": [
-      "trace_id",
-      "span_id",
-      "decision_id",
-      "policy_id",
-      "evidence_seqno"
-    ]
+    "required_fields": ["index_version", "run_id", "bead_id", "generated_utc", "artifacts"],
+    "artifact_required_fields": ["path", "kind", "sha256"],
+    "join_key_fields": ["trace_ids", "span_ids", "decision_ids", "policy_ids", "evidence_seqnos"],
+    "legacy_join_key_aliases": ["trace_id", "span_id", "decision_id", "policy_id", "evidence_seqno"]
   },
   "one_command_triage": {
     "command": "scripts/check_structured_log_artifact_index_completion_contract.sh",

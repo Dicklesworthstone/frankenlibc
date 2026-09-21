@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_harness::kernel_snapshot::build_kernel_snapshot_fixture as a CLI: deterministic capture of a RuntimeKernelSnapshot fixture (v1) intended for fixture diffing and sha256 gating. The fixture contains a fixed 7-family scenario id 'runtime_math_kernel_snapshot_smoke' plus optional strict/hardened ModeSnapshotV1 blocks. The decoder side is exercised by the paired diff-kernel-snapshot subcommand; this contract pins only the snapshot producer.",
   "subcommand_name": "snapshot-kernel",
   "binary_target": "harness",
-  "required_flags": [
-    "--output"
-  ],
-  "optional_flags": [
-    "--mode",
-    "--seed",
-    "--steps"
-  ],
+  "required_flags": ["--output"],
+  "optional_flags": ["--mode", "--seed", "--steps"],
   "underlying_lib_functions": [
     "frankenlibc_harness::kernel_snapshot::build_kernel_snapshot_fixture",
     "frankenlibc_harness::kernel_snapshot::SnapshotMode::from_str_loose"
@@ -24,16 +18,8 @@
     "format": "json",
     "schema_version_field": "version",
     "schema_version_value": "v1",
-    "required_top_level_fields": [
-      "version",
-      "scenario"
-    ],
-    "scenario_fields": [
-      "id",
-      "seed",
-      "steps",
-      "families"
-    ],
+    "required_top_level_fields": ["version", "scenario"],
+    "scenario_fields": ["id", "seed", "steps", "families"],
     "scenario_id_value": "runtime_math_kernel_snapshot_smoke",
     "scenario_families_count": 7,
     "scenario_families_order": [
@@ -47,16 +33,9 @@
     ],
     "mode_strict_field": "strict",
     "mode_hardened_field": "hardened",
-    "mode_block_fields": [
-      "mode",
-      "snapshot"
-    ]
+    "mode_block_fields": ["mode", "snapshot"]
   },
-  "mode_enum": [
-    "strict",
-    "hardened",
-    "both"
-  ],
+  "mode_enum": ["strict", "hardened", "both"],
   "default_seed_hex": "0xDEAD_BEEF",
   "default_steps": 128,
   "default_mode": "both",

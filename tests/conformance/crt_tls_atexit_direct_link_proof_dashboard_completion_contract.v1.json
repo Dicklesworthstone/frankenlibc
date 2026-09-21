@@ -16,10 +16,7 @@
     "completion_harness": "crates/frankenlibc-harness/tests/crt_tls_atexit_direct_link_proof_dashboard_completion_contract_test.rs"
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.conformance.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.conformance.primary", "telemetry.primary"],
     "required_dashboard": {
       "schema_version": "v1",
       "total_rows_min": 619,
@@ -292,9 +289,7 @@
       "crt_tls_dashboard.source_gates_replayed",
       "crt_tls_dashboard.completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "crt_tls_dashboard.completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["crt_tls_dashboard.completion_contract_fail"]
   },
   "required_test_functions": {
     "positive": [

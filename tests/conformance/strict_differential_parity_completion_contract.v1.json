@@ -7,10 +7,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3.1/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind the original strict differential parity closure to explicit unit and e2e evidence for the claimed wide-pointer and iconv UTF-32 surface, without broadening the claim to unrelated later strict or hardened matrix drift.",
   "source_artifacts": {
@@ -234,10 +231,7 @@
     },
     "abi_iconv": {
       "path": "crates/frankenlibc-abi/tests/iconv_abi_test.rs",
-      "required_test_refs": [
-        "iconv_open_utf8_to_utf32",
-        "iconv_utf8_to_utf32"
-      ]
+      "required_test_refs": ["iconv_open_utf8_to_utf32", "iconv_utf8_to_utf32"]
     },
     "wide_string_ops_harness": {
       "path": "crates/frankenlibc-harness/tests/wide_string_ops_conformance_test.rs",
@@ -255,9 +249,7 @@
     },
     "iconv_phase1_harness": {
       "path": "crates/frankenlibc-harness/tests/iconv_phase1_conformance_test.rs",
-      "required_test_refs": [
-        "iconv_phase1_fixture_executes_via_isolated_harness"
-      ]
+      "required_test_refs": ["iconv_phase1_fixture_executes_via_isolated_harness"]
     }
   },
   "completion_coverage": [

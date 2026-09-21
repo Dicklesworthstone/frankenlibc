@@ -218,13 +218,13 @@
     "total_cves_analyzed": 15,
     "expected_prevented": 12,
     "expected_not_prevented": 3,
-    "prevention_rate": 0.80,
+    "prevention_rate": 0.8,
     "by_class": {
-      "buffer_overflow": {"total": 9, "prevented": 8, "rate": 0.89},
-      "buffer_over_read": {"total": 1, "prevented": 1, "rate": 1.0},
-      "use_after_free": {"total": 2, "prevented": 2, "rate": 1.0},
-      "integer_overflow": {"total": 1, "prevented": 1, "rate": 1.0},
-      "logic_bugs": {"total": 2, "prevented": 0, "rate": 0.0}
+      "buffer_overflow": { "total": 9, "prevented": 8, "rate": 0.89 },
+      "buffer_over_read": { "total": 1, "prevented": 1, "rate": 1.0 },
+      "use_after_free": { "total": 2, "prevented": 2, "rate": 1.0 },
+      "integer_overflow": { "total": 1, "prevented": 1, "rate": 1.0 },
+      "logic_bugs": { "total": 2, "prevented": 0, "rate": 0.0 }
     }
   }
 }

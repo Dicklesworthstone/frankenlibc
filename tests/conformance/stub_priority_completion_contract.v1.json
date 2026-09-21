@@ -28,11 +28,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 700
   },
   "source_artifacts": [
@@ -88,21 +84,13 @@
       "id": "support_matrix",
       "path": "support_matrix.json",
       "role": "classified symbol status source for Stub and GlibcCallThrough membership",
-      "required_needles": [
-        "\"total_exported\": 4119",
-        "\"GlibcCallThrough\"",
-        "\"Stub\""
-      ]
+      "required_needles": ["\"total_exported\": 4119", "\"GlibcCallThrough\"", "\"Stub\""]
     },
     {
       "id": "workload_matrix",
       "path": "tests/conformance/workload_matrix.json",
       "role": "hard-parts workload impact source consumed by the stub-priority score formula",
-      "required_needles": [
-        "\"bead\": \"bd-3u0\"",
-        "\"subsystem_impact\"",
-        "\"unblocks_workloads\""
-      ]
+      "required_needles": ["\"bead\": \"bd-3u0\"", "\"subsystem_impact\"", "\"unblocks_workloads\""]
     },
     {
       "id": "verification_matrix",
@@ -118,12 +106,7 @@
       "id": "ld_preload_smoke_summary",
       "path": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "role": "checked LD_PRELOAD smoke summary that anchors the strict and hardened real-program smoke lane",
-      "required_needles": [
-        "\"passes\": 58",
-        "\"fails\": 0",
-        "\"strict\"",
-        "\"hardened\""
-      ]
+      "required_needles": ["\"passes\": 58", "\"fails\": 0", "\"strict\"", "\"hardened\""]
     },
     {
       "id": "ld_preload_smoke_e2e_index",

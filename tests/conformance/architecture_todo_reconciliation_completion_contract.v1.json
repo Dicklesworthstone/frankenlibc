@@ -36,12 +36,7 @@
         "stale_doc_only": 0,
         "blocked_by_missing_artifact": 0
       },
-      "required_new_beads": [
-        "bd-0agsk",
-        "bd-0agsk.1",
-        "bd-0agsk.2",
-        "bd-0agsk.18"
-      ],
+      "required_new_beads": ["bd-0agsk", "bd-0agsk.1", "bd-0agsk.2", "bd-0agsk.18"],
       "required_log_events": [
         "architecture_todo_reconciliation_validated",
         "architecture_todo_reconciliation_row_validated"

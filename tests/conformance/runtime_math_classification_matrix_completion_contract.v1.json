@@ -61,9 +61,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary"],
     "required_matrix": {
       "total_modules": 69,
       "classification_counts": {
@@ -78,15 +76,8 @@
       "production_manifest_modules": 25,
       "research_only_manifest_modules": 44,
       "research_modules_currently_in_production_manifest": 0,
-      "allowed_classifications": [
-        "production_core",
-        "production_monitor",
-        "research"
-      ],
-      "allowed_linkage_statuses": [
-        "Production",
-        "ResearchOnly"
-      ]
+      "allowed_classifications": ["production_core", "production_monitor", "research"],
+      "allowed_linkage_statuses": ["Production", "ResearchOnly"]
     },
     "required_gate": {
       "command": "bash scripts/check_runtime_math_classification_matrix.sh",

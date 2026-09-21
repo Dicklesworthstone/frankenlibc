@@ -45,9 +45,7 @@
         "standalone.diagnostics_session",
         "standalone.profiling_fenv"
       ],
-      "negative_smoke_rows": [
-        "standalone.loader_process_negative_missing_obligation"
-      ],
+      "negative_smoke_rows": ["standalone.loader_process_negative_missing_obligation"],
       "required_log_fields": [
         "trace_id",
         "bead_id",
@@ -96,10 +94,7 @@
     "log_env": "STANDALONE_SMOKE_LOG",
     "required_artifact_name": "libfrankenlibc_replace.so",
     "stale_if_older_than_head": true,
-    "host_dependency_probe_tools": [
-      "readelf -d",
-      "ldd"
-    ],
+    "host_dependency_probe_tools": ["readelf -d", "ldd"],
     "case_dir_template": "target/standalone_link_run_smoke/${run_id}/${smoke_id}",
     "required_artifacts": [
       "source.c",
@@ -163,19 +158,10 @@
       "source_filename": "minimal_exit.c",
       "c_source": "int main(void) {\n    return 0;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -191,9 +177,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "The directly linked binary reaches main without LD_PRELOAD or host-interpose semantics.",
       "symbol_version_requirements": [
@@ -225,19 +209,10 @@
       "source_filename": "stdio_file_roundtrip.c",
       "c_source": "#include <stdio.h>\n#include <string.h>\n\nint main(void) {\n    FILE *file = tmpfile();\n    if (file == NULL) {\n        perror(\"tmpfile\");\n        return 2;\n    }\n    if (fputs(\"frankenlibc-stdio\\n\", file) < 0) {\n        return 3;\n    }\n    rewind(file);\n    char buffer[64];\n    if (fgets(buffer, sizeof(buffer), file) == NULL) {\n        return 4;\n    }\n    if (strcmp(buffer, \"frankenlibc-stdio\\n\") != 0) {\n        return 5;\n    }\n    puts(\"stdio-file-ok\");\n    return 0;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -253,9 +228,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Native stdio setup is present enough for tmpfile and buffered I/O without LD_PRELOAD.",
       "symbol_version_requirements": [
@@ -292,20 +265,10 @@
       "source_filename": "pthread_tls_errno.c",
       "c_source": "#include <errno.h>\n#include <pthread.h>\n#include <stdint.h>\n#include <stdio.h>\n\nstatic _Thread_local int tls_value;\n\nstatic void *worker(void *arg) {\n    (void)arg;\n    tls_value = 41;\n    errno = EDOM;\n    return (void *)(intptr_t)(tls_value + (errno == EDOM));\n}\n\nint main(void) {\n    pthread_t thread;\n    void *result = NULL;\n    if (pthread_create(&thread, NULL, worker, NULL) != 0) {\n        perror(\"pthread_create\");\n        return 2;\n    }\n    if (pthread_join(thread, &result) != 0) {\n        perror(\"pthread_join\");\n        return 3;\n    }\n    long value = (long)(intptr_t)result;\n    printf(\"pthread-tls-ok:%ld\\n\", value);\n    return value == 42 ? 0 : 4;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}",
-          "-pthread"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}", "-pthread"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -316,17 +279,13 @@
           "${candidate_binary}",
           "-pthread"
         ],
-        "extra_flags": [
-          "-pthread"
-        ]
+        "extra_flags": ["-pthread"]
       },
       "runtime_env": {
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Thread creation, join, TLS, and errno work without host-pthread interpose assumptions.",
       "symbol_version_requirements": [
@@ -363,19 +322,10 @@
       "source_filename": "resolver_locale.c",
       "c_source": "#include <locale.h>\n#include <netdb.h>\n#include <stdio.h>\n#include <string.h>\n\nint main(void) {\n    if (setlocale(LC_ALL, \"C\") == NULL) {\n        return 2;\n    }\n    struct addrinfo hints;\n    memset(&hints, 0, sizeof(hints));\n    hints.ai_family = AF_UNSPEC;\n    hints.ai_socktype = SOCK_STREAM;\n    struct addrinfo *result = NULL;\n    int rc = getaddrinfo(\"localhost\", \"80\", &hints, &result);\n    if (rc != 0) {\n        fprintf(stderr, \"getaddrinfo:%s\\n\", gai_strerror(rc));\n        return 3;\n    }\n    freeaddrinfo(result);\n    printf(\"resolver-locale-ok:%s\\n\", localeconv()->decimal_point);\n    return 0;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -392,9 +342,7 @@
           "FRANKENLIBC_MODE": "${runtime_mode}",
           "LC_ALL": "C"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Locale initialization and resolver/NSS calls are owned or explicitly blocked by standalone policy.",
       "symbol_version_requirements": [
@@ -431,10 +379,7 @@
       "source_filename": "negative_missing_obligation.c",
       "c_source": "int main(void) {\n    return 0;\n}\n",
       "replacement_level": "L3",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "negative_case": true,
       "missing_obligations": [
         "custom_crt_startup",
@@ -443,13 +388,7 @@
       ],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -465,9 +404,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "This row must not be treated as standalone-ready until CRT, rtld, and zero-host-glibc evidence is current.",
       "symbol_version_requirements": [
@@ -510,20 +447,10 @@
       ],
       "c_source": "#define _GNU_SOURCE\n#include <dlfcn.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/auxv.h>\n#include <time.h>\n\nint main(void) {\n    void *handle = dlopen(NULL, RTLD_NOW);\n    if (handle == NULL) {\n        fprintf(stderr, \"dlopen:%s\\n\", dlerror());\n        return 2;\n    }\n    void *symbol = dlsym(handle, \"memcpy\");\n    if (symbol == NULL) {\n        fprintf(stderr, \"dlsym:%s\\n\", dlerror());\n        return 3;\n    }\n    if (sizeof(time_t) < 8) {\n        return 4;\n    }\n    unsigned long pagesz = getauxval(AT_PAGESZ);\n    unsigned long secure = getauxval(AT_SECURE);\n    if (pagesz == 0) {\n        return 5;\n    }\n    char dst[8] = {0};\n    ((void *(*)(void *, const void *, size_t))symbol)(dst, \"ok\", 3);\n    printf(\"loader-symbol-bootstrap-ok:%s:%lu\\n\", dst, secure);\n    return strcmp(dst, \"ok\") == 0 ? 0 : 6;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}",
-          "-ldl"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}", "-ldl"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -534,17 +461,13 @@
           "${candidate_binary}",
           "-ldl"
         ],
-        "extra_flags": [
-          "-ldl"
-        ]
+        "extra_flags": ["-ldl"]
       },
       "runtime_env": {
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Versioned dynamic-linker, IFUNC-adjacent symbol lookup, auxv bootstrap, and time_t layout assumptions are checked before L2 claims.",
       "symbol_version_requirements": [
@@ -592,19 +515,10 @@
       ],
       "c_source": "#define _GNU_SOURCE\n#include <errno.h>\n#include <stdio.h>\n#include <string.h>\n#include <sys/ipc.h>\n#include <sys/mman.h>\n#include <sys/syscall.h>\n#include <unistd.h>\n\nint main(void) {\n    void *page = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n    if (page == MAP_FAILED) {\n        perror(\"mmap\");\n        return 2;\n    }\n    strcpy((char *)page, \"vm-ok\");\n    long raw_pid = syscall(SYS_getpid);\n    if (raw_pid != (long)getpid()) {\n        return 3;\n    }\n    key_t key = ftok(\".\", 65);\n    int key_seen = key != (key_t)-1 || errno == ENOENT;\n    int unmap_rc = munmap(page, 4096);\n    if (unmap_rc != 0) {\n        perror(\"munmap\");\n        return 4;\n    }\n    printf(\"vm-syscall-ipc-ok:%ld:%d\\n\", raw_pid, key_seen);\n    return key_seen ? 0 : 5;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -620,9 +534,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "VM transitions, raw syscall ABI glue, and SysV IPC key semantics must work or remain explicitly blocked for standalone replacement claims.",
       "symbol_version_requirements": [
@@ -663,25 +575,13 @@
       "category": "diagnostics_session",
       "description": "GNU backtrace and utmpx session-accounting probes run without requiring mutable session records.",
       "source_filename": "diagnostics_session.c",
-      "feature_gap_ids": [
-        "fp-reverse-core-8f05cebd7805",
-        "fp-reverse-core-b4b2f8e772cb"
-      ],
+      "feature_gap_ids": ["fp-reverse-core-8f05cebd7805", "fp-reverse-core-b4b2f8e772cb"],
       "c_source": "#define _GNU_SOURCE\n#include <execinfo.h>\n#include <stdio.h>\n#include <utmpx.h>\n\nint main(void) {\n    void *frames[8];\n    int frame_count = backtrace(frames, 8);\n    if (frame_count <= 0) {\n        return 2;\n    }\n    setutxent();\n    struct utmpx *entry = getutxent();\n    endutxent();\n    printf(\"diagnostics-session-ok:%d:%d\\n\", frame_count, entry != NULL);\n    return 0;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -697,9 +597,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Diagnostics/unwinding and session-accounting read paths must be executable before user-facing standalone compatibility claims advance.",
       "symbol_version_requirements": [
@@ -735,26 +633,13 @@
       "category": "profiling_fenv",
       "description": "profil disable path and fenv exception round-trip run in a direct-link binary.",
       "source_filename": "profiling_fenv.c",
-      "feature_gap_ids": [
-        "fp-reverse-core-44162ed23382",
-        "fp-reverse-core-a559b1461f71"
-      ],
+      "feature_gap_ids": ["fp-reverse-core-44162ed23382", "fp-reverse-core-a559b1461f71"],
       "c_source": "#define _GNU_SOURCE\n#include <fenv.h>\n#include <stdio.h>\n#include <unistd.h>\n\nint main(void) {\n    int profil_rc = profil(NULL, 0, 0, 0);\n    if (profil_rc != 0) {\n        perror(\"profil\");\n        return 2;\n    }\n    if (feclearexcept(FE_ALL_EXCEPT) != 0) {\n        return 3;\n    }\n    if (feraiseexcept(FE_DIVBYZERO) != 0) {\n        return 4;\n    }\n    int raised = fetestexcept(FE_DIVBYZERO);\n    printf(\"profiling-fenv-ok:%d\\n\", raised != 0);\n    return raised ? 0 : 5;\n}\n",
       "replacement_level": "L2",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}",
-          "-lm"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}", "-lm"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -765,17 +650,13 @@
           "${candidate_binary}",
           "-lm"
         ],
-        "extra_flags": [
-          "-lm"
-        ]
+        "extra_flags": ["-lm"]
       },
       "runtime_env": {
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "Profiling hooks and fenv exceptional paths must have direct-link executable witnesses before standalone claims advance.",
       "symbol_version_requirements": [
@@ -825,10 +706,7 @@
       ],
       "c_source": "int main(void) {\n    return 0;\n}\n",
       "replacement_level": "L3",
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "negative_case": true,
       "missing_obligations": [
         "owned_rtld_relocation",
@@ -844,13 +722,7 @@
       ],
       "link_command": {
         "profile": "standalone_direct_link",
-        "baseline_template": [
-          "${CC}",
-          "-O2",
-          "${source}",
-          "-o",
-          "${baseline_binary}"
-        ],
+        "baseline_template": ["${CC}", "-O2", "${source}", "-o", "${baseline_binary}"],
         "candidate_template": [
           "${CC}",
           "-O2",
@@ -866,9 +738,7 @@
         "required": {
           "FRANKENLIBC_MODE": "${runtime_mode}"
         },
-        "forbidden": [
-          "LD_PRELOAD"
-        ]
+        "forbidden": ["LD_PRELOAD"]
       },
       "expected_loader_startup": "This row must remain claim_blocked until every loader/process ABI gap ID has current positive evidence and unsupported cases are explicitly blocked.",
       "symbol_version_requirements": [

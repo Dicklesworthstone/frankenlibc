@@ -50,12 +50,7 @@
       "target_total": 688,
       "target_uncovered": 494,
       "title": "unistd/process/filesystem syscall fixture wave",
-      "workload_domains": [
-        "shell_coreutils",
-        "build_tools",
-        "package_manager",
-        "startup_linking"
-      ]
+      "workload_domains": ["shell_coreutils", "build_tools", "package_manager", "startup_linking"]
     },
     {
       "campaign_id": "fcq-stdio-libio",
@@ -66,12 +61,7 @@
       ],
       "expected_coverage_after_first_wave_pct": 100.0,
       "first_wave_fixture_count": 4,
-      "first_wave_symbols": [
-        "stderr",
-        "stdin",
-        "stdout",
-        "tmpnam"
-      ],
+      "first_wave_symbols": ["stderr", "stdin", "stdout", "tmpnam"],
       "module": "stdio_abi",
       "next_step": "Add stream-state and _IO alias fixtures that prove behavior before native stdio replacement claims advance.",
       "oracle_kind": "stdio_fixture_or_replay",
@@ -98,12 +88,7 @@
       "target_total": 10,
       "target_uncovered": 4,
       "title": "stdio/libio stream semantics fixture wave",
-      "workload_domains": [
-        "stdio_libio",
-        "shell_coreutils",
-        "build_tools",
-        "package_manager"
-      ]
+      "workload_domains": ["stdio_libio", "shell_coreutils", "build_tools", "package_manager"]
     },
     {
       "campaign_id": "fcq-pthread-sync",
@@ -142,9 +127,7 @@
       "scores": {
         "coverage_gap_score": 40,
         "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [
-          "threading"
-        ],
+        "hard_parts_risk_tags": ["threading"],
         "implementation_complexity_score": 4,
         "parity_risk_score": 5,
         "priority_score": 2340,
@@ -157,11 +140,7 @@
       "target_total": 113,
       "target_uncovered": 40,
       "title": "pthread synchronization and cancellation fixture wave",
-      "workload_domains": [
-        "threaded_services",
-        "language_runtimes",
-        "performance_sensitive"
-      ]
+      "workload_domains": ["threaded_services", "language_runtimes", "performance_sensitive"]
     },
     {
       "campaign_id": "fcq-wchar-locale-encoding",
@@ -212,11 +191,7 @@
       "target_total": 92,
       "target_uncovered": 52,
       "title": "wide-character and multibyte fixture wave",
-      "workload_domains": [
-        "locale_iconv",
-        "language_runtimes",
-        "shell_coreutils"
-      ]
+      "workload_domains": ["locale_iconv", "language_runtimes", "shell_coreutils"]
     },
     {
       "campaign_id": "fcq-fortify-bounds",
@@ -245,12 +220,7 @@
       "next_step": "Add positive and negative checked-wrapper fixtures before fortify safety claims expand.",
       "oracle_kind": "hardened_bounds_oracle",
       "rank": 5,
-      "risk_tags": [
-        "buffer_boundary",
-        "claim_blocked",
-        "diagnostics_gap",
-        "hardened_repair"
-      ],
+      "risk_tags": ["buffer_boundary", "claim_blocked", "diagnostics_gap", "hardened_repair"],
       "scores": {
         "coverage_gap_score": 17,
         "feature_gap_risk_score": 0,
@@ -267,18 +237,12 @@
       "target_total": 25,
       "target_uncovered": 17,
       "title": "fortify and checked-variant fixture wave",
-      "workload_domains": [
-        "performance_sensitive",
-        "shell_coreutils",
-        "build_tools"
-      ]
+      "workload_domains": ["performance_sensitive", "shell_coreutils", "build_tools"]
     },
     {
       "campaign_id": "fcq-math-special",
       "current_coverage_pct": 6.88,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
+      "deterministic_e2e_scripts": ["scripts/check_fixture_coverage_prioritizer.sh"],
       "expected_coverage_after_first_wave_pct": 8.47,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
@@ -309,9 +273,7 @@
       "scores": {
         "coverage_gap_score": 200,
         "feature_gap_risk_score": 3,
-        "hard_parts_risk_tags": [
-          "threading"
-        ],
+        "hard_parts_risk_tags": ["threading"],
         "implementation_complexity_score": 5,
         "parity_risk_score": 5,
         "priority_score": 1850,
@@ -324,18 +286,12 @@
       "target_total": 756,
       "target_uncovered": 704,
       "title": "math finite/special-function fixture wave",
-      "workload_domains": [
-        "language_runtimes",
-        "performance_sensitive",
-        "build_tools"
-      ]
+      "workload_domains": ["language_runtimes", "performance_sensitive", "build_tools"]
     },
     {
       "campaign_id": "fcq-glibc-internal-compat",
       "current_coverage_pct": 8.91,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
+      "deterministic_e2e_scripts": ["scripts/check_fixture_coverage_prioritizer.sh"],
       "expected_coverage_after_first_wave_pct": 12.26,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
@@ -378,18 +334,12 @@
       "target_total": 359,
       "target_uncovered": 327,
       "title": "glibc internal compatibility triage fixture wave",
-      "workload_domains": [
-        "startup_linking",
-        "build_tools",
-        "diagnostics"
-      ]
+      "workload_domains": ["startup_linking", "build_tools", "diagnostics"]
     },
     {
       "campaign_id": "fcq-rpc-legacy-network",
       "current_coverage_pct": 25.56,
-      "deterministic_e2e_scripts": [
-        "scripts/check_fixture_coverage_prioritizer.sh"
-      ],
+      "deterministic_e2e_scripts": ["scripts/check_fixture_coverage_prioritizer.sh"],
       "expected_coverage_after_first_wave_pct": 34.59,
       "first_wave_fixture_count": 12,
       "first_wave_symbols": [
@@ -432,11 +382,7 @@
       "target_total": 133,
       "target_uncovered": 99,
       "title": "legacy RPC compatibility fixture wave",
-      "workload_domains": [
-        "resolver_nss",
-        "package_manager",
-        "legacy_network"
-      ]
+      "workload_domains": ["resolver_nss", "package_manager", "legacy_network"]
     }
   ],
   "deferred_modules": [
@@ -656,11 +602,7 @@
       "target_covered": 1,
       "target_total": 1,
       "target_uncovered": 0,
-      "workload_domains": [
-        "startup_linking",
-        "language_runtimes",
-        "build_tools"
-      ]
+      "workload_domains": ["startup_linking", "language_runtimes", "build_tools"]
     },
     {
       "coverage_state": "covered",
@@ -697,11 +639,7 @@
       "target_covered": 15,
       "target_total": 15,
       "target_uncovered": 0,
-      "workload_domains": [
-        "threaded_services",
-        "performance_sensitive",
-        "package_manager"
-      ]
+      "workload_domains": ["threaded_services", "performance_sensitive", "package_manager"]
     },
     {
       "coverage_state": "covered",
@@ -710,12 +648,7 @@
       "target_covered": 27,
       "target_total": 27,
       "target_uncovered": 0,
-      "workload_domains": [
-        "shell_coreutils",
-        "build_tools",
-        "package_manager",
-        "startup_linking"
-      ]
+      "workload_domains": ["shell_coreutils", "build_tools", "package_manager", "startup_linking"]
     },
     {
       "coverage_state": "covered",
@@ -738,11 +671,7 @@
       "target_covered": 19,
       "target_total": 19,
       "target_uncovered": 0,
-      "workload_domains": [
-        "threaded_services",
-        "shell_coreutils",
-        "language_runtimes"
-      ]
+      "workload_domains": ["threaded_services", "shell_coreutils", "language_runtimes"]
     },
     {
       "coverage_state": "covered",
@@ -779,11 +708,7 @@
       "target_covered": 20,
       "target_total": 20,
       "target_uncovered": 0,
-      "workload_domains": [
-        "build_tools",
-        "language_runtimes",
-        "package_manager"
-      ]
+      "workload_domains": ["build_tools", "language_runtimes", "package_manager"]
     }
   ],
   "generated_at_utc": "2026-06-03T21:45:00Z",
@@ -829,14 +754,8 @@
   "schema_version": "v1",
   "scoring_policy": {
     "coverage_gap_score": "min(target_uncovered, 200)",
-    "implementation_complexity_score_range": [
-      1,
-      5
-    ],
-    "parity_risk_score_range": [
-      0,
-      5
-    ],
+    "implementation_complexity_score_range": [1, 5],
+    "parity_risk_score_range": [0, 5],
     "priority_score": "coverage_gap_score + 300 * workload_risk_score + 200 * parity_risk_score - 50 * implementation_complexity_score",
     "risk_inputs": {
       "abi_symbol_universe": "tests/conformance/symbol_universe_normalization.v1.json",
@@ -852,10 +771,7 @@
       "version_script_exports": "crates/frankenlibc-abi/version_scripts/libc.map"
     },
     "sort_order": "priority_score_desc_then_target_uncovered_desc_then_module_asc",
-    "workload_risk_score_range": [
-      0,
-      5
-    ]
+    "workload_risk_score_range": [0, 5]
   },
   "summary": {
     "all_uncovered_target_symbols": 1950,

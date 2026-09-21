@@ -49,10 +49,7 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_item_ids": ["tests.unit.primary", "tests.e2e.primary"],
     "required_inventory_summary": {
       "total_keys_min": 25,
       "keys_with_reads_min": 1,

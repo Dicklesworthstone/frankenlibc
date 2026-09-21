@@ -6,11 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-3cco/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "artifacts": {
       "dashboard_generator": "scripts/generate_test_obligation_dashboard.py",
       "dashboard_checker": "scripts/check_test_obligation_dashboard.sh",
@@ -52,12 +48,7 @@
       "required_schema_version": "v1",
       "required_bead": "bd-3cco",
       "required_source": "tests/conformance/verification_matrix.json",
-      "tracked_statuses": [
-        "open",
-        "in_progress",
-        "blocked",
-        "deferred"
-      ],
+      "tracked_statuses": ["open", "in_progress", "blocked", "deferred"],
       "minimum_dashboard_entries": 1,
       "minimum_subsystems": 1,
       "required_categories": [

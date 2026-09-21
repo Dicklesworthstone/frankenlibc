@@ -94,26 +94,14 @@
         {
           "name": "fuzz_fortify",
           "path": "crates/frankenlibc-fuzz/fuzz_targets/fuzz_fortify.rs",
-          "required_text": [
-            "FORTIFY_SOURCE",
-            "GUARD_BYTES",
-            "safe path",
-            "Bead: bd-dvr22"
-          ]
+          "required_text": ["FORTIFY_SOURCE", "GUARD_BYTES", "safe path", "Bead: bd-dvr22"]
         }
       ]
     },
     {
       "module_id": "setjmp",
       "risk_surface": "setjmp/longjmp control-flow transfer ABI",
-      "required_symbols": [
-        "setjmp",
-        "_setjmp",
-        "sigsetjmp",
-        "longjmp",
-        "_longjmp",
-        "siglongjmp"
-      ],
+      "required_symbols": ["setjmp", "_setjmp", "sigsetjmp", "longjmp", "_longjmp", "siglongjmp"],
       "targets": [
         {
           "name": "fuzz_setjmp",
@@ -130,14 +118,7 @@
     {
       "module_id": "mmap",
       "risk_surface": "virtual-memory mapping lifecycle and stale-range ABI",
-      "required_symbols": [
-        "mmap",
-        "munmap",
-        "mprotect",
-        "msync",
-        "madvise",
-        "mremap"
-      ],
+      "required_symbols": ["mmap", "munmap", "mprotect", "msync", "madvise", "mremap"],
       "targets": [
         {
           "name": "fuzz_mmap",
@@ -154,13 +135,7 @@
     {
       "module_id": "dlfcn",
       "risk_surface": "dynamic-loader handle/symbol lifecycle ABI",
-      "required_symbols": [
-        "dlopen",
-        "dlsym",
-        "dlclose",
-        "dlerror",
-        "dladdr"
-      ],
+      "required_symbols": ["dlopen", "dlsym", "dlclose", "dlerror", "dladdr"],
       "targets": [
         {
           "name": "fuzz_dlfcn",

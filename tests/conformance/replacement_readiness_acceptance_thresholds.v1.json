@@ -1,9 +1,7 @@
 {
   "schema_version": "replacement_readiness_acceptance_thresholds.v1",
   "generated_by_bead": "bd-0agsk.17",
-  "source_todo_ids": [
-    "TODO-0604"
-  ],
+  "source_todo_ids": ["TODO-0604"],
   "generated_utc": "2026-05-06T13:22:00Z",
   "canonical_command": "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
   "purpose": "Define the per-family acceptance thresholds that must pass before a support-matrix family can contribute to replacement-readiness claims.",
@@ -23,10 +21,7 @@
   "readiness_policy": {
     "claim_gate_decision_when_any_family_fails": "blocked",
     "aggregate_support_green_not_sufficient": true,
-    "supported_statuses": [
-      "Implemented",
-      "RawSyscall"
-    ],
+    "supported_statuses": ["Implemented", "RawSyscall"],
     "minimum_supported_status_pct": 100.0,
     "maximum_missing_exports_per_family": 0,
     "maximum_residual_callthrough_count": 0,
@@ -53,10 +48,7 @@
     "support_symbol_count": 4119,
     "support_supported_symbol_count": 4119,
     "missing_export_count": 5,
-    "families_with_missing_exports": [
-      "glibc_internal_abi",
-      "stdio_abi"
-    ],
+    "families_with_missing_exports": ["glibc_internal_abi", "stdio_abi"],
     "residual_forbidden_callthrough_count": 0,
     "family_coverage_fail_count": 37,
     "hardened_coverage_gap_group_count": 4,
@@ -88,11 +80,7 @@
       "gate_id": "replacement_readiness_acceptance_thresholds",
       "command": "scripts/check_replacement_readiness_acceptance_thresholds.sh --validate-only",
       "blocks_on_failure": true,
-      "blocks_replacement_levels": [
-        "L1",
-        "L2",
-        "L3"
-      ]
+      "blocks_replacement_levels": ["L1", "L2", "L3"]
     }
   ],
   "report_outputs": {

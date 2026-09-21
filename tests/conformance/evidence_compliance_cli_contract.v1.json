@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary `evidence-compliance` subcommand that validates a structured-log plus artifact-index evidence bundle and emits deterministic triage JSON before returning success or failure.",
   "subcommand_name": "evidence-compliance",
   "binary_target": "harness",
-  "required_flags": [
-    "--log",
-    "--artifact-index"
-  ],
-  "optional_flags": [
-    "--workspace-root",
-    "--output"
-  ],
+  "required_flags": ["--log", "--artifact-index"],
+  "optional_flags": ["--workspace-root", "--output"],
   "underlying_lib_functions": [
     "frankenlibc_harness::evidence_compliance::validate_evidence_bundle",
     "harness::evidence_report_to_triage_json"

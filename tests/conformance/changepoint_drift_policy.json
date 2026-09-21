@@ -21,12 +21,12 @@
         "description": "Run-lengths below this threshold are considered 'short' (recent change-point)."
       },
       "drift_threshold": {
-        "value": 0.30,
+        "value": 0.3,
         "description": "Posterior mass on short run-lengths (r < short_window) required for Drift state.",
         "rationale": "Moderate evidence that a regime shift has occurred recently."
       },
       "changepoint_threshold": {
-        "value": 0.60,
+        "value": 0.6,
         "description": "Posterior mass on short run-lengths required for ChangePoint state.",
         "rationale": "Strong evidence of regime shift; triggers escalation."
       },
@@ -47,10 +47,19 @@
       }
     },
     "states": [
-      {"state": "Calibrating", "description": "Fewer than warmup_count observations received."},
-      {"state": "Stable", "description": "Posterior mass on short runs < drift_threshold. No regime shift detected."},
-      {"state": "Drift", "description": "Posterior mass >= drift_threshold but < changepoint_threshold. Moderate evidence of shift."},
-      {"state": "ChangePoint", "description": "Posterior mass >= changepoint_threshold. Strong evidence of regime shift."}
+      { "state": "Calibrating", "description": "Fewer than warmup_count observations received." },
+      {
+        "state": "Stable",
+        "description": "Posterior mass on short runs < drift_threshold. No regime shift detected."
+      },
+      {
+        "state": "Drift",
+        "description": "Posterior mass >= drift_threshold but < changepoint_threshold. Moderate evidence of shift."
+      },
+      {
+        "state": "ChangePoint",
+        "description": "Posterior mass >= changepoint_threshold. Strong evidence of regime shift."
+      }
     ],
     "mathematical_properties": {
       "conjugate_model": "Beta-Bernoulli with per-run-length sufficient statistics.",

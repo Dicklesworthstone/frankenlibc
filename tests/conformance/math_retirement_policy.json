@@ -75,13 +75,7 @@
   },
   "waiver_policy": {
     "description": "Waivers allow a module to remain in production despite meeting retirement criteria.",
-    "required_fields": [
-      "module",
-      "waiver_bead",
-      "justification",
-      "expires_date",
-      "reviewer"
-    ],
+    "required_fields": ["module", "waiver_bead", "justification", "expires_date", "reviewer"],
     "max_duration_days": 90,
     "review_cadence": "monthly",
     "escalation": "Expired waivers without renewal automatically trigger deprecation stage transition."

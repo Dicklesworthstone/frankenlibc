@@ -21,43 +21,28 @@
     {
       "crate": "frankenlibc-harness",
       "test": "fortify_checked_wrapper_wave01_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "fortify_checked_wrapper_wave02_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "fortify_checked_wrapper_wave03_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "fortify_abi_test::*_chk",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
     "classification": "native-fortify-wrapper-libio-allocator-errno-bridge",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_host_symbols": [
       "<dynamic>",
       "_IO_list_all",

@@ -80,23 +80,80 @@
     "description": "Conversion specifier determines output format and argument type",
     "members": {
       "d": { "name": "signed_decimal", "argument": "int family", "output": "decimal" },
-      "i": { "name": "signed_decimal_alt", "argument": "int family", "output": "decimal", "note": "Same as d" },
+      "i": {
+        "name": "signed_decimal_alt",
+        "argument": "int family",
+        "output": "decimal",
+        "note": "Same as d"
+      },
       "o": { "name": "unsigned_octal", "argument": "unsigned family", "output": "octal" },
       "u": { "name": "unsigned_decimal", "argument": "unsigned family", "output": "decimal" },
-      "x": { "name": "unsigned_hex_lower", "argument": "unsigned family", "output": "hex lowercase" },
-      "X": { "name": "unsigned_hex_upper", "argument": "unsigned family", "output": "hex uppercase" },
-      "f": { "name": "float_fixed_lower", "argument": "double family", "output": "fixed point lowercase" },
-      "F": { "name": "float_fixed_upper", "argument": "double family", "output": "fixed point uppercase" },
-      "e": { "name": "float_exp_lower", "argument": "double family", "output": "scientific lowercase" },
-      "E": { "name": "float_exp_upper", "argument": "double family", "output": "scientific uppercase" },
-      "g": { "name": "float_general_lower", "argument": "double family", "output": "shortest of f or e" },
-      "G": { "name": "float_general_upper", "argument": "double family", "output": "shortest of F or E" },
-      "a": { "name": "float_hex_lower", "argument": "double family", "output": "hex float lowercase" },
-      "A": { "name": "float_hex_upper", "argument": "double family", "output": "hex float uppercase" },
-      "c": { "name": "character", "argument": "int (char) or wint_t", "output": "single character" },
-      "s": { "name": "string", "argument": "char* or wchar_t*", "output": "null-terminated string" },
+      "x": {
+        "name": "unsigned_hex_lower",
+        "argument": "unsigned family",
+        "output": "hex lowercase"
+      },
+      "X": {
+        "name": "unsigned_hex_upper",
+        "argument": "unsigned family",
+        "output": "hex uppercase"
+      },
+      "f": {
+        "name": "float_fixed_lower",
+        "argument": "double family",
+        "output": "fixed point lowercase"
+      },
+      "F": {
+        "name": "float_fixed_upper",
+        "argument": "double family",
+        "output": "fixed point uppercase"
+      },
+      "e": {
+        "name": "float_exp_lower",
+        "argument": "double family",
+        "output": "scientific lowercase"
+      },
+      "E": {
+        "name": "float_exp_upper",
+        "argument": "double family",
+        "output": "scientific uppercase"
+      },
+      "g": {
+        "name": "float_general_lower",
+        "argument": "double family",
+        "output": "shortest of f or e"
+      },
+      "G": {
+        "name": "float_general_upper",
+        "argument": "double family",
+        "output": "shortest of F or E"
+      },
+      "a": {
+        "name": "float_hex_lower",
+        "argument": "double family",
+        "output": "hex float lowercase"
+      },
+      "A": {
+        "name": "float_hex_upper",
+        "argument": "double family",
+        "output": "hex float uppercase"
+      },
+      "c": {
+        "name": "character",
+        "argument": "int (char) or wint_t",
+        "output": "single character"
+      },
+      "s": {
+        "name": "string",
+        "argument": "char* or wchar_t*",
+        "output": "null-terminated string"
+      },
       "p": { "name": "pointer", "argument": "void*", "output": "implementation-defined" },
-      "n": { "name": "store_count", "argument": "int* family", "output": "none (stores count written)" },
+      "n": {
+        "name": "store_count",
+        "argument": "int* family",
+        "output": "none (stores count written)"
+      },
       "%": { "name": "literal_percent", "argument": "none", "output": "%" }
     }
   },
@@ -105,10 +162,26 @@
     "description": "Cross-product of valid flag+length+conversion combinations",
     "note": "See covering_array.json for test coverage requirements",
     "invalid_combinations": [
-      { "flags": ["+", " "], "conversions": ["o", "u", "x", "X", "c", "s", "p", "%"], "reason": "Sign flags not applicable to unsigned/char/string" },
-      { "flags": ["#"], "conversions": ["d", "i", "u", "c", "s", "p", "n", "%"], "reason": "Alternate form only for o/x/X/floating" },
-      { "length": ["L"], "conversions": ["d", "i", "o", "u", "x", "X", "c", "s", "p", "n", "%"], "reason": "L only for floating point" },
-      { "length": ["l"], "conversions": ["f", "F", "e", "E", "g", "G", "a", "A"], "reason": "l is redundant for floating (double is default)" }
+      {
+        "flags": ["+", " "],
+        "conversions": ["o", "u", "x", "X", "c", "s", "p", "%"],
+        "reason": "Sign flags not applicable to unsigned/char/string"
+      },
+      {
+        "flags": ["#"],
+        "conversions": ["d", "i", "u", "c", "s", "p", "n", "%"],
+        "reason": "Alternate form only for o/x/X/floating"
+      },
+      {
+        "length": ["L"],
+        "conversions": ["d", "i", "o", "u", "x", "X", "c", "s", "p", "n", "%"],
+        "reason": "L only for floating point"
+      },
+      {
+        "length": ["l"],
+        "conversions": ["f", "F", "e", "E", "g", "G", "a", "A"],
+        "reason": "l is redundant for floating (double is default)"
+      }
     ]
   },
 

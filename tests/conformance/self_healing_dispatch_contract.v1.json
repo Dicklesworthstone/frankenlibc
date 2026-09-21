@@ -86,10 +86,7 @@
         "escalated",
         "details"
       ],
-      "required_levels": [
-        "info",
-        "warn"
-      ],
+      "required_levels": ["info", "warn"],
       "evidence_summary": "The self-healing policy records every non-None healing action, increments an action-specific counter, emits bounded structured JSONL evidence with monotone decision IDs, and routes escalated repairs to warn-level telemetry."
     },
     "unit_primary": {

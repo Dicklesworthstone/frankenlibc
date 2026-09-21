@@ -90,20 +90,14 @@
         "check_id": "strict_fixture_parity",
         "source": "tests/conformance/optimization_proof_ledger.v1.json",
         "artifact_ref": "tests/conformance/fixtures",
-        "input_classes": [
-          "null_ptr",
-          "in_bounds"
-        ],
+        "input_classes": ["null_ptr", "in_bounds"],
         "status": "pass"
       },
       {
         "check_id": "mode_semantics_guard",
         "source": "tests/conformance/optimization_proof_ledger.v1.json",
         "artifact_ref": "tests/conformance/mode_semantics_matrix.json",
-        "input_classes": [
-          "boundary",
-          "oversize"
-        ],
+        "input_classes": ["boundary", "oversize"],
         "status": "pass"
       }
     ],

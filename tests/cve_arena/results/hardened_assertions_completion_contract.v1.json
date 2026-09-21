@@ -62,11 +62,7 @@
       "source_corpus_bead": "bd-1m5.5",
       "minimum_total_assertions": 12,
       "minimum_unique_healing_actions": 8,
-      "required_prevention_strategies": [
-        "prevent",
-        "quarantine",
-        "deny"
-      ],
+      "required_prevention_strategies": ["prevent", "quarantine", "deny"],
       "required_healing_actions": [
         "ClampSize",
         "FreedWithCanaryCorruption",
@@ -99,11 +95,7 @@
         "healing_actions_emitted",
         "healing_actions_list"
       ],
-      "required_corpus_replay_fields": [
-        "expected_strict",
-        "expected_hardened",
-        "replay_key"
-      ],
+      "required_corpus_replay_fields": ["expected_strict", "expected_hardened", "replay_key"],
       "required_source_log_fields": [
         "timestamp",
         "trace_id",
@@ -126,9 +118,7 @@
         "cve_hardened_assertions_conformance_mapping_verified",
         "cve_hardened_assertions_completion_summary"
       ],
-      "forbidden_completion_log_events": [
-        "cve_hardened_assertions_completion_contract_failed"
-      ]
+      "forbidden_completion_log_events": ["cve_hardened_assertions_completion_contract_failed"]
     },
     "unit_primary": {
       "missing_item_id": "tests.unit.primary",

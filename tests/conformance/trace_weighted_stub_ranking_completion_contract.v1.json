@@ -28,9 +28,7 @@
       "completion_gate": "scripts/check_trace_weighted_stub_ranking_completion_contract.sh",
       "completion_harness": "crates/frankenlibc-harness/tests/trace_weighted_stub_ranking_completion_contract_test.rs"
     },
-    "directory_artifacts": [
-      "conformance_fixtures"
-    ],
+    "directory_artifacts": ["conformance_fixtures"],
     "implementation_refs": [
       "scripts/generate_stub_priority_ranking.py:83",
       "scripts/generate_stub_priority_ranking.py:115",
@@ -297,9 +295,7 @@
         "failure_signature",
         "artifact_refs"
       ],
-      "consumed_gate_events": [
-        "workload_api_wave_plan_check"
-      ],
+      "consumed_gate_events": ["workload_api_wave_plan_check"],
       "default_report_path": "target/conformance/trace_weighted_stub_ranking_completion_contract.report.json",
       "default_log_path": "target/conformance/trace_weighted_stub_ranking_completion_contract.log.jsonl"
     }

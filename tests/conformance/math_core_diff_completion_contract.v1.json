@@ -9,10 +9,7 @@
     "threshold": 700
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.conformance.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.conformance.primary", "telemetry.primary"],
     "scope": "libc math.h core differential matrix against glibc",
     "original_close_reason": "Harness shipped; 0 divergences against glibc."
   },
@@ -34,11 +31,7 @@
       "id": "core_math_exports",
       "path": "crates/frankenlibc-core/src/math/mod.rs",
       "role": "Safe Rust math exports used by the ABI layer.",
-      "required_needles": [
-        "pub use exp::{exp",
-        "pub use float::{",
-        "pub use trig::{"
-      ]
+      "required_needles": ["pub use exp::{exp", "pub use float::{", "pub use trig::{"]
     },
     {
       "id": "math_diff_harness",

@@ -57,12 +57,7 @@
       "rollback_instructions",
       "attribution_metadata"
     ],
-    "required_statuses": [
-      "pending",
-      "verified",
-      "failed",
-      "waived"
-    ],
+    "required_statuses": ["pending", "verified", "failed", "waived"],
     "applicable_module_counts": {
       "high_priority": 6,
       "medium_priority": 2,
@@ -133,12 +128,7 @@
       "isomorphism_protocol_e2e",
       "isomorphism_protocol_summary"
     ],
-    "required_log_fields": [
-      "event",
-      "status",
-      "timestamp",
-      "artifact_refs"
-    ]
+    "required_log_fields": ["event", "status", "timestamp", "artifact_refs"]
   },
   "completion_debt_evidence": {
     "bead": "bd-2bd.1",

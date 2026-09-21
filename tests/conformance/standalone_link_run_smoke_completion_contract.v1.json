@@ -139,11 +139,20 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "smoke_harness", "name": "manifest_defines_required_rows_and_log_contract"},
-        {"source": "smoke_harness", "name": "link_commands_are_direct_and_case_isolated"},
-        {"source": "smoke_harness", "name": "failure_classification_and_stale_rejection_are_declared"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_metamorphic_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        { "source": "smoke_harness", "name": "manifest_defines_required_rows_and_log_contract" },
+        { "source": "smoke_harness", "name": "link_commands_are_direct_and_case_isolated" },
+        {
+          "source": "smoke_harness",
+          "name": "failure_classification_and_stale_rejection_are_declared"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_metamorphic_conformance_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/standalone_link_run_smoke_completion_contract.v1.json",
@@ -155,10 +164,16 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact"},
-        {"source": "smoke_harness", "name": "run_mode_compiles_baseline_programs_and_emits_artifacts"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_smoke_gate_and_preserves_claim_block"}
+        { "source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact" },
+        {
+          "source": "smoke_harness",
+          "name": "run_mode_compiles_baseline_programs_and_emits_artifacts"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_smoke_gate_and_preserves_claim_block"
+        }
       ],
       "required_commands": [
         "STANDALONE_SMOKE_RUN_ID=<run> scripts/check_standalone_link_run_smoke.sh --run",
@@ -170,10 +185,10 @@
       "missing_item_id": "tests.metamorphic.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact"},
-        {"source": "smoke_harness", "name": "link_commands_are_direct_and_case_isolated"},
-        {"source": "completion_harness", "name": "checker_validates_metamorphic_relations"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_metamorphic_relation"}
+        { "source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact" },
+        { "source": "smoke_harness", "name": "link_commands_are_direct_and_case_isolated" },
+        { "source": "completion_harness", "name": "checker_validates_metamorphic_relations" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_metamorphic_relation" }
       ],
       "required_commands": [
         "bash scripts/check_standalone_link_run_smoke_completion_contract.sh",
@@ -184,12 +199,21 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "smoke_harness", "name": "loader_process_owner_rows_cover_all_gap_ids"},
-        {"source": "smoke_harness", "name": "dry_run_blocks_host_libc_dependent_candidate_artifact"},
-        {"source": "smoke_harness", "name": "dry_run_blocks_wrong_profile_candidate_artifact"},
-        {"source": "smoke_harness", "name": "dry_run_blocks_stale_candidate_artifact"},
-        {"source": "smoke_harness", "name": "dry_run_blocks_candidate_artifact_when_ldd_probe_fails"},
-        {"source": "completion_harness", "name": "checker_replays_standalone_smoke_gate_and_preserves_claim_block"}
+        { "source": "smoke_harness", "name": "loader_process_owner_rows_cover_all_gap_ids" },
+        {
+          "source": "smoke_harness",
+          "name": "dry_run_blocks_host_libc_dependent_candidate_artifact"
+        },
+        { "source": "smoke_harness", "name": "dry_run_blocks_wrong_profile_candidate_artifact" },
+        { "source": "smoke_harness", "name": "dry_run_blocks_stale_candidate_artifact" },
+        {
+          "source": "smoke_harness",
+          "name": "dry_run_blocks_candidate_artifact_when_ldd_probe_fails"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_standalone_smoke_gate_and_preserves_claim_block"
+        }
       ],
       "required_commands": [
         "STANDALONE_SMOKE_RUN_ID=<run> scripts/check_standalone_link_run_smoke.sh --dry-run",
@@ -203,10 +227,13 @@
       "default_report_path": "target/conformance/standalone_link_run_smoke_completion_contract.report.json",
       "default_log_path": "target/conformance/standalone_link_run_smoke_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact"},
-        {"source": "smoke_harness", "name": "run_mode_compiles_baseline_programs_and_emits_artifacts"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_validates_metamorphic_relations"}
+        { "source": "smoke_harness", "name": "dry_run_blocks_l2_claim_without_candidate_artifact" },
+        {
+          "source": "smoke_harness",
+          "name": "run_mode_compiles_baseline_programs_and_emits_artifacts"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_validates_metamorphic_relations" }
       ],
       "required_events": [
         "standalone_link_run_smoke_completion_contract_validated",

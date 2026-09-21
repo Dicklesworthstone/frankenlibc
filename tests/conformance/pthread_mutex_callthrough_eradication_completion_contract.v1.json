@@ -48,9 +48,7 @@
       "FAIL: ${mutex_forbidden_count} forbidden pthread_mutex_* call-through(s) detected:",
       "PASS: No forbidden pthread_mutex_* call-throughs detected"
     ],
-    "replacement_guard_harness": [
-      "fn no_pthread_mutex_call_throughs_in_replacement_paths()"
-    ],
+    "replacement_guard_harness": ["fn no_pthread_mutex_call_throughs_in_replacement_paths()"],
     "residual_contract": [
       "\"mutex_forbidden_count\": 0",
       "\"residual_forbidden_count\": 0",
@@ -61,9 +59,7 @@
       "run_replacement_guard(\"interpose\"",
       "residual_replacement_callthrough_blockers_validated"
     ],
-    "residual_harness": [
-      "fn checker_passes_with_live_replacement_guard_reports()"
-    ],
+    "residual_harness": ["fn checker_passes_with_live_replacement_guard_reports()"],
     "support_matrix": [
       "\"symbol\": \"pthread_mutex_init\"",
       "\"symbol\": \"pthread_mutex_destroy\"",
@@ -113,10 +109,7 @@
       "pthread_mutex_trylock",
       "pthread_mutex_unlock"
     ],
-    "guard_modes": [
-      "replacement",
-      "interpose"
-    ],
+    "guard_modes": ["replacement", "interpose"],
     "support_matrix_required_status": "Implemented",
     "support_matrix_required_module": "pthread_abi",
     "replacement_guard_required_zero_fields": [

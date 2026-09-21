@@ -123,22 +123,11 @@
   },
   "roadmap_contract": {
     "minimum_symbols": 100,
-    "required_tiers": [
-      "top50",
-      "top100",
-      "top200"
-    ],
+    "required_tiers": ["top50", "top100", "top200"],
     "required_top50_count": 50,
     "minimum_waves": 3,
     "minimum_mandatory_checklist_items": 3,
-    "required_symbol_fields": [
-      "symbol",
-      "family",
-      "priority_score",
-      "rank",
-      "tier",
-      "wave"
-    ]
+    "required_symbol_fields": ["symbol", "family", "priority_score", "rank", "tier", "wave"]
   },
   "telemetry_contract": {
     "events": [

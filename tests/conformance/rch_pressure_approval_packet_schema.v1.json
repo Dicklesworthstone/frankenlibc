@@ -6,11 +6,7 @@
     "collection_mode": "read_only",
     "destructive_actions_authorized_by_this_schema": false,
     "destructive_action_rule": "Packet generators may report candidate cleanup paths, but they must not delete files, release ballast, rewrite git state, run package cleanup, or execute any command that can remove or overwrite data. Cleanup remains blocked until the user provides explicit written approval for exact paths and commands.",
-    "must_distinguish": [
-      "read_only_evidence",
-      "requires_explicit_approval",
-      "executed_actions"
-    ],
+    "must_distinguish": ["read_only_evidence", "requires_explicit_approval", "executed_actions"],
     "local_cargo_fallback_rule": "A packet may record local fallback as a failure signature only. It must never count local cargo execution as validation proof."
   },
   "required_top_level_fields": [
@@ -179,20 +175,8 @@
     "rejection_count_by_reason",
     "largest_rejected_findings"
   ],
-  "allowed_worker_statuses": [
-    "healthy",
-    "degraded",
-    "disabled",
-    "unreachable",
-    "unknown"
-  ],
-  "allowed_pressure_states": [
-    "green",
-    "warning",
-    "critical",
-    "telemetry_gap",
-    "unknown"
-  ],
+  "allowed_worker_statuses": ["healthy", "degraded", "disabled", "unreachable", "unknown"],
+  "allowed_pressure_states": ["green", "warning", "critical", "telemetry_gap", "unknown"],
   "allowed_probe_failure_signatures": [
     "ok",
     "RCH-E100",
@@ -239,9 +223,7 @@
         "head_commit": "3b4960ef",
         "origin_main_commit": "3b4960ef",
         "origin_master_commit": "3b4960ef",
-        "worktree_list": [
-          "/data/projects/frankenlibc  3b4960ef [main]"
-        ],
+        "worktree_list": ["/data/projects/frankenlibc  3b4960ef [main]"],
         "dirty_summary": [],
         "untracked_summary": [
           "=",
@@ -256,10 +238,7 @@
         "worker_selection_status": "skipped",
         "skip_reason": "no admissible workers: critical_pressure=6",
         "required_remote_env": "RCH_REQUIRE_REMOTE=1",
-        "fallback_markers_rejected": [
-          "[RCH] local",
-          "remote required; refusing local fallback"
-        ]
+        "fallback_markers_rejected": ["[RCH] local", "remote required; refusing local fallback"]
       },
       "non_deletion_recovery": {
         "summary": "Read-only recovery checks ran before requesting deletion-level cleanup approval.",
@@ -327,9 +306,7 @@
           "df_snapshot": "/dev/sda1 774G 736G 39G 96% /; tmpfs 30G 336M 30G 2% /tmp",
           "sbh_snapshot": "overall critical; configured pool metadata present",
           "ballast_snapshot": "sudo sbh ballast status reports available_count=0, releasable_bytes=0, missing_count=10; /var/lib/sbh/ballast absent",
-          "bounded_du_findings": [
-            "116K /data/projects/asupersync/target"
-          ],
+          "bounded_du_findings": ["116K /data/projects/asupersync/target"],
           "collection_errors": []
         },
         {
@@ -353,9 +330,7 @@
           "df_snapshot": "/dev/sda1 774G 736G 39G 96% /; tmpfs 30G 6.1G 24G 21% /tmp",
           "sbh_snapshot": "overall critical; configured pool metadata present",
           "ballast_snapshot": "sudo sbh ballast status reports available_count=0, releasable_bytes=0, missing_count=10; /var/lib/sbh/ballast absent",
-          "bounded_du_findings": [
-            "68K /data/projects/frankenlibc/target"
-          ],
+          "bounded_du_findings": ["68K /data/projects/frankenlibc/target"],
           "collection_errors": []
         },
         {
@@ -407,9 +382,7 @@
           "sbh_snapshot": null,
           "ballast_snapshot": null,
           "bounded_du_findings": [],
-          "collection_errors": [
-            "SSH connection failed for ubuntu@109.205.181.92"
-          ]
+          "collection_errors": ["SSH connection failed for ubuntu@109.205.181.92"]
         }
       ],
       "cleanup_candidates": [
@@ -523,10 +496,7 @@
           "read_only_check_results_passed": 0,
           "read_only_checks_passed": false,
           "approval_state": "needs_read_only_precheck_results",
-          "blocked_by": [
-            "read_only_precheck_results_missing",
-            "explicit_user_approval_required"
-          ],
+          "blocked_by": ["read_only_precheck_results_missing", "explicit_user_approval_required"],
           "safe_to_run_without_user_approval": false,
           "exact_user_approval_required": true,
           "cleanup_executed": false,
@@ -548,21 +518,10 @@
         "status": "candidates_identified",
         "candidate_count": 2,
         "critical_worker_count": 3,
-        "workers_with_bounded_du_findings": [
-          "vmi1149989",
-          "vmi1227854",
-          "vmi1264463"
-        ],
-        "critical_workers_without_candidates": [
-          "vmi1149989",
-          "vmi1227854"
-        ],
-        "probe_failure_workers": [
-          "vmi1152480"
-        ],
-        "collection_error_workers": [
-          "vmi1152480"
-        ],
+        "workers_with_bounded_du_findings": ["vmi1149989", "vmi1227854", "vmi1264463"],
+        "critical_workers_without_candidates": ["vmi1149989", "vmi1227854"],
+        "probe_failure_workers": ["vmi1152480"],
+        "collection_error_workers": ["vmi1152480"],
         "candidate_rejection_summary": {
           "bounded_du_finding_count": 4,
           "rejected_finding_count": 2,
@@ -593,9 +552,7 @@
       },
       "approval_request": {
         "operator_summary": "rch cannot run FrankenLibC cargo validation because all healthy workers are excluded by critical storage pressure and disabled workers fail SSH probes.",
-        "exact_worker_ids": [
-          "vmi1264463"
-        ],
+        "exact_worker_ids": ["vmi1264463"],
         "exact_candidate_paths": [
           "/data/projects/fcp-beads-a4-final-20260516T2140/target",
           "/data/projects/franken_engine/target_PearlTower_focused"

@@ -9,7 +9,12 @@
       "name": "clockwait_realtime",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_REALTIME",
+        "deadline": "future"
+      },
       "expected_output": "0",
       "expected_errno": 0,
       "mode": "both",
@@ -19,7 +24,12 @@
       "name": "clockwait_monotonic",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_MONOTONIC", "deadline": "future" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_MONOTONIC",
+        "deadline": "future"
+      },
       "expected_output": "0",
       "expected_errno": 0,
       "mode": "both",
@@ -29,7 +39,12 @@
       "name": "clockwait_timeout",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_MONOTONIC", "deadline": "past" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_MONOTONIC",
+        "deadline": "past"
+      },
       "expected_output": "ETIMEDOUT",
       "expected_errno": 110,
       "mode": "both",
@@ -39,7 +54,12 @@
       "name": "clockwait_null_condvar",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "NULL", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "inputs": {
+        "condvar": "NULL",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_REALTIME",
+        "deadline": "future"
+      },
       "expected_output": "EINVAL",
       "expected_errno": 22,
       "mode": "both",
@@ -49,7 +69,12 @@
       "name": "clockwait_null_mutex",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "NULL", "clock_id": "CLOCK_REALTIME", "deadline": "future" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "NULL",
+        "clock_id": "CLOCK_REALTIME",
+        "deadline": "future"
+      },
       "expected_output": "EINVAL",
       "expected_errno": 22,
       "mode": "both",
@@ -59,7 +84,12 @@
       "name": "clockwait_null_abstime",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "abstime": "NULL" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_REALTIME",
+        "abstime": "NULL"
+      },
       "expected_output": "EINVAL",
       "expected_errno": 22,
       "mode": "both",
@@ -69,7 +99,12 @@
       "name": "clockwait_invalid_clock",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": -1, "deadline": "future" },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": -1,
+        "deadline": "future"
+      },
       "expected_output": "EINVAL",
       "expected_errno": 22,
       "mode": "both",
@@ -79,7 +114,12 @@
       "name": "clockwait_invalid_nsec",
       "function": "pthread_cond_clockwait",
       "spec_section": "glibc pthread_cond_clockwait",
-      "inputs": { "condvar": "initialized", "mutex": "locked_by_caller", "clock_id": "CLOCK_REALTIME", "tv_nsec": 1000000000 },
+      "inputs": {
+        "condvar": "initialized",
+        "mutex": "locked_by_caller",
+        "clock_id": "CLOCK_REALTIME",
+        "tv_nsec": 1000000000
+      },
       "expected_output": "EINVAL",
       "expected_errno": 22,
       "mode": "both",

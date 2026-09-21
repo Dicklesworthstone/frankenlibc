@@ -6,10 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-w2c3.7.1/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"],
     "artifacts": {
       "pressure_sensor_source": "crates/frankenlibc-membrane/src/pressure_sensor.rs",
       "pressure_sensing_fixture": "tests/conformance/fixtures/pressure_sensing.json",
@@ -47,16 +44,8 @@
       "scenario_bead": "bd-w2c3.7.1",
       "minimum_fixture_cases": 9,
       "minimum_scenario_count": 5,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
-      "required_regimes": [
-        "Nominal",
-        "Pressured",
-        "Overloaded",
-        "Recovery"
-      ],
+      "required_modes": ["strict", "hardened"],
+      "required_regimes": ["Nominal", "Pressured", "Overloaded", "Recovery"],
       "required_scenario_ids": [
         "steady_state_nominal",
         "escalation_calm_to_overloaded",

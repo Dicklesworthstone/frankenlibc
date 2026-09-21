@@ -7,14 +7,8 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier as a standalone CLI. The lib API computes the size-class admissibility barrier certificate over (requested_size, mapped_class_size, class_membership_valid) and returns an i64 score where positive => certified-safe headroom and negative => certificate violation. The SDP quadratic form penalizes waste ratio + membership violations + range violations + underflow. Previously reachable only from Rust callers; the CLI bridge lets CI verify size-class invariants without compiling.",
   "subcommand_name": "evaluate-size-class-barrier",
   "binary_target": "harness",
-  "required_flags": [
-    "--requested-size",
-    "--mapped-class-size",
-    "--output"
-  ],
-  "optional_flags": [
-    "--class-membership-valid"
-  ],
+  "required_flags": ["--requested-size", "--mapped-class-size", "--output"],
+  "optional_flags": ["--class-membership-valid"],
   "io_pattern": "output_file_single_jsonl_record_no_stdout",
   "underlying_lib_function": "frankenlibc_membrane::runtime_math::sos_barrier::evaluate_size_class_barrier",
   "underlying_lib_functions": [

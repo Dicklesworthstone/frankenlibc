@@ -16,10 +16,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "ClampSize",
-      "FreedWithCanaryCorruption"
-    ],
+    "healing_actions": ["ClampSize", "FreedWithCanaryCorruption"],
     "description": "ClampSize intercepts the memcpy call and clamps copy_len to the known allocation bounds via remaining_from(); if the overflow is not prevented proactively, the 8-byte trailing canary detects corruption at free() time and reports FreedWithCanaryCorruption; heap integrity is maintained"
   },
   "tsm_features_tested": [

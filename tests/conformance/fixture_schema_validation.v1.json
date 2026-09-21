@@ -12,32 +12,14 @@
     {
       "id": "standard_case_fixture",
       "file_shape": "version/schema_version + family + captured_at + cases[]",
-      "case_required_fields": [
-        "name",
-        "function",
-        "spec_section",
-        "inputs",
-        "mode"
-      ],
-      "mode_values": [
-        "strict",
-        "hardened",
-        "both"
-      ]
+      "case_required_fields": ["name", "function", "spec_section", "inputs", "mode"],
+      "mode_values": ["strict", "hardened", "both"]
     },
     {
       "id": "structured_scenario_fixture",
       "file_shape": "version/schema_version + family + captured_at + program_scenarios[] or unsupported_scenarios[]",
-      "program_required_fields": [
-        "scenario_id",
-        "source",
-        "expected"
-      ],
-      "unsupported_required_fields": [
-        "scenario_id",
-        "expected_outcome",
-        "expected_errno"
-      ]
+      "program_required_fields": ["scenario_id", "source", "expected"],
+      "unsupported_required_fields": ["scenario_id", "expected_outcome", "expected_errno"]
     }
   ],
   "expected_errno_policy": {
@@ -56,44 +38,17 @@
     ]
   },
   "expectation_value_kind_overrides": {
-    "expected_output": [
-      "array",
-      "boolean",
-      "null",
-      "number",
-      "object",
-      "string"
-    ],
-    "expected_output_bytes": [
-      "array"
-    ],
-    "expected_output_pattern": [
-      "string"
-    ],
-    "expected_return": [
-      "number",
-      "string"
-    ],
-    "expected_values": [
-      "array"
-    ],
-    "expected_n_value": [
-      "number",
-      "string"
-    ]
+    "expected_output": ["array", "boolean", "null", "number", "object", "string"],
+    "expected_output_bytes": ["array"],
+    "expected_output_pattern": ["string"],
+    "expected_return": ["number", "string"],
+    "expected_values": ["array"],
+    "expected_n_value": ["number", "string"]
   },
   "allowed_supplemental_expectation_fields": {
-    "expected_return": [
-      "number",
-      "string"
-    ],
-    "expected_n_value": [
-      "number",
-      "string"
-    ],
-    "expected_hex": [
-      "string"
-    ]
+    "expected_return": ["number", "string"],
+    "expected_n_value": ["number", "string"],
+    "expected_hex": ["string"]
   },
   "expected_inventory": {
     "fixture_file_count": 127,

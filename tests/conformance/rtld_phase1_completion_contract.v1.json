@@ -27,9 +27,7 @@
       "completion_gate": "scripts/check_rtld_phase1_completion_contract.sh",
       "completion_harness": "crates/frankenlibc-harness/tests/rtld_phase1_completion_contract_test.rs"
     },
-    "directory_artifacts": [
-      "fuzz_elf_loader_corpus"
-    ],
+    "directory_artifacts": ["fuzz_elf_loader_corpus"],
     "implementation_refs": [
       "crates/frankenlibc-core/src/elf/relocation.rs:7",
       "crates/frankenlibc-core/src/elf/relocation.rs:134",
@@ -156,11 +154,7 @@
         "bash scripts/check_loader_dlfcn_relocation_tls_audit.sh",
         "rch exec -- cargo test -p frankenlibc-harness --test loader_dlfcn_relocation_tls_audit_test -- --nocapture"
       ],
-      "required_artifacts": [
-        "loader_audit_manifest",
-        "loader_audit_gate",
-        "loader_audit_test"
-      ],
+      "required_artifacts": ["loader_audit_manifest", "loader_audit_gate", "loader_audit_test"],
       "required_fixture_kinds": [
         "dlopen_success",
         "dlopen_failure",

@@ -42,10 +42,7 @@
       "status": "green"
     }
   },
-  "optional_skip_binaries": [
-    "nginx",
-    "redis-cli"
-  ],
+  "optional_skip_binaries": ["nginx", "redis-cli"],
   "notes": [
     "This checked-in summary is the canonical source for README smoke-status claims.",
     "The four skips come from the two optional binary probes across strict and hardened modes.",

@@ -6,10 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-1iya/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "flag.architecture"
-    ],
+    "missing_items": ["tests.unit.primary", "flag.architecture"],
     "artifacts": {
       "production_manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
       "membrane_cargo": "crates/frankenlibc-membrane/Cargo.toml",
@@ -32,12 +29,8 @@
     ],
     "flag_architecture": {
       "missing_item_id": "flag.architecture",
-      "default_feature_set": [
-        "runtime-math-production"
-      ],
-      "optional_feature_set": [
-        "runtime-math-research"
-      ],
+      "default_feature_set": ["runtime-math-production"],
+      "optional_feature_set": ["runtime-math-research"],
       "required_feature_bindings": [
         "default = [\"runtime-math-production\"]",
         "runtime-math-production = []",

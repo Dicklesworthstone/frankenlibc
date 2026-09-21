@@ -7,9 +7,7 @@
   "purpose": "Pin the harness binary subcommand that exposes frankenlibc_membrane::check_oracle::{pack_ordering, unpack_ordering} (4-bit-per-stage u64 codec for a 7-stage validation pipeline permutation). Pack accepts the 7-stage permutation via repeated --stage flags or comma-separated names; the lib API packs the [CheckStage; 7] into a u64 with 4 bits per stage. Unlike most harness bridges this subcommand prints to stdout (no --output file). Pairs naturally with the membrane validation pipeline (null, tls-cache, bloom, arena, fingerprint, canary, bounds) where a contextual bandit reorders checks per call family to minimize total check cost. Previously unpinned by a conformance manifest; this contract closes the gate gap.",
   "subcommand_name": "pack-check-ordering",
   "binary_target": "harness",
-  "required_flags": [
-    "--stage"
-  ],
+  "required_flags": ["--stage"],
   "optional_flags": [],
   "underlying_lib_functions": [
     "frankenlibc_membrane::check_oracle::pack_ordering",
@@ -28,15 +26,7 @@
       "round_trip_ok"
     ]
   },
-  "stage_name_enum": [
-    "null",
-    "tls-cache",
-    "bloom",
-    "arena",
-    "fingerprint",
-    "canary",
-    "bounds"
-  ],
+  "stage_name_enum": ["null", "tls-cache", "bloom", "arena", "fingerprint", "canary", "bounds"],
   "expected_identity_packed_hex": "0x0000000006543210",
   "expected_identity_packed_u64": 106181136,
   "expected_reverse_packed_hex": "0x0000000000123456",

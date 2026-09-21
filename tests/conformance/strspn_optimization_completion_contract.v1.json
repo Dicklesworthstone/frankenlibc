@@ -61,28 +61,20 @@
         "tests/conformance/per_symbol_fixture_tests.v1.json:55497",
         "tests/conformance/per_symbol_fixture_tests.v1.json:86363"
       ],
-      "required_needles": [
-        "\"symbol\": \"strspn\""
-      ]
+      "required_needles": ["\"symbol\": \"strspn\""]
     },
     {
       "artifact_id": "symbol_fixture_coverage",
       "kind": "conformance_artifact",
       "path": "tests/conformance/symbol_fixture_coverage.v1.json",
-      "required_line_refs": [
-        "tests/conformance/symbol_fixture_coverage.v1.json:56794"
-      ],
-      "required_needles": [
-        "\"symbol\": \"strspn\""
-      ]
+      "required_line_refs": ["tests/conformance/symbol_fixture_coverage.v1.json:56794"],
+      "required_needles": ["\"symbol\": \"strspn\""]
     },
     {
       "artifact_id": "perf_budget_policy",
       "kind": "telemetry_artifact",
       "path": "tests/conformance/perf_budget_policy.json",
-      "required_line_refs": [
-        "tests/conformance/perf_budget_policy.json:965"
-      ],
+      "required_line_refs": ["tests/conformance/perf_budget_policy.json:965"],
       "required_needles": [
         "\"symbol\": \"strspn\"",
         "\"module\": \"string_abi\"",

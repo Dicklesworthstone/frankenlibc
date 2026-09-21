@@ -64,12 +64,7 @@
       "minimized_input": {
         "fixture_family": "string_ops",
         "case_name": "strlen_empty",
-        "argv": [
-          "--family",
-          "string_ops",
-          "--case",
-          "strlen_empty"
-        ],
+        "argv": ["--family", "string_ops", "--case", "strlen_empty"],
         "stdin": "",
         "environment": {}
       },

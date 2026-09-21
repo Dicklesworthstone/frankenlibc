@@ -14,11 +14,7 @@
   "checker": "scripts/check_runtime_math_decision_relevance.sh",
   "report_path": "target/conformance/runtime_math_decision_relevance.report.json",
   "log_path": "target/conformance/runtime_math_decision_relevance.log.jsonl",
-  "completion_debt_items": [
-    "tests.unit.primary",
-    "tests.e2e.primary",
-    "telemetry.primary"
-  ],
+  "completion_debt_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
   "runtime_module_scope": {
     "include_pattern": "pub mod <module>; declarations in crates/frankenlibc-membrane/src/runtime_math/mod.rs",
     "excluded_helpers": [

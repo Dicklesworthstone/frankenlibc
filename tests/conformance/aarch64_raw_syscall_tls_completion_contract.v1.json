@@ -154,11 +154,7 @@
       "Structure-aware fuzz target",
       "Guard bytes around perf_event_attr survive every call"
     ],
-    "fuzz_sched": [
-      "fuzz_target!",
-      "sched_*-family wrappers",
-      "Syscall differential"
-    ],
+    "fuzz_sched": ["fuzz_target!", "sched_*-family wrappers", "Syscall differential"],
     "fuzz_pthread_keys": [
       "fuzz_target!",
       "pthread_key_create, pthread_key_delete",
@@ -200,14 +196,8 @@
       "__cxa_thread_atexit_impl",
       "invoke_tls_dtors"
     ],
-    "required_proof_rows": [
-      "tls_initialization",
-      "pthread_tls_keys"
-    ],
-    "required_conformance_fixtures": [
-      "pthread_tls_keys",
-      "pthread_thread"
-    ],
+    "required_proof_rows": ["tls_initialization", "pthread_tls_keys"],
+    "required_conformance_fixtures": ["pthread_tls_keys", "pthread_thread"],
     "required_fuzz_targets": [
       "fuzz_open_syscalls",
       "fuzz_security_syscalls",

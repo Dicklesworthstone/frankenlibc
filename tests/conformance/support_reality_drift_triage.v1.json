@@ -39,15 +39,8 @@
       "classification": "missing_export",
       "owner_family": "stdio_abi",
       "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
-      "artifact_refs": [
-        "support_matrix.json",
-        "crates/frankenlibc-abi/version_scripts/libc.map"
-      ],
-      "symbols": [
-        "_IO_2_1_stderr_",
-        "_IO_2_1_stdin_",
-        "_IO_2_1_stdout_"
-      ]
+      "artifact_refs": ["support_matrix.json", "crates/frankenlibc-abi/version_scripts/libc.map"],
+      "symbols": ["_IO_2_1_stderr_", "_IO_2_1_stdin_", "_IO_2_1_stdout_"]
     },
     {
       "id": "support_symbols_missing_version_exports_glibc_internal_abi",
@@ -55,14 +48,8 @@
       "classification": "missing_export",
       "owner_family": "glibc_internal_abi",
       "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
-      "artifact_refs": [
-        "support_matrix.json",
-        "crates/frankenlibc-abi/version_scripts/libc.map"
-      ],
-      "symbols": [
-        "__ns_name_uncompressed_p",
-        "__ns_samename"
-      ]
+      "artifact_refs": ["support_matrix.json", "crates/frankenlibc-abi/version_scripts/libc.map"],
+      "symbols": ["__ns_name_uncompressed_p", "__ns_samename"]
     },
     {
       "id": "version_exports_outside_support_matrix",
@@ -70,10 +57,7 @@
       "classification": "expected_unsupported_surface",
       "owner_family": "version_script_compatibility_surface",
       "first_evidence_command": "scripts/check_support_reality_drift_triage.sh --validate-only",
-      "artifact_refs": [
-        "crates/frankenlibc-abi/version_scripts/libc.map",
-        "support_matrix.json"
-      ],
+      "artifact_refs": ["crates/frankenlibc-abi/version_scripts/libc.map", "support_matrix.json"],
       "symbols": [
         "__cxa_bad_cast",
         "__cxa_bad_typeid",

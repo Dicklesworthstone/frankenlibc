@@ -12,11 +12,7 @@
   "artifact_inventory": {
     "cdylib_output": "target/release/libfrankenlibc_abi.so",
     "staticlib_output": "target/release/libfrankenlibc_abi.a",
-    "configured_crate_types": [
-      "cdylib",
-      "staticlib",
-      "rlib"
-    ],
+    "configured_crate_types": ["cdylib", "staticlib", "rlib"],
     "staticlib_current_state": "frankenlibc-abi declares cdylib+staticlib+rlib outputs. Static artifact configuration rows are inventory evidence, and L2/L3 standalone blockers are emitted only when staticlib output is not configured or concrete artifact probes expose host/runtime dependencies."
   },
   "source_surfaces": {
@@ -46,12 +42,7 @@
   "release_artifact_policy": {
     "default_behavior": "If the release artifact is absent, the checker emits a release_artifact_missing row and still validates the source inventory.",
     "strict_behavior": "Set FRANKENLIBC_REQUIRE_RELEASE_ARTIFACT=1 to require target/release/libfrankenlibc_abi.so and fail when it is missing.",
-    "dynamic_audit_tools": [
-      "readelf -d",
-      "ldd",
-      "objdump -p",
-      "nm -D --undefined-only"
-    ],
+    "dynamic_audit_tools": ["readelf -d", "ldd", "objdump -p", "nm -D --undefined-only"],
     "replacement_blocking_rule": "Any remaining host glibc, loader, CRT, startup, dlsym/dlopen, or dynamic runtime dependency is allowed only for L0/L1 interpose unless explicitly approved by a later replacement bead."
   },
   "artifact_presence_scenarios": [
@@ -79,9 +70,7 @@
   ],
   "profile_allowlist_policy": {
     "source": "tests/conformance/replacement_profile.json::interpose_allowlist.modules",
-    "explicit_sentinels": [
-      "None"
-    ],
+    "explicit_sentinels": ["None"],
     "real_module_rule": "Every non-sentinel allowlist entry must name an existing crates/frankenlibc-abi/src/*.rs module.",
     "direct_call_rule": "Every source-level libc::function call other than libc::syscall must be in an allowlisted interpose module or a documented resolver module.",
     "failure_signature": "unapproved_source_callthrough"

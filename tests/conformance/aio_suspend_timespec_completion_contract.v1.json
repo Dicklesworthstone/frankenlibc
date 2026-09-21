@@ -23,10 +23,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.unit.primary",
-      "tests.golden.primary"
-    ],
+    "missing_items_closed": ["tests.unit.primary", "tests.golden.primary"],
     "next_audit_score_threshold": 700
   },
   "source_artifacts": [
@@ -131,9 +128,7 @@
       "aio_suspend rejects null/empty lists with EINVAL before consulting timeout",
       "aio_suspend64 delegates to aio_suspend and inherits the validation contract"
     ],
-    "required_commands": [
-      "bash scripts/check_aio_suspend_timespec_completion_contract.sh"
-    ]
+    "required_commands": ["bash scripts/check_aio_suspend_timespec_completion_contract.sh"]
   },
   "required_validation_commands": [
     "jq empty tests/conformance/aio_suspend_timespec_completion_contract.v1.json",

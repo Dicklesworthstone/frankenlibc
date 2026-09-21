@@ -7,14 +7,9 @@
   "purpose": "Pin the hidden `conformance-matrix-case` subprocess entrypoint used by isolated conformance-matrix runs. This command is not operator-facing, but it is the crash/timeout containment boundary for fixture execution.",
   "subcommand_name": "conformance-matrix-case",
   "binary_target": "harness",
-  "underlying_lib_functions": [
-    "frankenlibc_fixture_exec::execute_fixture_case"
-  ],
+  "underlying_lib_functions": ["frankenlibc_fixture_exec::execute_fixture_case"],
   "visibility": "hidden_subprocess_entrypoint",
-  "required_flags": [
-    "--function",
-    "--mode"
-  ],
+  "required_flags": ["--function", "--mode"],
   "optional_flags": [],
   "stdin_contract": {
     "format": "single JSON value",
@@ -32,11 +27,7 @@
       "startup_frankenlibc_mode",
       "startup_mode_matches"
     ],
-    "run_required_fields": [
-      "host_output",
-      "impl_output",
-      "host_parity"
-    ],
+    "run_required_fields": ["host_output", "impl_output", "host_parity"],
     "error_required_fields": [
       "kind",
       "error",

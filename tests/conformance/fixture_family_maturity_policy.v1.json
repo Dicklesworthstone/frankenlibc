@@ -13,18 +13,11 @@
   "state_requirements": [
     {
       "state": "structural_coverage",
-      "required_evidence_kinds": [
-        "fixture_schema_valid",
-        "coverage_inventory_linked"
-      ]
+      "required_evidence_kinds": ["fixture_schema_valid", "coverage_inventory_linked"]
     },
     {
       "state": "deterministic_safe_default",
-      "required_evidence_kinds": [
-        "safe_default_rows",
-        "explicit_oracle_kind",
-        "divergence_policy"
-      ]
+      "required_evidence_kinds": ["safe_default_rows", "explicit_oracle_kind", "divergence_policy"]
     },
     {
       "state": "host_differential_parity",

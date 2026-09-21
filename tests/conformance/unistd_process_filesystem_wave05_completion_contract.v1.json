@@ -73,10 +73,7 @@
     "coverage_close_commit": "a617bf00",
     "fixture_file": "tests/conformance/fixtures/unistd_process_filesystem_wave05.json",
     "harness_test": "crates/frankenlibc-harness/tests/unistd_process_filesystem_wave05_conformance_test.rs",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_first_wave_symbols": [
       "argp_parse",
       "argp_state_help",

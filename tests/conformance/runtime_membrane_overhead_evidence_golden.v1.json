@@ -36,10 +36,7 @@
         "logical_cpus": 64,
         "memory_gb": 256
       },
-      "fallback_markers_rejected": [
-        "[RCH] local",
-        "remote required; refusing local fallback"
-      ],
+      "fallback_markers_rejected": ["[RCH] local", "remote required; refusing local fallback"],
       "local_fallback_seen": false,
       "transcript_artifact": "target/conformance/runtime_membrane_overhead/schema_golden_transcript.txt"
     },
@@ -55,14 +52,8 @@
         "budget_source": "AGENTS.md performance target"
       }
     ],
-    "required_families": [
-      "string",
-      "malloc"
-    ],
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_families": ["string", "malloc"],
+    "required_modes": ["strict", "hardened"],
     "measurements": [
       {
         "abi_family": "string",

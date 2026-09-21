@@ -1,9 +1,7 @@
 {
   "schema_version": 1,
   "bead": "bd-w2c3.8.3",
-  "supersedes": [
-    "bd-30o.3"
-  ],
+  "supersedes": ["bd-30o.3"],
   "description": "Perf regression attribution policy for runtime_math/membrane perf gate. Defines threshold resolution, regression classes, suspect-component mapping, deterministic auto-throttle rules, and triage contract.",
   "warning_policy": {
     "default_warning_pct": 5.0,
@@ -110,9 +108,7 @@
   },
   "auto_throttle_policy": {
     "action": "skip_benchmarks",
-    "actions": [
-      "skip_benchmarks"
-    ],
+    "actions": ["skip_benchmarks"],
     "host_signal": "loadavg",
     "max_load_factor_default": 0.85,
     "forced_env_overrides": [
@@ -166,10 +162,7 @@
         "Inspect warning deltas and confirm no trend acceleration",
         "Capture targeted profile before promoting to blocker backlog"
       ],
-      "commands": [
-        "scripts/profile_pipeline.sh",
-        "scripts/perf_gate.sh"
-      ]
+      "commands": ["scripts/profile_pipeline.sh", "scripts/perf_gate.sh"]
     },
     "target_budget_violation": {
       "severity": "policy_blocker",
@@ -177,9 +170,7 @@
         "Validate waiver status in perf_budget_policy active_waivers",
         "Escalate to optimization backlog if waiver is absent or expired"
       ],
-      "commands": [
-        "scripts/check_perf_budget.sh"
-      ]
+      "commands": ["scripts/check_perf_budget.sh"]
     },
     "baseline_and_budget_violation": {
       "severity": "critical",
@@ -187,10 +178,7 @@
         "Treat as hard regression and budget breach",
         "Prioritize rollback or immediate hotfix"
       ],
-      "commands": [
-        "scripts/perf_gate.sh",
-        "scripts/check_perf_budget.sh"
-      ]
+      "commands": ["scripts/perf_gate.sh", "scripts/check_perf_budget.sh"]
     }
   },
   "intentional_regression_scenario": {

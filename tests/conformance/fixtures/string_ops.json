@@ -3,44 +3,329 @@
   "family": "string/narrow",
   "captured_at": "2026-02-09T00:00:00Z",
   "cases": [
-    { "name": "strict_memmove_basic", "function": "memmove", "spec_section": "POSIX memmove", "inputs": { "src": [1, 2, 3], "dst_len": 3, "n": 3 }, "expected_output": "[1, 2, 3]", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_memset_basic", "function": "memset", "spec_section": "POSIX memset", "inputs": { "dst_len": 5, "c": 65, "n": 3 }, "expected_output": "[65, 65, 65, 0, 0]", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_memcmp_equal", "function": "memcmp", "spec_section": "POSIX memcmp", "inputs": { "s1": [1, 2, 3], "s2": [1, 2, 3], "n": 3 }, "expected_output": "0", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_memcmp_less", "function": "memcmp", "spec_section": "POSIX memcmp", "inputs": { "s1": [1, 2, 0], "s2": [1, 2, 3], "n": 3 }, "expected_output": "-1", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_memchr_found", "function": "memchr", "spec_section": "POSIX memchr", "inputs": { "s": [1, 2, 3], "c": 2, "n": 3 }, "expected_output": "Some(1)", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_memrchr_found", "function": "memrchr", "spec_section": "GNU memrchr", "inputs": { "s": [1, 2, 1], "c": 1, "n": 3 }, "expected_output": "Some(2)", "expected_errno": 0, "mode": "strict" },
-    
-    { "name": "strict_strcpy_basic", "function": "strcpy", "spec_section": "POSIX strcpy", "inputs": { "src": [65, 66, 0], "dst_len": 5 }, "expected_output": "[65, 66, 0, 0, 0]", "expected_errno": 0, "mode": "strict" },
-    { "name": "hardened_strcpy_overflow", "function": "strcpy", "spec_section": "TSM hardened strcpy", "inputs": { "src": [65, 66, 67, 0], "dst_len": 2 }, "expected_output": "[65, 0]", "expected_errno": 0, "mode": "hardened" },
-    
-    { "name": "strict_strncpy_basic", "function": "strncpy", "spec_section": "POSIX strncpy", "inputs": { "src": [65, 66, 0], "dst_len": 5, "n": 2 }, "expected_output": "[65, 66, 0, 0, 0]", "expected_errno": 0, "mode": "strict" },
-    
-    { "name": "strict_strcat_basic", "function": "strcat", "spec_section": "POSIX strcat", "inputs": { "dst_init": [65, 0], "src": [66, 0], "dst_cap": 5 }, "expected_output": "[65, 66, 0, 0, 0]", "expected_errno": 0, "mode": "strict" },
-    { "name": "hardened_strcat_overflow", "function": "strcat", "spec_section": "TSM hardened strcat", "inputs": { "dst_init": [65, 0], "src": [66, 67, 0], "dst_cap": 3 }, "expected_output": "[65, 66, 0]", "expected_errno": 0, "mode": "hardened" },
+    {
+      "name": "strict_memmove_basic",
+      "function": "memmove",
+      "spec_section": "POSIX memmove",
+      "inputs": { "src": [1, 2, 3], "dst_len": 3, "n": 3 },
+      "expected_output": "[1, 2, 3]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_memset_basic",
+      "function": "memset",
+      "spec_section": "POSIX memset",
+      "inputs": { "dst_len": 5, "c": 65, "n": 3 },
+      "expected_output": "[65, 65, 65, 0, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_memcmp_equal",
+      "function": "memcmp",
+      "spec_section": "POSIX memcmp",
+      "inputs": { "s1": [1, 2, 3], "s2": [1, 2, 3], "n": 3 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_memcmp_less",
+      "function": "memcmp",
+      "spec_section": "POSIX memcmp",
+      "inputs": { "s1": [1, 2, 0], "s2": [1, 2, 3], "n": 3 },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_memchr_found",
+      "function": "memchr",
+      "spec_section": "POSIX memchr",
+      "inputs": { "s": [1, 2, 3], "c": 2, "n": 3 },
+      "expected_output": "Some(1)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_memrchr_found",
+      "function": "memrchr",
+      "spec_section": "GNU memrchr",
+      "inputs": { "s": [1, 2, 1], "c": 1, "n": 3 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
 
-    { "name": "strict_strlcpy_truncates_with_nul", "function": "strlcpy", "spec_section": "BSD strlcpy", "inputs": { "src": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0], "dst_len": 6, "dstsize": 6 }, "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 0]", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_strlcat_truncates_with_nul", "function": "strlcat", "spec_section": "BSD strlcat", "inputs": { "dst_init": [104, 101, 108, 108, 111, 0, 0, 0, 0, 0], "src": [32, 119, 111, 114, 108, 100, 0], "dstsize": 10 }, "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 32, 119, 111, 114, 0]", "expected_errno": 0, "mode": "strict" },
-    { "name": "hardened_strlcpy_dst_bound_clamps_requested_size", "function": "strlcpy", "spec_section": "TSM hardened strlcpy destination bounds", "inputs": { "src": [97, 98, 99, 100, 0], "dst_alloc_len": 4, "requested_dstsize": 8 }, "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull", "expected_errno": 0, "mode": "hardened" },
-    { "name": "hardened_strlcat_dst_bound_clamps_requested_size", "function": "strlcat", "spec_section": "TSM hardened strlcat destination bounds", "inputs": { "dst_init": [97, 0, 0, 0], "src": [98, 99, 100, 0], "dst_alloc_len": 4, "requested_dstsize": 8 }, "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull", "expected_errno": 0, "mode": "hardened" },
-    
-    { "name": "strict_strcmp_equal", "function": "strcmp", "spec_section": "POSIX strcmp", "inputs": { "s1": [65, 0], "s2": [65, 0] }, "expected_output": "0", "expected_errno": 0, "mode": "strict" },
-    
-    { "name": "strict_strchr_found", "function": "strchr", "spec_section": "POSIX strchr", "inputs": { "s": [65, 66, 0], "c": 66 }, "expected_output": "Some(1)", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_strrchr_found", "function": "strrchr", "spec_section": "POSIX strrchr", "inputs": { "s": [65, 66, 65, 0], "c": 65 }, "expected_output": "Some(2)", "expected_errno": 0, "mode": "strict" },
-    { "name": "strict_strstr_found", "function": "strstr", "spec_section": "POSIX strstr", "inputs": { "haystack": [65, 66, 67, 0], "needle": [66, 0] }, "expected_output": "Some(1)", "expected_errno": 0, "mode": "strict" },
+    {
+      "name": "strict_strcpy_basic",
+      "function": "strcpy",
+      "spec_section": "POSIX strcpy",
+      "inputs": { "src": [65, 66, 0], "dst_len": 5 },
+      "expected_output": "[65, 66, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "hardened_strcpy_overflow",
+      "function": "strcpy",
+      "spec_section": "TSM hardened strcpy",
+      "inputs": { "src": [65, 66, 67, 0], "dst_len": 2 },
+      "expected_output": "[65, 0]",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
 
-    { "name": "both___memcmpeq_zero_length_equal", "function": "__memcmpeq", "spec_section": "glibc internal __memcmpeq", "inputs": { "s1": [1, 2], "s2": [9, 8], "n": 0 }, "expected_output": "0", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave string hot-path boundary fixture" },
-    { "name": "both___mempcpy_binary_boundary_return_offset", "function": "__mempcpy", "spec_section": "glibc internal __mempcpy", "inputs": { "src": [1, 2, 0, 255], "dst_len": 6, "n": 4 }, "expected_output": "return=4,dst=[1, 2, 0, 255, 0, 0]", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave string hot-path fixture" },
-    { "name": "hardened___mempcpy_dst_bound_clamps_requested_len", "function": "__mempcpy", "spec_section": "TSM hardened __mempcpy destination bounds", "inputs": { "src": [1, 2, 3, 4], "dst_len": 2, "n": 4 }, "expected_output": "return=2,dst=[1, 2],repair=ClampSize", "expected_errno": 0, "mode": "hardened", "note": "bd-bp8fl.4.4 invalid-input repair fixture" },
-    { "name": "both___rawmemchr_zero_byte_at_boundary", "function": "__rawmemchr", "spec_section": "glibc internal __rawmemchr", "inputs": { "s": [0, 65, 66], "c": 0 }, "expected_output": "Some(0)", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave string hot-path boundary fixture" },
-    { "name": "both___stpcpy_empty_string_return_offset", "function": "__stpcpy", "spec_section": "glibc internal __stpcpy", "inputs": { "src": [0], "dst_len": 3 }, "expected_output": "return=0,dst=[0, 0, 0]", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave string hot-path zero-length fixture" },
-    { "name": "both___stpcpy_small_ascii_return_offset", "function": "__stpcpy_small", "spec_section": "glibc internal __stpcpy_small", "inputs": { "src": [104, 105, 0], "dst_len": 4 }, "expected_output": "return=2,dst=[104, 105, 0, 0]", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave small-string fixture" },
-    { "name": "both___stpncpy_pads_to_boundary", "function": "__stpncpy", "spec_section": "glibc internal __stpncpy", "inputs": { "src": [97, 0], "dst_len": 6, "n": 5 }, "expected_output": "return=1,dst=[97, 0, 0, 0, 0, 0]", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave NUL-padding fixture" },
-    { "name": "both___strcasecmp_ascii_casefold_equal", "function": "__strcasecmp", "spec_section": "glibc internal __strcasecmp", "inputs": { "s1": [65, 108, 112, 104, 97, 0], "s2": [97, 76, 80, 72, 65, 0] }, "expected_output": "0", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave casefold fixture" },
-    { "name": "both___strcasecmp_l_ascii_casefold_equal", "function": "__strcasecmp_l", "spec_section": "glibc internal __strcasecmp_l", "inputs": { "s1": [66, 101, 116, 97, 0], "s2": [98, 69, 84, 65, 0], "locale": "C" }, "expected_output": "0", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 locale-adjacent low-risk fixture; executor uses C-locale semantics" },
-    { "name": "both___strcasestr_case_insensitive_found", "function": "__strcasestr", "spec_section": "glibc internal __strcasestr", "inputs": { "haystack": [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0], "needle": [119, 111, 114, 108, 100, 0] }, "expected_output": "Some(6)", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave case-insensitive search fixture" },
-    { "name": "both___strcoll_l_c_locale_order", "function": "__strcoll_l", "spec_section": "glibc internal __strcoll_l", "inputs": { "s1": [97, 98, 99, 0], "s2": [97, 98, 100, 0], "locale": "C" }, "expected_output": "-1", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 locale-adjacent low-risk fixture; C-locale collation matches strcmp" },
-    { "name": "both___strcpy_small_ascii_return_dst", "function": "__strcpy_small", "spec_section": "glibc internal __strcpy_small", "inputs": { "src": [111, 107, 0], "dst_len": 5 }, "expected_output": "return=0,dst=[111, 107, 0, 0, 0]", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave small-string copy fixture" },
-    { "name": "both___strcspn_c1_reject_found", "function": "__strcspn_c1", "spec_section": "glibc internal __strcspn_c1", "inputs": { "s": [97, 98, 58, 99, 100, 0], "reject": 58 }, "expected_output": "2", "expected_errno": 0, "mode": "both", "note": "bd-bp8fl.4.4 first-wave single-reject-set fixture" }
+    {
+      "name": "strict_strncpy_basic",
+      "function": "strncpy",
+      "spec_section": "POSIX strncpy",
+      "inputs": { "src": [65, 66, 0], "dst_len": 5, "n": 2 },
+      "expected_output": "[65, 66, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+
+    {
+      "name": "strict_strcat_basic",
+      "function": "strcat",
+      "spec_section": "POSIX strcat",
+      "inputs": { "dst_init": [65, 0], "src": [66, 0], "dst_cap": 5 },
+      "expected_output": "[65, 66, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "hardened_strcat_overflow",
+      "function": "strcat",
+      "spec_section": "TSM hardened strcat",
+      "inputs": { "dst_init": [65, 0], "src": [66, 67, 0], "dst_cap": 3 },
+      "expected_output": "[65, 66, 0]",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+
+    {
+      "name": "strict_strlcpy_truncates_with_nul",
+      "function": "strlcpy",
+      "spec_section": "BSD strlcpy",
+      "inputs": {
+        "src": [104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100, 0],
+        "dst_len": 6,
+        "dstsize": 6
+      },
+      "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_strlcat_truncates_with_nul",
+      "function": "strlcat",
+      "spec_section": "BSD strlcat",
+      "inputs": {
+        "dst_init": [104, 101, 108, 108, 111, 0, 0, 0, 0, 0],
+        "src": [32, 119, 111, 114, 108, 100, 0],
+        "dstsize": 10
+      },
+      "expected_output": "return=11,dst=[104, 101, 108, 108, 111, 32, 119, 111, 114, 0]",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "hardened_strlcpy_dst_bound_clamps_requested_size",
+      "function": "strlcpy",
+      "spec_section": "TSM hardened strlcpy destination bounds",
+      "inputs": { "src": [97, 98, 99, 100, 0], "dst_alloc_len": 4, "requested_dstsize": 8 },
+      "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "hardened_strlcat_dst_bound_clamps_requested_size",
+      "function": "strlcat",
+      "spec_section": "TSM hardened strlcat destination bounds",
+      "inputs": {
+        "dst_init": [97, 0, 0, 0],
+        "src": [98, 99, 100, 0],
+        "dst_alloc_len": 4,
+        "requested_dstsize": 8
+      },
+      "expected_output": "return=4,dst=[97, 98, 99, 0],repair=TruncateWithNull",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+
+    {
+      "name": "strict_strcmp_equal",
+      "function": "strcmp",
+      "spec_section": "POSIX strcmp",
+      "inputs": { "s1": [65, 0], "s2": [65, 0] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+
+    {
+      "name": "strict_strchr_found",
+      "function": "strchr",
+      "spec_section": "POSIX strchr",
+      "inputs": { "s": [65, 66, 0], "c": 66 },
+      "expected_output": "Some(1)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_strrchr_found",
+      "function": "strrchr",
+      "spec_section": "POSIX strrchr",
+      "inputs": { "s": [65, 66, 65, 0], "c": 65 },
+      "expected_output": "Some(2)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "strict_strstr_found",
+      "function": "strstr",
+      "spec_section": "POSIX strstr",
+      "inputs": { "haystack": [65, 66, 67, 0], "needle": [66, 0] },
+      "expected_output": "Some(1)",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+
+    {
+      "name": "both___memcmpeq_zero_length_equal",
+      "function": "__memcmpeq",
+      "spec_section": "glibc internal __memcmpeq",
+      "inputs": { "s1": [1, 2], "s2": [9, 8], "n": 0 },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave string hot-path boundary fixture"
+    },
+    {
+      "name": "both___mempcpy_binary_boundary_return_offset",
+      "function": "__mempcpy",
+      "spec_section": "glibc internal __mempcpy",
+      "inputs": { "src": [1, 2, 0, 255], "dst_len": 6, "n": 4 },
+      "expected_output": "return=4,dst=[1, 2, 0, 255, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave string hot-path fixture"
+    },
+    {
+      "name": "hardened___mempcpy_dst_bound_clamps_requested_len",
+      "function": "__mempcpy",
+      "spec_section": "TSM hardened __mempcpy destination bounds",
+      "inputs": { "src": [1, 2, 3, 4], "dst_len": 2, "n": 4 },
+      "expected_output": "return=2,dst=[1, 2],repair=ClampSize",
+      "expected_errno": 0,
+      "mode": "hardened",
+      "note": "bd-bp8fl.4.4 invalid-input repair fixture"
+    },
+    {
+      "name": "both___rawmemchr_zero_byte_at_boundary",
+      "function": "__rawmemchr",
+      "spec_section": "glibc internal __rawmemchr",
+      "inputs": { "s": [0, 65, 66], "c": 0 },
+      "expected_output": "Some(0)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave string hot-path boundary fixture"
+    },
+    {
+      "name": "both___stpcpy_empty_string_return_offset",
+      "function": "__stpcpy",
+      "spec_section": "glibc internal __stpcpy",
+      "inputs": { "src": [0], "dst_len": 3 },
+      "expected_output": "return=0,dst=[0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave string hot-path zero-length fixture"
+    },
+    {
+      "name": "both___stpcpy_small_ascii_return_offset",
+      "function": "__stpcpy_small",
+      "spec_section": "glibc internal __stpcpy_small",
+      "inputs": { "src": [104, 105, 0], "dst_len": 4 },
+      "expected_output": "return=2,dst=[104, 105, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave small-string fixture"
+    },
+    {
+      "name": "both___stpncpy_pads_to_boundary",
+      "function": "__stpncpy",
+      "spec_section": "glibc internal __stpncpy",
+      "inputs": { "src": [97, 0], "dst_len": 6, "n": 5 },
+      "expected_output": "return=1,dst=[97, 0, 0, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave NUL-padding fixture"
+    },
+    {
+      "name": "both___strcasecmp_ascii_casefold_equal",
+      "function": "__strcasecmp",
+      "spec_section": "glibc internal __strcasecmp",
+      "inputs": { "s1": [65, 108, 112, 104, 97, 0], "s2": [97, 76, 80, 72, 65, 0] },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave casefold fixture"
+    },
+    {
+      "name": "both___strcasecmp_l_ascii_casefold_equal",
+      "function": "__strcasecmp_l",
+      "spec_section": "glibc internal __strcasecmp_l",
+      "inputs": { "s1": [66, 101, 116, 97, 0], "s2": [98, 69, 84, 65, 0], "locale": "C" },
+      "expected_output": "0",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 locale-adjacent low-risk fixture; executor uses C-locale semantics"
+    },
+    {
+      "name": "both___strcasestr_case_insensitive_found",
+      "function": "__strcasestr",
+      "spec_section": "glibc internal __strcasestr",
+      "inputs": {
+        "haystack": [72, 101, 108, 108, 111, 32, 87, 111, 114, 108, 100, 0],
+        "needle": [119, 111, 114, 108, 100, 0]
+      },
+      "expected_output": "Some(6)",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave case-insensitive search fixture"
+    },
+    {
+      "name": "both___strcoll_l_c_locale_order",
+      "function": "__strcoll_l",
+      "spec_section": "glibc internal __strcoll_l",
+      "inputs": { "s1": [97, 98, 99, 0], "s2": [97, 98, 100, 0], "locale": "C" },
+      "expected_output": "-1",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 locale-adjacent low-risk fixture; C-locale collation matches strcmp"
+    },
+    {
+      "name": "both___strcpy_small_ascii_return_dst",
+      "function": "__strcpy_small",
+      "spec_section": "glibc internal __strcpy_small",
+      "inputs": { "src": [111, 107, 0], "dst_len": 5 },
+      "expected_output": "return=0,dst=[111, 107, 0, 0, 0]",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave small-string copy fixture"
+    },
+    {
+      "name": "both___strcspn_c1_reject_found",
+      "function": "__strcspn_c1",
+      "spec_section": "glibc internal __strcspn_c1",
+      "inputs": { "s": [97, 98, 58, 99, 100, 0], "reject": 58 },
+      "expected_output": "2",
+      "expected_errno": 0,
+      "mode": "both",
+      "note": "bd-bp8fl.4.4 first-wave single-reject-set fixture"
+    }
   ]
 }

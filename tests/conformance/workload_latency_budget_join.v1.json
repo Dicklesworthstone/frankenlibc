@@ -1,12 +1,7 @@
 {
   "schema_version": "v1",
   "bead": "bd-fp4tm.4",
-  "source_beads": [
-    "bd-b92jd.3.2",
-    "bd-fp4tm.2",
-    "bd-fp4tm.3",
-    "bd-2r0"
-  ],
+  "source_beads": ["bd-b92jd.3.2", "bd-fp4tm.2", "bd-fp4tm.3", "bd-2r0"],
   "generated_at_utc": "2026-05-08T05:06:00Z",
   "purpose": "Join workload replay and LD_PRELOAD smoke latency rows to perf_budget_policy.json so user-facing workload claims cannot advance without fresh latency evidence.",
   "inputs": {
@@ -42,10 +37,7 @@
       "contract_errors"
     ]
   },
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
   "required_input_fields": [
     "trace_id",
     "workload_id",
@@ -116,15 +108,8 @@
     "missing_budget_failure_signature": "workload_latency_missing_budget"
   },
   "overload_policy": {
-    "skip_signatures": [
-      "overloaded_host_skip",
-      "host_overloaded",
-      "perf_gate_overloaded_skip"
-    ],
-    "load_state_values": [
-      "overloaded",
-      "host_overloaded"
-    ],
+    "skip_signatures": ["overloaded_host_skip", "host_overloaded", "perf_gate_overloaded_skip"],
+    "load_state_values": ["overloaded", "host_overloaded"],
     "decision": "skip",
     "failure_signature": "workload_latency_overloaded_skip"
   },

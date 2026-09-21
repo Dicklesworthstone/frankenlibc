@@ -228,11 +228,7 @@
         "min_functional_targets": 4,
         "min_smoke_viable_targets": 4,
         "min_symbols_covered": 10,
-        "required_transition_families": [
-          "resolver",
-          "locale",
-          "runtime-math"
-        ],
+        "required_transition_families": ["resolver", "locale", "runtime-math"],
         "min_runs_per_target": 1000000
       },
       "golden_fixture": {

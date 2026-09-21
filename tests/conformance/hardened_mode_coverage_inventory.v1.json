@@ -1,14 +1,7 @@
 {
   "schema_version": "hardened_mode_coverage_inventory.v1",
   "generated_by_bead": "bd-0agsk.10",
-  "source_todo_ids": [
-    "TODO-0501",
-    "TODO-0502",
-    "TODO-0503",
-    "TODO-0504",
-    "TODO-0505",
-    "TODO-0506"
-  ],
+  "source_todo_ids": ["TODO-0501", "TODO-0502", "TODO-0503", "TODO-0504", "TODO-0505", "TODO-0506"],
   "generated_utc": "2026-06-03T21:06:41Z",
   "source_commit": "630aadf32020fb52d507eb510628c71f520489f5",
   "canonical_command": "scripts/check_hardened_mode_coverage_inventory.sh --validate-only",
@@ -94,16 +87,10 @@
       "title": "Allocator anomaly repairs",
       "coverage_status": "gap_identified",
       "claim_strength": "gap_identified",
-      "fixture_families": [
-        "allocator"
-      ],
-      "support_modules": [
-        "malloc_abi"
-      ],
+      "fixture_families": ["allocator"],
+      "support_modules": ["malloc_abi"],
       "repair_deny_matrix_classes": [],
-      "stress_scenarios": [
-        "hardened-repair-malloc-overflow"
-      ],
+      "stress_scenarios": ["hardened-repair-malloc-overflow"],
       "expected_counts": {
         "fixture_case_count": 5,
         "strict_only": 5,
@@ -113,9 +100,7 @@
         "support_symbol_count": 21,
         "stress_repair_scenarios": 1
       },
-      "missing_hardened_families": [
-        "allocator"
-      ],
+      "missing_hardened_families": ["allocator"],
       "next_action": "Add direct hardened allocator anomaly fixtures; current repair evidence is stress-orchard manifest scoped."
     },
     {
@@ -150,9 +135,7 @@
         "string_concat_overflow",
         "wide_copy_overflow"
       ],
-      "stress_scenarios": [
-        "hardened-repair-stdio-format-truncation"
-      ],
+      "stress_scenarios": ["hardened-repair-stdio-format-truncation"],
       "expected_counts": {
         "fixture_case_count": 479,
         "strict_only": 335,
@@ -162,9 +145,7 @@
         "support_symbol_count": 600,
         "stress_repair_scenarios": 1
       },
-      "missing_hardened_families": [
-        "scanf_conformance"
-      ],
+      "missing_hardened_families": ["scanf_conformance"],
       "next_action": "Add hardened scanf/parser boundary fixtures before claiming full parser coverage."
     },
     {
@@ -172,16 +153,8 @@
       "title": "Resolver, passwd, and group retry/cache cases",
       "coverage_status": "inventory_present",
       "claim_strength": "fixture_case_declared",
-      "fixture_families": [
-        "resolv/dns",
-        "pwd_ops",
-        "grp_ops"
-      ],
-      "support_modules": [
-        "resolv_abi",
-        "pwd_abi",
-        "grp_abi"
-      ],
+      "fixture_families": ["resolv/dns", "pwd_ops", "grp_ops"],
+      "support_modules": ["resolv_abi", "pwd_abi", "grp_abi"],
       "repair_deny_matrix_classes": [],
       "stress_scenarios": [],
       "expected_counts": {
@@ -210,21 +183,14 @@
         "virtual_memory_ops",
         "membrane/mode-split"
       ],
-      "support_modules": [
-        "malloc_abi",
-        "mmap_abi",
-        "string_abi",
-        "wchar_abi"
-      ],
+      "support_modules": ["malloc_abi", "mmap_abi", "string_abi", "wchar_abi"],
       "repair_deny_matrix_classes": [
         "memcpy_overflow",
         "unterminated_scan",
         "mmap_invalid_protection",
         "mmap_missing_visibility"
       ],
-      "stress_scenarios": [
-        "hardened-repair-malloc-overflow"
-      ],
+      "stress_scenarios": ["hardened-repair-malloc-overflow"],
       "expected_counts": {
         "fixture_case_count": 61,
         "strict_only": 47,
@@ -234,10 +200,7 @@
         "support_symbol_count": 323,
         "stress_repair_scenarios": 1
       },
-      "missing_hardened_families": [
-        "string/memory",
-        "string/wide_memory"
-      ],
+      "missing_hardened_families": ["string/memory", "string/wide_memory"],
       "next_action": "Add hardened string memory and wide-memory fixtures before high-risk family thresholds are defined."
     },
     {
@@ -254,11 +217,7 @@
         "c11threads/ops",
         "stdio_file_ops"
       ],
-      "support_modules": [
-        "pthread_abi",
-        "c11threads_abi",
-        "stdio_abi"
-      ],
+      "support_modules": ["pthread_abi", "c11threads_abi", "stdio_abi"],
       "repair_deny_matrix_classes": [],
       "stress_scenarios": [
         "malloc-concurrent-alloc-free",
@@ -357,10 +316,7 @@
         "support_symbol_count": 816,
         "stress_repair_scenarios": 2
       },
-      "missing_hardened_families": [
-        "allocator",
-        "scanf_conformance"
-      ],
+      "missing_hardened_families": ["allocator", "scanf_conformance"],
       "next_action": "Define acceptance thresholds only after allocator and scanf hardened gaps have explicit fixture rows."
     }
   ],

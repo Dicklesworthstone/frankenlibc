@@ -11,12 +11,7 @@
     "abi_source_root": "crates/frankenlibc-abi/src"
   },
   "join_schema": {
-    "key_fields": [
-      "symbol",
-      "version_node",
-      "namespace_header",
-      "abi_family"
-    ],
+    "key_fields": ["symbol", "version_node", "namespace_header", "abi_family"],
     "status_fields": [
       "support_status",
       "semantic_contract",
@@ -116,12 +111,7 @@
       "semantic_class": "compat_noop",
       "semantic_parity_status": "blocked_compat_noop",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "encrypt",
-        "encrypt_r",
-        "setkey",
-        "setkey_r"
-      ],
+      "symbol_refs": ["encrypt", "encrypt_r", "setkey", "setkey_r"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -184,14 +174,8 @@
         "__nss_lookup_function"
       ],
       "expected_missing_source_symbols": [],
-      "expected_missing_support_matrix_symbols": [
-        "__nss_next2",
-        "__nss_lookup_function"
-      ],
-      "expected_missing_version_script_symbols": [
-        "__nss_next2",
-        "__nss_lookup_function"
-      ],
+      "expected_missing_support_matrix_symbols": ["__nss_next2", "__nss_lookup_function"],
+      "expected_missing_version_script_symbols": ["__nss_next2", "__nss_lookup_function"],
       "expected_pattern_expansion_counts": {},
       "claim_effect": "blocks_full_replacement_claim_until_semantic_followup_closes"
     },
@@ -225,13 +209,7 @@
       "semantic_class": "unsupported_platform_contract",
       "semantic_parity_status": "blocked_unsupported_platform",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "__sysctl",
-        "bdflush",
-        "create_module",
-        "get_kernel_syms",
-        "query_module"
-      ],
+      "symbol_refs": ["__sysctl", "bdflush", "create_module", "get_kernel_syms", "query_module"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -246,13 +224,7 @@
       "semantic_class": "compat_noop",
       "semantic_parity_status": "blocked_compat_noop",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "mcheck",
-        "mcheck_pedantic",
-        "mcheck_check_all",
-        "mtrace",
-        "muntrace"
-      ],
+      "symbol_refs": ["mcheck", "mcheck_pedantic", "mcheck_check_all", "mtrace", "muntrace"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -267,13 +239,7 @@
       "semantic_class": "limited_bootstrap",
       "semantic_parity_status": "blocked_limited_bootstrap",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "argp_help",
-        "argp_usage",
-        "argp_error",
-        "argp_failure",
-        "argp_state_help"
-      ],
+      "symbol_refs": ["argp_help", "argp_usage", "argp_error", "argp_failure", "argp_state_help"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -288,10 +254,7 @@
       "semantic_class": "unsupported_platform_contract",
       "semantic_parity_status": "blocked_unsupported_platform",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "pthread_mutex_getprioceiling",
-        "pthread_mutex_setprioceiling"
-      ],
+      "symbol_refs": ["pthread_mutex_getprioceiling", "pthread_mutex_setprioceiling"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -398,12 +361,7 @@
       "semantic_class": "limited_bootstrap",
       "semantic_parity_status": "blocked_limited_bootstrap",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "getaddrinfo_a",
-        "gai_cancel",
-        "gai_error",
-        "gai_suspend"
-      ],
+      "symbol_refs": ["getaddrinfo_a", "gai_cancel", "gai_error", "gai_suspend"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],
@@ -418,14 +376,7 @@
       "semantic_class": "limited_bootstrap",
       "semantic_parity_status": "blocked_limited_bootstrap",
       "taxonomy_status_is_semantic_parity": false,
-      "symbol_refs": [
-        "setjmp",
-        "_setjmp",
-        "sigsetjmp",
-        "longjmp",
-        "_longjmp",
-        "siglongjmp"
-      ],
+      "symbol_refs": ["setjmp", "_setjmp", "sigsetjmp", "longjmp", "_longjmp", "siglongjmp"],
       "expected_missing_source_symbols": [],
       "expected_missing_support_matrix_symbols": [],
       "expected_missing_version_script_symbols": [],

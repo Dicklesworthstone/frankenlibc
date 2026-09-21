@@ -10,9 +10,7 @@
     "audit_pass": "2026-05-10T03-16-16Z",
     "audit_score": 470,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.conformance.primary"
-    ],
+    "missing_items": ["tests.conformance.primary"],
     "missing_item_contracts": {
       "tests.conformance.primary": {
         "type": "conformance",
@@ -45,11 +43,7 @@
     "conformance_primary": {
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
-      "required_symbols": [
-        "strtok",
-        "strtok_r",
-        "strsep"
-      ],
+      "required_symbols": ["strtok", "strtok_r", "strsep"],
       "required_scenarios": [
         "strtok rejects a tracked unterminated delimiter without mutating the source buffer",
         "strtok_r rejects a tracked unterminated delimiter and leaves saveptr null",

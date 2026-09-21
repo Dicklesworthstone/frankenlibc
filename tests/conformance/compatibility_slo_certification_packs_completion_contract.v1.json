@@ -101,11 +101,7 @@
         "closure_contract"
       ],
       "optional_missing_artifact": "e2e_scenario_manifest",
-      "compatibility_policy_fields": [
-        "format",
-        "schema_versions",
-        "integrity"
-      ],
+      "compatibility_policy_fields": ["format", "schema_versions", "integrity"],
       "release_notes_hook": {
         "source_path": ".beads/issues.jsonl",
         "selection_policy": {
@@ -117,13 +113,7 @@
           "selected": 8,
           "invalid_rows": 0
         },
-        "required_entry_fields": [
-          "id",
-          "title",
-          "issue_type",
-          "closed_at",
-          "close_reason"
-        ]
+        "required_entry_fields": ["id", "title", "issue_type", "closed_at", "close_reason"]
       }
     },
     "certification_pack_requirements": {
@@ -226,9 +216,7 @@
       },
       "workload_compatibility_harness": {
         "path": "crates/frankenlibc-harness/tests/workload_compatibility_dossier_test.rs",
-        "required_test_refs": [
-          "workload_compatibility_dossier"
-        ]
+        "required_test_refs": ["workload_compatibility_dossier"]
       },
       "completion_harness_test": {
         "path": "crates/frankenlibc-harness/tests/compatibility_slo_certification_packs_completion_contract_test.rs",

@@ -75,8 +75,6 @@
     "core_safety": 2,
     "determinism": 1
   },
-  "doc_proof_dirs": [
-    "docs/proofs"
-  ],
+  "doc_proof_dirs": ["docs/proofs"],
   "doc_proof_extension": ".md"
 }

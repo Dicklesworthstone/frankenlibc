@@ -8,10 +8,7 @@
     "required_source_commit": "current",
     "source_commit_policy": "gate must compare this marker to git rev-parse HEAD and fail stale artifacts when pinned to any other commit"
   },
-  "supported_architectures": [
-    "x86_64",
-    "aarch64"
-  ],
+  "supported_architectures": ["x86_64", "aarch64"],
   "sources": {
     "locale_ops_fixture": "tests/conformance/fixtures/locale_ops.json",
     "iconv_phase1_fixture": "tests/conformance/fixtures/iconv_phase1.json",
@@ -55,24 +52,9 @@
       "determinism",
       "cleanup"
     ],
-    "expected_required_fields": [
-      "bytes",
-      "text",
-      "errno",
-      "status",
-      "decision_path"
-    ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ],
-    "catalog_lookup_required_fields": [
-      "catalog",
-      "set_id",
-      "message_id",
-      "default_text"
-    ]
+    "expected_required_fields": ["bytes", "text", "errno", "status", "decision_path"],
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"],
+    "catalog_lookup_required_fields": ["catalog", "set_id", "message_id", "default_text"]
   },
   "required_fixture_classes": [
     "c_locale_collation",
@@ -124,11 +106,7 @@
       "fixture_class": "c_locale_collation",
       "locale": "C",
       "category": "LC_COLLATE",
-      "input_strings": [
-        "a",
-        "B",
-        "z"
-      ],
+      "input_strings": ["a", "B", "z"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -140,10 +118,7 @@
         "LANG": "C",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "posix_text",
       "allowed_divergence": "parity_match",
@@ -193,10 +168,7 @@
       "fixture_class": "utf8_locale_category_switch",
       "locale": "C.UTF-8",
       "category": "LC_CTYPE",
-      "input_strings": [
-        "CODESET",
-        "RADIXCHAR"
-      ],
+      "input_strings": ["CODESET", "RADIXCHAR"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -208,10 +180,7 @@
         "LANG": "C.UTF-8",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "environment_probe",
       "allowed_divergence": "flaky_environment",
@@ -261,10 +230,7 @@
       "fixture_class": "missing_locale_data",
       "locale": "fr_FR.UTF-8",
       "category": "LC_ALL",
-      "input_strings": [
-        "decimal_point",
-        "thousands_sep"
-      ],
+      "input_strings": ["decimal_point", "thousands_sep"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -276,10 +242,7 @@
         "LANG": "fr_FR.UTF-8",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "environment_probe",
       "allowed_divergence": "flaky_environment",
@@ -329,11 +292,7 @@
       "fixture_class": "collation_order",
       "locale": "C",
       "category": "LC_COLLATE",
-      "input_strings": [
-        "aa",
-        "ab",
-        "b"
-      ],
+      "input_strings": ["aa", "ab", "b"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -345,10 +304,7 @@
         "LANG": "C",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
@@ -398,9 +354,7 @@
       "fixture_class": "catalog_lookup",
       "locale": "C",
       "category": "LC_MESSAGES",
-      "input_strings": [
-        "fallback message"
-      ],
+      "input_strings": ["fallback message"],
       "catalog_lookup": {
         "catalog": "frankenlibc_missing_catalog",
         "set_id": 1,
@@ -412,10 +366,7 @@
         "LANG": "C",
         "NLSPATH": "/nonexistent/%N"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "posix_text",
       "allowed_divergence": "allowed_divergence",
@@ -465,10 +416,7 @@
       "fixture_class": "transliteration_boundary",
       "locale": "C.UTF-8",
       "category": "LC_CTYPE",
-      "input_strings": [
-        "fa\\u00e7ade",
-        "na\\u00efve"
-      ],
+      "input_strings": ["fa\\u00e7ade", "na\\u00efve"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -480,10 +428,7 @@
         "LANG": "C.UTF-8",
         "GCONV_PATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "proof_gap",
@@ -533,9 +478,7 @@
       "fixture_class": "invalid_locale_name",
       "locale": "xx_INVALID.UTF-8",
       "category": "LC_ALL",
-      "input_strings": [
-        "setlocale"
-      ],
+      "input_strings": ["setlocale"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -547,10 +490,7 @@
         "LANG": "C",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "hardened_safety_policy",
       "allowed_divergence": "safety_repair",
@@ -600,10 +540,7 @@
       "fixture_class": "threaded_locale_read",
       "locale": "C",
       "category": "LC_ALL",
-      "input_strings": [
-        "thread_a:nl_langinfo(CODESET)",
-        "thread_b:localeconv(decimal_point)"
-      ],
+      "input_strings": ["thread_a:nl_langinfo(CODESET)", "thread_b:localeconv(decimal_point)"],
       "catalog_lookup": {
         "catalog": "none",
         "set_id": 0,
@@ -615,10 +552,7 @@
         "LANG": "C",
         "NLSPATH": "unset"
       },
-      "runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "runtime_modes": ["strict", "hardened"],
       "replacement_level": "L0",
       "oracle_kind": "posix_text",
       "allowed_divergence": "parity_match",

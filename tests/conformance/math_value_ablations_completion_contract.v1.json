@@ -45,10 +45,7 @@
   "e2e_contract": {
     "missing_item_id": "tests.e2e.primary",
     "required_experiment_count": 25,
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "required_log_row_count": 50,
     "required_report_schema_version": "v1",
     "required_report_ok": true,

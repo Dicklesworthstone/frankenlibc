@@ -102,22 +102,9 @@
     }
   ],
   "required_track0_contract": {
-    "child_beads": [
-      "bd-w2c3.1.1",
-      "bd-w2c3.1.2",
-      "bd-w2c3.1.3"
-    ],
-    "required_scripts": [
-      "gap_ledger_checker",
-      "drift_checker",
-      "gap_coverage_checker"
-    ],
-    "required_artifacts": [
-      "gap_ledger",
-      "drift_diagnostics",
-      "gap_coverage",
-      "gap_dashboard"
-    ],
+    "child_beads": ["bd-w2c3.1.1", "bd-w2c3.1.2", "bd-w2c3.1.3"],
+    "required_scripts": ["gap_ledger_checker", "drift_checker", "gap_coverage_checker"],
+    "required_artifacts": ["gap_ledger", "drift_diagnostics", "gap_coverage", "gap_dashboard"],
     "ledger_expectations": {
       "schema_version": "v1",
       "bead": "bd-w2c3.1.1",
@@ -179,8 +166,6 @@
       "track0_governance_coverage_gate_verified",
       "track0_governance_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "track0_governance_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["track0_governance_completion_contract_fail"]
   }
 }

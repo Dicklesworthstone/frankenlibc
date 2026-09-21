@@ -7,11 +7,7 @@
   "completion_debt_evidence": {
     "bead": "bd-6yd.1",
     "original_bead": "bd-6yd",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800,
     "test_sources": {
       "spec": "tests/conformance/crash_bundle_spec.json",
@@ -85,11 +81,7 @@
       "required_artifact": "evidence_snapshot.jsonl",
       "required_log_schema_ref": "tests/conformance/log_schema.json",
       "required_evidence_system_ref": "crates/frankenlibc-membrane/src/runtime_math/evidence.rs",
-      "required_artifact_kinds": [
-        "backtrace",
-        "snapshot",
-        "log"
-      ],
+      "required_artifact_kinds": ["backtrace", "snapshot", "log"],
       "completion_artifacts": {
         "report": "target/conformance/crash_bundle_completion_contract.report.json",
         "log": "target/conformance/crash_bundle_completion_contract.log.jsonl"

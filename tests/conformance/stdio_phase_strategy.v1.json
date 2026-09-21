@@ -159,10 +159,7 @@
         "phase": 1,
         "phase_id": "bootstrap-handle-and-byte-primitives",
         "validation_profile": "Fast",
-        "mode_scope": [
-          "strict",
-          "hardened"
-        ],
+        "mode_scope": ["strict", "hardened"],
         "symbols": [
           "_IO_2_1_stderr_",
           "_IO_2_1_stdin_",
@@ -205,9 +202,7 @@
           "stdout",
           "ungetc"
         ],
-        "entry_gates": [
-          "scripts/check_stdio_phase_strategy.sh"
-        ],
+        "entry_gates": ["scripts/check_stdio_phase_strategy.sh"],
         "completion_criteria": [
           "bootstrap-sensitive stdio globals and byte primitives remain implemented and partition-complete",
           "strict and hardened evidence continues to emit deterministic phase-plan artifacts for the full stdio surface"
@@ -217,10 +212,7 @@
         "phase": 2,
         "phase_id": "stream-lifecycle-and-buffering",
         "validation_profile": "Full",
-        "mode_scope": [
-          "strict",
-          "hardened"
-        ],
+        "mode_scope": ["strict", "hardened"],
         "symbols": [
           "fclose",
           "fcloseall",
@@ -264,9 +256,7 @@
           "tmpfile64",
           "tmpnam"
         ],
-        "entry_gates": [
-          "scripts/check_stdio_phase_strategy.sh"
-        ],
+        "entry_gates": ["scripts/check_stdio_phase_strategy.sh"],
         "completion_criteria": [
           "open/close/read/write/seek lifecycle paths have parity fixtures and deterministic state transitions",
           "buffering and memory-stream entrypoints stay partition-complete and migration-accounted"
@@ -276,10 +266,7 @@
         "phase": 3,
         "phase_id": "formatted-output-and-diagnostics",
         "validation_profile": "Full",
-        "mode_scope": [
-          "strict",
-          "hardened"
-        ],
+        "mode_scope": ["strict", "hardened"],
         "symbols": [
           "_IO_padn",
           "_IO_puts",
@@ -302,9 +289,7 @@
           "vsnprintf",
           "vsprintf"
         ],
-        "entry_gates": [
-          "scripts/check_stdio_phase_strategy.sh"
-        ],
+        "entry_gates": ["scripts/check_stdio_phase_strategy.sh"],
         "completion_criteria": [
           "formatted output and diagnostics retain deterministic fixture coverage",
           "no formatted-output symbol falls outside the declared phase partition"
@@ -314,10 +299,7 @@
         "phase": 4,
         "phase_id": "formatted-input-and-internal-scan-helpers",
         "validation_profile": "Full",
-        "mode_scope": [
-          "strict",
-          "hardened"
-        ],
+        "mode_scope": ["strict", "hardened"],
         "symbols": [
           "_IO_peekc_locked",
           "_IO_seekoff",
@@ -345,9 +327,7 @@
           "vscanf",
           "vsscanf"
         ],
-        "entry_gates": [
-          "scripts/check_stdio_phase_strategy.sh"
-        ],
+        "entry_gates": ["scripts/check_stdio_phase_strategy.sh"],
         "completion_criteria": [
           "scanf-family and internal scan helpers stay explicitly partitioned and validation-tracked",
           "wide and internal scan helpers remain aligned with the stdio support surface without orphaned symbols"
@@ -372,13 +352,7 @@
     "deferred_ready_count": 86
   },
   "support_contract": {
-    "phase1_required_statuses": [
-      "Implemented",
-      "RawSyscall"
-    ],
-    "deferred_surface_statuses": [
-      "Implemented",
-      "RawSyscall"
-    ]
+    "phase1_required_statuses": ["Implemented", "RawSyscall"],
+    "deferred_surface_statuses": ["Implemented", "RawSyscall"]
   }
 }

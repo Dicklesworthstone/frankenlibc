@@ -11,11 +11,7 @@
     "source_artifact": "tests/conformance/fixture_coverage_prioritizer.v1.json",
     "ambient_state_policy": "forbid_pointer_address_frame_path_stderr_pid_timing_global_diagnostic_capture",
     "symbol_groups": {
-      "supported": [
-        "_IO_enable_locks",
-        "__b64_ntop",
-        "__b64_pton"
-      ],
+      "supported": ["_IO_enable_locks", "__b64_ntop", "__b64_pton"],
       "deterministic_fallback": [
         "__abort_msg",
         "__adjtimex",
@@ -46,13 +42,7 @@
     "residual_symbols": [],
     "deferred_ambient_symbols": []
   },
-  "structured_log_fields": [
-    "symbol",
-    "mode",
-    "expected",
-    "actual",
-    "failure_signature"
-  ],
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
   "cases": [
     {
       "name": "io_enable_locks_noop_strict",

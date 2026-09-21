@@ -7,10 +7,7 @@
     "scorecard": "beads_compliance_audit/passes/2026-05-10T03-16-16Z/beads/bd-w2c3.3.2/scorecard.md",
     "audit_score": 570,
     "next_audit_score_threshold": 800,
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ]
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"]
   },
   "purpose": "Bind the existing hardened repair/deny matrix, deterministic policy IDs, fixture-backed deny coverage, and gate telemetry to explicit unit and e2e completion evidence.",
   "source_artifacts": {
@@ -33,10 +30,7 @@
       "entry_count": 15,
       "repair_entries": 9,
       "deny_entries": 6,
-      "required_decisions": [
-        "Repair",
-        "Deny"
-      ],
+      "required_decisions": ["Repair", "Deny"],
       "required_healing_actions": [
         "ClampSize",
         "TruncateWithNull",
@@ -47,10 +41,7 @@
         "UpgradeToSafeVariant",
         "None"
       ],
-      "required_policy_id_prefixes": [
-        "tsm.repair.",
-        "tsm.deny."
-      ],
+      "required_policy_id_prefixes": ["tsm.repair.", "tsm.deny."],
       "required_fixture_ref": "tests/conformance/fixtures/iconv_phase1.json#/cases/hardened_unsupported_encoding_denied"
     },
     "checker": {
@@ -199,9 +190,7 @@
     },
     "conformance_executor": {
       "path": "crates/frankenlibc_conformance/src/lib.rs",
-      "required_test_refs": [
-        "execute_iconv_case_hardened_unsupported_encoding_denied"
-      ]
+      "required_test_refs": ["execute_iconv_case_hardened_unsupported_encoding_denied"]
     },
     "completion_harness": {
       "path": "crates/frankenlibc-harness/tests/hardened_repair_deny_completion_contract_test.rs",

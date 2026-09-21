@@ -31,7 +31,9 @@
       "name": "resolv_conf_max_nameservers",
       "function": "ResolverConfig::parse",
       "spec_section": "resolver(5)",
-      "inputs": { "content": "nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n" },
+      "inputs": {
+        "content": "nameserver 1.1.1.1\nnameserver 2.2.2.2\nnameserver 3.3.3.3\nnameserver 4.4.4.4\n"
+      },
       "expected_output": {
         "nameservers": ["1.1.1.1", "2.2.2.2", "3.3.3.3"],
         "note": "Only first 3 nameservers are used per MAXNS"

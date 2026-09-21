@@ -21,35 +21,23 @@
     {
       "crate": "frankenlibc-harness",
       "test": "wchar_locale_encoding_wave01_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "wchar_locale_encoding_wave02_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "wchar_abi_promotion_tranche_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
     "classification": "native-wchar-isoc-libio-codec-allocator-bridge",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_host_symbols": [
       "<dynamic>",
       "_IO_list_all",

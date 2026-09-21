@@ -130,7 +130,11 @@
         "bead": "bd-0agsk.1",
         "path": "tests/conformance/architecture_todo_reconciliation_completion_contract.v1.json",
         "schema_version": "architecture_todo_reconciliation_completion_contract.v1",
-        "covers": ["tests.conformance.primary", "migrations.primary", "theater.todo_wording.primary"]
+        "covers": [
+          "tests.conformance.primary",
+          "migrations.primary",
+          "theater.todo_wording.primary"
+        ]
       },
       {
         "id": "support_reality_completion",
@@ -231,7 +235,11 @@
         "path": "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json",
         "schema_version": "top_blocker_symbol_coverage_wave_plan.v1",
         "generated_by_bead": "bd-0agsk.18",
-        "covers": ["tests.conformance.primary", "migrations.primary", "theater.todo_wording.primary"]
+        "covers": [
+          "tests.conformance.primary",
+          "migrations.primary",
+          "theater.todo_wording.primary"
+        ]
       },
       {
         "id": "golden_fixture_protocol_completion",
@@ -253,9 +261,15 @@
         "tests/conformance/golden/fixture_verify_strict_hardened.v1.suite.json"
       ],
       "required_test_refs": [
-        {"source": "golden_protocol_harness", "name": "manifest_binds_all_completion_debt_evidence_classes"},
-        {"source": "golden_protocol_harness", "name": "checker_validates_golden_fixture_protocol_contract"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_golden_binding"}
+        {
+          "source": "golden_protocol_harness",
+          "name": "manifest_binds_all_completion_debt_evidence_classes"
+        },
+        {
+          "source": "golden_protocol_harness",
+          "name": "checker_validates_golden_fixture_protocol_contract"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_golden_binding" }
       ],
       "required_commands": [
         "bash scripts/check_golden_fixture_protocol_completion_contract.sh",
@@ -275,9 +289,18 @@
         "tests/conformance/top_blocker_symbol_coverage_wave_plan.v1.json"
       ],
       "required_test_refs": [
-        {"source": "architecture_todo_harness", "name": "contract_binds_architecture_source_gate_and_missing_items"},
-        {"source": "support_reality_harness", "name": "checker_validates_support_reality_regeneration_contract"},
-        {"source": "completion_harness", "name": "checker_validates_architecture_ledger_live_evidence_contract"}
+        {
+          "source": "architecture_todo_harness",
+          "name": "contract_binds_architecture_source_gate_and_missing_items"
+        },
+        {
+          "source": "support_reality_harness",
+          "name": "checker_validates_support_reality_regeneration_contract"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_validates_architecture_ledger_live_evidence_contract"
+        }
       ],
       "required_commands": [
         "bash scripts/check_architecture_todo_reconciliation_completion_contract.sh",
@@ -301,8 +324,11 @@
         "top blocker wave plan keeps remaining work as concrete follow-up beads"
       ],
       "required_test_refs": [
-        {"source": "architecture_todo_harness", "name": "checker_rejects_source_artifact_count_drift"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_child_closeout_binding"}
+        {
+          "source": "architecture_todo_harness",
+          "name": "checker_rejects_source_artifact_count_drift"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_child_closeout_binding" }
       ]
     },
     "theater_resolution": {
@@ -320,8 +346,11 @@
         "report_only claim status forbids replacement-level promotion"
       ],
       "required_test_refs": [
-        {"source": "architecture_todo_harness", "name": "checker_rejects_missing_theater_resolution"},
-        {"source": "completion_harness", "name": "checker_rejects_theater_resolution_drift"}
+        {
+          "source": "architecture_todo_harness",
+          "name": "checker_rejects_missing_theater_resolution"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_theater_resolution_drift" }
       ]
     },
     "test_sources": {

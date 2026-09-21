@@ -58,10 +58,7 @@
   ],
   "owner_surface_validation_paths": {
     "runtime_linkage": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.needed_libraries",
         "artifact_state.dependency_breakdown.host_needed_libraries",
@@ -69,10 +66,7 @@
       ]
     },
     "direct_dynamic_dependencies": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.needed_libraries",
         "artifact_state.dependency_breakdown.host_direct_needed_libraries",
@@ -80,10 +74,7 @@
       ]
     },
     "loader_resolution": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.ldd_libraries",
         "artifact_state.dependency_breakdown.host_resolved_libraries",
@@ -91,65 +82,43 @@
       ]
     },
     "loader_startup": {
-      "primary_command": [
-        "scripts/check_standalone_readiness_matrix.sh"
-      ],
+      "primary_command": ["scripts/check_standalone_readiness_matrix.sh"],
       "required_report_fields": [
         "proof_rows.loader_startup",
         "artifact_state.dependency_breakdown.host_resolved_libraries"
       ]
     },
     "libc_surface": {
-      "primary_command": [
-        "scripts/check_replacement_guard.sh",
-        "replacement"
-      ],
+      "primary_command": ["scripts/check_replacement_guard.sh", "replacement"],
       "required_report_fields": [
         "replacement_profile.call_through_census",
         "artifact_state.dependency_breakdown.host_needed_libraries"
       ]
     },
     "compiler_runtime": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.needed_libraries",
         "artifact_state.dependency_breakdown.version_needs"
       ]
     },
     "unwind_runtime": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
-      "required_report_fields": [
-        "artifact_state.dependency_breakdown.undefined_unwind_symbols"
-      ]
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
+      "required_report_fields": ["artifact_state.dependency_breakdown.undefined_unwind_symbols"]
     },
     "tls_startup": {
-      "primary_command": [
-        "scripts/check_crt_tls_atexit_direct_link_run_proof_fixtures.sh"
-      ],
+      "primary_command": ["scripts/check_crt_tls_atexit_direct_link_run_proof_fixtures.sh"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.undefined_tls_symbols",
         "proof_rows.tls"
       ]
     },
     "glibc_symbol_surface": {
-      "primary_command": [
-        "scripts/check_standalone_replacement_artifact.sh",
-        "--forge"
-      ],
-      "required_report_fields": [
-        "artifact_state.dependency_breakdown.undefined_glibc_symbols"
-      ]
+      "primary_command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
+      "required_report_fields": ["artifact_state.dependency_breakdown.undefined_glibc_symbols"]
     },
     "symbol_versioning": {
-      "primary_command": [
-        "scripts/check_standalone_host_dependency_probe_plan.sh"
-      ],
+      "primary_command": ["scripts/check_standalone_host_dependency_probe_plan.sh"],
       "required_report_fields": [
         "artifact_state.dependency_breakdown.version_needs",
         "artifact_state.dependency_breakdown.host_version_requirements"
@@ -162,11 +131,7 @@
       "owner_surface": "runtime_linkage",
       "catalog_owner_surface": "runtime_linkage",
       "primary_probe_id": "readelf_dynamic_dependencies",
-      "primary_evidence_command": [
-        "readelf",
-        "-d",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["readelf", "-d", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "residual_host_glibc_dependency",
       "likely_code_config_files": [
         "crates/frankenlibc-abi/Cargo.toml",
@@ -175,10 +140,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "host_needed_libraries_present",
         "negative_control": "residual_host_glibc_dependency"
       },
@@ -195,11 +157,7 @@
       "owner_surface": "direct_dynamic_dependencies",
       "catalog_owner_surface": "direct_dynamic_dependencies",
       "primary_probe_id": "readelf_dynamic_dependencies",
-      "primary_evidence_command": [
-        "readelf",
-        "-d",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["readelf", "-d", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "residual_host_glibc_dependency",
       "likely_code_config_files": [
         "crates/frankenlibc-abi/Cargo.toml",
@@ -208,10 +166,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "host_direct_needed_libraries_present",
         "negative_control": "residual_host_glibc_dependency"
       },
@@ -228,10 +183,7 @@
       "owner_surface": "loader_resolution",
       "catalog_owner_surface": "loader_resolution",
       "primary_probe_id": "ldd_host_glibc_scan",
-      "primary_evidence_command": [
-        "ldd",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["ldd", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "residual_host_glibc_dependency",
       "likely_code_config_files": [
         "crates/frankenlibc-abi/Cargo.toml",
@@ -240,10 +192,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "host_resolved_libraries_present",
         "negative_control": "residual_host_glibc_dependency"
       },
@@ -260,10 +209,7 @@
       "owner_surface": "loader_startup",
       "catalog_owner_surface": "loader_startup",
       "primary_probe_id": "ldd_host_glibc_scan",
-      "primary_evidence_command": [
-        "ldd",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["ldd", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "missing_startup_tls_rows",
       "likely_code_config_files": [
         "crates/frankenlibc-abi/src/startup_abi.rs",
@@ -273,9 +219,7 @@
         "tests/conformance/standalone_readiness_proof_matrix.v1.json"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_readiness_matrix.sh"
-        ],
+        "command": ["scripts/check_standalone_readiness_matrix.sh"],
         "expected_blocking_reason_absent": "host_loader_dependency",
         "negative_control": "missing_startup_tls_rows"
       },
@@ -292,10 +236,7 @@
       "owner_surface": "libc_surface",
       "catalog_owner_surface": "libc_surface",
       "primary_probe_id": "ldd_host_glibc_scan",
-      "primary_evidence_command": [
-        "ldd",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["ldd", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "residual_host_glibc_dependency",
       "likely_code_config_files": [
         "support_matrix.json",
@@ -305,10 +246,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_replacement_guard.sh",
-          "replacement"
-        ],
+        "command": ["scripts/check_replacement_guard.sh", "replacement"],
         "expected_blocking_reason_absent": "host_libc_dependency",
         "negative_control": "residual_host_glibc_dependency"
       },
@@ -325,11 +263,7 @@
       "owner_surface": "compiler_runtime",
       "catalog_owner_surface": "compiler_runtime",
       "primary_probe_id": "readelf_dynamic_dependencies",
-      "primary_evidence_command": [
-        "readelf",
-        "-d",
-        "target/release/libfrankenlibc_replace.so"
-      ],
+      "primary_evidence_command": ["readelf", "-d", "target/release/libfrankenlibc_replace.so"],
       "negative_control_test": "residual_host_glibc_dependency",
       "likely_code_config_files": [
         "crates/frankenlibc-abi/Cargo.toml",
@@ -339,10 +273,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "libgcc_runtime_dependency",
         "negative_control": "residual_host_glibc_dependency"
       },
@@ -374,10 +305,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "undefined_unwind_symbols",
         "negative_control": "missing_symbol_evidence"
       },
@@ -409,10 +337,7 @@
         "scripts/check_standalone_replacement_artifact.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_replacement_artifact.sh",
-          "--forge"
-        ],
+        "command": ["scripts/check_standalone_replacement_artifact.sh", "--forge"],
         "expected_blocking_reason_absent": "undefined_glibc_symbols",
         "negative_control": "missing_symbol_evidence"
       },
@@ -444,9 +369,7 @@
         "tests/conformance/standalone_tls_blocker_diagnostics.v1.json"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_crt_tls_atexit_direct_link_run_proof_fixtures.sh"
-        ],
+        "command": ["scripts/check_crt_tls_atexit_direct_link_run_proof_fixtures.sh"],
         "expected_blocking_reason_absent": "undefined_tls_symbols",
         "negative_control": "missing_startup_tls_rows"
       },
@@ -477,9 +400,7 @@
         "scripts/check_standalone_host_dependency_probe_plan.sh"
       ],
       "validation_path": {
-        "command": [
-          "scripts/check_standalone_host_dependency_probe_plan.sh"
-        ],
+        "command": ["scripts/check_standalone_host_dependency_probe_plan.sh"],
         "expected_blocking_reason_absent": "host_version_requirements",
         "negative_control": "missing_symbol_evidence"
       },

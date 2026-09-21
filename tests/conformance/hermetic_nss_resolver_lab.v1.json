@@ -39,7 +39,10 @@
         "kernel_id": "hosts_files_kernel",
         "lookup_family": "hosts",
         "input_files": ["etc/hosts", "etc/nsswitch.conf"],
-        "host_glibc_fixture_ids": ["getaddrinfo_hosts_file_subset", "hosts_lookup_inline_comments_and_aliases"],
+        "host_glibc_fixture_ids": [
+          "getaddrinfo_hosts_file_subset",
+          "hosts_lookup_inline_comments_and_aliases"
+        ],
         "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/dns.rs",
         "contract": "Parse /etc/hosts aliases and return deterministic address rows when nsswitch selects files."
       },
@@ -71,7 +74,11 @@
         "kernel_id": "resolv_conf_kernel",
         "lookup_family": "resolv_conf",
         "input_files": ["etc/resolv.conf"],
-        "host_glibc_fixture_ids": ["resolv_conf_options_attempts", "resolv_conf_options_timeout", "resolv_conf_search_list"],
+        "host_glibc_fixture_ids": [
+          "resolv_conf_options_attempts",
+          "resolv_conf_options_timeout",
+          "resolv_conf_search_list"
+        ],
         "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/config.rs",
         "contract": "Parse nameserver, timeout, attempts, and search-domain controls for bounded fake-DNS replay."
       },
@@ -79,7 +86,11 @@
         "kernel_id": "nsswitch_kernel",
         "lookup_family": "nsswitch",
         "input_files": ["etc/nsswitch.conf"],
-        "host_glibc_fixture_ids": ["nsswitch_hosts_files_dns_order", "nsswitch_passwd_files_order", "nsswitch_group_files_order"],
+        "host_glibc_fixture_ids": [
+          "nsswitch_hosts_files_dns_order",
+          "nsswitch_passwd_files_order",
+          "nsswitch_group_files_order"
+        ],
         "frankenlibc_surface": "crates/frankenlibc-core/src/resolv/mod.rs",
         "contract": "Parse per-database source order and reject scenarios that require unsupported NSS backends."
       },
@@ -215,7 +226,10 @@
       "runtime_modes": ["strict", "hardened"],
       "oracle_kind": "files_db_replay",
       "semantic_kernel": "hosts_files_kernel",
-      "host_glibc_fixture_ids": ["getaddrinfo_hosts_file_subset", "hosts_lookup_inline_comments_and_aliases"],
+      "host_glibc_fixture_ids": [
+        "getaddrinfo_hosts_file_subset",
+        "hosts_lookup_inline_comments_and_aliases"
+      ],
       "fake_root_files_needed": ["etc/hosts", "etc/nsswitch.conf"],
       "fixture_obligation": "etc/hosts row 'hermetic.local 198.51.100.7' must round-trip through getaddrinfo without DNS fallback.",
       "evidence_artifact": "target/conformance/nss_lab/hosts_files_only.jsonl"

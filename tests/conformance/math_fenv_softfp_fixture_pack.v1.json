@@ -56,24 +56,9 @@
       "direct_runner",
       "isolated_runner"
     ],
-    "expected_required_fields": [
-      "value_class",
-      "errno",
-      "fenv_flags",
-      "status",
-      "user_diagnostic"
-    ],
-    "tolerance_required_fields": [
-      "kind",
-      "abs",
-      "ulp",
-      "nan_payload_policy"
-    ],
-    "runner_required_fields": [
-      "runner_kind",
-      "command",
-      "artifact_refs"
-    ]
+    "expected_required_fields": ["value_class", "errno", "fenv_flags", "status", "user_diagnostic"],
+    "tolerance_required_fields": ["kind", "abs", "ulp", "nan_payload_policy"],
+    "runner_required_fields": ["runner_kind", "command", "artifact_refs"]
   },
   "required_scenario_kinds": [
     "domain_error",
@@ -88,10 +73,7 @@
     "subnormal_behavior",
     "soft_fp_arch_sensitive"
   ],
-  "required_runtime_modes": [
-    "strict",
-    "hardened"
-  ],
+  "required_runtime_modes": ["strict", "hardened"],
   "required_exception_flags": [
     "FE_INVALID",
     "FE_DIVBYZERO",
@@ -157,9 +139,7 @@
       "fixture_id": "math.domain.asin_out_of_range.strict",
       "scenario_kind": "domain_error",
       "function": "asin",
-      "symbols": [
-        "asin"
-      ],
+      "symbols": ["asin"],
       "input_class": "finite_outside_domain",
       "inputs": {
         "x": 2.0
@@ -172,9 +152,7 @@
       "expected": {
         "value_class": "quiet_nan",
         "errno": "EDOM",
-        "fenv_flags": [
-          "FE_INVALID"
-        ],
+        "fenv_flags": ["FE_INVALID"],
         "status": "pass",
         "user_diagnostic": "asin outside [-1,1] must stay a domain-error fixture with FE_INVALID evidence"
       },
@@ -182,10 +160,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:asin_domain_error",
-        "symbol:asin"
-      ],
+      "source_case_refs": ["test:asin_domain_error", "symbol:asin"],
       "tolerance": {
         "kind": "nan_payload",
         "abs": 0.0,
@@ -199,26 +174,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test asin_domain_error -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_c_fixture_suite.sh",
-        "artifact_refs": [
-          "scripts/check_c_fixture_suite.sh",
-          "tests/integration/fixture_math.c"
-        ]
+        "artifact_refs": ["scripts/check_c_fixture_suite.sh", "tests/integration/fixture_math.c"]
       }
     },
     {
       "fixture_id": "math.range.log_zero.strict",
       "scenario_kind": "range_error",
       "function": "log",
-      "symbols": [
-        "log"
-      ],
+      "symbols": ["log"],
       "input_class": "zero_pole",
       "inputs": {
         "x": 0.0
@@ -231,9 +199,7 @@
       "expected": {
         "value_class": "negative_infinity",
         "errno": "ERANGE",
-        "fenv_flags": [
-          "FE_DIVBYZERO"
-        ],
+        "fenv_flags": ["FE_DIVBYZERO"],
         "status": "pass",
         "user_diagnostic": "log(0) remains a range/pole fixture and must preserve FE_DIVBYZERO evidence"
       },
@@ -241,10 +207,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:log_domain_and_pole",
-        "symbol:log"
-      ],
+      "source_case_refs": ["test:log_domain_and_pole", "symbol:log"],
       "tolerance": {
         "kind": "exact",
         "abs": 0.0,
@@ -258,9 +221,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test log_domain_and_pole -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -275,15 +236,10 @@
       "fixture_id": "math.fenv.divide_by_zero.raise.strict",
       "scenario_kind": "divide_by_zero",
       "function": "feraiseexcept",
-      "symbols": [
-        "feraiseexcept",
-        "fetestexcept"
-      ],
+      "symbols": ["feraiseexcept", "fetestexcept"],
       "input_class": "explicit_exception_raise",
       "inputs": {
-        "excepts": [
-          "FE_DIVBYZERO"
-        ]
+        "excepts": ["FE_DIVBYZERO"]
       },
       "rounding_mode": "FE_TONEAREST",
       "initial_fenv": {
@@ -293,9 +249,7 @@
       "expected": {
         "value_class": "exception_flag_set",
         "errno": "0",
-        "fenv_flags": [
-          "FE_DIVBYZERO"
-        ],
+        "fenv_flags": ["FE_DIVBYZERO"],
         "status": "pass",
         "user_diagnostic": "explicit FE_DIVBYZERO raise/test/clear remains isolated from arithmetic value fixtures"
       },
@@ -322,25 +276,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test fenv_abi_test exception_flags_raise_and_clear -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/fenv_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/fenv_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_fenv diff_exception_flags_roundtrip -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_fenv.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_fenv.rs"]
       }
     },
     {
       "fixture_id": "math.overflow.exp_large.strict",
       "scenario_kind": "overflow",
       "function": "exp",
-      "symbols": [
-        "exp"
-      ],
+      "symbols": ["exp"],
       "input_class": "positive_overflow",
       "inputs": {
         "x": 1000.0
@@ -353,10 +301,7 @@
       "expected": {
         "value_class": "positive_infinity",
         "errno": "ERANGE",
-        "fenv_flags": [
-          "FE_OVERFLOW",
-          "FE_INEXACT"
-        ],
+        "fenv_flags": ["FE_OVERFLOW", "FE_INEXACT"],
         "status": "pass",
         "user_diagnostic": "exp overflow must keep ERANGE plus FE_OVERFLOW/FE_INEXACT coverage"
       },
@@ -364,10 +309,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:exp_overflow_to_infinity",
-        "symbol:exp"
-      ],
+      "source_case_refs": ["test:exp_overflow_to_infinity", "symbol:exp"],
       "tolerance": {
         "kind": "exact",
         "abs": 0.0,
@@ -381,25 +323,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test exp_overflow_to_infinity -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_math.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_math.rs"]
       }
     },
     {
       "fixture_id": "math.underflow.exp_negative.strict",
       "scenario_kind": "underflow",
       "function": "exp",
-      "symbols": [
-        "exp"
-      ],
+      "symbols": ["exp"],
       "input_class": "negative_underflow",
       "inputs": {
         "x": -1000.0
@@ -412,10 +348,7 @@
       "expected": {
         "value_class": "positive_zero",
         "errno": "ERANGE",
-        "fenv_flags": [
-          "FE_UNDERFLOW",
-          "FE_INEXACT"
-        ],
+        "fenv_flags": ["FE_UNDERFLOW", "FE_INEXACT"],
         "status": "pass",
         "user_diagnostic": "exp underflow must keep ERANGE plus FE_UNDERFLOW/FE_INEXACT coverage"
       },
@@ -423,10 +356,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:exp_underflow_to_zero",
-        "symbol:exp"
-      ],
+      "source_case_refs": ["test:exp_underflow_to_zero", "symbol:exp"],
       "tolerance": {
         "kind": "exact",
         "abs": 0.0,
@@ -440,26 +370,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test exp_underflow_to_zero -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_c_fixture_suite.sh",
-        "artifact_refs": [
-          "scripts/check_c_fixture_suite.sh",
-          "tests/integration/fixture_math.c"
-        ]
+        "artifact_refs": ["scripts/check_c_fixture_suite.sh", "tests/integration/fixture_math.c"]
       }
     },
     {
       "fixture_id": "math.inexact.rint_half_even.strict",
       "scenario_kind": "inexact",
       "function": "rint",
-      "symbols": [
-        "rint"
-      ],
+      "symbols": ["rint"],
       "input_class": "halfway_fraction",
       "inputs": {
         "x": 2.5
@@ -472,9 +395,7 @@
       "expected": {
         "value_class": "finite_rounded",
         "errno": "0",
-        "fenv_flags": [
-          "FE_INEXACT"
-        ],
+        "fenv_flags": ["FE_INEXACT"],
         "status": "pass",
         "user_diagnostic": "rint halfway cases must name FE_INEXACT rather than only comparing rounded values"
       },
@@ -482,10 +403,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:rint_known_values",
-        "symbol:rint"
-      ],
+      "source_case_refs": ["test:rint_known_values", "symbol:rint"],
       "tolerance": {
         "kind": "ulp",
         "abs": 0.0,
@@ -499,9 +417,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test rint_known_values -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
@@ -516,10 +432,7 @@
       "fixture_id": "math.rounding.fesetround_downward.hardened",
       "scenario_kind": "rounding_mode_sensitivity",
       "function": "fesetround",
-      "symbols": [
-        "fesetround",
-        "fegetround"
-      ],
+      "symbols": ["fesetround", "fegetround"],
       "input_class": "rounding_mode_transition",
       "inputs": {
         "mode": "FE_DOWNWARD"
@@ -559,25 +472,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test fenv_abi_test fesetround_all_modes_round_trip -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/fenv_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/fenv_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_fenv diff_round_modes_roundtrip -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_fenv.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_fenv.rs"]
       }
     },
     {
       "fixture_id": "math.nan.fmaximum_propagation.hardened",
       "scenario_kind": "nan_propagation",
       "function": "fmaximum",
-      "symbols": [
-        "fmaximum"
-      ],
+      "symbols": ["fmaximum"],
       "input_class": "quiet_nan_operand",
       "inputs": {
         "x": "NaN",
@@ -599,10 +506,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:fmaximum_nan_propagation",
-        "symbol:fmaximum"
-      ],
+      "source_case_refs": ["test:fmaximum_nan_propagation", "symbol:fmaximum"],
       "tolerance": {
         "kind": "nan_payload",
         "abs": 0.0,
@@ -616,25 +520,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test fmaximum_nan_propagation -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test conformance_diff_math -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/conformance_diff_math.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/conformance_diff_math.rs"]
       }
     },
     {
       "fixture_id": "math.infinity.log_positive_inf.hardened",
       "scenario_kind": "infinity_behavior",
       "function": "log",
-      "symbols": [
-        "log"
-      ],
+      "symbols": ["log"],
       "input_class": "positive_infinity",
       "inputs": {
         "x": "Infinity"
@@ -655,10 +553,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:log_infinity",
-        "symbol:log"
-      ],
+      "source_case_refs": ["test:log_infinity", "symbol:log"],
       "tolerance": {
         "kind": "exact",
         "abs": 0.0,
@@ -672,26 +567,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test log_infinity -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_c_fixture_suite.sh",
-        "artifact_refs": [
-          "scripts/check_c_fixture_suite.sh",
-          "tests/integration/fixture_math.c"
-        ]
+        "artifact_refs": ["scripts/check_c_fixture_suite.sh", "tests/integration/fixture_math.c"]
       }
     },
     {
       "fixture_id": "math.subnormal.nextafter_zero_to_min.hardened",
       "scenario_kind": "subnormal_behavior",
       "function": "nextafter",
-      "symbols": [
-        "nextafter"
-      ],
+      "symbols": ["nextafter"],
       "input_class": "zero_to_min_subnormal",
       "inputs": {
         "x": 0.0,
@@ -713,10 +601,7 @@
       "replacement_level": "L0",
       "oracle_kind": "host_glibc",
       "allowed_divergence": "parity_match",
-      "source_case_refs": [
-        "test:nextafter_increments",
-        "symbol:nextafter"
-      ],
+      "source_case_refs": ["test:nextafter_increments", "symbol:nextafter"],
       "tolerance": {
         "kind": "ulp",
         "abs": 0.0,
@@ -730,26 +615,19 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test nextafter_increments -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",
         "command": "scripts/check_c_fixture_suite.sh",
-        "artifact_refs": [
-          "scripts/check_c_fixture_suite.sh",
-          "tests/integration/fixture_math.c"
-        ]
+        "artifact_refs": ["scripts/check_c_fixture_suite.sh", "tests/integration/fixture_math.c"]
       }
     },
     {
       "fixture_id": "math.softfp.sinl_arch_sensitive.deferred",
       "scenario_kind": "soft_fp_arch_sensitive",
       "function": "sinl",
-      "symbols": [
-        "sinl"
-      ],
+      "symbols": ["sinl"],
       "input_class": "long_double_arch_sensitive",
       "inputs": {
         "x": 1.0,
@@ -771,10 +649,7 @@
       "replacement_level": "L1",
       "oracle_kind": "posix_text",
       "allowed_divergence": "proof_gap",
-      "source_case_refs": [
-        "test:sinl_cosl_basic",
-        "symbol:sinl"
-      ],
+      "source_case_refs": ["test:sinl_cosl_basic", "symbol:sinl"],
       "tolerance": {
         "kind": "deferred",
         "abs": 0.0,
@@ -788,9 +663,7 @@
       "direct_runner": {
         "runner_kind": "direct",
         "command": "rch exec -- cargo test -p frankenlibc-abi --test math_abi_test sinl_cosl_basic -- --nocapture",
-        "artifact_refs": [
-          "crates/frankenlibc-abi/tests/math_abi_test.rs"
-        ]
+        "artifact_refs": ["crates/frankenlibc-abi/tests/math_abi_test.rs"]
       },
       "isolated_runner": {
         "runner_kind": "isolated",

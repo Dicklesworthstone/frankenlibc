@@ -9,15 +9,8 @@
     "manifest": "tests/runtime_math/production_kernel_manifest.v1.json",
     "retirement_policy": "tests/conformance/math_retirement_policy.json"
   },
-  "classification_enum": [
-    "production_core",
-    "production_monitor",
-    "research"
-  ],
-  "linkage_status_enum": [
-    "Production",
-    "ResearchOnly"
-  ],
+  "classification_enum": ["production_core", "production_monitor", "research"],
+  "linkage_status_enum": ["Production", "ResearchOnly"],
   "modules": [
     {
       "module": "admm_budget",

@@ -14,24 +14,9 @@
       "locale_iconv",
       "startup_linking"
     ],
-    "expected_runtime_modes": [
-      "strict",
-      "hardened"
-    ],
-    "expected_replacement_levels": [
-      "L0",
-      "L1",
-      "L2",
-      "L3"
-    ],
-    "api_families": [
-      "process",
-      "stdio",
-      "unistd",
-      "dirent",
-      "locale",
-      "startup"
-    ],
+    "expected_runtime_modes": ["strict", "hardened"],
+    "expected_replacement_levels": ["L0", "L1", "L2", "L3"],
+    "api_families": ["process", "stdio", "unistd", "dirent", "locale", "startup"],
     "representative_symbols": [
       "printf",
       "write",
@@ -47,9 +32,7 @@
       "id": "direct_l0_strict",
       "path_kind": "direct",
       "script": "scripts/check_real_program_smoke_suite.sh",
-      "args": [
-        "--run"
-      ],
+      "args": ["--run"],
       "source_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
       "source_bead": "bd-bp8fl.10.2",
       "smoke_workload_id": "shell_coreutils.sort_pipeline",
@@ -64,9 +47,7 @@
       "id": "isolated_l1_hardened",
       "path_kind": "isolated",
       "script": "scripts/check_real_program_smoke_suite.sh",
-      "args": [
-        "--dry-run"
-      ],
+      "args": ["--dry-run"],
       "source_artifact": "tests/conformance/real_program_smoke_suite.v1.json",
       "source_bead": "bd-bp8fl.10.2",
       "smoke_workload_id": "shell_coreutils.sort_pipeline",

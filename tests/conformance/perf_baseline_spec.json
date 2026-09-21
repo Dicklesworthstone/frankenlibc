@@ -12,9 +12,12 @@
         "command": "cargo bench -p frankenlibc-bench --bench runtime_math_bench",
         "output_prefix": "RUNTIME_MATH_BENCH",
         "benchmarks": [
-          {"name": "decide", "description": "Per-call overhead of RuntimeMathKernel::decide()"},
-          {"name": "observe_fast", "description": "Per-call overhead of observe_validation_result()"},
-          {"name": "decide_observe", "description": "Combined decide + observe hot path"}
+          { "name": "decide", "description": "Per-call overhead of RuntimeMathKernel::decide()" },
+          {
+            "name": "observe_fast",
+            "description": "Per-call overhead of observe_validation_result()"
+          },
+          { "name": "decide_observe", "description": "Combined decide + observe hot path" }
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
@@ -35,16 +38,37 @@
         "command": "cargo bench -p frankenlibc-bench --bench membrane_bench",
         "output_prefix": "MEMBRANE_BENCH",
         "benchmarks": [
-          {"name": "stage_null_check", "description": "Direct null-check stage predicate"},
-          {"name": "stage_tls_cache_hit", "description": "Direct TLS validation cache hit lookup"},
-          {"name": "stage_bloom_hit", "description": "Direct bloom-filter positive ownership pre-check"},
-          {"name": "stage_arena_lookup", "description": "Direct allocation arena lookup for a live pointer"},
-          {"name": "stage_fingerprint_verify", "description": "Direct fingerprint header load and verification"},
-          {"name": "stage_canary_verify", "description": "Direct trailing canary load and verification"},
-          {"name": "stage_bounds_check", "description": "Direct in-allocation bounds predicate"},
-          {"name": "validate_null", "description": "Full validation entrypoint null-pointer fast exit"},
-          {"name": "validate_foreign", "description": "Full validation entrypoint foreign-pointer fast path"},
-          {"name": "validate_known", "description": "Hot-path validation for known-safe pointers"}
+          { "name": "stage_null_check", "description": "Direct null-check stage predicate" },
+          {
+            "name": "stage_tls_cache_hit",
+            "description": "Direct TLS validation cache hit lookup"
+          },
+          {
+            "name": "stage_bloom_hit",
+            "description": "Direct bloom-filter positive ownership pre-check"
+          },
+          {
+            "name": "stage_arena_lookup",
+            "description": "Direct allocation arena lookup for a live pointer"
+          },
+          {
+            "name": "stage_fingerprint_verify",
+            "description": "Direct fingerprint header load and verification"
+          },
+          {
+            "name": "stage_canary_verify",
+            "description": "Direct trailing canary load and verification"
+          },
+          { "name": "stage_bounds_check", "description": "Direct in-allocation bounds predicate" },
+          {
+            "name": "validate_null",
+            "description": "Full validation entrypoint null-pointer fast exit"
+          },
+          {
+            "name": "validate_foreign",
+            "description": "Full validation entrypoint foreign-pointer fast path"
+          },
+          { "name": "validate_known", "description": "Hot-path validation for known-safe pointers" }
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
@@ -65,14 +89,14 @@
         "command": "cargo bench -p frankenlibc-bench --bench string_bench",
         "output_prefix": "STRING_BENCH",
         "benchmarks": [
-          {"name": "memcpy_16", "description": "memcpy 16 bytes"},
-          {"name": "memcpy_64", "description": "memcpy 64 bytes"},
-          {"name": "memcpy_256", "description": "memcpy 256 bytes"},
-          {"name": "memcpy_1024", "description": "memcpy 1KB"},
-          {"name": "memcpy_4096", "description": "memcpy 4KB"},
-          {"name": "memcpy_65536", "description": "memcpy 64KB"},
-          {"name": "strlen_16", "description": "strlen 16-char string"},
-          {"name": "strlen_256", "description": "strlen 256-char string"}
+          { "name": "memcpy_16", "description": "memcpy 16 bytes" },
+          { "name": "memcpy_64", "description": "memcpy 64 bytes" },
+          { "name": "memcpy_256", "description": "memcpy 256 bytes" },
+          { "name": "memcpy_1024", "description": "memcpy 1KB" },
+          { "name": "memcpy_4096", "description": "memcpy 4KB" },
+          { "name": "memcpy_65536", "description": "memcpy 64KB" },
+          { "name": "strlen_16", "description": "strlen 16-char string" },
+          { "name": "strlen_256", "description": "strlen 256-char string" }
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
@@ -94,8 +118,8 @@
         "command": "cargo bench -p frankenlibc-bench --bench malloc_bench",
         "output_prefix": "MALLOC_BENCH",
         "benchmarks": [
-          {"name": "alloc_free_cycle", "description": "Single malloc+free cycle"},
-          {"name": "alloc_burst", "description": "Burst allocation pattern"}
+          { "name": "alloc_free_cycle", "description": "Single malloc+free cycle" },
+          { "name": "alloc_burst", "description": "Burst allocation pattern" }
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
@@ -117,8 +141,14 @@
         "command": "cargo bench -p frankenlibc-bench --bench errno_bench",
         "output_prefix": "ERRNO_BENCH",
         "benchmarks": [
-          {"name": "errno_location_fastpath", "description": "Steady-state __errno_location TLS accessor"},
-          {"name": "errno_set_then_read_roundtrip", "description": "Volatile write/read through the current thread errno slot"}
+          {
+            "name": "errno_location_fastpath",
+            "description": "Steady-state __errno_location TLS accessor"
+          },
+          {
+            "name": "errno_set_then_read_roundtrip",
+            "description": "Volatile write/read through the current thread errno slot"
+          }
         ],
         "modes": ["strict", "hardened"],
         "env_vars": {
@@ -181,13 +211,7 @@
     ],
     "structured_reports": {
       "profile_report_v1": {
-        "required_fields": [
-          "schema_version",
-          "generated_at_utc",
-          "run",
-          "targets",
-          "summary"
-        ]
+        "required_fields": ["schema_version", "generated_at_utc", "run", "targets", "summary"]
       },
       "hotspot_opportunity_matrix_v1": {
         "required_fields": [
@@ -238,7 +262,16 @@
       "behavior": "Skip perf gate with warning on overloaded machines."
     },
     "output_on_regression": {
-      "reported_fields": ["suite", "benchmark", "mode", "baseline_p50_ns", "current_p50_ns", "regression_pct", "target_ns", "verdict"],
+      "reported_fields": [
+        "suite",
+        "benchmark",
+        "mode",
+        "baseline_p50_ns",
+        "current_p50_ns",
+        "regression_pct",
+        "target_ns",
+        "verdict"
+      ],
       "exit_code": 1
     }
   },

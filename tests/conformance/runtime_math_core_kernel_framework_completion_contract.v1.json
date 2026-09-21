@@ -113,12 +113,27 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Runtime-math unit tests exercise the common evaluate/calibrate/snapshot trait surface, evidence counters, reverse-round diversity snapshot, decision-card JSON export, and ABI runtime-policy export bridge wrappers.",
       "required_test_refs": [
-        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_roundtrip_exposes_snapshot_and_contract"},
-        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exposes_reverse_round_diversity_snapshot"},
-        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exports_structured_decision_card_json"},
-        {"source": "runtime_policy", "name": "runtime_kernel_snapshot_wrapper_exposes_live_decision_state"},
-        {"source": "runtime_policy", "name": "runtime_evidence_contract_wrapper_and_cards_export_are_available"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_and_e2e_framework_evidence"}
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_roundtrip_exposes_snapshot_and_contract"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_exposes_reverse_round_diversity_snapshot"
+        },
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_exports_structured_decision_card_json"
+        },
+        {
+          "source": "runtime_policy",
+          "name": "runtime_kernel_snapshot_wrapper_exposes_live_decision_state"
+        },
+        {
+          "source": "runtime_policy",
+          "name": "runtime_evidence_contract_wrapper_and_cards_export_are_available"
+        },
+        { "source": "completion_harness", "name": "manifest_binds_unit_and_e2e_framework_evidence" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_framework -- --nocapture",
@@ -129,12 +144,21 @@
       "missing_item_id": "tests.e2e.primary",
       "description": "The framework JSONL export is exercised through the runtime-policy bridge and this completion checker emits deterministic pass/fail report and JSONL artifacts for CI ingestion.",
       "required_test_refs": [
-        {"source": "runtime_math_mod", "name": "runtime_kernel_framework_exports_runtime_math_jsonl_logs"},
-        {"source": "runtime_policy", "name": "runtime_math_log_wrapper_includes_required_traceability_fields"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_trait_method"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_runtime_policy_wrapper"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_jsonl_event"}
+        {
+          "source": "runtime_math_mod",
+          "name": "runtime_kernel_framework_exports_runtime_math_jsonl_logs"
+        },
+        {
+          "source": "runtime_policy",
+          "name": "runtime_math_log_wrapper_includes_required_traceability_fields"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_trait_method" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_runtime_policy_wrapper"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_missing_jsonl_event" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-membrane runtime_kernel_framework_exports_runtime_math_jsonl_logs -- --nocapture",
@@ -168,8 +192,8 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_jsonl_event"}
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_jsonl_event" }
       ]
     }
   }

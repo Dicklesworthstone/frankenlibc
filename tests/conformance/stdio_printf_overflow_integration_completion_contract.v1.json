@@ -7,9 +7,7 @@
   "audit_score": 470,
   "score_threshold": 700,
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.integration.primary"
-    ],
+    "missing_items_closed": ["tests.integration.primary"],
     "next_audit_score_threshold": 700
   },
   "source_artifacts": {
@@ -39,10 +37,7 @@
         "vasprintf"
       ],
       "minimum_tests": 10,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ]
+      "required_modes": ["strict", "hardened"]
     },
     "integration_fixture": {
       "path": "tests/integration/fixture_stdio_printf.c",

@@ -7,16 +7,11 @@
     "stub_census": "tests/conformance/stub_census.json",
     "waiver_policy": "tests/conformance/stub_regression_waiver_policy.v1.json",
     "fixture": "tests/conformance/fixtures/setjmp_ops.json",
-      "generated_utc": "2026-03-23T00:00:00Z"
+    "generated_utc": "2026-03-23T00:00:00Z"
   },
   "symbols": {
     "phase1_deferred": [],
-    "phase2_target": [
-      "setjmp",
-      "longjmp",
-      "sigsetjmp",
-      "siglongjmp"
-    ],
+    "phase2_target": ["setjmp", "longjmp", "sigsetjmp", "siglongjmp"],
     "support_matrix_visible_now": [
       "setjmp",
       "longjmp",
@@ -109,10 +104,7 @@
       "The exported restore path still carries explicit backend debt and remains guarded by waiver policy until implementation beads close.",
       "Users should treat the current setjmp family as phase-1 semantics with backend caveats, not as a fully closed production transfer implementation."
     ],
-    "waiver_policy_symbols": [
-      "setjmp",
-      "longjmp"
-    ],
+    "waiver_policy_symbols": ["setjmp", "longjmp"],
     "owner_bead": "bd-2ry",
     "expires_utc": "2026-06-30T00:00:00Z"
   },

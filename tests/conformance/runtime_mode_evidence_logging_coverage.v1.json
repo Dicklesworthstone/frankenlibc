@@ -1,11 +1,7 @@
 {
   "schema_version": "runtime_mode_evidence_logging_coverage.v1",
   "generated_by_bead": "bd-0agsk.11",
-  "source_todo_ids": [
-    "TODO-0701",
-    "TODO-0702",
-    "TODO-0703"
-  ],
+  "source_todo_ids": ["TODO-0701", "TODO-0702", "TODO-0703"],
   "canonical_command": "scripts/check_runtime_mode_evidence_logging_coverage.sh --validate-only",
   "purpose": "Fail closed when a subprocess-orchestrated harness campaign can inherit a stale FRANKENLIBC_MODE, omit startup-mode evidence, or lose the trace id needed to diagnose strict/hardened mode mismatch behavior.",
   "input_artifacts": [
@@ -22,10 +18,7 @@
   ],
   "coverage_policy": {
     "env_key": "FRANKENLIBC_MODE",
-    "allowed_modes": [
-      "strict",
-      "hardened"
-    ],
+    "allowed_modes": ["strict", "hardened"],
     "process_immutable_after_startup": true,
     "subprocess_rows_must_override_inherited_mode": true,
     "startup_evidence_required": true,

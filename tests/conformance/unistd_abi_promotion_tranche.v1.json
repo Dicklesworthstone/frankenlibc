@@ -28,211 +28,133 @@
     {
       "crate": "frankenlibc-harness",
       "test": "unistd_process_filesystem_wave02_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-harness",
       "test": "unistd_process_filesystem_wave13_executes_via_isolated_harness",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "stdlib_abi_test::lfs64_aliases_io_roundtrip_and_fd_truncate",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "stdlib_abi_test::lfs64_aliases_path_stat_and_truncate",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "mmap_abi_test::mmap64_creates_anon_mapping",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "io_abi_test::sendfile64_between_fds",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "conformance_diff_getopt::conformance_getopt_basic_short_opts",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "unistd_abi_test::posix_close_zero_flag_closes_valid_fd",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "unistd_abi_test::named_semaphore_open_close_unlink_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "unistd_abi_test::syslog_and_vsyslog_write_perror_in_child",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "process_abi_test::spawnattr_sigdefault_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "process_abi_test::spawnattr_sigmask_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::mbrlen_measures_multibyte",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::mbsnrtowcs_converts_bounded",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::mbstowcs_converts_utf8_to_wide",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::mbtowc_converts_ascii",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcsnrtombs_converts_bounded",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcstoimax_parses_signed",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcstombs_converts_wide_to_utf8",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcstoumax_parses_unsigned",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wctomb_encodes_ascii",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wide_stream_getwc_putwc_aliases_roundtrip",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wide_stdio_unlocked_aliases_use_redirected_globals",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcsftime_l_null_locale_matches_base",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     },
     {
       "crate": "frankenlibc-abi",
       "test": "wchar_abi_test::wcsto_l_null_locale_variants_match_base",
-      "modes": [
-        "strict",
-        "hardened"
-      ]
+      "modes": ["strict", "hardened"]
     }
   ],
   "policy": {
     "support_matrix_status": "Implemented",
     "classification": "native-unistd-stackfail-lfs-wchar-stream-locale-sem-syslog-process-getopt-errno-bridge",
-    "required_modes": [
-      "strict",
-      "hardened"
-    ],
+    "required_modes": ["strict", "hardened"],
     "accepted_host_symbols": [
       "<dynamic>",
       "_IO_list_all",

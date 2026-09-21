@@ -118,13 +118,8 @@
       "release_gate_dag",
       "closure_contract"
     ],
-    "required_present_noncritical_artifacts": [
-      "opportunity_matrix",
-      "symbol_fixture_coverage"
-    ],
-    "allowed_missing_artifacts": [
-      "e2e_scenario_manifest"
-    ],
+    "required_present_noncritical_artifacts": ["opportunity_matrix", "symbol_fixture_coverage"],
+    "allowed_missing_artifacts": ["e2e_scenario_manifest"],
     "required_artifact_result_fields": [
       "id",
       "path",
@@ -150,11 +145,7 @@
       "dossier_manifest_version",
       "release_notes_hook"
     ],
-    "required_policy_fields": [
-      "format",
-      "schema_versions",
-      "integrity"
-    ],
+    "required_policy_fields": ["format", "schema_versions", "integrity"],
     "release_notes_hook": {
       "required_fields": [
         "source_path",

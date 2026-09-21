@@ -29,14 +29,8 @@
     }
   ],
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.conformance.primary"
-    ],
-    "conflict_marker_prefixes": [
-      "<<<<<<<",
-      ">>>>>>>",
-      "|||||||"
-    ],
+    "missing_item_ids": ["tests.conformance.primary"],
+    "conflict_marker_prefixes": ["<<<<<<<", ">>>>>>>", "|||||||"],
     "tracked_text_extensions": [
       ".c",
       ".h",

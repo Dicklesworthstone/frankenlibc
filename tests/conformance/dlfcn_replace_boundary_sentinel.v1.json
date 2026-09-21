@@ -42,20 +42,9 @@
   "policy": {
     "default_decision": "block_until_replace_mode_evidence_current",
     "max_total_host_callsites_at_standalone_levels": 0,
-    "standalone_replacement_levels": [
-      "L2",
-      "L3"
-    ],
-    "allowed_at_L0": [
-      "interpose_only",
-      "host_handle_passthrough",
-      "bootstrap_passthrough"
-    ],
-    "allowed_at_L1": [
-      "interpose_only",
-      "host_handle_passthrough",
-      "bootstrap_passthrough"
-    ],
+    "standalone_replacement_levels": ["L2", "L3"],
+    "allowed_at_L0": ["interpose_only", "host_handle_passthrough", "bootstrap_passthrough"],
+    "allowed_at_L1": ["interpose_only", "host_handle_passthrough", "bootstrap_passthrough"],
     "rejected_evidence_kinds": [
       "unannotated_host_callsite",
       "host_callsite_count_drift",

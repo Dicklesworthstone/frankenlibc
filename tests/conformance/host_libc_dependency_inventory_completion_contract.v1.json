@@ -116,11 +116,23 @@
       "missing_item_id": "tests.unit.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "inventory_harness", "name": "contract_has_required_shape_and_fields"},
-        {"source": "inventory_harness", "name": "configured_staticlib_rows_are_not_l2_l3_blockers"},
-        {"source": "inventory_harness", "name": "contract_staticlib_state_matches_abi_crate_types"},
-        {"source": "completion_harness", "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        { "source": "inventory_harness", "name": "contract_has_required_shape_and_fields" },
+        {
+          "source": "inventory_harness",
+          "name": "configured_staticlib_rows_are_not_l2_l3_blockers"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "contract_staticlib_state_matches_abi_crate_types"
+        },
+        {
+          "source": "completion_harness",
+          "name": "manifest_binds_unit_e2e_conformance_and_telemetry_evidence"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_commands": [
         "jq empty tests/conformance/host_libc_dependency_inventory_completion_contract.v1.json",
@@ -132,12 +144,24 @@
       "missing_item_id": "tests.e2e.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "inventory_harness", "name": "gate_emits_complete_inventory_report_and_log"},
-        {"source": "inventory_harness", "name": "strict_missing_release_artifact_mode_fails_with_signature"},
-        {"source": "inventory_harness", "name": "present_release_artifact_mode_uses_readelf_or_nm_evidence"},
-        {"source": "inventory_harness", "name": "strict_stale_release_artifact_mode_fails_with_signature"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_inventory_contract_binding"}
+        { "source": "inventory_harness", "name": "gate_emits_complete_inventory_report_and_log" },
+        {
+          "source": "inventory_harness",
+          "name": "strict_missing_release_artifact_mode_fails_with_signature"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "present_release_artifact_mode_uses_readelf_or_nm_evidence"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "strict_stale_release_artifact_mode_fails_with_signature"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_inventory_contract_binding"
+        }
       ],
       "required_commands": [
         "bash scripts/check_host_libc_dependency_inventory.sh",
@@ -150,11 +174,26 @@
       "missing_item_id": "tests.conformance.primary",
       "next_audit_score_threshold": 800,
       "required_test_refs": [
-        {"source": "inventory_harness", "name": "required_categories_and_anchor_symbols_are_present"},
-        {"source": "inventory_harness", "name": "source_surfaces_are_inventoried_without_self_reference_noise"},
-        {"source": "inventory_harness", "name": "allowlist_policy_is_enforced_and_negative_claims_are_resolved"},
-        {"source": "inventory_harness", "name": "replacement_policy_separates_interpose_from_standalone_claims"},
-        {"source": "completion_harness", "name": "checker_replays_inventory_gate_and_preserves_blockers"}
+        {
+          "source": "inventory_harness",
+          "name": "required_categories_and_anchor_symbols_are_present"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "source_surfaces_are_inventoried_without_self_reference_noise"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "allowlist_policy_is_enforced_and_negative_claims_are_resolved"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "replacement_policy_separates_interpose_from_standalone_claims"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_replays_inventory_gate_and_preserves_blockers"
+        }
       ],
       "required_commands": [
         "bash scripts/check_host_libc_dependency_inventory.sh",
@@ -168,11 +207,20 @@
       "default_report_path": "target/conformance/host_libc_dependency_inventory_completion_contract.report.json",
       "default_log_path": "target/conformance/host_libc_dependency_inventory_completion_contract.log.jsonl",
       "required_test_refs": [
-        {"source": "inventory_harness", "name": "gate_emits_complete_inventory_report_and_log"},
-        {"source": "inventory_harness", "name": "strict_missing_release_artifact_mode_fails_with_signature"},
-        {"source": "inventory_harness", "name": "present_release_artifact_mode_uses_readelf_or_nm_evidence"},
-        {"source": "completion_harness", "name": "checker_emits_report_and_jsonl"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_required_log_field_binding"}
+        { "source": "inventory_harness", "name": "gate_emits_complete_inventory_report_and_log" },
+        {
+          "source": "inventory_harness",
+          "name": "strict_missing_release_artifact_mode_fails_with_signature"
+        },
+        {
+          "source": "inventory_harness",
+          "name": "present_release_artifact_mode_uses_readelf_or_nm_evidence"
+        },
+        { "source": "completion_harness", "name": "checker_emits_report_and_jsonl" },
+        {
+          "source": "completion_harness",
+          "name": "checker_rejects_missing_required_log_field_binding"
+        }
       ],
       "required_events": [
         "host_libc_dependency_inventory_completion_contract_validated",

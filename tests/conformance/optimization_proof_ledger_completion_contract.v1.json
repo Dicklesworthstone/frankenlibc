@@ -52,12 +52,7 @@
       "perf_delta",
       "acceptance_reason"
     ],
-    "required_input_classes": [
-      "null_ptr",
-      "in_bounds",
-      "boundary",
-      "oversize"
-    ],
+    "required_input_classes": ["null_ptr", "in_bounds", "boundary", "oversize"],
     "summary": {
       "total_candidates": 3,
       "verified": 1,

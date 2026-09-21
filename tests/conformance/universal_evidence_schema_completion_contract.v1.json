@@ -38,16 +38,8 @@
       "failure_signature",
       "artifact_refs"
     ],
-    "required_streams": [
-      "unit",
-      "conformance",
-      "e2e"
-    ],
-    "required_schema_examples": [
-      "ambition_evidence",
-      "artifact_index",
-      "test_failure"
-    ],
+    "required_streams": ["unit", "conformance", "e2e"],
+    "required_schema_examples": ["ambition_evidence", "artifact_index", "test_failure"],
     "implementation_refs": [
       {
         "id": "log-schema-declares-universal-ambition-row",
@@ -136,9 +128,7 @@
       },
       "structured_log_schema_contract_tests": {
         "path": "crates/frankenlibc-harness/tests/structured_log_schema_contract_test.rs",
-        "required_test_refs": [
-          "primary_unit_tests_exist_in_structured_log_rs"
-        ]
+        "required_test_refs": ["primary_unit_tests_exist_in_structured_log_rs"]
       },
       "evidence_compliance_tests": {
         "path": "crates/frankenlibc-harness/tests/evidence_compliance_test.rs",

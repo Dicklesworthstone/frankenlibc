@@ -16,10 +16,7 @@
   "expected_tsm": {
     "crashes": false,
     "exit_code": 0,
-    "healing_actions": [
-      "ReturnSafeDefault",
-      "IgnoreDoubleFree"
-    ],
+    "healing_actions": ["ReturnSafeDefault", "IgnoreDoubleFree"],
     "description": "Generational arena detects generation mismatch when stream cleanup dereferences the freed connection pointer (100% detection probability via monotonic generation counter); quarantine queue holds the freed connection memory for up to 64MB/65536 entries preventing immediate reuse by attacker allocation; bloom filter provides O(1) pre-check returning false for freed pointers; access is blocked and ReturnSafeDefault provides a null/safe connection context"
   },
   "tsm_features_tested": [

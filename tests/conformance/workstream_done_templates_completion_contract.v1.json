@@ -6,11 +6,7 @@
   "source_scorecard": "passes/2026-05-10T03-16-16Z/beads/bd-bp8fl.11/scorecard.md",
   "next_audit_score_threshold": 800,
   "completion_debt_evidence": {
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary",
-      "telemetry.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary", "telemetry.primary"],
     "artifacts": {
       "base_artifact": "tests/conformance/workstream_done_templates.v1.json",
       "base_checker": "scripts/check_workstream_done_templates.sh",

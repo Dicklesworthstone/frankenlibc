@@ -90,12 +90,7 @@
   ],
   "gate_wiring": {
     "exists": true,
-    "enforced_suites": [
-      "runtime_math",
-      "membrane",
-      "errno",
-      "runtime_math_kernels"
-    ],
+    "enforced_suites": ["runtime_math", "membrane", "errno", "runtime_math_kernels"],
     "features": {
       "load_guard": true,
       "attribution_policy": true,

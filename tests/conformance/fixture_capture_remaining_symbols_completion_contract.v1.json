@@ -27,18 +27,12 @@
     "completion_harness": "crates/frankenlibc-harness/tests/fixture_capture_remaining_symbols_completion_contract_test.rs"
   },
   "completion_contract": {
-    "missing_item_ids": [
-      "tests.golden.primary",
-      "telemetry.primary"
-    ],
+    "missing_item_ids": ["tests.golden.primary", "telemetry.primary"],
     "required_symbol_fixture_coverage": {
       "minimum_total_exported_symbols": 4119,
       "minimum_covered_exported_symbols": 1166,
       "minimum_explicit_uncovered_symbols": 1949,
-      "target_statuses": [
-        "Implemented",
-        "RawSyscall"
-      ],
+      "target_statuses": ["Implemented", "RawSyscall"],
       "coverage_gaps_are_explicit": true
     },
     "required_per_symbol_fixture_report": {
@@ -159,9 +153,7 @@
       "fixture_remaining_symbol_source_gates_replayed",
       "fixture_remaining_symbol_completion_contract_pass"
     ],
-    "forbidden_pass_events": [
-      "fixture_remaining_symbol_completion_contract_fail"
-    ]
+    "forbidden_pass_events": ["fixture_remaining_symbol_completion_contract_fail"]
   },
   "required_test_functions": {
     "positive": [

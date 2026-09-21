@@ -17,11 +17,11 @@
           "crates/frankenlibc-harness/tests/e2e_suite_test.rs:685"
         ],
         "required_markers": [
-          {"source": "e2e_suite", "marker": "compute_replay_key()"},
-          {"source": "e2e_suite", "marker": "compute_env_fingerprint()"},
-          {"source": "e2e_suite", "marker": "FRANKENLIBC_E2E_SEED"},
-          {"source": "e2e_suite", "marker": "replay_key"},
-          {"source": "e2e_suite", "marker": "env_fingerprint"}
+          { "source": "e2e_suite", "marker": "compute_replay_key()" },
+          { "source": "e2e_suite", "marker": "compute_env_fingerprint()" },
+          { "source": "e2e_suite", "marker": "FRANKENLIBC_E2E_SEED" },
+          { "source": "e2e_suite", "marker": "replay_key" },
+          { "source": "e2e_suite", "marker": "env_fingerprint" }
         ]
       },
       {
@@ -35,12 +35,12 @@
           "crates/frankenlibc-harness/tests/e2e_suite_test.rs:530"
         ],
         "required_markers": [
-          {"source": "e2e_suite", "marker": "emit_mode_pair_report()"},
-          {"source": "e2e_suite", "marker": "mode_pair_result"},
-          {"source": "e2e_suite", "marker": "drift_flags"},
-          {"source": "e2e_suite", "marker": "strict_replay_key"},
-          {"source": "e2e_suite", "marker": "hardened_replay_key"},
-          {"source": "e2e_suite", "marker": "mismatch_count"}
+          { "source": "e2e_suite", "marker": "emit_mode_pair_report()" },
+          { "source": "e2e_suite", "marker": "mode_pair_result" },
+          { "source": "e2e_suite", "marker": "drift_flags" },
+          { "source": "e2e_suite", "marker": "strict_replay_key" },
+          { "source": "e2e_suite", "marker": "hardened_replay_key" },
+          { "source": "e2e_suite", "marker": "mismatch_count" }
         ]
       },
       {
@@ -55,11 +55,11 @@
           "scripts/check_e2e_suite.sh:558"
         ],
         "required_markers": [
-          {"source": "e2e_checker", "marker": "mode_pair_result"},
-          {"source": "e2e_checker", "marker": "replay_key"},
-          {"source": "e2e_checker", "marker": "env_fingerprint"},
-          {"source": "e2e_checker", "marker": "drift_flags"},
-          {"source": "e2e_checker", "marker": "mode_pair_report.json"}
+          { "source": "e2e_checker", "marker": "mode_pair_result" },
+          { "source": "e2e_checker", "marker": "replay_key" },
+          { "source": "e2e_checker", "marker": "env_fingerprint" },
+          { "source": "e2e_checker", "marker": "drift_flags" },
+          { "source": "e2e_checker", "marker": "mode_pair_report.json" }
         ]
       },
       {
@@ -72,11 +72,11 @@
           "crates/frankenlibc-harness/tests/strict_hardened_decision_trace_minimizer_test.rs:416"
         ],
         "required_markers": [
-          {"source": "strict_hardened_gate", "marker": "required_modes"},
-          {"source": "strict_hardened_gate", "marker": "strict"},
-          {"source": "strict_hardened_gate", "marker": "hardened"},
-          {"source": "strict_hardened_gate", "marker": "failure_signature"},
-          {"source": "runtime_replay_gate", "marker": "expected_decision"}
+          { "source": "strict_hardened_gate", "marker": "required_modes" },
+          { "source": "strict_hardened_gate", "marker": "strict" },
+          { "source": "strict_hardened_gate", "marker": "hardened" },
+          { "source": "strict_hardened_gate", "marker": "failure_signature" },
+          { "source": "runtime_replay_gate", "marker": "expected_decision" }
         ]
       }
     ],
@@ -97,10 +97,7 @@
   "completion_debt_evidence": {
     "bead": "bd-b5a.2.1",
     "original_bead": "bd-b5a.2",
-    "missing_items": [
-      "tests.unit.primary",
-      "tests.e2e.primary"
-    ],
+    "missing_items": ["tests.unit.primary", "tests.e2e.primary"],
     "test_sources": {
       "e2e_suite": "scripts/e2e_suite.sh",
       "e2e_checker": "scripts/check_e2e_suite.sh",
@@ -120,13 +117,25 @@
       "missing_item_id": "tests.unit.primary",
       "description": "Unit evidence binds deterministic replay-key generation, manifest metadata lookup, mode-pair report semantics, strict/hardened gate shape, and runtime evidence replay shape.",
       "required_test_refs": [
-        {"source": "e2e_suite_test", "name": "replay_keys_are_deterministic_for_same_seed_and_manifest"},
-        {"source": "e2e_suite_test", "name": "e2e_mode_pair_report_valid"},
-        {"source": "e2e_suite_test", "name": "e2e_suite_runs_and_produces_jsonl"},
-        {"source": "e2e_manifest_test", "name": "validator_metadata_lookup_succeeds_for_known_case"},
-        {"source": "strict_hardened_test", "name": "e2e_artifact_covers_strict_hardened_runtime_evidence_contract"},
-        {"source": "runtime_replay_test", "name": "gate_artifact_covers_runtime_evidence_replay_contract"},
-        {"source": "trace_minimizer_test", "name": "checker_rejects_missing_hardened_pair"}
+        {
+          "source": "e2e_suite_test",
+          "name": "replay_keys_are_deterministic_for_same_seed_and_manifest"
+        },
+        { "source": "e2e_suite_test", "name": "e2e_mode_pair_report_valid" },
+        { "source": "e2e_suite_test", "name": "e2e_suite_runs_and_produces_jsonl" },
+        {
+          "source": "e2e_manifest_test",
+          "name": "validator_metadata_lookup_succeeds_for_known_case"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_artifact_covers_strict_hardened_runtime_evidence_contract"
+        },
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_artifact_covers_runtime_evidence_replay_contract"
+        },
+        { "source": "trace_minimizer_test", "name": "checker_rejects_missing_hardened_pair" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_suite_test replay_keys_are_deterministic_for_same_seed_and_manifest -- --nocapture",
@@ -145,14 +154,26 @@
         "scripts/check_replay_engine_pair_comparator_completion_contract.sh"
       ],
       "required_test_refs": [
-        {"source": "e2e_suite_test", "name": "e2e_suite_supports_manifest_dry_run"},
-        {"source": "e2e_suite_test", "name": "check_e2e_suite_emits_completion_debt_report_and_log"},
-        {"source": "strict_hardened_test", "name": "e2e_gate_script_passes_and_emits_report_and_jsonl_log"},
-        {"source": "runtime_replay_test", "name": "gate_script_passes_and_emits_report_and_jsonl_log"},
-        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_replay_contract"},
-        {"source": "completion_harness", "name": "checker_rejects_stale_unit_test_binding"},
-        {"source": "completion_harness", "name": "checker_rejects_missing_pair_marker"},
-        {"source": "completion_harness", "name": "checker_rejects_local_cargo_command"}
+        { "source": "e2e_suite_test", "name": "e2e_suite_supports_manifest_dry_run" },
+        {
+          "source": "e2e_suite_test",
+          "name": "check_e2e_suite_emits_completion_debt_report_and_log"
+        },
+        {
+          "source": "strict_hardened_test",
+          "name": "e2e_gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        {
+          "source": "runtime_replay_test",
+          "name": "gate_script_passes_and_emits_report_and_jsonl_log"
+        },
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_report_log_and_validates_replay_contract"
+        },
+        { "source": "completion_harness", "name": "checker_rejects_stale_unit_test_binding" },
+        { "source": "completion_harness", "name": "checker_rejects_missing_pair_marker" },
+        { "source": "completion_harness", "name": "checker_rejects_local_cargo_command" }
       ],
       "required_commands": [
         "rch exec -- env CARGO_TARGET_DIR=<target> cargo test -p frankenlibc-harness --test e2e_suite_test e2e_suite_supports_manifest_dry_run -- --nocapture",
@@ -163,9 +184,7 @@
     },
     "telemetry_primary": {
       "description": "The completion checker writes structured telemetry naming the completion-debt bead, original bead, components, tests, artifacts, and failure signature.",
-      "required_events": [
-        "replay_engine_pair_comparator_completion_contract_validated"
-      ],
+      "required_events": ["replay_engine_pair_comparator_completion_contract_validated"],
       "required_fields": [
         "timestamp",
         "trace_id",
@@ -181,7 +200,10 @@
         "failure_signature"
       ],
       "required_test_refs": [
-        {"source": "completion_harness", "name": "checker_emits_report_log_and_validates_replay_contract"}
+        {
+          "source": "completion_harness",
+          "name": "checker_emits_report_log_and_validates_replay_contract"
+        }
       ]
     }
   }

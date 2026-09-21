@@ -4,15 +4,9 @@
   "purpose": "Closed beads covered by this policy must cite a completion-contract artifact whose freshness_state is generated after the bead enters in_progress and no later than closed_at.",
   "effective_after_utc": "2026-05-21T08:00:00Z",
   "enforce_reality_check_after_effective": true,
-  "enforced_labels": [
-    "reality-check"
-  ],
-  "enforced_bead_ids": [
-    "bd-3yr14.7"
-  ],
-  "completion_artifact_patterns": [
-    "tests/conformance/*_completion_contract.v1.json"
-  ],
+  "enforced_labels": ["reality-check"],
+  "enforced_bead_ids": ["bd-3yr14.7"],
+  "completion_artifact_patterns": ["tests/conformance/*_completion_contract.v1.json"],
   "window_start_sources": [
     "artifact.bead_status_window.in_progress_at_utc",
     "artifact.bead_status_window.claimed_at_utc",

@@ -1,247 +1,237 @@
 {
- "version": "v1",
- "family": "fortify/checked-wrapper",
- "captured_at": "2026-09-15T06:00:00Z",
- "description": "Wave-06 residual fortify checked wrappers: the __v* variadic members driven through the C va_list forwarder shim (src/fortify_va_shim.c), with bad-fd, tmpfile-append, bounded-buffer, and /dev/null-contained scenarios. Raw buffer addresses never compared, FILE pointers limited to fl-owned streams closed before return, filesystem paths never touched, process ids never captured, wall-clock timing never captured.",
- "spec_reference": "GNU _FORTIFY_SOURCE object-size checked wrappers: __vasprintf_chk, __vdprintf_chk, __vfprintf_chk, __vprintf_chk, __vsnprintf_chk, __vsprintf_chk, __vwprintf_chk consume a va_list exactly as a C caller would pass it; this wave pins the seven shim-drivable members (bd-reality-202609-lx578q.6.1).",
- "campaign": {
-  "bead": "bd-reality-202609-lx578q.6.1",
-  "campaign_id": "fcq-fortify-bounds",
-  "wave_id": "wave-06-fortify-checked-wrapper-variadic-shim",
-  "source_artifact": "tests/conformance/support_matrix_promotion_triage.v1.json",
-  "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
-  "first_wave_symbols": [
-   "__vasprintf_chk",
-   "__vdprintf_chk",
-   "__vfprintf_chk",
-   "__vprintf_chk",
-   "__vsnprintf_chk",
-   "__vsprintf_chk",
-   "__vwprintf_chk"
-  ],
-  "residual_symbols": [
-   "__vfwprintf_chk",
-   "__syslog_chk",
-   "__vsyslog_chk"
+  "version": "v1",
+  "family": "fortify/checked-wrapper",
+  "captured_at": "2026-09-15T06:00:00Z",
+  "description": "Wave-06 residual fortify checked wrappers: the __v* variadic members driven through the C va_list forwarder shim (src/fortify_va_shim.c), with bad-fd, tmpfile-append, bounded-buffer, and /dev/null-contained scenarios. Raw buffer addresses never compared, FILE pointers limited to fl-owned streams closed before return, filesystem paths never touched, process ids never captured, wall-clock timing never captured.",
+  "spec_reference": "GNU _FORTIFY_SOURCE object-size checked wrappers: __vasprintf_chk, __vdprintf_chk, __vfprintf_chk, __vprintf_chk, __vsnprintf_chk, __vsprintf_chk, __vwprintf_chk consume a va_list exactly as a C caller would pass it; this wave pins the seven shim-drivable members (bd-reality-202609-lx578q.6.1).",
+  "campaign": {
+    "bead": "bd-reality-202609-lx578q.6.1",
+    "campaign_id": "fcq-fortify-bounds",
+    "wave_id": "wave-06-fortify-checked-wrapper-variadic-shim",
+    "source_artifact": "tests/conformance/support_matrix_promotion_triage.v1.json",
+    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture",
+    "first_wave_symbols": [
+      "__vasprintf_chk",
+      "__vdprintf_chk",
+      "__vfprintf_chk",
+      "__vprintf_chk",
+      "__vsnprintf_chk",
+      "__vsprintf_chk",
+      "__vwprintf_chk"
+    ],
+    "residual_symbols": ["__vfwprintf_chk", "__syslog_chk", "__vsyslog_chk"]
+  },
+  "structured_log_fields": ["symbol", "mode", "expected", "actual", "failure_signature"],
+  "cases": [
+    {
+      "name": "__vasprintf_chk_literal_allocates_via_shim_without_capture_strict",
+      "function": "__vasprintf_chk",
+      "spec_section": "GNU __vasprintf_chk allocates and renders through the va_list bridge",
+      "inputs": {
+        "symbol": "__vasprintf_chk",
+        "scenario": "literal_allocates_via_shim_without_capture",
+        "expected": "VASPRINTF_SHIM_RC_11;BUF=wave06=4602",
+        "oracle_source": "FrankenLibC fortify_abi::__vasprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vasprintf_chk;mode=strict;expected=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;actual=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vasprintf_chk_literal_allocates_via_shim_without_capture_hardened",
+      "function": "__vasprintf_chk",
+      "spec_section": "GNU __vasprintf_chk allocates and renders through the va_list bridge",
+      "inputs": {
+        "symbol": "__vasprintf_chk",
+        "scenario": "literal_allocates_via_shim_without_capture",
+        "expected": "VASPRINTF_SHIM_RC_11;BUF=wave06=4602",
+        "oracle_source": "FrankenLibC fortify_abi::__vasprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vasprintf_chk;mode=hardened;expected=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;actual=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vdprintf_chk_bad_fd_fails_via_shim_without_capture_strict",
+      "function": "__vdprintf_chk",
+      "spec_section": "GNU __vdprintf_chk propagates EBADF for an invalid descriptor",
+      "inputs": {
+        "symbol": "__vdprintf_chk",
+        "scenario": "bad_fd_fails_via_shim_without_capture",
+        "expected": "VDPRINTF_BAD_FD_RC_-1",
+        "oracle_source": "FrankenLibC fortify_abi::__vdprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vdprintf_chk;mode=strict;expected=VDPRINTF_BAD_FD_RC_-1;actual=VDPRINTF_BAD_FD_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vdprintf_chk_bad_fd_fails_via_shim_without_capture_hardened",
+      "function": "__vdprintf_chk",
+      "spec_section": "GNU __vdprintf_chk propagates EBADF for an invalid descriptor",
+      "inputs": {
+        "symbol": "__vdprintf_chk",
+        "scenario": "bad_fd_fails_via_shim_without_capture",
+        "expected": "VDPRINTF_BAD_FD_RC_-1",
+        "oracle_source": "FrankenLibC fortify_abi::__vdprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vdprintf_chk;mode=hardened;expected=VDPRINTF_BAD_FD_RC_-1;actual=VDPRINTF_BAD_FD_RC_-1;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vfprintf_chk_tmpfile_append_via_shim_without_capture_strict",
+      "function": "__vfprintf_chk",
+      "spec_section": "GNU __vfprintf_chk appends the formatted bytes to an fl stream",
+      "inputs": {
+        "symbol": "__vfprintf_chk",
+        "scenario": "tmpfile_append_via_shim_without_capture",
+        "expected": "VFPRINTF_TMPFILE_RC_4",
+        "oracle_source": "FrankenLibC fortify_abi::__vfprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vfprintf_chk;mode=strict;expected=VFPRINTF_TMPFILE_RC_4;actual=VFPRINTF_TMPFILE_RC_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vfprintf_chk_tmpfile_append_via_shim_without_capture_hardened",
+      "function": "__vfprintf_chk",
+      "spec_section": "GNU __vfprintf_chk appends the formatted bytes to an fl stream",
+      "inputs": {
+        "symbol": "__vfprintf_chk",
+        "scenario": "tmpfile_append_via_shim_without_capture",
+        "expected": "VFPRINTF_TMPFILE_RC_4",
+        "oracle_source": "FrankenLibC fortify_abi::__vfprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vfprintf_chk;mode=hardened;expected=VFPRINTF_TMPFILE_RC_4;actual=VFPRINTF_TMPFILE_RC_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vprintf_chk_contained_devnull_format_write_strict",
+      "function": "__vprintf_chk",
+      "spec_section": "GNU __vprintf_chk formats to the contained process stdout",
+      "inputs": {
+        "symbol": "__vprintf_chk",
+        "scenario": "contained_devnull_format_write",
+        "expected": "VPRINTF_DEVNULL_RC_7",
+        "oracle_source": "FrankenLibC fortify_abi::__vprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vprintf_chk;mode=strict;expected=VPRINTF_DEVNULL_RC_7;actual=VPRINTF_DEVNULL_RC_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vprintf_chk_contained_devnull_format_write_hardened",
+      "function": "__vprintf_chk",
+      "spec_section": "GNU __vprintf_chk formats to the contained process stdout",
+      "inputs": {
+        "symbol": "__vprintf_chk",
+        "scenario": "contained_devnull_format_write",
+        "expected": "VPRINTF_DEVNULL_RC_7",
+        "oracle_source": "FrankenLibC fortify_abi::__vprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vprintf_chk;mode=hardened;expected=VPRINTF_DEVNULL_RC_7;actual=VPRINTF_DEVNULL_RC_7;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vsnprintf_chk_bounded_format_via_shim_without_capture_strict",
+      "function": "__vsnprintf_chk",
+      "spec_section": "GNU __vsnprintf_chk formats within the destination bound and reports the would-be length",
+      "inputs": {
+        "symbol": "__vsnprintf_chk",
+        "scenario": "bounded_format_via_shim_without_capture",
+        "expected": "VSNPRINTF_BOUNDED_RC_4;BUF=v=42",
+        "oracle_source": "FrankenLibC fortify_abi::__vsnprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vsnprintf_chk;mode=strict;expected=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;actual=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vsnprintf_chk_bounded_format_via_shim_without_capture_hardened",
+      "function": "__vsnprintf_chk",
+      "spec_section": "GNU __vsnprintf_chk formats within the destination bound and reports the would-be length",
+      "inputs": {
+        "symbol": "__vsnprintf_chk",
+        "scenario": "bounded_format_via_shim_without_capture",
+        "expected": "VSNPRINTF_BOUNDED_RC_4;BUF=v=42",
+        "oracle_source": "FrankenLibC fortify_abi::__vsnprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vsnprintf_chk;mode=hardened;expected=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;actual=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vsprintf_chk_in_bounds_format_via_shim_without_capture_strict",
+      "function": "__vsprintf_chk",
+      "spec_section": "GNU __vsprintf_chk writes the formatted bytes within the destination bound",
+      "inputs": {
+        "symbol": "__vsprintf_chk",
+        "scenario": "in_bounds_format_via_shim_without_capture",
+        "expected": "VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok",
+        "oracle_source": "FrankenLibC fortify_abi::__vsprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vsprintf_chk;mode=strict;expected=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;actual=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vsprintf_chk_in_bounds_format_via_shim_without_capture_hardened",
+      "function": "__vsprintf_chk",
+      "spec_section": "GNU __vsprintf_chk writes the formatted bytes within the destination bound",
+      "inputs": {
+        "symbol": "__vsprintf_chk",
+        "scenario": "in_bounds_format_via_shim_without_capture",
+        "expected": "VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok",
+        "oracle_source": "FrankenLibC fortify_abi::__vsprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vsprintf_chk;mode=hardened;expected=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;actual=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    },
+    {
+      "name": "__vwprintf_chk_contained_devnull_wide_write_strict",
+      "function": "__vwprintf_chk",
+      "spec_section": "GNU __vwprintf_chk formats wide to the contained process stdout",
+      "inputs": {
+        "symbol": "__vwprintf_chk",
+        "scenario": "contained_devnull_wide_write",
+        "expected": "VWPRINTF_DEVNULL_RC_4",
+        "oracle_source": "FrankenLibC fortify_abi::__vwprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vwprintf_chk;mode=strict;expected=VWPRINTF_DEVNULL_RC_4;actual=VWPRINTF_DEVNULL_RC_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "strict"
+    },
+    {
+      "name": "__vwprintf_chk_contained_devnull_wide_write_hardened",
+      "function": "__vwprintf_chk",
+      "spec_section": "GNU __vwprintf_chk formats wide to the contained process stdout",
+      "inputs": {
+        "symbol": "__vwprintf_chk",
+        "scenario": "contained_devnull_wide_write",
+        "expected": "VWPRINTF_DEVNULL_RC_4",
+        "oracle_source": "FrankenLibC fortify_abi::__vwprintf_chk classified wave06 shim replay",
+        "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
+      },
+      "expected_output": "symbol=__vwprintf_chk;mode=hardened;expected=VWPRINTF_DEVNULL_RC_4;actual=VWPRINTF_DEVNULL_RC_4;failure_signature=none",
+      "expected_errno": 0,
+      "mode": "hardened"
+    }
   ]
- },
- "structured_log_fields": [
-  "symbol",
-  "mode",
-  "expected",
-  "actual",
-  "failure_signature"
- ],
- "cases": [
-  {
-   "name": "__vasprintf_chk_literal_allocates_via_shim_without_capture_strict",
-   "function": "__vasprintf_chk",
-   "spec_section": "GNU __vasprintf_chk allocates and renders through the va_list bridge",
-   "inputs": {
-    "symbol": "__vasprintf_chk",
-    "scenario": "literal_allocates_via_shim_without_capture",
-    "expected": "VASPRINTF_SHIM_RC_11;BUF=wave06=4602",
-    "oracle_source": "FrankenLibC fortify_abi::__vasprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vasprintf_chk;mode=strict;expected=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;actual=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vasprintf_chk_literal_allocates_via_shim_without_capture_hardened",
-   "function": "__vasprintf_chk",
-   "spec_section": "GNU __vasprintf_chk allocates and renders through the va_list bridge",
-   "inputs": {
-    "symbol": "__vasprintf_chk",
-    "scenario": "literal_allocates_via_shim_without_capture",
-    "expected": "VASPRINTF_SHIM_RC_11;BUF=wave06=4602",
-    "oracle_source": "FrankenLibC fortify_abi::__vasprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vasprintf_chk;mode=hardened;expected=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;actual=VASPRINTF_SHIM_RC_11;BUF=wave06=4602;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vdprintf_chk_bad_fd_fails_via_shim_without_capture_strict",
-   "function": "__vdprintf_chk",
-   "spec_section": "GNU __vdprintf_chk propagates EBADF for an invalid descriptor",
-   "inputs": {
-    "symbol": "__vdprintf_chk",
-    "scenario": "bad_fd_fails_via_shim_without_capture",
-    "expected": "VDPRINTF_BAD_FD_RC_-1",
-    "oracle_source": "FrankenLibC fortify_abi::__vdprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vdprintf_chk;mode=strict;expected=VDPRINTF_BAD_FD_RC_-1;actual=VDPRINTF_BAD_FD_RC_-1;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vdprintf_chk_bad_fd_fails_via_shim_without_capture_hardened",
-   "function": "__vdprintf_chk",
-   "spec_section": "GNU __vdprintf_chk propagates EBADF for an invalid descriptor",
-   "inputs": {
-    "symbol": "__vdprintf_chk",
-    "scenario": "bad_fd_fails_via_shim_without_capture",
-    "expected": "VDPRINTF_BAD_FD_RC_-1",
-    "oracle_source": "FrankenLibC fortify_abi::__vdprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vdprintf_chk;mode=hardened;expected=VDPRINTF_BAD_FD_RC_-1;actual=VDPRINTF_BAD_FD_RC_-1;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vfprintf_chk_tmpfile_append_via_shim_without_capture_strict",
-   "function": "__vfprintf_chk",
-   "spec_section": "GNU __vfprintf_chk appends the formatted bytes to an fl stream",
-   "inputs": {
-    "symbol": "__vfprintf_chk",
-    "scenario": "tmpfile_append_via_shim_without_capture",
-    "expected": "VFPRINTF_TMPFILE_RC_4",
-    "oracle_source": "FrankenLibC fortify_abi::__vfprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vfprintf_chk;mode=strict;expected=VFPRINTF_TMPFILE_RC_4;actual=VFPRINTF_TMPFILE_RC_4;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vfprintf_chk_tmpfile_append_via_shim_without_capture_hardened",
-   "function": "__vfprintf_chk",
-   "spec_section": "GNU __vfprintf_chk appends the formatted bytes to an fl stream",
-   "inputs": {
-    "symbol": "__vfprintf_chk",
-    "scenario": "tmpfile_append_via_shim_without_capture",
-    "expected": "VFPRINTF_TMPFILE_RC_4",
-    "oracle_source": "FrankenLibC fortify_abi::__vfprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vfprintf_chk;mode=hardened;expected=VFPRINTF_TMPFILE_RC_4;actual=VFPRINTF_TMPFILE_RC_4;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vprintf_chk_contained_devnull_format_write_strict",
-   "function": "__vprintf_chk",
-   "spec_section": "GNU __vprintf_chk formats to the contained process stdout",
-   "inputs": {
-    "symbol": "__vprintf_chk",
-    "scenario": "contained_devnull_format_write",
-    "expected": "VPRINTF_DEVNULL_RC_7",
-    "oracle_source": "FrankenLibC fortify_abi::__vprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vprintf_chk;mode=strict;expected=VPRINTF_DEVNULL_RC_7;actual=VPRINTF_DEVNULL_RC_7;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vprintf_chk_contained_devnull_format_write_hardened",
-   "function": "__vprintf_chk",
-   "spec_section": "GNU __vprintf_chk formats to the contained process stdout",
-   "inputs": {
-    "symbol": "__vprintf_chk",
-    "scenario": "contained_devnull_format_write",
-    "expected": "VPRINTF_DEVNULL_RC_7",
-    "oracle_source": "FrankenLibC fortify_abi::__vprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vprintf_chk;mode=hardened;expected=VPRINTF_DEVNULL_RC_7;actual=VPRINTF_DEVNULL_RC_7;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vsnprintf_chk_bounded_format_via_shim_without_capture_strict",
-   "function": "__vsnprintf_chk",
-   "spec_section": "GNU __vsnprintf_chk formats within the destination bound and reports the would-be length",
-   "inputs": {
-    "symbol": "__vsnprintf_chk",
-    "scenario": "bounded_format_via_shim_without_capture",
-    "expected": "VSNPRINTF_BOUNDED_RC_4;BUF=v=42",
-    "oracle_source": "FrankenLibC fortify_abi::__vsnprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vsnprintf_chk;mode=strict;expected=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;actual=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vsnprintf_chk_bounded_format_via_shim_without_capture_hardened",
-   "function": "__vsnprintf_chk",
-   "spec_section": "GNU __vsnprintf_chk formats within the destination bound and reports the would-be length",
-   "inputs": {
-    "symbol": "__vsnprintf_chk",
-    "scenario": "bounded_format_via_shim_without_capture",
-    "expected": "VSNPRINTF_BOUNDED_RC_4;BUF=v=42",
-    "oracle_source": "FrankenLibC fortify_abi::__vsnprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vsnprintf_chk;mode=hardened;expected=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;actual=VSNPRINTF_BOUNDED_RC_4;BUF=v=42;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vsprintf_chk_in_bounds_format_via_shim_without_capture_strict",
-   "function": "__vsprintf_chk",
-   "spec_section": "GNU __vsprintf_chk writes the formatted bytes within the destination bound",
-   "inputs": {
-    "symbol": "__vsprintf_chk",
-    "scenario": "in_bounds_format_via_shim_without_capture",
-    "expected": "VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok",
-    "oracle_source": "FrankenLibC fortify_abi::__vsprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vsprintf_chk;mode=strict;expected=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;actual=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vsprintf_chk_in_bounds_format_via_shim_without_capture_hardened",
-   "function": "__vsprintf_chk",
-   "spec_section": "GNU __vsprintf_chk writes the formatted bytes within the destination bound",
-   "inputs": {
-    "symbol": "__vsprintf_chk",
-    "scenario": "in_bounds_format_via_shim_without_capture",
-    "expected": "VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok",
-    "oracle_source": "FrankenLibC fortify_abi::__vsprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vsprintf_chk;mode=hardened;expected=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;actual=VSPRINTF_INBOUNDS_RC_5;BUF=vs=ok;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  },
-  {
-   "name": "__vwprintf_chk_contained_devnull_wide_write_strict",
-   "function": "__vwprintf_chk",
-   "spec_section": "GNU __vwprintf_chk formats wide to the contained process stdout",
-   "inputs": {
-    "symbol": "__vwprintf_chk",
-    "scenario": "contained_devnull_wide_write",
-    "expected": "VWPRINTF_DEVNULL_RC_4",
-    "oracle_source": "FrankenLibC fortify_abi::__vwprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vwprintf_chk;mode=strict;expected=VWPRINTF_DEVNULL_RC_4;actual=VWPRINTF_DEVNULL_RC_4;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "strict"
-  },
-  {
-   "name": "__vwprintf_chk_contained_devnull_wide_write_hardened",
-   "function": "__vwprintf_chk",
-   "spec_section": "GNU __vwprintf_chk formats wide to the contained process stdout",
-   "inputs": {
-    "symbol": "__vwprintf_chk",
-    "scenario": "contained_devnull_wide_write",
-    "expected": "VWPRINTF_DEVNULL_RC_4",
-    "oracle_source": "FrankenLibC fortify_abi::__vwprintf_chk classified wave06 shim replay",
-    "ambient_state_policy": "forbid_raw_pointer_file_path_fd_stdout_stderr_pid_or_wall_clock_capture"
-   },
-   "expected_output": "symbol=__vwprintf_chk;mode=hardened;expected=VWPRINTF_DEVNULL_RC_4;actual=VWPRINTF_DEVNULL_RC_4;failure_signature=none",
-   "expected_errno": 0,
-   "mode": "hardened"
-  }
- ]
 }

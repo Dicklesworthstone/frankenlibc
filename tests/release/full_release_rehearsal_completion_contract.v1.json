@@ -255,19 +255,13 @@
       "expected_passes": 60,
       "expected_fails": 0,
       "expected_skips": 4,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_modes": ["strict", "hardened"],
       "expected_mode_status": "green",
       "expected_mode_total_cases": 32,
       "expected_mode_passes": 30,
       "expected_mode_fails": 0,
       "expected_mode_skips": 2,
-      "expected_optional_skip_binaries": [
-        "redis-cli",
-        "nginx"
-      ]
+      "expected_optional_skip_binaries": ["redis-cli", "nginx"]
     }
   },
   "telemetry_contract": {

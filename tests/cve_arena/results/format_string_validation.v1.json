@@ -8,19 +8,9 @@
     "with_trigger_files": 1,
     "c_triggers_compile": 1,
     "c_triggers_total": 1,
-    "unique_healing_actions": [
-      "UpgradeToSafeVariant"
-    ],
-    "attack_vectors_covered": [
-      "crash",
-      "info_leak",
-      "write"
-    ],
-    "attack_vectors_target": [
-      "crash",
-      "info_leak",
-      "write"
-    ],
+    "unique_healing_actions": ["UpgradeToSafeVariant"],
+    "attack_vectors_covered": ["crash", "info_leak", "write"],
+    "attack_vectors_target": ["crash", "info_leak", "write"],
     "coverage_matrix_present": true,
     "total_issues": 0
   },
@@ -29,27 +19,15 @@
       "cve_id": "CVE-2024-23113 (synthetic)",
       "test_name": "format_string_cve_2024_23113",
       "category": "synthetic",
-      "cwe_ids": [
-        "CWE-134"
-      ],
+      "cwe_ids": ["CWE-134"],
       "cvss_score": 9.8,
-      "trigger_files": [
-        "trigger.c"
-      ],
+      "trigger_files": ["trigger.c"],
       "c_compiles": true,
-      "healing_actions": [
-        "UpgradeToSafeVariant"
-      ],
-      "tsm_features": [
-        "UpgradeToSafeVariant"
-      ],
+      "healing_actions": ["UpgradeToSafeVariant"],
+      "tsm_features": ["UpgradeToSafeVariant"],
       "attack_vectors": {
         "total": 3,
-        "covered": [
-          "crash",
-          "info_leak",
-          "write"
-        ],
+        "covered": ["crash", "info_leak", "write"],
         "missing": [],
         "vector_details": [
           {

@@ -38,9 +38,7 @@
         {
           "id": "vg-9.4",
           "description": "Standing adversarial-verifier agent role exists and is operational",
-          "evidence_sources": [
-            "AGENTS.md"
-          ],
+          "evidence_sources": ["AGENTS.md"],
           "evidence_type": "doc_contains",
           "evidence_pattern": "adversarial.verifier|cross.review",
           "required": false
@@ -58,9 +56,7 @@
         {
           "id": "vg-8.1",
           "description": "Produce libfrankenlibc_replace.so standalone artifact",
-          "evidence_sources": [
-            "target/release/libfrankenlibc_replace.so"
-          ],
+          "evidence_sources": ["target/release/libfrankenlibc_replace.so"],
           "evidence_type": "file_exists",
           "required": true
         }
@@ -77,18 +73,14 @@
         {
           "id": "vg-test.1",
           "description": "A file that exists",
-          "evidence_sources": [
-            "README.md"
-          ],
+          "evidence_sources": ["README.md"],
           "evidence_type": "file_exists",
           "required": true
         },
         {
           "id": "vg-test.2",
           "description": "A file that does NOT exist (required)",
-          "evidence_sources": [
-            "nonexistent-file-12345.xyz"
-          ],
+          "evidence_sources": ["nonexistent-file-12345.xyz"],
           "evidence_type": "file_exists",
           "required": true
         }
@@ -103,7 +95,7 @@
   "e_process_parameters": {
     "null_hypothesis": "Goals are NOT met (divergence rate P0)",
     "alternative_hypothesis": "Goals ARE met (divergence rate Q1 < P0)",
-    "P0": 0.50,
+    "P0": 0.5,
     "Q1": 0.05,
     "alarm_e_value": 10.0,
     "pass_e_value": 0.2

@@ -8,9 +8,7 @@
   "subcommand_name": "observability-dashboard",
   "binary_target": "harness",
   "execution_lane": "integration",
-  "required_flags": [
-    "--input"
-  ],
+  "required_flags": ["--input"],
   "optional_flags": [
     "--output",
     "--prometheus-output",
@@ -18,9 +16,7 @@
     "--grafana-output",
     "--alerts-output"
   ],
-  "underlying_lib_functions": [
-    "frankenlibc_harness::observability_dashboard::write_bundle"
-  ],
+  "underlying_lib_functions": ["frankenlibc_harness::observability_dashboard::write_bundle"],
   "io_pattern": "five_output_files_no_stdout_jsonl",
   "default_output_paths": {
     "summary": "target/conformance/observability_dashboard.current.v1.json",

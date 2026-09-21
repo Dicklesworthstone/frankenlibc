@@ -17,10 +17,7 @@
     },
     "fixture_spec": {
       "path": "tests/conformance/c_fixture_spec.json",
-      "required_fixtures": [
-        "fixture_malloc",
-        "fixture_malloc_stress"
-      ],
+      "required_fixtures": ["fixture_malloc", "fixture_malloc_stress"],
       "required_stress_symbols": [
         "malloc",
         "free",
@@ -33,12 +30,7 @@
     },
     "allocator_fixture": {
       "path": "tests/conformance/fixtures/allocator.json",
-      "required_functions": [
-        "malloc",
-        "calloc",
-        "free",
-        "realloc"
-      ],
+      "required_functions": ["malloc", "calloc", "free", "realloc"],
       "minimum_cases": 5
     },
     "integration_fixtures": {

@@ -11,124 +11,524 @@
   },
   "families": {
     "PointerValidation": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 11.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.6, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.9, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.8, "adverse_intercept": 1.8, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 11.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.6,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.9,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.8,
+        "adverse_intercept": 1.8,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Allocator": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 12.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.8, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.8, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.7, "adverse_intercept": 1.7, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 12.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.8,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.8,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.7,
+        "adverse_intercept": 1.7,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "StringMemory": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 13.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 2.0, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.9, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.1, "adverse_intercept": 2.1, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 13.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 2.0,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.9,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.1,
+        "adverse_intercept": 2.1,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Stdio": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 9.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.4, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.8, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.5, "adverse_intercept": 2.5, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 9.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.4,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.8,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.5,
+        "adverse_intercept": 2.5,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Threading": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 10.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.7, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.95, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.7, "adverse_intercept": 2.7, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 10.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.7,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.95,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.7,
+        "adverse_intercept": 2.7,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Resolver": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 8.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.3, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.9, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 3.0, "adverse_intercept": 3.0, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 8.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.3,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.9,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 3.0,
+        "adverse_intercept": 3.0,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "MathFenv": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 7.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.2, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.75, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.6, "adverse_intercept": 1.6, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 7.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.2,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.75,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.6,
+        "adverse_intercept": 1.6,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Loader": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 14.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 2.1, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 1.0, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.4, "adverse_intercept": 1.4, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 14.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 2.1,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 1.0,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.4,
+        "adverse_intercept": 1.4,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Stdlib": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 8.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.3, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.8, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.0, "adverse_intercept": 2.0, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 8.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.3,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.8,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.0,
+        "adverse_intercept": 2.0,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Ctype": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 6.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.1, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.7, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.3, "adverse_intercept": 1.3, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 6.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.1,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.7,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.3,
+        "adverse_intercept": 1.3,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Time": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 7.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.2, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.75, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.9, "adverse_intercept": 1.9, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 7.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.2,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.75,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.9,
+        "adverse_intercept": 1.9,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Signal": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 12.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 2.2, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 1.2, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.2, "adverse_intercept": 1.2, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 12.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 2.2,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 1.2,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.2,
+        "adverse_intercept": 1.2,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "IoFd": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 11.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.8, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.9, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.2, "adverse_intercept": 2.2, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 11.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.8,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.9,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.2,
+        "adverse_intercept": 2.2,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Socket": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 10.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.6, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.9, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.6, "adverse_intercept": 2.6, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 10.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.6,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.9,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.6,
+        "adverse_intercept": 2.6,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Locale": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 8.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.3, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.85, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.4, "adverse_intercept": 2.4, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 8.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.3,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.85,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.4,
+        "adverse_intercept": 2.4,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Termios": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 8.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.4, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.85, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.3, "adverse_intercept": 2.3, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 8.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.4,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.85,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.3,
+        "adverse_intercept": 2.3,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Inet": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 9.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.5, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.88, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.5, "adverse_intercept": 2.5, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 9.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.5,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.88,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.5,
+        "adverse_intercept": 2.5,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Process": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 11.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.9, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 1.0, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.8, "adverse_intercept": 1.8, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 11.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.9,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 1.0,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.8,
+        "adverse_intercept": 1.8,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "VirtualMemory": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 13.5, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 2.0, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 1.05, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 1.5, "adverse_intercept": 1.5, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 13.5,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 2.0,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 1.05,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 1.5,
+        "adverse_intercept": 1.5,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     },
     "Poll": {
-      "allow": {"clean_intercept": 0.0, "adverse_intercept": 8.0, "clean_cost_factor": 0.08, "adverse_cost_factor": 1.0},
-      "full_validate": {"clean_intercept": 0.5, "adverse_intercept": 1.3, "clean_cost_factor": 0.3, "adverse_cost_factor": 0.35},
-      "repair": {"clean_intercept": 0.6, "adverse_intercept": 0.82, "clean_cost_factor": 0.35, "adverse_cost_factor": 0.4},
-      "deny": {"clean_intercept": 2.1, "adverse_intercept": 2.1, "clean_cost_factor": 0.0, "adverse_cost_factor": 0.1}
+      "allow": {
+        "clean_intercept": 0.0,
+        "adverse_intercept": 8.0,
+        "clean_cost_factor": 0.08,
+        "adverse_cost_factor": 1.0
+      },
+      "full_validate": {
+        "clean_intercept": 0.5,
+        "adverse_intercept": 1.3,
+        "clean_cost_factor": 0.3,
+        "adverse_cost_factor": 0.35
+      },
+      "repair": {
+        "clean_intercept": 0.6,
+        "adverse_intercept": 0.82,
+        "clean_cost_factor": 0.35,
+        "adverse_cost_factor": 0.4
+      },
+      "deny": {
+        "clean_intercept": 2.1,
+        "adverse_intercept": 2.1,
+        "clean_cost_factor": 0.0,
+        "adverse_cost_factor": 0.1
+      }
     }
   },
   "assumptions": [

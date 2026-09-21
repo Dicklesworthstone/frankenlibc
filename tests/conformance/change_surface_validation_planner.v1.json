@@ -20,18 +20,12 @@
   },
   "proof_policy": {
     "cargo_requires_rch": true,
-    "required_remote_env": [
-      "RCH_REQUIRE_REMOTE=1"
-    ],
+    "required_remote_env": ["RCH_REQUIRE_REMOTE=1"],
     "required_launcher": "rch exec -- env",
     "required_target_dir_env": "CARGO_TARGET_DIR=",
     "target_dir_template": "/data/tmp/frankenlibc-{bead_slug}-{lane}",
     "local_fallback_invalid": true,
-    "forbidden_output_markers": [
-      "[RCH] local",
-      "remote execution failed",
-      "falling back to local"
-    ],
+    "forbidden_output_markers": ["[RCH] local", "remote execution failed", "falling back to local"],
     "allowed_local_proof_classes": [
       "static_diff_check",
       "static_shell_syntax",
@@ -91,32 +85,19 @@
   "sample_cases": [
     {
       "case_id": "tracker-only",
-      "changed_paths": [
-        ".beads/issues.jsonl"
-      ],
-      "expected_categories": [
-        "tracker"
-      ],
+      "changed_paths": [".beads/issues.jsonl"],
+      "expected_categories": ["tracker"],
       "expected_crates": [],
-      "expected_proof_classes": [
-        "tracker_jsonl_parse",
-        "tracker_graph_health"
-      ],
+      "expected_proof_classes": ["tracker_jsonl_parse", "tracker_graph_health"],
       "expected_cargo_required": false,
       "expected_mixed": false,
       "expected_tracker_only": true
     },
     {
       "case_id": "rust-crate-src",
-      "changed_paths": [
-        "crates/frankenlibc-core/src/string/mod.rs"
-      ],
-      "expected_categories": [
-        "rust_crate_code"
-      ],
-      "expected_crates": [
-        "frankenlibc-core"
-      ],
+      "changed_paths": ["crates/frankenlibc-core/src/string/mod.rs"],
+      "expected_categories": ["rust_crate_code"],
+      "expected_crates": ["frankenlibc-core"],
       "expected_proof_classes": [
         "remote_rch_cargo_check",
         "remote_rch_cargo_test",
@@ -131,12 +112,8 @@
       "changed_paths": [
         "crates/frankenlibc-harness/tests/change_surface_validation_planner_test.rs"
       ],
-      "expected_categories": [
-        "rust_crate_test"
-      ],
-      "expected_crates": [
-        "frankenlibc-harness"
-      ],
+      "expected_categories": ["rust_crate_test"],
+      "expected_crates": ["frankenlibc-harness"],
       "expected_proof_classes": [
         "remote_rch_cargo_check",
         "remote_rch_cargo_test",
@@ -148,54 +125,30 @@
     },
     {
       "case_id": "script",
-      "changed_paths": [
-        "scripts/plan_change_surface_validation.sh"
-      ],
-      "expected_categories": [
-        "script"
-      ],
-      "expected_crates": [
-        "frankenlibc-harness"
-      ],
-      "expected_proof_classes": [
-        "static_shell_syntax",
-        "remote_rch_cargo_test"
-      ],
+      "changed_paths": ["scripts/plan_change_surface_validation.sh"],
+      "expected_categories": ["script"],
+      "expected_crates": ["frankenlibc-harness"],
+      "expected_proof_classes": ["static_shell_syntax", "remote_rch_cargo_test"],
       "expected_cargo_required": true,
       "expected_mixed": false,
       "expected_tracker_only": false
     },
     {
       "case_id": "contract-json",
-      "changed_paths": [
-        "tests/conformance/change_surface_validation_planner.v1.json"
-      ],
-      "expected_categories": [
-        "contract"
-      ],
-      "expected_crates": [
-        "frankenlibc-harness"
-      ],
-      "expected_proof_classes": [
-        "static_json_parse",
-        "remote_rch_cargo_test"
-      ],
+      "changed_paths": ["tests/conformance/change_surface_validation_planner.v1.json"],
+      "expected_categories": ["contract"],
+      "expected_crates": ["frankenlibc-harness"],
+      "expected_proof_classes": ["static_json_parse", "remote_rch_cargo_test"],
       "expected_cargo_required": true,
       "expected_mixed": false,
       "expected_tracker_only": false
     },
     {
       "case_id": "docs",
-      "changed_paths": [
-        "README.md"
-      ],
-      "expected_categories": [
-        "docs"
-      ],
+      "changed_paths": ["README.md"],
+      "expected_categories": ["docs"],
       "expected_crates": [],
-      "expected_proof_classes": [
-        "static_diff_check"
-      ],
+      "expected_proof_classes": ["static_diff_check"],
       "expected_cargo_required": false,
       "expected_mixed": false,
       "expected_tracker_only": false
@@ -207,15 +160,8 @@
         "scripts/plan_change_surface_validation.sh",
         "crates/frankenlibc-core/src/string/mod.rs"
       ],
-      "expected_categories": [
-        "tracker",
-        "script",
-        "rust_crate_code"
-      ],
-      "expected_crates": [
-        "frankenlibc-core",
-        "frankenlibc-harness"
-      ],
+      "expected_categories": ["tracker", "script", "rust_crate_code"],
+      "expected_crates": ["frankenlibc-core", "frankenlibc-harness"],
       "expected_proof_classes": [
         "tracker_graph_health",
         "static_shell_syntax",

@@ -119,10 +119,7 @@
         "status": "open",
         "priority": 0,
         "issue_type": "epic",
-        "labels": [
-          "fixture",
-          "graph-quality"
-        ],
+        "labels": ["fixture", "graph-quality"],
         "acceptance_criteria": "Preserve every fixture issue and dependency intention. Closure must list exact commands, artifact paths, structured logs, and remaining limitations."
       },
       {
@@ -132,11 +129,7 @@
         "status": "open",
         "priority": 1,
         "issue_type": "task",
-        "labels": [
-          "fixture",
-          "readiness",
-          "graph-quality"
-        ],
+        "labels": ["fixture", "readiness", "graph-quality"],
         "acceptance_criteria": "Preserve all existing graph ambition; include unit tests, deterministic e2e harness replay, structured JSONL logs with trace_id and failure_signature, artifact freshness checks, closure commands, and explicit limitations.",
         "dependencies": [
           {
@@ -153,9 +146,7 @@
         "status": "open",
         "priority": 2,
         "issue_type": "task",
-        "labels": [
-          "fixture"
-        ],
+        "labels": ["fixture"],
         "dependencies": [
           {
             "issue_id": "bd-fixture.missing-acceptance",
@@ -171,10 +162,7 @@
         "status": "closed",
         "priority": 2,
         "issue_type": "task",
-        "labels": [
-          "fixture",
-          "sys/stat"
-        ],
+        "labels": ["fixture", "sys/stat"],
         "close_reason": "Fixture shipped."
       },
       {
@@ -184,10 +172,7 @@
         "status": "open",
         "priority": 1,
         "issue_type": "task",
-        "labels": [
-          "fixture",
-          "graph-quality"
-        ],
+        "labels": ["fixture", "graph-quality"],
         "acceptance_criteria": "Preserve the cycle example; include unit tests, deterministic e2e replay, structured logs, artifact paths, closure commands, and known limitation notes.",
         "dependencies": [
           {
@@ -204,10 +189,7 @@
         "status": "open",
         "priority": 1,
         "issue_type": "task",
-        "labels": [
-          "fixture",
-          "graph-quality"
-        ],
+        "labels": ["fixture", "graph-quality"],
         "acceptance_criteria": "Preserve the cycle example; include unit tests, deterministic e2e replay, structured logs, artifact paths, closure commands, and known limitation notes.",
         "dependencies": [
           {
@@ -224,10 +206,7 @@
         "status": "open",
         "priority": 2,
         "issue_type": "task",
-        "labels": [
-          "fixture",
-          "tracker"
-        ],
+        "labels": ["fixture", "tracker"],
         "acceptance_criteria": "Preserve status evidence; include unit tests, e2e replay, structured JSONL logs, artifact refs, closure commands, and limitations before closing.",
         "dependencies": [
           {

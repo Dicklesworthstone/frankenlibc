@@ -29,12 +29,7 @@
     {
       "artifact_id": "structured_log_schema",
       "path": "crates/frankenlibc-harness/src/structured_log.rs",
-      "required_needles": [
-        "LogEntry",
-        "ArtifactIndex",
-        "validate_log_line",
-        "StreamKind"
-      ]
+      "required_needles": ["LogEntry", "ArtifactIndex", "validate_log_line", "StreamKind"]
     },
     {
       "artifact_id": "fixture_pipeline",
@@ -84,9 +79,7 @@
       "baseline.env.json",
       "candidate.env.json"
     ],
-    "required_shadow_log_events": [
-      "conformance.shadow_run_divergence"
-    ],
+    "required_shadow_log_events": ["conformance.shadow_run_divergence"],
     "required_structured_log_fields": [
       "timestamp",
       "trace_id",
@@ -99,13 +92,7 @@
       "mode",
       "artifact_refs"
     ],
-    "required_stream_kinds": [
-      "Unit",
-      "Conformance",
-      "E2e",
-      "Perf",
-      "Release"
-    ]
+    "required_stream_kinds": ["Unit", "Conformance", "E2e", "Perf", "Release"]
   },
   "conformance_expectations": {
     "fixture_pipeline": {
@@ -120,10 +107,7 @@
       "minimum_family_count": 6,
       "minimum_bench_target_count": 9,
       "minimum_inventory_rows": 674,
-      "required_modes": [
-        "strict",
-        "hardened"
-      ]
+      "required_modes": ["strict", "hardened"]
     },
     "perf_results": {
       "path": "data/gentoo/perf-results/perf_benchmark_results.v1.json",
@@ -155,12 +139,7 @@
       "conformance_logging_benchmark",
       "conformance_logging_summary"
     ],
-    "required_log_fields": [
-      "event",
-      "status",
-      "timestamp",
-      "artifact_refs"
-    ]
+    "required_log_fields": ["event", "status", "timestamp", "artifact_refs"]
   },
   "completion_debt_evidence": {
     "bead": "bd-2hh.7.1",

@@ -8,24 +8,12 @@
   "subcommand_name": "observability-capture",
   "binary_target": "harness",
   "required_flags": [],
-  "optional_flags": [
-    "--out-dir",
-    "--bead-id",
-    "--run-id",
-    "--mode",
-    "--seed-sample"
-  ],
-  "underlying_lib_functions": [
-    "frankenlibc_harness::observability_dashboard::capture_bundle"
-  ],
+  "optional_flags": ["--out-dir", "--bead-id", "--run-id", "--mode", "--seed-sample"],
+  "underlying_lib_functions": ["frankenlibc_harness::observability_dashboard::capture_bundle"],
   "io_pattern": "out_dir_bundle_no_stdout_jsonl",
   "out_dir_layout": {
     "inputs_subdir": "inputs",
-    "input_files": [
-      "membrane_metrics.jsonl",
-      "allocator_metrics.jsonl",
-      "runtime_math.jsonl"
-    ],
+    "input_files": ["membrane_metrics.jsonl", "allocator_metrics.jsonl", "runtime_math.jsonl"],
     "output_files": [
       "observability_dashboard.current.v1.json",
       "observability_dashboard.prom",
@@ -34,11 +22,7 @@
       "observability_dashboard.alerts.yaml"
     ]
   },
-  "mode_enum": [
-    "strict",
-    "hardened",
-    "off"
-  ],
+  "mode_enum": ["strict", "hardened", "off"],
   "default_mode": "hardened",
   "default_bead_id": "bd-282v",
   "default_run_id": "capture",

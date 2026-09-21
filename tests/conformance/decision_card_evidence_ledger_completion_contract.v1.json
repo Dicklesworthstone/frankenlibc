@@ -22,10 +22,7 @@
     ]
   },
   "completion_debt_evidence": {
-    "missing_items_closed": [
-      "tests.golden.primary",
-      "telemetry.primary"
-    ],
+    "missing_items_closed": ["tests.golden.primary", "telemetry.primary"],
     "next_audit_score_threshold": 800
   },
   "source_artifacts": [

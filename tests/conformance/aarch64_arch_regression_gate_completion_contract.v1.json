@@ -156,14 +156,8 @@
       "schema_version": "v1",
       "bead": "bd-bp8fl.10.7",
       "minimum_row_count": 12,
-      "required_architectures": [
-        "x86_64",
-        "aarch64"
-      ],
-      "required_runtime_modes": [
-        "strict",
-        "hardened"
-      ],
+      "required_architectures": ["x86_64", "aarch64"],
+      "required_runtime_modes": ["strict", "hardened"],
       "aarch64_claim_state": "blocked",
       "aarch64_support_claim_allowed": false,
       "required_log_fields": [
@@ -208,26 +202,14 @@
     "standalone_readiness": {
       "schema_version": "v1",
       "bead": "bd-bp8fl.6.6",
-      "required_dimensions": [
-        "syscall_arch_obligations",
-        "performance_budget"
-      ],
-      "required_proof_surfaces": [
-        "arch_specific_obligations",
-        "cross_environment_evidence"
-      ],
+      "required_dimensions": ["syscall_arch_obligations", "performance_budget"],
+      "required_proof_surfaces": ["arch_specific_obligations", "cross_environment_evidence"],
       "required_claim_decision": "claim_blocked"
     },
     "crosscompile_gate": {
       "target": "aarch64-unknown-linux-gnu",
-      "required_crates": [
-        "frankenlibc-core",
-        "frankenlibc-abi"
-      ],
-      "required_stages": [
-        "check_core",
-        "check_abi"
-      ]
+      "required_crates": ["frankenlibc-core", "frankenlibc-abi"],
+      "required_stages": ["check_core", "check_abi"]
     },
     "telemetry": {
       "required_events": [
@@ -318,10 +300,7 @@
       "id": "telemetry.primary",
       "kind": "telemetry",
       "evidence_section": "telemetry_primary",
-      "required_artifacts": [
-        "completion_gate",
-        "completion_harness_test"
-      ],
+      "required_artifacts": ["completion_gate", "completion_harness_test"],
       "required_events": [
         "aarch64_arch_regression_completion.source_artifact_bound",
         "aarch64_arch_regression_completion.matrix_bound",
