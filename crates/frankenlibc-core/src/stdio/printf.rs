@@ -3910,8 +3910,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_invalid_length_modifier_rejects_printf_spec() {
-        assert!(parse_format_spec(b"Ls").is_none());
+    fn test_parse_invalid_length_modifier_sanitizes_printf_spec() {
+        // glibc accepts the historical uppercase `L` spelling on `s`/`c` as
+        // the wide `l` form (same as `%ls`). Our parser sanitizes BigL to L
+        // to match. Verified against glibc 2.42 (bd-2g7oyh).
+        let (spec, consumed) = parse_format_spec(b"Ls")
+            .expect("glibc accepts %Ls as the wide %ls form");
+        assert_eq!(consumed, 2);
+        assert_eq!(spec.length, LengthMod::L);
     }
 
     #[test]
