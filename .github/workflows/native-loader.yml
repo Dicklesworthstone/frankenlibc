@@ -44,6 +44,7 @@ jobs:
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
               --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
+              --test dlfcn_native_search_test \
               -- --test-threads=1 2>&1 | tee "artifacts/native-loader/$mode.log"
           done
       - name: Preserve execution logs

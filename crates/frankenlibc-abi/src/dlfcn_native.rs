@@ -20,6 +20,10 @@ use frankenlibc_core::elf::{
 };
 use frankenlibc_core::syscall as raw_syscall;
 
+#[path = "dlfcn_search.rs"]
+mod search;
+use search::{SearchContext, SearchPaths};
+
 const HANDLE_TAG: usize = 0x4d;
 const HANDLE_MASK: usize = 0xff;
 const MAX_GROUP_OBJECTS: usize = 256;
@@ -66,6 +70,9 @@ struct PreparedDso {
     object: LoadedObject,
     image: LoadImage,
     needed: Vec<usize>,
+    path: PathBuf,
+    search: SearchPaths,
+    inherited_rpaths: Vec<PathBuf>,
 }
 
 static NATIVE_DSOS: OnceLock<Mutex<Vec<NativeDso>>> = OnceLock::new();
@@ -103,6 +110,11 @@ fn next_id() -> Option<usize> {
         .ok()
 }
 
+fn absolute_path(path: &Path) -> Option<PathBuf> {
+    if path.is_absolute() { Some(path.to_owned()) }
+    else { Some(std::env::current_dir().ok()?.join(path)) }
+}
+
 fn open_file(path: &Path) -> Option<(File, u64, u64)> {
     // A FIFO must not block before its type can be checked. Never perform this
     // open, or the subsequent read/parse, while holding the loader registry.
@@ -115,7 +127,7 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
     metadata.is_file().then_some((file, metadata.dev(), metadata.ino()))
 }
 
-fn prepare_file(mut file: File, device: u64, inode: u64) -> Option<PreparedDso> {
+fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, context: &SearchContext) -> Option<PreparedDso> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
     let loader = ElfLoader::new(0);
@@ -136,25 +148,38 @@ fn prepare_file(mut file: File, device: u64, inode: u64) -> Option<PreparedDso> 
     if image.low_vaddr != 0 || image.memory.is_empty() {
         return None;
     }
+    // $ORIGIN follows the name used to load this object, not the symlink
+    // target. Identity still comes from the retained descriptor. Callers make
+    // the requested pathname absolute before opening, so a later chdir cannot
+    // rebase its relative directory while parsing or staging dependencies.
+    let path = requested_path.to_owned();
+    let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
     Some(PreparedDso {
         file, device, inode, bytes, object, image, needed: Vec::new(),
+        path, search, inherited_rpaths: Vec::new(),
     })
 }
 
-fn prepare_group(root: PreparedDso) -> Option<Vec<PreparedDso>> {
+fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<PreparedDso>> {
     let mut group = vec![root];
     let mut cursor = 0;
     while cursor < group.len() {
         let names = group[cursor].object.needed_libraries.clone();
         let mut needed = Vec::new();
         for name in names {
-            // Path-bearing DT_NEEDED entries use the process working directory,
-            // not the referring object's directory. SONAME search is separate.
             if !name.as_bytes().contains(&b'/') {
-                return None;
+                if let Some(index) = group.iter().position(|dso| dso.object.soname.as_deref() == Some(name.as_str())) {
+                    if !needed.contains(&index) { needed.push(index); }
+                    continue;
+                }
             }
-            let path = PathBuf::from(name);
-            let (file, device, inode) = open_file(&path)?;
+            let parent = &group[cursor];
+            let candidates = parent.search.candidates(name.as_bytes(), parent.path.parent()?, &parent.inherited_rpaths, context)?;
+            let inherited = parent.search.child_rpaths(&parent.inherited_rpaths);
+            let (path, file, device, inode) = candidates.into_iter().find_map(|path| {
+                let path = absolute_path(&path)?;
+                open_file(&path).map(|(file, device, inode)| (path, file, device, inode))
+            })?;
             let index = if let Some(index) = group.iter().position(|dso| {
                 dso.device == device && dso.inode == inode
             }) {
@@ -163,7 +188,8 @@ fn prepare_group(root: PreparedDso) -> Option<Vec<PreparedDso>> {
                 if group.len() == MAX_GROUP_OBJECTS {
                     return None;
                 }
-                let dso = prepare_file(file, device, inode)?;
+                let mut dso = prepare_file(file, device, inode, &path, context)?;
+                dso.inherited_rpaths = inherited;
                 group.push(dso);
                 group.len() - 1
             };
@@ -393,8 +419,8 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 }
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
-    let path = Path::new(OsStr::from_bytes(name));
-    let (file, device, inode) = open_file(path)?;
+    let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
+    let (file, device, inode) = open_file(&path)?;
     {
         let mut dsos = registry().lock().ok()?;
         if let Some(index) = dsos.iter().position(|dso| dso.device == device && dso.inode == inode) {
@@ -404,8 +430,9 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     if flags & dlfcn_core::RTLD_NOLOAD != 0 {
         return None;
     }
-    let root = prepare_file(file, device, inode)?;
-    let group = prepare_group(root)?;
+    let context = SearchContext::process();
+    let root = prepare_file(file, device, inode, &path, &context)?;
+    let group = prepare_group(root, &context)?;
     publish_group(&group, flags)
 }
 
