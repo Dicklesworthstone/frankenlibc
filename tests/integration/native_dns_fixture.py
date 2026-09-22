@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import os
 import socket
 import struct
 import subprocess
@@ -53,6 +54,10 @@ def respond(query: bytes, transport: str, seen: Counter) -> bytes:
         flags |= 3
     elif name == "temporary.test":
         flags |= 2
+    elif name == "refused.test":
+        flags |= 5
+    elif name == "cycle.test":
+        records = [rr(b"\xc0\x0c", 5, b"\xc0\x0c")]
     else:
         raise ValueError(f"unexpected DNS name: {name}")
     return query[:2] + struct.pack("!HHHHH", flags, 1, len(records), 0, 0) + question + b"".join(records)
@@ -73,6 +78,7 @@ def main() -> None:
     parser.add_argument("client")
     parser.add_argument("library")
     parser.add_argument("--tcp-only", action="store_true")
+    parser.add_argument("--preload", action="store_true")
     args = parser.parse_args()
     stop = threading.Event()
     seen: Counter = Counter()
@@ -121,7 +127,12 @@ def main() -> None:
     for worker in workers:
         worker.start()
     try:
-        subprocess.run([args.client, args.library], check=True, timeout=20)
+        environment = os.environ.copy()
+        if args.preload:
+            # Interpose only the C caller, never the fixture server. The
+            # client still verifies which library owns its resolver symbol.
+            environment["LD_PRELOAD"] = args.library
+        subprocess.run([args.client, args.library], check=True, timeout=20, env=environment)
     finally:
         stop.set()
         for worker in workers:

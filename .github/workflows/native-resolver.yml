@@ -42,40 +42,55 @@ jobs:
         run: |
           set -euo pipefail
           cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/resolver/abi-check.log
-      - name: Build shared library and public C caller
+      - name: Build release C exports and public caller
         shell: bash
         run: |
           set -euo pipefail
-          cargo build -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/abi-build.log
+          # Debug builds intentionally omit no_mangle on getaddrinfo. Test
+          # the deployed export profile, not dependency-provided host symbols.
+          cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/abi-build.log
           cc -Wall -Wextra -Werror tests/integration/fixture_native_dns_transport.c -ldl -o target/native-dns-abi
-          test -f target/debug/libfrankenlibc_abi.so
-      - name: Exercise getaddrinfo with isolated UDP/TCP DNS peers
+          test -f target/release/libfrankenlibc_abi.so
+          nm -D --defined-only target/release/libfrankenlibc_abi.so > artifacts/resolver/exports.txt
+          grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+          grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+      - name: Exercise release resolver through dlopen and preload
         shell: bash
         run: |
           set -euo pipefail
           printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > artifacts/resolver/resolv-udp.conf
           printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1 use-vc\n' > artifacts/resolver/resolv-tcp.conf
+          status=0
           for transport in udp tcp; do
-            extra=()
-            if [[ "$transport" == tcp ]]; then extra=(--tcp-only); fi
-            for mode in strict hardened; do
-              # Private mount and network namespaces: no runner/system DNS
-              # mutation, no privileged port conflict, no external DNS traffic.
-              sudo unshare --mount --net -- bash -eu -c '
-                mount --make-rprivate /
-                ip link set lo up
-                mount --bind "$1" /etc/resolv.conf
-                export FRANKENLIBC_MODE="$2"
-                exec python3 "$3" "$4" "$5" "${@:6}"
-              ' bash \
-                "$PWD/artifacts/resolver/resolv-$transport.conf" "$mode" \
-                "$PWD/tests/integration/native_dns_fixture.py" \
-                "$PWD/target/native-dns-abi" \
-                "$PWD/target/debug/libfrankenlibc_abi.so" "${extra[@]}" \
-                2>&1 | tee "artifacts/resolver/abi-$transport-$mode.log"
-              grep -Eq 'native DNS ABI: [1-9][0-9]* passed' "artifacts/resolver/abi-$transport-$mode.log"
+            for loading in dlopen preload; do
+              extra=()
+              if [[ "$transport" == tcp ]]; then extra+=(--tcp-only); fi
+              if [[ "$loading" == preload ]]; then extra+=(--preload); fi
+              for mode in strict hardened; do
+                log="artifacts/resolver/abi-$transport-$loading-$mode.log"
+                # Private mount and network namespaces: no runner/system DNS
+                # mutation, privileged-port conflict, or external DNS traffic.
+                # Run every combination even after failure, but fail the job
+                # if any check fails. Never turn missing execution into green.
+                if ! sudo -n unshare --mount --net -- bash -eu -c '
+                  mount --make-rprivate /
+                  ip link set lo up
+                  mount --bind "$1" /etc/resolv.conf
+                  export FRANKENLIBC_MODE="$2"
+                  exec python3 "$3" "$4" "$5" "${@:6}"
+                ' bash \
+                  "$PWD/artifacts/resolver/resolv-$transport.conf" "$mode" \
+                  "$PWD/tests/integration/native_dns_fixture.py" \
+                  "$PWD/target/native-dns-abi" \
+                  "$PWD/target/release/libfrankenlibc_abi.so" "${extra[@]}" \
+                  2>&1 | tee "$log"; then
+                  status=1
+                fi
+                if ! grep -Eq 'native DNS ABI: [1-9][0-9]* passed' "$log"; then status=1; fi
+              done
             done
           done
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -92,7 +92,9 @@ int main(int argc, char **argv) {
     if (!mode || strcmp(mode, "hardened") != 0) {
         check_error("missing.test.", EAI_NONAME);
         check_error("temporary.test.", EAI_AGAIN);
-        puts("native DNS ABI: 4 passed");
+        check_error("refused.test.", EAI_FAIL);
+        check_error("cycle.test.", EAI_FAIL);
+        puts("native DNS ABI: 6 passed");
     } else {
         /* Existing hardened repair of a missing hostname is outside this
          * defined-input parity test. Do not assert strict error semantics. */
