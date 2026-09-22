@@ -563,23 +563,31 @@ pub fn parse_dns_response(recv_buf: &[u8], expected_id: u16) -> Option<Vec<DnsRe
 }
 
 /// Build the list of hostnames to try, applying search domains per resolv.conf.
+///
+/// `ndots` chooses the position of the unsuffixed name, not whether search
+/// domains are tried. A name with enough dots is tried as-is first, then with
+/// each suffix after a miss. A trailing dot explicitly disables suffix search.
 pub fn build_search_names(hostname: &[u8], search_domains: &[String], ndots: u32) -> Vec<Vec<u8>> {
-    let dot_count = hostname.iter().filter(|&&b| b == b'.').count();
-    if dot_count >= ndots as usize || hostname.last() == Some(&b'.') {
-        vec![hostname.to_vec()]
-    } else {
-        let mut names: Vec<Vec<u8>> = search_domains
-            .iter()
-            .map(|domain| {
-                let mut fqdn = hostname.to_vec();
-                fqdn.push(b'.');
-                fqdn.extend_from_slice(domain.as_bytes());
-                fqdn
-            })
-            .collect();
-        names.push(hostname.to_vec());
-        names
+    if hostname.last() == Some(&b'.') {
+        return vec![hostname.to_vec()];
     }
+
+    let dot_count = hostname.iter().filter(|&&b| b == b'.').count();
+    let absolute_first = dot_count >= ndots as usize;
+    let mut names = Vec::with_capacity(search_domains.len() + 1);
+    if absolute_first {
+        names.push(hostname.to_vec());
+    }
+    names.extend(search_domains.iter().map(|domain| {
+        let mut fqdn = hostname.to_vec();
+        fqdn.push(b'.');
+        fqdn.extend_from_slice(domain.as_bytes());
+        fqdn
+    }));
+    if !absolute_first {
+        names.push(hostname.to_vec());
+    }
+    names
 }
 
 #[cfg(test)]
@@ -859,6 +867,98 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_search_names_single_label_searches_before_absolute() {
+        let domains = vec!["corp.example".to_owned(), "lab.example".to_owned()];
+        assert_eq!(
+            build_search_names(b"printer", &domains, 1),
+            vec![
+                b"printer.corp.example".to_vec(),
+                b"printer.lab.example".to_vec(),
+                b"printer".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_search_names_dotted_name_keeps_suffix_fallback() {
+        let domains = vec!["corp.example".to_owned(), "lab.example".to_owned()];
+        assert_eq!(
+            build_search_names(b"api.dev", &domains, 1),
+            vec![
+                b"api.dev".to_vec(),
+                b"api.dev.corp.example".to_vec(),
+                b"api.dev.lab.example".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_search_names_ndots_boundary_only_changes_order() {
+        let domains = vec!["corp.example".to_owned()];
+        assert_eq!(
+            build_search_names(b"api.dev", &domains, 2),
+            vec![b"api.dev.corp.example".to_vec(), b"api.dev".to_vec()]
+        );
+        assert_eq!(
+            build_search_names(b"api.dev.test", &domains, 2),
+            vec![
+                b"api.dev.test".to_vec(),
+                b"api.dev.test.corp.example".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_search_names_ndots_zero_tries_absolute_then_search() {
+        let domains = vec!["corp.example".to_owned()];
+        assert_eq!(
+            build_search_names(b"printer", &domains, 0),
+            vec![b"printer".to_vec(), b"printer.corp.example".to_vec()]
+        );
+    }
+
+    #[test]
+    fn test_search_names_trailing_dot_never_uses_search_domains() {
+        let domains = vec!["corp.example".to_owned(), "lab.example".to_owned()];
+        for hostname in [&b"api.dev."[..], &b"printer."[..], &b"."[..]] {
+            for ndots in [0, 1, 2, 15, u32::MAX] {
+                assert_eq!(
+                    build_search_names(hostname, &domains, ndots),
+                    vec![hostname.to_vec()]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_search_names_empty_search_list_keeps_absolute_once() {
+        for hostname in [&b"printer"[..], &b"api.dev"[..], &b"api.dev."[..]] {
+            for ndots in [0, 1, 2, 15, u32::MAX] {
+                assert_eq!(
+                    build_search_names(hostname, &[], ndots),
+                    vec![hostname.to_vec()]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_search_names_preserves_configured_order_and_input() {
+        let domains = vec!["Z.example".to_owned(), "A.example".to_owned()];
+        let original = domains.clone();
+        let names = build_search_names(b"API.dev", &domains, 1);
+        assert_eq!(domains, original);
+        assert_eq!(
+            names,
+            vec![
+                b"API.dev".to_vec(),
+                b"API.dev.Z.example".to_vec(),
+                b"API.dev.A.example".to_vec(),
+            ]
+        );
+    }
+
     // -----------------------------------------------------------------
     // Smoke-fuzz proptests for encode_domain_name (bd-s170, Archetype 1)
     // -----------------------------------------------------------------
@@ -888,6 +988,30 @@ mod tests {
 
     proptest! {
         #![proptest_config(fuzz_proptest_config(512))]
+
+        #[test]
+        fn fuzz_search_names_preserves_candidates_and_ndots_order(
+            hostname in "[a-z]{1,16}(\\.[a-z]{1,16}){0,3}",
+            domains in proptest::collection::vec("[a-z]{1,16}\\.[a-z]{1,16}", 0..8),
+            ndots in 0u32..6,
+        ) {
+            let names = build_search_names(hostname.as_bytes(), &domains, ndots);
+            let absolute_first = hostname.bytes().filter(|&b| b == b'.').count()
+                >= ndots as usize;
+            prop_assert_eq!(names.len(), domains.len() + 1);
+            let absolute_index = if absolute_first { 0 } else { domains.len() };
+            prop_assert_eq!(names[absolute_index].as_slice(), hostname.as_bytes());
+            let suffix_start = usize::from(absolute_first);
+            for (index, domain) in domains.iter().enumerate() {
+                let expected = format!("{hostname}.{domain}").into_bytes();
+                prop_assert_eq!(names[suffix_start + index].as_slice(), expected.as_slice());
+            }
+            let absolute = format!("{hostname}.");
+            prop_assert_eq!(
+                build_search_names(absolute.as_bytes(), &domains, ndots),
+                vec![absolute.into_bytes()]
+            );
+        }
 
         #[test]
         fn fuzz_decode_domain_name_is_bounded(
