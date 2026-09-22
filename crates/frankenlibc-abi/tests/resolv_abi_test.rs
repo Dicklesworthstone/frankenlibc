@@ -1297,7 +1297,7 @@ fn getaddrinfo_non_null_ai_canonname_sets_first_result_only() {
 }
 
 #[test]
-fn getaddrinfo_hosts_backend_ai_canonname_preserves_query_name() {
+fn getaddrinfo_hosts_backend_ai_canonname_returns_canonical_hostname() {
     with_resolver_backends(
         Some(b"203.0.113.10 fixture-host fixture-alias\n"),
         None,
@@ -1317,7 +1317,10 @@ fn getaddrinfo_hosts_backend_ai_canonname_preserves_query_name() {
             assert!(!res.is_null());
 
             let names = unsafe { collect_addrinfo_canonname(res) };
-            assert_eq!(names, vec![Some(b"FIXTURE-ALIAS".to_vec())]);
+            // Independently checked against glibc with this hosts row: the
+            // canonical field is the first hostname, not the alias spelling
+            // passed to getaddrinfo. Numeric hosts still retain their input.
+            assert_eq!(names, vec![Some(b"fixture-host".to_vec())]);
 
             unsafe { resolv_abi::freeaddrinfo(res) };
         },

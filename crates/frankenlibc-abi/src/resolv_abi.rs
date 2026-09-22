@@ -2158,6 +2158,7 @@ struct ContiguousAddrinfoV6 {
 
 unsafe fn build_addrinfo_v6(
     ip: Ipv6Addr,
+    scope_id: u32,
     profile: AddrinfoProfile,
     hints: Option<&libc::addrinfo>,
     canonname: Option<&CStr>,
@@ -2206,7 +2207,7 @@ unsafe fn build_addrinfo_v6(
                 sin6_addr: libc::in6_addr {
                     s6_addr: ip.octets(),
                 },
-                sin6_scope_id: 0,
+                sin6_scope_id: scope_id,
             },
         );
     }
@@ -2251,7 +2252,28 @@ fn push_addrinfo_v6_nodes(
     canonname: Option<&CStr>,
 ) {
     for &profile in profiles {
-        nodes.push(unsafe { build_addrinfo_v6(ip, profile, hints, canonname) });
+        nodes.push(unsafe { build_addrinfo_v6(ip, 0, profile, hints, canonname) });
+    }
+}
+
+fn push_addrinfo_address_nodes(
+    nodes: &mut Vec<*mut libc::addrinfo>,
+    address: std::net::IpAddr,
+    scope_id: u32,
+    profiles: &[AddrinfoProfile],
+    hints: Option<&libc::addrinfo>,
+    canonname: Option<&CStr>,
+) {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            push_addrinfo_v4_nodes(nodes, ip, profiles, hints, canonname);
+        }
+        std::net::IpAddr::V6(ip) => {
+            for &profile in profiles {
+                // SAFETY: the builder owns each contiguous ABI allocation.
+                nodes.push(unsafe { build_addrinfo_v6(ip, scope_id, profile, hints, canonname) });
+            }
+        }
     }
 }
 
@@ -2350,30 +2372,46 @@ fn native_dns_query(
 /// Preserve the difference between a missing name and a temporary DNS failure.
 fn native_dns_resolve(
     hostname: &[u8],
-    want_v4: bool,
-    want_v6: bool,
-) -> Result<frankenlibc_core::resolv::dns::DnsResolution, c_int> {
+    policy: frankenlibc_core::addrinfo::AddressPolicy,
+) -> Result<
+    (
+        frankenlibc_core::resolv::dns::DnsResolution,
+        Option<Vec<u8>>,
+    ),
+    c_int,
+> {
     use frankenlibc_core::dns_transport::ResolveError;
 
     let config = match std::fs::read("/etc/resolv.conf") {
         Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
         Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
     };
-    frankenlibc_core::dns_transport::resolve_with(
-        hostname,
-        want_v4,
-        want_v6,
-        &config,
-        native_dns_query,
-    )
-    .map_err(|error| match error {
-        ResolveError::NotFound => libc::EAI_NONAME,
-        ResolveError::Temporary => libc::EAI_AGAIN,
-        ResolveError::Failure => libc::EAI_FAIL,
-    })
+    let mut canonical_name = None;
+    policy
+        .resolve_dns_with(|want_v4, want_v6| {
+            let result = frankenlibc_core::dns_transport::resolve_with_canonical(
+                hostname,
+                want_v4,
+                want_v6,
+                &config,
+                native_dns_query,
+            )?;
+            // AF_INET6 + AI_ALL queries AAAA before A. Keep the native IPv6
+            // canonical owner when both families succeed, as glibc does.
+            if canonical_name.is_none() {
+                canonical_name = Some(result.canonical_name);
+            }
+            Ok(result.addresses)
+        })
+        .map(|addresses| (addresses, canonical_name))
+        .map_err(|error| match error {
+            ResolveError::NotFound => libc::EAI_NONAME,
+            ResolveError::Temporary => libc::EAI_AGAIN,
+            ResolveError::Failure => libc::EAI_FAIL,
+        })
 }
 
-/// POSIX `getaddrinfo` (numeric address bootstrap implementation).
+/// POSIX `getaddrinfo`: numeric/scoped hosts, files and native DNS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo(
     node: *const c_char,
@@ -2391,8 +2429,17 @@ pub unsafe extern "C" fn getaddrinfo(
         );
         return libc::EAI_FAIL;
     }
-    // SAFETY: output pointer is non-null and writable by contract.
-    unsafe { *res = ptr::null_mut() };
+    if !tracked_addr_region_fits(res as usize, size_of::<*mut libc::addrinfo>()) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        return libc::EAI_FAIL;
+    }
+    // SAFETY: caller owns the output slot; tracked extent is checked above.
+    unsafe { ptr::write_unaligned(res, ptr::null_mut()) };
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
@@ -2443,12 +2490,24 @@ pub unsafe extern "C" fn getaddrinfo(
             return libc::EAI_SERVICE;
         }
     };
-    let hints_ref = if hints.is_null() {
+    let hints_value = if hints.is_null() {
         None
     } else {
-        // SAFETY: hints pointer is caller-provided.
-        Some(unsafe { &*hints })
+        if !tracked_addr_region_fits(hints as usize, size_of::<libc::addrinfo>()) {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_FAIL;
+        }
+        // SAFETY: validate the tracked extent and copy, rather than forming an
+        // aligned reference to potentially unaligned caller-owned storage.
+        Some(unsafe { ptr::read_unaligned(hints) })
     };
+    let hints_ref = hints_value.as_ref();
 
     if node_cstr.is_none() && service_cstr.is_none() {
         record_resolver_stage_outcome(
@@ -2477,6 +2536,27 @@ pub unsafe extern "C" fn getaddrinfo(
 
     let flags = hints_ref.map(|h| h.ai_flags).unwrap_or(0);
     let family = hints_ref.map(|h| h.ai_family).unwrap_or(libc::AF_UNSPEC);
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family, NumericError};
+    let address_family = match family {
+        libc::AF_UNSPEC => Family::Unspecified,
+        libc::AF_INET => Family::Inet,
+        libc::AF_INET6 => Family::Inet6,
+        _ => {
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_FAMILY;
+        }
+    };
+    let address_policy = AddressPolicy::new(
+        address_family,
+        flags & libc::AI_V4MAPPED != 0,
+        flags & libc::AI_ALL != 0,
+    );
     if node_cstr.is_none() && (flags & libc::AI_CANONNAME) != 0 {
         record_resolver_stage_outcome(
             &ordering,
@@ -2487,7 +2567,21 @@ pub unsafe extern "C" fn getaddrinfo(
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
         return libc::EAI_BADFLAGS;
     }
-    let host_text = node_cstr.and_then(|c| c.to_str().ok());
+    let host_text = match node_cstr.map(CStr::to_str).transpose() {
+        Ok(text) => text,
+        Err(_) => {
+            // A supplied but unrepresentable host is not a NULL node. Never
+            // turn it into wildcard/loopback success, in either runtime mode.
+            record_resolver_stage_outcome(
+                &ordering,
+                aligned,
+                recent_page,
+                Some(stage_index(&ordering, CheckStage::Bounds)),
+            );
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return libc::EAI_NONAME;
+        }
+    };
     let canonname = if (flags & libc::AI_CANONNAME) != 0 {
         node_cstr
     } else {
@@ -2499,61 +2593,38 @@ pub unsafe extern "C" fn getaddrinfo(
 
     match host_text {
         Some(text) => {
-            let mut numeric_host = false;
-            if let Ok(v4) = text.parse::<Ipv4Addr>() {
-                numeric_host = true;
-                match family {
-                    libc::AF_UNSPEC | libc::AF_INET => {
-                        push_addrinfo_v4_nodes(&mut nodes, v4, &profiles, hints_ref, canonname);
-                    }
-                    libc::AF_INET6 => {
-                        record_resolver_stage_outcome(
-                            &ordering,
-                            aligned,
-                            recent_page,
-                            Some(stage_index(&ordering, CheckStage::Bounds)),
-                        );
-                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return EAI_ADDRFAMILY;
-                    }
-                    _ => {
-                        record_resolver_stage_outcome(
-                            &ordering,
-                            aligned,
-                            recent_page,
-                            Some(stage_index(&ordering, CheckStage::Bounds)),
-                        );
-                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return libc::EAI_FAMILY;
-                    }
+            let numeric = match address_policy.numeric(text, |zone| {
+                let Ok(name) = std::ffi::CString::new(zone) else {
+                    return 0;
+                };
+                // SAFETY: CString supplies a terminated interface name. The
+                // native interface lookup returns zero for unknown names.
+                unsafe { crate::inet_abi::if_nametoindex(name.as_ptr()) }
+            }) {
+                Ok(address) => address,
+                Err(error) => {
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return match error {
+                        NumericError::AddressFamily => EAI_ADDRFAMILY,
+                        NumericError::InvalidScope => libc::EAI_NONAME,
+                    };
                 }
-            } else if let Ok(v6) = text.parse::<Ipv6Addr>() {
-                numeric_host = true;
-                match family {
-                    libc::AF_UNSPEC | libc::AF_INET6 => {
-                        push_addrinfo_v6_nodes(&mut nodes, v6, &profiles, hints_ref, canonname);
-                    }
-                    libc::AF_INET => {
-                        record_resolver_stage_outcome(
-                            &ordering,
-                            aligned,
-                            recent_page,
-                            Some(stage_index(&ordering, CheckStage::Bounds)),
-                        );
-                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return EAI_ADDRFAMILY;
-                    }
-                    _ => {
-                        record_resolver_stage_outcome(
-                            &ordering,
-                            aligned,
-                            recent_page,
-                            Some(stage_index(&ordering, CheckStage::Bounds)),
-                        );
-                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return libc::EAI_FAMILY;
-                    }
-                }
+            };
+            if let Some(address) = numeric {
+                push_addrinfo_address_nodes(
+                    &mut nodes,
+                    address.address,
+                    address.scope_id,
+                    &profiles,
+                    hints_ref,
+                    canonname,
+                );
             } else {
                 if (flags & libc::AI_NUMERICHOST) != 0 {
                     record_resolver_stage_outcome(
@@ -2566,89 +2637,142 @@ pub unsafe extern "C" fn getaddrinfo(
                     return libc::EAI_NONAME;
                 }
 
-                // Check /etc/hosts for all matches (subset only). Borrowed + allocation-free:
-                // `read_hosts_backend()` cloned the whole file per call and `lookup_hosts` ran
-                // `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>` hostnames) on EVERY line,
-                // cloning each match into a result `Vec<Vec<u8>>`. This visits the same matching
-                // lines in the same order and pushes the same nodes; `visit` never returns `true`
-                // because every match must be pushed, exactly as the old `for candidate` loop did.
-                // A backend read error still yields no matches (was `unwrap_or_default()`).
+                // Borrow the cached hosts snapshot. Select from the complete
+                // result before IPv4 mapping: a native IPv6 row may occur AFTER
+                // an IPv4 row. Only matching address/name data is copied; never
+                // clone the whole file or hold its borrow across DNS I/O.
                 let _ = with_hosts_backend_snapshot(|content, _generation| {
-                    frankenlibc_core::resolv::for_each_hosts_match(
+                    let mut addresses = Vec::new();
+                    let mut first_name = None;
+                    let mut ipv6_name = None;
+                    frankenlibc_core::resolv::for_each_hosts_match_entry(
                         content,
                         text.as_bytes(),
-                        |addr| {
-                            if let Ok(c_text) = core::str::from_utf8(addr) {
-                                if (family == libc::AF_UNSPEC || family == libc::AF_INET)
-                                    && let Ok(v4) = c_text.parse::<Ipv4Addr>()
+                        |entry| {
+                            let address = if address_family == Family::Inet {
+                                gethostbyname_ipv4_address(entry.address())
+                                    .map(std::net::IpAddr::V4)
+                            } else {
+                                core::str::from_utf8(entry.address())
+                                    .ok()
+                                    .and_then(|text| text.parse::<std::net::IpAddr>().ok())
+                            };
+                            if let Some(address) = address {
+                                if canonname.is_some() {
+                                    if first_name.is_none() {
+                                        first_name =
+                                            std::ffi::CString::new(entry.canonical_name()).ok();
+                                    }
+                                    if address.is_ipv6() && ipv6_name.is_none() {
+                                        ipv6_name =
+                                            std::ffi::CString::new(entry.canonical_name()).ok();
+                                    }
+                                }
+                                addresses.push(address);
+                                // The AF_INET files view folds IPv6 loopback
+                                // and mapped rows. AI_ALL also requests that
+                                // view, in addition to the native IPv6 view.
+                                if address_family == Family::Inet6
+                                    && flags & (libc::AI_V4MAPPED | libc::AI_ALL)
+                                        == (libc::AI_V4MAPPED | libc::AI_ALL)
+                                    && address.is_ipv6()
+                                    && let Some(v4) = gethostbyname_ipv4_address(entry.address())
                                 {
-                                    push_addrinfo_v4_nodes(
-                                        &mut nodes, v4, &profiles, hints_ref, canonname,
-                                    );
-                                } else if (family == libc::AF_UNSPEC || family == libc::AF_INET6)
-                                    && let Ok(v6) = c_text.parse::<Ipv6Addr>()
-                                {
-                                    push_addrinfo_v6_nodes(
-                                        &mut nodes, v6, &profiles, hints_ref, canonname,
-                                    );
+                                    addresses.push(std::net::IpAddr::V4(v4));
                                 }
                             }
                             false
                         },
                     );
+                    let selected = address_policy.select(&addresses);
+                    // IPv6 is searched first for mapped AF_INET6 requests,
+                    // including AI_ALL. The first node alone exposes its name.
+                    let files_name = if address_family == Family::Inet6 {
+                        ipv6_name.as_deref().or(first_name.as_deref())
+                    } else {
+                        first_name.as_deref()
+                    };
+                    for address in selected {
+                        push_addrinfo_address_nodes(
+                            &mut nodes,
+                            address,
+                            0,
+                            &profiles,
+                            hints_ref,
+                            files_name.or(canonname),
+                        );
+                    }
                 });
             }
 
             if nodes.is_empty() {
                 // Hostname not found in /etc/hosts and not a numeric address.
                 // Use native DNS stub resolver.
-                let want_v4 = family == libc::AF_UNSPEC || family == libc::AF_INET;
-                let want_v6 = family == libc::AF_UNSPEC || family == libc::AF_INET6;
-                let hostname_bytes = node_cstr.map(|c| c.to_bytes()).unwrap_or(b"");
-                let (dns_result, dns_error) =
-                    match native_dns_resolve(hostname_bytes, want_v4, want_v6) {
-                        Ok(result) => (result, libc::EAI_NONAME),
-                        Err(error) => (
-                            frankenlibc_core::resolv::dns::DnsResolution::default(),
-                            error,
-                        ),
+                let (dns_result, dns_name) =
+                    match native_dns_resolve(text.as_bytes(), address_policy) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            // A missing name or an unavailable DNS server is a
+                            // defined lookup failure, not memory corruption. Even
+                            // hardened mode must not redirect it to localhost.
+                            record_resolver_stage_outcome(
+                                &ordering,
+                                aligned,
+                                recent_page,
+                                Some(stage_index(&ordering, CheckStage::Bounds)),
+                            );
+                            runtime_policy::observe(
+                                ApiFamily::Resolver,
+                                decision.profile,
+                                25,
+                                true,
+                            );
+                            return error;
+                        }
                     };
+                let dns_name = if canonname.is_some() {
+                    dns_name.and_then(|name| std::ffi::CString::new(name).ok())
+                } else {
+                    None
+                };
+                let resolved_name = dns_name.as_deref().or(canonname);
 
                 for v4 in &dns_result.ipv4 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET {
-                        push_addrinfo_v4_nodes(&mut nodes, *v4, &profiles, hints_ref, canonname);
+                        push_addrinfo_v4_nodes(
+                            &mut nodes,
+                            *v4,
+                            &profiles,
+                            hints_ref,
+                            resolved_name,
+                        );
                     }
                 }
                 for v6 in &dns_result.ipv6 {
                     if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
-                        push_addrinfo_v6_nodes(&mut nodes, *v6, &profiles, hints_ref, canonname);
+                        push_addrinfo_v6_nodes(
+                            &mut nodes,
+                            *v6,
+                            &profiles,
+                            hints_ref,
+                            resolved_name,
+                        );
                     }
                 }
 
                 if nodes.is_empty() {
-                    if repair {
-                        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-                        push_addrinfo_v4_nodes(
-                            &mut nodes,
-                            Ipv4Addr::LOCALHOST,
-                            &profiles,
-                            hints_ref,
-                            canonname,
-                        );
-                    } else {
-                        record_resolver_stage_outcome(
-                            &ordering,
-                            aligned,
-                            recent_page,
-                            Some(stage_index(&ordering, CheckStage::Bounds)),
-                        );
-                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return dns_error;
-                    }
+                    record_resolver_stage_outcome(
+                        &ordering,
+                        aligned,
+                        recent_page,
+                        Some(stage_index(&ordering, CheckStage::Bounds)),
+                    );
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return libc::EAI_NONAME;
                 }
             }
 
-            addrconfig_filter_eligible = !numeric_host;
+            addrconfig_filter_eligible = numeric.is_none();
         }
         None => match family {
             libc::AF_INET6 => {
@@ -2762,7 +2886,7 @@ pub unsafe extern "C" fn getaddrinfo(
     }
 
     // SAFETY: output pointer is non-null and writable.
-    unsafe { *res = nodes[0] };
+    unsafe { ptr::write_unaligned(res, nodes[0]) };
     record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
     0

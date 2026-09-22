@@ -62,6 +62,16 @@ pub enum ResolveError {
     Failure,
 }
 
+/// Addresses and the owner of the first accepted address RR. The owner is
+/// supplied by the validated CNAME chain, not the original search input or an
+/// unrelated additional-section record. Its DNS presentation escapes are
+/// preserved by the decoder.
+#[derive(Debug)]
+pub struct NameResolution {
+    pub addresses: DnsResolution,
+    pub canonical_name: Vec<u8>,
+}
+
 fn remaining(deadline: Instant) -> io::Result<Duration> {
     deadline
         .checked_duration_since(Instant::now())
@@ -478,8 +488,24 @@ pub fn resolve_with<F>(
     want_v4: bool,
     want_v6: bool,
     config: &ResolverConfig,
-    mut query: F,
+    query: F,
 ) -> Result<DnsResolution, ResolveError>
+where
+    F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
+{
+    resolve_with_canonical(hostname, want_v4, want_v6, config, query).map(|result| result.addresses)
+}
+
+/// Resolve addresses while retaining the actual canonical owner for
+/// AI_CANONNAME. Uses exactly the same transport, search and retry rules as
+/// address-only resolution; obtaining the name requires no extra DNS query.
+pub fn resolve_with_canonical<F>(
+    hostname: &[u8],
+    want_v4: bool,
+    want_v6: bool,
+    config: &ResolverConfig,
+    mut query: F,
+) -> Result<NameResolution, ResolveError>
 where
     F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
 {
@@ -499,6 +525,7 @@ where
     let mut saw_failure = false;
     for name in build_search_names(hostname, &config.search, config.ndots) {
         let mut result = DnsResolution::default();
+        let mut canonical_name = None;
         let mut done = [!want_v4, !want_v6];
         let mut failures = [None, None];
         for _ in 0..config.attempts.max(1) {
@@ -528,11 +555,14 @@ where
                                         if let Some(address) = record.as_ipv4()
                                             && !result.ipv4.contains(&address)
                                         {
+                                            canonical_name
+                                                .get_or_insert_with(|| record.name.clone());
                                             result.ipv4.push(address);
                                         }
                                     } else if let Some(address) = record.as_ipv6()
                                         && !result.ipv6.contains(&address)
                                     {
+                                        canonical_name.get_or_insert_with(|| record.name.clone());
                                         result.ipv6.push(address);
                                     }
                                 }
@@ -562,7 +592,10 @@ where
             }
         }
         if !result.ipv4.is_empty() || !result.ipv6.is_empty() {
-            return Ok(result);
+            return Ok(NameResolution {
+                addresses: result,
+                canonical_name: canonical_name.unwrap_or(name),
+            });
         }
         // A successful definitive reply supersedes errors from earlier
         // attempts of that family. Only unresolved failures affect the result.
@@ -1392,6 +1425,101 @@ mod tests {
 
     fn name(text: &[u8]) -> Vec<u8> {
         crate::resolv::dns::encode_domain_name(text).unwrap()
+    }
+
+    #[test]
+    fn canonical_name_follows_validated_cname_not_unrelated_answer_owner() {
+        let config = ResolverConfig::default();
+        let result = resolve_with_canonical(
+            b"alias.test.",
+            true,
+            false,
+            &config,
+            |owner, kind, _, _, _, _| {
+                query_with_exchange(owner, kind, Duration::from_secs(1), false, |sent, _| {
+                    Ok(response_with_records(
+                        sent,
+                        &[
+                            rr(&name(b"unrelated.test"), qtype::A, 1, 60, &[203, 0, 113, 9]),
+                            rr(&name(b"Canonical.test"), qtype::A, 1, 60, &[192, 0, 2, 7]),
+                            rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(b"Canonical.test")),
+                        ],
+                    ))
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(result.canonical_name, b"Canonical.test");
+        assert_eq!(result.addresses.ipv4, [Ipv4Addr::new(192, 0, 2, 7)]);
+    }
+
+    #[test]
+    fn canonical_name_survives_cross_packet_alias_followup() {
+        let config = ResolverConfig::default();
+        let mut calls = 0;
+        let result = resolve_with_canonical(
+            b"alias.test.",
+            false,
+            true,
+            &config,
+            |owner, kind, _, _, _, _| {
+                query_with_exchange(owner, kind, Duration::from_secs(1), false, |sent, _| {
+                    calls += 1;
+                    let records = if calls == 1 {
+                        vec![rr(
+                            &[0xc0, 12],
+                            qtype::CNAME,
+                            1,
+                            60,
+                            &name(b"v6-canonical.test"),
+                        )]
+                    } else {
+                        assert_eq!(calls, 2);
+                        vec![rr(
+                            &[0xc0, 12],
+                            qtype::AAAA,
+                            1,
+                            60,
+                            &Ipv6Addr::LOCALHOST.octets(),
+                        )]
+                    };
+                    Ok(response_with_records(sent, &records))
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result.canonical_name, b"v6-canonical.test");
+        assert_eq!(result.addresses.ipv6, [Ipv6Addr::LOCALHOST]);
+    }
+
+    #[test]
+    fn canonical_name_comes_from_successful_search_candidate() {
+        let mut config = ResolverConfig::default();
+        config.search = vec!["missing.test".into(), "found.test".into()];
+        let mut calls = Vec::new();
+        let result =
+            resolve_with_canonical(b"host", true, false, &config, |owner, kind, _, _, _, _| {
+                calls.push(owner.to_vec());
+                query_with_exchange(owner, kind, Duration::from_secs(1), false, |sent, _| {
+                    if owner == b"host.missing.test" {
+                        let mut reply = response_with_records(sent, &[]);
+                        reply[3] |= rcode::NXDOMAIN;
+                        Ok(reply)
+                    } else {
+                        Ok(response_with_records(
+                            sent,
+                            &[rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 7])],
+                        ))
+                    }
+                })
+            })
+            .unwrap();
+        assert_eq!(
+            calls,
+            [b"host.missing.test".to_vec(), b"host.found.test".to_vec()]
+        );
+        assert_eq!(result.canonical_name, b"host.found.test");
     }
 
     fn bound_answer(sent: &[u8], packet: &[u8]) -> Result<AddressAnswer, QueryError> {

@@ -24,7 +24,8 @@ V4_REVERSE = ipaddress.ip_address("192.0.2.9").reverse_pointer
 V6_REVERSE = ipaddress.ip_address("2001:db8::9").reverse_pointer
 
 
-def respond(query: bytes, transport: str, seen: Counter) -> bytes:
+def respond(query: bytes, transport: str, seen: Counter,
+            events: list[tuple[str, int, str]] | None = None) -> bytes:
     if len(query) < 17 or struct.unpack_from("!H", query, 4)[0] != 1:
         raise ValueError("expected one complete DNS question")
     position, labels = 12, []
@@ -39,6 +40,9 @@ def respond(query: bytes, transport: str, seen: Counter) -> bytes:
         raise ValueError("unexpected query type/class")
     name = ".".join(labels).lower()
     seen[(name, transport)] += 1
+    seen[(name, kind, transport)] += 1
+    if events is not None:
+        events.append((name, kind, transport))
     question = query[12:position + 5]
     flags, records = 0x8180, []
     if kind == 12:
@@ -101,6 +105,31 @@ def respond(query: bytes, transport: str, seen: Counter) -> bytes:
         flags |= 5
     elif name == "cycle.test":
         records = [rr(b"\xc0\x0c", 5, b"\xc0\x0c")]
+    elif name in ("v4only.test", "dual.test", "all.test", "failure6.test", "failure4.test"):
+        if (name == "failure6.test" and kind == 28) or (name == "failure4.test" and kind == 1):
+            flags |= 2
+        elif name != "v4only.test" or kind == 1:
+            address = "192.0.2.17" if kind == 1 else "2001:db8::17"
+            records = [rr(b"\xc0\x0c", kind, ipaddress.ip_address(address).packed)]
+    elif name in ("search-only.first.test", "search-all.first.test", "searched-alias.first.test"):
+        if kind == 1:
+            records = [rr(b"\xc0\x0c", kind, ipaddress.ip_address("192.0.2.17").packed)]
+        else:
+            flags |= 3
+    elif name in ("search-only.second.test", "search-all.second.test", "search-edge.test"):
+        if kind != 28:
+            raise AssertionError(f"unexpected IPv4 fallback after native IPv6 success: {name}")
+        records = [rr(b"\xc0\x0c", kind, ipaddress.ip_address("2001:db8::17").packed)]
+    elif name == "searched-alias.second.test":
+        if kind != 28:
+            raise AssertionError("alias IPv6 lookup fell back to IPv4")
+        # A complete recursive answer supplies the canonical address with the
+        # CNAME. The existing alias.test cases separately require cross-packet
+        # follow-up (which not every host-glibc path performs).
+        records = [rr(b"\xc0\x0c", 5, wire_name("search-edge.test")),
+                   rr(wire_name("search-edge.test"), 28, ipaddress.ip_address("2001:db8::17").packed)]
+    elif name == "no-address.test":
+        flags |= 3
     else:
         raise ValueError(f"unexpected forward DNS query: {name}")
     return query[:2] + struct.pack("!HHHHH", flags, 1, len(records), 0, 0) + question + b"".join(records)
@@ -125,6 +154,7 @@ def main() -> None:
     args = parser.parse_args()
     stop = threading.Event()
     seen: Counter = Counter()
+    events: list[tuple[str, int, str]] = []
     failures: list[BaseException] = []
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -144,7 +174,7 @@ def main() -> None:
                     continue
                 if args.tcp_only:
                     raise AssertionError("use-vc sent a UDP query")
-                udp.sendto(respond(query, "udp", seen), peer)
+                udp.sendto(respond(query, "udp", seen, events), peer)
         except BaseException as error:
             failures.append(error)
 
@@ -158,7 +188,7 @@ def main() -> None:
                 with stream:
                     stream.settimeout(3)
                     length = struct.unpack("!H", read_exact(stream, 2))[0]
-                    reply = respond(read_exact(stream, length), "tcp", seen)
+                    reply = respond(read_exact(stream, length), "tcp", seen, events)
                     framed = struct.pack("!H", len(reply)) + reply
                     for offset in range(0, len(framed), 7):
                         stream.sendall(framed[offset:offset + 7])
@@ -197,7 +227,23 @@ def main() -> None:
         assert seen[(owner, transport)] == 2, (owner, seen)
         other = "udp" if transport == "tcp" else "tcp"
         assert seen[(owner, other)] == 0, (owner, seen)
+    for host in ("dual.test", "search-only.first.test", "searched-alias.first.test"):
+        assert sum(seen[(host, 1, t)] for t in ("udp", "tcp")) == 0, (host, seen)
+    expected_search = [
+        ("search-only.first.test", 28), ("search-only.second.test", 28),
+        ("search-all.first.test", 28), ("search-all.second.test", 28),
+        ("search-all.first.test", 1),
+        ("searched-alias.first.test", 28), ("searched-alias.second.test", 28),
+    ]
+    actual_search = [(name, kind) for name, kind, _ in events
+                     if name.startswith(("search-only.", "search-all.", "searched-alias.", "search-edge."))]
+    assert actual_search == expected_search, actual_search
+    for host in ("v4only.test", "all.test", "failure6.test", "failure4.test", "no-address.test"):
+        assert [(kind, t) for name, kind, t in events if name == host] == [
+            (28, transport), (1, transport)
+        ], (host, events)
     print("DNS fixture: forward/PTR TCP fallback, alias follow-up, files and no-query controls passed", flush=True)
+    print("DNS fixture: mapped/all query order, full AAAA search and absolute canonical follow-up passed", flush=True)
 
 
 if __name__ == "__main__":

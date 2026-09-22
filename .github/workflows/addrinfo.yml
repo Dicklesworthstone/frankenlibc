@@ -4,15 +4,15 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/tests/resolv_abi_test.rs'
       - '.github/workflows/addrinfo.yml'
   workflow_dispatch:
 permissions:
   contents: read
 jobs:
   addrinfo:
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -20,89 +20,21 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: 4aa29d4d717a34e6acc7984e66bad94dd34717f6
-      - name: Apply immutable public resolver integration candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/resolver
-          test "$(git hash-object .github/workflows/native-resolver.yml)" = 69338ec799e2b062fba1d25dc1d4afb01061261f
-          test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = a6e26a1c2b76b5bf459363540dbeaa8bcb17ae6e
-          test "$(git hash-object crates/frankenlibc-core/src/dns_transport.rs)" = 5d6eb03caddf5d79a246bed69e4a2606a8605de4
-          test "$(git hash-object tests/integration/fixture_native_dns_transport.c)" = 14354f8bb854e85dc6497a6a381fdb25c1091852
-          test "$(git hash-object tests/integration/native_dns_fixture.py)" = 9b85e3668e5a309b051a27aae418e7fc58867c77
-          test "$(git hash-object crates/frankenlibc-abi/tests/resolv_abi_test.rs)" = cab40c2c87385649a864b1a3e863a79671a106fb
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/19b4ba92051abc78dbbb558f0be05e8d6002c8df" --jq .content | base64 --decode > "$RUNNER_TEMP/addrinfo.patch.gz"
-          test "$(git hash-object "$RUNNER_TEMP/addrinfo.patch.gz")" = 19b4ba92051abc78dbbb558f0be05e8d6002c8df
-          gzip -dc "$RUNNER_TEMP/addrinfo.patch.gz" > "$RUNNER_TEMP/addrinfo.patch"
-          git apply --check "$RUNNER_TEMP/addrinfo.patch"
-          git apply "$RUNNER_TEMP/addrinfo.patch"
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/9c87892d3dc69b8179220b7eabbbe49b617f1915" --jq .content | base64 --decode > "$RUNNER_TEMP/supplement.patch"
-          test "$(git hash-object "$RUNNER_TEMP/supplement.patch")" = 9c87892d3dc69b8179220b7eabbbe49b617f1915
-          git apply --check "$RUNNER_TEMP/supplement.patch"
-          git apply "$RUNNER_TEMP/supplement.patch"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
           components: rustfmt
-      - name: Format changed modules and check fixture syntax
+      - name: Exercise the deployed address policy and existing ABI regressions
         shell: bash
         run: |
           set -euo pipefail
-          rustfmt --edition 2024 crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs
-          python3 -m py_compile tests/integration/native_dns_fixture.py
-          git diff --check
-      - name: Execute the exact production resolver test and release matrix
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m venv "$RUNNER_TEMP/workflow-yaml"
-          "$RUNNER_TEMP/workflow-yaml/bin/pip" install PyYAML
-          "$RUNNER_TEMP/workflow-yaml/bin/python" - <<'PY'
-          from pathlib import Path
-          import subprocess
-          import yaml
-          workflow = yaml.safe_load(Path('.github/workflows/native-resolver.yml').read_text())
-          steps = [s for s in workflow['jobs']['resolver']['steps'] if 'run' in s]
-          assert len(steps) == 4, 'all four production test/build/matrix steps must execute'
-          for step in steps:
-              print('Executing production step: ' + step['name'], flush=True)
-              subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], check=True)
-          PY
-      - name: Execute existing getaddrinfo ABI regression tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/resolver/existing-addrinfo.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/existing-addrinfo.log
-      - name: Preserve exact candidate source and hashes
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/resolver/source
-          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
-            mkdir -p "artifacts/resolver/source/$(dirname "$path")"
-            cp "$path" "artifacts/resolver/source/$path"
-            printf '%s %s\n' "$(git hash-object "$path")" "$path" | tee -a artifacts/resolver/source-hashes.txt
-          done
-          git diff > artifacts/resolver/candidate.diff
-      - name: Publish validated immutable blobs without advancing any branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
-            blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
-            test "$blob" = "$(git hash-object "$path")"
-            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/resolver/published-blobs.txt
-          done
+          mkdir -p artifacts/addrinfo
+          cargo test -p frankenlibc-core --lib addrinfo:: -- --nocapture 2>&1 | tee artifacts/addrinfo/core.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/core.log
+          cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/addrinfo/abi.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/abi.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: addrinfo-integration-results
-          path: artifacts/resolver/**
+          name: addrinfo-results
+          path: artifacts/addrinfo/**
