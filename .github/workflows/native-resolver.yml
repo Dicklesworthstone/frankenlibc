@@ -1,0 +1,44 @@
+name: Native resolver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - '.github/workflows/native-resolver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  resolver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - name: Compile and execute native DNS transport and policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/resolver
+          cargo test -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/resolver/transport.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
+          FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::dns:: -- --nocapture 2>&1 | tee artifacts/resolver/decoder.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/decoder.log
+      - name: Check ABI integration
+        run: cargo check -p frankenlibc-abi --lib --keep-going
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-resolver-results
+          path: artifacts/resolver/**

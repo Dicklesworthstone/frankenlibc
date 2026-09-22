@@ -73,6 +73,7 @@ pub mod crypt;
 pub mod ctype;
 pub mod dirent;
 pub mod dlfcn;
+pub mod dns_transport;
 pub mod elf;
 pub mod err;
 pub mod errno;
