@@ -269,16 +269,15 @@ impl MemBacking {
     pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
         let (size, pos) = match self {
             MemBacking::Fixed {
-                data,
-                pos,
                 content_end,
+                pos,
+                ..
             } => {
-                let sz = if whence == 2 {
-                    *content_end
-                } else {
-                    data.len()
-                };
-                (sz, pos)
+                // bd-rv2gv6: use content_end for all whence modes. The logical
+                // extent is independent of the backing allocation size — for
+                // read-only fmemopen streams the cursor owns the content and
+                // the stream's backing may be empty.
+                (*content_end, pos)
             }
             MemBacking::Dynamic { data, pos } => (data.len(), pos),
         };
@@ -296,10 +295,12 @@ impl MemBacking {
         }
 
         let new_pos = new_pos as usize;
-        // For Fixed, clamp to buffer size; for Dynamic, allow within data length
+        // bd-rv2gv6: clamp to content_end (the logical extent), not data.len().
+        // For read-only fmemopen the backing may be empty while content_end
+        // reflects the actual content size.
         match self {
-            MemBacking::Fixed { data, .. } => {
-                if new_pos > data.len() {
+            MemBacking::Fixed { content_end, .. } => {
+                if new_pos > *content_end {
                     return None;
                 }
             }
@@ -448,6 +449,35 @@ impl StdioStream {
                 data,
                 pos,
                 content_end: cl,
+            }),
+        }
+    }
+
+    /// Create a read-only memory stream that carries NO data internally.
+    ///
+    /// Used by fmemopen read-only mode (bd-rv2gv6): the content lives in the
+    /// registered `FastFixedMemRead` cursor (which owns its own copy), and ALL
+    /// reads — fast path and fallback — are served from that cursor. The
+    /// stream's `mem_backing` is present only for seek/ftell position tracking
+    /// (`content_end` drives clamping; `data` is empty because the generic
+    /// mem-read path is unreachable for properly registered streams).
+    ///
+    /// This eliminates the 4 KiB stream-side copy per fmemopen open
+    /// (bd-rv2gv6: the copy was redundant with the cursor's copy).
+    pub fn new_mem_fixed_readonly(content_len: usize, open_flags: OpenFlags) -> Self {
+        let pos = if open_flags.append { content_len } else { 0 };
+        Self {
+            fd: -2,
+            buffer: StreamBuffer::new(BufMode::None, 0),
+            open_flags,
+            flags: StreamFlags::default(),
+            offset: pos as i64,
+            ungetc_byte: None,
+            read_pushback: VecDeque::new(),
+            mem_backing: Some(MemBacking::Fixed {
+                data: Vec::new(),
+                pos,
+                content_end: content_len,
             }),
         }
     }
