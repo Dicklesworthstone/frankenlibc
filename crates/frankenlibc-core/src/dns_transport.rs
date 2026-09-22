@@ -98,7 +98,12 @@ fn tcp_write_all(stream: &mut TcpStream, mut bytes: &[u8], deadline: Instant) ->
     while !bytes.is_empty() {
         stream.set_write_timeout(Some(remaining(deadline)?))?;
         match stream.write(bytes) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::WriteZero, "DNS TCP write stopped")),
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "DNS TCP write stopped",
+                ));
+            }
             Ok(written) => bytes = &bytes[written..],
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
@@ -107,11 +112,20 @@ fn tcp_write_all(stream: &mut TcpStream, mut bytes: &[u8], deadline: Instant) ->
     Ok(())
 }
 
-fn tcp_read_exact(stream: &mut TcpStream, mut bytes: &mut [u8], deadline: Instant) -> io::Result<()> {
+fn tcp_read_exact(
+    stream: &mut TcpStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+) -> io::Result<()> {
     while !bytes.is_empty() {
         stream.set_read_timeout(Some(remaining(deadline)?))?;
         match stream.read(bytes) {
-            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "short DNS TCP frame")),
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "short DNS TCP frame",
+                ));
+            }
             Ok(read) => bytes = &mut bytes[read..],
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             Err(error) => return Err(error),
@@ -120,7 +134,11 @@ fn tcp_read_exact(stream: &mut TcpStream, mut bytes: &mut [u8], deadline: Instan
     Ok(())
 }
 
-fn tcp_exchange(server: SocketAddr, query: &[u8], deadline: Instant) -> Result<Vec<u8>, QueryError> {
+fn tcp_exchange(
+    server: SocketAddr,
+    query: &[u8],
+    deadline: Instant,
+) -> Result<Vec<u8>, QueryError> {
     let mut stream = TcpStream::connect_timeout(&server, remaining(deadline)?)?;
     let mut frame = Vec::with_capacity(query.len() + 2);
     frame.extend_from_slice(&(query.len() as u16).to_be_bytes());
@@ -267,8 +285,8 @@ fn address_answer(
     let mut records = Vec::new();
     for record in message.answers {
         let mut name = [0; NS_MAXCDNAME];
-        let name_len = name_unpack(packet, pos, &mut name)
-            .map_err(|_| QueryError::InvalidResponse)?;
+        let name_len =
+            name_unpack(packet, pos, &mut name).map_err(|_| QueryError::InvalidResponse)?;
         let data_start = pos + name_len + 10;
         // DnsMessage::decode has already checked the complete RR span. Use
         // the original packet offset, not the copied compressed RDATA, when
@@ -295,7 +313,11 @@ fn address_answer(
             qtype::A | qtype::AAAA => return Err(QueryError::InvalidResponse),
             _ => continue,
         };
-        records.push(AddressRecord { owner: name, target, record });
+        records.push(AddressRecord {
+            owner: name,
+            target,
+            record,
+        });
     }
 
     let mut followed = false;
@@ -358,9 +380,13 @@ pub fn query(
     trust_ad: bool,
     use_vc: bool,
 ) -> Result<QueryReply, QueryError> {
-    query_with_exchange(hostname, record_type, timeout, trust_ad, |wire, deadline| {
-        exchange_until(server, wire, deadline, use_vc)
-    })
+    query_with_exchange(
+        hostname,
+        record_type,
+        timeout,
+        trust_ad,
+        |wire, deadline| exchange_until(server, wire, deadline, use_vc),
+    )
 }
 
 fn query_with_exchange<F>(
@@ -376,7 +402,9 @@ where
     if !matches!(record_type, qtype::A | qtype::AAAA) {
         return Err(QueryError::InvalidQuery);
     }
-    let deadline = Instant::now().checked_add(timeout).ok_or(QueryError::InvalidQuery)?;
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or(QueryError::InvalidQuery)?;
     remaining(deadline)?;
     let mut message = DnsMessage::new_query_with_trust_ad(0, hostname, record_type, trust_ad)
         .ok_or(QueryError::InvalidQuery)?;
@@ -401,7 +429,9 @@ where
                 // a presentation round trip so embedded dots/NULs retain their
                 // label identity. CNAME targets are absolute, never searched.
                 let mut end = 0;
-                while next[end] != 0 { end += usize::from(next[end]) + 1; }
+                while next[end] != 0 {
+                    end += usize::from(next[end]) + 1;
+                }
                 message.questions[0].qname = next[..=end].to_vec();
             }
         }
@@ -430,7 +460,9 @@ where
     }
     let start = if config.rotate {
         NEXT_SERVER.fetch_add(1, Ordering::Relaxed) % config.nameservers.len()
-    } else { 0 };
+    } else {
+        0
+    };
     let timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
     let mut saw_temporary = false;
     let mut saw_failure = false;
@@ -441,11 +473,21 @@ where
         for _ in 0..config.attempts.max(1) {
             for offset in 0..config.nameservers.len() {
                 let server = SocketAddr::new(
-                    config.nameservers[(start + offset) % config.nameservers.len()], DNS_PORT,
+                    config.nameservers[(start + offset) % config.nameservers.len()],
+                    DNS_PORT,
                 );
                 for (index, record_type) in [qtype::A, qtype::AAAA].into_iter().enumerate() {
-                    if done[index] { continue; }
-                    match query(&name, record_type, server, timeout, config.trust_ad, config.use_vc) {
+                    if done[index] {
+                        continue;
+                    }
+                    match query(
+                        &name,
+                        record_type,
+                        server,
+                        timeout,
+                        config.trust_ad,
+                        config.use_vc,
+                    ) {
                         Ok(reply) => {
                             done[index] = true;
                             failures[index] = None;
@@ -454,10 +496,14 @@ where
                                     if index == 0 {
                                         if let Some(address) = record.as_ipv4()
                                             && !result.ipv4.contains(&address)
-                                        { result.ipv4.push(address); }
+                                        {
+                                            result.ipv4.push(address);
+                                        }
                                     } else if let Some(address) = record.as_ipv6()
                                         && !result.ipv6.contains(&address)
-                                    { result.ipv6.push(address); }
+                                    {
+                                        result.ipv6.push(address);
+                                    }
                                 }
                             }
                         }
@@ -469,9 +515,13 @@ where
                         }
                     }
                 }
-                if done.iter().all(|&value| value) { break; }
+                if done.iter().all(|&value| value) {
+                    break;
+                }
             }
-            if done.iter().all(|&value| value) { break; }
+            if done.iter().all(|&value| value) {
+                break;
+            }
         }
         if !result.ipv4.is_empty() || !result.ipv6.is_empty() {
             return Ok(result);
@@ -481,9 +531,13 @@ where
         saw_temporary |= failures.contains(&Some(ResolveError::Temporary));
         saw_failure |= failures.contains(&Some(ResolveError::Failure));
     }
-    if saw_temporary { Err(ResolveError::Temporary) }
-    else if saw_failure { Err(ResolveError::Failure) }
-    else { Err(ResolveError::NotFound) }
+    if saw_temporary {
+        Err(ResolveError::Temporary)
+    } else if saw_failure {
+        Err(ResolveError::Failure)
+    } else {
+        Err(ResolveError::NotFound)
+    }
 }
 
 #[cfg(test)]
@@ -495,7 +549,9 @@ mod tests {
     fn query_wire() -> Vec<u8> {
         let mut bytes = vec![0; DNS_MAX_UDP_SIZE];
         let length = DnsMessage::new_query(0x1234, b"example.test", qtype::A)
-            .unwrap().encode(&mut bytes).unwrap();
+            .unwrap()
+            .encode(&mut bytes)
+            .unwrap();
         bytes.truncate(length);
         bytes
     }
@@ -505,15 +561,17 @@ mod tests {
         bytes[2] |= 0x80;
         bytes[3] = 0x80;
         bytes[7] = 1;
-        bytes.extend_from_slice(&[
-            0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 7,
-        ]);
+        bytes.extend_from_slice(&[0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 192, 0, 2, 7]);
         bytes
     }
 
     fn read_query(stream: &mut TcpStream) -> Vec<u8> {
-        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
-        stream.set_write_timeout(Some(Duration::from_secs(3))).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let mut prefix = [0; 2];
         stream.read_exact(&mut prefix).unwrap();
         let mut bytes = vec![0; usize::from(u16::from_be_bytes(prefix))];
@@ -526,7 +584,14 @@ mod tests {
         let sent = query_wire();
         let valid = answer(&sent);
         assert!(response_matches(&sent, &valid));
-        for (index, mask) in [(0, 1), (2, 8), (5, 1), (13, 1), (sent.len()-1, 1), (sent.len()-3, 1)] {
+        for (index, mask) in [
+            (0, 1),
+            (2, 8),
+            (5, 1),
+            (13, 1),
+            (sent.len() - 1, 1),
+            (sent.len() - 3, 1),
+        ] {
             let mut wrong = valid.clone();
             wrong[index] ^= mask;
             assert!(!response_matches(&sent, &wrong), "byte {index}");
@@ -537,7 +602,9 @@ mod tests {
         // Literal dot inside a label is not a label separator.
         let mut dotted = vec![0; 512];
         let len = DnsMessage::new_query(0x1234, br"example\.test", qtype::A)
-            .unwrap().encode(&mut dotted).unwrap();
+            .unwrap()
+            .encode(&mut dotted)
+            .unwrap();
         dotted.truncate(len);
         assert!(!response_matches(&sent, &answer(&dotted)));
     }
@@ -545,7 +612,9 @@ mod tests {
     #[test]
     fn udp_ignores_wrong_source_and_wrong_question_before_valid_reply() {
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-        server.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let addr = server.local_addr().unwrap();
         let worker = thread::spawn(move || {
             let mut buffer = [0; 512];
@@ -590,12 +659,16 @@ mod tests {
             stream.write_all(&prefix[..1]).unwrap();
             thread::sleep(Duration::from_millis(5));
             stream.write_all(&prefix[1..]).unwrap();
-            for chunk in reply.chunks(7) { stream.write_all(chunk).unwrap(); }
+            for chunk in reply.chunks(7) {
+                stream.write_all(chunk).unwrap();
+            }
         });
         let reply = exchange(addr, &query_wire(), Duration::from_secs(2), false).unwrap();
         assert!(reply.len() > 512);
-        assert_eq!(DnsMessage::decode(&reply).unwrap().answers[0].as_ipv4(),
-            Some(Ipv4Addr::new(192, 0, 2, 7)));
+        assert_eq!(
+            DnsMessage::decode(&reply).unwrap().answers[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 7))
+        );
         worker.join().unwrap();
     }
 
@@ -607,7 +680,9 @@ mod tests {
             let (mut stream, _) = listener.accept().unwrap();
             let sent = read_query(&mut stream);
             let reply = answer(&sent);
-            stream.write_all(&(reply.len() as u16).to_be_bytes()).unwrap();
+            stream
+                .write_all(&(reply.len() as u16).to_be_bytes())
+                .unwrap();
             stream.write_all(&reply).unwrap();
         });
         assert!(exchange(addr, &query_wire(), Duration::from_secs(2), true).is_ok());
@@ -623,8 +698,10 @@ mod tests {
             let _ = read_query(&mut stream);
             stream.write_all(&[0, 30, 1, 2, 3]).unwrap();
         });
-        assert!(matches!(exchange(addr, &query_wire(), Duration::from_secs(2), true),
-            Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof));
+        assert!(
+            matches!(exchange(addr, &query_wire(), Duration::from_secs(2), true),
+            Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::UnexpectedEof)
+        );
         worker.join().unwrap();
     }
 
@@ -632,15 +709,19 @@ mod tests {
     fn zero_timeout_cannot_become_an_infinite_socket_wait() {
         let addr = "127.0.0.1:53".parse().unwrap();
         for use_vc in [false, true] {
-            assert!(matches!(exchange(addr, &query_wire(), Duration::ZERO, use_vc),
-                Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::TimedOut));
+            assert!(
+                matches!(exchange(addr, &query_wire(), Duration::ZERO, use_vc),
+                Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::TimedOut)
+            );
         }
     }
 
     #[test]
     fn wrong_packets_cannot_extend_query_deadline() {
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-        server.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let addr = server.local_addr().unwrap();
         let worker = thread::spawn(move || {
             let mut buffer = [0; 512];
@@ -653,14 +734,19 @@ mod tests {
             }
         });
         let start = Instant::now();
-        assert!(matches!(exchange(addr, &query_wire(), Duration::from_millis(80), false),
-            Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::TimedOut));
+        assert!(
+            matches!(exchange(addr, &query_wire(), Duration::from_millis(80), false),
+            Err(QueryError::Io(error)) if error.kind() == io::ErrorKind::TimedOut)
+        );
         assert!(start.elapsed() < Duration::from_secs(2));
         worker.join().unwrap();
     }
 
     fn address_reply() -> QueryReply {
-        QueryReply { records: DnsMessage::decode(&answer(&query_wire())).unwrap().answers, rcode: 0 }
+        QueryReply {
+            records: DnsMessage::decode(&answer(&query_wire())).unwrap().answers,
+            rcode: 0,
+        }
     }
 
     #[test]
@@ -670,16 +756,36 @@ mod tests {
         config.attempts = 3;
         let mut calls = Vec::new();
         let mut a_attempts = 0;
-        let result = resolve_with(b"example.test.", true, true, &config,
+        let result = resolve_with(
+            b"example.test.",
+            true,
+            true,
+            &config,
             |_, kind, server, _, _, _| {
                 calls.push((kind, server));
-                if kind == qtype::AAAA { return Ok(QueryReply { records: vec![], rcode: 0 }); }
+                if kind == qtype::AAAA {
+                    return Ok(QueryReply {
+                        records: vec![],
+                        rcode: 0,
+                    });
+                }
                 a_attempts += 1;
-                if a_attempts == 1 { Err(QueryError::ResponseCode(rcode::SERVFAIL)) }
-                else { Ok(address_reply()) }
-            }).unwrap();
+                if a_attempts == 1 {
+                    Err(QueryError::ResponseCode(rcode::SERVFAIL))
+                } else {
+                    Ok(address_reply())
+                }
+            },
+        )
+        .unwrap();
         assert_eq!(result.ipv4, vec![Ipv4Addr::new(192, 0, 2, 7)]);
-        assert_eq!(calls.iter().filter(|(kind, _)| *kind == qtype::AAAA).count(), 1);
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(kind, _)| *kind == qtype::AAAA)
+                .count(),
+            1
+        );
         assert_eq!(calls.len(), 3);
     }
 
@@ -689,25 +795,48 @@ mod tests {
         config.search = vec!["missing.test".to_owned(), "found.test".to_owned()];
         config.attempts = 4;
         let mut calls = Vec::new();
-        let result = resolve_with(b"host", true, false, &config,
-            |name, _, _, _, _, _| {
-                calls.push(name.to_vec());
-                if name.ends_with(b"missing.test") {
-                    Ok(QueryReply { records: vec![], rcode: rcode::NXDOMAIN })
-                } else { Ok(address_reply()) }
-            }).unwrap();
+        let result = resolve_with(b"host", true, false, &config, |name, _, _, _, _, _| {
+            calls.push(name.to_vec());
+            if name.ends_with(b"missing.test") {
+                Ok(QueryReply {
+                    records: vec![],
+                    rcode: rcode::NXDOMAIN,
+                })
+            } else {
+                Ok(address_reply())
+            }
+        })
+        .unwrap();
         assert_eq!(result.ipv4.len(), 1);
-        assert_eq!(calls, vec![b"host.missing.test".to_vec(), b"host.found.test".to_vec()]);
+        assert_eq!(
+            calls,
+            vec![b"host.missing.test".to_vec(), b"host.found.test".to_vec()]
+        );
     }
 
     #[test]
     fn temporary_failure_is_not_reported_as_name_not_found() {
         let config = ResolverConfig::default();
-        let result = resolve_with(b"example.test.", true, false, &config,
-            |_, _, _, _, _, _| Err(QueryError::ResponseCode(rcode::SERVFAIL)));
+        let result = resolve_with(
+            b"example.test.",
+            true,
+            false,
+            &config,
+            |_, _, _, _, _, _| Err(QueryError::ResponseCode(rcode::SERVFAIL)),
+        );
         assert_eq!(result.unwrap_err(), ResolveError::Temporary);
-        let result = resolve_with(b"example.test.", true, false, &config,
-            |_, _, _, _, _, _| Ok(QueryReply { records: vec![], rcode: rcode::NXDOMAIN }));
+        let result = resolve_with(
+            b"example.test.",
+            true,
+            false,
+            &config,
+            |_, _, _, _, _, _| {
+                Ok(QueryReply {
+                    records: vec![],
+                    rcode: rcode::NXDOMAIN,
+                })
+            },
+        );
         assert_eq!(result.unwrap_err(), ResolveError::NotFound);
     }
 
@@ -717,12 +846,17 @@ mod tests {
         config.use_vc = true;
         config.trust_ad = true;
         config.timeout = 7;
-        let result = resolve_with(b"example.test.", true, false, &config,
+        let result = resolve_with(
+            b"example.test.",
+            true,
+            false,
+            &config,
             |_, _, _, timeout, trust_ad, use_vc| {
                 assert_eq!(timeout, Duration::from_secs(7));
                 assert!(trust_ad && use_vc);
                 Ok(address_reply())
-            });
+            },
+        );
         assert!(result.is_ok());
     }
 
@@ -731,7 +865,9 @@ mod tests {
         packet[2] |= 0x80;
         packet[3] = 0x80;
         packet[6..8].copy_from_slice(&(records.len() as u16).to_be_bytes());
-        for record in records { packet.extend_from_slice(record); }
+        for record in records {
+            packet.extend_from_slice(record);
+        }
         packet
     }
 
@@ -751,24 +887,35 @@ mod tests {
 
     fn bound_answer(sent: &[u8], packet: &[u8]) -> Result<AddressAnswer, QueryError> {
         let (owner, fields) = question(sent).unwrap();
-        address_answer(sent, packet, u16::from_be_bytes([fields[0], fields[1]]),
-            &mut vec![owner], &mut u32::MAX)
+        address_answer(
+            sent,
+            packet,
+            u16::from_be_bytes([fields[0], fields[1]]),
+            &mut vec![owner],
+            &mut u32::MAX,
+        )
     }
 
     #[test]
     fn address_answer_excludes_unrelated_owner_class_and_family() {
         let sent = query_wire();
-        let packet = response_with_records(&sent, &[
-            rr(&name(b"foreign.test"), qtype::A, 1, 60, &[203, 0, 113, 99]),
-            rr(&[0xc0, 12], qtype::A, 3, 60, &[203, 0, 113, 98]),
-            rr(&[0xc0, 12], qtype::AAAA, 1, 60, &[0; 16]),
-            rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 7]),
-        ]);
+        let packet = response_with_records(
+            &sent,
+            &[
+                rr(&name(b"foreign.test"), qtype::A, 1, 60, &[203, 0, 113, 99]),
+                rr(&[0xc0, 12], qtype::A, 3, 60, &[203, 0, 113, 98]),
+                rr(&[0xc0, 12], qtype::AAAA, 1, 60, &[0; 16]),
+                rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 7]),
+            ],
+        );
         let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
             panic!("direct address must complete");
         };
         assert_eq!(reply.records.len(), 1);
-        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 7)));
+        assert_eq!(
+            reply.records[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 7))
+        );
     }
 
     #[test]
@@ -777,17 +924,23 @@ mod tests {
         // edge.test uses a compressed suffix pointer into example.test's
         // question: the four-byte "test" label begins at message offset 20.
         let edge = b"\x04edge\xc0\x14";
-        let packet = response_with_records(&sent, &[
-            rr(edge, qtype::A, 1, 600, &[192, 0, 2, 8]),
-            rr(&name(b"middle.test"), qtype::CNAME, 1, 20, edge),
-            rr(&[0xc0, 12], qtype::CNAME, 1, 40, &name(b"middle.test")),
-            rr(&name(b"unrelated.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
-        ]);
+        let packet = response_with_records(
+            &sent,
+            &[
+                rr(edge, qtype::A, 1, 600, &[192, 0, 2, 8]),
+                rr(&name(b"middle.test"), qtype::CNAME, 1, 20, edge),
+                rr(&[0xc0, 12], qtype::CNAME, 1, 40, &name(b"middle.test")),
+                rr(&name(b"unrelated.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
+            ],
+        );
         let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
             panic!("in-packet chain must complete");
         };
         assert_eq!(reply.records.len(), 1);
-        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 8)));
+        assert_eq!(
+            reply.records[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 8))
+        );
         assert_eq!(reply.records[0].ttl, 20);
     }
 
@@ -795,16 +948,22 @@ mod tests {
     fn cname_targets_keep_label_identity() {
         let sent = query_wire();
         let literal_dot = name(br"edge\.test");
-        let packet = response_with_records(&sent, &[
-            rr(&[0xc0, 12], qtype::CNAME, 1, 60, &literal_dot),
-            rr(&name(b"edge.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
-            rr(&literal_dot, qtype::A, 1, 60, &[192, 0, 2, 8]),
-        ]);
+        let packet = response_with_records(
+            &sent,
+            &[
+                rr(&[0xc0, 12], qtype::CNAME, 1, 60, &literal_dot),
+                rr(&name(b"edge.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
+                rr(&literal_dot, qtype::A, 1, 60, &[192, 0, 2, 8]),
+            ],
+        );
         let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
             panic!("literal-dot target must resolve");
         };
         assert_eq!(reply.records.len(), 1);
-        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 8)));
+        assert_eq!(
+            reply.records[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 8))
+        );
     }
 
     #[test]
@@ -815,11 +974,16 @@ mod tests {
         for records in [
             vec![rr(&[0xc0, 12], qtype::CNAME, 1, 60, &[0xc0, 12])],
             vec![alias.clone(), rr(&edge, qtype::CNAME, 1, 60, &[0xc0, 12])],
-            vec![alias.clone(), rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(b"other.test"))],
+            vec![
+                alias.clone(),
+                rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(b"other.test")),
+            ],
             vec![alias, rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 8])],
         ] {
-            assert!(matches!(bound_answer(&sent, &response_with_records(&sent, &records)),
-                Err(QueryError::InvalidResponse)));
+            assert!(matches!(
+                bound_answer(&sent, &response_with_records(&sent, &records)),
+                Err(QueryError::InvalidResponse)
+            ));
         }
     }
 
@@ -827,12 +991,18 @@ mod tests {
     fn cname_rdata_cannot_consume_a_name_outside_its_declared_span() {
         let sent = query_wire();
         for target in [vec![0xc0], vec![0xc0, 12, 0], vec![1, b'a']] {
-            let packet = response_with_records(&sent, &[
-                rr(&[0xc0, 12], qtype::CNAME, 1, 60, &target),
-                // The following root byte must not terminate the previous RR.
-                rr(&[0], qtype::A, 1, 60, &[192, 0, 2, 8]),
-            ]);
-            assert!(matches!(bound_answer(&sent, &packet), Err(QueryError::InvalidResponse)));
+            let packet = response_with_records(
+                &sent,
+                &[
+                    rr(&[0xc0, 12], qtype::CNAME, 1, 60, &target),
+                    // The following root byte must not terminate the previous RR.
+                    rr(&[0], qtype::A, 1, 60, &[192, 0, 2, 8]),
+                ],
+            );
+            assert!(matches!(
+                bound_answer(&sent, &packet),
+                Err(QueryError::InvalidResponse)
+            ));
         }
     }
 
@@ -840,35 +1010,63 @@ mod tests {
     fn cname_follows_across_packets_under_the_same_deadline() {
         let mut calls = 0;
         let mut first_deadline = None;
-        let reply = query_with_exchange(b"example.test", qtype::A, Duration::from_secs(2), true,
+        let reply = query_with_exchange(
+            b"example.test",
+            qtype::A,
+            Duration::from_secs(2),
+            true,
             |sent, deadline| {
                 calls += 1;
                 assert_eq!(DnsHeader::decode(sent).unwrap().flags & 0x20, 0x20);
-                if let Some(first) = first_deadline { assert_eq!(deadline, first); }
-                else { first_deadline = Some(deadline); }
-                if calls == 1 {
-                    Ok(response_with_records(sent, &[
-                        rr(&[0xc0, 12], qtype::CNAME, 1, 9, &name(b"edge.test")),
-                    ]))
+                if let Some(first) = first_deadline {
+                    assert_eq!(deadline, first);
                 } else {
-                    assert_eq!(DnsMessage::decode(sent).unwrap().questions[0].qname, b"edge.test");
+                    first_deadline = Some(deadline);
+                }
+                if calls == 1 {
+                    Ok(response_with_records(
+                        sent,
+                        &[rr(&[0xc0, 12], qtype::CNAME, 1, 9, &name(b"edge.test"))],
+                    ))
+                } else {
+                    assert_eq!(
+                        DnsMessage::decode(sent).unwrap().questions[0].qname,
+                        b"edge.test"
+                    );
                     Ok(answer(sent))
                 }
-            }).unwrap();
+            },
+        )
+        .unwrap();
         assert_eq!(calls, 2);
-        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 7)));
+        assert_eq!(
+            reply.records[0].as_ipv4(),
+            Some(Ipv4Addr::new(192, 0, 2, 7))
+        );
         assert_eq!(reply.records[0].ttl, 9);
     }
 
     #[test]
     fn cname_cross_packet_loop_is_rejected_without_retry_explosion() {
         let mut calls = 0;
-        let result = query_with_exchange(b"example.test", qtype::A, Duration::from_secs(2), false,
+        let result = query_with_exchange(
+            b"example.test",
+            qtype::A,
+            Duration::from_secs(2),
+            false,
             |sent, _| {
                 calls += 1;
-                let next = if calls == 1 { b"edge.test".as_slice() } else { b"example.test".as_slice() };
-                Ok(response_with_records(sent, &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(next))]))
-            });
+                let next = if calls == 1 {
+                    b"edge.test".as_slice()
+                } else {
+                    b"example.test".as_slice()
+                };
+                Ok(response_with_records(
+                    sent,
+                    &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(next))],
+                ))
+            },
+        );
         assert!(matches!(result, Err(QueryError::InvalidResponse)));
         assert_eq!(calls, 2);
     }
@@ -876,12 +1074,20 @@ mod tests {
     #[test]
     fn cname_hop_budget_applies_across_packets() {
         let mut calls = 0;
-        let result = query_with_exchange(b"example.test", qtype::AAAA, Duration::from_secs(2), false,
+        let result = query_with_exchange(
+            b"example.test",
+            qtype::AAAA,
+            Duration::from_secs(2),
+            false,
             |sent, _| {
                 calls += 1;
                 let next = name(format!("hop{calls}.test").as_bytes());
-                Ok(response_with_records(sent, &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &next)]))
-            });
+                Ok(response_with_records(
+                    sent,
+                    &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &next)],
+                ))
+            },
+        );
         assert!(matches!(result, Err(QueryError::InvalidResponse)));
         assert_eq!(calls, MAX_CNAME_HOPS + 1);
     }
@@ -889,7 +1095,9 @@ mod tests {
     #[test]
     fn cname_can_resolve_ipv6_through_real_udp_followup() {
         let server = UdpSocket::bind("127.0.0.1:0").unwrap();
-        server.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        server
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let addr = server.local_addr().unwrap();
         let expected: Ipv6Addr = "2001:db8::1234".parse().unwrap();
         let worker = thread::spawn(move || {
@@ -905,10 +1113,20 @@ mod tests {
                     assert_eq!(decoded.questions[0].qname, b"v6.test");
                     rr(&[0xc0, 12], qtype::AAAA, 1, 60, &expected.octets())
                 };
-                server.send_to(&response_with_records(sent, &[record]), peer).unwrap();
+                server
+                    .send_to(&response_with_records(sent, &[record]), peer)
+                    .unwrap();
             }
         });
-        let reply = query(b"example.test", qtype::AAAA, addr, Duration::from_secs(2), false, false).unwrap();
+        let reply = query(
+            b"example.test",
+            qtype::AAAA,
+            addr,
+            Duration::from_secs(2),
+            false,
+            false,
+        )
+        .unwrap();
         assert_eq!(reply.records.len(), 1);
         assert_eq!(reply.records[0].as_ipv6(), Some(expected));
         assert_eq!(reply.records[0].ttl, 12);
@@ -919,12 +1137,23 @@ mod tests {
     fn definitive_negative_supersedes_prior_transient_failure() {
         let config = ResolverConfig::default();
         let mut attempts = 0;
-        let result = resolve_with(b"example.test.", true, false, &config,
+        let result = resolve_with(
+            b"example.test.",
+            true,
+            false,
+            &config,
             |_, _, _, _, _, _| {
                 attempts += 1;
-                if attempts == 1 { Err(QueryError::ResponseCode(rcode::SERVFAIL)) }
-                else { Ok(QueryReply { records: vec![], rcode: rcode::NXDOMAIN }) }
-            });
+                if attempts == 1 {
+                    Err(QueryError::ResponseCode(rcode::SERVFAIL))
+                } else {
+                    Ok(QueryReply {
+                        records: vec![],
+                        rcode: rcode::NXDOMAIN,
+                    })
+                }
+            },
+        );
         assert_eq!(attempts, 2);
         assert_eq!(result.unwrap_err(), ResolveError::NotFound);
     }

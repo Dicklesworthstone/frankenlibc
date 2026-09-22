@@ -7,6 +7,8 @@ on:
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'tests/integration/fixture_native_dns_transport.c'
+      - 'tests/integration/native_dns_fixture.py'
       - '.github/workflows/native-resolver.yml'
   workflow_dispatch:
 
@@ -15,11 +17,6 @@ permissions:
 
 jobs:
   resolver:
-    # Integration validation only. This job publishes source blobs for a
-    # reviewed commit through the user connection; it cannot advance main.
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -27,45 +24,15 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
-      - name: Apply previously compiled ABI integration
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/resolver
-          test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = 3af7350b45d53c9096ba45c2a9d1eb6b057e521e
-          # Extract the literal, reviewed diff from its immutable commit, not
-          # a generated source rewrite. That exact patch compiled in run
-          # 35736683401; the surrounding workflow is never executed here.
-          git fetch --depth=1 origin 78748a09d702ea53935856e9fb9323aa3eb08ff7
-          git show 78748a09d702ea53935856e9fb9323aa3eb08ff7:.github/workflows/native-resolver.yml > "$RUNNER_TEMP/reviewed-workflow.txt"
-          sed -n '/^          diff --git /,/^          RESOLVER_ABI_PATCH/p' "$RUNNER_TEMP/reviewed-workflow.txt" | sed '$d;s/^          //' > "$RUNNER_TEMP/resolver.patch"
-          git apply --recount --check "$RUNNER_TEMP/resolver.patch"
-          git apply --recount "$RUNNER_TEMP/resolver.patch"
-          cat > "$RUNNER_TEMP/unused-import.patch" <<'PATCH'
-          diff --git a/crates/frankenlibc-abi/src/resolv_abi.rs b/crates/frankenlibc-abi/src/resolv_abi.rs
-          --- a/crates/frankenlibc-abi/src/resolv_abi.rs
-          +++ b/crates/frankenlibc-abi/src/resolv_abi.rs
-          @@ -21,7 +21,6 @@
-           use std::ptr;
-           use std::time::UNIX_EPOCH;
-           
-          -use frankenlibc_core::syscall as raw_syscall;
-           use frankenlibc_membrane::check_oracle::CheckStage;
-           use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
-           use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
-          PATCH
-          git apply --check "$RUNNER_TEMP/unused-import.patch"
-          git apply "$RUNNER_TEMP/unused-import.patch"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
           components: rustfmt
-      - name: Format the new transport module
-        run: rustfmt --edition 2024 crates/frankenlibc-core/src/dns_transport.rs
-      - name: Compile and execute DNS transport, CNAME, and policy tests
+      - name: Compile and execute native DNS transport and policy tests
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p artifacts/resolver
           cargo test -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/resolver/transport.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
           FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::dns:: -- --nocapture 2>&1 | tee artifacts/resolver/decoder.log
@@ -75,28 +42,39 @@ jobs:
         run: |
           set -euo pipefail
           cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/resolver/abi-check.log
-          git diff --check
-      - name: Preserve reviewed source and hashes
-        if: always()
+      - name: Build shared library and public C caller
         shell: bash
         run: |
           set -euo pipefail
-          for path in crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-core/src/dns_transport.rs; do
-            cp "$path" "artifacts/resolver/$(basename "$path")"
-            printf '%s %s\n' "$(git hash-object "$path")" "$path" | tee -a artifacts/resolver/source-hashes.txt
-          done
-          git diff --stat | tee artifacts/resolver/diff-stat.txt
-      - name: Publish validated source blobs only
-        env:
-          GH_TOKEN: ${{ github.token }}
+          cargo build -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/abi-build.log
+          cc -Wall -Wextra -Werror tests/integration/fixture_native_dns_transport.c -ldl -o target/native-dns-abi
+          test -f target/debug/libfrankenlibc_abi.so
+      - name: Exercise getaddrinfo with isolated UDP/TCP DNS peers
         shell: bash
         run: |
           set -euo pipefail
-          for path in crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-core/src/dns_transport.rs; do
-            echo "Publishing source blob: $path"
-            blob=$(jq -Rs '{content: ., encoding: "utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
-            test "$blob" = "$(git hash-object "$path")"
-            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/resolver/published-blobs.txt
+          printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > artifacts/resolver/resolv-udp.conf
+          printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1 use-vc\n' > artifacts/resolver/resolv-tcp.conf
+          for transport in udp tcp; do
+            extra=()
+            if [[ "$transport" == tcp ]]; then extra=(--tcp-only); fi
+            for mode in strict hardened; do
+              # Private mount and network namespaces: no runner/system DNS
+              # mutation, no privileged port conflict, no external DNS traffic.
+              sudo unshare --mount --net -- bash -eu -c '
+                mount --make-rprivate /
+                ip link set lo up
+                mount --bind "$1" /etc/resolv.conf
+                export FRANKENLIBC_MODE="$2"
+                exec python3 "$3" "$4" "$5" "${@:6}"
+              ' bash \
+                "$PWD/artifacts/resolver/resolv-$transport.conf" "$mode" \
+                "$PWD/tests/integration/native_dns_fixture.py" \
+                "$PWD/target/native-dns-abi" \
+                "$PWD/target/debug/libfrankenlibc_abi.so" "${extra[@]}" \
+                2>&1 | tee "artifacts/resolver/abi-$transport-$mode.log"
+              grep -Eq 'native DNS ABI: [1-9][0-9]* passed' "artifacts/resolver/abi-$transport-$mode.log"
+            done
           done
       - uses: actions/upload-artifact@v4
         if: always()
