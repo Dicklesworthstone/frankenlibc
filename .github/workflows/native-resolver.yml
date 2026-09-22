@@ -17,9 +17,6 @@ permissions:
 
 jobs:
   resolver:
-    if: github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -27,31 +24,10 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
-      - name: Apply immutable reconciled PTR correction
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/resolver
-          test "$(git hash-object crates/frankenlibc-core/src/dns_transport.rs)" = 5325ed6bee0c7c85b1664957943a187b366b3519
-          test "$(git hash-object tests/integration/fixture_native_dns_transport.c)" = 5931e054daaa7b7aa406bbdd8a002fd5bc890db2
-          test "$(git hash-object tests/integration/native_dns_fixture.py)" = 5407576cf8690df4203abcf34ddce5e8f5d192c4
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/67b55b7fb2da8b19932f4a9e5627cfdd09fc5801" --jq .content | base64 --decode > "$RUNNER_TEMP/ptr.patch"
-          test "$(git hash-object "$RUNNER_TEMP/ptr.patch")" = 67b55b7fb2da8b19932f4a9e5627cfdd09fc5801
-          git apply --check "$RUNNER_TEMP/ptr.patch"
-          git apply "$RUNNER_TEMP/ptr.patch"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
           components: rustfmt
-      - name: Format corrected source and check fixture syntax
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustfmt --edition 2024 crates/frankenlibc-core/src/dns_transport.rs
-          python3 -m py_compile tests/integration/native_dns_fixture.py
-          git diff --check
       - name: Compile and execute native DNS transport and policy tests
         shell: bash
         run: |
@@ -126,29 +102,6 @@ jobs:
             done
           done
           exit "$status"
-      - name: Preserve candidate source and hashes
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/resolver/source
-          for path in crates/frankenlibc-core/src/dns_transport.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py; do
-            mkdir -p "artifacts/resolver/source/$(dirname "$path")"
-            cp "$path" "artifacts/resolver/source/$path"
-            printf '%s %s\n' "$(git hash-object "$path")" "$path" | tee -a artifacts/resolver/source-hashes.txt
-          done
-          git diff > artifacts/resolver/reconciled.diff
-      - name: Publish validated source blobs without updating a branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for path in crates/frankenlibc-core/src/dns_transport.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py; do
-            blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
-            test "$blob" = "$(git hash-object "$path")"
-            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/resolver/published-blobs.txt
-          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

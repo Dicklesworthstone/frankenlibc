@@ -158,6 +158,18 @@ static void check_named_resolution(int tcp_only) {
     check_reverse("192.0.2.200", 4443, required, 4, 0, EAI_OVERFLOW, NULL, NULL);
     check_reverse("192.0.2.250", 4443, NI_NUMERICHOST, 0, 4, EAI_OVERFLOW, NULL, NULL);
     check_reverse("192.0.2.200", 4443, required, sizeof("files-v4.local.test"), 0, 0, "files-v4.local.test", NULL);
+    /* DNS can encode binary labels that must not be exposed as hostnames.
+     * The root PTR is legal; an invalid first target is not rescued by a
+     * later valid PTR. Captured against glibc 2.41 over both transports. */
+    for (int want_name = 0; want_name <= 1; ++want_name) {
+        int flags = NI_NUMERICSERV | (want_name ? NI_NAMEREQD : 0);
+        check_reverse("192.0.2.206", 4443, flags, 128, 0, 0, ".", NULL);
+        check_reverse("192.0.2.207", 4443, flags, 128, 0, want_name ? EAI_NONAME : 0, "192.0.2.207", NULL);
+        check_reverse("192.0.2.208", 4443, flags, 128, 0, want_name ? EAI_NONAME : 0, "192.0.2.208", NULL);
+        check_reverse("192.0.2.209", 4443, flags, 128, 0, 0, "_service.Host-.test", NULL);
+        check_reverse("192.0.2.210", 4443, flags, 128, 0, want_name ? EAI_NONAME : 0, "192.0.2.210", NULL);
+        check_reverse("192.0.2.211", 4443, flags, 128, 0, 0, "valid.test", NULL);
+    }
     check_input_contract();
 }
 

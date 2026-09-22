@@ -327,7 +327,7 @@ fn address_answer(
                 let mut target = [0; NS_MAXCDNAME];
                 let consumed = name_unpack(packet, data_start, &mut target)
                     .map_err(|_| QueryError::InvalidResponse)?;
-                if consumed != record.rdata.len() || target[0] == 0 {
+                if consumed != record.rdata.len() {
                     return Err(QueryError::InvalidResponse);
                 }
                 // The unpacker validated label lengths and the 255-byte
@@ -607,6 +607,48 @@ pub fn reverse_name(address: IpAddr) -> Vec<u8> {
     }
 }
 
+/// Convert a normalized PTR wire name to an application hostname. DNS labels
+/// allow binary data; hostnames do not. Validate bytes before presentation
+/// conversion so an embedded dot or NUL cannot masquerade as a label boundary.
+/// The root is the valid presentation ".". A leading hyphen is rejected at the
+/// beginning of the name; later labels may begin with one, as in glibc res_hnok.
+fn ptr_hostname(wire: &[u8]) -> Option<Vec<u8>> {
+    if wire.len() > NS_MAXCDNAME {
+        return None;
+    }
+    let mut pos = 0usize;
+    let mut output = Vec::new();
+    loop {
+        let length = usize::from(*wire.get(pos)?);
+        pos += 1;
+        if length == 0 {
+            if pos != wire.len() {
+                return None;
+            }
+            if output.is_empty() {
+                output.push(b'.');
+            }
+            return Some(output);
+        }
+        if length > 63 {
+            return None;
+        }
+        let label = wire.get(pos..pos.checked_add(length)?)?;
+        if (output.is_empty() && label[0] == b'-')
+            || !label
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'-' | b'_'))
+        {
+            return None;
+        }
+        if !output.is_empty() {
+            output.push(b'.');
+        }
+        output.extend_from_slice(label);
+        pos += length;
+    }
+}
+
 /// Resolve a PTR name without applying search domains. Reuse the same
 /// query-bound UDP/TCP/CNAME engine as forward lookup and keep ABI evidence
 /// accounting in the supplied query callback. A definitive negative reply
@@ -620,8 +662,6 @@ pub fn reverse_with<F>(
 where
     F: FnMut(&[u8], u16, SocketAddr, Duration, bool, bool) -> Result<QueryReply, QueryError>,
 {
-    use crate::resolv::dns_name::{NS_MAXDNAME, name_ntop};
-
     if config.nameservers.is_empty() {
         return Err(ResolveError::Temporary);
     }
@@ -653,13 +693,10 @@ where
                         if record.rtype != qtype::PTR || record.rclass != qclass::IN {
                             continue;
                         }
-                        let mut text = [0; NS_MAXDNAME];
-                        let length = name_ntop(&record.rdata, &mut text)
-                            .map_err(|_| ResolveError::Failure)?;
-                        if text[..length] == *b"." {
-                            return Err(ResolveError::Failure);
-                        }
-                        return Ok(text[..length].to_vec());
+                        // The first owner-bound IN/PTR is authoritative for
+                        // this result. Do not salvage an invalid first target
+                        // by accepting a later one: glibc reports no name.
+                        return ptr_hostname(&record.rdata).ok_or(ResolveError::NotFound);
                     }
                     return Err(ResolveError::NotFound);
                 }
@@ -683,6 +720,86 @@ mod tests {
     use super::*;
     use std::net::TcpListener;
     use std::thread;
+
+    #[test]
+    fn ptr_hostname_accepts_root_and_glibc_hostname_syntax() {
+        for host in [
+            b".".as_slice(),
+            b"_service.Host-.test",
+            b"host.-part.test",
+            b"123.test",
+        ] {
+            assert_eq!(ptr_hostname(&name(host)), Some(host.to_vec()));
+        }
+    }
+
+    #[test]
+    fn ptr_hostname_rejects_binary_labels_and_malformed_wire_names() {
+        for host in [
+            br"server\.test".as_slice(),
+            br"server\000.test",
+            b"server test",
+            b"-host.test",
+        ] {
+            assert_eq!(ptr_hostname(&name(host)), None, "{host:?}");
+        }
+        for wire in [
+            vec![],
+            vec![1, b'a'],
+            vec![0, 0],
+            vec![64; 66],
+            vec![0xc0, 0],
+        ] {
+            assert_eq!(ptr_hostname(&wire), None);
+        }
+        let mut longest = Vec::new();
+        for length in [63, 63, 63, 61] {
+            longest.push(length);
+            longest.extend(std::iter::repeat_n(b'a', usize::from(length)));
+        }
+        longest.push(0);
+        assert_eq!(longest.len(), NS_MAXCDNAME);
+        assert_eq!(ptr_hostname(&longest).unwrap().len(), 253);
+        longest.insert(longest.len() - 1, b'a');
+        assert_eq!(ptr_hostname(&longest), None);
+    }
+
+    #[test]
+    fn reverse_ptr_root_and_first_target_policy_use_real_decoder() {
+        let config = ResolverConfig::default();
+        for (targets, expected) in [
+            (vec![b".".as_slice()], Ok(b".".to_vec())),
+            (
+                vec![br"bad\.test".as_slice(), b"valid.test"],
+                Err(ResolveError::NotFound),
+            ),
+            (
+                vec![b"valid.test".as_slice(), br"bad\.test"],
+                Ok(b"valid.test".to_vec()),
+            ),
+        ] {
+            let mut calls = 0;
+            let result = reverse_with(
+                "192.0.2.230".parse().unwrap(),
+                &config,
+                |owner, kind, _, _, _, _| {
+                    calls += 1;
+                    query_with_exchange(owner, kind, Duration::from_secs(1), false, |sent, _| {
+                        let records: Vec<_> = targets
+                            .iter()
+                            .map(|target| rr(&[0xc0, 12], qtype::PTR, 1, 60, &name(target)))
+                            .collect();
+                        Ok(response_with_records(sent, &records))
+                    })
+                },
+            );
+            assert_eq!(result, expected);
+            assert_eq!(
+                calls, 1,
+                "a definitive target must not cause retry amplification"
+            );
+        }
+    }
 
     #[test]
     fn reverse_owners_are_absolute_and_preserve_all_ipv6_nibbles() {
@@ -762,8 +879,8 @@ mod tests {
     }
 
     #[test]
-    fn ptr_rejects_root_and_rdata_spilling_into_the_next_record() {
-        for target in [vec![0], vec![0xc0], vec![0xc0, 12, 0], vec![1, b'x']] {
+    fn ptr_rejects_rdata_spilling_into_the_next_record() {
+        for target in [vec![0xc0], vec![0xc0, 12, 0], vec![1, b'x']] {
             let result = query_with_exchange(
                 b"example.test",
                 qtype::PTR,

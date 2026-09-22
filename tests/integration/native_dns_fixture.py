@@ -58,6 +58,16 @@ def respond(query: bytes, transport: str, seen: Counter) -> bytes:
                        rr(b"\xc0\x0c", 12, target)]
         elif name == "10.2.0.192.in-addr.arpa":
             records = [rr(b"\xc0\x0c", 12, wire_name("peer.foreign.test"))]
+        elif name.endswith(".2.0.192.in-addr.arpa") and 206 <= int(name.split(".")[0]) <= 211:
+            targets = {
+                206: [b"\0"],
+                207: [b"\x03a.b\0"],
+                208: [b"\x03a\0b\0"],
+                209: [wire_name("_service.Host-.test")],
+                210: [b"\x03a.b\0", wire_name("valid.test")],
+                211: [wire_name("valid.test"), b"\x03a.b\0"],
+            }
+            records = [rr(b"\xc0\x0c", 12, target) for target in targets[int(name.split(".")[0])]]
         elif name == "201.2.0.192.in-addr.arpa":
             flags |= 3
         elif name == "202.2.0.192.in-addr.arpa":
@@ -182,6 +192,11 @@ def main() -> None:
     transport = "tcp" if args.tcp_only else "udp"
     for canonical, count in [("edge.test", 1), ("v6edge.test", 1), ("ptr-edge.local.test", 3), ("ptr-v6.local.test", 1)]:
         assert seen[(canonical, transport)] == count, (canonical, seen)
+    for last in range(206, 212):
+        owner = f"{last}.2.0.192.in-addr.arpa"
+        assert seen[(owner, transport)] == 2, (owner, seen)
+        other = "udp" if transport == "tcp" else "tcp"
+        assert seen[(owner, other)] == 0, (owner, seen)
     print("DNS fixture: forward/PTR TCP fallback, alias follow-up, files and no-query controls passed", flush=True)
 
 
