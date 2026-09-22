@@ -310,7 +310,7 @@ impl DnsRecord {
 
     /// Try to extract an IPv4 address from an A record.
     pub fn as_ipv4(&self) -> Option<Ipv4Addr> {
-        if self.rtype != qtype::A || self.rdata.len() != 4 {
+        if self.rclass != qclass::IN || self.rtype != qtype::A || self.rdata.len() != 4 {
             return None;
         }
         Some(Ipv4Addr::new(
@@ -323,7 +323,7 @@ impl DnsRecord {
 
     /// Try to extract an IPv6 address from an AAAA record.
     pub fn as_ipv6(&self) -> Option<Ipv6Addr> {
-        if self.rtype != qtype::AAAA || self.rdata.len() != 16 {
+        if self.rclass != qclass::IN || self.rtype != qtype::AAAA || self.rdata.len() != 16 {
             return None;
         }
         let mut octets = [0u8; 16];
@@ -396,6 +396,18 @@ impl DnsMessage {
         let header = DnsHeader::decode(buf)?;
         let mut pos = DNS_HEADER_SIZE;
 
+        // Counts are supplied by the peer. Even a root-name question needs
+        // five bytes, and a root-name RR with empty RDATA needs eleven. Reject
+        // impossible counts BEFORE reserving vectors: a twelve-byte datagram
+        // must not trigger allocations for tens of thousands of records.
+        let record_count = usize::from(header.ancount)
+            + usize::from(header.nscount)
+            + usize::from(header.arcount);
+        let minimum_body = usize::from(header.qdcount) * 5 + record_count * 11;
+        if minimum_body > buf.len() - DNS_HEADER_SIZE {
+            return None;
+        }
+
         let mut questions = Vec::with_capacity(header.qdcount as usize);
         for _ in 0..header.qdcount {
             let (q, len) = DnsQuestion::decode(&buf[pos..], buf)?;
@@ -449,7 +461,7 @@ pub fn encode_domain_name(name: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Maximum number of compression pointer hops allowed before aborting.
-/// This prevents stack overflow from pointer loops (e.g., mutual back-references).
+/// Bounds work even for pointer-only chains which do not expand the name.
 const MAX_POINTER_HOPS: usize = 64;
 
 /// Decode a domain name from DNS wire format, handling compression.
@@ -457,102 +469,50 @@ const MAX_POINTER_HOPS: usize = 64;
 /// Returns the decoded name (as "example.com") and bytes consumed.
 fn decode_domain_name(buf: &[u8], full_msg: &[u8]) -> Option<(Vec<u8>, usize)> {
     let mut result = Vec::new();
+    let mut source = buf;
     let mut pos = 0;
+    let mut consumed = None;
+    let mut pointer_hops = 0;
+    // RFC 1035 counts label-length octets AND the final root octet, not
+    // just the dotted presentation. Keep one budget across all pointers.
+    let mut wire_len = 1usize;
 
     loop {
-        if pos >= buf.len() {
-            return None;
-        }
-
-        let len = buf[pos];
-
-        if len == 0 {
-            // End of name
-            return Some((result, pos + 1));
-        }
-
-        // Check for compression pointer (top 2 bits set)
-        if (len & 0xC0) == 0xC0 {
-            if pos + 1 >= buf.len() {
-                return None;
+        let len = *source.get(pos)?;
+        match len {
+            0 => return Some((result, consumed.unwrap_or(pos + 1))),
+            1..=63 => {
+                let label_len = usize::from(len);
+                wire_len += 1 + label_len;
+                if wire_len > NS_MAXCDNAME {
+                    return None;
+                }
+                let end = pos.checked_add(1 + label_len)?;
+                let label = source.get(pos + 1..end)?;
+                if !result.is_empty() {
+                    result.push(b'.');
+                }
+                result.extend_from_slice(label);
+                pos = end;
             }
-            let offset = (((len & 0x3F) as usize) << 8) | (buf[pos + 1] as usize);
-
-            // Follow the pointer in full_msg, starting hop counter at 1
-            return decode_domain_name_at_offset(full_msg, offset, &mut result, 1)
-                .map(|_| (result, pos + 2));
-        }
-
-        // Normal label
-        let label_len = len as usize;
-        if pos + 1 + label_len > buf.len() {
-            return None;
-        }
-
-        if !result.is_empty() {
-            result.push(b'.');
-        }
-        result.extend_from_slice(&buf[pos + 1..pos + 1 + label_len]);
-        pos += 1 + label_len;
-    }
-}
-
-/// Helper for decoding a name at a specific offset (for compression).
-///
-/// `pointer_hops` tracks the total number of compression pointers followed
-/// across all recursive calls. This prevents stack overflow from pointer loops
-/// (e.g., offset A -> offset B -> offset A) that the simple `new_offset >= pos`
-/// check cannot catch.
-fn decode_domain_name_at_offset(
-    msg: &[u8],
-    offset: usize,
-    result: &mut Vec<u8>,
-    pointer_hops: usize,
-) -> Option<()> {
-    if pointer_hops > MAX_POINTER_HOPS {
-        return None;
-    }
-
-    let mut pos = offset;
-    let mut depth = 0;
-
-    loop {
-        if pos >= msg.len() || depth > 128 {
-            return None;
-        }
-
-        let len = msg[pos];
-
-        if len == 0 {
-            break;
-        }
-
-        if (len & 0xC0) == 0xC0 {
-            if pos + 1 >= msg.len() {
-                return None;
+            0xc0..=0xff => {
+                let low = *source.get(pos.checked_add(1)?)?;
+                let offset = (usize::from(len & 0x3f) << 8) | usize::from(low);
+                pointer_hops += 1;
+                if pointer_hops > MAX_POINTER_HOPS || (consumed.is_some() && offset >= pos) {
+                    return None;
+                }
+                // Only the first pointer consumes bytes in the caller's
+                // slice. Following pointers is iterative, never recursive.
+                consumed.get_or_insert(pos + 2);
+                source = full_msg;
+                pos = offset;
             }
-            let new_offset = (((len & 0x3F) as usize) << 8) | (msg[pos + 1] as usize);
-            if new_offset >= pos {
-                // Forward pointer would cause infinite loop
-                return None;
-            }
-            return decode_domain_name_at_offset(msg, new_offset, result, pointer_hops + 1);
+            // 01xxxxxx and 10xxxxxx are reserved label encodings, not
+            // lengths of 64..191 bytes. Reject them before copying data.
+            _ => return None,
         }
-
-        let label_len = len as usize;
-        if pos + 1 + label_len > msg.len() {
-            return None;
-        }
-
-        if !result.is_empty() {
-            result.push(b'.');
-        }
-        result.extend_from_slice(&msg[pos + 1..pos + 1 + label_len]);
-        pos += 1 + label_len;
-        depth += 1;
     }
-
-    Some(())
 }
 
 // ---------------------------------------------------------------------------
@@ -575,22 +535,30 @@ pub struct DnsResolution {
 /// Parse a DNS response buffer and extract address records.
 ///
 /// Used by the ABI layer's DNS stub resolver after receiving a UDP response.
-/// Returns the answer records on success, empty vec on NXDOMAIN, None on error.
+/// Returns the answer records on success, empty vec on a complete NXDOMAIN,
+/// and None on malformed, truncated, or unsuccessful replies. The transport
+/// must handle TCP fallback; partial UDP answers are not a successful result.
 pub fn parse_dns_response(recv_buf: &[u8], expected_id: u16) -> Option<Vec<DnsRecord>> {
     if recv_buf.len() < DNS_HEADER_SIZE {
         return None;
     }
     let header = DnsHeader::decode(recv_buf)?;
-    if !header.is_response() || header.id != expected_id {
+    if !header.is_response()
+        || header.id != expected_id
+        || header.is_truncated()
+        || header.flags & 0x7800 != 0
+    {
         return None;
     }
+    // Validate all declared sections even for negative replies. Otherwise a
+    // malformed NXDOMAIN can bypass decoding and look like a valid miss.
+    let decoded = DnsMessage::decode(recv_buf)?;
     if header.rcode() == rcode::NXDOMAIN {
         return Some(Vec::new());
     }
     if header.rcode() != rcode::NOERROR {
         return None;
     }
-    let decoded = DnsMessage::decode(recv_buf)?;
     Some(decoded.answers)
 }
 
@@ -713,6 +681,184 @@ mod tests {
         assert_eq!(header.rcode(), 3);
     }
 
+    fn wire_name(label_lengths: &[usize]) -> Vec<u8> {
+        let mut wire = Vec::new();
+        for &len in label_lengths {
+            assert!((1..=63).contains(&len));
+            wire.push(len as u8);
+            wire.extend(std::iter::repeat_n(b'a', len));
+        }
+        wire.push(0);
+        wire
+    }
+
+    #[test]
+    fn test_decode_rejects_reserved_label_tags() {
+        for tag in [0x40u8, 0x7f, 0x80, 0xbf] {
+            let mut wire = vec![tag];
+            wire.extend(std::iter::repeat_n(b'a', usize::from(tag)));
+            wire.push(0);
+            assert!(decode_domain_name(&wire, &wire).is_none());
+
+            let start = wire.len();
+            wire.extend_from_slice(&[0xc0, 0]);
+            assert!(decode_domain_name(&wire[start..], &wire).is_none());
+        }
+    }
+
+    #[test]
+    fn test_decode_enforces_expanded_wire_name_limit() {
+        let longest = wire_name(&[63, 63, 63, 61]);
+        assert_eq!(longest.len(), 255);
+        let (name, consumed) = decode_domain_name(&longest, &longest).unwrap();
+        assert_eq!(name.len(), 253);
+        assert_eq!(consumed, 255);
+
+        let too_long = wire_name(&[63, 63, 63, 62]);
+        assert_eq!(too_long.len(), 256);
+        assert!(decode_domain_name(&too_long, &too_long).is_none());
+
+        let many_labels = wire_name(&[1; 127]);
+        assert!(decode_domain_name(&many_labels, &many_labels).is_some());
+        let too_many_labels = wire_name(&[1; 128]);
+        assert!(decode_domain_name(&too_many_labels, &too_many_labels).is_none());
+    }
+
+    #[test]
+    fn test_decode_compressed_suffix_shares_name_budget() {
+        for prefix_len in [61usize, 62] {
+            let mut message = wire_name(&[63, 63, 63]);
+            let start = message.len();
+            message.push(prefix_len as u8);
+            message.extend(std::iter::repeat_n(b'p', prefix_len));
+            message.extend_from_slice(&[0xc0, 0, 0xaa, 0xbb]);
+            let decoded = decode_domain_name(&message[start..], &message);
+            if prefix_len == 61 {
+                let (name, consumed) = decoded.unwrap();
+                assert_eq!(name.len(), 253);
+                assert_eq!(consumed, prefix_len + 3);
+                assert_eq!(&name[..prefix_len], vec![b'p'; prefix_len]);
+                assert_eq!(name[prefix_len], b'.');
+            } else {
+                assert!(decoded.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn test_decode_pointer_chains_have_bounded_work() {
+        let mut message = vec![0];
+        let mut target = 0usize;
+        for hops in 1..=MAX_POINTER_HOPS + 1 {
+            let start = message.len();
+            message.push(0xc0 | ((target >> 8) as u8));
+            message.push(target as u8);
+            let decoded = decode_domain_name(&message[start..], &message);
+            if hops <= MAX_POINTER_HOPS {
+                assert_eq!(decoded, Some((Vec::new(), 2)));
+            } else {
+                assert!(decoded.is_none());
+            }
+            target = start;
+        }
+    }
+
+    #[test]
+    fn test_decode_rejects_cycles_and_truncated_names() {
+        for wire in [
+            &b"\xc0\x00"[..],
+            &b"\xc0\x02\xc0\x00"[..],
+            &b"\x01a\xc0\x00"[..],
+            &b"\xc0\xff"[..],
+            &b"\xc0"[..],
+            &b"\x03ab"[..],
+            &b""[..],
+        ] {
+            assert!(decode_domain_name(wire, wire).is_none());
+        }
+    }
+
+    #[test]
+    fn test_decode_rejects_impossible_section_counts() {
+        for count_offset in [4, 6, 8, 10] {
+            let mut packet = [0u8; DNS_HEADER_SIZE];
+            packet[count_offset..count_offset + 2].copy_from_slice(&u16::MAX.to_be_bytes());
+            assert!(DnsMessage::decode(&packet).is_none());
+        }
+
+        // The lower bound must accept the smallest legal entries, including
+        // a root question and empty-RDATA records in all three RR sections.
+        let mut packet = vec![0u8; DNS_HEADER_SIZE + 5 + 3 * 11];
+        for count_offset in [4, 6, 8, 10] {
+            packet[count_offset + 1] = 1;
+        }
+        let decoded = DnsMessage::decode(&packet).unwrap();
+        assert_eq!(decoded.questions.len(), 1);
+        assert_eq!(decoded.answers.len(), 1);
+        assert_eq!(decoded.authorities.len(), 1);
+        assert_eq!(decoded.additionals.len(), 1);
+    }
+
+    fn address_response() -> Vec<u8> {
+        b"\x12\x34\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00\x07example\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04\xc0\x00\x02\x01".to_vec()
+    }
+
+    #[test]
+    fn test_parse_response_accepts_complete_compressed_answer() {
+        let packet = address_response();
+        let answers = parse_dns_response(&packet, 0x1234).unwrap();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].name, b"example.com");
+        assert_eq!(answers[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 1)));
+        for end in 0..packet.len() {
+            assert!(parse_dns_response(&packet[..end], 0x1234).is_none());
+        }
+        assert!(parse_dns_response(&packet, 0x4321).is_none());
+    }
+
+    #[test]
+    fn test_parse_response_rejects_truncation_and_non_query_opcode() {
+        for flag in [0x02, 0x08] {
+            let mut packet = address_response();
+            packet[2] |= flag;
+            assert!(parse_dns_response(&packet, 0x1234).is_none());
+        }
+        let mut query = address_response();
+        query[2] &= 0x7f;
+        assert!(parse_dns_response(&query, 0x1234).is_none());
+    }
+
+    #[test]
+    fn test_parse_response_validates_negative_reply_sections() {
+        let mut packet = address_response();
+        packet.truncate(29); // Header and complete question, no answers.
+        packet[3] = 0x83;
+        packet[7] = 0;
+        assert!(parse_dns_response(&packet, 0x1234).unwrap().is_empty());
+        assert!(parse_dns_response(&packet[..28], 0x1234).is_none());
+        packet[7] = 1; // A declared but missing answer is not a valid miss.
+        assert!(parse_dns_response(&packet, 0x1234).is_none());
+    }
+
+    #[test]
+    fn test_address_extraction_requires_internet_class() {
+        for (rtype, rdata) in [(qtype::A, vec![0; 4]), (qtype::AAAA, vec![0; 16])] {
+            let mut record = DnsRecord {
+                name: b"example.com".to_vec(),
+                rtype,
+                rclass: qclass::IN,
+                ttl: 60,
+                rdata,
+            };
+            assert!(record.as_ipv4().is_some() || record.as_ipv6().is_some());
+            for rclass in [2, 3, 4, 255] {
+                record.rclass = rclass;
+                assert!(record.as_ipv4().is_none());
+                assert!(record.as_ipv6().is_none());
+            }
+        }
+    }
+
     // -----------------------------------------------------------------
     // Smoke-fuzz proptests for encode_domain_name (bd-s170, Archetype 1)
     // -----------------------------------------------------------------
@@ -742,6 +888,24 @@ mod tests {
 
     proptest! {
         #![proptest_config(fuzz_proptest_config(512))]
+
+        #[test]
+        fn fuzz_decode_domain_name_is_bounded(
+            bytes in proptest::collection::vec(any::<u8>(), 0..2048),
+        ) {
+            if let Some((name, consumed)) = decode_domain_name(&bytes, &bytes) {
+                prop_assert!(name.len() <= 253);
+                prop_assert!((1..=bytes.len()).contains(&consumed));
+            }
+        }
+
+        #[test]
+        fn fuzz_decode_dns_message_never_panics(
+            bytes in proptest::collection::vec(any::<u8>(), 0..2048),
+        ) {
+            let _ = DnsMessage::decode(&bytes);
+            let _ = parse_dns_response(&bytes, 0x1234);
+        }
 
         #[test]
         fn fuzz_encode_domain_name_never_panics(
