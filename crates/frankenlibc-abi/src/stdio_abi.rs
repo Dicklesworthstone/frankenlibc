@@ -12928,40 +12928,50 @@ pub unsafe extern "C" fn fmemopen(
     };
 
     // Prepare the backing buffer.
-    let (data, content_len) = if buf.is_null() {
+    // bd-rv2gv6: for read-only mode, the cursor's shadow is the SOLE copy —
+    // the stream's mem_backing carries NO data (position tracking only via
+    // content_end). For writable modes, single-alloc copy into the stream.
+    let (data, content_len, fast_read_data) = if buf.is_null() {
         // Internal buffer: zero-initialized, no initial content.
-        (vec![0u8; size], 0)
+        (vec![0u8; size], 0usize, None)
     } else {
-        // User-provided buffer: copy into our Vec so we own it safely.
-        // For truncate modes ("w"/"w+"), content starts empty.
-        // For append modes, content_len = first NUL byte or size.
-        // For read-only and read/write (non-truncate) modes, content_len = size.
         let slice = unsafe { std::slice::from_raw_parts(buf.cast::<u8>(), size) };
-        let mut v = vec![0u8; size];
-        if !open_flags.truncate {
-            v[..size].copy_from_slice(slice);
-        }
-
-        let cl = if open_flags.truncate {
-            0
-        } else if open_flags.append {
-            v.iter().position(|&b| b == 0).unwrap_or(size)
-        } else if open_flags.readable && !open_flags.writable {
-            size
-        } else if open_flags.writable && !open_flags.readable {
-            0
+        if open_flags.readable && !open_flags.writable {
+            // Read-only "r": single copy serves as the cursor's shadow.
+            // The stream's mem_backing tracks position only.
+            let shadow = slice.to_vec();
+            let cl = if open_flags.append {
+                shadow.iter().position(|&b| b == 0).unwrap_or(size)
+            } else {
+                size
+            };
+            (Vec::new(), cl, Some(shadow))
         } else {
-            size
-        };
-        (v, cl)
+            // Writable modes: single-alloc copy into the stream's buffer.
+            let v = if open_flags.truncate {
+                vec![0u8; size]
+            } else {
+                let mut v = Vec::with_capacity(size);
+                v.extend_from_slice(slice);
+                v
+            };
+            let cl = if open_flags.truncate {
+                0
+            } else if open_flags.append {
+                v.iter().position(|&b| b == 0).unwrap_or(size)
+            } else {
+                size
+            };
+            (v, cl, None)
+        }
     };
 
-    let fast_read_data = if open_flags.readable && !open_flags.writable {
-        Some(data[..content_len].to_vec())
+    let stream = if fast_read_data.is_some() {
+        // bd-rv2gv6 read-only: cursor owns the content; stream tracks position.
+        StdioStream::new_mem_fixed_readonly(content_len, open_flags)
     } else {
-        None
+        StdioStream::new_mem_fixed(data, content_len, open_flags)
     };
-    let stream = StdioStream::new_mem_fixed(data, content_len, open_flags);
     let handle = register_memory_stream_with_native_handle(
         stream,
         io_internal_abi::NativeFileBacking::MemoryFixed {
