@@ -19,7 +19,7 @@
 //! +---------------------+
 //! ```
 
-use super::dns_name::{NS_MAXCDNAME, name_pton};
+use super::dns_name::{NS_MAXCDNAME, NS_MAXDNAME, name_ntop, name_pton};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 // ---------------------------------------------------------------------------
@@ -466,9 +466,10 @@ const MAX_POINTER_HOPS: usize = 64;
 
 /// Decode a domain name from DNS wire format, handling compression.
 ///
-/// Returns the decoded name (as "example.com") and bytes consumed.
+/// Returns the escaped presentation name (as "example.com") and bytes consumed.
+/// Label data is escaped using `name_ntop`; the root retains its empty form.
 fn decode_domain_name(buf: &[u8], full_msg: &[u8]) -> Option<(Vec<u8>, usize)> {
-    let mut result = Vec::new();
+    let mut wire = Vec::new();
     let mut source = buf;
     let mut pos = 0;
     let mut consumed = None;
@@ -480,7 +481,20 @@ fn decode_domain_name(buf: &[u8], full_msg: &[u8]) -> Option<(Vec<u8>, usize)> {
     loop {
         let len = *source.get(pos)?;
         match len {
-            0 => return Some((result, consumed.unwrap_or(pos + 1))),
+            0 => {
+                let consumed = consumed.unwrap_or(pos + 1);
+                // Keep the existing empty presentation for the root name.
+                if wire.is_empty() {
+                    return Some((Vec::new(), consumed));
+                }
+                wire.push(0);
+                // Do not flatten label data into separators. A literal dot,
+                // backslash, NUL or non-ASCII octet must survive a round trip
+                // through the presentation form used by resolver consumers.
+                let mut presentation = [0u8; NS_MAXDNAME];
+                let len = name_ntop(&wire, &mut presentation).ok()?;
+                return Some((presentation[..len].to_vec(), consumed));
+            }
             1..=63 => {
                 let label_len = usize::from(len);
                 wire_len += 1 + label_len;
@@ -489,10 +503,8 @@ fn decode_domain_name(buf: &[u8], full_msg: &[u8]) -> Option<(Vec<u8>, usize)> {
                 }
                 let end = pos.checked_add(1 + label_len)?;
                 let label = source.get(pos + 1..end)?;
-                if !result.is_empty() {
-                    result.push(b'.');
-                }
-                result.extend_from_slice(label);
+                wire.push(len);
+                wire.extend_from_slice(label);
                 pos = end;
             }
             0xc0..=0xff => {
@@ -624,6 +636,65 @@ mod tests {
         let (name, len) = decode_domain_name(msg, msg).unwrap();
         assert_eq!(name, b"example.com");
         assert_eq!(len, 13);
+    }
+
+    #[test]
+    fn test_decode_preserves_literal_dots_in_labels() {
+        let single_label = b"\x0bexample.com\x00";
+        let two_labels = b"\x07example\x03com\x00";
+        let (single, consumed) = decode_domain_name(single_label, single_label).unwrap();
+        let (dotted, _) = decode_domain_name(two_labels, two_labels).unwrap();
+        assert_eq!(single, br"example\.com");
+        assert_eq!(dotted, b"example.com");
+        assert_ne!(single, dotted);
+        assert_eq!(consumed, single_label.len());
+        assert_eq!(encode_domain_name(&single).unwrap(), single_label);
+    }
+
+    #[test]
+    fn test_decode_escapes_binary_label_data() {
+        let wire = b"\x05a\x00.\\\xff\x00";
+        let (name, consumed) = decode_domain_name(wire, wire).unwrap();
+        assert_eq!(name, br"a\000\.\\\255");
+        assert_eq!(consumed, wire.len());
+        assert_eq!(encode_domain_name(&name).unwrap(), wire);
+        assert!(!name.contains(&0));
+    }
+
+    #[test]
+    fn test_decode_every_label_octet_round_trips() {
+        for octet in 0u8..=u8::MAX {
+            let wire = [1, octet, 0];
+            let (name, consumed) = decode_domain_name(&wire, &wire).unwrap();
+            assert_eq!(consumed, wire.len());
+            assert_eq!(encode_domain_name(&name).unwrap(), wire, "octet {octet}");
+        }
+    }
+
+    #[test]
+    fn test_decode_compressed_binary_suffix_keeps_label_boundaries() {
+        let packet = b"\x03a.b\x00\x01x\xc0\x00";
+        let (name, consumed) = decode_domain_name(&packet[5..], packet).unwrap();
+        assert_eq!(name, br"x.a\.b");
+        assert_eq!(consumed, 4);
+        assert_eq!(encode_domain_name(&name).unwrap(), b"\x01x\x03a.b\x00");
+    }
+
+    #[test]
+    fn test_decode_maximum_binary_name_has_bounded_presentation() {
+        let mut wire = Vec::new();
+        for len in [63u8, 63, 63, 61] {
+            wire.push(len);
+            wire.extend(std::iter::repeat_n(0xff, usize::from(len)));
+        }
+        wire.push(0);
+        assert_eq!(wire.len(), NS_MAXCDNAME);
+        let (name, consumed) = decode_domain_name(&wire, &wire).unwrap();
+        // 250 data octets rendered as four bytes each, plus three dots.
+        assert_eq!(name.len(), 1003);
+        assert!(name.len() < NS_MAXDNAME);
+        assert_eq!(consumed, wire.len());
+        assert_eq!(encode_domain_name(&name).unwrap(), wire);
     }
 
     #[test]
@@ -1018,9 +1089,32 @@ mod tests {
             bytes in proptest::collection::vec(any::<u8>(), 0..2048),
         ) {
             if let Some((name, consumed)) = decode_domain_name(&bytes, &bytes) {
-                prop_assert!(name.len() <= 253);
+                // Escaped presentation can expand each binary octet to four
+                // bytes; the encoded name must still fit the DNS wire limit.
+                prop_assert!(name.len() < NS_MAXDNAME);
+                let wire = encode_domain_name(&name).expect("decoded presentation is valid");
+                prop_assert!(wire.len() <= NS_MAXCDNAME);
                 prop_assert!((1..=bytes.len()).contains(&consumed));
             }
+        }
+
+        #[test]
+        fn fuzz_decode_binary_labels_round_trip(
+            labels in proptest::collection::vec(
+                proptest::collection::vec(any::<u8>(), 1..64), 1..5
+            ),
+        ) {
+            let mut wire = Vec::new();
+            for label in labels {
+                wire.push(label.len() as u8);
+                wire.extend_from_slice(&label);
+            }
+            wire.push(0);
+            prop_assume!(wire.len() <= NS_MAXCDNAME);
+            let (name, consumed) = decode_domain_name(&wire, &wire).unwrap();
+            prop_assert_eq!(consumed, wire.len());
+            prop_assert!(name.len() < NS_MAXDNAME);
+            prop_assert_eq!(encode_domain_name(&name).unwrap(), wire);
         }
 
         #[test]
