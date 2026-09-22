@@ -1,0 +1,119 @@
+name: Native hostent
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/native-hostent.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hostent:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply reviewed core hostent implementation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/hostent
+          test "$(git hash-object crates/frankenlibc-core/src/dns_transport.rs)" = ccf19e60c6d62866fae266898e470246f518d262
+          mkdir -p crates/frankenlibc-core/src/dns_transport
+          gh api repos/$GITHUB_REPOSITORY/git/blobs/bc279305d8843a1911611bd160cc22e3e7856b31 --jq .content | base64 --decode > crates/frankenlibc-core/src/dns_transport/host.rs
+          test "$(git hash-object crates/frankenlibc-core/src/dns_transport/host.rs)" = bc279305d8843a1911611bd160cc22e3e7856b31
+          cat > "$RUNNER_TEMP/hostent.patch" <<'PATCH'
+          --- a/crates/frankenlibc-core/src/dns_transport.rs
+          +++ b/crates/frankenlibc-core/src/dns_transport.rs
+          @@ -4,6 +4,8 @@
+           //! the complete wire-format question are checked before accepting a reply or
+           //! following TC to TCP (RFC 5452, RFC 7766). One monotonic deadline covers UDP,
+           //! TCP connection establishment, partial frame I/O, and discarded packets.
+          +
+          +pub mod host;
+           
+           use std::fs::File;
+           use std::io::{self, Read, Write};
+          @@ -435,8 +437,23 @@
+               record_type: u16,
+               timeout: Duration,
+               trust_ad: bool,
+          +    exchange: F,
+          +) -> Result<QueryReply, QueryError>
+          +where
+          +    F: FnMut(&[u8], Instant) -> Result<Vec<u8>, QueryError>,
+          +{
+          +    query_with_chain(hostname, record_type, timeout, trust_ad, exchange).map(|(reply, _)| reply)
+          +}
+          +
+          +// Retain the validated alias path for hostent consumers without changing the
+          +// existing QueryReply contract or exposing unbound records from the packet.
+          +fn query_with_chain<F>(
+          +    hostname: &[u8],
+          +    record_type: u16,
+          +    timeout: Duration,
+          +    trust_ad: bool,
+               mut exchange: F,
+          -) -> Result<QueryReply, QueryError>
+          +) -> Result<(QueryReply, Vec<WireName>), QueryError>
+           where
+               F: FnMut(&[u8], Instant) -> Result<Vec<u8>, QueryError>,
+           {
+          @@ -464,7 +481,7 @@
+                   let sent = &wire[..length];
+                   let packet = exchange(sent, deadline)?;
+                   match address_answer(sent, &packet, record_type, &mut visited, &mut ttl_limit)? {
+          -            AddressAnswer::Complete(reply) => return Ok(reply),
+          +            AddressAnswer::Complete(reply) => return Ok((reply, visited)),
+                       AddressAnswer::Follow(next) => {
+                           // Already validated, uncompressed wire name. Re-encode without
+                           // a presentation round trip so embedded dots/NULs retain their
+          PATCH
+          git apply --check "$RUNNER_TEMP/hostent.patch"
+          git apply "$RUNNER_TEMP/hostent.patch"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - name: Compile and exercise host metadata and existing transports
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 --config skip_children=true crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-core/src/dns_transport/host.rs
+          cargo test -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/hostent/core.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/hostent/core.log
+          cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/hostent/abi-check.log
+          git diff --check
+      - name: Preserve source for ABI integration and verification
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-core/src/dns_transport/host.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/src/glibc_internal_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs AGENTS.md PLAN_TO_PORT_GLIBC_TO_RUST.md .beads/issues.jsonl; do
+            mkdir -p "artifacts/hostent/source/$(dirname "$path")"
+            cp "$path" "artifacts/hostent/source/$path"
+          done
+      - name: Publish validated source objects without moving any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-core/src/dns_transport/host.rs; do
+            blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST repos/$GITHUB_REPOSITORY/git/blobs --input - --jq .sha)
+            test "$blob" = "$(git hash-object "$path")"
+            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/hostent/published-blobs.txt
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-hostent-results
+          path: artifacts/hostent/**
+          include-hidden-files: true
