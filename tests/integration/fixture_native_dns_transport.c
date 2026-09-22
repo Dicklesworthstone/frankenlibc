@@ -72,18 +72,32 @@ static void check_error(const char *name, int expected) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
-    void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
-    if (!library) {
-        fprintf(stderr, "dlopen: %s\n", dlerror());
-        return 1;
+    if (argc != 2 && argc != 3) return 2;
+    if (argc == 3) {
+        if (strcmp(argv[2], "--preloaded") != 0) return 2;
+        /* Exercise normal ELF symbol interposition. Reopening the already
+         * preloaded library through its own dlopen tests the independent
+         * loader implementation, not how applications call getaddrinfo. */
+        lookup = getaddrinfo;
+        release_result = freeaddrinfo;
+    } else {
+        void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+        if (!library) {
+            fprintf(stderr, "dlopen: %s\n", dlerror());
+            return 1;
+        }
+        lookup = (getaddrinfo_fn)dlsym(library, "getaddrinfo");
+        release_result = (freeaddrinfo_fn)dlsym(library, "freeaddrinfo");
     }
-    lookup = (getaddrinfo_fn)dlsym(library, "getaddrinfo");
-    release_result = (freeaddrinfo_fn)dlsym(library, "freeaddrinfo");
     Dl_info owner = {0};
     if (!lookup || !release_result || !dladdr((void *)lookup, &owner)
         || !owner.dli_fname || !strstr(owner.dli_fname, "frankenlibc")) {
         fprintf(stderr, "resolver symbol did not resolve to FrankenLibC\n");
+        return 1;
+    }
+    if (!dladdr((void *)release_result, &owner) || !owner.dli_fname
+        || !strstr(owner.dli_fname, "frankenlibc")) {
+        fprintf(stderr, "freeaddrinfo symbol did not resolve to FrankenLibC\n");
         return 1;
     }
     check_address("alias.test.", AF_INET, "192.0.2.9");

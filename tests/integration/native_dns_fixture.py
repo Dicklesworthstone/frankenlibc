@@ -128,11 +128,13 @@ def main() -> None:
         worker.start()
     try:
         environment = os.environ.copy()
+        command = [args.client, args.library]
         if args.preload:
             # Interpose only the C caller, never the fixture server. The
             # client still verifies which library owns its resolver symbol.
             environment["LD_PRELOAD"] = args.library
-        subprocess.run([args.client, args.library], check=True, timeout=20, env=environment)
+            command.append("--preloaded")
+        subprocess.run(command, check=True, timeout=20, env=environment)
     finally:
         stop.set()
         for worker in workers:
