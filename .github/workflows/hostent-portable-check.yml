@@ -1,0 +1,102 @@
+name: Hostent portable cross-check
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/hostent-portable-check.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protocol:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a06c957985c40bfe756c3d78575aa44201b1d6f3
+      - name: Apply the same immutable reviewed candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/hostent
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          lines = Path('.github/workflows/native-hostent.yml').read_text().splitlines(True)
+          start = lines.index('      - name: Apply immutable reviewed legacy resolver candidate\n')
+          start = next(i for i in range(start, len(lines)) if lines[i] == '        run: |\n') + 1
+          body = []
+          for line in lines[start:]:
+              if line.strip() and not line.startswith('          '):
+                  break
+              body.append(line[10:] if line.strip() else line)
+          assert body and '075b757eddbb2c2b824de6941136bd488a56be7e' in ''.join(body)
+          Path(os.environ['RUNNER_TEMP'], 'apply-hostent.sh').write_text(''.join(body))
+          PY
+          bash "$RUNNER_TEMP/apply-hostent.sh"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          targets: x86_64-unknown-linux-gnu
+          components: rustfmt
+      - name: Execute the real portable protocol and policy source tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path.cwd() / 'crates/frankenlibc-core/src'
+          harness = Path(os.environ['RUNNER_TEMP']) / 'hostent-protocol'
+          harness.mkdir()
+          (harness / 'Cargo.toml').write_text('[package]\nname="hostent-protocol-check"\nversion="0.0.0"\nedition="2024"\n[dependencies]\nproptest="1"\n[lib]\npath="lib.rs"\n')
+          source = f'#[path = "{root}/dns_transport.rs"] pub mod dns_transport;\npub mod resolv {{\n'
+          for name in ['config', 'dns_name', 'dns']:
+              source += f'#[path = "{root}/resolv/{name}.rs"] pub mod {name};\n'
+          source += '}\n'
+          (harness / 'lib.rs').write_text(source)
+          PY
+          FRANKENLIBC_PROPTEST_CASES=10000 cargo test --manifest-path "$RUNNER_TEMP/hostent-protocol/Cargo.toml" -- --nocapture 2>&1 | tee artifacts/hostent/portable-core.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/hostent/portable-core.log
+      - name: Preserve reviewed source objects without claiming Linux execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-core/src/dns_transport/host.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/src/resolv_abi/legacy_hostent.rs crates/frankenlibc-abi/src/unistd_abi.rs tests/integration/fixture_native_hostent.c tests/integration/native_hostent_fixture.py; do
+            blob=$(python3 -c 'import json,sys; print(json.dumps({"content":open(sys.argv[1]).read(),"encoding":"utf-8"}))' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
+            test "$blob" = "$(git hash-object "$path")"
+            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/hostent/published-blobs.txt
+          done
+      - name: Cross-compile-check the complete Linux ABI (not runtime execution)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --target x86_64-unknown-linux-gnu -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/hostent/linux-cross-check.log
+      - name: Preserve source, original wrappers and diff on every result
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for path in crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-core/src/dns_transport/host.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/src/resolv_abi/legacy_hostent.rs crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs tests/integration/fixture_native_hostent.c tests/integration/native_hostent_fixture.py .github/workflows/native-hostent.yml AGENTS.md PLAN_TO_PORT_GLIBC_TO_RUST.md .beads/issues.jsonl; do
+            if [[ -f "$path" ]]; then
+              mkdir -p "artifacts/hostent/source/$(dirname "$path")"
+              cp "$path" "artifacts/hostent/source/$path"
+            fi
+          done
+          git diff > artifacts/hostent/integration.diff
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-hostent-portable-source
+          path: artifacts/hostent/**
+          include-hidden-files: true
