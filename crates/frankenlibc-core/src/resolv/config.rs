@@ -23,7 +23,11 @@ use std::net::IpAddr;
 /// Maximum number of nameservers (matches glibc)
 pub const MAX_NAMESERVERS: usize = 3;
 
-/// Maximum number of search domains (matches glibc)
+/// Search slots in glibc's legacy public `res_state.dnsrch` array.
+///
+/// Retained for callers that construct that fixed-size ABI representation.
+/// Modern glibc's resolver searches beyond these slots; this is not a limit
+/// on the native configuration's dynamically allocated search list.
 pub const MAX_SEARCH_DOMAINS: usize = 6;
 
 /// Default DNS port
@@ -164,11 +168,19 @@ impl ResolverConfig {
                 }
             }
             b"search" => {
-                self.search.clear();
-                for name in parts.take(MAX_SEARCH_DOMAINS) {
-                    if let Ok(s) = core::str::from_utf8(name) {
-                        self.search.push(s.to_string());
-                    }
+                // MAXDNSRCH limits the old public res_state array, not the
+                // modern resolver's internal search list. A host glibc
+                // res_nsearch probe reaches an eighth suffix even though
+                // res_state.dnsrch exposes only the first six. Keep all
+                // configured candidates, in order, with input-linear storage.
+                let search: Vec<String> = parts
+                    .filter_map(|name| core::str::from_utf8(name).ok().map(str::to_owned))
+                    .collect();
+                // A bare/whitespace-only directive is ignored by glibc; it
+                // must not erase a preceding search list or revive a stale
+                // domain directive through the final defaulting step.
+                if !search.is_empty() {
+                    self.search = search;
                 }
             }
             b"options" => {
@@ -358,6 +370,55 @@ mod tests {
     }
 
     #[test]
+    fn test_search_retains_long_lists_without_legacy_count_or_byte_caps() {
+        let domains: Vec<String> = (0..64).map(|i| format!("d{i}.example")).collect();
+        let content = format!("search {}\n", domains.join(" "));
+        assert!(content.len() > 256);
+        let config = ResolverConfig::parse(content.as_bytes());
+        assert_eq!(config.search, domains);
+        assert_eq!(config.search[7], "d7.example");
+        assert_eq!(config.search[63], "d63.example");
+    }
+
+    #[test]
+    fn test_empty_search_preserves_previous_effective_configuration() {
+        for empty in ["search\n", "search \t\r\n"] {
+            let content = format!(
+                "domain stale.example\nsearch current.example other.example\n{empty}"
+            );
+            let config = ResolverConfig::parse(content.as_bytes());
+            assert_eq!(config.search, vec!["current.example", "other.example"]);
+
+            let content = format!("domain corp.example\n{empty}");
+            let config = ResolverConfig::parse(content.as_bytes());
+            assert_eq!(config.search, vec!["corp.example"]);
+        }
+    }
+
+    #[test]
+    fn test_last_nonempty_search_replaces_rather_than_appends() {
+        let config = ResolverConfig::parse(
+            b"search one two three four five six seven eight\nsearch new.example last.example\nsearch\n",
+        );
+        assert_eq!(config.search, vec!["new.example", "last.example"]);
+    }
+
+    #[test]
+    fn test_inline_comment_markers_retain_glibc_token_semantics() {
+        // Unlike full-line comments, these tokens are not stripped by
+        // glibc's resolv.conf parser. Do not apply a shell-comment lexer.
+        let config = ResolverConfig::parse(
+            b"search one.example # two.example ; three.example\noptions timeout:2 # timeout:30 trust-ad\n",
+        );
+        assert_eq!(
+            config.search,
+            vec!["one.example", "#", "two.example", ";", "three.example"]
+        );
+        assert_eq!(config.timeout, 30);
+        assert!(config.trust_ad);
+    }
+
+    #[test]
     fn test_parse_options_ndots() {
         let config = ResolverConfig::parse(b"options ndots:3\n");
         assert_eq!(config.ndots, 3);
@@ -432,7 +493,7 @@ options ndots:2 timeout:3 attempts:2 rotate
         let config = ResolverConfig::parse(b"search one two three four five six seven eight\n");
         assert_eq!(
             config.search,
-            vec!["one", "two", "three", "four", "five", "six"]
+            vec!["one", "two", "three", "four", "five", "six", "seven", "eight"]
         );
 
         let config =
@@ -660,7 +721,7 @@ options ndots:2 timeout:3 attempts:2 rotate
     //   • Parser never panics on arbitrary bytes.
     //   • Returned config respects documented clamps regardless of input:
     //       - nameservers.len() ≤ MAX_NAMESERVERS
-    //       - search.len() ≤ MAX_SEARCH_DOMAINS
+    //       - search storage is bounded by input size, not legacy ABI slots
     //       - ndots ≤ 15
     //       - timeout ∈ [1, 30]
     //       - attempts ∈ [1, 5]
@@ -701,10 +762,19 @@ options ndots:2 timeout:3 attempts:2 rotate
             ) {
                 let config = ResolverConfig::parse(&bytes);
                 prop_assert!(config.nameservers.len() <= MAX_NAMESERVERS);
-                prop_assert!(config.search.len() <= MAX_SEARCH_DOMAINS);
+                prop_assert!(config.search.iter().map(|name| name.len()).sum::<usize>() <= bytes.len());
                 prop_assert!(config.ndots <= 15);
                 prop_assert!(config.timeout >= 1 && config.timeout <= 30);
                 prop_assert!(config.attempts >= 1 && config.attempts <= 5);
+            }
+
+            #[test]
+            fn fuzz_search_keeps_every_configured_candidate_in_order(
+                domains in proptest::collection::vec("[a-z]{1,16}\\.example", 1..65),
+            ) {
+                let content = format!("domain stale.example\nsearch {}\nsearch\n", domains.join(" "));
+                let config = ResolverConfig::parse(content.as_bytes());
+                prop_assert_eq!(config.search, domains);
             }
 
             /// Biased strategy: directives spliced together with random

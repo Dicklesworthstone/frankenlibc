@@ -37,6 +37,8 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
           FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::dns:: -- --nocapture 2>&1 | tee artifacts/resolver/decoder.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/decoder.log
+          FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::config:: -- --nocapture 2>&1 | tee artifacts/resolver/config.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/config.log
       - name: Check ABI integration
         shell: bash
         run: |
