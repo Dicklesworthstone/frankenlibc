@@ -34,11 +34,14 @@ jobs:
           test "$(git hash-object crates/frankenlibc-core/src/dns_transport.rs)" = 5d6eb03caddf5d79a246bed69e4a2606a8605de4
           test "$(git hash-object tests/integration/fixture_native_dns_transport.c)" = 14354f8bb854e85dc6497a6a381fdb25c1091852
           test "$(git hash-object tests/integration/native_dns_fixture.py)" = 9b85e3668e5a309b051a27aae418e7fc58867c77
+          test "$(git hash-object crates/frankenlibc-abi/tests/resolv_abi_test.rs)" = cab40c2c87385649a864b1a3e863a79671a106fb
           gh api "repos/$GITHUB_REPOSITORY/git/blobs/19b4ba92051abc78dbbb558f0be05e8d6002c8df" --jq .content | base64 --decode > "$RUNNER_TEMP/addrinfo.patch.gz"
           test "$(git hash-object "$RUNNER_TEMP/addrinfo.patch.gz")" = 19b4ba92051abc78dbbb558f0be05e8d6002c8df
           gzip -dc "$RUNNER_TEMP/addrinfo.patch.gz" > "$RUNNER_TEMP/addrinfo.patch"
-          git apply --check "$RUNNER_TEMP/addrinfo.patch"
-          git apply "$RUNNER_TEMP/addrinfo.patch"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/88e18f920ba92865cf036b17465acbe7260c80a2" --jq .content | base64 --decode > "$RUNNER_TEMP/canonical-test.patch"
+          test "$(git hash-object "$RUNNER_TEMP/canonical-test.patch")" = 88e18f920ba92865cf036b17465acbe7260c80a2
+          git apply --check "$RUNNER_TEMP/addrinfo.patch" "$RUNNER_TEMP/canonical-test.patch"
+          git apply "$RUNNER_TEMP/addrinfo.patch" "$RUNNER_TEMP/canonical-test.patch"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
@@ -69,6 +72,8 @@ jobs:
         run: |
           set -euo pipefail
           cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/resolver/abi-check.log
+          cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/resolver/existing-addrinfo.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/existing-addrinfo.log
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/abi-build.log
           cc -Wall -Wextra -Werror tests/integration/fixture_native_dns_transport.c -ldl -o target/native-dns-abi
           test -f target/release/libfrankenlibc_abi.so
@@ -121,7 +126,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/resolver/source
-          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
+          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
             mkdir -p "artifacts/resolver/source/$(dirname "$path")"
             cp "$path" "artifacts/resolver/source/$path"
             printf '%s %s\n' "$(git hash-object "$path")" "$path" | tee -a artifacts/resolver/source-hashes.txt
@@ -133,7 +138,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
+          for path in crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs crates/frankenlibc-abi/tests/resolv_abi_test.rs tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py .github/workflows/native-resolver.yml; do
             blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
             test "$blob" = "$(git hash-object "$path")"
             printf '%s %s\n' "$blob" "$path" | tee -a artifacts/resolver/published-blobs.txt
