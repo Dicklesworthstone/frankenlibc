@@ -1,0 +1,41 @@
+name: Native address selection
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'crates/frankenlibc-core/src/inet/**'
+      - 'crates/frankenlibc-core/src/lib.rs'
+      - '.github/workflows/addrinfo.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  addrinfo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - name: Execute address-family, scoped-literal and mapped-DNS regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/addrinfo
+          cargo test -p frankenlibc-core --lib addrinfo:: -- --nocapture 2>&1 | tee artifacts/addrinfo/core.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/addrinfo/core.log
+          cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/addrinfo/abi-check.log
+      - name: Preserve exact source for ABI integration review
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/addrinfo
+          git archive HEAD AGENTS.md PLAN_TO_PORT_GLIBC_TO_RUST.md .beads/issues.jsonl crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/lib.rs crates/frankenlibc-core/src/inet/mod.rs crates/frankenlibc-core/src/resolv crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs .github/workflows/native-resolver.yml tests/integration/fixture_native_dns_transport.c tests/integration/native_dns_fixture.py | gzip > artifacts/addrinfo/source.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: addrinfo-results
+          path: artifacts/addrinfo/**

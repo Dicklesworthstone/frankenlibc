@@ -68,6 +68,7 @@ compile_error!(
     this crate can build on it."
 );
 
+pub mod addrinfo;
 pub mod aliases;
 pub mod crypt;
 pub mod ctype;
