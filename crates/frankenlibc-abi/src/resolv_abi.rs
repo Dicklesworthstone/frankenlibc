@@ -2319,10 +2319,8 @@ fn native_dns_query(
     timeout: std::time::Duration,
     trust_ad: bool,
     use_vc: bool,
-) -> Result<
-    frankenlibc_core::dns_transport::QueryReply,
-    frankenlibc_core::dns_transport::QueryError,
-> {
+) -> Result<frankenlibc_core::dns_transport::QueryReply, frankenlibc_core::dns_transport::QueryError>
+{
     use frankenlibc_core::dns_transport::QueryError;
     use frankenlibc_core::resolv::dns::rcode;
 
@@ -2340,7 +2338,9 @@ fn native_dns_query(
             &DNS_METRICS.queries_timeout
         }
         Err(QueryError::Io(_)) => &DNS_METRICS.queries_send_error,
-        Err(QueryError::ResponseCode(_)) => &DNS_METRICS.queries_dns_error,
+        Err(QueryError::ResponseCode(_) | QueryError::RetryableResponse(_)) => {
+            &DNS_METRICS.queries_dns_error
+        }
         Err(_) => &DNS_METRICS.queries_parse_error,
     };
     counter.fetch_add(1, AtomicOrdering::Relaxed);
@@ -2360,7 +2360,11 @@ fn native_dns_resolve(
         Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
     };
     frankenlibc_core::dns_transport::resolve_with(
-        hostname, want_v4, want_v6, &config, native_dns_query,
+        hostname,
+        want_v4,
+        want_v6,
+        &config,
+        native_dns_query,
     )
     .map_err(|error| match error {
         ResolveError::NotFound => libc::EAI_NONAME,
@@ -2604,7 +2608,10 @@ pub unsafe extern "C" fn getaddrinfo(
                 let (dns_result, dns_error) =
                     match native_dns_resolve(hostname_bytes, want_v4, want_v6) {
                         Ok(result) => (result, libc::EAI_NONAME),
-                        Err(error) => (frankenlibc_core::resolv::dns::DnsResolution::default(), error),
+                        Err(error) => (
+                            frankenlibc_core::resolv::dns::DnsResolution::default(),
+                            error,
+                        ),
                     };
 
                 for v4 in &dns_result.ipv4 {
@@ -2871,14 +2878,14 @@ unsafe fn getnameinfo_strict_fast(
     let mut port_buf = [0u8; 5];
 
     // SAFETY: caller provides a valid sockaddr for `salen`.
-    let family = unsafe { (*sa).sa_family as c_int };
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
     let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
         libc::AF_INET => {
             if (salen as usize) < size_of::<libc::sockaddr_in>() {
                 return libc::EAI_FAIL;
             }
             // SAFETY: size checked above.
-            let sin = unsafe { &*sa.cast::<libc::sockaddr_in>() };
+            let sin = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in>()) };
             let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
             let port = u16::from_be(sin.sin_port);
             let ip_bytes = write_ipv4_text(ip, &mut ipv4_buf);
@@ -2893,7 +2900,7 @@ unsafe fn getnameinfo_strict_fast(
                 return libc::EAI_FAIL;
             }
             // SAFETY: size checked above.
-            let sin6 = unsafe { &*sa.cast::<libc::sockaddr_in6>() };
+            let sin6 = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in6>()) };
             let mut host_text =
                 match frankenlibc_core::inet::inet_ntop(libc::AF_INET6, &sin6.sin6_addr.s6_addr) {
                     Some(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
@@ -2929,7 +2936,209 @@ unsafe fn getnameinfo_strict_fast(
     0
 }
 
-/// POSIX `getnameinfo` (numeric bootstrap implementation).
+/// Files-first reverse resolution shared by the protocol-independent ABI.
+/// A failed DNS lookup never manufactures a hostname, even in hardened mode.
+fn native_reverse_name(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+    use frankenlibc_core::dns_transport::ResolveError;
+    let address = match address {
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(address),
+        _ => address,
+    };
+    let numeric = address.to_string();
+    if let Ok(Some(name)) = with_hosts_backend_snapshot(|content, _| {
+        frankenlibc_core::resolv::first_reverse_hosts_hostname(content, numeric.as_bytes())
+            .map(ToOwned::to_owned)
+    }) {
+        return Ok(name);
+    }
+    let config = std::fs::read("/etc/resolv.conf")
+        .map(|bytes| frankenlibc_core::resolv::ResolverConfig::parse(&bytes))
+        .unwrap_or_default();
+    frankenlibc_core::dns_transport::reverse_with(address, &config, native_dns_query).map_err(
+        |error| match error {
+            ResolveError::NotFound => libc::EAI_NONAME,
+            ResolveError::Temporary => libc::EAI_AGAIN,
+            ResolveError::Failure => libc::EAI_FAIL,
+        },
+    )
+}
+
+/// NI_NOFQDN shortens a name only in this machine's domain, not every FQDN.
+/// Prefer the kernel hostname; a short kernel hostname may have its canonical
+/// domain in the files backend. Do not launch unrelated DNS lookups here.
+fn shorten_local_hostname(name: &mut String) {
+    let mut local = [0 as c_char; 256];
+    // SAFETY: local is writable for the entire advertised length.
+    if unsafe { crate::unistd_abi::gethostname(local.as_mut_ptr(), local.len()) } != 0 {
+        return;
+    }
+    let Some(length) = local.iter().position(|&byte| byte == 0) else {
+        return;
+    };
+    let local: Vec<u8> = local[..length].iter().map(|&byte| byte as u8).collect();
+    let canonical = if local.contains(&b'.') {
+        local
+    } else {
+        with_hosts_backend_snapshot(|content, _| {
+            let mut found = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(content, &local, |entry| {
+                if entry.canonical_name().contains(&b'.') {
+                    found = Some(entry.canonical_name().to_vec());
+                    true
+                } else {
+                    false
+                }
+            });
+            found
+        })
+        .ok()
+        .flatten()
+        .unwrap_or(local)
+    };
+    let Some(dot) = canonical.iter().position(|&byte| byte == b'.') else {
+        return;
+    };
+    let domain = &canonical[dot..];
+    if name.len() > domain.len() {
+        let split = name.len() - domain.len();
+        if name.as_bytes()[split..].eq_ignore_ascii_case(domain) {
+            name.truncate(split);
+        }
+    }
+}
+
+/// Named getnameinfo uses the membrane before file/network I/O. Numeric
+/// rendering stays in the existing byte-exact fast path; no host resolver is
+/// called, and no lookup is performed for an omitted or numeric-only output.
+unsafe fn getnameinfo_named(
+    sa: *const libc::sockaddr,
+    salen: libc::socklen_t,
+    host: *mut c_char,
+    hostlen: libc::socklen_t,
+    serv: *mut c_char,
+    servlen: libc::socklen_t,
+    flags: c_int,
+) -> c_int {
+    let (aligned, recent_page, ordering) = resolver_stage_context(sa as usize, host as usize);
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Resolver,
+        sa as usize,
+        (hostlen as usize).saturating_add(servlen as usize),
+        true,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Arena)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, true);
+        return libc::EAI_FAIL;
+    }
+    let result = (|| -> Result<(), c_int> {
+        let want_host = !host.is_null() && hostlen != 0;
+        let want_serv = !serv.is_null() && servlen != 0;
+        let mut numeric_host = [0 as c_char; 1025];
+        let mut numeric_serv = [0 as c_char; 32];
+        // SAFETY: the public dispatcher checked the input's family/length and
+        // tracked extent; both output arrays are private and fully writable.
+        let rc = unsafe {
+            getnameinfo_strict_fast(
+                sa,
+                salen,
+                numeric_host.as_mut_ptr(),
+                numeric_host.len() as _,
+                numeric_serv.as_mut_ptr(),
+                numeric_serv.len() as _,
+                flags | libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        // SAFETY: successful numeric rendering terminated both private arrays.
+        let host_number = unsafe { CStr::from_ptr(numeric_host.as_ptr()) }
+            .to_str()
+            .map_err(|_| libc::EAI_FAIL)?;
+        // SAFETY: same private-array invariant as above.
+        let serv_number = unsafe { CStr::from_ptr(numeric_serv.as_ptr()) }
+            .to_str()
+            .map_err(|_| libc::EAI_FAIL)?;
+        let mut host_name = None;
+        if want_host && flags & libc::NI_NUMERICHOST == 0 {
+            // A scope zone is a local interface selector, not a DNS label.
+            let address = host_number
+                .split('%')
+                .next()
+                .unwrap_or(host_number)
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| libc::EAI_FAMILY)?;
+            match native_reverse_name(address) {
+                Ok(bytes) => {
+                    let mut name = String::from_utf8(bytes).map_err(|_| libc::EAI_FAIL)?;
+                    if flags & libc::NI_NOFQDN != 0 {
+                        shorten_local_hostname(&mut name);
+                    }
+                    host_name = Some(name);
+                }
+                Err(libc::EAI_AGAIN) => return Err(libc::EAI_AGAIN),
+                Err(_) if flags & libc::NI_NAMEREQD != 0 => return Err(libc::EAI_NONAME),
+                Err(_) => {} // Definitive failure: numeric fallback is permitted.
+            }
+        }
+        let service_name = if want_serv && flags & libc::NI_NUMERICSERV == 0 {
+            let port = serv_number.parse::<u16>().map_err(|_| libc::EAI_SERVICE)?;
+            let protocol = if flags & libc::NI_DGRAM != 0 {
+                b"udp"
+            } else {
+                b"tcp"
+            };
+            with_service_entry_by_port(port, Some(protocol), |entry| {
+                String::from_utf8(entry.name.clone()).ok()
+            })
+            .ok()
+            .flatten()
+            .flatten()
+        } else {
+            None
+        };
+        // Insufficient output space is a defined EAI_OVERFLOW condition, not
+        // permission to return a silently truncated name in hardened mode.
+        // SAFETY: write_c_buffer checks advertised and tracked output bounds.
+        unsafe {
+            write_c_buffer(
+                host,
+                hostlen,
+                host_name.as_deref().unwrap_or(host_number),
+                false,
+            )?;
+            write_c_buffer(
+                serv,
+                servlen,
+                service_name.as_deref().unwrap_or(serv_number),
+                false,
+            )?;
+        }
+        Ok(())
+    })();
+    let code = result.err().unwrap_or(0);
+    record_resolver_stage_outcome(
+        &ordering,
+        aligned,
+        recent_page,
+        (code == libc::EAI_OVERFLOW).then(|| stage_index(&ordering, CheckStage::Bounds)),
+    );
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 20, code != 0);
+    code
+}
+
+/// POSIX `getnameinfo`: native numeric, files and DNS reverse lookup.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getnameinfo(
     sa: *const libc::sockaddr,
@@ -2940,6 +3149,41 @@ pub unsafe extern "C" fn getnameinfo(
     servlen: libc::socklen_t,
     flags: c_int,
 ) -> c_int {
+    // POSIX flags plus the historically accepted GNU IDN/scope option bits.
+    if flags & !0xff != 0 {
+        return libc::EAI_BADFLAGS;
+    }
+    if sa.is_null() {
+        return libc::EAI_FAIL;
+    }
+    if (salen as usize) < size_of::<libc::sa_family_t>()
+        || !tracked_region_fits(sa.cast(), size_of::<libc::sa_family_t>())
+    {
+        return libc::EAI_FAMILY;
+    }
+    // SAFETY: at least the family field is readable; unaligned input is safe.
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
+    let required = match family {
+        libc::AF_INET => size_of::<libc::sockaddr_in>(),
+        libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
+        _ => return libc::EAI_FAMILY,
+    };
+    if (salen as usize) < required || !tracked_region_fits(sa.cast(), required) {
+        return libc::EAI_FAMILY;
+    }
+    let want_host = !host.is_null() && hostlen != 0;
+    let want_serv = !serv.is_null() && servlen != 0;
+    if flags & libc::NI_NAMEREQD != 0
+        && ((want_host && flags & libc::NI_NUMERICHOST != 0) || (host.is_null() && serv.is_null()))
+    {
+        return libc::EAI_NONAME;
+    }
+    if (want_host && flags & libc::NI_NUMERICHOST == 0)
+        || (want_serv && flags & libc::NI_NUMERICSERV == 0)
+    {
+        // SAFETY: the input extent was checked above; output checks are inside.
+        return unsafe { getnameinfo_named(sa, salen, host, hostlen, serv, servlen, flags) };
+    }
     // Strict-passthrough fast path (the DEFAULT deployed mode). `Resolver` `decide()` always-Allows
     // in strict, and this numeric render does NO DNS/file I/O, so the adaptive check-ordering
     // bookkeeping (`resolver_stage_context` + `record_resolver_stage_outcome`, which is ~1.6µs/call
@@ -3031,7 +3275,7 @@ unsafe fn getnameinfo_full(
     let mut port_buf = [0u8; 5];
 
     // SAFETY: caller provides valid sockaddr for given salen.
-    let family = unsafe { (*sa).sa_family as c_int };
+    let family = unsafe { ptr::read_unaligned(sa.cast::<libc::sa_family_t>()) } as c_int;
     let (host_text, serv_text): (Cow<str>, Cow<str>) = match family {
         libc::AF_INET => {
             if (salen as usize) < size_of::<libc::sockaddr_in>() {
@@ -3045,7 +3289,7 @@ unsafe fn getnameinfo_full(
                 return libc::EAI_FAIL;
             }
             // SAFETY: size checked above.
-            let sin = unsafe { &*sa.cast::<libc::sockaddr_in>() };
+            let sin = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in>()) };
             // s_addr is in network byte order (big-endian bytes in memory).
             // Read raw bytes via to_ne_bytes to get [a,b,c,d] in memory order.
             let ip = Ipv4Addr::from(sin.sin_addr.s_addr.to_ne_bytes());
@@ -3070,7 +3314,7 @@ unsafe fn getnameinfo_full(
                 return libc::EAI_FAIL;
             }
             // SAFETY: size checked above.
-            let sin6 = unsafe { &*sa.cast::<libc::sockaddr_in6>() };
+            let sin6 = unsafe { ptr::read_unaligned(sa.cast::<libc::sockaddr_in6>()) };
             // Format with fl's own inet_ntop (byte-exact vs glibc). std
             // Ipv6Addr::Display does NOT emit the dotted-quad form for
             // IPv4-compatible `::a.b.c.d`, so it diverged from glibc.

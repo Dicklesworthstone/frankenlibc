@@ -285,17 +285,26 @@ fn hosts_line_match_entry<'a>(line: &'a [u8], name: &[u8]) -> Option<HostsMatch<
 }
 
 /// Allocation-free analogue of [`reverse_lookup_hosts`] for the only shape its callers use: the
-/// FIRST hostname of the FIRST line whose address equals `addr` exactly.
+/// FIRST hostname of the FIRST line whose address denotes the same IP as `addr`.
 ///
 /// `reverse_lookup_hosts` skips lines that fail [`parse_hosts_line`] (invalid address, or no
 /// hostnames), takes the first line whose address matches, and returns that line's hostnames —
-/// and every deployed caller then uses `[0]` / `.first()`. This reproduces exactly that, without
+/// and every deployed caller then uses `[0]` / `.first()`. This preserves that order without
 /// building an owned address `Vec`, a `Vec<Vec<u8>>` of hostnames per line, or the result vector.
 /// The returned slice aliases `content`.
 pub fn first_reverse_hosts_hostname<'a>(content: &'a [u8], addr: &[u8]) -> Option<&'a [u8]> {
+    // Different IPv6 spellings denote the same address. Keep the direct byte
+    // comparison, but do not let compression or case bypass a files entry.
+    let parse = |bytes: &[u8]| {
+        core::str::from_utf8(bytes)
+            .ok()?
+            .parse::<std::net::IpAddr>()
+            .ok()
+    };
+    let address = parse(addr);
     for line in content.split(|&b| b == b'\n') {
         if let Some((line_addr, first_hostname)) = hosts_line_addr_and_first_hostname(line)
-            && line_addr == addr
+            && (line_addr == addr || (address.is_some() && parse(line_addr) == address))
         {
             return Some(first_hostname);
         }
@@ -1120,6 +1129,31 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+
+    #[test]
+    fn reverse_hosts_accepts_equivalent_ipv6_spellings_in_file_order() {
+        let content =
+            b"2001:DB8:0000:0000:0000:0000:0000:0009 first.test alias\n2001:db8::9 later.test\n";
+        assert_eq!(
+            first_reverse_hosts_hostname(content, b"2001:db8::9"),
+            Some(b"first.test".as_slice())
+        );
+        assert_eq!(first_reverse_hosts_hostname(content, b"2001:db8::a"), None);
+    }
+
+    #[test]
+    fn reverse_hosts_keeps_family_identity_and_skips_invalid_rows() {
+        let content = b"not-an-ip bad.test\n192.0.2.9\n::ffff:192.0.2.9 mapped.test\n192.0.2.9 v4.test alias\n";
+        assert_eq!(
+            first_reverse_hosts_hostname(content, b"192.0.2.9"),
+            Some(b"v4.test".as_slice())
+        );
+        assert_eq!(
+            first_reverse_hosts_hostname(content, b"::ffff:c000:209"),
+            Some(b"mapped.test".as_slice())
+        );
+        assert_eq!(first_reverse_hosts_hostname(content, b"not-an-ip"), None);
+    }
 
     fn fuzz_proptest_config(default_cases: u32) -> ProptestConfig {
         let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")

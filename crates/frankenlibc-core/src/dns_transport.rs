@@ -30,6 +30,9 @@ pub enum QueryError {
     InvalidQuery,
     InvalidResponse,
     ResponseCode(u8),
+    /// A validated UDP SERVFAIL/NOTIMP/REFUSED asks the resolver to try
+    /// another nameserver. Keep it distinct from a terminal TCP response.
+    RetryableResponse(u8),
 }
 
 impl From<io::Error> for QueryError {
@@ -236,6 +239,15 @@ fn exchange_until(
             // Do not decode the truncated answer section: it may end halfway
             // through an RR. The validated header + question are sufficient.
             return tcp_exchange(server, query, deadline);
+        }
+        let code = DnsHeader::decode(reply)
+            .ok_or(QueryError::InvalidResponse)?
+            .rcode();
+        if matches!(code, rcode::SERVFAIL | rcode::NOTIMP | rcode::REFUSED) {
+            // A server rejection is not a timeout or a parse failure. Validate
+            // all declared sections before allowing it to affect retry policy.
+            DnsMessage::decode(reply).ok_or(QueryError::InvalidResponse)?;
+            return Err(QueryError::RetryableResponse(code));
         }
         packet.truncate(received);
         return Ok(packet);
@@ -526,8 +538,15 @@ where
                                 }
                             }
                         }
-                        Err(QueryError::Io(_)) | Err(QueryError::ResponseCode(rcode::SERVFAIL)) => {
+                        Err(QueryError::Io(_) | QueryError::RetryableResponse(_)) => {
                             failures[index] = Some(ResolveError::Temporary);
+                        }
+                        Err(QueryError::ResponseCode(_)) => {
+                            // The transport already separated retryable UDP
+                            // errors. A terminal DNS failure is a negative
+                            // lookup, not an invalid/malformed-response error.
+                            done[index] = true;
+                            failures[index] = None;
                         }
                         Err(_) => {
                             failures[index].get_or_insert(ResolveError::Failure);
@@ -644,8 +663,8 @@ where
                     }
                     return Err(ResolveError::NotFound);
                 }
-                Err(QueryError::Io(_))
-                | Err(QueryError::ResponseCode(rcode::SERVFAIL | rcode::REFUSED)) => {
+                Err(QueryError::Io(_) | QueryError::RetryableResponse(_))
+                | Err(QueryError::ResponseCode(rcode::SERVFAIL)) => {
                     temporary = true;
                 }
                 _ => {}
@@ -803,7 +822,7 @@ mod tests {
                 assert!(trust_ad && use_vc);
                 calls += 1;
                 if calls == 1 {
-                    return Err(QueryError::ResponseCode(rcode::REFUSED));
+                    return Err(QueryError::RetryableResponse(rcode::REFUSED));
                 }
                 Ok(QueryReply {
                     records: vec![],
@@ -821,7 +840,7 @@ mod tests {
         let ip = "192.0.2.9".parse().unwrap();
         assert_eq!(
             reverse_with(ip, &config, |_, _, _, _, _, _| Err(
-                QueryError::ResponseCode(rcode::REFUSED)
+                QueryError::RetryableResponse(rcode::REFUSED)
             ))
             .unwrap_err(),
             ResolveError::Temporary
@@ -841,6 +860,82 @@ mod tests {
             .unwrap_err(),
             ResolveError::NotFound
         );
+    }
+
+    #[test]
+    fn udp_rejections_are_retryable_but_tcp_response_codes_remain_explicit() {
+        for code in [rcode::SERVFAIL, rcode::NOTIMP, rcode::REFUSED] {
+            let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let address = socket.local_addr().unwrap();
+            let worker = thread::spawn(move || {
+                let mut buffer = [0; 512];
+                let (len, peer) = socket.recv_from(&mut buffer).unwrap();
+                let mut reply = response_with_records(&buffer[..len], &[]);
+                reply[3] |= code;
+                socket.send_to(&reply, peer).unwrap();
+            });
+            let result = query(
+                b"example.test",
+                qtype::A,
+                address,
+                Duration::from_secs(2),
+                false,
+                false,
+            );
+            assert!(matches!(result, Err(QueryError::RetryableResponse(value)) if value == code));
+            worker.join().unwrap();
+        }
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let sent = read_query(&mut stream);
+            let mut reply = response_with_records(&sent, &[]);
+            reply[3] |= rcode::REFUSED;
+            stream
+                .write_all(&(reply.len() as u16).to_be_bytes())
+                .unwrap();
+            stream.write_all(&reply).unwrap();
+        });
+        let result = query(
+            b"example.test",
+            qtype::A,
+            address,
+            Duration::from_secs(2),
+            false,
+            true,
+        );
+        assert!(matches!(
+            result,
+            Err(QueryError::ResponseCode(rcode::REFUSED))
+        ));
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn forward_retryable_and_terminal_dns_codes_are_not_conflated() {
+        let config = ResolverConfig::default();
+        for code in [rcode::SERVFAIL, rcode::NOTIMP, rcode::REFUSED] {
+            let temporary = resolve_with(
+                b"example.test.",
+                true,
+                false,
+                &config,
+                |_, _, _, _, _, _| Err(QueryError::RetryableResponse(code)),
+            );
+            assert_eq!(temporary.unwrap_err(), ResolveError::Temporary);
+            let terminal = resolve_with(
+                b"example.test.",
+                true,
+                false,
+                &config,
+                |_, _, _, _, _, _| Err(QueryError::ResponseCode(code)),
+            );
+            assert_eq!(terminal.unwrap_err(), ResolveError::NotFound);
+        }
     }
 
     fn query_wire() -> Vec<u8> {
@@ -1068,7 +1163,7 @@ mod tests {
                 }
                 a_attempts += 1;
                 if a_attempts == 1 {
-                    Err(QueryError::ResponseCode(rcode::SERVFAIL))
+                    Err(QueryError::RetryableResponse(rcode::SERVFAIL))
                 } else {
                     Ok(address_reply())
                 }
@@ -1119,7 +1214,7 @@ mod tests {
             true,
             false,
             &config,
-            |_, _, _, _, _, _| Err(QueryError::ResponseCode(rcode::SERVFAIL)),
+            |_, _, _, _, _, _| Err(QueryError::RetryableResponse(rcode::SERVFAIL)),
         );
         assert_eq!(result.unwrap_err(), ResolveError::Temporary);
         let result = resolve_with(
@@ -1442,7 +1537,7 @@ mod tests {
             |_, _, _, _, _, _| {
                 attempts += 1;
                 if attempts == 1 {
-                    Err(QueryError::ResponseCode(rcode::SERVFAIL))
+                    Err(QueryError::RetryableResponse(rcode::SERVFAIL))
                 } else {
                     Ok(QueryReply {
                         records: vec![],

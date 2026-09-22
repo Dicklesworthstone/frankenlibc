@@ -39,6 +39,8 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/decoder.log
           FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::config:: -- --nocapture 2>&1 | tee artifacts/resolver/config.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/config.log
+          cargo test -p frankenlibc-core --lib resolv::tests::reverse_hosts_ -- --nocapture 2>&1 | tee artifacts/resolver/reverse-hosts.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/reverse-hosts.log
       - name: Check ABI integration
         shell: bash
         run: |
@@ -56,12 +58,15 @@ jobs:
           nm -D --defined-only target/release/libfrankenlibc_abi.so > artifacts/resolver/exports.txt
           grep -E '[[:space:]]getaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
           grep -E '[[:space:]]freeaddrinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
+          grep -E '[[:space:]]getnameinfo(@@[^[:space:]]+)?$' artifacts/resolver/exports.txt
       - name: Exercise release resolver through dlopen and preload
         shell: bash
         run: |
           set -euo pipefail
           printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1\n' > artifacts/resolver/resolv-udp.conf
           printf 'nameserver 127.0.0.1\noptions timeout:1 attempts:1 use-vc\n' > artifacts/resolver/resolv-tcp.conf
+          printf '127.0.0.1 fixture.local.test fixture localhost\n192.0.2.200 files-v4.local.test alias-files\n2001:0DB8:0000:0000:0000:0000:0000:0200 files-v6.local.test\n' > artifacts/resolver/hosts
+          printf 'franken-stream 4443/tcp\nfranken-datagram 4443/udp\n' > artifacts/resolver/services
           status=0
           for transport in udp tcp; do
             for loading in dlopen preload; do
@@ -74,17 +79,21 @@ jobs:
                 # mutation, privileged-port conflict, or external DNS traffic.
                 # Run every combination even after failure, but fail the job
                 # if any check fails. Never turn missing execution into green.
-                if ! sudo -n unshare --mount --net -- bash -eu -c '
+                if ! sudo -n unshare --mount --net --uts -- bash -eu -c '
                   mount --make-rprivate /
                   ip link set lo up
+                  hostname fixture.local.test
                   mount --bind "$1" /etc/resolv.conf
+                  mount --bind "$6" /etc/hosts
+                  mount --bind "$7" /etc/services
                   export FRANKENLIBC_MODE="$2"
-                  exec python3 "$3" "$4" "$5" "${@:6}"
+                  exec python3 "$3" "$4" "$5" "${@:8}"
                 ' bash \
                   "$PWD/artifacts/resolver/resolv-$transport.conf" "$mode" \
                   "$PWD/tests/integration/native_dns_fixture.py" \
                   "$PWD/target/native-dns-abi" \
-                  "$PWD/target/release/libfrankenlibc_abi.so" "${extra[@]}" \
+                  "$PWD/target/release/libfrankenlibc_abi.so" \
+                  "$PWD/artifacts/resolver/hosts" "$PWD/artifacts/resolver/services" "${extra[@]}" \
                   2>&1 | tee "$log"; then
                   status=1
                 fi
