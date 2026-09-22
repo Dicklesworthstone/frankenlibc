@@ -1,0 +1,55 @@
+name: Native loader execution
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-loader.yml'
+      - 'Cargo.lock'
+  pull_request:
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-loader.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-dso-groups:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute existing and transitive native-loader regressions in both modes
+        run: |
+          mkdir -p artifacts/native-loader
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
+              -- --test-threads=1 2>&1 | tee "artifacts/native-loader/$mode.log"
+          done
+      - name: Preserve execution logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-loader-execution
+          path: artifacts/native-loader/
+          if-no-files-found: error
