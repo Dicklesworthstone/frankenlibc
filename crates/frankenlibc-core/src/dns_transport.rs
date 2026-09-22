@@ -14,12 +14,14 @@ use std::time::{Duration, Instant};
 use crate::resolv::config::{DNS_PORT, ResolverConfig};
 use crate::resolv::dns::{
     DNS_HEADER_SIZE, DNS_MAX_UDP_SIZE, DnsHeader, DnsMessage, DnsRecord, DnsResolution,
-    build_search_names, qtype, rcode,
+    build_search_names, qclass, qtype, rcode,
 };
 use crate::resolv::dns_name::{NS_MAXCDNAME, name_unpack};
 
 /// DNS-over-TCP's unsigned 16-bit message length, excluding the length prefix.
 const MAX_MESSAGE: usize = u16::MAX as usize;
+const MAX_CNAME_HOPS: usize = 16;
+type WireName = [u8; NS_MAXCDNAME];
 static NEXT_SERVER: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
@@ -152,6 +154,18 @@ pub fn exchange(
     timeout: Duration,
     use_vc: bool,
 ) -> Result<Vec<u8>, QueryError> {
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .ok_or(QueryError::InvalidQuery)?;
+    exchange_until(server, query, deadline, use_vc)
+}
+
+fn exchange_until(
+    server: SocketAddr,
+    query: &[u8],
+    deadline: Instant,
+    use_vc: bool,
+) -> Result<Vec<u8>, QueryError> {
     let header = DnsHeader::decode(query).ok_or(QueryError::InvalidQuery)?;
     if query.len() > MAX_MESSAGE
         || header.is_response()
@@ -161,9 +175,6 @@ pub fn exchange(
     {
         return Err(QueryError::InvalidQuery);
     }
-    let deadline = Instant::now()
-        .checked_add(timeout)
-        .ok_or(QueryError::InvalidQuery)?;
     // Check zero budgets before opening a descriptor. SO_RCVTIMEO=0 means an
     // *unbounded* wait on Linux, not an immediate timeout.
     remaining(deadline)?;
@@ -210,8 +221,135 @@ pub fn exchange(
     }
 }
 
-/// Query a configured server without any host resolver call-through. Linux's
-/// entropy device supplies unpredictable IDs; clock/hash fallback is forbidden.
+struct AddressRecord {
+    owner: WireName,
+    target: Option<WireName>,
+    record: DnsRecord,
+}
+
+enum AddressAnswer {
+    Complete(QueryReply),
+    Follow(WireName),
+}
+
+/// Return only addresses owned by the queried name or its validated CNAME
+/// chain. Keep names in wire form for identity checks; the generic decoder's
+/// unescaped dotted names are display data, not a safe comparison key.
+fn address_answer(
+    sent: &[u8],
+    packet: &[u8],
+    record_type: u16,
+    visited: &mut Vec<WireName>,
+    ttl_limit: &mut u32,
+) -> Result<AddressAnswer, QueryError> {
+    if !response_matches(sent, packet) {
+        return Err(QueryError::InvalidResponse);
+    }
+    let message = DnsMessage::decode(packet).ok_or(QueryError::InvalidResponse)?;
+    if message.header.is_truncated() {
+        return Err(QueryError::InvalidResponse);
+    }
+    match message.header.rcode() {
+        rcode::NOERROR => {}
+        rcode::NXDOMAIN => {
+            return Ok(AddressAnswer::Complete(QueryReply {
+                records: Vec::new(),
+                rcode: rcode::NXDOMAIN,
+            }));
+        }
+        code => return Err(QueryError::ResponseCode(code)),
+    }
+    let (mut owner, _) = question(sent).ok_or(QueryError::InvalidQuery)?;
+    let mut scratch = [0; NS_MAXCDNAME];
+    let question_len = name_unpack(packet, DNS_HEADER_SIZE, &mut scratch)
+        .map_err(|_| QueryError::InvalidResponse)?;
+    let mut pos = DNS_HEADER_SIZE + question_len + 4;
+    let mut records = Vec::new();
+    for record in message.answers {
+        let mut name = [0; NS_MAXCDNAME];
+        let name_len = name_unpack(packet, pos, &mut name)
+            .map_err(|_| QueryError::InvalidResponse)?;
+        let data_start = pos + name_len + 10;
+        // DnsMessage::decode has already checked the complete RR span. Use
+        // the original packet offset, not the copied compressed RDATA, when
+        // expanding CNAME targets. Compression offsets are message-relative.
+        pos = data_start + record.rdata.len();
+        if record.rclass != qclass::IN {
+            continue;
+        }
+        let target = match record.rtype {
+            qtype::CNAME => {
+                let mut target = [0; NS_MAXCDNAME];
+                let consumed = name_unpack(packet, data_start, &mut target)
+                    .map_err(|_| QueryError::InvalidResponse)?;
+                // An expanded target can be longer than RDLENGTH, but bytes
+                // consumed in THIS RR must match it exactly. A missing root
+                // must not be borrowed from the next record.
+                if consumed != record.rdata.len() {
+                    return Err(QueryError::InvalidResponse);
+                }
+                Some(target)
+            }
+            qtype::A if record.rdata.len() == 4 => None,
+            qtype::AAAA if record.rdata.len() == 16 => None,
+            qtype::A | qtype::AAAA => return Err(QueryError::InvalidResponse),
+            _ => continue,
+        };
+        records.push(AddressRecord { owner: name, target, record });
+    }
+
+    let mut followed = false;
+    loop {
+        let mut target: Option<WireName> = None;
+        let mut alias_ttl = u32::MAX;
+        let mut addresses = Vec::new();
+        let mut has_address = false;
+        for entry in &records {
+            if !owner.eq_ignore_ascii_case(&entry.owner) {
+                continue;
+            }
+            if let Some(next) = entry.target {
+                if target.is_some_and(|previous| !previous.eq_ignore_ascii_case(&next)) {
+                    return Err(QueryError::InvalidResponse);
+                }
+                target = Some(next);
+                alias_ttl = alias_ttl.min(entry.record.ttl);
+            } else {
+                has_address = true;
+                if entry.record.rtype == record_type {
+                    let mut record = entry.record.clone();
+                    record.ttl = record.ttl.min(*ttl_limit);
+                    addresses.push(record);
+                }
+            }
+        }
+        if let Some(next) = target {
+            // A CNAME owner cannot simultaneously own address records, or
+            // point at two different targets (RFC 2181 section 10.1).
+            if has_address
+                || visited.len() > MAX_CNAME_HOPS
+                || visited.iter().any(|name| name.eq_ignore_ascii_case(&next))
+            {
+                return Err(QueryError::InvalidResponse);
+            }
+            visited.push(next);
+            *ttl_limit = (*ttl_limit).min(alias_ttl);
+            owner = next;
+            followed = true;
+        } else if !addresses.is_empty() || !followed {
+            return Ok(AddressAnswer::Complete(QueryReply {
+                records: addresses,
+                rcode: rcode::NOERROR,
+            }));
+        } else {
+            return Ok(AddressAnswer::Follow(owner));
+        }
+    }
+}
+
+/// Query addresses at a configured server, following at most 16 CNAME links
+/// across packets under one deadline. No host resolver call-through is used.
+/// Linux's entropy device supplies IDs; clock/hash fallback is forbidden.
 pub fn query(
     hostname: &[u8],
     record_type: u16,
@@ -220,19 +358,53 @@ pub fn query(
     trust_ad: bool,
     use_vc: bool,
 ) -> Result<QueryReply, QueryError> {
-    let mut entropy = [0; 2];
-    File::open("/dev/urandom")?.read_exact(&mut entropy)?;
-    let message = DnsMessage::new_query_with_trust_ad(
-        u16::from_ne_bytes(entropy), hostname, record_type, trust_ad,
-    ).ok_or(QueryError::InvalidQuery)?;
-    let mut wire = [0; DNS_MAX_UDP_SIZE];
-    let length = message.encode(&mut wire).ok_or(QueryError::InvalidQuery)?;
-    let packet = exchange(server, &wire[..length], timeout, use_vc)?;
-    let message = DnsMessage::decode(&packet).ok_or(QueryError::InvalidResponse)?;
-    match message.header.rcode() {
-        rcode::NOERROR => Ok(QueryReply { records: message.answers, rcode: rcode::NOERROR }),
-        rcode::NXDOMAIN => Ok(QueryReply { records: Vec::new(), rcode: rcode::NXDOMAIN }),
-        code => Err(QueryError::ResponseCode(code)),
+    query_with_exchange(hostname, record_type, timeout, trust_ad, |wire, deadline| {
+        exchange_until(server, wire, deadline, use_vc)
+    })
+}
+
+fn query_with_exchange<F>(
+    hostname: &[u8],
+    record_type: u16,
+    timeout: Duration,
+    trust_ad: bool,
+    mut exchange: F,
+) -> Result<QueryReply, QueryError>
+where
+    F: FnMut(&[u8], Instant) -> Result<Vec<u8>, QueryError>,
+{
+    if !matches!(record_type, qtype::A | qtype::AAAA) {
+        return Err(QueryError::InvalidQuery);
+    }
+    let deadline = Instant::now().checked_add(timeout).ok_or(QueryError::InvalidQuery)?;
+    remaining(deadline)?;
+    let mut message = DnsMessage::new_query_with_trust_ad(0, hostname, record_type, trust_ad)
+        .ok_or(QueryError::InvalidQuery)?;
+    let mut initial = [0; NS_MAXCDNAME];
+    initial[..message.questions[0].qname.len()].copy_from_slice(&message.questions[0].qname);
+    let mut visited = vec![initial];
+    let mut ttl_limit = u32::MAX;
+    let mut random = File::open("/dev/urandom")?;
+    loop {
+        remaining(deadline)?;
+        let mut entropy = [0; 2];
+        random.read_exact(&mut entropy)?;
+        message.header.id = u16::from_ne_bytes(entropy);
+        let mut wire = [0; DNS_MAX_UDP_SIZE];
+        let length = message.encode(&mut wire).ok_or(QueryError::InvalidQuery)?;
+        let sent = &wire[..length];
+        let packet = exchange(sent, deadline)?;
+        match address_answer(sent, &packet, record_type, &mut visited, &mut ttl_limit)? {
+            AddressAnswer::Complete(reply) => return Ok(reply),
+            AddressAnswer::Follow(next) => {
+                // Already validated, uncompressed wire name. Re-encode without
+                // a presentation round trip so embedded dots/NULs retain their
+                // label identity. CNAME targets are absolute, never searched.
+                let mut end = 0;
+                while next[end] != 0 { end += usize::from(next[end]) + 1; }
+                message.questions[0].qname = next[..=end].to_vec();
+            }
+        }
     }
 }
 
@@ -265,6 +437,7 @@ where
     for name in build_search_names(hostname, &config.search, config.ndots) {
         let mut result = DnsResolution::default();
         let mut done = [!want_v4, !want_v6];
+        let mut failures = [None, None];
         for _ in 0..config.attempts.max(1) {
             for offset in 0..config.nameservers.len() {
                 let server = SocketAddr::new(
@@ -275,6 +448,7 @@ where
                     match query(&name, record_type, server, timeout, config.trust_ad, config.use_vc) {
                         Ok(reply) => {
                             done[index] = true;
+                            failures[index] = None;
                             if reply.rcode == rcode::NOERROR {
                                 for record in reply.records {
                                     if index == 0 {
@@ -288,9 +462,11 @@ where
                             }
                         }
                         Err(QueryError::Io(_)) | Err(QueryError::ResponseCode(rcode::SERVFAIL)) => {
-                            saw_temporary = true;
+                            failures[index] = Some(ResolveError::Temporary);
                         }
-                        Err(_) => { saw_failure = true; }
+                        Err(_) => {
+                            failures[index].get_or_insert(ResolveError::Failure);
+                        }
                     }
                 }
                 if done.iter().all(|&value| value) { break; }
@@ -300,6 +476,10 @@ where
         if !result.ipv4.is_empty() || !result.ipv6.is_empty() {
             return Ok(result);
         }
+        // A successful definitive reply supersedes errors from earlier
+        // attempts of that family. Only unresolved failures affect the result.
+        saw_temporary |= failures.contains(&Some(ResolveError::Temporary));
+        saw_failure |= failures.contains(&Some(ResolveError::Failure));
     }
     if saw_temporary { Err(ResolveError::Temporary) }
     else if saw_failure { Err(ResolveError::Failure) }
@@ -544,5 +724,208 @@ mod tests {
                 Ok(address_reply())
             });
         assert!(result.is_ok());
+    }
+
+    fn response_with_records(sent: &[u8], records: &[Vec<u8>]) -> Vec<u8> {
+        let mut packet = sent.to_vec();
+        packet[2] |= 0x80;
+        packet[3] = 0x80;
+        packet[6..8].copy_from_slice(&(records.len() as u16).to_be_bytes());
+        for record in records { packet.extend_from_slice(record); }
+        packet
+    }
+
+    fn rr(owner: &[u8], kind: u16, class: u16, ttl: u32, data: &[u8]) -> Vec<u8> {
+        let mut bytes = owner.to_vec();
+        bytes.extend_from_slice(&kind.to_be_bytes());
+        bytes.extend_from_slice(&class.to_be_bytes());
+        bytes.extend_from_slice(&ttl.to_be_bytes());
+        bytes.extend_from_slice(&(data.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(data);
+        bytes
+    }
+
+    fn name(text: &[u8]) -> Vec<u8> {
+        crate::resolv::dns::encode_domain_name(text).unwrap()
+    }
+
+    fn bound_answer(sent: &[u8], packet: &[u8]) -> Result<AddressAnswer, QueryError> {
+        let (owner, fields) = question(sent).unwrap();
+        address_answer(sent, packet, u16::from_be_bytes([fields[0], fields[1]]),
+            &mut vec![owner], &mut u32::MAX)
+    }
+
+    #[test]
+    fn address_answer_excludes_unrelated_owner_class_and_family() {
+        let sent = query_wire();
+        let packet = response_with_records(&sent, &[
+            rr(&name(b"foreign.test"), qtype::A, 1, 60, &[203, 0, 113, 99]),
+            rr(&[0xc0, 12], qtype::A, 3, 60, &[203, 0, 113, 98]),
+            rr(&[0xc0, 12], qtype::AAAA, 1, 60, &[0; 16]),
+            rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 7]),
+        ]);
+        let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
+            panic!("direct address must complete");
+        };
+        assert_eq!(reply.records.len(), 1);
+        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 7)));
+    }
+
+    #[test]
+    fn cname_chain_accepts_out_of_order_records_and_limits_ttl() {
+        let sent = query_wire();
+        // edge.test uses a compressed suffix pointer into example.test's
+        // question: the four-byte "test" label begins at message offset 20.
+        let edge = b"\x04edge\xc0\x14";
+        let packet = response_with_records(&sent, &[
+            rr(edge, qtype::A, 1, 600, &[192, 0, 2, 8]),
+            rr(&name(b"middle.test"), qtype::CNAME, 1, 20, edge),
+            rr(&[0xc0, 12], qtype::CNAME, 1, 40, &name(b"middle.test")),
+            rr(&name(b"unrelated.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
+        ]);
+        let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
+            panic!("in-packet chain must complete");
+        };
+        assert_eq!(reply.records.len(), 1);
+        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 8)));
+        assert_eq!(reply.records[0].ttl, 20);
+    }
+
+    #[test]
+    fn cname_targets_keep_label_identity() {
+        let sent = query_wire();
+        let literal_dot = name(br"edge\.test");
+        let packet = response_with_records(&sent, &[
+            rr(&[0xc0, 12], qtype::CNAME, 1, 60, &literal_dot),
+            rr(&name(b"edge.test"), qtype::A, 1, 60, &[203, 0, 113, 7]),
+            rr(&literal_dot, qtype::A, 1, 60, &[192, 0, 2, 8]),
+        ]);
+        let AddressAnswer::Complete(reply) = bound_answer(&sent, &packet).unwrap() else {
+            panic!("literal-dot target must resolve");
+        };
+        assert_eq!(reply.records.len(), 1);
+        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 8)));
+    }
+
+    #[test]
+    fn cname_rejects_cycles_conflicting_targets_and_address_coexistence() {
+        let sent = query_wire();
+        let edge = name(b"edge.test");
+        let alias = rr(&[0xc0, 12], qtype::CNAME, 1, 60, &edge);
+        for records in [
+            vec![rr(&[0xc0, 12], qtype::CNAME, 1, 60, &[0xc0, 12])],
+            vec![alias.clone(), rr(&edge, qtype::CNAME, 1, 60, &[0xc0, 12])],
+            vec![alias.clone(), rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(b"other.test"))],
+            vec![alias, rr(&[0xc0, 12], qtype::A, 1, 60, &[192, 0, 2, 8])],
+        ] {
+            assert!(matches!(bound_answer(&sent, &response_with_records(&sent, &records)),
+                Err(QueryError::InvalidResponse)));
+        }
+    }
+
+    #[test]
+    fn cname_rdata_cannot_consume_a_name_outside_its_declared_span() {
+        let sent = query_wire();
+        for target in [vec![0xc0], vec![0xc0, 12, 0], vec![1, b'a']] {
+            let packet = response_with_records(&sent, &[
+                rr(&[0xc0, 12], qtype::CNAME, 1, 60, &target),
+                // The following root byte must not terminate the previous RR.
+                rr(&[0], qtype::A, 1, 60, &[192, 0, 2, 8]),
+            ]);
+            assert!(matches!(bound_answer(&sent, &packet), Err(QueryError::InvalidResponse)));
+        }
+    }
+
+    #[test]
+    fn cname_follows_across_packets_under_the_same_deadline() {
+        let mut calls = 0;
+        let mut first_deadline = None;
+        let reply = query_with_exchange(b"example.test", qtype::A, Duration::from_secs(2), true,
+            |sent, deadline| {
+                calls += 1;
+                assert_eq!(DnsHeader::decode(sent).unwrap().flags & 0x20, 0x20);
+                if let Some(first) = first_deadline { assert_eq!(deadline, first); }
+                else { first_deadline = Some(deadline); }
+                if calls == 1 {
+                    Ok(response_with_records(sent, &[
+                        rr(&[0xc0, 12], qtype::CNAME, 1, 9, &name(b"edge.test")),
+                    ]))
+                } else {
+                    assert_eq!(DnsMessage::decode(sent).unwrap().questions[0].qname, b"edge.test");
+                    Ok(answer(sent))
+                }
+            }).unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(reply.records[0].as_ipv4(), Some(Ipv4Addr::new(192, 0, 2, 7)));
+        assert_eq!(reply.records[0].ttl, 9);
+    }
+
+    #[test]
+    fn cname_cross_packet_loop_is_rejected_without_retry_explosion() {
+        let mut calls = 0;
+        let result = query_with_exchange(b"example.test", qtype::A, Duration::from_secs(2), false,
+            |sent, _| {
+                calls += 1;
+                let next = if calls == 1 { b"edge.test".as_slice() } else { b"example.test".as_slice() };
+                Ok(response_with_records(sent, &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &name(next))]))
+            });
+        assert!(matches!(result, Err(QueryError::InvalidResponse)));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn cname_hop_budget_applies_across_packets() {
+        let mut calls = 0;
+        let result = query_with_exchange(b"example.test", qtype::AAAA, Duration::from_secs(2), false,
+            |sent, _| {
+                calls += 1;
+                let next = name(format!("hop{calls}.test").as_bytes());
+                Ok(response_with_records(sent, &[rr(&[0xc0, 12], qtype::CNAME, 1, 60, &next)]))
+            });
+        assert!(matches!(result, Err(QueryError::InvalidResponse)));
+        assert_eq!(calls, MAX_CNAME_HOPS + 1);
+    }
+
+    #[test]
+    fn cname_can_resolve_ipv6_through_real_udp_followup() {
+        let server = UdpSocket::bind("127.0.0.1:0").unwrap();
+        server.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let addr = server.local_addr().unwrap();
+        let expected: Ipv6Addr = "2001:db8::1234".parse().unwrap();
+        let worker = thread::spawn(move || {
+            let mut buffer = [0; 512];
+            for attempt in 0..2 {
+                let (len, peer) = server.recv_from(&mut buffer).unwrap();
+                let sent = &buffer[..len];
+                let decoded = DnsMessage::decode(sent).unwrap();
+                assert_eq!(decoded.questions[0].qtype, qtype::AAAA);
+                let record = if attempt == 0 {
+                    rr(&[0xc0, 12], qtype::CNAME, 1, 12, &name(b"v6.test"))
+                } else {
+                    assert_eq!(decoded.questions[0].qname, b"v6.test");
+                    rr(&[0xc0, 12], qtype::AAAA, 1, 60, &expected.octets())
+                };
+                server.send_to(&response_with_records(sent, &[record]), peer).unwrap();
+            }
+        });
+        let reply = query(b"example.test", qtype::AAAA, addr, Duration::from_secs(2), false, false).unwrap();
+        assert_eq!(reply.records.len(), 1);
+        assert_eq!(reply.records[0].as_ipv6(), Some(expected));
+        assert_eq!(reply.records[0].ttl, 12);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn definitive_negative_supersedes_prior_transient_failure() {
+        let config = ResolverConfig::default();
+        let mut attempts = 0;
+        let result = resolve_with(b"example.test.", true, false, &config,
+            |_, _, _, _, _, _| {
+                attempts += 1;
+                if attempts == 1 { Err(QueryError::ResponseCode(rcode::SERVFAIL)) }
+                else { Ok(QueryReply { records: vec![], rcode: rcode::NXDOMAIN }) }
+            });
+        assert_eq!(attempts, 2);
+        assert_eq!(result.unwrap_err(), ResolveError::NotFound);
     }
 }
