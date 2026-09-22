@@ -38,88 +38,46 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/blobs/19b4ba92051abc78dbbb558f0be05e8d6002c8df" --jq .content | base64 --decode > "$RUNNER_TEMP/addrinfo.patch.gz"
           test "$(git hash-object "$RUNNER_TEMP/addrinfo.patch.gz")" = 19b4ba92051abc78dbbb558f0be05e8d6002c8df
           gzip -dc "$RUNNER_TEMP/addrinfo.patch.gz" > "$RUNNER_TEMP/addrinfo.patch"
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/88e18f920ba92865cf036b17465acbe7260c80a2" --jq .content | base64 --decode > "$RUNNER_TEMP/canonical-test.patch"
-          test "$(git hash-object "$RUNNER_TEMP/canonical-test.patch")" = 88e18f920ba92865cf036b17465acbe7260c80a2
-          git apply --check "$RUNNER_TEMP/addrinfo.patch" "$RUNNER_TEMP/canonical-test.patch"
-          git apply "$RUNNER_TEMP/addrinfo.patch" "$RUNNER_TEMP/canonical-test.patch"
+          git apply --check "$RUNNER_TEMP/addrinfo.patch"
+          git apply "$RUNNER_TEMP/addrinfo.patch"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/9c87892d3dc69b8179220b7eabbbe49b617f1915" --jq .content | base64 --decode > "$RUNNER_TEMP/supplement.patch"
+          test "$(git hash-object "$RUNNER_TEMP/supplement.patch")" = 9c87892d3dc69b8179220b7eabbbe49b617f1915
+          git apply --check "$RUNNER_TEMP/supplement.patch"
+          git apply "$RUNNER_TEMP/supplement.patch"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
           components: rustfmt
-      - name: Format changed Rust modules and check fixture syntax
+      - name: Format changed modules and check fixture syntax
         shell: bash
         run: |
           set -euo pipefail
           rustfmt --edition 2024 crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/dns_transport.rs crates/frankenlibc-abi/src/resolv_abi.rs
           python3 -m py_compile tests/integration/native_dns_fixture.py
           git diff --check
-      - name: Execute address policy and resolver regressions
+      - name: Execute the exact production resolver test and release matrix
         shell: bash
         run: |
           set -euo pipefail
-          cargo test -p frankenlibc-core --lib addrinfo:: -- --nocapture 2>&1 | tee artifacts/resolver/addrinfo.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/addrinfo.log
-          cargo test -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/resolver/transport.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
-          FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::dns:: -- --nocapture 2>&1 | tee artifacts/resolver/decoder.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/decoder.log
-          FRANKENLIBC_PROPTEST_CASES=10000 cargo test -p frankenlibc-core --lib resolv::config:: -- --nocapture 2>&1 | tee artifacts/resolver/config.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/config.log
-          cargo test -p frankenlibc-core --lib resolv::tests::reverse_hosts_ -- --nocapture 2>&1 | tee artifacts/resolver/reverse-hosts.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/reverse-hosts.log
-      - name: Build actual release ABI and C caller
+          python3 -m venv "$RUNNER_TEMP/workflow-yaml"
+          "$RUNNER_TEMP/workflow-yaml/bin/pip" install PyYAML
+          "$RUNNER_TEMP/workflow-yaml/bin/python" - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import yaml
+          workflow = yaml.safe_load(Path('.github/workflows/native-resolver.yml').read_text())
+          steps = [s for s in workflow['jobs']['resolver']['steps'] if 'run' in s]
+          assert len(steps) == 4, 'all four production test/build/matrix steps must execute'
+          for step in steps:
+              print('Executing production step: ' + step['name'], flush=True)
+              subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], check=True)
+          PY
+      - name: Execute existing getaddrinfo ABI regression tests
         shell: bash
         run: |
           set -euo pipefail
-          cargo check -p frankenlibc-abi --lib --keep-going 2>&1 | tee artifacts/resolver/abi-check.log
           cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/resolver/existing-addrinfo.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/existing-addrinfo.log
-          cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/abi-build.log
-          cc -Wall -Wextra -Werror tests/integration/fixture_native_dns_transport.c -ldl -o target/native-dns-abi
-          test -f target/release/libfrankenlibc_abi.so
-          nm -D --defined-only target/release/libfrankenlibc_abi.so > artifacts/resolver/exports.txt
-          for symbol in getaddrinfo freeaddrinfo getnameinfo; do
-            grep -E "[[:space:]]${symbol}(@@[^[:space:]]+)?$" artifacts/resolver/exports.txt
-          done
-      - name: Exercise public resolver in all eight transport loading and mode combinations
-        shell: bash
-        run: |
-          set -euo pipefail
-          printf 'nameserver 127.0.0.1\nsearch first.test second.test\noptions timeout:1 attempts:1\n' > artifacts/resolver/resolv-udp.conf
-          printf 'nameserver 127.0.0.1\nsearch first.test second.test\noptions timeout:1 attempts:1 use-vc\n' > artifacts/resolver/resolv-tcp.conf
-          printf '127.0.0.1 fixture.local.test fixture localhost\n192.0.2.200 files-v4.local.test alias-files\n2001:0DB8:0000:0000:0000:0000:0000:0200 files-v6.local.test\n192.0.2.201 dual-v4.local.test dual-files\n2001:db8::201 dual-v6.local.test dual-files\n::1 loopback-v6.local.test loopback-files\n' > artifacts/resolver/hosts
-          printf 'franken-stream 4443/tcp\nfranken-datagram 4443/udp\n' > artifacts/resolver/services
-          status=0
-          for transport in udp tcp; do
-            for loading in dlopen preload; do
-              extra=()
-              if [[ "$transport" == tcp ]]; then extra+=(--tcp-only); fi
-              if [[ "$loading" == preload ]]; then extra+=(--preload); fi
-              for mode in strict hardened; do
-                log="artifacts/resolver/abi-$transport-$loading-$mode.log"
-                if ! sudo -n unshare --mount --net --uts -- bash -eu -c '
-                  mount --make-rprivate /
-                  ip link set lo up
-                  hostname fixture.local.test
-                  mount --bind "$1" /etc/resolv.conf
-                  mount --bind "$6" /etc/hosts
-                  mount --bind "$7" /etc/services
-                  export FRANKENLIBC_MODE="$2"
-                  exec python3 "$3" "$4" "$5" "${@:8}"
-                ' bash \
-                  "$PWD/artifacts/resolver/resolv-$transport.conf" "$mode" \
-                  "$PWD/tests/integration/native_dns_fixture.py" \
-                  "$PWD/target/native-dns-abi" \
-                  "$PWD/target/release/libfrankenlibc_abi.so" \
-                  "$PWD/artifacts/resolver/hosts" "$PWD/artifacts/resolver/services" "${extra[@]}" \
-                  2>&1 | tee "$log"; then
-                  status=1
-                fi
-                if ! grep -Eq 'native DNS ABI: [1-9][0-9]* passed' "$log"; then status=1; fi
-              done
-            done
-          done
-          exit "$status"
       - name: Preserve exact candidate source and hashes
         if: always()
         shell: bash
