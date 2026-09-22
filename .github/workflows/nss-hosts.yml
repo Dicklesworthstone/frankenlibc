@@ -1,0 +1,146 @@
+name: Native NSS hosts policy
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-core/src/addrinfo/**'
+      - '.github/workflows/nss-hosts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nss:
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply hash-bound native NSS integration candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nss
+          test "$(git hash-object crates/frankenlibc-core/src/addrinfo.rs)" = fdc8c903524b7e8a6290daaef4a9a120cd4c01d5
+          test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = 17295cedac5adce51b5c1fe872b1257f66732e90
+          test "$(git hash-object crates/frankenlibc-core/src/addrinfo/hosts_policy.rs)" = b394a30c9ae1d44cffe135bd5850ad815d92d750
+          test "$(git hash-object .github/workflows/native-resolver.yml)" = 738a4bc5c37544aed92dd13cbb3e072140e56c90
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/387f837d00e0b01478324cf2ebd83e1b900f52d9" --jq .content | base64 --decode > "$RUNNER_TEMP/nss.patch.gz"
+          test "$(git hash-object "$RUNNER_TEMP/nss.patch.gz")" = 387f837d00e0b01478324cf2ebd83e1b900f52d9
+          gzip -dc "$RUNNER_TEMP/nss.patch.gz" > "$RUNNER_TEMP/nss.patch"
+          git apply --check "$RUNNER_TEMP/nss.patch"
+          git apply "$RUNNER_TEMP/nss.patch"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/d7836585c8f085349a7be25a8fe05e373ce022ac" --jq .content | base64 --decode > "$RUNNER_TEMP/nss-fixtures.tar.gz"
+          test "$(git hash-object "$RUNNER_TEMP/nss-fixtures.tar.gz")" = d7836585c8f085349a7be25a8fe05e373ce022ac
+          tar -tzf "$RUNNER_TEMP/nss-fixtures.tar.gz" > "$RUNNER_TEMP/nss-fixture-paths"
+          diff -u <(printf 'tests/integration/fixture_nss_hosts.c\ntests/integration/nss_hosts_fixture.py\n') "$RUNNER_TEMP/nss-fixture-paths"
+          test ! -e tests/integration/fixture_nss_hosts.c
+          test ! -e tests/integration/nss_hosts_fixture.py
+          tar -xzf "$RUNNER_TEMP/nss-fixtures.tar.gz"
+          test "$(git hash-object tests/integration/fixture_nss_hosts.c)" = b86d63d2eec81fedf9f40a4875efefeea09ab82f
+          test "$(git hash-object tests/integration/nss_hosts_fixture.py)" = 688ff0579dbfce4acc6835636ba9a300cfdca1ad
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/workflows/native-resolver.yml')
+          s = p.read_text()
+          s = s.replace("      - 'crates/frankenlibc-core/src/addrinfo.rs'", "      - 'crates/frankenlibc-core/src/addrinfo.rs'\n      - 'crates/frankenlibc-core/src/addrinfo/**'")
+          s = s.replace('          status=0', "          printf 'hosts: files dns\\n' > artifacts/resolver/nsswitch.conf\n          status=0")
+          s = s.replace('                  mount --bind "$7" /etc/services', '                  mount --bind "$7" /etc/services\n                  mount --bind "$PWD/artifacts/resolver/nsswitch.conf" /etc/nsswitch.conf')
+          p.write_text(s)
+          PY
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - name: Format and syntax-check candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-abi/src/resolv_abi.rs
+          python3 -m py_compile tests/integration/nss_hosts_fixture.py
+          git diff --check
+      - name: Run production resolver tests and the complete existing release matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/nss-yaml"
+          "$RUNNER_TEMP/nss-yaml/bin/pip" install PyYAML
+          "$RUNNER_TEMP/nss-yaml/bin/python" - <<'PY'
+          from pathlib import Path
+          import subprocess, yaml
+          steps = [s for s in yaml.safe_load(Path('.github/workflows/native-resolver.yml').read_text())['jobs']['resolver']['steps'] if 'run' in s]
+          assert len(steps) == 4
+          for step in steps:
+              print('Executing production step: ' + step['name'], flush=True)
+              subprocess.run(['bash', '-euo', 'pipefail', '-c', step['run']], check=True)
+          PY
+          cargo test -p frankenlibc-abi --test resolv_abi_test getaddrinfo -- --nocapture --test-threads=1 2>&1 | tee artifacts/nss/existing-abi.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/nss/existing-abi.log
+      - name: Execute forward and reverse NSS policies in all eight release configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -Wall -Wextra -Werror tests/integration/fixture_nss_hosts.c -ldl -o target/nss-hosts-caller
+          status=0
+          for transport in udp tcp; do
+            for loading in dlopen preload; do
+              for mode in strict hardened; do
+                dir="$PWD/artifacts/nss/etc-$transport-$loading-$mode"
+                mkdir -p "$dir"
+                touch "$dir/hosts" "$dir/nsswitch.conf" "$dir/resolv.conf"
+                extra=()
+                if [[ "$transport" == tcp ]]; then extra+=(--tcp-only); fi
+                if [[ "$loading" == preload ]]; then extra+=(--preload); fi
+                log="artifacts/nss/$transport-$loading-$mode.log"
+                # Bind a private minimal /etc so missing-file tests exercise
+                # actual absence, not an old inode held by an individual bind.
+                if ! sudo -n unshare --mount --net -- bash -eu -c '
+                  mount --make-rprivate /
+                  ip link set lo up
+                  mount --bind "$1" /etc
+                  export FRANKENLIBC_MODE="$2"
+                  exec /usr/bin/python3 "$3" "$4" "$5" --config-dir "$1" "${@:6}"
+                ' bash "$dir" "$mode" \
+                  "$PWD/tests/integration/nss_hosts_fixture.py" \
+                  "$PWD/target/nss-hosts-caller" \
+                  "$PWD/target/release/libfrankenlibc_abi.so" "${extra[@]}" \
+                  2>&1 | tee "$log"; then status=1; fi
+                if ! grep -q '^native NSS hosts: 33 policy cases passed;' "$log"; then status=1; fi
+              done
+            done
+          done
+          exit "$status"
+      - name: Preserve candidate source and hashes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/nss
+          paths=(crates/frankenlibc-core/src/addrinfo.rs crates/frankenlibc-core/src/addrinfo/hosts_policy.rs crates/frankenlibc-abi/src/resolv_abi.rs tests/integration/fixture_nss_hosts.c tests/integration/nss_hosts_fixture.py .github/workflows/native-resolver.yml)
+          tar -czf artifacts/nss/validated-source.tar.gz "${paths[@]}"
+          for path in "${paths[@]}"; do printf '%s %s\n' "$(git hash-object "$path")" "$path"; done > artifacts/nss/source-hashes.txt
+          git diff > artifacts/nss/integration.diff
+      - name: Publish validated immutable blobs only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          while read -r expected path; do
+            blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
+            test "$blob" = "$expected"
+            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/nss/published-blobs.txt
+          done < artifacts/nss/source-hashes.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nss-hosts-results
+          path: |
+            artifacts/nss/**
+            artifacts/resolver/**
