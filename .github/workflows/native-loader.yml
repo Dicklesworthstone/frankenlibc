@@ -6,6 +6,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-loader.yml'
       - 'Cargo.lock'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-loader.yml'
   workflow_dispatch:
@@ -100,13 +102,16 @@ jobs:
         run: |
           source=crates/frankenlibc-abi/src/dlfcn_native.rs
           ifunc=crates/frankenlibc-abi/src/dlfcn_ifunc.rs
+          tls=crates/frankenlibc-abi/src/dlfcn_tls.rs
           saved=$(mktemp -d)
           cp "$source" "$saved/native"
           cp "$ifunc" "$saved/ifunc"
-          trap 'cp "$saved/native" "$source"; cp "$saved/ifunc" "$ifunc"' EXIT
+          cp "$tls" "$saved/tls"
+          trap 'cp "$saved/native" "$source"; cp "$saved/ifunc" "$ifunc"; cp "$saved/tls" "$tls"' EXIT
           git fetch --no-tags --depth=1 origin d0ebbac95d459830fc4f367f477162f5f8a67ab7
           git show d0ebbac95d459830fc4f367f477162f5f8a67ab7:"$source" > "$source"
           git show d0ebbac95d459830fc4f367f477162f5f8a67ab7:"$ifunc" > "$ifunc"
+          git show d0ebbac95d459830fc4f367f477162f5f8a67ab7:"$tls" > "$tls"
           set +e
           cargo test -p frankenlibc-abi --test dlfcn_native_binding_test \
             native_binding_preempts_own_data_and_function_definitions -- --exact --nocapture \
@@ -117,6 +122,26 @@ jobs:
           grep -F 'default-visible definitions must be preempted' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
           grep -F 'left: 15' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
           grep -F 'right: 81' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
+      - name: Prove TLSDESC execution rejects the retained loader
+        run: |
+          source=crates/frankenlibc-abi/src/dlfcn_native.rs
+          tls=crates/frankenlibc-abi/src/dlfcn_tls.rs
+          saved=$(mktemp -d)
+          cp "$source" "$saved/native"
+          cp "$tls" "$saved/tls"
+          trap 'cp "$saved/native" "$source"; cp "$saved/tls" "$tls"' EXIT
+          git fetch --no-tags --depth=1 origin d21f379b4e97ff30cbfd114d96b85a396e9fe74b
+          git show d21f379b4e97ff30cbfd114d96b85a396e9fe74b:"$source" > "$source"
+          git show d21f379b4e97ff30cbfd114d96b85a396e9fe74b:"$tls" > "$tls"
+          set +e
+          cargo test -p frankenlibc-abi --test dlfcn_native_tlsdesc_test \
+            native_tlsdesc_data_bss_alignment_and_dlsym_match_host -- --exact --nocapture \
+            2>&1 | tee "artifacts/native-loader/retained-tlsdesc-${FRANKENLIBC_MODE}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'TLSDESC fixture must load natively' "artifacts/native-loader/retained-tlsdesc-${FRANKENLIBC_MODE}.log"
+          grep -E 'test result: FAILED.*1 failed' "artifacts/native-loader/retained-tlsdesc-${FRANKENLIBC_MODE}.log"
       - name: Execute native loader suites without hiding later targets on failure
         if: always()
         run: |
@@ -126,6 +151,7 @@ jobs:
             --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
             --test dlfcn_native_tls_test --test dlfcn_native_thread_exit_test \
             --test dlfcn_native_ifunc_test --test dlfcn_native_binding_test \
+            --test dlfcn_native_tlsdesc_test \
             -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
       - name: Isolate host version lookup regression
         if: always()

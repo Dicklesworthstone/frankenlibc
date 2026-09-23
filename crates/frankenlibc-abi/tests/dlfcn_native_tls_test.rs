@@ -346,7 +346,10 @@ fn native_tls_malformed_metadata_and_relocations_rollback() {
 fn native_tls_unsupported_models_are_not_silently_loaded() {
     let _serial=SERIAL.lock().unwrap_or_else(|e|e.into_inner());
     let f=Fixture::new();
-    for (index,flag,relocation) in [(0,"-ftls-model=initial-exec","R_X86_64_TPOFF64"),(1,"-mtls-dialect=gnu2","R_X86_64_TLSDESC")] {
+    // Initial-exec still requires integration with the host static TLS layout.
+    // GNU2 descriptors now have execution and malformed-pair rollback coverage
+    // in dlfcn_native_tlsdesc_test; blanket rejection is no longer the contract.
+    for (index,flag,relocation) in [(0,"-ftls-model=initial-exec","R_X86_64_TPOFF64")] {
         let path=f.compile(&format!("unsupported-{index}"),"__thread long tls_value=7; long value(void){return tls_value;}",&[],&[flag]);
         assert!(f.relocations(&path).contains(relocation));
         assert!(Loader::Native.open(&path,libc::RTLD_NOW).is_null());

@@ -2,10 +2,12 @@
 //!
 //! DTPMOD64 names a native object, DTPOFF64 is an offset in its PT_TLS block.
 //! These IDs NEVER enter the host DTV: only relocations in native mappings are
-//! bound to our private __tls_get_addr. Initial-exec and TLSDESC remain rejected.
+//! bound to our private __tls_get_addr. GNU2 TLSDESC uses the same native TLS
+//! blocks through a register-preserving resolver. Initial-exec remains rejected.
 //! Templates are captured after relocation, before any constructor executes.
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::{Arc, Weak};
@@ -14,8 +16,17 @@ use frankenlibc_core::elf::{Elf64Rela, Elf64Symbol, LoadedObject, ProgramType, R
 
 use super::{NativeDso, OPERATIONS, Resolver, registry};
 
+// The pure core engine deliberately does not execute TLS relocations. Keep
+// recognition here until that engine has a TLS execution context of its own.
+const R_X86_64_TLSDESC: u32 = 36;
+
+fn is_descriptor(relocation: &Elf64Rela) -> bool {
+    relocation.reloc_type().to_u32() == R_X86_64_TLSDESC
+}
+
 pub(super) fn handles(relocation: &Elf64Rela) -> bool {
     matches!(relocation.reloc_type(), RelocationType::DtpMod64 | RelocationType::DtpOff64)
+        || is_descriptor(relocation)
 }
 
 fn load_contains(object: &LoadedObject, start: u64, size: u64) -> bool {
@@ -56,7 +67,10 @@ pub(super) fn validate(object: &LoadedObject, bytes: &[u8]) -> Option<()> {
     }
     for relocation in object.rela_dyn.iter().chain(&object.rela_plt) {
         if handles(relocation) {
-            if !load_contains(object, relocation.r_offset, 8) { return None; }
+            // A descriptor is TWO words. Validating only the function word can
+            // let its argument overwrite a PT_LOAD gap or the end of a mapping.
+            let width = if is_descriptor(relocation) { 16 } else { 8 };
+            if !load_contains(object, relocation.r_offset, width) { return None; }
         } else {
             if !relocation.reloc_type().is_supported() { return None; }
             // A TLS offset is not an ordinary load-biased data address.
@@ -86,47 +100,121 @@ pub(super) fn take_relocations(object: &mut LoadedObject) -> Vec<Elf64Rela> {
     tls
 }
 
-fn definition<'a>(dso: &'a NativeDso, resolver: &Resolver<'a>, index: usize) -> Option<(&'a NativeDso, u64)> {
+ enum Definition<'a> {
+    Tls(&'a NativeDso, u64),
+    UndefinedWeak,
+}
+
+fn definition<'a>(dso: &'a NativeDso, resolver: &Resolver<'a>, index: usize) -> Option<Definition<'a>> {
     if index == 0 {
         dso.object.tls_segment.as_ref()?;
-        return Some((dso, 0));
+        return Some(Definition::Tls(dso, 0));
     }
     let requested = dso.object.dynsym.get(index)?;
     if !requested.is_tls() { return None; }
     // Local/hidden/internal/protected definitions cannot be preempted.
     if requested.is_defined() && (requested.is_local() || requested.st_other & 3 != 0) {
-        return Some((dso, symbol_offset(&dso.object, requested)?));
+        return Some(Definition::Tls(dso, symbol_offset(&dso.object, requested)?));
     }
     let name = dso.object.symbol_name(requested)?;
     let version = dso.object.symbol_version_by_index(index);
     for provider in &resolver.scope {
         if let Some(symbol) = provider.object.lookup_symbol_versioned(name, version) {
-            return Some((provider, symbol_offset(&provider.object, symbol)?));
+            // A malformed or non-TLS definition is an error, not an unresolved
+            // weak reference. Never conceal a type/version/bounds mismatch.
+            return Some(Definition::Tls(provider, symbol_offset(&provider.object, symbol)?));
         }
     }
     // No host fallback: a host TLS offset/module ID is not usable in our DTV.
-    None
+    (requested.is_undefined() && requested.is_weak()).then_some(Definition::UndefinedWeak)
+}
+
+fn addend_offset(provider: &NativeDso, offset: u64, addend: i64) -> Option<u64> {
+    let value = u64::try_from((offset as i128).checked_add(addend as i128)?).ok()?;
+    (value <= provider.object.tls_segment.as_ref()?.memsz).then_some(value)
 }
 
 pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'_>) -> Option<()> {
     for relocation in &dso.tls_relocations {
-        let (provider, offset) = definition(dso, resolver, relocation.symbol_index() as usize)?;
-        let value = match relocation.reloc_type() {
-            RelocationType::DtpMod64 => provider.id as u64,
-            RelocationType::DtpOff64 => {
-                let value = (offset as i128).checked_add(relocation.r_addend as i128)?;
-                let value = u64::try_from(value).ok()?;
-                if value > provider.object.tls_segment.as_ref()?.memsz { return None; }
-                value
-            }
-            _ => return None,
-        };
+        let definition = definition(dso, resolver, relocation.symbol_index() as usize)?;
         let start = usize::try_from(relocation.r_offset).ok()?;
-        memory.get_mut(start..start.checked_add(8)?)?.copy_from_slice(&value.to_le_bytes());
-        let mut providers = resolver.providers.borrow_mut();
-        if !providers.contains(&provider.id) { providers.push(provider.id); }
+        if is_descriptor(relocation) {
+            let (module, offset) = match definition {
+                Definition::Tls(provider, offset) => {
+                    let offset = addend_offset(provider, offset, relocation.r_addend)?;
+                    let mut providers = resolver.providers.borrow_mut();
+                    if !providers.contains(&provider.id) { providers.push(provider.id); }
+                    (provider.id, usize::try_from(offset).ok()?)
+                }
+                // The compiler adds the thread pointer to the resolver result.
+                // An unresolved weak TLS symbol must yield NULL + A, NOT TP+A.
+                // Module zero is private to descriptors; native IDs start at 1.
+                Definition::UndefinedWeak => (0, relocation.r_addend as usize),
+            };
+            let target = memory.get_mut(start..start.checked_add(16)?)?;
+            let argument = dso.tls_descriptors.allocate(module, offset)?;
+            target[..8].copy_from_slice(&(frankenlibc_native_tlsdesc as *const () as usize as u64).to_le_bytes());
+            target[8..].copy_from_slice(&argument.to_le_bytes());
+        } else {
+            // Preserve the existing GD/LD contract; missing weak module-index
+            // pairs are not implicitly treated as host DTV module zero.
+            let Definition::Tls(provider, offset) = definition else { return None; };
+            let value = match relocation.reloc_type() {
+                RelocationType::DtpMod64 => provider.id as u64,
+                RelocationType::DtpOff64 => addend_offset(provider, offset, relocation.r_addend)?,
+                _ => return None,
+            };
+            memory.get_mut(start..start.checked_add(8)?)?.copy_from_slice(&value.to_le_bytes());
+            let mut providers = resolver.providers.borrow_mut();
+            if !providers.contains(&provider.id) { providers.push(provider.id); }
+        }
     }
     Some(())
+}
+
+/// Arguments are owned by the descriptor's DSO, not its TLS provider or the
+/// loading thread. Boxing keeps addresses stable when pending/resident vectors
+/// grow. Dropping a failed transaction or the retired DSO frees every argument.
+#[derive(Debug, Default)]
+pub(super) struct Descriptors {
+    arguments: RefCell<Vec<Box<TlsIndex>>>,
+}
+
+impl Descriptors {
+    fn allocate(&self, module: usize, offset: usize) -> Option<u64> {
+        let mut arguments = self.arguments.try_borrow_mut().ok()?;
+        arguments.try_reserve(1).ok()?;
+        let argument = Box::new(TlsIndex { module, offset });
+        let address = (&*argument as *const TlsIndex) as usize as u64;
+        arguments.push(argument);
+        Some(address)
+    }
+}
+
+// This is NOT a C-callable function: RAX supplies the descriptor, and every
+// register except RAX/EFLAGS must survive, including x87 and enabled vector
+// state. The assembly bridge calls the ordinary C-ABI helper only after saving
+// that state, and returns an offset relative to the host thread pointer.
+core::arch::global_asm!(
+    include_str!("dlfcn_tlsdesc_x86_64.S"),
+    resolver = sym descriptor_address,
+    options(att_syntax),
+);
+unsafe extern "C" {
+    fn frankenlibc_native_tlsdesc();
+}
+
+unsafe extern "C" fn descriptor_address(index: *const TlsIndex) -> *mut c_void {
+    // SAFETY: the descriptor points to a stable, DSO-owned argument. The code
+    // using the descriptor must, like any DSO code, retain the containing DSO.
+    let argument = unsafe { std::ptr::read_unaligned(index) };
+    if argument.module == 0 {
+        argument.offset as *mut c_void
+    } else {
+        // Share generation checks, thread-exit state and temporary IFUNC TLS
+        // with GD/LD. A descriptor never allocates a second TLS block.
+        unsafe { get_addr(index) }
+    }
 }
 
 #[derive(Debug)]
@@ -208,6 +296,7 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
 }
 
 #[repr(C)]
+#[derive(Debug)]
 struct TlsIndex { module: usize, offset: usize }
 
 unsafe extern "C" fn get_addr(index: *const TlsIndex) -> *mut c_void {

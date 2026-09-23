@@ -2,8 +2,8 @@
 //! mappings and relocation edges are published only after the whole group binds.
 //!
 //! Native constructors/destructors run outside the registry mutex, under a
-//! reentrant operation lock. General-/local-dynamic TLS and eager IFUNC are
-//! owned here; initial-exec TLS and TLSDESC remain unsupported.
+//! reentrant operation lock. General-/local-dynamic TLS, GNU2 TLSDESC and eager
+//! IFUNC are owned here; initial-exec TLS remains unsupported.
 //! No dependency is delegated to the host loader.
 
 use std::cell::RefCell;
@@ -98,6 +98,7 @@ struct NativeDso {
     callbacks: lifecycle::Callbacks,
     tls: Option<Arc<tls::Module>>,
     tls_relocations: Vec<Elf64Rela>,
+    tls_descriptors: tls::Descriptors,
     thread_exit_pins: usize,
     state: InitState,
     initialized_at: usize,
@@ -320,6 +321,7 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         callbacks: lifecycle::Callbacks::default(),
         tls: None,
         tls_relocations,
+        tls_descriptors: tls::Descriptors::default(),
         thread_exit_pins: 0,
         state: InitState::Pending,
         initialized_at: 0,
