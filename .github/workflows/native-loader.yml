@@ -83,7 +83,7 @@ jobs:
           cargo test -p frankenlibc-abi --no-fail-fast \
             --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
             --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
-            --test dlfcn_native_tls_test \
+            --test dlfcn_native_tls_test --test dlfcn_native_thread_exit_test \
             -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
       - name: Isolate host version lookup regression
         if: always()

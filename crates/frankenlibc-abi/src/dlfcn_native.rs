@@ -32,6 +32,9 @@ mod lifecycle;
 #[path = "dlfcn_tls.rs"]
 mod tls;
 
+#[path = "dlfcn_thread_exit.rs"]
+mod thread_exit;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -88,6 +91,7 @@ struct NativeDso {
     callbacks: lifecycle::Callbacks,
     tls: Option<Arc<tls::Module>>,
     tls_relocations: Vec<Elf64Rela>,
+    thread_exit_pins: usize,
     state: InitState,
     initialized_at: usize,
     retiring: bool,
@@ -308,6 +312,7 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         callbacks: lifecycle::Callbacks::default(),
         tls: None,
         tls_relocations,
+        thread_exit_pins: 0,
         state: InitState::Pending,
         initialized_at: 0,
         retiring: false,
@@ -353,6 +358,7 @@ impl SymbolLookup for Resolver<'_> {
 
     fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
         if name == "__tls_get_addr" { return tls::resolver_address(version); }
+        if name == "__cxa_thread_atexit_impl" { return thread_exit::resolver_address(version); }
         for dso in &self.scope {
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
                 if symbol.is_tls() { return None; }
@@ -580,7 +586,8 @@ fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
     // Active initialization and finalization batches pin their entire closure
     // during reentrant operations, independent of explicit open counts.
     let mut live = dsos.iter().filter(|dso| {
-        dso.references != 0 || dso.nodelete || dso.state != InitState::Live || dso.retiring
+        dso.references != 0 || dso.thread_exit_pins != 0 || dso.nodelete
+            || dso.state != InitState::Live || dso.retiring
     }).map(|dso| dso.id).collect::<Vec<_>>();
     let mut cursor = 0;
     while cursor < live.len() {

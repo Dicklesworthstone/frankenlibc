@@ -6,7 +6,6 @@
 //! Templates are captured after relocation, before any constructor executes.
 
 use std::alloc::{Layout, alloc_zeroed, dealloc};
-use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::sync::{Arc, Weak};
@@ -161,7 +160,7 @@ impl Module {
     }
 }
 
-struct Block {
+pub(super) struct Block {
     id: usize,
     module: Weak<Module>,
     allocation: NonNull<u8>,
@@ -187,14 +186,10 @@ impl Drop for Block {
     }
 }
 
-std::thread_local! {
-    static BLOCKS: RefCell<Vec<Block>> = const { RefCell::new(Vec::new()) };
-}
-
 pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void> {
     if offset > module.size { return None; }
-    BLOCKS.try_with(|blocks| {
-        let mut blocks = blocks.try_borrow_mut().ok()?;
+    super::thread_exit::with_state(|state| {
+        let mut blocks = state.blocks.try_borrow_mut().ok()?;
         // Weak ownership permits dlclose to unload modules. Never reuse an ID:
         // stale per-thread blocks cannot become the TLS of a later dlopen.
         blocks.retain(|block| block.module.strong_count() != 0);
@@ -208,7 +203,7 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
         };
         // SAFETY: checked module-relative offset, possibly one-past the block.
         Some(unsafe { blocks[index].data.as_ptr().add(offset) }.cast())
-    }).ok().flatten()
+    })
 }
 
 #[repr(C)]
