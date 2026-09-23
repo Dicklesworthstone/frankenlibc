@@ -2,7 +2,8 @@
 //! mappings and relocation edges are published only after the whole group binds.
 //!
 //! Native constructors/destructors run outside the registry mutex, under a
-//! reentrant operation lock. TLS and IFUNC execution remain unsupported.
+//! reentrant operation lock. General-/local-dynamic TLS is owned here;
+//! initial-exec TLS, TLSDESC and IFUNC execution remain unsupported.
 //! No dependency is delegated to the host loader.
 
 use std::cell::RefCell;
@@ -13,11 +14,11 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_core::elf::{
-    ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
+    Elf64Rela, ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
 };
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -27,6 +28,9 @@ use search::{SearchContext, SearchPaths};
 
 #[path = "dlfcn_lifecycle.rs"]
 mod lifecycle;
+
+#[path = "dlfcn_tls.rs"]
+mod tls;
 
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
@@ -82,6 +86,8 @@ struct NativeDso {
     mapping: Mapping,
     object: LoadedObject,
     callbacks: lifecycle::Callbacks,
+    tls: Option<Arc<tls::Module>>,
+    tls_relocations: Vec<Elf64Rela>,
     state: InitState,
     initialized_at: usize,
     retiring: bool,
@@ -160,9 +166,8 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.
     if bytes.get(16..18)? != [3, 0].as_slice()
-        || object.tls_segment.is_some()
         || object.dynsym.iter().any(|symbol| symbol.st_info & 0xf == 10)
-        || object.has_unsupported_relocations()
+        || tls::validate(&object, &bytes).is_none()
     {
         return None;
     }
@@ -286,7 +291,8 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
     // from the immutable source Vec. The guard unmaps it on every error path.
     unsafe { core::slice::from_raw_parts_mut(base, len) }
         .copy_from_slice(&prepared.image.memory);
-    let object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
+    let mut object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
+    let tls_relocations = tls::take_relocations(&mut object);
     Some(NativeDso {
         id,
         device: prepared.device,
@@ -300,6 +306,8 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         mapping,
         object,
         callbacks: lifecycle::Callbacks::default(),
+        tls: None,
+        tls_relocations,
         state: InitState::Pending,
         initialized_at: 0,
         retiring: false,
@@ -344,8 +352,10 @@ impl SymbolLookup for Resolver<'_> {
     }
 
     fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
+        if name == "__tls_get_addr" { return tls::resolver_address(version); }
         for dso in &self.scope {
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
+                if symbol.is_tls() { return None; }
                 let address = symbol.definition_address(dso.object.base)?;
                 let mut providers = self.providers.borrow_mut();
                 if !providers.contains(&dso.id) {
@@ -428,6 +438,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         }) {
             return None;
         }
+        tls::relocate(dso, memory, &resolver)?;
         edges.push(resolver.providers.into_inner());
     }
     // Resolve every array from relocated memory before running any callback.
@@ -459,6 +470,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
                 dso.dependencies.push(provider);
             }
         }
+        dso.tls = tls::Module::capture(dso)?;
         protect_object(dso, &group[index].image)?;
     }
     // No resident state has changed before this point. Dropping pending on any
@@ -517,10 +529,14 @@ pub(super) fn resolve_native_dso_symbol(
     dsos.iter().find(|dso| dso.id == id)?;
     for candidate in lookup_order(&dsos, &[], id) {
         let dso = dsos.iter().find(|dso| dso.id == candidate)?;
-        if let Some(address) = dso.object.lookup_symbol_versioned(symbol, version)
-            .and_then(|symbol| symbol.definition_address(dso.object.base))
-        {
-            return Some(Some(address as *mut c_void));
+        if let Some(symbol) = dso.object.lookup_symbol_versioned(symbol, version) {
+            if symbol.is_tls() {
+                let module = dso.tls.clone()?;
+                let offset = usize::try_from(symbol.st_value).ok()?;
+                drop(dsos);
+                return Some(tls::address(&module, offset));
+            }
+            return Some(symbol.definition_address(dso.object.base).map(|address| address as *mut c_void));
         }
     }
     Some(None)
