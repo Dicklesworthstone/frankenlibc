@@ -12,7 +12,7 @@ use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
@@ -32,6 +32,14 @@ mod lifecycle;
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
 static OPERATIONS: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+
+// All accesses occur under OPERATIONS. Nested dlclose calls update reference
+// counts, but only the outer collector runs finalizers and retires mappings.
+static COLLECTING: AtomicBool = AtomicBool::new(false);
+struct CollectionGuard;
+impl Drop for CollectionGuard {
+    fn drop(&mut self) { COLLECTING.store(false, Ordering::Relaxed); }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum InitState { Pending, Running, Live }
@@ -468,8 +476,8 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
     let (file, device, inode) = open_file(&path)?;
-    let _operation = OPERATIONS.lock();
     {
+        let _operation = OPERATIONS.lock();
         let mut dsos = registry().lock().ok()?;
         if let Some(index) = dsos.iter().position(|dso| dso.device == device && dso.inode == inode) {
             let handle = reopen(&mut dsos, index, flags)?;
@@ -485,6 +493,9 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     let context = SearchContext::process();
     let root = prepare_file(file, device, inode, &path, &context)?;
     let group = prepare_group(root, &context)?;
+    // Slow file reads and dependency staging hold neither loader lock. Recheck
+    // resident identities atomically once the complete group is prepared.
+    let _operation = OPERATIONS.lock();
     let result = publish_group(&group, flags)?;
     initialize(native_dso_id_from_handle(result)?)?;
     Some(result)
@@ -568,6 +579,8 @@ fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
 }
 
 fn collect_unreachable() -> Option<()> {
+    if COLLECTING.swap(true, Ordering::Relaxed) { return Some(()); }
+    let _collection = CollectionGuard;
     loop {
         let mut dsos = registry().lock().ok()?;
         let live = live_ids(&dsos);

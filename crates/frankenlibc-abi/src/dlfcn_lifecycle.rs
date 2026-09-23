@@ -152,8 +152,27 @@ fn read_array(dso: &NativeDso, address: Option<u64>, size: Option<u64>) -> Optio
 
 pub(super) fn executable_address(dso: &NativeDso, address: usize) -> bool {
     let Some(offset) = address.checked_sub(dso.mapping.base) else { return false; };
-    offset < dso.mapping.len && dso.object.program_headers.iter().any(|header| {
-        header.is_load() && header.p_flags.0 & 1 != 0 && header.p_vaddr <= offset as u64
-            && header.p_vaddr.checked_add(header.p_memsz).is_some_and(|end| (offset as u64) < end)
-    })
+    if offset >= dso.mapping.len { return false; }
+    let offset = offset as u64;
+    let mut backed = false;
+    let mut executable = false;
+    // Match protect_object's actual page protections in program-header order.
+    // A later overlapping data segment can remove execute permission, even
+    // when an earlier PT_LOAD labels the callback address executable.
+    for header in &dso.object.program_headers {
+        if !header.is_load() || header.p_memsz == 0 { continue; }
+        let Some(end) = header.p_vaddr.checked_add(header.p_memsz) else { return false; };
+        let Some(page_end) = end.checked_add(4095).map(|end| end & !4095) else { return false; };
+        backed |= header.p_vaddr <= offset && offset < end;
+        if (header.p_vaddr & !4095) <= offset && offset < page_end {
+            executable = header.p_flags.0 & 1 != 0;
+        }
+    }
+    for header in &dso.object.program_headers {
+        if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 { continue; }
+        let Some(end) = header.p_vaddr.checked_add(header.p_memsz)
+            .and_then(|end| end.checked_add(4095)) else { return false; };
+        if (header.p_vaddr & !4095) <= offset && offset < (end & !4095) { return false; }
+    }
+    backed && executable
 }

@@ -187,7 +187,9 @@ fn native_lifecycle_callbacks_can_reenter_loader() {
         let root=f.compile("root",&source,&[],&[]);
         let h=loader.open(&root,libc::RTLD_NOW); assert!(!h.is_null()); assert_eq!(loader.value(h,"result"),7);
         assert_eq!(f.events(loader,sink),[10,1,20]); loader.close(h);
-        assert_eq!(f.events(loader,sink),[10,1,20,-20,-1,-10]); loader.close(sink);
+        // Live glibc defers the child finalizer until the enclosing finalizer
+        // has returned; the nested dlclose updates counts without recursing.
+        assert_eq!(f.events(loader,sink),[10,1,20,-20,-10,-1]); loader.close(sink);
     }
 }
 
@@ -274,4 +276,44 @@ fn native_lifecycle_self_reopen_does_not_repeat_initialization() {
     assert_eq!(f.events(Loader::Native,sink),[1,2,3]);Loader::Native.close(h);
     assert_eq!(f.events(Loader::Native,sink),[1,2,3,-1,-2]);
     assert!(!native_dso_handle_for_tests(h));Loader::Native.close(sink);
+}
+
+
+fn replace_dynamic_value(path: &Path, wanted: i64, replacement: u64) {
+    let mut bytes = std::fs::read(path).unwrap();
+    let phoff = u64::from_le_bytes(bytes[32..40].try_into().unwrap()) as usize;
+    let stride = u16::from_le_bytes(bytes[54..56].try_into().unwrap()) as usize;
+    let count = u16::from_le_bytes(bytes[56..58].try_into().unwrap()) as usize;
+    for index in 0..count {
+        let header = phoff + index * stride;
+        if u32::from_le_bytes(bytes[header..header+4].try_into().unwrap()) != 2 { continue; }
+        let offset = u64::from_le_bytes(bytes[header+8..header+16].try_into().unwrap()) as usize;
+        let size = u64::from_le_bytes(bytes[header+32..header+40].try_into().unwrap()) as usize;
+        for entry in (offset..offset+size).step_by(16) {
+            let tag = i64::from_le_bytes(bytes[entry..entry+8].try_into().unwrap());
+            if tag == 0 { break; }
+            if tag == wanted {
+                bytes[entry+8..entry+16].copy_from_slice(&replacement.to_le_bytes());
+                std::fs::write(path, bytes).unwrap();
+                return;
+            }
+        }
+    }
+    panic!("fixture did not contain dynamic tag {wanted}");
+}
+
+#[test]
+fn native_lifecycle_rejects_malformed_array_metadata_without_side_effects() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let f=Fixture::new();let sink=f.sink(Loader::Native);
+    let dependency=f.compile("dependency","extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(1);}",&[],&[]);
+    let source="extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(2);} __attribute__((destructor)) static void fini(void){event_push(-2);}";
+    for (index,(tag,value)) in [(27,9),(28,9),(25,u64::MAX-7),(26,u64::MAX-7),(27,8*65537)].into_iter().enumerate() {
+        let path=f.compile(&format!("malformed{index}"),source,&[&dependency],&[]);
+        replace_dynamic_value(&path,tag,value);
+        assert!(Loader::Native.open(&path,libc::RTLD_NOW).is_null());
+        assert!(f.events(Loader::Native,sink).is_empty());
+        assert!(Loader::Native.open(&dependency,libc::RTLD_NOW|libc::RTLD_NOLOAD).is_null());
+    }
+    Loader::Native.close(sink);
 }

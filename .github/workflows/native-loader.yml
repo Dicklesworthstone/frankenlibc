@@ -43,6 +43,24 @@ jobs:
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@v2
+      - name: Prove nested-finalizer regression rejects the retained collector
+        run: |
+          mkdir -p artifacts/native-loader
+          source=crates/frankenlibc-abi/src/dlfcn_native.rs
+          saved=$(mktemp)
+          cp "$source" "$saved"
+          trap 'cp "$saved" "$source"' EXIT
+          git fetch --no-tags --depth=1 origin 13ad4eadeb7cba5d3de21825d3154bfaa0409a98
+          git show 13ad4eadeb7cba5d3de21825d3154bfaa0409a98:"$source" > "$source"
+          set +e
+          cargo test -p frankenlibc-abi --test dlfcn_native_lifecycle_test \
+            native_lifecycle_callbacks_can_reenter_loader -- --exact --nocapture \
+            2>&1 | tee "artifacts/native-loader/retained-collector-${FRANKENLIBC_MODE}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'left: [10, 1, 20, -20, -1, -10]' "artifacts/native-loader/retained-collector-${FRANKENLIBC_MODE}.log"
+          grep -F 'right: [10, 1, 20, -20, -10, -1]' "artifacts/native-loader/retained-collector-${FRANKENLIBC_MODE}.log"
       - name: Execute native loader suites without hiding later targets on failure
         run: |
           mkdir -p artifacts/native-loader
