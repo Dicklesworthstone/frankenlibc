@@ -28,29 +28,39 @@ jobs:
   native-dso-groups:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
     env:
       CARGO_TERM_COLOR: always
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_PROFILE_TEST_DEBUG: 0
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@v2
-      - name: Execute existing and transitive native-loader regressions in both modes
+      - name: Execute native loader suites without hiding later targets on failure
         run: |
           mkdir -p artifacts/native-loader
-          for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
-              --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
-              --test dlfcn_native_search_test \
-              -- --test-threads=1 2>&1 | tee "artifacts/native-loader/$mode.log"
-          done
+          cargo test -p frankenlibc-abi --no-fail-fast \
+            --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
+            --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
+            -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
+      - name: Isolate host version lookup regression
+        if: always()
+        run: |
+          mkdir -p artifacts/native-loader
+          cargo test -p frankenlibc-abi --test dlfcn_abi_test \
+            dlvsym_host_handle_resolves_symbol -- --exact --nocapture \
+            2>&1 | tee "artifacts/native-loader/host-version-${FRANKENLIBC_MODE}.log"
       - name: Preserve execution logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: native-loader-execution
+          name: native-loader-execution-${{ matrix.mode }}
           path: artifacts/native-loader/
           if-no-files-found: error

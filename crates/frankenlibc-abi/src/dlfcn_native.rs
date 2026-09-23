@@ -1,8 +1,9 @@
 //! Native mmap-backed DSO groups. File I/O happens before the registry lock;
 //! mappings and relocation edges are published only after the whole group binds.
 //!
-//! Constructors, destructors, TLS and IFUNC execution are deliberately not
-//! admitted by this loader yet. No dependency is delegated to the host loader.
+//! Native constructors/destructors run outside the registry mutex, under a
+//! reentrant operation lock. TLS and IFUNC execution remain unsupported.
+//! No dependency is delegated to the host loader.
 
 use std::cell::RefCell;
 use std::ffi::{OsStr, c_int, c_void};
@@ -23,6 +24,18 @@ use frankenlibc_core::syscall as raw_syscall;
 #[path = "dlfcn_search.rs"]
 mod search;
 use search::{SearchContext, SearchPaths};
+
+#[path = "dlfcn_lifecycle.rs"]
+mod lifecycle;
+
+// Lock order: operation lock -> registry. The operation lock is recursive for
+// same-thread constructor/finalizer reentry; other threads cannot observe a
+// partially initialized object. No registry guard crosses a user callback.
+static OPERATIONS: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InitState { Pending, Running, Live }
+
 
 const HANDLE_TAG: usize = 0x4d;
 const HANDLE_MASK: usize = 0xff;
@@ -60,6 +73,10 @@ struct NativeDso {
     dependencies: Vec<usize>,
     mapping: Mapping,
     object: LoadedObject,
+    callbacks: lifecycle::Callbacks,
+    state: InitState,
+    initialized_at: usize,
+    retiring: bool,
 }
 
 struct PreparedDso {
@@ -73,6 +90,7 @@ struct PreparedDso {
     path: PathBuf,
     search: SearchPaths,
     inherited_rpaths: Vec<PathBuf>,
+    lifecycle: lifecycle::Layout,
 }
 
 static NATIVE_DSOS: OnceLock<Mutex<Vec<NativeDso>>> = OnceLock::new();
@@ -135,15 +153,12 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     // ET_EXEC cannot be safely relocated as an ordinary shared library.
     if bytes.get(16..18)? != [3, 0].as_slice()
         || object.tls_segment.is_some()
-        || object.legacy_init.is_some()
-        || object.legacy_fini.is_some()
-        || !object.init_array.is_empty()
-        || !object.fini_array.is_empty()
         || object.dynsym.iter().any(|symbol| symbol.st_info & 0xf == 10)
         || object.has_unsupported_relocations()
     {
         return None;
     }
+    let lifecycle = lifecycle::Layout::parse(&bytes, &object)?;
     let image = loader.materialize_load_image(&bytes, &object).ok()?;
     if image.low_vaddr != 0 || image.memory.is_empty() {
         return None;
@@ -156,7 +171,7 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
     Some(PreparedDso {
         file, device, inode, bytes, object, image, needed: Vec::new(),
-        path, search, inherited_rpaths: Vec::new(),
+        path, search, inherited_rpaths: Vec::new(), lifecycle,
     })
 }
 
@@ -234,6 +249,10 @@ fn promote_global(dsos: &mut [NativeDso], root: usize) {
 }
 
 fn reopen(dsos: &mut [NativeDso], index: usize, flags: c_int) -> Option<*mut c_void> {
+    // Resurrection during a finalization batch is deliberately rejected. Its
+    // dependency closure is pinned for callbacks, but is no longer admissible
+    // for new consumers. Never return a soon-to-be-unmapped successful handle.
+    if dsos[index].retiring { return None; }
     let references = dsos[index].references.checked_add(1)?;
     let id = dsos[index].id;
     dsos[index].references = references;
@@ -272,6 +291,10 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         needed,
         mapping,
         object,
+        callbacks: lifecycle::Callbacks::default(),
+        state: InitState::Pending,
+        initialized_at: 0,
+        retiring: false,
     })
 }
 
@@ -353,6 +376,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             if let Some(dso) = dsos.iter().find(|dso| {
                 dso.device == prepared.device && dso.inode == prepared.inode
             }) {
+                if dso.retiring { return None; }
                 ids[index] = Some(dso.id);
             } else {
                 ids[index] = Some(next_id()?);
@@ -376,7 +400,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     let local_scope = lookup_order(&dsos, &pending, root);
     let mut edges = Vec::new();
     for dso in &pending {
-        let mut scope = dsos.iter().filter(|dso| dso.global).collect::<Vec<_>>();
+        let mut scope = dsos.iter().filter(|dso| dso.global && !dso.retiring).collect::<Vec<_>>();
         for &id in &local_scope {
             if !scope.iter().any(|dso| dso.id == id) {
                 scope.push(find(&dsos, &pending, id)?);
@@ -397,6 +421,29 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             return None;
         }
         edges.push(resolver.providers.into_inner());
+    }
+    // Resolve every array from relocated memory before running any callback.
+    // Also retain providers of callback addresses, even when no symbol
+    // relocation was required to materialize that address.
+    let mut lifecycle_data = Vec::new();
+    for (dso, &index) in pending.iter().zip(&new_indexes) {
+        let callbacks = group[index].lifecycle.resolve(dso)?;
+        let mut providers = Vec::new();
+        for &address in callbacks.init.iter().chain(&callbacks.fini) {
+            let provider = dsos.iter().chain(&pending).find(|provider| {
+                !provider.retiring && lifecycle::executable_address(provider, address)
+            })?;
+            if provider.id != dso.id && !providers.contains(&provider.id) {
+                providers.push(provider.id);
+            }
+        }
+        lifecycle_data.push((callbacks, providers));
+    }
+    for (dso, (callbacks, providers)) in pending.iter_mut().zip(lifecycle_data) {
+        dso.callbacks = callbacks;
+        for provider in providers {
+            if !dso.dependencies.contains(&provider) { dso.dependencies.push(provider); }
+        }
     }
     for ((dso, providers), &index) in pending.iter_mut().zip(edges).zip(&new_indexes) {
         for provider in providers {
@@ -421,10 +468,15 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
     let (file, device, inode) = open_file(&path)?;
+    let _operation = OPERATIONS.lock();
     {
         let mut dsos = registry().lock().ok()?;
         if let Some(index) = dsos.iter().position(|dso| dso.device == device && dso.inode == inode) {
-            return reopen(&mut dsos, index, flags);
+            let handle = reopen(&mut dsos, index, flags)?;
+            let id = dsos[index].id;
+            drop(dsos);
+            initialize(id)?;
+            return Some(handle);
         }
     }
     if flags & dlfcn_core::RTLD_NOLOAD != 0 {
@@ -433,7 +485,9 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     let context = SearchContext::process();
     let root = prepare_file(file, device, inode, &path, &context)?;
     let group = prepare_group(root, &context)?;
-    publish_group(&group, flags)
+    let result = publish_group(&group, flags)?;
+    initialize(native_dso_id_from_handle(result)?)?;
+    Some(result)
 }
 
 pub(super) fn resolve_native_dso_symbol(
@@ -447,6 +501,7 @@ pub(super) fn resolve_native_dso_symbol(
         Some(bytes) => Some(std::str::from_utf8(bytes).ok()?),
         None => None,
     };
+    let _operation = OPERATIONS.lock();
     let dsos = registry().lock().ok()?;
     dsos.iter().find(|dso| dso.id == id)?;
     for candidate in lookup_order(&dsos, &[], id) {
@@ -460,31 +515,95 @@ pub(super) fn resolve_native_dso_symbol(
     Some(None)
 }
 
-pub(super) fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
-    let id = native_dso_id_from_handle(handle)?;
-    let mut dsos = registry().lock().ok()?;
-    let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
-    if dso.references == 0 {
-        return Some(-1);
+// Initialize a dependency before its consumer. Mark on traversal so cycles
+// execute each initializer once; mark Running before releasing the mutex so a
+// constructor reopening itself cannot recursively initialize itself again.
+fn initialize(root: usize) -> Option<()> {
+    let mut stack = vec![(root, false)];
+    let mut seen = Vec::new();
+    while let Some((id, ready)) = stack.pop() {
+        let mut dsos = registry().lock().ok()?;
+        let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
+        if dso.state != InitState::Pending { continue; }
+        if !ready {
+            if seen.contains(&id) { continue; }
+            seen.push(id);
+            stack.push((id, true));
+            stack.extend(dso.needed.iter().rev().map(|&id| (id, false)));
+            continue;
+        }
+        dso.state = InitState::Running;
+        let callbacks = dso.callbacks.init.clone();
+        drop(dsos);
+        for address in callbacks {
+            // SAFETY: validated before publication; Pending/Running are roots
+            // for nested close, retaining every mapping until init returns.
+            unsafe { lifecycle::call_init(address) };
+        }
+        let mut dsos = registry().lock().ok()?;
+        let sequence = dsos.iter().map(|dso| dso.initialized_at).max().unwrap_or(0).checked_add(1)?;
+        let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
+        dso.initialized_at = sequence;
+        dso.state = InitState::Live;
     }
-    dso.references -= 1;
-    // Reachability, rather than incoming-edge counts, permits an otherwise
-    // unreferenced cycle to unload. NODELETE is a root and pins its closure.
-    let mut live = dsos.iter().filter(|dso| dso.references != 0 || dso.nodelete)
-        .map(|dso| dso.id).collect::<Vec<_>>();
+    Some(())
+}
+
+fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
+    // Active initialization and finalization batches pin their entire closure
+    // during reentrant operations, independent of explicit open counts.
+    let mut live = dsos.iter().filter(|dso| {
+        dso.references != 0 || dso.nodelete || dso.state != InitState::Live || dso.retiring
+    }).map(|dso| dso.id).collect::<Vec<_>>();
     let mut cursor = 0;
     while cursor < live.len() {
         if let Some(dso) = dsos.iter().find(|dso| dso.id == live[cursor]) {
             for &dependency in &dso.dependencies {
-                if !live.contains(&dependency) {
-                    live.push(dependency);
-                }
+                if !live.contains(&dependency) { live.push(dependency); }
             }
         }
         cursor += 1;
     }
-    // retain preserves the remaining global lookup order. The mapping guards
-    // perform unmap only after the complete liveness set has been computed.
-    dsos.retain(|dso| live.contains(&dso.id));
+    live
+}
+
+fn collect_unreachable() -> Option<()> {
+    loop {
+        let mut dsos = registry().lock().ok()?;
+        let live = live_ids(&dsos);
+        let mut retiring = dsos.iter().filter(|dso| !live.contains(&dso.id))
+            .map(|dso| (dso.initialized_at, dso.id)).collect::<Vec<_>>();
+        if retiring.is_empty() { return Some(()); }
+        retiring.sort_unstable_by(|left, right| right.cmp(left));
+        let ids = retiring.iter().map(|entry| entry.1).collect::<Vec<_>>();
+        let mut callbacks = Vec::new();
+        for &id in &ids {
+            let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
+            dso.retiring = true;
+            callbacks.extend(dso.callbacks.fini.iter().copied());
+        }
+        // Pin the WHOLE batch, not just the currently executing finalizer: a
+        // dependency in a cycle may still call back into an earlier member.
+        drop(dsos);
+        for address in callbacks {
+            // SAFETY: all validated callback mappings remain pinned above.
+            unsafe { lifecycle::call_fini(address) };
+        }
+        let mut dsos = registry().lock().ok()?;
+        dsos.retain(|dso| !ids.contains(&dso.id));
+        // Nested closes can make an external provider unreachable. Recompute
+        // after dropping this batch's edges instead of leaking that provider.
+    }
+}
+
+pub(super) fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
+    let id = native_dso_id_from_handle(handle)?;
+    let _operation = OPERATIONS.lock();
+    let mut dsos = registry().lock().ok()?;
+    let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
+    if dso.references == 0 { return Some(-1); }
+    dso.references -= 1;
+    drop(dsos);
+    collect_unreachable()?;
     Some(0)
 }
