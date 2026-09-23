@@ -8,13 +8,14 @@
 //! Lazy PLT binding and IFUNC-valued TLS template relocations remain unsupported.
 
 use std::cell::{Cell, RefCell};
+use std::ffi::c_int;
 use std::sync::Arc;
 
 use frankenlibc_core::elf::{
     Elf64ProgramHeader, Elf64Rela, ProgramType, RelocationType,
 };
 
-use super::{NativeDso, lifecycle, lookup_order, registry, tls};
+use super::{NativeDso, binding, lifecycle, registry, tls};
 
 std::thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
@@ -153,19 +154,13 @@ fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
 }
 
 /// Identify indirect relocations without calling any machine code. The core
-/// continues to own all ordinary relocations, including compressed RELR.
+/// continues to own all ordinary arithmetic, including compressed RELR.
 pub(super) fn prepare(
-    resident: &[NativeDso], pending: &mut [NativeDso], root: usize,
+    resident: &[NativeDso], pending: &mut [NativeDso], root: usize, flags: c_int,
 ) -> Option<Vec<Vec<Fixup>>> {
-    let order = lookup_order(resident, pending, root);
     let mut plans = Vec::new();
     for dso in pending.iter() {
-        let mut scope = resident.iter().filter(|dso| dso.global && !dso.retiring).collect::<Vec<_>>();
-        for &id in &order {
-            if !scope.iter().any(|dso| dso.id == id) {
-                scope.push(super::find(resident, pending, id)?);
-            }
-        }
+        let scope = binding::scope(resident, pending, root, dso, flags)?;
         let mut fixups = Vec::new();
         for relocation in dso.object.rela_dyn.iter().chain(&dso.object.rela_plt) {
             let indirect = if relocation.reloc_type() == RelocationType::IRelative {
@@ -175,24 +170,10 @@ pub(super) fn prepare(
             } else if matches!(relocation.reloc_type(), RelocationType::None | RelocationType::Relative) {
                 None
             } else if relocation.symbol_index() != 0 {
-                let symbol = dso.object.dynsym.get(relocation.symbol_index() as usize)?;
-                let definition = if symbol.is_defined() {
-                    // Match the core's current definition-first relocation
-                    // contract; broader ELF symbol interposition is separate.
-                    Some((dso, symbol))
-                } else {
-                    let name = dso.object.symbol_name(symbol)?;
-                    let version = dso.object.symbol_version_by_index(relocation.symbol_index() as usize);
-                    scope.iter().find_map(|provider| {
-                        provider.object.lookup_symbol_versioned(name, version).map(|symbol| (*provider, symbol))
-                    })
-                };
-                match definition {
-                    Some((provider, symbol)) if symbol.is_ifunc() => {
-                        Some((provider.id, usize::try_from(symbol.definition_address(provider.object.base)?).ok()?))
-                    }
-                    _ => None,
-                }
+                let definition = binding::select(dso, relocation.symbol_index() as usize, &scope)?;
+                if definition.indirect {
+                    Some((definition.provider?, usize::try_from(definition.address).ok()?))
+                } else { None }
             } else { None };
             if let Some((provider, address)) = indirect {
                 if !indirect_form(relocation) { return None; }

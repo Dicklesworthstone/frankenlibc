@@ -96,6 +96,27 @@ jobs:
           set -e
           test "$status" -eq 101
           grep -F 'IFUNC fixture must load natively' "artifacts/native-loader/retained-ifunc-${FRANKENLIBC_MODE}.log"
+      - name: Prove preemption regression rejects definition-first binding
+        run: |
+          source=crates/frankenlibc-abi/src/dlfcn_native.rs
+          ifunc=crates/frankenlibc-abi/src/dlfcn_ifunc.rs
+          saved=$(mktemp -d)
+          cp "$source" "$saved/native"
+          cp "$ifunc" "$saved/ifunc"
+          trap 'cp "$saved/native" "$source"; cp "$saved/ifunc" "$ifunc"' EXIT
+          git fetch --no-tags --depth=1 origin d0ebbac95d459830fc4f367f477162f5f8a67ab7
+          git show d0ebbac95d459830fc4f367f477162f5f8a67ab7:"$source" > "$source"
+          git show d0ebbac95d459830fc4f367f477162f5f8a67ab7:"$ifunc" > "$ifunc"
+          set +e
+          cargo test -p frankenlibc-abi --test dlfcn_native_binding_test \
+            native_binding_preempts_own_data_and_function_definitions -- --exact --nocapture \
+            2>&1 | tee "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'default-visible definitions must be preempted' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
+          grep -F 'left: 15' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
+          grep -F 'right: 81' "artifacts/native-loader/retained-binding-${FRANKENLIBC_MODE}.log"
       - name: Execute native loader suites without hiding later targets on failure
         if: always()
         run: |
@@ -104,7 +125,7 @@ jobs:
             --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
             --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
             --test dlfcn_native_tls_test --test dlfcn_native_thread_exit_test \
-            --test dlfcn_native_ifunc_test \
+            --test dlfcn_native_ifunc_test --test dlfcn_native_binding_test \
             -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
       - name: Isolate host version lookup regression
         if: always()

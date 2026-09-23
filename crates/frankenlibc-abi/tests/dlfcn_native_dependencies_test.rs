@@ -221,12 +221,20 @@ fn native_concurrent_first_opens_publish_one_dependency_group() {
 }
 
 #[test]
-fn native_ifunc_objects_remain_explicitly_unsupported() {
+fn native_ifunc_lookup_executes_resolver_and_rejects_invalid_selected_code() {
     let _guard = TEST_GUARD.lock().unwrap_or_else(|error| error.into_inner());
     let dir = fixture_dir();
     let object = compile(&dir, "ifunc",
         "static int implementation(void) { return 42; } static void *resolver(void) { return implementation; } int group_ifunc(void) __attribute__((ifunc(\"resolver\")));", &[]);
-    // Do not expose the resolver address as though it were the function.
-    assert!(try_open(&object, libc::RTLD_NOW).is_null());
+    // The original fixture required rejection while IFUNC was unsupported.
+    // Now require execution of the selected implementation, never exposure of
+    // the resolver itself as though it were the exported function.
+    let handle = open(&object, libc::RTLD_NOW);
+    assert_eq!(call(handle, "group_ifunc"), 42);
+    close(handle);
+    let invalid = compile(&dir, "invalid_ifunc",
+        "static void *resolver(void) { return (void *)1; } int invalid_ifunc(void) __attribute__((ifunc(\"resolver\"))); int (*force_relocation)(void) = invalid_ifunc;", &[]);
+    assert!(try_open(&invalid, libc::RTLD_NOW).is_null());
     assert_ne!(error(), "no dlerror");
+    assert!(try_open(&invalid, libc::RTLD_NOW | libc::RTLD_NOLOAD).is_null());
 }

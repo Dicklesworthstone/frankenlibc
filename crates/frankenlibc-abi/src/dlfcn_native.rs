@@ -38,6 +38,9 @@ mod thread_exit;
 #[path = "dlfcn_ifunc.rs"]
 mod ifunc;
 
+#[path = "dlfcn_binding.rs"]
+mod binding;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -85,6 +88,7 @@ struct NativeDso {
     references: usize,
     nodelete: bool,
     global: bool,
+    symbolic: bool,
     // DT_NEEDED order is the lookup scope; relocation-only providers are
     // lifetime edges, not additional members of a handle's lookup scope.
     needed: Vec<usize>,
@@ -298,6 +302,7 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
     unsafe { core::slice::from_raw_parts_mut(base, len) }
         .copy_from_slice(&prepared.image.memory);
     let mut object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
+    let symbolic = binding::symbolic(&prepared.bytes, &object)?;
     let tls_relocations = tls::take_relocations(&mut object);
     Some(NativeDso {
         id,
@@ -307,6 +312,7 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         references: 0,
         nodelete: false,
         global: false,
+        symbolic,
         dependencies: needed.clone(),
         needed,
         mapping,
@@ -428,18 +434,13 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             .collect::<Option<Vec<_>>>()?;
         pending.push(map_object(&group[index], ids[index]?, needed)?);
     }
-    let indirect = ifunc::prepare(&dsos, &mut pending, root)?;
+    let direct = binding::prepare(&dsos, &mut pending, root, flags)?;
+    let indirect = ifunc::prepare(&dsos, &mut pending, root, flags)?;
     // Every member is mapped before the first relocation. Forward references,
     // siblings and cycles therefore resolve without publishing partial DSOs.
-    let local_scope = lookup_order(&dsos, &pending, root);
     let mut edges = Vec::new();
-    for dso in &pending {
-        let mut scope = dsos.iter().filter(|dso| dso.global && !dso.retiring).collect::<Vec<_>>();
-        for &id in &local_scope {
-            if !scope.iter().any(|dso| dso.id == id) {
-                scope.push(find(&dsos, &pending, id)?);
-            }
-        }
+    for (dso, plan) in pending.iter().zip(&direct) {
+        let scope = binding::scope(&dsos, &pending, root, dso, flags)?;
         let resolver = Resolver { scope, providers: RefCell::new(Vec::new()) };
         // SAFETY: all pending mappings remain uniquely owned by this
         // transaction, are disjoint and writable, and no callback is invoked.
@@ -454,6 +455,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         }) {
             return None;
         }
+        binding::apply(plan, memory, &resolver)?;
         tls::relocate(dso, memory, &resolver)?;
         edges.push(resolver.providers.into_inner());
     }
