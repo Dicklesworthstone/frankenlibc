@@ -77,13 +77,34 @@ jobs:
           set -e
           test "$status" -eq 101
           grep -F 'TLS fixture was rejected by native loader' "artifacts/native-loader/retained-tls-${FRANKENLIBC_MODE}.log"
+      - name: Prove native IFUNC execution rejects the retained loader
+        run: |
+          source=crates/frankenlibc-abi/src/dlfcn_native.rs
+          tls=crates/frankenlibc-abi/src/dlfcn_tls.rs
+          saved=$(mktemp -d)
+          cp "$source" "$saved/native"
+          cp "$tls" "$saved/tls"
+          trap 'cp "$saved/native" "$source"; cp "$saved/tls" "$tls"' EXIT
+          git fetch --no-tags --depth=1 origin e0d814633691925f962e58e642e079df1bb93f23
+          git show e0d814633691925f962e58e642e079df1bb93f23:"$source" > "$source"
+          git show e0d814633691925f962e58e642e079df1bb93f23:"$tls" > "$tls"
+          set +e
+          cargo test -p frankenlibc-abi --test dlfcn_native_ifunc_test \
+            native_ifunc_data_got_plt_and_lookup_match_host -- --exact --nocapture \
+            2>&1 | tee "artifacts/native-loader/retained-ifunc-${FRANKENLIBC_MODE}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'IFUNC fixture must load natively' "artifacts/native-loader/retained-ifunc-${FRANKENLIBC_MODE}.log"
       - name: Execute native loader suites without hiding later targets on failure
+        if: always()
         run: |
           mkdir -p artifacts/native-loader
           cargo test -p frankenlibc-abi --no-fail-fast \
             --test dlfcn_abi_test --test dlfcn_native_dependencies_test \
             --test dlfcn_native_search_test --test dlfcn_native_lifecycle_test \
             --test dlfcn_native_tls_test --test dlfcn_native_thread_exit_test \
+            --test dlfcn_native_ifunc_test \
             -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
       - name: Isolate host version lookup regression
         if: always()

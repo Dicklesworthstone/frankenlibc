@@ -152,7 +152,8 @@ impl Module {
         template.try_reserve_exact(count).ok()?;
         if count != 0 {
             // SAFETY: validated PT_TLS/PT_LOAD range of an unpublished RW
-            // mapping. Capture AFTER all relocations, not from raw file bytes.
+            // mapping. Capture AFTER all ordinary relocations, not raw bytes.
+            // Indirect relocations into the template are rejected separately.
             let bytes = unsafe { std::slice::from_raw_parts((dso.mapping.base + start) as *const u8, count) };
             template.extend_from_slice(bytes);
         }
@@ -214,8 +215,12 @@ unsafe extern "C" fn get_addr(index: *const TlsIndex) -> *mut c_void {
     // SAFETY: native compiler-emitted TLS sequences pass a readable GOT pair.
     let index = unsafe { std::ptr::read_unaligned(index) };
     let _operation = OPERATIONS.lock();
-    let module = registry().lock().ok().and_then(|dsos| {
-        dsos.iter().find(|dso| dso.id == index.module).and_then(|dso| dso.tls.clone())
+    // The loading thread may use its own TLS from an IFUNC resolver before
+    // registry publication. This private scope never exposes a partial handle.
+    let module = super::ifunc::temporary_tls_module(index.module).or_else(|| {
+        registry().lock().ok().and_then(|dsos| {
+            dsos.iter().find(|dso| dso.id == index.module).and_then(|dso| dso.tls.clone())
+        })
     });
     module.and_then(|module| address(&module, index.offset)).unwrap_or(std::ptr::null_mut())
 }

@@ -2,8 +2,8 @@
 //! mappings and relocation edges are published only after the whole group binds.
 //!
 //! Native constructors/destructors run outside the registry mutex, under a
-//! reentrant operation lock. General-/local-dynamic TLS is owned here;
-//! initial-exec TLS, TLSDESC and IFUNC execution remain unsupported.
+//! reentrant operation lock. General-/local-dynamic TLS and eager IFUNC are
+//! owned here; initial-exec TLS and TLSDESC remain unsupported.
 //! No dependency is delegated to the host loader.
 
 use std::cell::RefCell;
@@ -34,6 +34,9 @@ mod tls;
 
 #[path = "dlfcn_thread_exit.rs"]
 mod thread_exit;
+
+#[path = "dlfcn_ifunc.rs"]
+mod ifunc;
 
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
@@ -170,7 +173,6 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.
     if bytes.get(16..18)? != [3, 0].as_slice()
-        || object.dynsym.iter().any(|symbol| symbol.st_info & 0xf == 10)
         || tls::validate(&object, &bytes).is_none()
     {
         return None;
@@ -319,19 +321,25 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
     })
 }
 
-fn protect_object(dso: &NativeDso, image: &LoadImage) -> Option<()> {
+fn protect_object(dso: &NativeDso, image: &LoadImage, apply_relro: bool) -> Option<()> {
+    // Anonymous gaps between PT_LOAD segments must not remain writable.
+    // SAFETY: this guard owns the entire page-aligned anonymous mapping.
+    unsafe { raw_syscall::sys_mprotect(dso.mapping.base as *mut u8, dso.mapping.len, libc::PROT_NONE) }.ok()?;
     for segment in &image.segments {
         let offset = usize::try_from(segment.map_addr).ok()?;
         let len = usize::try_from(segment.map_size).ok()?;
         if offset.checked_add(len)? > dso.mapping.len {
             return None;
         }
+        if !apply_relro && segment.prot & (libc::PROT_WRITE | libc::PROT_EXEC)
+            == (libc::PROT_WRITE | libc::PROT_EXEC)
+        { return None; }
         let address = dso.mapping.base.checked_add(offset)? as *mut u8;
         // SAFETY: checked range inside this mapping; page alignment and flags
         // come from the validated materialized PT_LOAD image.
         unsafe { raw_syscall::sys_mprotect(address, len, segment.prot) }.ok()?;
     }
-    if let Some(range) = &image.relro_range {
+    if apply_relro && let Some(range) = &image.relro_range {
         let start = range.start & !0xfff;
         let end = range.end.checked_add(0xfff)? & !0xfff;
         if end > dso.mapping.len {
@@ -361,7 +369,8 @@ impl SymbolLookup for Resolver<'_> {
         if name == "__cxa_thread_atexit_impl" { return thread_exit::resolver_address(version); }
         for dso in &self.scope {
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
-                if symbol.is_tls() { return None; }
+                // All IFUNC references belong to the explicit late pass.
+                if symbol.is_tls() || symbol.is_ifunc() { return None; }
                 let address = symbol.definition_address(dso.object.base)?;
                 let mut providers = self.providers.borrow_mut();
                 if !providers.contains(&dso.id) {
@@ -419,6 +428,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             .collect::<Option<Vec<_>>>()?;
         pending.push(map_object(&group[index], ids[index]?, needed)?);
     }
+    let indirect = ifunc::prepare(&dsos, &mut pending, root)?;
     // Every member is mapped before the first relocation. Forward references,
     // siblings and cycles therefore resolve without publishing partial DSOs.
     let local_scope = lookup_order(&dsos, &pending, root);
@@ -447,7 +457,35 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         tls::relocate(dso, memory, &resolver)?;
         edges.push(resolver.providers.into_inner());
     }
-    // Resolve every array from relocated memory before running any callback.
+    for (dso, providers) in pending.iter_mut().zip(edges) {
+        for provider in providers {
+            if provider != dso.id && !dso.dependencies.contains(&provider) {
+                dso.dependencies.push(provider);
+            }
+        }
+        dso.tls = tls::Module::capture(dso)?;
+    }
+    if indirect.iter().any(|plan| !plan.is_empty()) {
+        for (dso, &index) in pending.iter().zip(&new_indexes) {
+            protect_object(dso, &group[index].image, false)?;
+        }
+        let order = ifunc::execution_order(&dsos, &pending, root);
+        let context = ifunc::Context::new(&dsos, &pending);
+        // OPERATIONS stays held. Recursive load/lookup/close is rejected while
+        // resolving, so residents cannot disappear while their addresses are
+        // in use. The pending transaction is never exposed as a live handle.
+        drop(dsos);
+        let edges = ifunc::execute(context, &indirect, &order)?;
+        dsos = registry().lock().ok()?;
+        for (dso, providers) in pending.iter_mut().zip(edges) {
+            for provider in providers {
+                if provider != dso.id && !dso.dependencies.contains(&provider) {
+                    dso.dependencies.push(provider);
+                }
+            }
+        }
+    }
+    // Resolve every array from relocated memory before running constructors.
     // Also retain providers of callback addresses, even when no symbol
     // relocation was required to materialize that address.
     let mut lifecycle_data = Vec::new();
@@ -470,17 +508,12 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             if !dso.dependencies.contains(&provider) { dso.dependencies.push(provider); }
         }
     }
-    for ((dso, providers), &index) in pending.iter_mut().zip(edges).zip(&new_indexes) {
-        for provider in providers {
-            if provider != dso.id && !dso.dependencies.contains(&provider) {
-                dso.dependencies.push(provider);
-            }
-        }
-        dso.tls = tls::Module::capture(dso)?;
-        protect_object(dso, &group[index].image)?;
+    for (dso, &index) in pending.iter().zip(&new_indexes) {
+        protect_object(dso, &group[index].image, true)?;
     }
     // No resident state has changed before this point. Dropping pending on any
     // failure above rolls back mappings and descriptors, but never providers.
+    // Resolver side effects, like arbitrary constructor effects, are not undoable.
     let root_dso = pending.iter_mut().find(|dso| dso.id == root)?;
     root_dso.references = 1;
     root_dso.nodelete = flags & dlfcn_core::RTLD_NODELETE != 0;
@@ -492,6 +525,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 }
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
+    if ifunc::active() { return None; }
     let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
     let (file, device, inode) = open_file(&path)?;
     {
@@ -525,6 +559,7 @@ pub(super) fn resolve_native_dso_symbol(
     version_name: Option<&[u8]>,
 ) -> Option<Option<*mut c_void>> {
     let id = native_dso_id_from_handle(handle)?;
+    if ifunc::active() { return Some(None); }
     let symbol = std::str::from_utf8(symbol_name).ok()?;
     let version = match version_name {
         Some(bytes) => Some(std::str::from_utf8(bytes).ok()?),
@@ -541,6 +576,11 @@ pub(super) fn resolve_native_dso_symbol(
                 let offset = usize::try_from(symbol.st_value).ok()?;
                 drop(dsos);
                 return Some(tls::address(&module, offset));
+            }
+            if symbol.is_ifunc() {
+                let address = usize::try_from(symbol.definition_address(dso.object.base)?).ok()?;
+                drop(dsos);
+                return Some(ifunc::resolve_symbol(id, address).map(|address| address as *mut c_void));
             }
             return Some(symbol.definition_address(dso.object.base).map(|address| address as *mut c_void));
         }
@@ -634,6 +674,7 @@ fn collect_unreachable() -> Option<()> {
 
 pub(super) fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
     let id = native_dso_id_from_handle(handle)?;
+    if ifunc::active() { return Some(-1); }
     let _operation = OPERATIONS.lock();
     let mut dsos = registry().lock().ok()?;
     let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
