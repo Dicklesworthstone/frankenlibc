@@ -130,3 +130,33 @@ fn newlocale_c_succeeds_both() {
     assert!(!gnull, "glibc newlocale(LC_ALL_MASK, \"C\") should succeed");
     assert!(!fnull, "fl newlocale(LC_ALL_MASK, \"C\") should succeed");
 }
+
+/// The mask libstdc++ passes: exactly `1 << LC_ALL`. glibc normalizes it to
+/// LC_ALL_MASK; only the LC_ALL bit combined with other bits is invalid. The
+/// earlier gate covered just the combined form, so it stayed green while fl
+/// rejected the exact form and every C++ program aborted at load
+/// (bd-rc0923-epic-eeuy4f.2).
+#[test]
+fn newlocale_lc_all_bit_masks_match_glibc() {
+    let exact: c_int = 1 << libc::LC_ALL;
+    for (mask, label) in [
+        (exact, "exact 1<<LC_ALL"),
+        (libc::LC_ALL_MASK | exact, "LC_ALL_MASK|1<<LC_ALL"),
+        (libc::LC_CTYPE_MASK | exact, "LC_CTYPE_MASK|1<<LC_ALL"),
+        (0, "zero mask"),
+        (libc::LC_NUMERIC_MASK, "LC_NUMERIC_MASK"),
+    ] {
+        for name in ["C", "POSIX", "C.UTF-8"] {
+            let n = CString::new(name).unwrap();
+            let (gnull, ge) = glibc_new(mask, &n);
+            let (fnull, fe) = fl_new(mask, &n);
+            assert_eq!(
+                fnull, gnull,
+                "newlocale({label}, {name}) NULL-ness: fl={fnull} glibc={gnull}"
+            );
+            if gnull {
+                assert_eq!(fe, ge, "newlocale({label}, {name}) errno: fl={fe} glibc={ge}");
+            }
+        }
+    }
+}

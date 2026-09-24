@@ -1039,6 +1039,19 @@ fn charset_for_handle(handle: LocaleT) -> Charset {
     }
 }
 
+/// glibc treats a mask of exactly `1 << LC_ALL` as `LC_ALL_MASK` before its
+/// sanity check; only the LC_ALL bit *combined with* other bits is invalid.
+/// libstdc++ creates its C locale with `__newlocale(1 << LC_ALL, "C", 0)`, so
+/// rejecting the exact form aborts every C++ program at load (bd-rc0923-epic-eeuy4f.2).
+#[inline]
+fn normalize_newlocale_category_mask(category_mask: c_int) -> c_int {
+    if category_mask == 1 << libc::LC_ALL {
+        libc::LC_ALL_MASK
+    } else {
+        category_mask
+    }
+}
+
 #[inline]
 fn valid_newlocale_category_mask(category_mask: c_int) -> bool {
     category_mask >= 0 && (category_mask & !VALID_NEWLOCALE_CATEGORY_MASK) == 0
@@ -1061,7 +1074,7 @@ pub unsafe extern "C" fn newlocale(
         return std::ptr::null_mut();
     }
 
-    if !valid_newlocale_category_mask(category_mask) {
+    if !valid_newlocale_category_mask(normalize_newlocale_category_mask(category_mask)) {
         unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
         return std::ptr::null_mut();
@@ -1434,6 +1447,23 @@ mod tests {
             unsafe { *crate::errno_abi::__errno_location() },
             libc::EINVAL
         );
+    }
+
+    #[test]
+    fn newlocale_accepts_exact_lc_all_bit_as_all_mask() {
+        // glibc normalizes a mask of exactly `1 << LC_ALL` to LC_ALL_MASK;
+        // libstdc++'s static init depends on it.
+        for name in [&b"C\0"[..], b"POSIX\0", b"C.UTF-8\0"] {
+            // SAFETY: NUL-terminated locale name, null base.
+            let loc = unsafe {
+                newlocale(
+                    1 << libc::LC_ALL,
+                    name.as_ptr() as *const c_char,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert!(!loc.is_null(), "exact 1<<LC_ALL rejected for {name:?}");
+        }
     }
 
     #[test]
