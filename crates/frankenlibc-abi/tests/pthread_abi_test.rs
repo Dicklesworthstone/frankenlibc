@@ -4770,8 +4770,16 @@ fn mutex_consistent_rejects_non_robust_mutex_like_host() {
     }
 }
 
+unsafe extern "C" fn lock_and_exit(m: *mut c_void) -> *mut c_void {
+    unsafe { pthread_mutex_lock(m.cast()) };
+    ptr::null_mut()
+}
+
 #[test]
-fn mutex_init_rejects_unsupported_extension_attributes() {
+fn robust_mutex_owner_death_eownerdead_consistent() {
+    // glibc accepts robust (and process-shared / PI) attributes; a robust
+    // mutex whose owner thread exits holding it reports EOWNERDEAD to the next
+    // locker, pthread_mutex_consistent repairs it (bd-rc0923-epic-eeuy4f.15).
     unsafe {
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
@@ -4780,11 +4788,24 @@ fn mutex_init_rejects_unsupported_extension_attributes() {
             pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_ROBUST),
             0
         );
-
-        let rc = pthread_mutex_init(&mut mutex, &attr);
-        assert_eq!(rc, libc::EINVAL);
-
+        assert_eq!(pthread_mutex_init(&mut mutex, &attr), 0);
         pthread_mutexattr_destroy(&mut attr);
+        assert_eq!(pthread_mutex_consistent(&mut mutex), libc::EINVAL);
+
+        let mut t: libc::pthread_t = 0;
+        let m_ptr = (&mut mutex as *mut libc::pthread_mutex_t).cast::<c_void>();
+        assert_eq!(
+            pthread_create(&mut t, ptr::null(), Some(lock_and_exit), m_ptr),
+            0
+        );
+        assert_eq!(pthread_join(t, ptr::null_mut()), 0);
+
+        assert_eq!(pthread_mutex_lock(&mut mutex), libc::EOWNERDEAD);
+        assert_eq!(pthread_mutex_consistent(&mut mutex), 0);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_lock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
+        assert_eq!(pthread_mutex_unlock(&mut mutex), libc::EPERM);
     }
 }
 
