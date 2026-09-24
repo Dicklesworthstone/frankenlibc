@@ -41,13 +41,15 @@ jobs:
           sudo "$RUNNER_TEMP/legacy-dns" reverse
       - name: Build actual release ABI
         run: cargo build --release -p frankenlibc-abi --lib --keep-going
-      - name: Exercise native forward host lookups in strict and hardened modes
+      - name: Exercise native forward and reverse lookups in both modes
         run: |
           set -euo pipefail
           so="$PWD/target/release/libfrankenlibc_abi.so"
           test -f "$so"
           for mode in strict hardened; do
-            sudo env FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/legacy-dns" forward "$so"
+            for direction in forward reverse; do
+              sudo env FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/legacy-dns" "$direction" "$so"
+            done
           done
       - name: DNS transport unit tests
         run: |

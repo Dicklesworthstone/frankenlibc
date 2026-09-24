@@ -2442,6 +2442,17 @@ fn native_dns_resolve(
         })
 }
 
+/// Resolve a files-only reverse miss through the validated native PTR engine.
+fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+    use frankenlibc_core::dns_transport::ResolveError;
+    frankenlibc_core::dns_transport::reverse_with(address, &native_dns_config(), native_dns_query)
+        .map_err(|error| match error {
+            ResolveError::NotFound => libc::EAI_NONAME,
+            ResolveError::Temporary => libc::EAI_AGAIN,
+            ResolveError::Failure => libc::EAI_FAIL,
+        })
+}
+
 /// POSIX `getaddrinfo`: numeric/scoped hosts, files and native DNS.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getaddrinfo(
@@ -3974,18 +3985,34 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     // Borrowed + allocation-free reverse walk: `read_hosts_backend()` cloned the whole file per
     // call and `reverse_lookup_hosts` ran `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>`
     // hostnames) on every line, then built an owned result vector — of which only `[0]` was used.
-    // First-matching-line-wins and the address validation are unchanged. A backend read error is
-    // still HOST_NOT_FOUND (the `Err(_)` arm), and so is "no matching line".
+    // First-matching-line-wins and address validation are unchanged.
+    // Files misses and read errors now fall through to native PTR lookup.
     let written = with_hosts_backend_snapshot(|content, _generation| {
         let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)?;
         // SAFETY: caller-provided output buffers, as in the previous call.
         Some(unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) })
     });
 
-    let Ok(Some(written)) = written else {
-        unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
-        return libc::ENOENT;
+    let written = match written {
+        Ok(Some(written)) => written,
+        Ok(None) | Err(_) => {
+            // The backend snapshot borrow ends before network I/O.
+            match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
+                Ok(hostname) => {
+                    // SAFETY: the writer checks output bounds and copies the owned name.
+                    unsafe {
+                        write_reentrant_hostent(&hostname, ip, result_buf, buf, buflen, result)
+                    }
+                }
+                Err(error) => {
+                    let (_, host_error) = legacy_host_lookup_error(error);
+                    unsafe { set_h_errnop(h_errnop, host_error) };
+
+                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                    return 0;
+                }
+            }
+        }
     };
 
     match written {
@@ -4006,9 +4033,9 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     }
 }
 
-/// POSIX `gethostbyaddr` — reverse DNS lookup by address.
+/// POSIX `gethostbyaddr` — IPv4 reverse lookup through files, then native PTR.
 ///
-/// Uses /etc/hosts for reverse lookup (no DNS queries).
+/// Internal `_gethtbyaddr` remains a files-only operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyaddr(
     addr: *const c_void,
@@ -4061,11 +4088,24 @@ pub unsafe extern "C" fn gethostbyaddr(
         Some(unsafe { populate_tls_hostent(hostname, ip) })
     });
 
-    let Ok(Some(hostent_ptr)) = filled else {
-        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-        return ptr::null_mut();
+    let hostent_ptr = match filled {
+        Ok(Some(hostent_ptr)) => hostent_ptr,
+        Ok(None) | Err(_) => match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
+            Ok(hostname) => {
+                // SAFETY: copies the name into TLS and retains the original address.
+                unsafe { populate_tls_hostent(&hostname, ip) }
+            }
+            Err(error) => {
+                let (_, host_error) = legacy_host_lookup_error(error);
+                unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+                return ptr::null_mut();
+            }
+        },
     };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
+    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
     hostent_ptr
 }
 
