@@ -5073,7 +5073,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-run-id",
-            ("run_id", json!("rc0923-corpus-20260924T111610Z")),
+            ("run_id", json!("rc0923-corpus-20260924T112959Z")),
         ),
         (
             "ld-preload-smoke-lib-path",
@@ -5091,7 +5091,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
             "ld-preload-smoke-total-cases",
             ("summary.total_cases", json!(184)),
         ),
-        ("ld-preload-smoke-passes", ("summary.passes", json!(178))),
+        ("ld-preload-smoke-passes", ("summary.passes", json!(180))),
         ("ld-preload-smoke-skips", ("summary.skips", json!(4))),
         (
             "ld-preload-smoke-no-signature-guard-failures",
@@ -5111,7 +5111,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-strict-passes",
-            ("modes.strict.passes", json!(89)),
+            ("modes.strict.passes", json!(90)),
         ),
         (
             "ld-preload-smoke-strict-skips",
@@ -5123,7 +5123,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-hardened-passes",
-            ("modes.hardened.passes", json!(89)),
+            ("modes.hardened.passes", json!(90)),
         ),
         (
             "ld-preload-smoke-hardened-skips",

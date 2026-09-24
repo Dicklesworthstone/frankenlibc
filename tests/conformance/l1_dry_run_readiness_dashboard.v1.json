@@ -2764,7 +2764,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "run_id",
-      "expected_value": "rc0923-corpus-20260924T111610Z",
+      "expected_value": "rc0923-corpus-20260924T112959Z",
       "rationale": "Dashboard consumers must see the checked LD_PRELOAD smoke run id behind the summary."
     },
     {
@@ -2804,7 +2804,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "summary.passes",
-      "expected_value": 178,
+      "expected_value": 180,
       "rationale": "Dashboard consumers must see the LD_PRELOAD smoke pass count."
     },
     {
@@ -2852,7 +2852,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.strict.passes",
-      "expected_value": 89,
+      "expected_value": 90,
       "rationale": "Dashboard consumers must see the strict-mode smoke pass count."
     },
     {
@@ -2876,7 +2876,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.hardened.passes",
-      "expected_value": 89,
+      "expected_value": 90,
       "rationale": "Dashboard consumers must see the hardened-mode smoke pass count."
     },
     {
