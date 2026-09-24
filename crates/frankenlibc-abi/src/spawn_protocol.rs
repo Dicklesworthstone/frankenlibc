@@ -128,12 +128,17 @@ fn close_from_proc(from: c_int, keep: c_int) -> Result<(), c_int> {
 }
 
 fn close_from_directory(directory: c_int, from: c_int, keep: c_int) -> Result<(), c_int> {
-    // Avoid a bulk zero-fill that could lower to interposed memset after clone.
-    // Only the prefix initialized by a successful kernel read becomes a slice.
+    // Initialize record padding too: getdents64 need not write every byte in
+    // its returned extent. Volatile scalar writes avoid an interposed memset
+    // after clone, where another thread may have left libc locks held.
     const CAPACITY: usize = 4096;
     let mut storage = std::mem::MaybeUninit::<[u8; CAPACITY]>::uninit();
+    for index in 0..CAPACITY {
+        // SAFETY: every index is within the writable storage allocation.
+        unsafe { storage.as_mut_ptr().cast::<u8>().add(index).write_volatile(0) };
+    }
     loop {
-        // SAFETY: storage has CAPACITY writable bytes; no uninitialized byte is read.
+        // SAFETY: storage has CAPACITY initialized, writable bytes.
         let count = match syscall_result(unsafe {
             raw_syscall::syscall3(
                 libc::SYS_getdents64 as usize,
@@ -148,7 +153,7 @@ fn close_from_directory(directory: c_int, from: c_int, keep: c_int) -> Result<()
             Err(libc::EINTR) => continue,
             Err(error) => return Err(error),
         };
-        // SAFETY: getdents64 initialized exactly this prefix, checked above.
+        // SAFETY: the whole allocation was initialized above; count is bounded.
         let buffer = unsafe { std::slice::from_raw_parts(storage.as_ptr().cast::<u8>(), count) };
         let mut offset = 0;
         while offset < count {
