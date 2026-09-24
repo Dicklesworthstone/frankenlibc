@@ -4,6 +4,9 @@
 //! waitpid, wait. All functions route through the membrane RuntimeMathKernel
 //! under `ApiFamily::Process`.
 
+#[path = "spawn_protocol.rs"]
+mod spawn_protocol;
+
 use std::ffi::{c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 
@@ -898,14 +901,10 @@ pub unsafe extern "C" fn posix_spawnattr_getsigdefault(
     if sigdefault.is_null() {
         return libc::EINVAL;
     }
-    // Store our u64 bitmask into sigset_t
+    // Store the kernel bit layout: signal N occupies bit N-1, including 64.
     unsafe {
-        crate::signal_abi::sigemptyset(sigdefault);
-        for sig in 1..=63 {
-            if attr.sigdefault & (1u64 << sig) != 0 {
-                crate::signal_abi::sigaddset(sigdefault, sig);
-            }
-        }
+        std::ptr::write_bytes(sigdefault, 0, 1);
+        std::ptr::write_unaligned(sigdefault.cast::<u64>(), attr.sigdefault);
     }
     0
 }
@@ -922,13 +921,8 @@ pub unsafe extern "C" fn posix_spawnattr_setsigdefault(
     if sigdefault.is_null() {
         return libc::EINVAL;
     }
-    let mut mask = 0u64;
-    for sig in 1..=63 {
-        if unsafe { crate::signal_abi::sigismember(sigdefault, sig) } == 1 {
-            mask |= 1u64 << sig;
-        }
-    }
-    attr.sigdefault = mask;
+    // Linux consumes the first 64 signal bits; do not drop SIGRTMAX.
+    attr.sigdefault = unsafe { std::ptr::read_unaligned(sigdefault.cast::<u64>()) };
     0
 }
 
@@ -944,13 +938,10 @@ pub unsafe extern "C" fn posix_spawnattr_getsigmask(
     if sigmask.is_null() {
         return libc::EINVAL;
     }
+    // Store the kernel bit layout: signal N occupies bit N-1, including 64.
     unsafe {
-        crate::signal_abi::sigemptyset(sigmask);
-        for sig in 1..=63 {
-            if attr.sigmask & (1u64 << sig) != 0 {
-                crate::signal_abi::sigaddset(sigmask, sig);
-            }
-        }
+        std::ptr::write_bytes(sigmask, 0, 1);
+        std::ptr::write_unaligned(sigmask.cast::<u64>(), attr.sigmask);
     }
     0
 }
@@ -967,13 +958,8 @@ pub unsafe extern "C" fn posix_spawnattr_setsigmask(
     if sigmask.is_null() {
         return libc::EINVAL;
     }
-    let mut mask = 0u64;
-    for sig in 1..=63 {
-        if unsafe { crate::signal_abi::sigismember(sigmask, sig) } == 1 {
-            mask |= 1u64 << sig;
-        }
-    }
-    attr.sigmask = mask;
+    // Linux consumes the first 64 signal bits; do not drop SIGRTMAX.
+    attr.sigmask = unsafe { std::ptr::read_unaligned(sigmask.cast::<u64>()) };
     0
 }
 
@@ -1108,36 +1094,10 @@ unsafe fn read_file_actions_mut(fa_ptr: *mut c_void) -> Option<&'static mut Spaw
 unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
     let flags = attr.flags as c_int;
 
-    // Flag-application order note (verified against glibc 2.42 spawni.c). glibc
-    // applies: SETSIGDEF -> SETSCHED{PARAM,ULER} -> SETSID -> SETPGROUP ->
-    // RESETIDS -> (SETSIGMASK last, right before exec). fl's textual order below
-    // differs, but the two sub-orderings that actually affect correctness are
-    // preserved: (1) SETSID precedes SETPGROUP (a session leader cannot later
-    // change its pgid, so setpgid must run after setsid creates the new
-    // session); (2) SETSCHED* precedes RESETIDS (the scheduler is set while the
-    // child still holds the parent's privileges, before they are dropped). The
-    // remaining differences (SETSIGDEF vs SETSIGMASK timing) are independent of
-    // every other step and yield the same final child state, so reordering them
-    // to match glibc verbatim is unnecessary. Do not move SETSID below
-    // SETPGROUP or RESETIDS above SETSCHED*.
-    //
-    // The actual order below, for the reader who does not want to re-derive it:
-    //   SETSID -> SETPGROUP -> SETSIGMASK -> SETSIGDEF -> SETSCHED{ULER,PARAM}
-    //   -> RESETIDS
-    // and both load-bearing invariants above are visible in it directly.
-    //
-    // ONE CONSEQUENCE THE "same final child state" CLAIM DOES NOT COVER, and it
-    // is a TRANSIENT rather than a final-state difference. glibc applies
-    // SETSIGMASK last, immediately before exec, so its child performs setsid,
-    // setpgid, the scheduler calls and the uid/gid drop under the ORIGINAL
-    // signal mask. fl applies SETSIGMASK third, so the remainder of fl's setup
-    // runs under the CALLER-SUPPLIED mask. If that mask blocks a signal which
-    // would otherwise have been delivered during those few syscalls, fl defers
-    // it to after exec where glibc would deliver it before. The child ends in
-    // the same state either way, which is why the ordering is not a bug, but a
-    // test that signals a spawning child mid-setup could observe the difference.
-    // Anyone chasing such a divergence should look here first rather than at the
-    // signal code. (bd-kp271z)
+    // The child trampoline has reset dispositions with every signal blocked.
+    // Keep SETSID before SETPGROUP and scheduling before the effective-ID drop.
+    // The requested/inherited signal mask is installed only after file actions,
+    // immediately before exec; no inherited application handler can run here.
 
     // POSIX_SPAWN_SETSID (glibc >= 2.26, value 0x80; not exposed by the libc
     // crate): the child starts a new session. glibc applies it FIRST, before
@@ -1157,44 +1117,8 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         return e;
     }
 
-    if flags & libc::POSIX_SPAWN_SETSIGMASK != 0 {
-        let mut sigset: libc::sigset_t = unsafe { std::mem::zeroed() };
-        unsafe { crate::signal_abi::sigemptyset(&mut sigset) };
-        for sig in 1..=63 {
-            if attr.sigmask & (1u64 << sig) != 0 {
-                unsafe { crate::signal_abi::sigaddset(&mut sigset, sig) };
-            }
-        }
-        if let Err(e) = unsafe {
-            raw_syscall::sys_rt_sigprocmask(
-                libc::SIG_SETMASK,
-                &sigset as *const libc::sigset_t as *const u8,
-                std::ptr::null_mut(),
-                8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
-            )
-        } {
-            return e;
-        }
-    }
-
-    if flags & libc::POSIX_SPAWN_SETSIGDEF != 0 {
-        let mut act: libc::sigaction = unsafe { std::mem::zeroed() };
-        act.sa_sigaction = libc::SIG_DFL;
-        for sig in 1..=63 {
-            if attr.sigdefault & (1u64 << sig) != 0
-                && let Err(e) = unsafe {
-                    raw_syscall::sys_rt_sigaction(
-                        sig,
-                        &act as *const libc::sigaction as *const u8,
-                        std::ptr::null_mut(),
-                        8, // kernel _NSIG / 8 (NOT sizeof(sigset_t))
-                    )
-                }
-            {
-                return e;
-            }
-        }
-    }
+    // Signal dispositions were reset by the raw child trampoline. All
+    // blockable signals remain blocked until file actions have completed.
 
     // Process setscheduler / setparam if requested
     if flags & libc::POSIX_SPAWN_SETSCHEDULER != 0 {
@@ -1221,15 +1145,10 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
         }
     }
 
-    if flags & libc::POSIX_SPAWN_RESETIDS != 0 {
-        let egid = raw_syscall::sys_getegid();
-        let euid = raw_syscall::sys_geteuid();
-        if let Err(e) = raw_syscall::sys_setgid(egid) {
-            return e;
-        }
-        if let Err(e) = raw_syscall::sys_setuid(euid) {
-            return e;
-        }
+    if flags & libc::POSIX_SPAWN_RESETIDS != 0
+        && let Err(error) = spawn_protocol::reset_effective_ids()
+    {
+        return error;
     }
 
     if attr.has_cgroup {
@@ -1254,16 +1173,16 @@ unsafe fn apply_spawn_attrs(attr: &SpawnAttrs) -> c_int {
 
 /// Apply file actions in the child process (between fork and exec).
 /// Returns 0 on success, errno on failure.
-unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
+unsafe fn apply_file_actions(fa: &SpawnFileActions, error_fd: c_int) -> c_int {
     for action in &fa.actions {
         match action {
             SpawnFileAction::Close(fd) => {
-                if let Err(e) = raw_syscall::sys_close(*fd) {
+                if let Err(e) = spawn_protocol::close_for_spawn(*fd) {
                     return e;
                 }
             }
             SpawnFileAction::Dup2 { oldfd, newfd } => {
-                if let Err(e) = raw_syscall::sys_dup2(*oldfd, *newfd) {
+                if let Err(e) = spawn_protocol::duplicate_for_spawn(*oldfd, *newfd) {
                     return e;
                 }
             }
@@ -1273,6 +1192,9 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
                 oflag,
                 mode,
             } => {
+                // An open action closes its destination before opening. This
+                // also makes that descriptor slot available under fd pressure.
+                let _ = raw_syscall::sys_close(*fd);
                 let opened_fd = match unsafe {
                     raw_syscall::sys_openat(libc::AT_FDCWD, path.as_ptr(), *oflag, *mode)
                 } {
@@ -1288,16 +1210,8 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
                 }
             }
             SpawnFileAction::CloseFrom(from) => {
-                if let Err(e) = raw_syscall::sys_close_range(*from as u32, u32::MAX, 0) {
-                    if e != libc::ENOSYS {
-                        return e;
-                    }
-                    // Fallback for older kernels without close_range
-                    let max_fd = unsafe { crate::unistd_abi::sysconf(libc::_SC_OPEN_MAX) };
-                    let end = if max_fd > 0 { max_fd as c_int } else { 1024 };
-                    for fd in *from..end {
-                        let _ = raw_syscall::sys_close(fd);
-                    }
+                if let Err(e) = spawn_protocol::close_from(*from, error_fd) {
+                    return e;
                 }
             }
             SpawnFileAction::Chdir { path } => {
@@ -1326,18 +1240,7 @@ unsafe fn apply_file_actions(fa: &SpawnFileActions) -> c_int {
 
 #[inline]
 unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
-    let mut to_write = err;
-    let mut written = 0usize;
-    while written < std::mem::size_of::<c_int>() {
-        let ptr = (&mut to_write as *mut c_int as *mut u8).wrapping_add(written);
-        let rc =
-            unsafe { raw_syscall::sys_write(err_fd, ptr, std::mem::size_of::<c_int>() - written) };
-        match rc {
-            Ok(n) if n > 0 => written += n,
-            _ => break,
-        }
-    }
-    raw_syscall::sys_exit_group(127)
+    spawn_protocol::child_fail(err_fd, err)
 }
 
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
@@ -1369,6 +1272,25 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         return libc::EINVAL;
     }
 
+    // Validate optional handles in the parent. A non-null invalid object must
+    // not silently turn into an empty action list/default attributes.
+    let spawn_attrs = if attrp.is_null() {
+        None
+    } else {
+        match unsafe { read_spawn_attrs(attrp) } {
+            Some(value) => Some(value),
+            None => return libc::EINVAL,
+        }
+    };
+    let spawn_actions = if file_actions.is_null() {
+        None
+    } else {
+        match unsafe { read_file_actions(file_actions) } {
+            Some(value) => Some(value),
+            None => return libc::EINVAL,
+        }
+    };
+
     let (path_len, terminated) = unsafe {
         crate::util::scan_c_string(path, crate::malloc_abi::known_remaining(path as usize))
     };
@@ -1376,6 +1298,10 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         return libc::EFAULT;
     }
     let path_slice = unsafe { std::slice::from_raw_parts(path as *const u8, path_len) };
+    if path_slice.is_empty() {
+        return libc::ENOENT;
+    }
+    let is_path_search = search_path && !path_slice.contains(&b'/');
     let file_cstr = unsafe {
         std::ffi::CStr::from_bytes_with_nul_unchecked(std::slice::from_raw_parts(
             path as *const u8,
@@ -1394,7 +1320,9 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         if file_bytes.contains(&b'/') {
             candidate_paths.push(std::ffi::CString::from(file_cstr));
         } else {
-            let owned_path = unsafe { path_bytes_from_env_vector(envp) };
+            // PATH comes from the caller's environment, not the environment
+            // vector that will be installed in the newly executed program.
+            let owned_path = unsafe { path_bytes_from_env_vector(std::ptr::null()) };
             let path_bytes = owned_path.as_slice();
             for dir in path_bytes.split(|b| *b == b':') {
                 let mut full = dir.to_vec();
@@ -1429,6 +1357,32 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         return e;
     }
 
+    // The pipe must not become an implicit source/destination in user actions.
+    // closefrom is handled separately by excluding this private descriptor.
+    if let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
+        spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
+            || spawn_actions.is_some_and(|fa| fa.actions.iter().any(|action| match action {
+                SpawnFileAction::Close(value)
+                | SpawnFileAction::Fchdir(value)
+                | SpawnFileAction::TcSetPgrp(value) => *value == fd,
+                SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
+                SpawnFileAction::Open { fd: destination, .. } => *destination == fd,
+                SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+            }))
+    }) {
+        let _ = raw_syscall::sys_close(err_pipe[0]);
+        let _ = raw_syscall::sys_close(err_pipe[1]);
+        return error;
+    }
+
+    let signal_guard = match spawn_protocol::SignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            let _ = raw_syscall::sys_close(err_pipe[0]);
+            let _ = raw_syscall::sys_close(err_pipe[1]);
+            return error;
+        }
+    };
     let mut child_pidfd = -1_i32;
     let want_pidfd = !pidfd_out.is_null();
 
@@ -1470,8 +1424,15 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         // --- Child process ---
         let _ = raw_syscall::sys_close(err_pipe[0]);
 
+        let defaults = spawn_attrs
+            .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGDEF != 0)
+            .map_or(0, |attr| attr.sigdefault);
+        if let Err(error) = spawn_protocol::reset_child_signals(defaults) {
+            unsafe { child_spawn_fail(err_pipe[1], error) };
+        }
+
         // Apply spawn attributes if provided
-        if let Some(attr) = unsafe { read_spawn_attrs(attrp) } {
+        if let Some(attr) = spawn_attrs {
             let err = unsafe { apply_spawn_attrs(attr) };
             if err != 0 {
                 unsafe { child_spawn_fail(err_pipe[1], err) };
@@ -1479,8 +1440,8 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         }
 
         // Apply file actions if provided
-        if let Some(fa) = unsafe { read_file_actions(file_actions) } {
-            let err = unsafe { apply_file_actions(fa) };
+        if let Some(fa) = spawn_actions {
+            let err = unsafe { apply_file_actions(fa, err_pipe[1]) };
             if err != 0 {
                 unsafe { child_spawn_fail(err_pipe[1], err) };
             }
@@ -1492,6 +1453,13 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
         } else {
             envp
         };
+
+        let final_mask = spawn_attrs
+            .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
+            .map_or(signal_guard.original, |attr| attr.sigmask);
+        if let Err(error) = spawn_protocol::install_signal_mask(final_mask) {
+            unsafe { child_spawn_fail(err_pipe[1], error) };
+        }
 
         // Try execve for each candidate path. Iterating a Vec is just reading
         // memory (slice) and does not allocate, so it is async-signal safe.
@@ -1508,15 +1476,19 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
             }
             .err()
             .unwrap_or(libc::ENOENT);
+            // Without a PATH search, preserve the syscall's exact errno
+            // (in particular ENOTDIR), rather than folding it into ENOENT.
+            if !is_path_search {
+                unsafe { child_spawn_fail(err_pipe[1], err) };
+            }
             match err {
-                libc::ENOENT | libc::ENOTDIR => {}
+                libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
                 libc::EACCES => {
                     saw_eacces = true;
                 }
-                _ => {
-                    final_err = err;
-                    break;
-                }
+                // A terminal error (notably ENOEXEC) wins over an earlier
+                // EACCES. posix_spawnp must not run an implicit shell here.
+                _ => unsafe { child_spawn_fail(err_pipe[1], err) },
             }
         }
 
@@ -1527,45 +1499,33 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     }
 
     // --- Parent process ---
+    // The child does not share this address space. Restore the calling thread's
+    // mask now, not after potentially blocking in the error-pipe read.
+    drop(signal_guard);
     let _ = raw_syscall::sys_close(err_pipe[1]);
-    let mut child_err: c_int = 0;
-    let mut bytes_read = 0usize;
-    while bytes_read < std::mem::size_of::<c_int>() {
-        let ptr = (&mut child_err as *mut c_int as *mut u8).wrapping_add(bytes_read);
-        match unsafe {
-            raw_syscall::sys_read(err_pipe[0], ptr, std::mem::size_of::<c_int>() - bytes_read)
-        } {
-            Ok(0) => break, // EOF => exec succeeded.
-            Ok(n) => bytes_read += n,
-            Err(libc::EINTR) => continue,
-            Err(e) => {
-                child_err = e;
-                bytes_read = std::mem::size_of::<c_int>();
-                break;
-            }
-        }
-    }
+    let child_status = spawn_protocol::read_child_error(err_pipe[0]);
     let _ = raw_syscall::sys_close(err_pipe[0]);
 
-    if bytes_read > 0 {
-        if child_pidfd >= 0 {
-            let _ = raw_syscall::sys_close(child_pidfd);
+    match child_status {
+        Ok(None) => {
+            if !pid.is_null() {
+                unsafe { *pid = child_pid };
+            }
+            if want_pidfd {
+                unsafe { *pidfd_out = child_pidfd };
+            }
+            0
         }
-        let _ = unsafe {
-            raw_syscall::sys_wait4(child_pid, std::ptr::null_mut(), 0, std::ptr::null_mut())
-        };
-        if want_pidfd {
-            unsafe { *pidfd_out = -1 };
+        Ok(Some(error)) | Err(error) => {
+            if child_pidfd >= 0 {
+                let _ = raw_syscall::sys_close(child_pidfd);
+            }
+            spawn_protocol::reap_failed_child(child_pid);
+            if want_pidfd {
+                unsafe { *pidfd_out = -1 };
+            }
+            error
         }
-        if child_err == 0 { libc::EIO } else { child_err }
-    } else {
-        if !pid.is_null() {
-            unsafe { *pid = child_pid };
-        }
-        if want_pidfd {
-            unsafe { *pidfd_out = child_pidfd };
-        }
-        0
     }
 }
 
