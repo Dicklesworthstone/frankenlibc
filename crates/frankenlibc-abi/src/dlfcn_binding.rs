@@ -112,11 +112,11 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
             });
         }
     }
-    if version.is_none_or(|version| super::super::version_supported(version.as_bytes())) {
-        let address = super::super::resolve_exported_symbol(name.as_bytes());
-        if !address.is_null() {
-            return Some(Definition { address: address as u64, provider: None, indirect: false });
-        }
+    // Keep ordinary builtin fallback on the same ABI/version path too. An
+    // empty scope cannot accidentally select a different native provider.
+    let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
+    if let Some(address) = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version) {
+        return Some(Definition { address, provider: None, indirect: false });
     }
     symbol.is_weak().then_some(Definition { address: 0, provider: None, indirect: false })
 }

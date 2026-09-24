@@ -6,6 +6,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
+use std::sync::OnceLock;
 
 use super::{NativeDso, OPERATIONS, lifecycle, registry};
 use super::tls::Block;
@@ -33,15 +34,24 @@ std::thread_local! {
     // within a C++ destructor, before the destructor has actually returned.
     static STATE: Cell<*mut ThreadState> = const { Cell::new(std::ptr::null_mut()) };
     static CLEANUP: Cleanup = const { Cleanup };
+    static PROCESS_EXIT: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
     STATE.try_with(|slot| {
         let mut state = slot.get();
         if state.is_null() {
-            // Do not resurrect a thread whose cleanup key has already died.
-            CLEANUP.try_with(|_| ()).ok()?;
-            state = Box::into_raw(Box::new(ThreadState::default()));
+            // Ordinary worker teardown must not resurrect a dead cleanup key.
+            // During process exit, late FINI calls may first touch a TLS block;
+            // that state is instead retained until the kernel reclaims it.
+            if !PROCESS_EXIT.with(Cell::get) { CLEANUP.try_with(|_| ()).ok()?; }
+            let allocation = Box::new(ThreadState::default());
+            state = Box::into_raw(allocation);
+            if !PROCESS_EXIT.with(Cell::get) && !attach_reclaimer(state) {
+                // SAFETY: registration failed before the pointer was exposed.
+                unsafe { drop(Box::from_raw(state)) };
+                return None;
+            }
             slot.set(state);
         }
         // SAFETY: only this thread accesses its heap-pinned state. Cleanup
@@ -50,28 +60,67 @@ pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) ->
     }).ok().flatten()
 }
 
+fn drain_current() {
+    let _ = STATE.try_with(|slot| {
+        let state = slot.get();
+        if state.is_null() { return; }
+        loop {
+            // SAFETY: this thread owns state through the entire drain.
+            // Remove before invoking, with no borrow held across user code.
+            let next = unsafe { &*state }.destructors.borrow_mut().pop();
+            let Some(entry) = next else { break; };
+            unsafe { (entry.destructor)(entry.argument) };
+            release_pins(&entry.owners);
+        }
+    });
+}
+
+pub(super) fn prepare_process_exit() {
+    PROCESS_EXIT.with(|flag| flag.set(true));
+    drain_current();
+}
+
+type SetSpecific = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
+struct Reclaimer { key: libc::pthread_key_t, set: SetSpecific }
+static RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
+
+fn attach_reclaimer(state: *mut ThreadState) -> bool {
+    let reclaimer = RECLAIMER.get_or_init(|| {
+        type Create = unsafe extern "C" fn(
+            *mut libc::pthread_key_t, Option<unsafe extern "C" fn(*mut c_void)>,
+        ) -> c_int;
+        let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
+        let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
+        // SAFETY: the private key belongs to host threads. This schedules only
+        // reclamation of our heap state; native module IDs never enter its DTV.
+        let create: Create = unsafe { std::mem::transmute(create) };
+        let set: SetSpecific = unsafe { std::mem::transmute(set) };
+        let mut key = 0;
+        if unsafe { create(&mut key, Some(reclaim)) } != 0 { return None; }
+        Some(Reclaimer { key, set })
+    });
+    reclaimer.as_ref().is_some_and(|reclaimer| {
+        unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 }
+    })
+}
+
+unsafe extern "C" fn reclaim(pointer: *mut c_void) {
+    if pointer.is_null() { return; }
+    // pthread-key destructors run on ordinary thread termination, but not on
+    // normal process exit. Deferring allocation reclamation to this stage
+    // keeps TLS valid for process finalizers even when a worker calls exit.
+    // Drain defensively: correctness does not depend on Rust's TLS strategy.
+    drain_current();
+    let _ = STATE.try_with(|slot| slot.set(std::ptr::null_mut()));
+    // SAFETY: one key value owns the one Box registered by attach_reclaimer.
+    unsafe { drop(Box::from_raw(pointer.cast::<ThreadState>())) };
+}
+
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        let _ = STATE.try_with(|slot| {
-            let state = slot.get();
-            if state.is_null() { return; }
-            loop {
-                // SAFETY: this thread owns state through the entire drain.
-                // Release the borrow before calling user code: registration
-                // during a callback must take priority over older entries.
-                let next = unsafe { &*state }.destructors.borrow_mut().pop();
-                let Some(entry) = next else { break; };
-                // No registry or operation lock crosses the user callback.
-                // Its module pins protect both code and dependencies even
-                // when another thread closes the last ordinary handle.
-                unsafe { (entry.destructor)(entry.argument) };
-                release_pins(&entry.owners);
-            }
-            slot.set(std::ptr::null_mut());
-            // SAFETY: created once by Box::into_raw on this thread; no user
-            // callback remains. Only now release its TLS allocation blocks.
-            unsafe { drop(Box::from_raw(state)) };
-        });
+        // Run native C++ TLS callbacks at Rust/C++ thread-exit time, retaining
+        // their storage until pthread-key cleanup or process reclamation.
+        drain_current();
     }
 }
 

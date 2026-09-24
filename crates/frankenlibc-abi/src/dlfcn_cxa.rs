@@ -6,6 +6,7 @@
 
 use std::ffi::{c_int, c_void};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{NativeDso, OPERATIONS, ifunc, lifecycle, registry};
 
@@ -20,6 +21,9 @@ struct Entry {
 }
 
 static ENTRIES: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
+static PROCESS_FINI: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn begin_process_fini() { PROCESS_FINI.store(true, Ordering::Relaxed); }
 
 fn contains(dso: &NativeDso, address: usize) -> bool {
     let Some(offset) = (address as u64).checked_sub(dso.object.base) else { return false; };
@@ -45,6 +49,7 @@ fn register(destructor: Destructor, argument: *mut c_void, token: *mut c_void) -
     // onto a still-live owner (or the process list). Registrations within the
     // retiring batch are drained before any of that batch is unmapped.
     if dsos.iter().find(|dso| dso.id == provider)?.retiring
+        && !PROCESS_FINI.load(Ordering::Relaxed)
         && !owner.is_some_and(|id| dsos.iter().any(|dso| dso.id == id && dso.retiring))
     { return None; }
     if let Some(owner) = owner {
@@ -115,6 +120,8 @@ fn drain(mut matches: impl FnMut(&Entry) -> bool) -> Option<()> {
         // take priority over older entries; recursion cannot call it twice.
     }
 }
+
+pub(super) fn finalize_all() -> Option<()> { drain(|_| true) }
 
 pub(super) fn finalize_owners(owners: &[usize]) -> Option<()> {
     // Also drains registrations left by custom CRTs with no __cxa_finalize

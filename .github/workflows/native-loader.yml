@@ -6,6 +6,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/examples/dlfcn_native_process_exit_probe.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-loader.yml'
@@ -14,6 +15,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn*'
+      - 'crates/frankenlibc-abi/examples/dlfcn_native_process_exit_probe.rs'
       - 'crates/frankenlibc-abi/tests/fixtures/tlsdesc_state_probe.S'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-loader.yml'
@@ -159,6 +161,23 @@ jobs:
           test "$status" -eq 101
           grep -F 'C++ fixture failed to load:' "artifacts/native-loader/retained-cxa-${FRANKENLIBC_MODE}.log"
           grep -E 'test result: FAILED.*1 failed' "artifacts/native-loader/retained-cxa-${FRANKENLIBC_MODE}.log"
+      - name: Prove process termination rejects the retained loader
+        run: |
+          source=crates/frankenlibc-abi/src/dlfcn_native.rs
+          saved=$(mktemp)
+          cp "$source" "$saved"
+          trap 'cp "$saved" "$source"' EXIT
+          git fetch --no-tags --depth=1 origin 16bb0e41ae6134faa4ce3385f5f4aefed5029a45
+          git show 16bb0e41ae6134faa4ce3385f5f4aefed5029a45:"$source" > "$source"
+          set +e
+          cargo run -p frankenlibc-abi --example dlfcn_native_process_exit_probe -- --only plain-return \
+            2>&1 | tee "artifacts/native-loader/retained-process-exit-${FRANKENLIBC_MODE}.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -eq 101
+          grep -F 'native process-exit trace mismatch: native plain-return' "artifacts/native-loader/retained-process-exit-${FRANKENLIBC_MODE}.log"
+          grep -F 'left: [76, 82, 77]' "artifacts/native-loader/retained-process-exit-${FRANKENLIBC_MODE}.log"
+          grep -F 'right: [76, 82, 77, 114, 108]' "artifacts/native-loader/retained-process-exit-${FRANKENLIBC_MODE}.log"
       - name: Execute native loader suites without hiding later targets on failure
         if: always()
         run: |
@@ -170,6 +189,13 @@ jobs:
             --test dlfcn_native_ifunc_test --test dlfcn_native_binding_test \
             --test dlfcn_native_tlsdesc_test --test dlfcn_native_cxa_test \
             -- --test-threads=1 2>&1 | tee "artifacts/native-loader/${FRANKENLIBC_MODE}.log"
+      - name: Execute real main and worker process termination
+        if: always()
+        run: |
+          mkdir -p artifacts/native-loader
+          cargo run -p frankenlibc-abi --example dlfcn_native_process_exit_probe \
+            2>&1 | tee "artifacts/native-loader/process-exit-${FRANKENLIBC_MODE}.log"
+          grep -F 'native-process-exit: 39 scenarios passed' "artifacts/native-loader/process-exit-${FRANKENLIBC_MODE}.log"
       - name: Isolate host version lookup regression
         if: always()
         run: |

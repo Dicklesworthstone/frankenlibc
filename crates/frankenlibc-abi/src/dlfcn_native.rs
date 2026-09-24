@@ -44,6 +44,9 @@ mod binding;
 #[path = "dlfcn_cxa.rs"]
 mod cxa;
 
+#[path = "dlfcn_process_exit.rs"]
+mod process_exit;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -379,6 +382,7 @@ impl SymbolLookup for Resolver<'_> {
         if name == "__tls_get_addr" { return tls::resolver_address(version); }
         if name == "__cxa_thread_atexit_impl" { return thread_exit::resolver_address(version); }
         if matches!(name, "__cxa_atexit" | "__cxa_finalize") { return cxa::resolver_address(name, version); }
+        if matches!(name, "exit" | "_Exit" | "_exit" | "quick_exit") { return process_exit::resolver_address(name, version); }
         for dso in &self.scope {
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
                 // All IFUNC references belong to the explicit late pass.
@@ -533,11 +537,12 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 }
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
-    if ifunc::active() { return None; }
+    if ifunc::active() || process_exit::unloading() { return None; }
     let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
     let (file, device, inode) = open_file(&path)?;
     {
         let _operation = OPERATIONS.lock();
+        if process_exit::unloading() { return None; }
         let mut dsos = registry().lock().ok()?;
         if let Some(index) = dsos.iter().position(|dso| dso.device == device && dso.inode == inode) {
             let handle = reopen(&mut dsos, index, flags)?;
@@ -556,6 +561,8 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     // Slow file reads and dependency staging hold neither loader lock. Recheck
     // resident identities atomically once the complete group is prepared.
     let _operation = OPERATIONS.lock();
+    if process_exit::unloading() { return None; }
+    process_exit::install()?;
     let result = publish_group(&group, flags)?;
     initialize(native_dso_id_from_handle(result)?)?;
     Some(result)
