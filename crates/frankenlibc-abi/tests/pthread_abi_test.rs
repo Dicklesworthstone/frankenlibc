@@ -3160,7 +3160,8 @@ fn barrier_init_rejects_destroyed_attr() {
 }
 
 #[test]
-fn barrier_init_rejects_process_shared_attr() {
+fn barrier_init_accepts_process_shared_attr() {
+    // glibc accepts PTHREAD_PROCESS_SHARED barriers (bd-rc0923-epic-eeuy4f.15).
     unsafe {
         let mut attr: libc::pthread_barrierattr_t = std::mem::zeroed();
         let mut barrier: libc::pthread_barrier_t = std::mem::zeroed();
@@ -3175,7 +3176,11 @@ fn barrier_init_rejects_process_shared_attr() {
                 &attr as *const _ as *mut _,
                 1
             ),
-            libc::EINVAL
+            0
+        );
+        assert_eq!(
+            pthread_barrier_destroy(&mut barrier as *mut _ as *mut c_void),
+            0
         );
         assert_eq!(pthread_barrierattr_destroy(&mut attr), 0);
     }

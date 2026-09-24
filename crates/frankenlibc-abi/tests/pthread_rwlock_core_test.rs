@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use frankenlibc_abi::pthread_abi::{
     pthread_rwlock_destroy, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_unlock,
-    pthread_rwlock_wrlock,
+    pthread_rwlock_wrlock, pthread_rwlockattr_init,
 };
 
 /// Acquire poison-tolerantly, so a failing assertion reports as one failure instead of
@@ -47,11 +47,11 @@ fn rwlock_destroy_busy_and_validation_contract() {
 
     // SAFETY: pointer identity is stable for test lifetime.
     unsafe {
+        // glibc accepts an initialized (default) attribute.
         let mut attr: libc::pthread_rwlockattr_t = std::mem::zeroed();
-        assert_eq!(
-            pthread_rwlock_init(rwlock, &mut attr as *mut libc::pthread_rwlockattr_t),
-            libc::EINVAL
-        );
+        assert_eq!(pthread_rwlockattr_init(&mut attr), 0);
+        assert_eq!(pthread_rwlock_init(rwlock, &attr), 0);
+        assert_eq!(pthread_rwlock_destroy(rwlock), 0);
 
         assert_eq!(pthread_rwlock_init(rwlock, std::ptr::null()), 0);
         assert_eq!(pthread_rwlock_rdlock(rwlock), 0);
@@ -59,7 +59,19 @@ fn rwlock_destroy_busy_and_validation_contract() {
         assert_eq!(pthread_rwlock_unlock(rwlock), 0);
         assert_eq!(pthread_rwlock_destroy(rwlock), 0);
 
+        // All-zero storage is PTHREAD_RWLOCK_INITIALIZER, which glibc
+        // accepts; garbage storage (a nonzero word and no managed magic) is
+        // what fl rejects.
+        let zeroed = alloc_rwlock_ptr();
+        assert_eq!(pthread_rwlock_rdlock(zeroed), 0);
+        assert_eq!(pthread_rwlock_unlock(zeroed), 0);
+        free_rwlock_ptr(zeroed);
         let unmanaged = alloc_rwlock_ptr();
+        std::ptr::write_bytes(
+            unmanaged.cast::<u8>(),
+            0xA5,
+            std::mem::size_of::<libc::pthread_rwlock_t>(),
+        );
         assert_eq!(pthread_rwlock_rdlock(unmanaged), libc::EINVAL);
         assert_eq!(pthread_rwlock_wrlock(unmanaged), libc::EINVAL);
         assert_eq!(pthread_rwlock_unlock(unmanaged), libc::EINVAL);
