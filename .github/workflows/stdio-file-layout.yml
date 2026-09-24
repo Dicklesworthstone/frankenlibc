@@ -1,0 +1,90 @@
+name: Native stdio FILE layout
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/stdio_abi.rs'
+      - 'crates/frankenlibc-abi/src/stdio_abi/**'
+      - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/io_internal_abi/**'
+      - 'crates/frankenlibc-core/src/stdio/**'
+      - 'tests/integration/fixture_stdio_file_layout.c'
+      - '.github/workflows/stdio-file-layout.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve exact source for ABI failure diagnosis
+        run: |
+          mkdir -p artifacts/stdio-layout
+          git ls-files -z Cargo.toml Cargo.lock rust-toolchain.toml crates tests scripts include .cargo AGENTS.md PLAN_TO_PORT_GLIBC_TO_RUST.md .beads/issues.jsonl | tar --null -T - -czf artifacts/stdio-layout/source.tar.gz
+          git rev-parse HEAD > artifacts/stdio-layout/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stdio-layout-source
+          path: artifacts/stdio-layout/
+          retention-days: 7
+  stdio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      # BEGIN STDIO BOOTSTRAP
+      - name: Preserve toolchain for isolated ABI debugging
+        if: github.run_number == 1
+        run: |
+          cargo fetch --locked
+          mkdir -p artifacts/stdio-toolchain
+          tar -C "$HOME" -czf artifacts/stdio-toolchain/rust.tar.gz .rustup/toolchains/nightly-2026-08-31-x86_64-unknown-linux-gnu .cargo/registry
+      - uses: actions/upload-artifact@v4
+        if: github.run_number == 1
+        with:
+          name: stdio-layout-toolchain
+          path: artifacts/stdio-toolchain/
+          retention-days: 1
+      # END STDIO BOOTSTRAP
+      - name: Build deployed ABI and optimized C caller
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
+          cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Compare inline FILE operations against host glibc in both modes
+        shell: bash
+        run: |
+          set -uo pipefail
+          status=0
+          for case in fopen fdopen tmpfile fmemopen open_memstream popen fopencookie error freopen reuse; do
+            if ! timeout 20 target/stdio-file-layout "$case" > "artifacts/stdio-layout/host-$case.out" 2> "artifacts/stdio-layout/host-$case.err"; then
+              status=1
+            fi
+            for mode in strict hardened; do
+              if ! timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" target/stdio-file-layout "$case" > "artifacts/stdio-layout/$mode-$case.out" 2> "artifacts/stdio-layout/$mode-$case.err"; then
+                status=1
+              fi
+              if ! diff -u "artifacts/stdio-layout/host-$case.out" "artifacts/stdio-layout/$mode-$case.out"; then status=1; fi
+              cat "artifacts/stdio-layout/$mode-$case.err"
+            done
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stdio-layout-results
+          path: artifacts/stdio-layout/
+          retention-days: 7
