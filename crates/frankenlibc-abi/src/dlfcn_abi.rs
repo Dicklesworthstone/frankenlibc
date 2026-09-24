@@ -1423,6 +1423,12 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
                 return rc;
             }
         }
+        // Host ld.so does not know the ABI loader's anonymous mappings.
+        // Query native metadata only after the host call has released its lock.
+        if unsafe { native::native_address_info(addr, info.cast::<libc::Dl_info>()) } {
+            clear_dlerror();
+            return 1;
+        }
         set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         0
     }

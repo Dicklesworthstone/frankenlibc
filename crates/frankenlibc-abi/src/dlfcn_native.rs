@@ -7,7 +7,7 @@
 //! No dependency is delegated to the host loader.
 
 use std::cell::RefCell;
-use std::ffi::{OsStr, c_int, c_void};
+use std::ffi::{CString, OsStr, c_int, c_void};
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
@@ -50,6 +50,10 @@ mod cxa;
 
 #[path = "dlfcn_process_exit.rs"]
 mod process_exit;
+
+#[path = "dlfcn_inspection.rs"]
+mod inspection;
+pub(super) use inspection::address_info as native_address_info;
 
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
@@ -98,6 +102,8 @@ struct NativeDso {
     inode: u64,
     // Keep the opened inode alive even after unlink/replacement of the path.
     _file: File,
+    // dladdr strings must outlive a lookup and retain the requested pathname.
+    name: CString,
     references: usize,
     // In-flight dependency staging retains mappings without inventing public
     // dlopen references that a concurrent dlclose could consume.
@@ -445,6 +451,7 @@ fn map_object(
         device: prepared.device,
         inode: prepared.inode,
         _file: file,
+        name: CString::new(prepared.path.as_os_str().as_bytes()).ok()?,
         references: 0,
         load_pins: 0,
         nodelete: prepared.flags & DF_1_NODELETE != 0,

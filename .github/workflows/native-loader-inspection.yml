@@ -4,25 +4,28 @@ on:
   push:
     branches: [main]
     paths:
-      - 'tools/native-loader-inspection/**'
+      - 'crates/frankenlibc-abi/src/dlfcn*.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native*'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - 'tests/integration/fixture_native_inspection*'
+      - 'scripts/check_native_loader_inspection.sh'
       - '.github/workflows/native-loader-inspection.yml'
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: native-loader-inspection-publish
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  validate-and-publish:
-    if: github.ref == 'refs/heads/main'
+  inspection:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     env:
       CARGO_BUILD_JOBS: '2'
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -31,50 +34,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
-          fetch-depth: 1
+          persist-credentials: false
       - name: Install repository toolchain
         run: |
           set -euo pipefail
           toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
-          rustup toolchain install "$toolchain" --profile minimal --component rustfmt
+          rustup toolchain install "$toolchain" --profile minimal
           rustc --version
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-loader-inspection
-      - name: Apply and validate native address inspection
+      - name: Native address inspection in strict and hardened modes
         run: |
           set -euo pipefail
           mkdir -p artifacts/native-loader-inspection
-          if ! test -f crates/frankenlibc-abi/src/dlfcn_inspection.rs; then
-            git apply --check tools/native-loader-inspection/0001-native-dladdr.patch
-            git apply tools/native-loader-inspection/0001-native-dladdr.patch
-          fi
           for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" timeout 900 cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_inspection_test -- --test-threads=1 2>&1 | tee "artifacts/native-loader-inspection/address-${mode}.log"
-            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/native-loader-inspection/address-${mode}.log"
+            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_inspection_test -- --test-threads=1 2>&1 | tee "artifacts/native-loader-inspection/inspection-${mode}.log"
+            grep -F 'test result: ok. 2 passed; 0 failed;' "artifacts/native-loader-inspection/inspection-${mode}.log"
           done
-          FRANKENLIBC_MODE=strict timeout 900 cargo test --keep-going -p frankenlibc-abi --features owned-tls-cache --test dlfcn_native_inspection_test -- --test-threads=1 2>&1 | tee artifacts/native-loader-inspection/address-owned-tls.log
-          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/native-loader-inspection/address-owned-tls.log
-      - name: Commit validated address implementation directly to main
+      - name: Owned TLS inspection configuration
         run: |
           set -euo pipefail
-          git add crates/frankenlibc-abi/src/dlfcn_native.rs crates/frankenlibc-abi/src/dlfcn_abi.rs crates/frankenlibc-abi/src/dlfcn_inspection.rs crates/frankenlibc-abi/tests/dlfcn_native_inspection_test.rs tests/integration/fixture_native_inspection_dso.c
-          if ! git diff --cached --quiet; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git commit -m 'abi/dlfcn: resolve native DSO addresses with retained metadata' -m "Validated on a full Linux checkout: native inspection tests in strict, hardened, and owned-tls-cache configurations. No host fallback accepted by the fixtures. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-            git push origin HEAD:main
-          fi
-          git log -1 --format='%H %s' | tee artifacts/native-loader-inspection/published-address.txt
-      - name: Preserve validation and exact candidate diff
-        if: always()
-        run: |
-          mkdir -p artifacts/native-loader-inspection
-          git diff HEAD -- crates/frankenlibc-abi tests/integration scripts > artifacts/native-loader-inspection/unpublished.diff
+          FRANKENLIBC_MODE=strict timeout 1200 cargo test --keep-going -p frankenlibc-abi --features owned-tls-cache --test dlfcn_native_inspection_test -- --test-threads=1 2>&1 | tee artifacts/native-loader-inspection/inspection-owned-tls.log
+          grep -F 'test result: ok. 2 passed; 0 failed;' artifacts/native-loader-inspection/inspection-owned-tls.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-loader-inspection-${{ github.run_attempt }}
           path: artifacts/native-loader-inspection/
-          if-no-files-found: error
+          if-no-files-found: warn
