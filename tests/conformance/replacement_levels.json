@@ -81,8 +81,8 @@
       },
       "objective_gate": {
         "bead": "bd-gtf.4",
-        "status": "blocked",
-        "status_reason": "The declared L1 interpose level remains the current taxonomy level, but the L1 objective gate is blocked: the real-world preload corpus (run rc0923-corpus-20260924T045148Z) is green in strict mode and red in hardened mode on one tracked known failure (hardened sed_substitute output corruption, bd-rc0923-epic-eeuy4f.20).",
+        "status": "pass",
+        "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T052700Z: git, sed, grep, awk, find, tar gzip/xz, make, perl, C++ and Python C-extension programs, TZ-aware localtime/date/ls) is green in both strict and hardened modes with no tracked known failures.",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -138,14 +138,14 @@
               "signature_guard_failures": 0
             },
             "actual": {
-              "run_id": "rc0923-corpus-20260924T045148Z",
+              "run_id": "rc0923-corpus-20260924T052700Z",
               "overall_failed": false,
               "strict_status": "green",
-              "hardened_status": "red",
+              "hardened_status": "green",
               "perf_failures": 0,
               "signature_guard_failures": 0
             },
-            "outcome": "blocked"
+            "outcome": "pass"
           },
           {
             "id": "claim_reconciliation_clean",

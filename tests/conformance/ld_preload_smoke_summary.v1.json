@@ -1,28 +1,28 @@
 {
   "schema_version": "v1",
   "bead": "bd-rc0923-epic-eeuy4f.4",
-  "source_report_path": "target/ld_preload_smoke/rc0923-corpus-20260924T045148Z/abi_compat_report.json",
-  "run_id": "rc0923-corpus-20260924T045148Z",
-  "checked_at_utc": "2026-09-24T04:52:26Z",
+  "source_report_path": "target/ld_preload_smoke/rc0923-corpus-20260924T052700Z/abi_compat_report.json",
+  "run_id": "rc0923-corpus-20260924T052700Z",
+  "checked_at_utc": "2026-09-24T05:27:52Z",
   "checked_date_display": "September 24, 2026",
-  "lib_path": "/data/tmp/claude-1000/-data-projects-frankenlibc/08825a4c-4f5a-4c63-8388-328486052003/scratchpad/smokelib/libfrankenlibc_abi.so",
+  "lib_path": "/data/tmp/claude-1000/-data-projects-frankenlibc/08825a4c-4f5a-4c63-8388-328486052003/scratchpad/libfl.so",
   "timeout_seconds": 10,
   "stress_iters": 5,
   "summary": {
-    "total_cases": 120,
-    "passes": 115,
+    "total_cases": 140,
+    "passes": 136,
     "fails": 0,
     "skips": 4,
     "signature_guard_failures": 0,
     "perf_failures": 0,
     "valgrind_failures": 0,
     "overall_failed": false,
-    "xfails": 1
+    "xfails": 0
   },
   "modes": {
     "strict": {
-      "total_cases": 60,
-      "passes": 58,
+      "total_cases": 70,
+      "passes": 68,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
@@ -33,16 +33,16 @@
       "xfails": 0
     },
     "hardened": {
-      "total_cases": 60,
-      "passes": 57,
+      "total_cases": 70,
+      "passes": 68,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
-      "strict_parity_failures": 1,
+      "strict_parity_failures": 0,
       "perf_failures": 0,
       "valgrind_failures": 0,
-      "status": "red",
-      "xfails": 1
+      "status": "green",
+      "xfails": 0
     }
   },
   "optional_skip_binaries": [
@@ -55,6 +55,6 @@
     "Parity is enforced in strict AND hardened mode. The four skips are the optional redis-cli/nginx probes. The one xfail is hardened sed_substitute (garbage output), tracked by bd-rc0923-epic-eeuy4f.20; the gate fails if it unexpectedly passes.",
     "Not yet covered (tracked, fail today): getent/argp (bd-rc0923-epic-eeuy4f.7), local time under TZ (.11), named-locale formatting (.10)."
   ],
-  "source_commit": "0cc1fb8990f95f408554d3bc2c57932170b037c8",
-  "lib_sha256": "ff7ec8d27bb3fca7a1c31175915d84238afcb892ebba7bdc732f163cbc3f9ea5"
+  "source_commit": "16f0429f64e20dc1bbd1f8e87ef1d613455ba22b",
+  "lib_sha256": "222e8a4c358e003838cba76db3d68f9ea6cd4454e476545bc73de04bd42147cd"
 }

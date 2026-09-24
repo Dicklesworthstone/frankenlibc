@@ -147,6 +147,8 @@ FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_small_stack_threads.c" -o "${SMALL_STACK_BIN}"
+LOCALTIME_TZ_BIN="${BIN_DIR}/fixture_localtime_tz"
+cc -O2 "${ROOT}/tests/integration/fixture_localtime_tz.c" -o "${LOCALTIME_TZ_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 
@@ -664,7 +666,7 @@ run_optional_case() {
 # Known failures, each tied to an open bead: "mode:label=bead ...". A listed
 # case that fails is reported as XFAIL (not PASS, not a gate failure); a listed
 # case that PASSES fails the run, so the entry must be removed with the fix.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-hardened:sed_substitute=bd-rc0923-epic-eeuy4f.20}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
 xfails=0
 
 known_failure_bead() {
@@ -753,6 +755,15 @@ EOF
   run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
+  # Local time (bd-rc0923-epic-eeuy4f.11): zone files, POSIX rules, edge values.
+  local tz_case=0
+  for tz_value in America/New_York Europe/London Australia/Sydney Asia/Kolkata \
+    'CET-1CEST,M3.5.0,M10.5.0/3' '<+0530>-5:30' UTC ''; do
+    tz_case=$((tz_case + 1))
+    run_corpus_case "${mode}" "localtime_tz_${tz_case}" /usr/bin/env "TZ=${tz_value}" "${LOCALTIME_TZ_BIN}" || mode_failed=1
+  done
+  run_corpus_case "${mode}" "date_tz_new_york" /usr/bin/env TZ=America/New_York LC_ALL=C date -d @1700000000 || mode_failed=1
+  run_corpus_case "${mode}" "ls_long_tz_sydney" /usr/bin/env TZ=Australia/Sydney LC_ALL=C ls -l "${tree}/a.txt" "${tree}/sub" || mode_failed=1
   run_corpus_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1
   run_corpus_case "${mode}" "grep_recursive" /usr/bin/env LC_ALL=C grep -rn alpha "${tree}/a.txt" "${tree}/sub" || mode_failed=1
   run_optional_case "awk" "${mode}" "awk_fields" awk '{n+=length($2)} END {print NR, n}' "${tree}/a.txt" || mode_failed=1

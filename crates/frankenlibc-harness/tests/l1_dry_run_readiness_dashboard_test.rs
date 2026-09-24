@@ -5073,13 +5073,13 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-run-id",
-            ("run_id", json!("rc0923-corpus-20260924T045148Z")),
+            ("run_id", json!("rc0923-corpus-20260924T052700Z")),
         ),
         (
             "ld-preload-smoke-lib-path",
             (
                 "lib_path",
-                json!("/data/tmp/claude-1000/-data-projects-frankenlibc/08825a4c-4f5a-4c63-8388-328486052003/scratchpad/smokelib/libfrankenlibc_abi.so"),
+                json!("/data/tmp/claude-1000/-data-projects-frankenlibc/08825a4c-4f5a-4c63-8388-328486052003/scratchpad/libfl.so"),
             ),
         ),
         (
@@ -5089,9 +5089,9 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ("ld-preload-smoke-stress-iters", ("stress_iters", json!(5))),
         (
             "ld-preload-smoke-total-cases",
-            ("summary.total_cases", json!(120)),
+            ("summary.total_cases", json!(140)),
         ),
-        ("ld-preload-smoke-passes", ("summary.passes", json!(115))),
+        ("ld-preload-smoke-passes", ("summary.passes", json!(136))),
         ("ld-preload-smoke-skips", ("summary.skips", json!(4))),
         (
             "ld-preload-smoke-no-signature-guard-failures",
@@ -5111,7 +5111,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-strict-passes",
-            ("modes.strict.passes", json!(58)),
+            ("modes.strict.passes", json!(68)),
         ),
         (
             "ld-preload-smoke-strict-skips",
@@ -5123,7 +5123,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-hardened-passes",
-            ("modes.hardened.passes", json!(57)),
+            ("modes.hardened.passes", json!(68)),
         ),
         (
             "ld-preload-smoke-hardened-skips",
