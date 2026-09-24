@@ -2764,7 +2764,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "run_id",
-      "expected_value": "rc0923-corpus-20260924T115503Z",
+      "expected_value": "rc0923-corpus-20260924T125933Z",
       "rationale": "Dashboard consumers must see the checked LD_PRELOAD smoke run id behind the summary."
     },
     {
@@ -2796,7 +2796,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "summary.total_cases",
-      "expected_value": 186,
+      "expected_value": 188,
       "rationale": "Dashboard consumers must see the total LD_PRELOAD smoke case count."
     },
     {
@@ -2804,7 +2804,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "summary.passes",
-      "expected_value": 182,
+      "expected_value": 184,
       "rationale": "Dashboard consumers must see the LD_PRELOAD smoke pass count."
     },
     {
@@ -2852,7 +2852,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.strict.passes",
-      "expected_value": 91,
+      "expected_value": 92,
       "rationale": "Dashboard consumers must see the strict-mode smoke pass count."
     },
     {
@@ -2876,7 +2876,7 @@
       "row_kind": "smoke",
       "evidence_artifact": "tests/conformance/ld_preload_smoke_summary.v1.json",
       "field": "modes.hardened.passes",
-      "expected_value": 91,
+      "expected_value": 92,
       "rationale": "Dashboard consumers must see the hardened-mode smoke pass count."
     },
     {
@@ -4828,7 +4828,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.status_reason",
-      "expected_value": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T115503Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp) is green in both strict and hardened modes with no tracked known failures.",
+      "expected_value": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T125933Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks) is green in both strict and hardened modes with no tracked known failures.",
       "rationale": "The dashboard must expose the exact reason the L1 objective gate passes."
     },
     {
