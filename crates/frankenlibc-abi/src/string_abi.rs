@@ -10086,6 +10086,22 @@ pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int 
 /// Caller must ensure `dst` is valid for `n` bytes and `src` is NUL-terminated.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strxfrm(dst: *mut c_char, src: *const c_char, n: usize) -> usize {
+    // A named LC_COLLATE with rules: the locale's sort key, so that strcmp
+    // on keys orders like strcoll.
+    if let Some(tables) = crate::locale_abi::named_collate()
+        && !src.is_null()
+    {
+        // SAFETY: strxfrm's contract: `src` is NUL-terminated.
+        let key = tables.sort_key(unsafe { std::ffi::CStr::from_ptr(src) }.to_bytes());
+        if !dst.is_null() && key.len() < n {
+            // SAFETY: the caller provides `n` writable bytes at `dst`.
+            unsafe {
+                std::ptr::copy_nonoverlapping(key.as_ptr(), dst.cast::<u8>(), key.len());
+                *dst.add(key.len()) = 0;
+            }
+        }
+        return key.len();
+    }
     // Strict-mode fast path (DEFAULT deployed): strict passthrough has `src_bound ==
     // None`, byte-identical to the strict body — scan src; if dst null / n==0 return
     // strlen(src), else core `strxfrm` into `dst[..n]`. Skips the membrane tax.

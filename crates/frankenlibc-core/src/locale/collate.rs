@@ -247,6 +247,46 @@ impl<'a> CollateTables<'a> {
     }
 }
 
+impl<'a> CollateTables<'a> {
+    /// `strxfrm`'s sort key: each level's weights in comparison order,
+    /// levels separated by `0x01`; on a position level every weight
+    /// sequence is preceded by its count byte (1 + ignorables skipped).
+    pub fn sort_key(&self, s: &[u8]) -> Vec<u8> {
+        if s.is_empty() {
+            return Vec::new();
+        }
+        let entries = self.entries(s);
+        let mut key = Vec::new();
+        let mut rule = 0usize;
+        let mut last_level_start = 0;
+        for pass in 0..self.nrules {
+            if pass > 0 {
+                key.push(1);
+            }
+            last_level_start = key.len();
+            let position = self.rule_flags(rule, pass) & SORT_POSITION != 0;
+            let mut val: u8 = 0;
+            for seq in self.emitted(&entries, pass) {
+                val = val.wrapping_add(1);
+                if seq.is_empty() {
+                    continue;
+                }
+                if position {
+                    key.push(val);
+                }
+                key.extend_from_slice(seq);
+                val = 0;
+            }
+            rule = entries.first().map_or(0, |e| e.0);
+        }
+        // glibc drops the separator before a last level that has no weights.
+        if self.nrules > 1 && key.len() == last_level_start {
+            key.pop();
+        }
+        key
+    }
+}
+
 fn align4(n: usize) -> usize {
     (n + 3) & !3
 }
@@ -321,5 +361,10 @@ mod tests {
         assert!(t.compare(b"abc", b"abc") == 0);
         assert!(t.compare(b"", b"a") < 0);
         assert!(t.compare(b"a", b"ab") < 0);
+        // strxfrm keys, byte-identical to glibc 2.43's.
+        assert_eq!(t.sort_key(b"a"), [0x51, 1, 2, 1, 2, 1, 1, 0xe2, 0x94, 0x92]);
+        assert_eq!(t.sort_key("中".as_bytes()), [0xe3, 0xaa, 0xaa, 1, 1]);
+        assert_eq!(t.sort_key(b"-"), [1, 1, 1, 1, 0xc7, 0x9c]);
+        assert!(t.sort_key(b"").is_empty());
     }
 }
