@@ -44,6 +44,19 @@ pub(crate) fn try_global_pipeline() -> Option<&'static ValidationPipeline> {
         return None;
     }
 
+    initialize_global_pipeline()
+}
+
+/// Build and publish the pipeline.
+///
+/// Kept out of line: `ValidationPipeline` is ~79 KB and is constructed on the
+/// stack before boxing. Inlined into `try_global_pipeline`, that frame (and its
+/// stack probe) was paid on EVERY call — including the READY fast path — so
+/// the first hardened malloc on any thread with a 32 KiB stack hit the guard
+/// page (node, libuv; bd-rc0923-epic-eeuy4f.9).
+#[cold]
+#[inline(never)]
+fn initialize_global_pipeline() -> Option<&'static ValidationPipeline> {
     let runtime_math_enabled = crate::runtime_policy::resolved_runtime_math_enabled()?;
 
     if PIPELINE_STATE

@@ -334,9 +334,7 @@ impl SignalHandlerSlot {
 struct DeferredSignalSlot {
     count: AtomicU32,
     has_siginfo: AtomicU8,
-    has_ucontext: AtomicU8,
     siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
-    ucontext: UnsafeCell<MaybeUninit<libc::ucontext_t>>,
 }
 
 impl DeferredSignalSlot {
@@ -344,9 +342,7 @@ impl DeferredSignalSlot {
         Self {
             count: AtomicU32::new(0),
             has_siginfo: AtomicU8::new(0),
-            has_ucontext: AtomicU8::new(0),
             siginfo: UnsafeCell::new(MaybeUninit::uninit()),
-            ucontext: UnsafeCell::new(MaybeUninit::uninit()),
         }
     }
 }
@@ -355,7 +351,6 @@ struct DeferredSignalReplay {
     signum: c_int,
     count: u32,
     siginfo: Option<libc::siginfo_t>,
-    ucontext: Option<libc::ucontext_t>,
 }
 
 static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
@@ -514,21 +509,15 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         } else {
             slot.has_siginfo.store(0, Ordering::Relaxed);
         }
-        if !context.is_null() {
-            // SAFETY: Linux passes a `ucontext_t` behind the opaque third
-            // handler argument. We snapshot that frame while it is live so
-            // deferred replay preserves the kernel delivery context.
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    context.cast::<libc::ucontext_t>(),
-                    (*slot.ucontext.get()).as_mut_ptr(),
-                    1,
-                );
-            }
-            slot.has_ucontext.store(1, Ordering::Relaxed);
-        } else {
-            slot.has_ucontext.store(0, Ordering::Relaxed);
-        }
+        // The interrupted frame's `ucontext_t` is deliberately NOT stored: a
+        // deferred replay runs later, outside that frame, so a handler that
+        // reads or edits `uc_mcontext` could not affect the frame it would
+        // "return to" anyway. Storing one per signal per thread cost ~70 KB of
+        // static TLS on every thread, which made host `pthread_create` reject
+        // ordinary small stacks with EINVAL (glibc carves static TLS out of the
+        // thread stack; node/libuv 32-64 KiB stacks failed under preload —
+        // bd-rc0923-epic-eeuy4f.9). Replay passes a fresh context instead.
+        let _ = context;
         slot.count.fetch_add(1, Ordering::Relaxed);
     });
     SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -549,19 +538,10 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
                 } else {
                     None
                 };
-                let ucontext = if slot.has_ucontext.swap(0, Ordering::Relaxed) != 0 {
-                    // SAFETY: the slot was populated before `has_ucontext` was
-                    // set, and swapping the flag back to zero gives the caller
-                    // exclusive ownership of this snapshot.
-                    Some(unsafe { (*slot.ucontext.get()).assume_init_read() })
-                } else {
-                    None
-                };
                 out.push(DeferredSignalReplay {
                     signum,
                     count,
                     siginfo,
-                    ucontext,
                 });
             }
         }
@@ -687,12 +667,21 @@ pub fn exit_signal_critical_section() {
                 // each replayed handler invocation.
                 unsafe { std::ptr::read(snapshot) }
             });
-            let mut ucontext = deferred.ucontext.as_ref().map(|snapshot| {
-                // SAFETY: `ucontext_t` is a kernel snapshot captured at
-                // delivery time; copying it lets each replayed invocation
-                // see a stable context value.
-                unsafe { std::ptr::read(snapshot) }
-            });
+            // SA_SIGINFO handlers may rely on a non-null context; give them a
+            // replay-time one carrying the current signal mask (see the note
+            // in the deferral path on why the delivery frame is not stored).
+            // SAFETY: `ucontext_t` is plain data; all-zero is a valid value.
+            let mut replay_context: libc::ucontext_t = unsafe { std::mem::zeroed() };
+            // SAFETY: querying the mask writes only into the provided sigset.
+            let _ = unsafe {
+                frankenlibc_core::syscall::sys_rt_sigprocmask(
+                    libc::SIG_BLOCK,
+                    std::ptr::null(),
+                    (&raw mut replay_context.uc_sigmask).cast::<u8>(),
+                    8,
+                )
+            };
+            let mut ucontext = Some(replay_context);
             // SAFETY: deferred delivery replays the previously registered handler on the same thread.
             unsafe {
                 dispatch_registered_handler(

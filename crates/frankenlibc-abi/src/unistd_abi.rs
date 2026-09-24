@@ -15902,8 +15902,10 @@ static GETMNTENT_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<GetmntentB
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static GETMNTENT_BUF: std::cell::UnsafeCell<GetmntentBuf> =
-        const { std::cell::UnsafeCell::new(empty_getmntent_buf()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static GETMNTENT_BUF: Box<std::cell::UnsafeCell<GetmntentBuf>> =
+        Box::new(std::cell::UnsafeCell::new(empty_getmntent_buf()));
 }
 
 #[inline]
@@ -20217,8 +20219,9 @@ fn with_gethostbyname2_state<R>(callback: impl FnOnce(&mut GetHostByName2State) 
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         thread_local! {
-            static GETHOSTBYNAME2_TLS: std::cell::RefCell<GetHostByName2State> =
-                std::cell::RefCell::new(new_gethostbyname2_state());
+            // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9).
+            static GETHOSTBYNAME2_TLS: Box<std::cell::RefCell<GetHostByName2State>> =
+                Box::new(std::cell::RefCell::new(new_gethostbyname2_state()));
         }
 
         GETHOSTBYNAME2_TLS.with(|cell| callback(&mut cell.borrow_mut()))
@@ -20288,8 +20291,10 @@ static SERV_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServIterState>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static SERV_ITER: std::cell::UnsafeCell<ServIterState> =
-        const { std::cell::UnsafeCell::new(ServIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static SERV_ITER: Box<std::cell::UnsafeCell<ServIterState>> =
+        Box::new(std::cell::UnsafeCell::new(ServIterState::new()));
 }
 
 #[inline]
@@ -20483,8 +20488,10 @@ static NET_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetIterState> =
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static NET_ITER: std::cell::UnsafeCell<NetIterState> =
-        const { std::cell::UnsafeCell::new(NetIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static NET_ITER: Box<std::cell::UnsafeCell<NetIterState>> =
+        Box::new(std::cell::UnsafeCell::new(NetIterState::new()));
 }
 
 #[inline]
@@ -20701,8 +20708,10 @@ static PROTO_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoIterStat
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static PROTO_ITER: std::cell::UnsafeCell<ProtoIterState> =
-        const { std::cell::UnsafeCell::new(ProtoIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static PROTO_ITER: Box<std::cell::UnsafeCell<ProtoIterState>> =
+        Box::new(std::cell::UnsafeCell::new(ProtoIterState::new()));
 }
 
 #[inline]
@@ -20917,8 +20926,10 @@ static HOST_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<HostIterState>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static HOST_ITER: std::cell::UnsafeCell<HostIterState> =
-        const { std::cell::UnsafeCell::new(HostIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static HOST_ITER: Box<std::cell::UnsafeCell<HostIterState>> =
+        Box::new(std::cell::UnsafeCell::new(HostIterState::new()));
 }
 
 #[inline]
@@ -24118,8 +24129,10 @@ static ALIAS_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<AliasIterStat
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static ALIAS_ITER: std::cell::UnsafeCell<AliasIterState> =
-        const { std::cell::UnsafeCell::new(AliasIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static ALIAS_ITER: Box<std::cell::UnsafeCell<AliasIterState>> =
+        Box::new(std::cell::UnsafeCell::new(AliasIterState::new()));
 }
 
 #[inline]
@@ -24564,8 +24577,10 @@ static NETGROUP_ITER_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<NetgroupIt
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static NETGROUP_ITER: std::cell::UnsafeCell<NetgroupIterState> =
-        const { std::cell::UnsafeCell::new(NetgroupIterState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static NETGROUP_ITER: Box<std::cell::UnsafeCell<NetgroupIterState>> =
+        Box::new(std::cell::UnsafeCell::new(NetgroupIterState::new()));
 }
 
 #[inline]
@@ -24842,8 +24857,10 @@ static RPC_ENTRY_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<RpcEntryState>
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static RPC_ENTRY_TLS: std::cell::RefCell<RpcEntryState> =
-        std::cell::RefCell::new(new_rpc_entry_state());
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static RPC_ENTRY_TLS: Box<std::cell::RefCell<RpcEntryState>> =
+        Box::new(std::cell::RefCell::new(new_rpc_entry_state()));
 }
 
 fn with_rpc_entry_state<R>(callback: impl FnOnce(&mut RpcEntryState) -> R) -> R {
@@ -25213,8 +25230,10 @@ static FGETSPENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Fgetspen
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static FGETSPENT_TLS: std::cell::RefCell<FgetspentState> =
-        std::cell::RefCell::new(new_fgetspent_state());
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static FGETSPENT_TLS: Box<std::cell::RefCell<FgetspentState>> =
+        Box::new(std::cell::RefCell::new(new_fgetspent_state()));
 }
 
 fn with_fgetspent_state<R>(callback: impl FnOnce(&mut FgetspentState) -> R) -> R {
@@ -27479,8 +27498,10 @@ static FSTAB_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<FstabState> 
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static FSTAB_STATE: std::cell::UnsafeCell<FstabState> =
-        const { std::cell::UnsafeCell::new(FstabState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static FSTAB_STATE: Box<std::cell::UnsafeCell<FstabState>> =
+        Box::new(std::cell::UnsafeCell::new(FstabState::new()));
 }
 
 #[inline]
@@ -27763,8 +27784,10 @@ static TTYENT_STATE_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<TtyentState
 
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static TTYENT_STATE: std::cell::UnsafeCell<TtyentState> =
-        const { std::cell::UnsafeCell::new(TtyentState::new()) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static TTYENT_STATE: Box<std::cell::UnsafeCell<TtyentState>> =
+        Box::new(std::cell::UnsafeCell::new(TtyentState::new()));
 }
 
 #[inline]

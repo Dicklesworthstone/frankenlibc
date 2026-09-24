@@ -145,6 +145,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_small_stack_threads.c" -o "${SMALL_STACK_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 
@@ -749,6 +751,8 @@ EOF
     run_corpus_case "${mode}" "stdio_file_layout_${layout_case}" "${FILE_LAYOUT_BIN}" "${layout_case}" || mode_failed=1
   done
   run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
+  run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
   run_corpus_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1
   run_corpus_case "${mode}" "grep_recursive" /usr/bin/env LC_ALL=C grep -rn alpha "${tree}/a.txt" "${tree}/sub" || mode_failed=1
   run_optional_case "awk" "${mode}" "awk_fields" awk '{n+=length($2)} END {print NR, n}' "${tree}/a.txt" || mode_failed=1

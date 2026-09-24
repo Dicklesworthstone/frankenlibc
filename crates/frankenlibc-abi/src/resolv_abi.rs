@@ -3688,8 +3688,10 @@ static SERVENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ServentTlsStorag
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static SERVENT_TLS: RefCell<ServentTlsStorage> =
-        RefCell::new(ServentTlsStorage::new());
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static SERVENT_TLS: Box<RefCell<ServentTlsStorage>> =
+        Box::new(RefCell::new(ServentTlsStorage::new()));
 }
 
 fn with_tls_servent<R>(callback: impl FnOnce(&mut ServentTlsStorage) -> R) -> R {
@@ -3760,8 +3762,10 @@ static PROTOENT_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<ProtoentTlsStor
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static PROTOENT_TLS: RefCell<ProtoentTlsStorage> =
-        RefCell::new(ProtoentTlsStorage::new());
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static PROTOENT_TLS: Box<RefCell<ProtoentTlsStorage>> =
+        Box::new(RefCell::new(ProtoentTlsStorage::new()));
 }
 
 fn with_tls_protoent<R>(callback: impl FnOnce(&mut ProtoentTlsStorage) -> R) -> R {
@@ -7187,8 +7191,10 @@ static HOSTALIAS_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; HOSTA
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static HOSTALIAS_BUF: RefCell<[u8; HOSTALIAS_BUF_LEN]> =
-        const { RefCell::new([0u8; HOSTALIAS_BUF_LEN]) };
+    // Boxed: cold buffer kept out of static TLS (bd-rc0923-epic-eeuy4f.9: oversized
+    // static TLS made host pthread_create reject small stacks with EINVAL).
+    static HOSTALIAS_BUF: Box<RefCell<[u8; HOSTALIAS_BUF_LEN]>> =
+        Box::new(RefCell::new([0u8; HOSTALIAS_BUF_LEN]));
 }
 
 fn with_hostalias_buf<R>(f: impl FnOnce(&mut [u8; HOSTALIAS_BUF_LEN]) -> R) -> R {

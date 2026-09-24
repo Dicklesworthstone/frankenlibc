@@ -122,10 +122,93 @@ static TLS_PTRS: [AtomicUsize; TLS_TABLE_SLOTS] = [const { AtomicUsize::new(0) }
 //
 // This preserves per-thread isolation for host-created threads while remaining
 // allocation-free for clone-based threads (which are expected to register).
+//
+// Layout mirrors glibc (32 inline key slots in the thread descriptor, the rest
+// allocated on first use): a full `[TlsEntry; PTHREAD_KEYS_MAX]` inline was
+// 16 KB of static TLS on EVERY thread of every preloaded process, and glibc
+// carves static TLS out of each thread's stack, so host `pthread_create`
+// rejected ordinary small stacks with EINVAL (node/libuv 32 KiB stacks;
+// bd-rc0923-epic-eeuy4f.9). Reads of unset high keys never allocate.
+#[cfg(not(feature = "owned-tls-cache"))]
+const FALLBACK_INLINE_KEYS: usize = 32;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+struct FallbackTls {
+    inline: [core::cell::Cell<TlsEntry>; FALLBACK_INLINE_KEYS],
+    /// Heap block of `PTHREAD_KEYS_MAX - FALLBACK_INLINE_KEYS` entries, or null.
+    spill: core::cell::Cell<*mut core::cell::Cell<TlsEntry>>,
+}
+
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static FALLBACK_TLS_VALUES: [core::cell::Cell<TlsEntry>; PTHREAD_KEYS_MAX] =
-        const { [const { core::cell::Cell::new(TlsEntry { seq: 0, value: 0 }) }; PTHREAD_KEYS_MAX] };
+    static FALLBACK_TLS_VALUES: FallbackTls = const {
+        FallbackTls {
+            inline: [const { core::cell::Cell::new(TlsEntry { seq: 0, value: 0 }) };
+                FALLBACK_INLINE_KEYS],
+            spill: core::cell::Cell::new(core::ptr::null_mut()),
+        }
+    };
+}
+
+#[cfg(not(feature = "owned-tls-cache"))]
+const FALLBACK_SPILL_KEYS: usize = PTHREAD_KEYS_MAX - FALLBACK_INLINE_KEYS;
+
+#[cfg(not(feature = "owned-tls-cache"))]
+impl FallbackTls {
+    fn get(&self, key_id: usize) -> TlsEntry {
+        if key_id < FALLBACK_INLINE_KEYS {
+            return self.inline[key_id].get();
+        }
+        let spill = self.spill.get();
+        if spill.is_null() {
+            return TlsEntry::default();
+        }
+        // SAFETY: `spill` is this thread's live block of FALLBACK_SPILL_KEYS
+        // entries; key_id < PTHREAD_KEYS_MAX is checked by callers.
+        unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).get() }
+    }
+
+    fn set(&self, key_id: usize, entry: TlsEntry) {
+        if key_id < FALLBACK_INLINE_KEYS {
+            self.inline[key_id].set(entry);
+            return;
+        }
+        let mut spill = self.spill.get();
+        if spill.is_null() {
+            if entry.value == 0 {
+                // Clearing a never-set high key: nothing to store.
+                return;
+            }
+            // Allocate directly on the heap (a stack temporary of this size
+            // would itself overflow the small stacks this layout protects).
+            let block: Box<[core::cell::Cell<TlsEntry>]> = (0..FALLBACK_SPILL_KEYS)
+                .map(|_| core::cell::Cell::new(TlsEntry::default()))
+                .collect();
+            spill = Box::into_raw(block).cast::<core::cell::Cell<TlsEntry>>();
+            self.spill.set(spill);
+        }
+        // SAFETY: as in `get`.
+        unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).set(entry) };
+    }
+
+    fn clear_all(&self) {
+        for slot in &self.inline {
+            slot.set(TlsEntry::default());
+        }
+        self.release_spill();
+    }
+
+    /// Free the spill block (thread teardown / reset).
+    fn release_spill(&self) {
+        let spill = self.spill.replace(core::ptr::null_mut());
+        if !spill.is_null() {
+            // SAFETY: `spill` came from `Box::into_raw` of a boxed slice of
+            // exactly FALLBACK_SPILL_KEYS entries and is no longer reachable.
+            drop(unsafe {
+                Box::from_raw(core::ptr::slice_from_raw_parts_mut(spill, FALLBACK_SPILL_KEYS))
+            });
+        }
+    }
 }
 
 // The standalone owned-TLS artifact lane cannot emit Rust TLS. Preserve the
@@ -400,7 +483,7 @@ fn read_tls_value(tid: i32, key_id: usize, expected_seq: u32) -> u64 {
         #[cfg(not(feature = "owned-tls-cache"))]
         {
             FALLBACK_TLS_VALUES.with(|values| {
-                let entry = values[key_id].get();
+                let entry = values.get(key_id);
                 if entry.seq == expected_seq {
                     entry.value
                 } else {
@@ -444,10 +527,13 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
         #[cfg(not(feature = "owned-tls-cache"))]
         {
             FALLBACK_TLS_VALUES.with(|values| {
-                values[key_id].set(TlsEntry {
-                    seq: expected_seq,
-                    value,
-                });
+                values.set(
+                    key_id,
+                    TlsEntry {
+                        seq: expected_seq,
+                        value,
+                    },
+                );
             });
         }
         #[cfg(feature = "owned-tls-cache")]
@@ -687,13 +773,16 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                         // can only address it from the exiting thread itself —
                         // exactly where teardown_thread_tls runs.
                         FALLBACK_TLS_VALUES.with(|values| {
-                            let entry = values[i].get();
+                            let entry = values.get(i);
                             if entry.seq == reg.slots[i].seq && entry.value != 0 {
                                 // Clear the value before calling destructor.
-                                values[i].set(TlsEntry {
-                                    seq: entry.seq,
-                                    value: 0,
-                                });
+                                values.set(
+                                    i,
+                                    TlsEntry {
+                                        seq: entry.seq,
+                                        value: 0,
+                                    },
+                                );
                                 if let Some(dtor) = reg.slots[i].destructor
                                     && call_count < MAX_CALLS
                                 {
@@ -743,6 +832,10 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
     // Remove from the table and unregister from RCU. table_remove is a no-op
     // for the fallback path (tid was never inserted) — safe to call either way.
     table_remove(tid);
+    // This thread's high-key spill block (keys >= 32) is dead once every
+    // destructor round has run. `try_with`: TLS may already be torn down.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    let _ = FALLBACK_TLS_VALUES.try_with(FallbackTls::release_spill);
     #[cfg(feature = "owned-tls-cache")]
     {
         let fallback_ptr = fallback_table_remove(tid);
@@ -786,11 +879,7 @@ pub(crate) fn reset_tls_state() {
     // Clear fallback values for the current thread.
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        FALLBACK_TLS_VALUES.with(|values| {
-            for slot in values.iter() {
-                slot.set(TlsEntry::default());
-            }
-        });
+        FALLBACK_TLS_VALUES.with(FallbackTls::clear_all);
     }
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -1325,6 +1414,36 @@ mod tests {
         for (i, k) in keys.iter().enumerate() {
             assert_eq!(pthread_getspecific(*k), (i + 1) as u64);
         }
+    }
+
+    /// Keys beyond the 32 inline fallback slots live in a lazily allocated
+    /// spill block (bd-rc0923-epic-eeuy4f.9). Unset high keys read 0 without
+    /// allocating; set ones round-trip, run their destructor at teardown, and
+    /// the block is released so a later value starts from zero.
+    #[test]
+    fn fallback_spill_keys_roundtrip_destruct_and_release() {
+        let _g = lock_and_reset();
+        static DTOR_COUNT: AtomicU32 = AtomicU32::new(0);
+        DTOR_COUNT.store(0, AtomicOrdering::SeqCst);
+        unsafe extern "C" fn dtor(_val: *mut c_void) {
+            DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        let tid = current_tid();
+        assert!(table_lookup(tid).is_null(), "test starts on fallback TLS path");
+        let mut keys = Vec::new();
+        for _ in 0..40 {
+            keys.push(create_key(Some(dtor)));
+        }
+        let high = keys[39];
+        assert_eq!(pthread_getspecific(high), 0);
+        FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "read must not allocate"));
+        assert_eq!(pthread_setspecific(high, 0x5151), 0);
+        assert_eq!(pthread_getspecific(high), 0x5151);
+        assert_eq!(pthread_getspecific(keys[38]), 0, "neighbouring spill key unaffected");
+        teardown_thread_tls(tid);
+        assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 1);
+        FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "teardown frees spill"));
+        assert_eq!(pthread_getspecific(high), 0);
     }
 
     #[test]

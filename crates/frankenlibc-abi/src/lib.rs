@@ -108,6 +108,12 @@ extern "C" fn frankenlibc_abi_stdio_init_entry() {
     // patching host libio exit handling for the exported _IO symbols.
     stdio_abi::init_host_stdio_streams();
     runtime_policy::signal_runtime_ready();
+    // Hardened mode: build the ~79 KB validation pipeline now, on the main
+    // thread's stack, instead of lazily inside whichever thread first
+    // validates — which may be a 32 KiB-stack worker (bd-rc0923-epic-eeuy4f.9).
+    if runtime_policy::mode().heals_enabled() {
+        let _ = membrane_state::try_global_pipeline();
+    }
 }
 
 // Phase 2+ ABI modules — call libc syscalls, gated to prevent symbol recursion in tests
