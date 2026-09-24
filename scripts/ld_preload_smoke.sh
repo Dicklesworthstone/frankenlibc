@@ -772,6 +772,10 @@ EOF
   run_corpus_case "${mode}" "argp_help_layout" "${ARGP_BIN}" help || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
+  # /etc/hosts semantics: every address of the family, aliases merged across
+  # lines (bd-rc0923-epic-eeuy4f.21).
+  run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1
+  run_corpus_case "${mode}" "getent_ahosts_localhost" /usr/bin/env LC_ALL=C getent ahosts localhost || mode_failed=1
   run_corpus_case "${mode}" "getent_help" /usr/bin/env LC_ALL=C getent --help || mode_failed=1
   # Exits 64 (EX_USAGE); the status is part of the compared output.
   run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1

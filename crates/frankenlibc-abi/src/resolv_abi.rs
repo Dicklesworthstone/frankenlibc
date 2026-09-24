@@ -1659,6 +1659,141 @@ fn gethostbyname_ipv4_address(address: &[u8]) -> Option<Ipv4Addr> {
         .or_else(|| v6.is_loopback().then_some(Ipv4Addr::LOCALHOST))
 }
 
+/// An AF_INET6 host answer: canonical name, aliases, addresses.
+type Host6Target = (Vec<u8>, Vec<Vec<u8>>, Vec<Ipv6Addr>);
+
+/// `gethostbyname2(name, AF_INET6)`: an IPv6 literal, else the IPv6
+/// `/etc/hosts` lines naming `name` (aliases merged across lines, as for
+/// IPv4), else native DNS AAAA.
+fn resolve_gethostbyname6_target(name: Option<&CStr>) -> Result<Host6Target, c_int> {
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    let name_cstr = name
+        .filter(|name| !name.to_bytes().is_empty())
+        .ok_or(libc::EAI_NONAME)?;
+    if let Ok(node) = name_cstr.to_str()
+        && let Ok(v6) = node.parse::<Ipv6Addr>()
+    {
+        return Ok((name_cstr.to_bytes().to_vec(), Vec::new(), vec![v6]));
+    }
+    let found = with_hosts_backend_snapshot(|content, _generation| {
+        let mut target: Option<Host6Target> = None;
+        frankenlibc_core::resolv::for_each_hosts_match_entry(
+            content,
+            name_cstr.to_bytes(),
+            |entry| {
+                let Some(address) = core::str::from_utf8(entry.address())
+                    .ok()
+                    .and_then(|a| a.parse::<Ipv6Addr>().ok())
+                else {
+                    return false;
+                };
+                match &mut target {
+                    Some((canonical, aliases, addresses)) => {
+                        aliases.extend(entry.aliases().map(ToOwned::to_owned));
+                        if entry.canonical_name() != canonical.as_slice() {
+                            aliases.push(entry.canonical_name().to_vec());
+                        }
+                        addresses.push(address);
+                    }
+                    None => {
+                        target = Some((
+                            entry.canonical_name().to_vec(),
+                            entry.aliases().map(ToOwned::to_owned).collect(),
+                            vec![address],
+                        ));
+                    }
+                }
+                false
+            },
+        );
+        target
+    })
+    .ok()
+    .flatten();
+    if let Some(found) = found {
+        return Ok(found);
+    }
+    let (addresses, canonical_name) = native_dns_resolve(
+        name_cstr.to_bytes(),
+        AddressPolicy::new(Family::Inet6, false, false),
+    )?;
+    if addresses.ipv6.is_empty() {
+        return Err(libc::EAI_NONAME);
+    }
+    let query_name = name_cstr.to_bytes();
+    let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+    let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+    let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+        Vec::new()
+    } else {
+        vec![query_name.to_vec()]
+    };
+    Ok((canonical_name, aliases, addresses.ipv6))
+}
+
+/// Reentrant `gethostbyname2_r`: AF_INET is `gethostbyname_r`; AF_INET6
+/// uses [`resolve_gethostbyname6_target`] with the same error contract.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn gethostbyname2_r_impl(
+    name: *const c_char,
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+    h_errnop: *mut c_int,
+) -> c_int {
+    if af == libc::AF_INET {
+        return unsafe { gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop) };
+    }
+    if !result.is_null() {
+        unsafe { *result = ptr::null_mut() };
+    }
+    let name_cstr = match unsafe { opt_cstr(name) } {
+        Ok(value) => value,
+        Err(()) => {
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            return libc::EINVAL;
+        }
+    };
+    let (canonical, aliases, addresses) = match resolve_gethostbyname6_target(name_cstr) {
+        Ok(found) => found,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            return code;
+        }
+    };
+    let octets: Vec<[u8; 16]> = addresses.iter().map(Ipv6Addr::octets).collect();
+    let addrs: Vec<&[u8]> = octets.iter().map(|o| &o[..]).collect();
+    match unsafe {
+        write_reentrant_hostent_family(
+            &canonical,
+            &aliases,
+            &addrs,
+            libc::AF_INET6,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    } {
+        Ok(()) => {
+            unsafe { set_h_errnop(h_errnop, 0) };
+            0
+        }
+        Err(code) => {
+            if code != libc::ERANGE {
+                unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            }
+            code
+        }
+    }
+}
+
 /// Resolve legacy IPv4 hosts through numeric, files, then native DNS.
 /// Release the backend borrow before performing network I/O.
 fn resolve_gethostbyname_target(name: Option<&CStr>) -> Result<GethostbynameTarget, c_int> {
@@ -1989,6 +2124,37 @@ unsafe fn write_reentrant_gethostbyname(
     buflen: usize,
     result: *mut *mut c_void,
 ) -> Result<(), c_int> {
+    let octets: Vec<[u8; 4]> = target.addresses.iter().map(Ipv4Addr::octets).collect();
+    let addresses: Vec<&[u8]> = octets.iter().map(|o| &o[..]).collect();
+    unsafe {
+        write_reentrant_hostent_family(
+            &target.name,
+            &target.aliases,
+            &addresses,
+            libc::AF_INET,
+            result_buf,
+            buf,
+            buflen,
+            result,
+        )
+    }
+}
+
+/// Pack a hostent (name, aliases, `addresses` of `af`'s width) into the
+/// caller's buffer, glibc layout order: strings, addresses, alias table,
+/// address table. `ERANGE` when `buflen` is too small.
+#[allow(clippy::too_many_arguments)]
+unsafe fn write_reentrant_hostent_family(
+    name: &[u8],
+    aliases: &[Vec<u8>],
+    addresses: &[&[u8]],
+    af: c_int,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    let addr_len = if af == libc::AF_INET6 { 16 } else { 4 };
     if result_buf.is_null() || buf.is_null() || result.is_null() {
         return Err(libc::EINVAL);
     }
@@ -2014,30 +2180,30 @@ unsafe fn write_reentrant_gethostbyname(
         }
     };
 
-    let name_ptr = copy_string(&target.name, &mut offset)?;
-    let mut alias_values = Vec::with_capacity(target.aliases.len());
-    for alias in &target.aliases {
+    let name_ptr = copy_string(name, &mut offset)?;
+    let mut alias_values = Vec::with_capacity(aliases.len());
+    for alias in aliases {
         alias_values.push(copy_string(alias, &mut offset)?);
     }
 
     offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
-    let addresses_bytes = target.addresses.len().checked_mul(4).ok_or(libc::ERANGE)?;
+    let addresses_bytes = addresses.len().checked_mul(addr_len).ok_or(libc::ERANGE)?;
     let addresses_end = offset.checked_add(addresses_bytes).ok_or(libc::ERANGE)?;
     if addresses_end > buf_limit {
         return Err(libc::ERANGE);
     }
-    let mut address_values = Vec::with_capacity(target.addresses.len());
-    for (index, address) in target.addresses.iter().enumerate() {
-        // SAFETY: the bounds check above reserves all four-byte IPv4 addresses.
-        let destination = unsafe { buf.add(offset + index * 4).cast::<u8>() };
-        // SAFETY: destination points to four writable bytes for this address.
-        unsafe { ptr::copy_nonoverlapping(address.octets().as_ptr(), destination, 4) };
+    let mut address_values = Vec::with_capacity(addresses.len());
+    for (index, address) in addresses.iter().enumerate() {
+        // SAFETY: the bounds check above reserves every address of this width.
+        let destination = unsafe { buf.add(offset + index * addr_len).cast::<u8>() };
+        // SAFETY: destination points to addr_len writable bytes for this address.
+        unsafe { ptr::copy_nonoverlapping(address.as_ptr(), destination, addr_len) };
         address_values.push(destination.cast::<c_char>());
     }
     offset = addresses_end;
 
     offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
-    let aliases_bytes = (target.aliases.len() + 1)
+    let aliases_bytes = (aliases.len() + 1)
         .checked_mul(size_of::<*mut c_char>())
         .ok_or(libc::ERANGE)?;
     let aliases_end = offset.checked_add(aliases_bytes).ok_or(libc::ERANGE)?;
@@ -2051,11 +2217,11 @@ unsafe fn write_reentrant_gethostbyname(
         unsafe { *aliases_ptr.add(index) = *alias };
     }
     // SAFETY: the final aliases-table slot is within the reserved terminator slot.
-    unsafe { *aliases_ptr.add(target.aliases.len()) = ptr::null_mut() };
+    unsafe { *aliases_ptr.add(aliases.len()) = ptr::null_mut() };
     offset = aliases_end;
 
     offset = aligned_buffer_offset(buf, offset, align_of::<*mut c_char>()).ok_or(libc::ERANGE)?;
-    let address_list_bytes = (target.addresses.len() + 1)
+    let address_list_bytes = (addresses.len() + 1)
         .checked_mul(size_of::<*mut c_char>())
         .ok_or(libc::ERANGE)?;
     let address_list_end = offset.checked_add(address_list_bytes).ok_or(libc::ERANGE)?;
@@ -2069,14 +2235,14 @@ unsafe fn write_reentrant_gethostbyname(
         unsafe { *address_list_ptr.add(index) = *address };
     }
     // SAFETY: the final address-list slot is within the reserved terminator slot.
-    unsafe { *address_list_ptr.add(target.addresses.len()) = ptr::null_mut() };
+    unsafe { *address_list_ptr.add(addresses.len()) = ptr::null_mut() };
 
     // SAFETY: result_buf and result passed the alignment and null checks above.
     let hostent = unsafe { &mut *result_buf.cast::<libc::hostent>() };
     hostent.h_name = name_ptr;
     hostent.h_aliases = aliases_ptr;
-    hostent.h_addrtype = libc::AF_INET;
-    hostent.h_length = 4;
+    hostent.h_addrtype = af;
+    hostent.h_length = addr_len as c_int;
     hostent.h_addr_list = address_list_ptr;
     // SAFETY: result is a caller-provided writable out pointer.
     unsafe { *result = result_buf };
