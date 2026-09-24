@@ -149,6 +149,11 @@ if command -v c++ >/dev/null 2>&1; then
   CXX_BIN="${BIN_DIR}/fixture_cxx_runtime"
   c++ -O2 -pthread "${ROOT}/tests/integration/fixture_cxx_runtime.cpp" -o "${CXX_BIN}" || CXX_BIN=""
 fi
+CALLBACK_UNWIND_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CALLBACK_UNWIND_BIN="${BIN_DIR}/fixture_callback_unwind"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_callback_unwind.cpp" -o "${CALLBACK_UNWIND_BIN}" || CALLBACK_UNWIND_BIN=""
+fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
@@ -831,6 +836,10 @@ EOF
   fi
   if [[ -n "${CXX_BIN}" ]]; then
     run_corpus_case "${mode}" "cxx_runtime" "${CXX_BIN}" || mode_failed=1
+  fi
+  # C++ exceptions through libc callback frames (bd-rc0923-epic-eeuy4f.6).
+  if [[ -n "${CALLBACK_UNWIND_BIN}" ]]; then
+    run_corpus_case "${mode}" "cxx_callback_unwind" "${CALLBACK_UNWIND_BIN}" || mode_failed=1
   fi
   if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
     run_corpus_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
