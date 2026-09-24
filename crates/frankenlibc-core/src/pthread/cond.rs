@@ -194,42 +194,11 @@ pub unsafe fn condvar_broadcast(condvar_ptr: *mut CondvarData) -> i32 {
 /// - `mutex_futex_word` must point to a valid aligned `u32` (the mutex lock word).
 #[allow(unsafe_code)]
 pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *const u32) -> i32 {
-    if condvar_ptr.is_null() || mutex_futex_word.is_null() {
-        return errno::EINVAL;
-    }
-    let cv = unsafe { &*condvar_ptr };
-    if !cv.is_initialized() {
-        return errno::EINVAL;
-    }
-    let mutex_word = unsafe { &*(mutex_futex_word as *const AtomicU32) };
-
-    // Validate mutex association invariant.
-    let mutex_addr = mutex_futex_word as usize;
-    match cv
-        .assoc_mutex
-        .compare_exchange(0, mutex_addr, Ordering::AcqRel, Ordering::Acquire)
-    {
-        Ok(_) => {}                                   // Successfully associated this mutex.
-        Err(existing) if existing == mutex_addr => {} // Already associated with same mutex.
-        Err(_) => return errno::EINVAL,               // Different mutex -- POSIX violation.
-    }
-
-    // Capture seq before releasing mutex.
-    let expected_seq = cv.seq.load(Ordering::Acquire);
-    cv.nwaiters.fetch_add(1, Ordering::AcqRel);
-
-    // Release mutex: set lock word to 0 and wake one waiter.
-    mutex_word.store(0, Ordering::Release);
-    let _ = unsafe {
-        syscall::sys_futex(
-            mutex_futex_word,
-            FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
-            1,
-            0,
-            0,
-            0,
-        )
+    let expected_seq = match unsafe { condvar_wait_prepare(condvar_ptr, mutex_futex_word) } {
+        Ok(seq) => seq,
+        Err(e) => return e,
     };
+    let cv = unsafe { &*condvar_ptr };
 
     // Block until seq changes (signal/broadcast).
     let seq_ptr = &cv.seq as *const AtomicU32 as *const u32;
@@ -254,6 +223,74 @@ pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *con
         }
     }
 
+    unsafe { condvar_wait_finish(condvar_ptr, mutex_futex_word) };
+    0
+}
+
+/// First half of a condvar wait: validate, associate the mutex, register as
+/// a waiter and release the mutex. Returns the sequence value to block on
+/// (`FUTEX_WAIT` on `seq`), or an errno. Every `Ok` must be paired with
+/// exactly one [`condvar_wait_finish`], including when the wait between them
+/// is abandoned by an unwind (thread cancellation).
+///
+/// # Safety
+///
+/// Same as [`condvar_wait`].
+#[allow(unsafe_code)]
+pub unsafe fn condvar_wait_prepare(
+    condvar_ptr: *mut CondvarData,
+    mutex_futex_word: *const u32,
+) -> Result<u32, i32> {
+    if condvar_ptr.is_null() || mutex_futex_word.is_null() {
+        return Err(errno::EINVAL);
+    }
+    let cv = unsafe { &*condvar_ptr };
+    if !cv.is_initialized() {
+        return Err(errno::EINVAL);
+    }
+    let mutex_word = unsafe { &*(mutex_futex_word as *const AtomicU32) };
+
+    // Validate mutex association invariant.
+    let mutex_addr = mutex_futex_word as usize;
+    match cv
+        .assoc_mutex
+        .compare_exchange(0, mutex_addr, Ordering::AcqRel, Ordering::Acquire)
+    {
+        Ok(_) => {}                                   // Successfully associated this mutex.
+        Err(existing) if existing == mutex_addr => {} // Already associated with same mutex.
+        Err(_) => return Err(errno::EINVAL),          // Different mutex -- POSIX violation.
+    }
+
+    // Capture seq before releasing mutex.
+    let expected_seq = cv.seq.load(Ordering::Acquire);
+    cv.nwaiters.fetch_add(1, Ordering::AcqRel);
+
+    // Release mutex: set lock word to 0 and wake one waiter.
+    mutex_word.store(0, Ordering::Release);
+    let _ = unsafe {
+        syscall::sys_futex(
+            mutex_futex_word,
+            FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+            1,
+            0,
+            0,
+            0,
+        )
+    };
+    Ok(expected_seq)
+}
+
+/// Second half of a condvar wait: deregister as a waiter and re-acquire the
+/// mutex (POSIX requires the mutex held on return, on timeout, and before a
+/// cancelled waiter's cleanup handlers run).
+///
+/// # Safety
+///
+/// Must follow a successful [`condvar_wait_prepare`] on the same pointers.
+#[allow(unsafe_code)]
+pub unsafe fn condvar_wait_finish(condvar_ptr: *mut CondvarData, mutex_futex_word: *const u32) {
+    let cv = unsafe { &*condvar_ptr };
+    let mutex_word = unsafe { &*(mutex_futex_word as *const AtomicU32) };
     let prev_waiters = cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
 
     // Clear mutex association if we were the last waiter.
@@ -264,7 +301,20 @@ pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *con
 
     // Reacquire mutex via futex CAS loop.
     relock_mutex(mutex_word, mutex_futex_word);
-    0
+}
+
+/// `FUTEX_WAIT_BITSET` operation for an absolute-deadline wait on `cv`'s
+/// clock (`FUTEX_CLOCK_REALTIME` selects CLOCK_REALTIME; without it the
+/// deadline is CLOCK_MONOTONIC).
+pub fn condvar_timed_futex_op(cv: &CondvarData) -> i32 {
+    let clock = cv.clock_id.load(Ordering::Relaxed) as i32;
+    FUTEX_WAIT_BITSET
+        | FUTEX_PRIVATE_FLAG
+        | if clock == PTHREAD_COND_CLOCK_REALTIME {
+            FUTEX_CLOCK_REALTIME
+        } else {
+            0
+        }
 }
 
 /// Timed wait on condvar with absolute deadline.
@@ -291,55 +341,19 @@ pub unsafe fn condvar_timedwait(
         return errno::EINVAL;
     }
 
-    let cv = unsafe { &*condvar_ptr };
-    if !cv.is_initialized() {
-        return errno::EINVAL;
-    }
-    let mutex_word = unsafe { &*(mutex_futex_word as *const AtomicU32) };
-
-    // Validate mutex association invariant.
-    let mutex_addr = mutex_futex_word as usize;
-    match cv
-        .assoc_mutex
-        .compare_exchange(0, mutex_addr, Ordering::AcqRel, Ordering::Acquire)
-    {
-        Ok(_) => {}                                   // Successfully associated this mutex.
-        Err(existing) if existing == mutex_addr => {} // Already associated with same mutex.
-        Err(_) => return errno::EINVAL,               // Different mutex -- POSIX violation.
-    }
-
-    let expected_seq = cv.seq.load(Ordering::Acquire);
-    cv.nwaiters.fetch_add(1, Ordering::AcqRel);
-
-    // Release mutex.
-    mutex_word.store(0, Ordering::Release);
-    let _ = unsafe {
-        syscall::sys_futex(
-            mutex_futex_word,
-            FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
-            1,
-            0,
-            0,
-            0,
-        )
+    let expected_seq = match unsafe { condvar_wait_prepare(condvar_ptr, mutex_futex_word) } {
+        Ok(seq) => seq,
+        Err(e) => return e,
     };
+    let cv = unsafe { &*condvar_ptr };
 
     // Build the absolute timeout as a kernel timespec.
     // Layout: [tv_sec: i64, tv_nsec: i64] = 16 bytes.
     let ts: [i64; 2] = [tv_sec, tv_nsec];
     let ts_ptr = ts.as_ptr() as usize;
 
-    // Choose futex op based on clock.
     // FUTEX_WAIT_BITSET supports absolute timeout natively.
-    // FUTEX_CLOCK_REALTIME flag selects CLOCK_REALTIME; without it, CLOCK_MONOTONIC.
-    let clock = cv.clock_id.load(Ordering::Relaxed) as i32;
-    let futex_op = FUTEX_WAIT_BITSET
-        | FUTEX_PRIVATE_FLAG
-        | if clock == PTHREAD_COND_CLOCK_REALTIME {
-            FUTEX_CLOCK_REALTIME
-        } else {
-            0
-        };
+    let futex_op = condvar_timed_futex_op(cv);
 
     let seq_ptr = &cv.seq as *const AtomicU32 as *const u32;
     let mut timed_out = false;
@@ -368,13 +382,8 @@ pub unsafe fn condvar_timedwait(
         }
     }
 
-    let prev_waiters = cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
-    if prev_waiters == 1 {
-        cv.assoc_mutex.store(0, Ordering::Release);
-    }
-
     // Reacquire mutex even on timeout (per POSIX).
-    relock_mutex(mutex_word, mutex_futex_word);
+    unsafe { condvar_wait_finish(condvar_ptr, mutex_futex_word) };
 
     if timed_out { errno::ETIMEDOUT } else { 0 }
 }

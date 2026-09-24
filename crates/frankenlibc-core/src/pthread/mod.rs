@@ -13,8 +13,8 @@ pub mod tls;
 
 pub use cond::{
     CondvarData, MANAGED_CONDVAR_MAGIC, PTHREAD_COND_CLOCK_MONOTONIC, PTHREAD_COND_CLOCK_REALTIME,
-    condvar_broadcast, condvar_destroy, condvar_init, condvar_signal, condvar_timedwait,
-    condvar_wait,
+    condvar_broadcast, condvar_destroy, condvar_init, condvar_signal, condvar_timed_futex_op,
+    condvar_timedwait, condvar_wait, condvar_wait_finish, condvar_wait_prepare,
 };
 pub use mutex::{
     PTHREAD_MUTEX_DEFAULT, PTHREAD_MUTEX_ERRORCHECK, PTHREAD_MUTEX_NORMAL, PTHREAD_MUTEX_RECURSIVE,

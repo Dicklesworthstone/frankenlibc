@@ -755,7 +755,11 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
     MemoryModelSource {
         relative_path: "../frankenlibc-core/src/pthread/cond.rs",
         domain: "futex",
-        expected_sites: 33,
+        // 33 -> 26 (bd-rc0923-epic-eeuy4f.24): condvar_timedwait's copies of the
+        // association CAS, seq load, waiter inc/dec, mutex release, association
+        // clear and clock load now run in the shared condvar_wait_prepare /
+        // condvar_wait_finish / condvar_timed_futex_op, with the same orderings.
+        expected_sites: 26,
         stop_at_cfg_test: true,
         optional: true, // Cross-crate: skip gracefully for standalone builds
     },

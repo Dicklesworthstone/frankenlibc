@@ -33,10 +33,12 @@ use frankenlibc_core::pthread::{
     THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle,
     condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
-    condvar_timedwait as core_condvar_timedwait, condvar_wait as core_condvar_wait,
-    create_thread as core_create_thread, detach_thread as core_detach_thread,
-    exit_current_thread as core_exit_current_thread, handle_for_tid as core_handle_for_tid,
-    join_thread as core_join_thread, self_tid as core_self_tid,
+    condvar_timed_futex_op as core_condvar_timed_futex_op,
+    condvar_wait_finish as core_condvar_wait_finish,
+    condvar_wait_prepare as core_condvar_wait_prepare, create_thread as core_create_thread,
+    detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
+    handle_for_tid as core_handle_for_tid, join_thread as core_join_thread,
+    self_tid as core_self_tid,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -3096,15 +3098,50 @@ pub unsafe extern "C" fn __pthread_cond_destroy(cond: *mut libc::pthread_cond_t)
     unsafe { pthread_cond_destroy(cond) }
 }
 
-/// POSIX `pthread_cond_wait`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_cond_wait(
+/// What a condvar wait takes from its mutex, handed back whether the wait
+/// returns or is abandoned by a cancellation unwind: POSIX requires a
+/// cancelled waiter to hold the mutex again before its cleanup handlers run.
+struct CondWaitGuard {
+    cond: *mut CondvarData,
+    word: *const u32,
+    mutex: *mut libc::pthread_mutex_t,
+    mtype: c_int,
+    saved_count: u32,
+    /// `condvar_wait_prepare` succeeded, so the mutex was released.
+    prepared: bool,
+}
+
+impl Drop for CondWaitGuard {
+    fn drop(&mut self) {
+        if self.prepared {
+            // SAFETY: pairs the successful prepare on the same pointers.
+            unsafe { core_condvar_wait_finish(self.cond, self.word) };
+        }
+        if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || self.mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+        {
+            if let Some(owner_ptr) = mutex_owner_ptr(self.mutex) {
+                let owner = unsafe { &*owner_ptr };
+                owner.store(core_self_tid(), Ordering::Release);
+            }
+            if self.mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
+                && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
+            {
+                let count = unsafe { &*count_ptr };
+                // Restore the lock count we had before waiting.
+                count.store(self.saved_count, Ordering::Release);
+            }
+        }
+    }
+}
+
+/// Shared body of `pthread_cond_wait` and `pthread_cond_timedwait`. Callers
+/// have rejected null pointers and invalid deadlines. The futex wait is a
+/// cancellation point.
+unsafe fn cond_wait_common(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
+    abstime: Option<&libc::timespec>,
 ) -> c_int {
-    if cond.is_null() || mutex.is_null() {
-        return libc::EINVAL;
-    }
     let managed_condvar = is_managed_condvar(cond);
     let managed_mutex = is_managed_mutex(mutex);
     if !managed_condvar || !managed_mutex {
@@ -3145,25 +3182,71 @@ pub unsafe extern "C" fn pthread_cond_wait(
         }
     }
 
+    let word_u32 = word_ptr.cast::<u32>() as *const u32;
+    let mut guard = CondWaitGuard {
+        cond: cond_ptr,
+        word: word_u32,
+        mutex,
+        mtype,
+        saved_count,
+        prepared: false,
+    };
     // SAFETY: condvar pointer and mutex futex word pointer are validated/aligned and caller-owned.
-    let rc = unsafe { core_condvar_wait(cond_ptr, word_ptr.cast::<u32>() as *const u32) };
+    let expected_seq = match unsafe { core_condvar_wait_prepare(cond_ptr, word_u32) } {
+        Ok(seq) => seq,
+        Err(e) => return e,
+    };
+    guard.prepared = true;
 
-    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
-        let self_tid = core_self_tid();
-        if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-            let owner = unsafe { &*owner_ptr };
-            owner.store(self_tid, Ordering::Release);
+    // SAFETY: `cond_ptr` was validated above.
+    let cv = unsafe { &*cond_ptr };
+    let seq_addr = &cv.seq as *const _ as usize;
+    let (futex_op, deadline, bitset) = match abstime {
+        None => ((libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as usize, 0, 0),
+        // libc::timespec is the kernel's 64-bit timespec on supported targets.
+        Some(ts) => (
+            core_condvar_timed_futex_op(cv) as usize,
+            ts as *const libc::timespec as usize,
+            u32::MAX as usize,
+        ),
+    };
+    let rc = loop {
+        // SAFETY: futex on the condvar sequence word with a live deadline.
+        let r = unsafe {
+            cancellation_point_syscall_raw(
+                libc::SYS_futex,
+                [
+                    seq_addr,
+                    futex_op,
+                    expected_seq as usize,
+                    deadline,
+                    0,
+                    bitset,
+                ],
+            )
+        };
+        match -r as c_int {
+            libc::EINTR if r < 0 => continue,
+            libc::ETIMEDOUT if r < 0 => break libc::ETIMEDOUT,
+            // Woken, sequence already moved (EAGAIN), or another error: the
+            // caller re-checks its predicate either way.
+            _ => break 0,
         }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
-            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
-        {
-            let count = unsafe { &*count_ptr };
-            // Restore the lock count we had before waiting.
-            count.store(saved_count, Ordering::Release);
-        }
-    }
-
+    };
+    drop(guard);
     rc
+}
+
+/// POSIX `pthread_cond_wait`.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    if cond.is_null() || mutex.is_null() {
+        return libc::EINVAL;
+    }
+    unsafe { cond_wait_common(cond, mutex, None) }
 }
 
 /// POSIX `pthread_cond_signal`.
@@ -3199,7 +3282,7 @@ pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut libc::pthread_cond_t)
 ///
 /// Same as [`pthread_cond_wait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_cond_wait(
+pub unsafe extern "C-unwind" fn __pthread_cond_wait(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
 ) -> c_int {
@@ -3370,7 +3453,7 @@ pub unsafe extern "C" fn pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_rwl
 
 /// POSIX `pthread_cond_timedwait`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_cond_timedwait(
+pub unsafe extern "C-unwind" fn pthread_cond_timedwait(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
     abstime: *const libc::timespec,
@@ -3381,70 +3464,8 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;
     }
-    let managed_condvar = is_managed_condvar(cond);
-    let managed_mutex = is_managed_mutex(mutex);
-    if !managed_condvar || !managed_mutex {
-        return libc::EINVAL;
-    }
-    let Some(cond_ptr) = condvar_data_ptr(cond) else {
-        return libc::EINVAL;
-    };
-    let Some(word_ptr) = mutex_word_ptr(mutex) else {
-        return libc::EINVAL;
-    };
-    // SAFETY: `word_ptr` is alignment-checked by `mutex_word_ptr`.
-    let word = unsafe { &*word_ptr };
-    if word.load(Ordering::Acquire) == 0 {
-        return libc::EINVAL;
-    }
-
-    let mtype = read_mutex_type(mutex);
-    let mut saved_count = 0;
-    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
-        // Verify ownership before clobbering the recursive/errorcheck book-
-        // keeping; mirrors pthread_cond_wait. (bd-cie59)
-        let self_tid = core_self_tid();
-        if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-            let owner = unsafe { &*owner_ptr };
-            if owner.load(Ordering::Acquire) != self_tid || self_tid == MUTEX_NO_OWNER {
-                return libc::EPERM;
-            }
-            owner.store(MUTEX_NO_OWNER, Ordering::Release);
-        }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
-            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
-        {
-            let count = unsafe { &*count_ptr };
-            saved_count = count.swap(0, Ordering::Release);
-        }
-    }
-
-    // SAFETY: abstime is non-null, condvar and mutex pointers are validated/aligned.
-    let ts = unsafe { &*abstime };
-    let rc = unsafe {
-        core_condvar_timedwait(
-            cond_ptr,
-            word_ptr.cast::<u32>() as *const u32,
-            ts.tv_sec,
-            ts.tv_nsec,
-        )
-    };
-
-    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE || mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE {
-        let self_tid = core_self_tid();
-        if let Some(owner_ptr) = mutex_owner_ptr(mutex) {
-            let owner = unsafe { &*owner_ptr };
-            owner.store(self_tid, Ordering::Release);
-        }
-        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE
-            && let Some(count_ptr) = mutex_lock_count_ptr(mutex)
-        {
-            let count = unsafe { &*count_ptr };
-            count.store(saved_count, Ordering::Release);
-        }
-    }
-
-    rc
+    // SAFETY: abstime is non-null and was validated above.
+    unsafe { cond_wait_common(cond, mutex, Some(&*abstime)) }
 }
 
 /// glibc reserved-namespace alias for [`pthread_cond_timedwait`].
@@ -3453,7 +3474,7 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
 ///
 /// Same as [`pthread_cond_timedwait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_cond_timedwait(
+pub unsafe extern "C-unwind" fn __pthread_cond_timedwait(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
     abstime: *const libc::timespec,
@@ -6255,7 +6276,7 @@ pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
 /// Native implementation: converts clock deadline to CLOCK_REALTIME and
 /// delegates to `pthread_cond_timedwait`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_cond_clockwait(
+pub unsafe extern "C-unwind" fn pthread_cond_clockwait(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
     clockid: c_int,
