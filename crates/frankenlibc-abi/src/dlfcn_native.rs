@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_core::elf::{
-    Elf64Rela, ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, RelocationResult, SymbolLookup,
+    Elf64Rela, ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, ProgramType,
+    RelocationResult, SymbolLookup,
 };
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -70,6 +71,9 @@ enum InitState { Pending, Running, Live }
 const HANDLE_TAG: usize = 0x4d;
 const HANDLE_MASK: usize = 0xff;
 const MAX_GROUP_OBJECTS: usize = 256;
+const DF_1_NODELETE: u64 = 0x8;
+const DF_1_NOOPEN: u64 = 0x40;
+const DF_1_PIE: u64 = 0x0800_0000;
 
 #[derive(Debug)]
 struct Mapping {
@@ -95,6 +99,9 @@ struct NativeDso {
     // Keep the opened inode alive even after unlink/replacement of the path.
     _file: File,
     references: usize,
+    // In-flight dependency staging retains mappings without inventing public
+    // dlopen references that a concurrent dlclose could consume.
+    load_pins: usize,
     nodelete: bool,
     global: bool,
     symbolic: bool,
@@ -116,6 +123,36 @@ struct NativeDso {
     retiring: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dependency {
+    Prepared(usize),
+    Resident(usize),
+}
+
+// A prepared transaction owns these guards until publication or rollback.
+// Releasing the last staging pin must collect a provider whose final public
+// handle was closed during file I/O, including after a failed consumer load.
+struct ResidentPin {
+    id: usize,
+}
+
+impl Drop for ResidentPin {
+    fn drop(&mut self) {
+        let _operation = OPERATIONS.lock();
+        let Ok(mut dsos) = registry().lock() else { return; };
+        if let Some(dso) = dsos.iter_mut().find(|dso| dso.id == self.id) {
+            let Some(pins) = dso.load_pins.checked_sub(1) else { return; };
+            dso.load_pins = pins;
+        }
+        drop(dsos);
+        // Process teardown owns its own finalization order. Otherwise this
+        // may invoke callbacks, so neither registry nor file I/O is held.
+        if !process_exit::unloading() {
+            let _ = collect_unreachable();
+        }
+    }
+}
+
 struct PreparedDso {
     file: File,
     device: u64,
@@ -123,8 +160,10 @@ struct PreparedDso {
     bytes: Vec<u8>,
     object: LoadedObject,
     image: LoadImage,
-    needed: Vec<usize>,
-    needed_by_name: Vec<(String, usize)>,
+    flags: u64,
+    needed: Vec<Dependency>,
+    needed_by_name: Vec<(String, Dependency)>,
+    resident_pins: Vec<ResidentPin>,
     path: PathBuf,
     search: SearchPaths,
     inherited_rpaths: Vec<PathBuf>,
@@ -183,6 +222,36 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
     metadata.is_file().then_some((file, metadata.dev(), metadata.ino()))
 }
 
+// Read runtime metadata rather than section headers: stripped objects retain
+// their load restrictions. Reject ambiguous/truncated dynamic segments before
+// mapping, TLS allocation, IFUNC execution, or constructor side effects.
+fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
+    let mut headers = object.program_headers.iter()
+        .filter(|header| header.p_type == ProgramType::Dynamic);
+    let Some(header) = headers.next() else { return Some(0); };
+    if headers.next().is_some() || header.p_filesz > header.p_memsz { return None; }
+    if !object.program_headers.iter().any(|load| {
+        if !load.is_load() { return false; }
+        let Some(delta) = header.p_vaddr.checked_sub(load.p_vaddr) else { return false; };
+        load.p_offset.checked_add(delta) == Some(header.p_offset)
+            && delta.checked_add(header.p_filesz).is_some_and(|end| end <= load.p_filesz)
+    }) { return None; }
+    let offset = usize::try_from(header.p_offset).ok()?;
+    let size = usize::try_from(header.p_filesz).ok()?;
+    if size % 16 != 0 { return None; }
+    let mut flags = None;
+    for entry in bytes.get(offset..offset.checked_add(size)?)?.chunks_exact(16) {
+        let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
+        let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
+        if tag == 0 { return Some(flags.unwrap_or(0)); }
+        if tag == 0x6fff_fffb {
+            if flags.is_some_and(|old| old != value) { return None; }
+            flags = Some(value);
+        }
+    }
+    None
+}
+
 fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, context: &SearchContext) -> Option<PreparedDso> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
@@ -194,6 +263,10 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     {
         return None;
     }
+    let flags = dynamic_flags(&bytes, &object)?;
+    // PIE also has ET_DYN, but is not a dlopen-able shared library. NOOPEN
+    // applies to dependencies as well as the explicitly requested root.
+    if flags & (DF_1_NOOPEN | DF_1_PIE) != 0 { return None; }
     let lifecycle = lifecycle::Layout::parse(&bytes, &object)?;
     let image = loader.materialize_load_image(&bytes, &object).ok()?;
     if image.low_vaddr != 0 || image.memory.is_empty() {
@@ -206,10 +279,35 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let path = requested_path.to_owned();
     let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
     Some(PreparedDso {
-        file, device, inode, bytes, object, image, needed: Vec::new(),
-        needed_by_name: Vec::new(),
+        file, device, inode, bytes, object, image, flags, needed: Vec::new(),
+        needed_by_name: Vec::new(), resident_pins: Vec::new(),
         path, search, inherited_rpaths: Vec::new(), lifecycle,
     })
+}
+
+// Match the resident link map BEFORE filesystem search. A loaded SONAME (or
+// an established DT_NEEDED alias) remains usable after rename/unlink or package
+// replacement. For path aliases, an opened inode can identify the same image.
+// Some(None) means absent; None means the transaction cannot safely continue.
+fn pin_resident_dependency(name: &str, identity: Option<(u64, u64)>) -> Option<Option<ResidentPin>> {
+    let _operation = OPERATIONS.lock();
+    if process_exit::unloading() { return None; }
+    let mut dsos = registry().lock().ok()?;
+    let index = dsos.iter().position(|dso| {
+        if dso.retiring { return false; }
+        if let Some((device, inode)) = identity {
+            return dso.device == device && dso.inode == inode;
+        }
+        dso.object.soname.as_deref() == Some(name)
+            || dsos.iter().any(|consumer| {
+                !consumer.retiring && consumer.needed_by_name.iter()
+                    .any(|(alias, id)| alias == name && *id == dso.id)
+            })
+    });
+    let Some(index) = index else { return Some(None); };
+    let dso = &mut dsos[index];
+    dso.load_pins = dso.load_pins.checked_add(1)?;
+    Some(Some(ResidentPin { id: dso.id }))
 }
 
 fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<PreparedDso>> {
@@ -221,9 +319,17 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
         let mut needed_by_name = Vec::new();
         for name in names {
             if !name.as_bytes().contains(&b'/') {
+                if let Some(pin) = pin_resident_dependency(&name, None)? {
+                    let dependency = Dependency::Resident(pin.id);
+                    group[cursor].resident_pins.push(pin);
+                    if !needed.contains(&dependency) { needed.push(dependency); }
+                    needed_by_name.push((name, dependency));
+                    continue;
+                }
                 if let Some(index) = group.iter().position(|dso| dso.object.soname.as_deref() == Some(name.as_str())) {
-                    if !needed.contains(&index) { needed.push(index); }
-                    needed_by_name.push((name, index));
+                    let dependency = Dependency::Prepared(index);
+                    if !needed.contains(&dependency) { needed.push(dependency); }
+                    needed_by_name.push((name, dependency));
                     continue;
                 }
             }
@@ -234,6 +340,13 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
                 let path = absolute_path(&path)?;
                 open_file(&path).map(|(file, device, inode)| (path, file, device, inode))
             })?;
+            if let Some(pin) = pin_resident_dependency(&name, Some((device, inode)))? {
+                let dependency = Dependency::Resident(pin.id);
+                group[cursor].resident_pins.push(pin);
+                if !needed.contains(&dependency) { needed.push(dependency); }
+                needed_by_name.push((name, dependency));
+                continue;
+            }
             let index = if let Some(index) = group.iter().position(|dso| {
                 dso.device == device && dso.inode == inode
             }) {
@@ -247,10 +360,11 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
                 group.push(dso);
                 group.len() - 1
             };
-            if !needed.contains(&index) {
-                needed.push(index);
+            let dependency = Dependency::Prepared(index);
+            if !needed.contains(&dependency) {
+                needed.push(dependency);
             }
-            needed_by_name.push((name, index));
+            needed_by_name.push((name, dependency));
         }
         group[cursor].needed = needed;
         group[cursor].needed_by_name = needed_by_name;
@@ -332,7 +446,8 @@ fn map_object(
         inode: prepared.inode,
         _file: file,
         references: 0,
-        nodelete: false,
+        load_pins: 0,
+        nodelete: prepared.flags & DF_1_NODELETE != 0,
         global: false,
         symbolic,
         dependencies: needed.clone(),
@@ -449,20 +564,34 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             } else {
                 ids[index] = Some(next_id()?);
                 new_indexes.push(index);
-                visit.extend(&prepared.needed);
+                visit.extend(prepared.needed.iter().filter_map(|dependency| {
+                    match dependency {
+                        Dependency::Prepared(index) => Some(*index),
+                        Dependency::Resident(_) => None,
+                    }
+                }));
             }
         }
         cursor += 1;
     }
 
+    // Prepared edges address this transaction; resident edges address the
+    // original link map and are kept alive by the group's staging guards.
+    let dependency_id = |dependency: Dependency| -> Option<usize> {
+        match dependency {
+            Dependency::Prepared(index) => ids.get(index).copied().flatten(),
+            Dependency::Resident(id) => dsos.iter()
+                .find(|dso| dso.id == id && !dso.retiring).map(|dso| dso.id),
+        }
+    };
     let root = ids[0]?;
     let mut pending = Vec::new();
     for &index in &new_indexes {
         let needed = group[index].needed.iter()
-            .map(|&dependency| ids[dependency])
+            .map(|&dependency| dependency_id(dependency))
             .collect::<Option<Vec<_>>>()?;
         let needed_by_name = group[index].needed_by_name.iter()
-            .map(|(name, dependency)| Some((name.clone(), ids[*dependency]?)))
+            .map(|(name, dependency)| Some((name.clone(), dependency_id(*dependency)?)))
             .collect::<Option<Vec<_>>>()?;
         pending.push(map_object(&group[index], ids[index]?, needed, needed_by_name)?);
     }
@@ -563,12 +692,13 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     for (dso, &index) in pending.iter().zip(&new_indexes) {
         protect_object(dso, &group[index].image, true)?;
     }
-    // No resident state has changed before this point. Dropping pending on any
-    // failure above rolls back mappings and descriptors, but never providers.
+    // Resident staging pins are temporary. No published reference, scope or
+    // lifetime edge changes before this point. Dropping pending on failure
+    // rolls back mappings; releasing the group's pins then permits collection.
     // Resolver side effects, like arbitrary constructor effects, are not undoable.
     let root_dso = pending.iter_mut().find(|dso| dso.id == root)?;
     root_dso.references = 1;
-    root_dso.nodelete = flags & dlfcn_core::RTLD_NODELETE != 0;
+    root_dso.nodelete |= flags & dlfcn_core::RTLD_NODELETE != 0;
     dsos.extend(pending);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
         promote_global(&mut dsos, root);
@@ -723,7 +853,7 @@ fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
     // Active initialization and finalization batches pin their entire closure
     // during reentrant operations, independent of explicit open counts.
     let mut live = dsos.iter().filter(|dso| {
-        dso.references != 0 || dso.thread_exit_pins != 0 || dso.nodelete
+        dso.references != 0 || dso.load_pins != 0 || dso.thread_exit_pins != 0 || dso.nodelete
             || dso.state != InitState::Live || dso.retiring
     }).map(|dso| dso.id).collect::<Vec<_>>();
     let mut cursor = 0;
