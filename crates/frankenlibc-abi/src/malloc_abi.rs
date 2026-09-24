@@ -3238,8 +3238,11 @@ fn record_stats_binned(slot: Option<&AllocatorReentrySlot>, op: usize, size: usi
             // accumulate in the slot's signed multi-threaded delta.
             // SAFETY: guard held => exclusive access to this slot's stats.
             unsafe { flush_slot_stats(slot, global) };
-            record_slot_mt_stats(slot, global, op, size, bin);
-            return;
+            // Forced-HTM test mode exercises the global combiner's transaction path.
+            if !crate::htm_fast_path::htm_forced_mode_active_for_tests() {
+                record_slot_mt_stats(slot, global, op, size, bin);
+                return;
+            }
         }
     }
     if op == FC_OP_ALLOC {
