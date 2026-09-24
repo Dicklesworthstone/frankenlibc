@@ -1,0 +1,107 @@
+name: Native process-shared synchronization
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/shared-sync.yml', 'tests/integration/fixture_shared_sync.c']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  shared-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read active work and retain evidence
+        run: |
+          mkdir -p artifacts/shared-sync
+          python3 - <<'PY' | tee artifacts/shared-sync/active-beads.log
+          import json
+          rows = [json.loads(line) for line in open('.beads/issues.jsonl') if line.strip()]
+          active = [r for r in rows if r.get('status') not in ('closed', 'tombstone')]
+          print('Total beads:', len(rows), 'Active:', len(active))
+          for r in sorted(active, key=lambda r:(r.get('priority', 9), r['id'])):
+              print(json.dumps({k:r.get(k) for k in ('id','status','priority','title','description')}, ensure_ascii=False))
+          PY
+      - name: Install the repository toolchain
+        run: |
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt
+          rustc --version
+      - name: Compile the independent host oracle
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_shared_sync.c -ldl -o "$RUNNER_TEMP/shared-sync"
+          "$RUNNER_TEMP/shared-sync" mutex | tee artifacts/shared-sync/host-mutex.log
+          "$RUNNER_TEMP/shared-sync" cond | tee artifacts/shared-sync/host-cond.log
+      - name: Observe the retained implementation reject shared mutexes
+        run: |
+          cargo build --release -p frankenlibc-abi --lib --keep-going > artifacts/shared-sync/base-build.log 2>&1
+          set +e
+          FRANKENLIBC_MODE=strict "$RUNNER_TEMP/shared-sync" mutex "$PWD/target/release/libfrankenlibc_abi.so" > artifacts/shared-sync/base-negative.log 2>&1
+          result=$?
+          set -e
+          cat artifacts/shared-sync/base-negative.log
+          test "$result" = 1
+          grep -Fq 'FAIL: shared mutex init' artifacts/shared-sync/base-negative.log
+      - name: Apply the immutable reviewed implementation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/4653f03abc74661a3e32cdd297df50baacf77702" --jq .content | base64 --decode > "$RUNNER_TEMP/shared-sync-candidate.py"
+          test "$(git hash-object "$RUNNER_TEMP/shared-sync-candidate.py")" = 4653f03abc74661a3e32cdd297df50baacf77702
+          python3 "$RUNNER_TEMP/shared-sync-candidate.py"
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/pthread_abi.rs crates/frankenlibc-core/src/pthread/cond.rs
+          git diff --check
+          git diff --stat
+      - name: Build the actual candidate ABI
+        run: cargo build --release -p frankenlibc-abi --lib --keep-going > artifacts/shared-sync/candidate-build.log 2>&1
+      - name: Execute remapped cross-process mutex and condition waits
+        run: |
+          for mode in strict hardened; do
+            for kind in mutex cond; do
+              FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/shared-sync" "$kind" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/shared-sync/$mode-$kind.log"
+            done
+          done
+      - name: Preserve the existing private condition-variable tests
+        run: |
+          cargo test -p frankenlibc-core --lib --no-fail-fast pthread::cond -- --test-threads=1 > artifacts/shared-sync/core-cond-tests.log 2>&1
+          grep -E 'test result:' artifacts/shared-sync/core-cond-tests.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/shared-sync/core-cond-tests.log
+      - name: Store tested source objects without changing a branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for path in crates/frankenlibc-abi/src/pthread_abi.rs crates/frankenlibc-core/src/pthread/cond.rs; do
+            blob=$(python3 -c 'import json,sys; print(json.dumps({"content":open(sys.argv[1]).read(),"encoding":"utf-8"}))' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
+            test "$blob" = "$(git hash-object "$path")"
+            printf 'TESTED_BLOB %s %s\n' "$blob" "$path" | tee -a artifacts/shared-sync/tested-blobs.log
+          done
+      - name: Preserve exact source and failures
+        if: always()
+        run: |
+          git diff > artifacts/shared-sync/implementation.diff
+          for path in crates/frankenlibc-abi/src/pthread_abi.rs crates/frankenlibc-core/src/pthread/cond.rs; do
+            mkdir -p "artifacts/shared-sync/source/$(dirname "$path")"
+            cp "$path" "artifacts/shared-sync/source/$path"
+          done
+          for log in artifacts/shared-sync/*build.log artifacts/shared-sync/core-cond-tests.log; do
+            if test -f "$log"; then echo "===== $log ====="; tail -60 "$log"; fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-shared-sync
+          path: artifacts/shared-sync/**
