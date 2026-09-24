@@ -1,0 +1,313 @@
+diff --git a/crates/frankenlibc-abi/src/dlfcn_native.rs b/crates/frankenlibc-abi/src/dlfcn_native.rs
+--- a/crates/frankenlibc-abi/src/dlfcn_native.rs
++++ b/crates/frankenlibc-abi/src/dlfcn_native.rs
+@@ -9,3 +9,3 @@
+ use std::cell::RefCell;
+-use std::ffi::{OsStr, c_int, c_void};
++use std::ffi::{CString, OsStr, c_int, c_void};
+ use std::fs::File;
+@@ -46,4 +46,8 @@
+ #[path = "dlfcn_process_exit.rs"]
+ mod process_exit;
+ 
++#[path = "dlfcn_inspection.rs"]
++mod inspection;
++pub(super) use inspection::address_info as native_address_info;
++
+ // Lock order: operation lock -> registry. The operation lock is recursive for
+@@ -99,3 +103,5 @@
+     // Keep the opened inode alive even after unlink/replacement of the path.
+     _file: File,
++    // dladdr strings must outlive a lookup and retain the requested pathname.
++    name: CString,
+     references: usize,
+@@ -329,4 +335,5 @@
+         device: prepared.device,
+         inode: prepared.inode,
+         _file: file,
++        name: CString::new(prepared.path.as_os_str().as_bytes()).ok()?,
+         references: 0,
+diff --git a/crates/frankenlibc-abi/src/dlfcn_abi.rs b/crates/frankenlibc-abi/src/dlfcn_abi.rs
+--- a/crates/frankenlibc-abi/src/dlfcn_abi.rs
++++ b/crates/frankenlibc-abi/src/dlfcn_abi.rs
+@@ -1349,5 +1349,11 @@
+                 return rc;
+             }
+         }
++        // Host ld.so does not know the ABI loader's anonymous mappings.
++        // Query native metadata only after the host call has released its lock.
++        if unsafe { native::native_address_info(addr, info.cast::<libc::Dl_info>()) } {
++            clear_dlerror();
++            return 1;
++        }
+         set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+         0
+diff --git a/crates/frankenlibc-abi/src/dlfcn_inspection.rs b/crates/frankenlibc-abi/src/dlfcn_inspection.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/frankenlibc-abi/src/dlfcn_inspection.rs
+@@ -0,0 +1,101 @@
++//! Inspection of ABI-owned native DSOs, independent of the host link map.
++//!
++//! Object and symbol names belong to the resident DSO, not temporary lookup
++//! buffers. No registry reference escapes a lookup. Program-header iteration
++//! (below) separately pins the complete snapshot across foreign callbacks.
++
++use std::ffi::{CStr, c_void};
++
++use frankenlibc_core::elf::{Elf64Symbol, LoadedObject};
++
++use super::{NativeDso, NATIVE_DSOS, OPERATIONS};
++
++/// Match the loaded image, including its inter-segment reservation, but not
++/// the page-rounded tail after the last PT_LOAD's p_memsz. No queried address
++/// is dereferenced. The ABI loader currently requires a zero low_vaddr.
++fn contains_address(dso: &NativeDso, address: usize) -> bool {
++    let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
++        return false;
++    };
++    let end = dso.object.program_headers.iter()
++        .filter(|header| header.is_load())
++        .filter_map(|header| header.p_vaddr.checked_add(header.p_memsz))
++        .max()
++        .unwrap_or(0);
++    offset < end && offset < dso.mapping.len as u64
++}
++
++fn symbol_name<'a>(object: &'a LoadedObject, symbol: &Elf64Symbol) -> Option<&'a CStr> {
++    // ELF names are bytes, not necessarily UTF-8. Reuse the retained dynstr
++    // allocation so the returned C string survives subsequent dlfcn calls.
++    let bytes = object.dynstr.get(symbol.st_name as usize..)?;
++    let name = CStr::from_bytes_until_nul(bytes).ok()?;
++    (!name.to_bytes().is_empty()).then_some(name)
++}
++
++fn symbol_start(object: &LoadedObject, symbol: &Elf64Symbol, address: u64) -> Option<u64> {
++    // STB_GLOBAL, STB_WEAK and STB_GNU_UNIQUE; STV_DEFAULT or STV_PROTECTED.
++    // TLS values are offsets, not process addresses. Merely inspecting an
++    // IFUNC must never invoke its resolver.
++    if !symbol.is_defined()
++        || !matches!(symbol.st_info >> 4, 1 | 2 | 10)
++        || !matches!(symbol.st_other & 3, 0 | 3)
++        || !matches!(symbol.st_info & 15, 0 | 1 | 2 | 10)
++    {
++        return None;
++    }
++    let start = symbol.definition_address(object.base)?;
++    let offset = address.checked_sub(start)?;
++    // A zero-sized symbol matches its exact address, not all later bytes.
++    // A nonzero-sized symbol does not claim its one-past-the-end address.
++    (offset < symbol.st_size || (symbol.st_size == 0 && offset == 0)).then_some(start)
++}
++
++/// Resolve a native object without invoking user code or a host loader.
++///
++/// # Safety
++/// `info` must be writable Dl_info storage. The caller must retain the DSO
++/// while using returned pointers, just as for host dladdr/dlsym pointers.
++pub(crate) unsafe fn address_info(address: *const c_void, info: *mut libc::Dl_info) -> bool {
++    if address.is_null() || info.is_null() {
++        return false;
++    }
++    // Do not initialize the native loader merely because bootstrap code asks
++    // about an address in the host. No native DSO can predate this registry.
++    let Some(registry) = NATIVE_DSOS.get() else {
++        return false;
++    };
++    let _operation = OPERATIONS.lock();
++    let Ok(dsos) = registry.lock() else {
++        return false;
++    };
++    let Some(dso) = dsos.iter().find(|dso| contains_address(dso, address as usize)) else {
++        return false;
++    };
++    // Retiring DSOs remain inspectable while their finalizers execute.
++    let mut result = libc::Dl_info {
++        dli_fname: dso.name.as_ptr(),
++        dli_fbase: dso.object.base as usize as *mut c_void,
++        dli_sname: std::ptr::null(),
++        dli_saddr: std::ptr::null_mut(),
++    };
++    let mut best = None;
++    for symbol in &dso.object.dynsym {
++        let Some(start) = symbol_start(&dso.object, symbol, address as usize as u64) else {
++            continue;
++        };
++        if best.is_some_and(|previous| start <= previous) {
++            continue;
++        }
++        let Some(name) = symbol_name(&dso.object, symbol) else {
++            continue;
++        };
++        best = Some(start);
++        result.dli_sname = name.as_ptr();
++        result.dli_saddr = start as usize as *mut c_void;
++    }
++    // SAFETY: caller supplies valid writable storage; resident allocations
++    // backing both strings cannot move while this registry guard is held.
++    unsafe { info.write(result) };
++    true
++}
+diff --git a/crates/frankenlibc-abi/tests/dlfcn_native_inspection_test.rs b/crates/frankenlibc-abi/tests/dlfcn_native_inspection_test.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/frankenlibc-abi/tests/dlfcn_native_inspection_test.rs
+@@ -0,0 +1,117 @@
++//! Gates must exercise ABI-owned anonymous mappings, not compare glibc to itself.
++#![cfg(all(target_os = "linux", target_arch = "x86_64", not(feature = "standalone")))]
++
++use std::ffi::{CStr, CString, c_void};
++use std::os::unix::ffi::OsStrExt;
++use std::path::PathBuf;
++use std::process::Command;
++use std::sync::Mutex;
++use std::sync::atomic::{AtomicUsize, Ordering};
++
++use frankenlibc_abi::dlfcn_abi as fl;
++
++static TEST_LOCK: Mutex<()> = Mutex::new(());
++static NEXT_FIXTURE: AtomicUsize = AtomicUsize::new(0);
++
++struct Dso {
++    handle: *mut c_void,
++    path: PathBuf,
++}
++
++impl Dso {
++    fn new() -> Self {
++        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
++        let stamp = std::time::SystemTime::now()
++            .duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
++        let directory = std::env::temp_dir().join(format!(
++            "frankenlibc-inspection-{}-{stamp}-{sequence}", std::process::id(),
++        ));
++        std::fs::create_dir(&directory).unwrap();
++        let path = directory.join("libinspection.so");
++        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
++            .join("../../tests/integration/fixture_native_inspection_dso.c");
++        let output = Command::new("cc")
++            .args(["-shared", "-fPIC", "-nostdlib", "-fexceptions",
++                   "-Wl,--hash-style=gnu", "-Wl,--eh-frame-hdr", "-o"])
++            .arg(&path).arg(source).output().expect("run C fixture compiler");
++        assert!(output.status.success(), "fixture compile: {}",
++                String::from_utf8_lossy(&output.stderr));
++        let filename = CString::new(path.as_os_str().as_bytes()).unwrap();
++        let handle = unsafe { fl::dlopen(filename.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
++        assert!(!handle.is_null(), "native fixture dlopen failed");
++        assert!(fl::native_dso_handle_for_tests(handle), "host fallback would mask the defect");
++        Self { handle, path }
++    }
++
++    fn symbol(&self, name: &CStr) -> *mut c_void {
++        let address = unsafe { fl::dlsym(self.handle, name.as_ptr()) };
++        assert!(!address.is_null(), "missing fixture symbol {name:?}");
++        address
++    }
++
++    fn close(&mut self) {
++        assert_eq!(unsafe { fl::dlclose(self.handle) }, 0);
++        self.handle = std::ptr::null_mut();
++    }
++}
++
++impl Drop for Dso {
++    fn drop(&mut self) {
++        if !self.handle.is_null() {
++            let _ = unsafe { fl::dlclose(self.handle) };
++        }
++    }
++}
++
++fn address_info(address: *const c_void) -> (i32, libc::Dl_info) {
++    // SAFETY: all-zero is a valid initial value for a pointer-only C struct.
++    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
++    let result = unsafe { fl::dladdr(address, (&raw mut info).cast()) };
++    (result, info)
++}
++
++#[test]
++fn native_address_lookup_reports_resident_path_and_symbol_bounds() {
++    let _serial = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
++    let mut dso = Dso::new();
++    let data = dso.symbol(c"inspection_data");
++    let (found, info) = address_info(data);
++    assert_ne!(found, 0);
++    assert_eq!(unsafe { CStr::from_ptr(info.dli_fname) }.to_bytes(),
++               dso.path.as_os_str().as_bytes());
++    assert_eq!(unsafe { CStr::from_ptr(info.dli_sname) }, c"inspection_data");
++    assert_eq!(info.dli_saddr, data);
++    assert!(!info.dli_fbase.is_null());
++    let (found, interior) = address_info((data as usize + 7) as *const c_void);
++    assert_ne!(found, 0);
++    assert_eq!(interior.dli_saddr, data);
++    let (found, past) = address_info((data as usize + 16) as *const c_void);
++    assert_ne!(found, 0);
++    assert!(past.dli_sname.is_null() && past.dli_saddr.is_null());
++    let (found, header) = address_info(info.dli_fbase);
++    assert_ne!(found, 0);
++    assert!(header.dli_sname.is_null() && header.dli_saddr.is_null());
++    // A second lookup must not overwrite temporary storage behind the first.
++    let function = dso.symbol(c"inspection_function");
++    let (found, function_info) = address_info(function);
++    assert_ne!(found, 0);
++    assert_eq!(unsafe { CStr::from_ptr(function_info.dli_sname) }, c"inspection_function");
++    assert_eq!(unsafe { CStr::from_ptr(info.dli_sname) }, c"inspection_data");
++    dso.close();
++    // Do not dereference returned strings after the object has been unloaded.
++    assert_eq!(address_info(data).0, 0);
++}
++
++#[test]
++fn native_zero_sized_symbol_matches_only_its_exact_address() {
++    let _serial = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
++    let dso = Dso::new();
++    let zero = dso.symbol(c"inspection_zero");
++    let (found, exact) = address_info(zero);
++    assert_ne!(found, 0);
++    assert_eq!(unsafe { CStr::from_ptr(exact.dli_sname) }, c"inspection_zero");
++    let (found, interior) = address_info((zero as usize + 1) as *const c_void);
++    assert_ne!(found, 0);
++    assert!(interior.dli_sname.is_null() && interior.dli_saddr.is_null());
++    assert_eq!(address_info(1usize as *const c_void).0, 0);
++}
+diff --git a/tests/integration/fixture_native_inspection_dso.c b/tests/integration/fixture_native_inspection_dso.c
+new file mode 100644
+--- /dev/null
++++ b/tests/integration/fixture_native_inspection_dso.c
+@@ -0,0 +1,36 @@
++/* Self-contained native-loader fixture: build -shared -fPIC -nostdlib.
++   Deliberately carries PT_GNU_EH_FRAME and dynamic TLS, but no host DT_NEEDED. */
++int inspection_data[4] = {11, 22, 33, 44};
++__thread int inspection_tls = 31;
++static void (*notify_finalized)(void *);
++static void *finalizer_argument;
++
++void inspection_install_finalizer(void (*notify)(void *), void *argument) {
++    notify_finalized = notify;
++    finalizer_argument = argument;
++}
++
++__attribute__((destructor)) static void inspection_fini(void) {
++    if (notify_finalized) notify_finalized(finalizer_argument);
++}
++
++__attribute__((noinline)) int inspection_function(int value) {
++    return value + inspection_data[1];
++}
++
++/* An exception thrown by the caller's callback must cross this native frame.
++   Build with -fexceptions; the fixture itself does not depend on libstdc++. */
++__attribute__((noinline)) int inspection_invoke(int (*callback)(int), int value) {
++    int result = callback(value);
++    return result + 1;
++}
++
++int *inspection_tls_address(void) { return &inspection_tls; }
++
++__asm__(".pushsection .text\n"
++        ".globl inspection_zero\n"
++        ".type inspection_zero,@function\n"
++        "inspection_zero:\n"
++        ".byte 0x90,0x90,0x90,0xc3\n"
++        ".size inspection_zero,0\n"
++        ".popsection\n");
