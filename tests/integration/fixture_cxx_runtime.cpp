@@ -8,6 +8,7 @@
 // noticing, because no fixture was C++.
 #include <cstdio>
 #include <cstdlib>
+#include <istream>
 #include <locale>
 #include <map>
 #include <mutex>
@@ -39,6 +40,17 @@ int main() {
     os.imbue(std::locale::classic());
     os << 1234567 << ' ' << 3.25;
     CHECK(os.str() == "1234567 3.25", "ostringstream classic formatting");
+
+    // 1b. istream extraction + ctype<char> facets. libstdc++ builds ctype<char>
+    // from locale_t->__ctype_b/__ctype_toupper, so locale_t must have glibc's
+    // struct __locale_struct layout (was a pointer to one byte -> SIGSEGV).
+    std::istringstream in("  alpha 42 beta\n3.5");
+    std::string w, b; int n = 0; double d = 0;
+    in >> w >> n >> b >> d;
+    CHECK(w == "alpha" && n == 42 && b == "beta" && d == 3.5, "istream extraction");
+    std::locale loc;
+    CHECK(std::toupper('q', loc) == 'Q' && !std::isalpha('7', loc) && std::isspace('\t', loc),
+          "ctype<char> facet via locale_t tables");
 
     // 2. exceptions: simple, nested frames, rethrow, catch-all.
     bool caught = false;

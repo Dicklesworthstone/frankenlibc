@@ -4,7 +4,7 @@
 //! C aliases and canonicalizes them to `C.UTF-8`; `localeconv` retains the
 //! C-locale numeric defaults.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::os::unix::ffi::OsStrExt;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -1002,9 +1002,48 @@ pub type LocaleT = *mut std::ffi::c_void;
 /// impossible by construction: the query would have nothing to distinguish. The
 /// ADDRESS of each static is the handle, so the two must not be merged by the
 /// compiler — each carries a distinct value for that reason.
-static C_LOCALE_HANDLE: u8 = 0;
+static C_LOCALE_HANDLE: GlibcLocaleStruct = GlibcLocaleStruct::new(c"C");
 /// Sentinel handle for the UTF-8 locale. See [`C_LOCALE_HANDLE`].
-static UTF8_LOCALE_HANDLE: u8 = 1;
+static UTF8_LOCALE_HANDLE: GlibcLocaleStruct = GlibcLocaleStruct::new(c"C.UTF-8");
+
+/// glibc's `struct __locale_struct` (locale/xlocale.h), which `locale_t`
+/// points at. It is not opaque in practice: libstdc++ builds `ctype<char>`
+/// from `__cloc->__ctype_b/__ctype_tolower/__ctype_toupper`, and glibc's own
+/// `isalpha_l`-style macros index `__ctype_b` directly. Handing out a pointer
+/// to a lone byte made every C++ `istream >> x` dereference garbage
+/// (bd-rc0923-epic-eeuy4f.2). `__locales` stays null: fl does not export
+/// glibc's per-category `__locale_data` and nothing reachable reads it.
+#[repr(C)]
+struct GlibcLocaleStruct {
+    locales: [*const std::ffi::c_void; 13],
+    ctype_b: *const u16,
+    ctype_tolower: *const i32,
+    ctype_toupper: *const i32,
+    names: [*const c_char; 13],
+}
+
+// SAFETY: every field points at immutable 'static data.
+unsafe impl Sync for GlibcLocaleStruct {}
+
+impl GlibcLocaleStruct {
+    const fn new(name: &'static CStr) -> Self {
+        Self {
+            locales: [std::ptr::null(); 13],
+            // glibc tables are indexed from -128, so the public pointer is
+            // table + 128 (same convention as __ctype_b_loc).
+            ctype_b: (&raw const crate::ctype_abi::CTYPE_B_TABLE)
+                .cast::<u16>()
+                .wrapping_add(128),
+            ctype_tolower: (&raw const crate::ctype_abi::TOLOWER_TABLE)
+                .cast::<i32>()
+                .wrapping_add(128),
+            ctype_toupper: (&raw const crate::ctype_abi::TOUPPER_TABLE)
+                .cast::<i32>()
+                .wrapping_add(128),
+            names: [name.as_ptr(); 13],
+        }
+    }
+}
 
 const VALID_NEWLOCALE_CATEGORY_MASK: c_int = libc::LC_ALL_MASK;
 
@@ -1030,9 +1069,9 @@ fn locale_handle_for(charset: Charset) -> LocaleT {
 /// `_l` entrypoints did implicitly before there was more than one locale.
 #[inline]
 fn charset_for_handle(handle: LocaleT) -> Charset {
-    if std::ptr::eq(handle.cast::<u8>(), std::ptr::addr_of!(C_LOCALE_HANDLE)) {
+    if std::ptr::eq(handle.cast::<GlibcLocaleStruct>(), std::ptr::addr_of!(C_LOCALE_HANDLE)) {
         Charset::Ascii
-    } else if std::ptr::eq(handle.cast::<u8>(), std::ptr::addr_of!(UTF8_LOCALE_HANDLE)) {
+    } else if std::ptr::eq(handle.cast::<GlibcLocaleStruct>(), std::ptr::addr_of!(UTF8_LOCALE_HANDLE)) {
         Charset::Utf8
     } else {
         active_charset()
@@ -1143,8 +1182,10 @@ pub unsafe extern "C" fn freelocale(_locale: LocaleT) {
 ///
 /// C-locale only: returns the same C locale handle.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn duplocale(_locale: LocaleT) -> LocaleT {
-    c_locale_handle()
+pub unsafe extern "C" fn duplocale(locale: LocaleT) -> LocaleT {
+    // Handles are immutable statics, so a duplicate is the same handle; it
+    // must keep the source's charset (libstdc++ clones every locale it uses).
+    locale_handle_for(charset_for_handle(locale))
 }
 
 /// POSIX `nl_langinfo_l` — locale-aware `nl_langinfo`.

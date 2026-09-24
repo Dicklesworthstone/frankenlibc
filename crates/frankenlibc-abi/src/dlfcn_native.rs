@@ -568,6 +568,48 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     Some(result)
 }
 
+/// Libraries owned by the host dynamic linker in an interpose (L0/L1)
+/// process. An object that links against any of them cannot be isolated from
+/// the host link map, so the native loader is not the right owner for it.
+const HOST_RUNTIME_SONAMES: &[&str] = &[
+    "libc.so.6",
+    "libm.so.6",
+    "libpthread.so.0",
+    "libdl.so.2",
+    "librt.so.1",
+    "libutil.so.1",
+    "libresolv.so.2",
+    "libgcc_s.so.1",
+    "libstdc++.so.6",
+    "ld-linux-x86-64.so.2",
+    "ld-linux-aarch64.so.1",
+];
+
+/// Whether a pathname `dlopen` the native loader declined may be served by
+/// the host loader instead (interpose builds only; bd-rc0923-epic-eeuy4f.3).
+///
+/// Only ordinary host-coupled objects qualify: those whose DT_NEEDED list
+/// names a host runtime library (every normal glibc-linked DSO, including all
+/// Python extension modules). Self-contained objects keep the native loader's
+/// fail-closed verdict — a bad IFUNC resolver or TLSDESC pair must not be
+/// "rescued" by the host — and nothing falls back while an IFUNC resolver is
+/// running (recursive loads must fail).
+pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
+    if ifunc::active() {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(OsStr::from_bytes(name)) else {
+        return false;
+    };
+    let Ok(object) = ElfLoader::new(0).parse(&bytes) else {
+        return false;
+    };
+    object
+        .needed_libraries
+        .iter()
+        .any(|needed| HOST_RUNTIME_SONAMES.contains(&needed.as_str()))
+}
+
 pub(super) fn resolve_native_dso_symbol(
     handle: *mut c_void,
     symbol_name: &[u8],

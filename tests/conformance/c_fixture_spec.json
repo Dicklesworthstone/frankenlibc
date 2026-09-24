@@ -351,7 +351,7 @@
         "glibc_internal_abi",
         "malloc_abi"
       ],
-      "tests": 7,
+      "tests": 9,
       "compile_flags": [
         "-O2",
         "-Wall",
@@ -394,7 +394,7 @@
   },
   "coverage_summary": {
     "total_fixtures": 14,
-    "total_tests": 79,
+    "total_tests": 81,
     "covered_symbols": 99,
     "covered_modules": [
       "malloc_abi",
@@ -480,7 +480,7 @@
   },
   "summary": {
     "total_fixtures": 14,
-    "total_tests": 79,
+    "total_tests": 81,
     "modules_covered": 15,
     "symbols_covered": 99,
     "execution_modes": 2

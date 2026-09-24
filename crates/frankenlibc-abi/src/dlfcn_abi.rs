@@ -115,9 +115,10 @@ unsafe fn dlopen_pathname(name: &[u8], filename: *const c_char, flags: c_int) ->
         clear_dlerror();
         return handle;
     }
-    // Only regular files (or paths that do not exist, which the host reports
-    // precisely) go to the host: handing it a FIFO or device would block or
-    // have side effects the native loader deliberately refuses.
+    // Only host-coupled regular files (or paths that do not exist, which the
+    // host reports precisely) go to the host: a FIFO or device would block or
+    // have side effects, and a self-contained object the native loader
+    // rejected as invalid must stay rejected.
     // SAFETY: `filename` is a bounded NUL-terminated string; `st` is a
     // correctly sized stat buffer.
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -130,7 +131,9 @@ unsafe fn dlopen_pathname(name: &[u8], filename: *const c_char, flags: c_int) ->
         )
     };
     let host_may_try = match stat_rc {
-        Ok(()) => (st.st_mode & libc::S_IFMT) == libc::S_IFREG,
+        Ok(()) => {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFREG && host_may_load_declined_object(name)
+        }
         Err(e) => e == libc::ENOENT || e == libc::ENOTDIR,
     };
     if !host_may_try {
@@ -350,6 +353,8 @@ mod native;
 use native::{
     close_native_dso, load_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol,
 };
+#[cfg(not(feature = "standalone"))]
+use native::host_may_load_declined_object;
 
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;

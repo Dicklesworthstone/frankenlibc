@@ -4405,7 +4405,15 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    unsafe { crate::io_internal_abi::_IO_file_overflow(fp, c) }
+    // glibc's putc_unlocked/putchar_unlocked macros call __overflow whenever
+    // `_IO_write_ptr == _IO_write_end`, which for fl handles is EVERY call
+    // (the buffer lives in the registry stream). Flushing first, as a literal
+    // "buffer full" handler would, cost one write(2) per character. Our
+    // buffer is not full, so just append through the buffered path.
+    if c == libc::EOF {
+        return if unsafe { crate::stdio_abi::fflush(fp) } == 0 { 0 } else { libc::EOF };
+    }
+    unsafe { crate::stdio_abi::fputc(c, fp) }
 }
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

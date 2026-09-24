@@ -1704,6 +1704,62 @@ const GLIBC_FILENO_OFFSET: usize = 112; // 0x70
 /// Insert a native FILE* pointer into the bloom filter for ownership tracking.
 ///
 /// Called when creating a new NativeFile (fopen, fdopen, etc.).
+/// glibc `_flags` bits a caller can observe through a `FILE *`
+/// (libio.h). Only the ones FrankenLibC keeps truthful are listed.
+pub(crate) mod glibc_flag_bits {
+    pub const UNBUFFERED: i32 = 0x0002;
+    pub const NO_READS: i32 = 0x0004;
+    pub const NO_WRITES: i32 = 0x0008;
+    pub const EOF_SEEN: i32 = super::GLIBC_IO_EOF_SEEN;
+    pub const ERR_SEEN: i32 = super::GLIBC_IO_ERR_SEEN;
+    pub const LINKED: i32 = 0x0080;
+    pub const LINE_BUF: i32 = 0x0200;
+    pub const TIED_PUT_GET: i32 = 0x0400;
+    pub const IS_APPENDING: i32 = 0x1000;
+    pub const IS_FILEBUF: i32 = 0x2000;
+}
+
+/// Register a glibc-layout `FILE` handle for a stream whose I/O state lives in
+/// the stdio registry, and return its address (the stream's id and the
+/// `FILE *` callers see).
+///
+/// Callers — and glibc's own inline macros (`getc_unlocked`, `putc_unlocked`,
+/// `feof_unlocked`, `ferror_unlocked`, `fileno_unlocked`) and gnulib's
+/// `freading`/`fpending` family — dereference `FILE *` directly. Handing out a
+/// synthetic integer id instead made every such program (git, sed, ...)
+/// SIGSEGV (bd-rc0923-epic-eeuy4f.1). The read/write windows stay empty so
+/// the inline fast paths always fall through to `__uflow`/`__overflow`, which
+/// dispatch into the registry; `_fileno` and `_flags` are kept truthful.
+///
+/// Returns `None` when the handle table is full.
+pub(crate) fn register_stdio_handle(
+    fd: c_int,
+    native_open_flags: u32,
+    glibc_flags: i32,
+) -> Option<*mut c_void> {
+    let mut file = NativeFile::new(fd, native_open_flags, NativeFileBufMode::None);
+    file._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
+    let mut reg = native_stream_registry();
+    let slot = reg.register(file)?;
+    let ptr = reg.get_mut(slot)? as *mut NativeFile as *mut c_void;
+    drop(reg);
+    register_native_file_ptr(ptr);
+    Some(ptr)
+}
+
+/// True when `ptr` is the address of one of FrankenLibC's dynamic `FILE`
+/// handle slots, occupied or not. A closed handle must never be passed to host
+/// glibc as if it were a host `FILE *` (its vtable is ours).
+pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
+    if ptr.is_null() || !might_be_native_file(ptr) {
+        return false;
+    }
+    let registry = native_stream_registry();
+    (3..STREAM_REGISTRY_CAPACITY).any(|i| {
+        (&registry.slots[i].file as *const NativeFile as *mut c_void) == ptr
+    })
+}
+
 pub fn register_native_file_ptr(ptr: *mut c_void) {
     if !ptr.is_null() {
         NATIVE_FILE_BLOOM.insert(ptr as usize);

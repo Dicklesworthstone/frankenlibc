@@ -482,6 +482,27 @@ impl StdioStream {
         }
     }
 
+    /// Give a [`Self::new_mem_fixed_readonly`] stream its bytes.
+    ///
+    /// That constructor leaves the generic backing empty because the ABI's
+    /// fast cursor owns the bytes, but not every operation goes through the
+    /// cursor (`fscanf`, for one), and the generic read then indexed an empty
+    /// buffer and panicked across the FFI boundary (process abort). The ABI
+    /// calls this when it hands the stream back to the generic path; it is a
+    /// no-op once the data is present.
+    pub fn materialize_mem_fixed_data(&mut self, bytes: &[u8]) {
+        if let Some(MemBacking::Fixed {
+            data, content_end, ..
+        }) = &mut self.mem_backing
+            && data.is_empty()
+            && *content_end > 0
+        {
+            let n = (*content_end).min(bytes.len());
+            data.extend_from_slice(&bytes[..n]);
+            data.resize(*content_end, 0);
+        }
+    }
+
     /// Create a dynamically-growing memory stream for `open_memstream`.
     pub fn new_mem_dynamic() -> Self {
         Self {

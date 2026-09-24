@@ -1,8 +1,10 @@
 #![cfg(all(target_os = "linux", not(feature = "standalone")))]
 #![allow(unsafe_code)] // exercises the real fl stdio ABI with real FILE* handles
 
-//! fl must never hand one of its own synthetic stream ids to host glibc
-//! (bd-u2daxd).
+//! fl must never hand one of its own stream handles to host glibc
+//! (bd-u2daxd). Since bd-rc0923-epic-eeuy4f.1 those handles are glibc-layout
+//! `FILE` objects in fl's handle table rather than the synthetic ids described
+//! below; the invariant and every refusal arm are unchanged.
 //!
 //! fl does not return real `FILE *` pointers. `stdin`/`stdout`/`stderr` are the
 //! sentinels `0x1000_0001..=0x1000_0003` and every `fopen` gets an id from
@@ -68,9 +70,14 @@ const EOF: c_int = -1;
 
 /// fl hands out ids from `0x1000_0001`; the first `fopen` id is `0x1000_0010`.
 /// Anything in this window is a synthetic handle, never a real pointer.
-fn is_synthetic_handle(p: *mut File) -> bool {
+/// A handle fl itself issued: a glibc-layout `FILE` in fl's handle table
+/// (bd-rc0923-epic-eeuy4f.1), or — only when that table is exhausted — a legacy
+/// synthetic id in `0x1000_0001..`. Either way it must never reach host glibc
+/// once closed.
+fn is_fl_handle(p: *mut File) -> bool {
     let v = p as usize;
     (0x1000_0001..0x2000_0000).contains(&v)
+        || frankenlibc_abi::io_internal_abi::verify_native_file(p).is_some()
 }
 
 /// `/dev/null` opened read-write, so both the read and write entry points have
@@ -92,17 +99,26 @@ fn open_devnull() -> *mut File {
 }
 
 #[test]
-fn fl_fopen_returns_a_synthetic_handle_not_a_pointer() {
+fn fl_fopen_returns_a_glibc_layout_fl_handle() {
     let _guard = gate_lock();
-    // The premise the rest of this file rests on. If fl ever starts returning
-    // real pointers, these gates stop testing what they claim to, and this
-    // assertion says so out loud rather than passing vacuously.
+    // The premise the rest of this file rests on, revisited as this test asked
+    // when fl switched from synthetic ids to real `FILE` handles
+    // (bd-rc0923-epic-eeuy4f.1: callers and glibc's inline macros dereference
+    // `FILE *`, so ids made git/sed SIGSEGV). The handle must be fl's own, and
+    // it must be real memory with glibc's `_flags` magic and `_fileno`.
     let f = open_devnull();
+    assert!(is_fl_handle(f), "expected an fl-owned handle, got {f:p}");
     assert!(
-        is_synthetic_handle(f),
-        "expected an fl synthetic stream id, got {f:p}; the rest of this gate \
-         assumes fl handles are ids and must be revisited"
+        frankenlibc_abi::io_internal_abi::verify_native_file(f).is_some(),
+        "fopen must return a glibc-layout FILE handle, not a synthetic id ({f:p})"
     );
+    // SAFETY: f is a live glibc-layout FILE; _flags is its first int field.
+    let flags = unsafe { *(f as *const i32) } as u32;
+    assert_eq!(flags & 0xFFFF_0000, 0xFBAD_0000, "_IO_MAGIC missing: {flags:#x}");
+    assert_eq!(flags & 0x8, 0x8, "read-only stream must carry _IO_NO_WRITES: {flags:#x}");
+    // SAFETY: _fileno sits at glibc x86_64 offset 112 in _IO_FILE.
+    let fileno_field = unsafe { *((f as *const u8).add(112) as *const c_int) };
+    assert_eq!(fileno_field, unsafe { fl::fileno(f) }, "_fileno must match fileno()");
     assert_eq!(unsafe { fl::fclose(f) }, 0, "first fclose should succeed");
 }
 
@@ -143,7 +159,7 @@ fn exercise_native_and_host_stream_io(runtime_ready: bool) {
         let stream = unsafe { open(stream_fd.as_raw_fd(), c"w+".as_ptr()) };
         assert!(!stream.is_null(), "{provider}: fdopen failed");
         let bound_fd = stream_fd.into_raw_fd(); // the successful stream owns it
-        assert_eq!(is_synthetic_handle(stream), synthetic, "{provider}");
+        assert_eq!(is_fl_handle(stream), synthetic, "{provider}");
         if runtime_ready
             && synthetic
             && std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened")
@@ -196,7 +212,7 @@ fn exercise_native_and_host_stream_io(runtime_ready: bool) {
 fn double_fclose_reports_eof_instead_of_reaching_glibc() {
     let _guard = gate_lock();
     let f = open_devnull();
-    assert!(is_synthetic_handle(f));
+    assert!(is_fl_handle(f));
 
     assert_eq!(unsafe { fl::fclose(f) }, 0, "first fclose should succeed");
 
@@ -219,7 +235,7 @@ fn fclose_after_fcloseall_reports_eof_instead_of_reaching_glibc() {
     // used to be misread as "this must be a host FILE *".
     let a = open_devnull();
     let b = open_devnull();
-    assert!(is_synthetic_handle(a) && is_synthetic_handle(b));
+    assert!(is_fl_handle(a) && is_fl_handle(b));
 
     assert_eq!(fl::fcloseall(), 0, "fcloseall should report 0");
 
@@ -278,7 +294,7 @@ fn every_stdio_entry_point_refuses_a_stale_fl_handle() {
     // small integer for a FILE * and took the process down.
     fn stale_handle() -> *mut File {
         let f = open_devnull_rw();
-        assert!(is_synthetic_handle(f));
+        assert!(is_fl_handle(f));
         assert_eq!(fl::fcloseall(), 0, "fcloseall should report 0");
         f
     }

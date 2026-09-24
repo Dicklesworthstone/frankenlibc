@@ -131,9 +131,9 @@ const fn build_tolower_table() -> [i32; 384] {
     t
 }
 
-static CTYPE_B_TABLE: [u16; 384] = build_ctype_b_table();
-static TOUPPER_TABLE: [i32; 384] = build_toupper_table();
-static TOLOWER_TABLE: [i32; 384] = build_tolower_table();
+pub(crate) static CTYPE_B_TABLE: [u16; 384] = build_ctype_b_table();
+pub(crate) static TOUPPER_TABLE: [i32; 384] = build_toupper_table();
+pub(crate) static TOLOWER_TABLE: [i32; 384] = build_tolower_table();
 
 /// Return a pointer to the ctype B table at offset 128 (for legacy `__ctype_b`).
 /// SAFETY: caller must not write through the returned pointer.

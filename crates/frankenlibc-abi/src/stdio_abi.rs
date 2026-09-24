@@ -1262,6 +1262,9 @@ impl FastFixedMemRead {
 
     #[inline]
     fn sync_to_stream(&self, stream: &mut StdioStream) {
+        // Read-only fmemopen streams keep their bytes only in this cursor
+        // (bd-rv2gv6); the generic path needs them too.
+        stream.materialize_mem_fixed_data(&self.data);
         let pos = self.pos.load(Ordering::Acquire).min(self.data.len());
         let _ = stream.mem_seek(pos as i64, libc::SEEK_SET);
         if self.eof.load(Ordering::Acquire) {
@@ -1445,10 +1448,141 @@ fn sync_and_unregister_fast_fixed_mem_read(id: usize, stream: &mut StdioStream) 
 /// glibc with the whole-registry lock held per op). Arc contents never move on HashMap
 /// rehash, so raw `*mut StdioStream` caches keyed by REGISTRY_GEN remain valid across
 /// inserts (stronger than the old map-value pointers, which DID move).
-type StreamCell = Arc<parking_lot::Mutex<StdioStream>>;
+type StreamCell = Arc<StreamCellInner>;
 
 fn new_stream_cell(stream: StdioStream) -> StreamCell {
-    Arc::new(parking_lot::Mutex::new(stream))
+    new_stream_cell_with_handle(stream, 0)
+}
+
+/// `handle` is the glibc-layout `FILE` whose `_flags` word mirrors this
+/// stream's EOF/ERR state (0 for streams without one).
+fn new_stream_cell_with_handle(stream: StdioStream, handle: usize) -> StreamCell {
+    Arc::new(StreamCellInner {
+        stream: parking_lot::Mutex::new(stream),
+        flags_word: handle,
+    })
+}
+
+/// A registry stream plus the address of the `FILE` handle callers hold.
+///
+/// glibc's `feof_unlocked`/`ferror_unlocked` macros read `_flags` directly,
+/// never calling into libc, so the EOF/ERR bits must be written into the
+/// handle whenever the stream state changes. Every mutation happens under
+/// this cell's lock, so the guard mirrors the bits on release
+/// (bd-rc0923-epic-eeuy4f.1). Known gap: the single-threaded raw write cache
+/// bypasses the guard, so a write *error* on that path is mirrored at the next
+/// locked operation rather than immediately.
+struct StreamCellInner {
+    stream: parking_lot::Mutex<StdioStream>,
+    flags_word: usize,
+}
+
+impl StreamCellInner {
+    #[inline]
+    fn lock(&self) -> StreamGuard<'_> {
+        StreamGuard {
+            guard: self.stream.lock(),
+            flags_word: self.flags_word,
+        }
+    }
+
+    #[inline]
+    fn try_lock(&self) -> Option<StreamGuard<'_>> {
+        self.stream.try_lock().map(|guard| StreamGuard {
+            guard,
+            flags_word: self.flags_word,
+        })
+    }
+}
+
+struct StreamGuard<'a> {
+    guard: parking_lot::MutexGuard<'a, StdioStream>,
+    flags_word: usize,
+}
+
+impl std::ops::Deref for StreamGuard<'_> {
+    type Target = StdioStream;
+    #[inline]
+    fn deref(&self) -> &StdioStream {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for StreamGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut StdioStream {
+        &mut self.guard
+    }
+}
+
+impl Drop for StreamGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        if self.flags_word != 0 {
+            mirror_stream_flags(self.flags_word, &self.guard);
+        }
+    }
+}
+
+#[inline]
+fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
+    // SAFETY: `handle` is the address of a registered NativeFile, whose first
+    // field is the 4-byte-aligned `_flags` int; it outlives the registry
+    // entry holding this cell. Other threads may read it (unlocked macros),
+    // hence the atomic view.
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    let current = word.load(Ordering::Relaxed);
+    let mut next = current & !(EOF_SEEN | ERR_SEEN);
+    if stream.is_eof() {
+        next |= EOF_SEEN;
+    }
+    if stream.is_error() {
+        next |= ERR_SEEN;
+    }
+    if next != current {
+        word.store(next, Ordering::Relaxed);
+    }
+}
+
+/// glibc `_flags` for a newly opened stream (matches e.g. 0xfbad2488 for
+/// `fopen(path, "r")`).
+fn initial_glibc_flags(open_flags: &OpenFlags, has_fd: bool, buf_mode: BufMode) -> i32 {
+    use io_internal_abi::glibc_flag_bits as b;
+    // glibc sets _IO_IS_FILEBUF on every stream it creates, including
+    // fmemopen/fopencookie ones, so `has_fd` does not change it.
+    let _ = has_fd;
+    let mut flags = b::LINKED | b::TIED_PUT_GET | b::IS_FILEBUF;
+    if !open_flags.readable {
+        flags |= b::NO_READS;
+    }
+    if !open_flags.writable {
+        flags |= b::NO_WRITES;
+    }
+    if open_flags.append {
+        flags |= b::IS_APPENDING;
+    }
+    match buf_mode {
+        BufMode::None => flags |= b::UNBUFFERED,
+        BufMode::Line => flags |= b::LINE_BUF,
+        BufMode::Full => {}
+    }
+    flags
+}
+
+/// Allocate the `FILE *` for a new registry stream: a glibc-layout handle
+/// when one is available, otherwise (handle table exhausted) a legacy
+/// synthetic id. Returns `(id, handle_word)`.
+fn alloc_stream_handle(fd: c_int, open_flags: &OpenFlags, buf_mode: BufMode) -> (usize, usize) {
+    let glibc_flags = initial_glibc_flags(open_flags, fd >= 0, buf_mode);
+    match io_internal_abi::register_stdio_handle(
+        fd,
+        native_stream_open_flags(*open_flags),
+        glibc_flags,
+    ) {
+        Some(ptr) => (ptr as usize, ptr as usize),
+        None => (alloc_stream_id(), 0),
+    }
 }
 
 struct StreamRegistry {
@@ -1501,6 +1635,17 @@ impl StreamRegistry {
     fn insert_stream(&mut self, id: usize, stream: StdioStream) {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
         self.streams.insert(id, new_stream_cell(stream));
+    }
+
+    /// Insert a stream whose `FILE *` is the glibc-layout handle at `handle`
+    /// (0 = none); see [`StreamCellInner`].
+    fn insert_stream_with_handle(&mut self, id: usize, stream: StdioStream, handle: usize) {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        if handle != 0 {
+            mirror_stream_flags(handle, &stream);
+        }
+        self.streams
+            .insert(id, new_stream_cell_with_handle(stream, handle));
     }
 
     /// Remove a stream, bumping the registry generation (the removed stream may still
@@ -1904,6 +2049,11 @@ fn is_fl_issued_stream_id(id: usize) -> bool {
     if id < STDIN_SENTINEL {
         return false;
     }
+    // Glibc-layout FILE handles from fl's handle table (bd-rc0923-epic-eeuy4f.1)
+    // live far above the legacy id window; open or closed, they are ours.
+    if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
+        return true;
+    }
     let watermark = *NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
     id < watermark
 }
@@ -1939,7 +2089,12 @@ fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
     if stream as usize == id && is_fl_issued_stream_id(id) {
         return false;
     }
-    !registry_contains_stream(id)
+    if registry_contains_stream(id) {
+        return false;
+    }
+    // A closed fl `FILE` handle is still ours: its vtable points at fl
+    // trampolines, so host glibc must never interpret it.
+    !io_internal_abi::is_native_handle_slot_address(stream)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2498,8 +2653,14 @@ pub(crate) fn register_memory_stream_with_native_handle(
     io_internal_abi::register_native_file_ptr(native_ptr);
     drop(native_reg);
 
+    // SAFETY: native_ptr is the registered NativeFile; `_flags` is its first
+    // field. Set the observable open-mode bits (the memory backing has no fd).
+    unsafe {
+        *(native_ptr as *mut i32) =
+            initial_glibc_flags(&open_flags, false, BufMode::Full) | (0xFBAD_0000u32 as i32);
+    }
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.insert_stream(native_ptr as usize, stream);
+    reg.insert_stream_with_handle(native_ptr as usize, stream, native_ptr as usize);
     native_ptr
 }
 
@@ -3046,18 +3207,19 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
         stream.set_offset(end_off);
     }
 
-    // Register in the StdioStream registry.
+    // The FILE * handed back is a glibc-layout handle (bd-rc0923-epic-eeuy4f.1):
+    // callers and glibc's inline macros dereference it.
+    let (id, handle) = alloc_stream_handle(fd, open_flags, buf_mode);
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    let mut id = alloc_stream_id();
-    let start = id;
-    while reg.streams.contains_key(&id) {
-        id = alloc_stream_id();
-        if id == start {
-            unsafe { set_abi_errno(errno::EMFILE) };
-            return std::ptr::null_mut();
-        }
+    if reg.streams.contains_key(&id) {
+        // A stale entry at a reused handle address would be a registry bug;
+        // refuse rather than alias two streams.
+        drop(reg);
+        maybe_unregister_dynamic_native_stream(id as *mut c_void);
+        unsafe { set_abi_errno(errno::EMFILE) };
+        return std::ptr::null_mut();
     }
-    reg.insert_stream(id, stream);
+    reg.insert_stream_with_handle(id, stream, handle);
     id as *mut c_void
 }
 
@@ -13118,10 +13280,10 @@ pub unsafe extern "C" fn fopencookie(
     // write buffer.  This makes the default `_IOFBF` behavior observable before
     // the callback is invoked, exactly as it is for glibc cookie streams.
     let stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
-    let id = alloc_stream_id();
+    let (id, handle) = alloc_stream_handle(-1, &open_flags, BufMode::Full);
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
-    reg.insert_stream(id, stream);
+    reg.insert_stream_with_handle(id, stream, handle);
     drop(reg);
 
     // Register the cookie info
