@@ -812,7 +812,11 @@ fn fork_inside_forked_child_does_not_hang() {
         "child did not exit normally (signal {} — alarm means the nested fork hung)",
         libc::WTERMSIG(status)
     );
-    assert_eq!(libc::WEXITSTATUS(status), 0, "nested fork/wait failed in child");
+    assert_eq!(
+        libc::WEXITSTATUS(status),
+        0,
+        "nested fork/wait failed in child"
+    );
 }
 
 #[test]
