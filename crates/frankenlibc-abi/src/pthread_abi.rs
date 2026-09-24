@@ -984,7 +984,35 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
     };
     // SAFETY: alignment and non-null checked in `condvar_data_ptr`.
     let condvar = unsafe { &*cond_ptr };
-    condvar.magic.load(Ordering::Acquire) == MANAGED_CONDVAR_MAGIC
+    match condvar.magic.load(Ordering::Acquire) {
+        MANAGED_CONDVAR_MAGIC => true,
+        0 => adopt_static_condvar(condvar),
+        _ => false,
+    }
+}
+
+/// `PTHREAD_COND_INITIALIZER` is all zero bytes, which is exactly an
+/// initialized realtime-clock condvar without its magic word. glibc accepts it
+/// without `pthread_cond_init`, so adopt it on first use; before this every
+/// wait, signal and broadcast on a statically initialized condvar returned
+/// EINVAL. Concurrent first uses race on the magic word only.
+fn adopt_static_condvar(condvar: &CondvarData) -> bool {
+    if condvar.seq.load(Ordering::Acquire) != 0
+        || condvar.nwaiters.load(Ordering::Acquire) != 0
+        || condvar.assoc_mutex.load(Ordering::Acquire) != 0
+        || condvar.clock_id.load(Ordering::Acquire) != 0
+    {
+        return false;
+    }
+    match condvar.magic.compare_exchange(
+        0,
+        MANAGED_CONDVAR_MAGIC,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => true,
+        Err(current) => current == MANAGED_CONDVAR_MAGIC,
+    }
 }
 
 #[inline(always)]
