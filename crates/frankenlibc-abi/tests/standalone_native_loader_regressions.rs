@@ -210,6 +210,38 @@ fn run_child(case: &str, root: &Path) {
             // Exercise the owned libc exit chain, not Rust's host termination.
             unsafe { frankenlibc_abi::stdlib_abi::exit(37) };
         }
+        "name" => {
+            // A same-named cwd DSO returns 13. The initial search path wins.
+            let handle = open_name(&CString::new(NAME).unwrap(), libc::RTLD_NOW);
+            assert_eq!(integer_symbol(handle, c"fixture_value"), 42);
+            close(handle);
+            let explicit = open_path(&root.join("cwd").join(NAME), libc::RTLD_NOW);
+            assert_eq!(integer_symbol(explicit, c"fixture_value"), 13);
+            close(explicit);
+        }
+        "resident_name" => {
+            let name = CString::new(NAME).unwrap();
+            assert!(unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }.is_null());
+            let _ = unsafe { dlerror() };
+            let handle = open_path(&path, libc::RTLD_NOW);
+            install_recorder(handle);
+            fs::rename(&path, root.join("original.so")).unwrap();
+            let again = open_name(&name, libc::RTLD_NOW | libc::RTLD_NOLOAD);
+            assert_eq!(handle, again, "SONAME must retain the original loaded image");
+            assert_eq!(integer_symbol(again, c"fixture_value"), 42);
+            assert_eq!(integer_symbol(again, c"fixture_initializations"), 1);
+            close(handle);
+            assert_eq!(FINALIZED.load(Ordering::SeqCst), 0);
+            close(again);
+            assert_eq!(FINALIZED.load(Ordering::SeqCst), 23);
+            assert!(unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }.is_null());
+        }
+        "no_implicit_cwd" => {
+            let name = CString::new(NAME).unwrap();
+            assert!(root.join("cwd").join(NAME).is_file());
+            assert!(unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) }.is_null());
+            assert!(!unsafe { dlerror() }.is_null());
+        }
         _ => panic!("unknown loader scenario: {case}"),
     }
 }
@@ -228,7 +260,7 @@ fn standalone_native_loader_regressions() {
     let template = root.join("template");
     build_fixtures(&template);
     for mode in ["strict", "hardened"] {
-        for case in ["path", "versions", "invalid", "nodelete", "shutdown"] {
+        for case in ["path", "versions", "invalid", "nodelete", "shutdown", "name", "resident_name", "no_implicit_cwd"] {
             let directory = root.join(mode).join(case);
             for subdirectory in ["search", "cwd", "empty"] {
                 fs::create_dir_all(directory.join(subdirectory)).unwrap();
@@ -240,7 +272,7 @@ fn standalone_native_loader_regressions() {
                 .args(["--exact", "standalone_native_loader_regressions", "--nocapture"])
                 .env(CHILD, case).env(DIRECTORY, &directory)
                 .env("FRANKENLIBC_MODE", mode)
-                .env("LD_LIBRARY_PATH", directory.join(if case == "path" { "empty" } else { "search" }))
+                .env("LD_LIBRARY_PATH", directory.join(if matches!(case, "path" | "no_implicit_cwd") { "empty" } else { "search" }))
                 .current_dir(directory.join("cwd"))
                 .output().expect("execute isolated loader scenario");
             let expected = if case == "shutdown" { 37 } else { 0 };

@@ -708,8 +708,45 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     if ifunc::active() || process_exit::unloading() { return None; }
-    let path = absolute_path(Path::new(OsStr::from_bytes(name)))?;
-    let (file, device, inode) = open_file(&path)?;
+    if name.is_empty() || name.contains(&0) {
+        return None;
+    }
+    // A loaded SONAME names its original image, even if its backing file has
+    // since been renamed, unlinked, or replaced. Do not reopen the filesystem
+    // before this lookup, and do not let RTLD_NOLOAD create a new object.
+    if !name.contains(&b'/') {
+        let _operation = OPERATIONS.lock();
+        if process_exit::unloading() {
+            return None;
+        }
+        let mut dsos = registry().lock().ok()?;
+        if let Some(index) = dsos.iter().position(|dso| {
+            dso.object.soname.as_deref().is_some_and(|soname| soname.as_bytes() == name)
+        }) {
+            let handle = reopen(&mut dsos, index, flags)?;
+            let id = dsos[index].id;
+            drop(dsos);
+            initialize(id)?;
+            return Some(handle);
+        }
+    }
+    let context = SearchContext::process();
+    let executable = std::fs::read_link("/proc/self/exe").ok();
+    let origin = executable.as_deref().and_then(Path::parent);
+    // Do not fabricate an ORIGIN when /proc cannot identify the executable.
+    if name.contains(&b'$') && origin.is_none() {
+        return None;
+    }
+    let candidates = SearchPaths::default().candidates(
+        name, origin.unwrap_or(Path::new("/")), &[], &context,
+    )?;
+    // Explicit pathnames stay exact. Bare names use the immutable initial
+    // environment, native cache and default directories, not an implicit cwd.
+    // The context also suppresses environment/ORIGIN use in secure execution.
+    let (path, file, device, inode) = candidates.into_iter().find_map(|candidate| {
+        let path = absolute_path(&candidate)?;
+        open_file(&path).map(|(file, device, inode)| (path, file, device, inode))
+    })?;
     {
         let _operation = OPERATIONS.lock();
         if process_exit::unloading() { return None; }
@@ -725,7 +762,6 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     if flags & dlfcn_core::RTLD_NOLOAD != 0 {
         return None;
     }
-    let context = SearchContext::process();
     let root = prepare_file(file, device, inode, &path, &context)?;
     let group = prepare_group(root, &context)?;
     // Slow file reads and dependency staging hold neither loader lock. Recheck

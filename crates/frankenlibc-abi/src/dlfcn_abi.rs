@@ -381,6 +381,7 @@ use native::{
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;
 
+#[cfg(not(feature = "standalone"))]
 fn is_pathname(name: &[u8]) -> bool {
     name.contains(&b'/')
 }
@@ -419,12 +420,6 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         {
             clear_dlerror();
             return open_main_program_handle();
-        }
-        // Until native name search is installed, never interpret a bare name
-        // as an implicit current-directory pathname.
-        if !is_pathname(name) {
-            set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
-            return std::ptr::null_mut();
         }
         return match load_native_dso(name, flags) {
             Some(handle) => {
