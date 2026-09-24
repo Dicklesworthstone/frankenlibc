@@ -1,0 +1,287 @@
+name: Legacy host DNS integration
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/legacy-host-dns.yml']
+  workflow_dispatch:
+
+# One-time validation of the exact reviewed implementation. Only source blobs
+# are stored: this job cannot update refs or create commits. The direct source
+# commit replaces it with the read-only regression job after validation.
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    if: github.repository == 'Dicklesworthstone/frankenlibc' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify exact reviewed source
+        run: test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = 17295cedac5adce51b5c1fe872b1257f66732e90
+      - name: Install repository toolchain
+        run: |
+          set -euo pipefail
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt
+          rustc --version
+      - name: Compile and run independent host oracle
+        run: |
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror tests/conformance/legacy_dns_fixture.c -lresolv -ldl -o "$RUNNER_TEMP/legacy-dns"
+          sudo "$RUNNER_TEMP/legacy-dns" forward
+          sudo "$RUNNER_TEMP/legacy-dns" reverse
+      - name: Apply reviewed forward implementation
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('crates/frankenlibc-abi/src/resolv_abi.rs')
+          text = path.read_text()
+          def replace(old, new):
+              global text
+              assert text.count(old) == 1, repr(old)
+              text = text.replace(old, new, 1)
+          start = text.index('/// Borrowed: the returned target aliases either')
+          end = text.index('/// Bench-only: reconstruct the per-call', start)
+          text = text[:start] + '''/// Resolve legacy IPv4 hosts through numeric, files, then native DNS.
+          /// Release the backend borrow before performing network I/O.
+          fn resolve_gethostbyname_target(name: Option<&CStr>) -> Result<GethostbynameTarget, c_int> {
+              use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+              let name_cstr = name.filter(|name| !name.to_bytes().is_empty()).ok_or(libc::EAI_NONAME)?;
+              if let Ok(node) = name_cstr.to_str()
+                  && let Ok(v4) = node.parse::<Ipv4Addr>()
+              {
+                  return Ok(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
+              }
+              let target = with_hosts_backend_snapshot(|content, _generation| {
+                  let mut target: Option<GethostbynameTarget> = None;
+                  frankenlibc_core::resolv::for_each_hosts_match_entry(content, name_cstr.to_bytes(), |entry| {
+                      let Some(address) = gethostbyname_ipv4_address(entry.address()) else { return false; };
+                      if let Some(target) = &mut target {
+                          target.append_row(entry.canonical_name(), entry.aliases(), address);
+                      } else {
+                          target = Some(GethostbynameTarget::seeded(entry.canonical_name(), entry.aliases(), address));
+                      }
+                      false
+                  });
+                  target
+              }).ok().flatten();
+              if let Some(target) = target { return Ok(target); }
+              // Ordinary lookup failure is not memory corruption. Neither mode
+              // may silently redirect a missing DNS name to localhost.
+              let (addresses, canonical_name) = native_dns_resolve(
+                  name_cstr.to_bytes(), AddressPolicy::new(Family::Inet, false, false),
+              )?;
+              if addresses.ipv4.is_empty() { return Err(libc::EAI_NONAME); }
+              let query_name = name_cstr.to_bytes();
+              let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+              let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+              let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+                  Vec::new()
+              } else { vec![query_name.to_vec()] };
+              Ok(GethostbynameTarget { name: canonical_name, aliases, addresses: addresses.ipv4 })
+          }
+
+          /// Definitive negatives complete a lookup (zero return, null result);
+          /// transient DNS failures remain retryable in both legacy entry points.
+          fn legacy_host_lookup_error(error: c_int) -> (c_int, c_int) {
+              match error {
+                  libc::EAI_AGAIN => (libc::EAGAIN, 2), // TRY_AGAIN
+                  libc::EAI_NONAME => (0, HOST_NOT_FOUND_ERRNO),
+                  _ => (0, NO_RECOVERY_ERRNO),
+              }
+          }
+
+          ''' + text[end:]
+          anchor = '/// Preserve the difference between a missing name and a temporary DNS failure.\nfn native_dns_resolve('
+          replace(anchor, '''/// Use the normal resolver configuration unless an explicit backend override
+          /// is selected, following the hosts/services backend convention.
+          fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
+              let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
+              match std::fs::read(path) {
+                  Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+                  Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
+              }
+          }
+
+          ''' + anchor)
+          replace('''    let config = match std::fs::read("/etc/resolv.conf") {
+                  Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+                  Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
+              };''', '    let config = native_dns_config();')
+          # Limit policy-binding edits to the two forward entry points.
+          start = text.index('pub unsafe extern "C" fn gethostbyname(')
+          end = text.index('unsafe fn gethostbyaddr_r_impl(', start)
+          region = text[start:end]
+          assert region.count('let (mode, decision) = runtime_policy::decide(') == 2
+          assert region.count('    let repair = repair_enabled(mode.heals_enabled(), decision.action);\n') == 2
+          region = region.replace('let (mode, decision) = runtime_policy::decide(', 'let (_, decision) = runtime_policy::decide(')
+          region = region.replace('    let repair = repair_enabled(mode.heals_enabled(), decision.action);\n', '')
+          text = text[:start] + region + text[end:]
+          replace('''    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
+                  unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+                  runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+                  return ptr::null_mut();
+              };''', '''    let target = match resolve_gethostbyname_target(name_cstr) {
+                  Ok(target) => target,
+                  Err(error) => {
+                      let (code, host_error) = legacy_host_lookup_error(error);
+                      unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+                      if code != 0 { unsafe { set_abi_errno(code) }; }
+                      runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+                      return ptr::null_mut();
+                  }
+              };''')
+          replace('''    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
+                  // SAFETY: optional h_errno pointer from caller.
+                  unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+                  runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                  return libc::ENOENT;
+              };''', '''    let target = match resolve_gethostbyname_target(name_cstr) {
+                  Ok(target) => target,
+                  Err(error) => {
+                      let (code, host_error) = legacy_host_lookup_error(error);
+                      // SAFETY: optional caller-provided h_errno pointer.
+                      unsafe { set_h_errnop(h_errnop, host_error) };
+                      if code != 0 { unsafe { set_abi_errno(code) }; }
+                      runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                      return code;
+                  }
+              };''')
+          path.write_text(text)
+      - name: Format and build forward implementation
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/resolv_abi.rs
+          cargo build --release -p frankenlibc-abi --lib --keep-going
+      - name: Exercise candidate forward ABI in both modes
+        run: |
+          set -euo pipefail
+          so="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$so"
+          sudo env FRANKENLIBC_MODE=strict "$RUNNER_TEMP/legacy-dns" forward "$so"
+          sudo env FRANKENLIBC_MODE=hardened "$RUNNER_TEMP/legacy-dns" forward "$so"
+          cp crates/frankenlibc-abi/src/resolv_abi.rs "$RUNNER_TEMP/legacy-forward.rs"
+      - name: Apply reviewed reverse implementation
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('crates/frankenlibc-abi/src/resolv_abi.rs')
+          text = path.read_text()
+          def replace(old, new):
+              global text
+              assert text.count(old) == 1, repr(old)
+              text = text.replace(old, new, 1)
+          anchor = '/// POSIX `getaddrinfo`: numeric/scoped hosts, files and native DNS.'
+          replace(anchor, '''/// Resolve a files-only reverse miss through the validated native PTR engine.
+          fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
+              use frankenlibc_core::dns_transport::ResolveError;
+              frankenlibc_core::dns_transport::reverse_with(address, &native_dns_config(), native_dns_query)
+                  .map_err(|error| match error {
+                      ResolveError::NotFound => libc::EAI_NONAME,
+                      ResolveError::Temporary => libc::EAI_AGAIN,
+                      ResolveError::Failure => libc::EAI_FAIL,
+                  })
+          }
+
+          ''' + anchor)
+          replace('''    let Ok(Some(written)) = written else {
+                  unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
+                  runtime_policy::observe(ApiFamily::Resolver, decision.profile, 10, true);
+                  return libc::ENOENT;
+              };''', '''    let written = match written {
+                  Ok(Some(written)) => written,
+                  Ok(None) | Err(_) => {
+                      // The backend snapshot borrow ends before network I/O.
+                      match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
+                          Ok(hostname) => {
+                              // SAFETY: the writer checks output bounds and copies the owned name.
+                              unsafe { write_reentrant_hostent(&hostname, ip, result_buf, buf, buflen, result) }
+                          }
+                          Err(error) => {
+                              let (code, host_error) = legacy_host_lookup_error(error);
+                              unsafe { set_h_errnop(h_errnop, host_error) };
+                              if code != 0 { unsafe { set_abi_errno(code) }; }
+                              runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                              return code;
+                          }
+                      }
+                  }
+              };''')
+          replace('''    // First-matching-line-wins and the address validation are unchanged. A backend read error is
+              // still HOST_NOT_FOUND (the `Err(_)` arm), and so is "no matching line".''', '''    // First-matching-line-wins and address validation are unchanged.
+              // Files misses and read errors now fall through to native PTR lookup.''')
+          replace('''/// POSIX `gethostbyaddr` — reverse DNS lookup by address.
+          ///
+          /// Uses /etc/hosts for reverse lookup (no DNS queries).''', '''/// POSIX `gethostbyaddr` — IPv4 reverse lookup through files, then native PTR.
+          ///
+          /// Internal `_gethtbyaddr` remains a files-only operation.''')
+          # The public gethostbyaddr is changed; internal _gethtbyaddr is untouched.
+          start = text.index('pub unsafe extern "C" fn gethostbyaddr(')
+          old = '''    let Ok(Some(hostent_ptr)) = filled else {
+                  unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
+                  return ptr::null_mut();
+              };
+              unsafe { set_h_errnop(ptr::null_mut(), 0) };
+              hostent_ptr'''
+          offset = text.index(old, start)
+          text = text[:offset] + '''    let hostent_ptr = match filled {
+                  Ok(Some(hostent_ptr)) => hostent_ptr,
+                  Ok(None) | Err(_) => match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
+                      Ok(hostname) => {
+                          // SAFETY: copies the name into TLS and retains the original address.
+                          unsafe { populate_tls_hostent(&hostname, ip) }
+                      }
+                      Err(error) => {
+                          let (code, host_error) = legacy_host_lookup_error(error);
+                          unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+                          if code != 0 { unsafe { set_abi_errno(code) }; }
+                          runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+                          return ptr::null_mut();
+                      }
+                  },
+              };
+              unsafe { set_h_errnop(ptr::null_mut(), 0) };
+              runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
+              hostent_ptr''' + text[offset + len(old):]
+          path.write_text(text)
+      - name: Format, build and test reverse implementation
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/resolv_abi.rs
+          cargo build --release -p frankenlibc-abi --lib --keep-going
+          cargo test -p frankenlibc-core --lib --keep-going dns_transport -- --test-threads=1
+          so="$PWD/target/release/libfrankenlibc_abi.so"
+          for mode in strict hardened; do
+            for direction in forward reverse; do
+              sudo env FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/legacy-dns" "$direction" "$so"
+            done
+          done
+          cp crates/frankenlibc-abi/src/resolv_abi.rs "$RUNNER_TEMP/legacy-reverse.rs"
+          git diff --check
+          git diff --stat
+      - name: Store tested source blobs without moving any ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, urllib.request
+          assert os.environ['GITHUB_REPOSITORY'] == 'Dicklesworthstone/frankenlibc'
+          for stage in ('forward', 'reverse'):
+              content = (pathlib.Path(os.environ['RUNNER_TEMP']) / ('legacy-' + stage + '.rs')).read_bytes()
+              expected = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs',
+                  data=json.dumps({'content': content.decode(), 'encoding': 'utf-8'}).encode(),
+                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'},
+                  method='POST')
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  result = json.load(response)
+              assert result['sha'] == expected
+              print('VERIFIED_' + stage.upper() + '_BLOB=' + expected, flush=True)
