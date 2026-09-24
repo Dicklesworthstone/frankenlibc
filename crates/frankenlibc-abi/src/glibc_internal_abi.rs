@@ -7372,6 +7372,10 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
     // Use futex FUTEX_WAIT_BITSET with clock selection
     // sem_t is an int at offset 0; if value > 0, decrement and return
     let sem_val = sem as *mut std::sync::atomic::AtomicI32;
+    // Register as a waiter before re-checking the value, as sem_wait does:
+    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
+    // unregistered sem_clockwait slept until its deadline.
+    let _registration = unsafe { crate::unistd_abi::sem_register_waiter(sem) };
     loop {
         let val = unsafe { (*sem_val).load(std::sync::atomic::Ordering::Acquire) };
         if val > 0 {
@@ -7398,6 +7402,7 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
         let _ = clock_flag;
         let ts = abstime as *const libc::timespec;
         let futex_op = libc::FUTEX_WAIT_BITSET
+            | crate::unistd_abi::sem_futex_private_flag(sem.cast())
             | (libc::FUTEX_CLOCK_REALTIME
                 * (if clockid == libc::CLOCK_REALTIME {
                     1

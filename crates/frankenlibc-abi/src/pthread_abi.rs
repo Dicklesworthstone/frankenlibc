@@ -129,6 +129,8 @@ const PTHREAD_CANCEL_ASYNCHRONOUS_TYPE: c_int = 1;
 /// Sentinel value for "no owner" in owner_tid fields.
 const MUTEX_NO_OWNER: i32 = 0;
 const MANAGED_RWLOCK_MAGIC: u32 = 0x4752_5758; // "GRWX"
+/// Magic of a `PTHREAD_PROCESS_SHARED` rwlock (shared futexes).
+const MANAGED_RWLOCK_PSHARED_MAGIC: u32 = 0x4752_5753; // "GRWS"
 const MUTEX_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
 const MUTEX_TYPE_OFFSET: usize = MUTEX_MAGIC_OFFSET + std::mem::size_of::<AtomicU32>();
 const MUTEX_OWNER_OFFSET: usize = MUTEX_TYPE_OFFSET + std::mem::size_of::<AtomicI32>();
@@ -973,16 +975,58 @@ fn is_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
     };
     // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
     let magic = unsafe { &*magic_ptr };
-    magic.load(Ordering::Acquire) == MANAGED_RWLOCK_MAGIC
+    match magic.load(Ordering::Acquire) {
+        MANAGED_RWLOCK_MAGIC | MANAGED_RWLOCK_PSHARED_MAGIC => true,
+        // PTHREAD_RWLOCK_INITIALIZER is all zero bytes: an unlocked private
+        // rwlock without its magic. glibc accepts it without
+        // pthread_rwlock_init, so adopt it on first use (every lock on a
+        // statically initialized rwlock used to return EINVAL).
+        0 => {
+            let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+                return false;
+            };
+            // SAFETY: alignment and non-null checked in `rwlock_word_ptr`.
+            if unsafe { &*word_ptr }.load(Ordering::Acquire) != 0 {
+                return false;
+            }
+            match magic.compare_exchange(
+                0,
+                MANAGED_RWLOCK_MAGIC,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => true,
+                Err(current) => {
+                    current == MANAGED_RWLOCK_MAGIC || current == MANAGED_RWLOCK_PSHARED_MAGIC
+                }
+            }
+        }
+        _ => false,
+    }
 }
 
-fn mark_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t) -> bool {
+/// Whether a managed rwlock's futexes are process-private.
+fn rwlock_is_private(rwlock: *mut libc::pthread_rwlock_t) -> bool {
+    rwlock_magic_ptr(rwlock).is_none_or(|magic_ptr| {
+        // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
+        unsafe { &*magic_ptr }.load(Ordering::Acquire) != MANAGED_RWLOCK_PSHARED_MAGIC
+    })
+}
+
+fn mark_managed_rwlock(rwlock: *mut libc::pthread_rwlock_t, pshared: bool) -> bool {
     let Some(magic_ptr) = rwlock_magic_ptr(rwlock) else {
         return false;
     };
     // SAFETY: alignment and non-null checked in `rwlock_magic_ptr`.
     let magic = unsafe { &*magic_ptr };
-    magic.store(MANAGED_RWLOCK_MAGIC, Ordering::Release);
+    magic.store(
+        if pshared {
+            MANAGED_RWLOCK_PSHARED_MAGIC
+        } else {
+            MANAGED_RWLOCK_MAGIC
+        },
+        Ordering::Release,
+    );
     true
 }
 
@@ -2036,11 +2080,17 @@ unsafe fn native_pthread_detach(thread: libc::pthread_t) -> c_int {
 
 #[cfg(target_os = "linux")]
 fn futex_wait_private(word: &AtomicI32, expected: i32) -> c_int {
+    futex_wait_word(word, expected, true)
+}
+
+/// Untimed FUTEX_WAIT, process-private or shared.
+#[cfg(target_os = "linux")]
+fn futex_wait_word(word: &AtomicI32, expected: i32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address and null timeout.
     match unsafe {
         raw_syscall::sys_futex(
             word as *const AtomicI32 as *const u32,
-            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             expected as u32,
             0, // null timeout
             0,
@@ -2084,11 +2134,17 @@ fn futex_wait_private_timeout(word: &AtomicI32, expected: i32, timeout_ns: i64) 
 
 #[cfg(target_os = "linux")]
 fn futex_wake_private(word: &AtomicI32, count: i32) -> c_int {
+    futex_wake_word(word, count, true)
+}
+
+/// FUTEX_WAKE, process-private or shared.
+#[cfg(target_os = "linux")]
+fn futex_wake_word(word: &AtomicI32, count: i32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address.
     match unsafe {
         raw_syscall::sys_futex(
             word as *const AtomicI32 as *const u32,
-            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             count as u32,
             0,
             0,
@@ -2571,7 +2627,7 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     0
 }
 
-fn futex_rwlock_rdlock(word: &AtomicI32) -> c_int {
+fn futex_rwlock_rdlock(word: &AtomicI32, private: bool) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
         if state >= 0 {
@@ -2589,7 +2645,7 @@ fn futex_rwlock_rdlock(word: &AtomicI32) -> c_int {
 
         #[cfg(target_os = "linux")]
         {
-            let rc = futex_wait_private(word, state);
+            let rc = futex_wait_word(word, state, private);
             if rc == 0 {
                 continue;
             }
@@ -2607,7 +2663,7 @@ fn futex_rwlock_rdlock(word: &AtomicI32) -> c_int {
     }
 }
 
-fn futex_rwlock_wrlock(word: &AtomicI32) -> c_int {
+fn futex_rwlock_wrlock(word: &AtomicI32, private: bool) -> c_int {
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
@@ -2620,7 +2676,7 @@ fn futex_rwlock_wrlock(word: &AtomicI32) -> c_int {
 
         #[cfg(target_os = "linux")]
         {
-            let rc = futex_wait_private(word, state);
+            let rc = futex_wait_word(word, state, private);
             if rc == 0 {
                 continue;
             }
@@ -2638,7 +2694,7 @@ fn futex_rwlock_wrlock(word: &AtomicI32) -> c_int {
     }
 }
 
-fn futex_rwlock_unlock(word: &AtomicI32) -> c_int {
+fn futex_rwlock_unlock(word: &AtomicI32, private: bool) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
         if state == 0 {
@@ -2651,7 +2707,7 @@ fn futex_rwlock_unlock(word: &AtomicI32) -> c_int {
             {
                 #[cfg(target_os = "linux")]
                 {
-                    let _ = futex_wake_private(word, i32::MAX);
+                    let _ = futex_wake_word(word, i32::MAX, private);
                 }
                 return 0;
             }
@@ -2665,7 +2721,7 @@ fn futex_rwlock_unlock(word: &AtomicI32) -> c_int {
                 if state == 1 {
                     #[cfg(target_os = "linux")]
                     {
-                        let _ = futex_wake_private(word, i32::MAX);
+                        let _ = futex_wake_word(word, i32::MAX, private);
                     }
                 }
                 return 0;
@@ -2700,7 +2756,11 @@ fn futex_rwlock_trywrlock(word: &AtomicI32) -> c_int {
 
 /// Timed read lock: same as `futex_rwlock_rdlock` but with futex timeout.
 #[cfg(target_os = "linux")]
-fn futex_rwlock_timed_rdlock(word: &AtomicI32, abstime: *const libc::timespec) -> c_int {
+fn futex_rwlock_timed_rdlock(
+    word: &AtomicI32,
+    abstime: *const libc::timespec,
+    private: bool,
+) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
         if state >= 0 {
@@ -2715,7 +2775,7 @@ fn futex_rwlock_timed_rdlock(word: &AtomicI32, abstime: *const libc::timespec) -
             }
             continue;
         }
-        let rc = futex_wait_timed_private(word, state, abstime);
+        let rc = futex_wait_timed(word, state, abstime, private);
         if rc == 0 {
             continue;
         }
@@ -2732,7 +2792,11 @@ fn futex_rwlock_timed_rdlock(word: &AtomicI32, abstime: *const libc::timespec) -
 
 /// Timed write lock: same as `futex_rwlock_wrlock` but with futex timeout.
 #[cfg(target_os = "linux")]
-fn futex_rwlock_timed_wrlock(word: &AtomicI32, abstime: *const libc::timespec) -> c_int {
+fn futex_rwlock_timed_wrlock(
+    word: &AtomicI32,
+    abstime: *const libc::timespec,
+    private: bool,
+) -> c_int {
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
@@ -2741,7 +2805,7 @@ fn futex_rwlock_timed_wrlock(word: &AtomicI32, abstime: *const libc::timespec) -
             return 0;
         }
         let state = word.load(Ordering::Acquire);
-        let rc = futex_wait_timed_private(word, state, abstime);
+        let rc = futex_wait_timed(word, state, abstime, private);
         if rc == 0 {
             continue;
         }
@@ -3831,7 +3895,10 @@ pub unsafe extern "C" fn pthread_rwlock_init(
     if rwlock.is_null() {
         return libc::EINVAL;
     }
-    if !attr.is_null() {
+    // A valid attribute is honoured for process sharing. The reader/writer
+    // preference kind is accepted; fl's rwlock has one fairness policy.
+    let mut pshared = libc::PTHREAD_PROCESS_PRIVATE;
+    if !attr.is_null() && unsafe { pthread_rwlockattr_getpshared(attr, &mut pshared) } != 0 {
         clear_managed_rwlock(rwlock);
         return libc::EINVAL;
     }
@@ -3842,7 +3909,7 @@ pub unsafe extern "C" fn pthread_rwlock_init(
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
     word.store(0, Ordering::Release);
-    if mark_managed_rwlock(rwlock) {
+    if mark_managed_rwlock(rwlock, pshared == libc::PTHREAD_PROCESS_SHARED) {
         0
     } else {
         libc::EINVAL
@@ -3885,7 +3952,7 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_rdlock(word)
+    futex_rwlock_rdlock(word, rwlock_is_private(rwlock))
 }
 
 /// POSIX `pthread_rwlock_wrlock`.
@@ -3902,7 +3969,7 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_wrlock(word)
+    futex_rwlock_wrlock(word, rwlock_is_private(rwlock))
 }
 
 /// POSIX `pthread_rwlock_unlock`.
@@ -3919,7 +3986,7 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_unlock(word)
+    futex_rwlock_unlock(word, rwlock_is_private(rwlock))
 }
 
 /// POSIX `pthread_rwlock_tryrdlock`.
@@ -5374,6 +5441,8 @@ pub unsafe extern "C" fn pthread_spin_unlock(lock: *mut c_void) -> c_int {
 // ---------------------------------------------------------------------------
 
 const BARRIER_MAGIC: u32 = 0x4742_4152; // "GBAR"
+/// Magic of a `PTHREAD_PROCESS_SHARED` barrier (shared futexes).
+const BARRIER_PSHARED_MAGIC: u32 = 0x4742_4153; // "GBAS"
 
 /// PTHREAD_BARRIER_SERIAL_THREAD: returned to exactly one thread per barrier cycle.
 const PTHREAD_BARRIER_SERIAL_THREAD: c_int = -1;
@@ -5417,12 +5486,12 @@ fn barrier_data_ptr(barrier: *mut c_void) -> Option<*mut BarrierData> {
     Some(ptr)
 }
 
-fn futex_wait_u32(addr: &AtomicU32, expected: u32) -> c_int {
+fn futex_wait_u32(addr: &AtomicU32, expected: u32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address and null timeout.
     match unsafe {
         raw_syscall::sys_futex(
             addr as *const AtomicU32 as *const u32,
-            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAIT | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             expected,
             0, // null timeout
             0,
@@ -5437,12 +5506,12 @@ fn futex_wait_u32(addr: &AtomicU32, expected: u32) -> c_int {
     }
 }
 
-fn futex_wake_u32(addr: &AtomicU32, count: i32) -> c_int {
+fn futex_wake_u32(addr: &AtomicU32, count: i32, private: bool) -> c_int {
     // SAFETY: Linux futex syscall with valid userspace address.
     match unsafe {
         raw_syscall::sys_futex(
             addr as *const AtomicU32 as *const u32,
-            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAKE | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 },
             count as u32,
             0,
             0,
@@ -5471,16 +5540,29 @@ pub unsafe extern "C" fn pthread_barrier_init(
         if word & BARRIERATTR_VALID_BIT == 0 {
             return libc::EINVAL;
         }
-        if (word & !BARRIERATTR_VALID_BIT) != libc::PTHREAD_PROCESS_PRIVATE {
+        if !matches!(
+            word & !BARRIERATTR_VALID_BIT,
+            libc::PTHREAD_PROCESS_PRIVATE | libc::PTHREAD_PROCESS_SHARED
+        ) {
             return libc::EINVAL;
         }
     }
+    let pshared = !attr.is_null()
+        && unsafe { *(attr.cast::<c_int>()) } & !BARRIERATTR_VALID_BIT
+            == libc::PTHREAD_PROCESS_SHARED;
     let Some(data) = barrier_data_ptr(barrier) else {
         return libc::EINVAL;
     };
     // SAFETY: pointer is non-null and aligned; caller owns the memory.
     unsafe {
-        (*data).magic.store(BARRIER_MAGIC, Ordering::Release);
+        (*data).magic.store(
+            if pshared {
+                BARRIER_PSHARED_MAGIC
+            } else {
+                BARRIER_MAGIC
+            },
+            Ordering::Release,
+        );
         (*data).count = count;
         (*data)
             .phase_arrived
@@ -5516,6 +5598,7 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
     };
     // SAFETY: pointer is non-null and aligned; caller owns the memory.
     let bd = unsafe { &*data };
+    let private = bd.magic.load(Ordering::Acquire) != BARRIER_PSHARED_MAGIC;
     let count = bd.count;
 
     // Atomically increment the arrival count via CAS on the packed u64.
@@ -5542,7 +5625,7 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
                 Ok(_) => {
                     // Update the futex notification word and wake all waiters.
                     bd.futex_phase.store(new_phase, Ordering::Release);
-                    futex_wake_u32(&bd.futex_phase, i32::MAX);
+                    futex_wake_u32(&bd.futex_phase, i32::MAX, private);
                     return PTHREAD_BARRIER_SERIAL_THREAD;
                 }
                 Err(actual) => {
@@ -5578,7 +5661,7 @@ pub unsafe extern "C" fn pthread_barrier_wait(barrier: *mut c_void) -> c_int {
         if fp != my_phase {
             break;
         }
-        futex_wait_u32(&bd.futex_phase, my_phase);
+        futex_wait_u32(&bd.futex_phase, my_phase, private);
     }
     0
 }
@@ -6717,7 +6800,7 @@ pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
         return libc::EINVAL;
     };
     let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_rdlock(word, abstime)
+    futex_rwlock_timed_rdlock(word, abstime, rwlock_is_private(rwlock))
 }
 
 /// POSIX `pthread_rwlock_timedwrlock` — timed write lock.
@@ -6741,7 +6824,7 @@ pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
         return libc::EINVAL;
     };
     let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_wrlock(word, abstime)
+    futex_rwlock_timed_wrlock(word, abstime, rwlock_is_private(rwlock))
 }
 
 /// GNU `pthread_rwlock_clockrdlock` — clock-specific timed read lock.

@@ -6198,6 +6198,31 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
 
+/// Marker in the sem_t word at offset 8 of a process-shared semaphore
+/// (`sem_init` with nonzero `pshared`, or `sem_open`): its futexes must be
+/// shared, since process-private futexes never wake another process.
+const SEM_SHARED_MARK: u32 = 0x5345_4d53; // "SMES"
+
+unsafe fn sem_shared_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
+    // SAFETY: a Linux sem_t is at least 32 bytes and 4-aligned.
+    unsafe {
+        &*((sem as *const u8).add(2 * std::mem::size_of::<i32>())
+            as *const std::sync::atomic::AtomicU32)
+    }
+}
+
+/// `FUTEX_PRIVATE_FLAG` for a process-private semaphore, 0 for a shared one.
+pub(crate) fn sem_futex_private_flag(sem: *mut c_void) -> c_int {
+    // SAFETY: `sem` is the caller's sem_t.
+    if unsafe { sem_shared_as_atomic(sem) }.load(std::sync::atomic::Ordering::Acquire)
+        == SEM_SHARED_MARK
+    {
+        0
+    } else {
+        libc::FUTEX_PRIVATE_FLAG
+    }
+}
+
 /// The waiter-registration counter, in the sem_t word after the value.
 ///
 /// Restored under bd-2g7oyh: 70973cf47 added this so sem_post can skip the
@@ -6216,7 +6241,7 @@ unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic:
 /// RAII registration: decrements on every exit path, including the error
 /// returns out of the sleeping loop, so a failed sem_wait cannot leak a
 /// phantom waiter and pin sem_post to the syscall path forever.
-struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
+pub(crate) struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
 
 impl Drop for SemWaiterRegistration {
     fn drop(&mut self) {
@@ -6224,7 +6249,7 @@ impl Drop for SemWaiterRegistration {
     }
 }
 
-unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
+pub(crate) unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
     let waiters = unsafe { sem_waiters_as_atomic(sem) };
     waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     SemWaiterRegistration(waiters)
@@ -6236,7 +6261,7 @@ fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_futex(
                 word as *const u32,
-                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                libc::FUTEX_WAIT | sem_futex_private_flag(word),
                 expected as u32,
                 0, // null timeout
                 0,
@@ -6303,7 +6328,7 @@ fn sem_futex_wait_timed(
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_futex(
                 word as *const u32,
-                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                libc::FUTEX_WAIT | sem_futex_private_flag(word),
                 expected as u32,
                 &rel as *const libc::timespec as usize,
                 0,
@@ -6320,7 +6345,7 @@ fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
     match unsafe {
         syscall::sys_futex(
             word as *const u32,
-            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            libc::FUTEX_WAKE | sem_futex_private_flag(word),
             count as u32,
             0,
             0,
@@ -6459,6 +6484,9 @@ pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: .
         let atom = unsafe { &*(ptr as *const std::sync::atomic::AtomicI32) };
         atom.store(initial_value as i32, std::sync::atomic::Ordering::Release);
     }
+    // Named semaphores are shared between processes by definition.
+    unsafe { sem_shared_as_atomic(ptr) }
+        .store(SEM_SHARED_MARK, std::sync::atomic::Ordering::Release);
 
     ptr
 }
@@ -6506,7 +6534,7 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 
 /// POSIX `sem_init` — initialize an unnamed semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_uint) -> c_int {
+pub unsafe extern "C" fn sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int {
     if sem.is_null() || value > SEM_VALUE_MAX {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
@@ -6516,6 +6544,10 @@ pub unsafe extern "C" fn sem_init(sem: *mut c_void, _pshared: c_int, value: c_ui
     // storage, and a stale nonzero count would keep sem_post on the syscall
     // path for the life of the new semaphore.
     unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
+    unsafe { sem_shared_as_atomic(sem) }.store(
+        if pshared != 0 { SEM_SHARED_MARK } else { 0 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
     atom.store(value as i32, std::sync::atomic::Ordering::Release);
     0
 }

@@ -3,7 +3,9 @@
 // and FrankenLibC.
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -19,7 +21,12 @@ struct shared {
   pthread_mutex_t cv_mutex;
   pthread_cond_t cv;
   int ready;
+  pthread_rwlock_t rw;
+  pthread_barrier_t bar;
+  sem_t sem;
 };
+
+static pthread_rwlock_t static_rw = PTHREAD_RWLOCK_INITIALIZER;
 
 static const char *name(int rc) {
   switch (rc) {
@@ -218,5 +225,66 @@ int main(void) {
   int e3 = pthread_mutex_trylock(&pi_err);
   printf("PI errorcheck lock/relock/trylock=%s,%s,%s\n", name(e1), name(e2), name(e3));
   pthread_mutex_unlock(&pi_err);
+
+  // Statically initialized and default-attribute rwlocks.
+  int w1 = pthread_rwlock_rdlock(&static_rw);
+  int w2 = pthread_rwlock_trywrlock(&static_rw);
+  int w3 = pthread_rwlock_unlock(&static_rw);
+  printf("static rwlock rdlock/trywrlock/unlock=%s,%s,%s\n", name(w1), name(w2), name(w3));
+  pthread_rwlockattr_t ra;
+  pthread_rwlockattr_init(&ra);
+  pthread_rwlock_t attr_rw;
+  printf("rwlock init with default attr=%s\n", name(pthread_rwlock_init(&attr_rw, &ra)));
+  pthread_rwlock_destroy(&attr_rw);
+
+  // Process-shared rwlock, barrier and semaphore across fork.
+  pthread_rwlockattr_setpshared(&ra, PTHREAD_PROCESS_SHARED);
+  printf("pshared rwlock init=%s\n", name(pthread_rwlock_init(&sh->rw, &ra)));
+  pthread_rwlockattr_destroy(&ra);
+  pthread_barrierattr_t ba;
+  pthread_barrierattr_init(&ba);
+  pthread_barrierattr_setpshared(&ba, PTHREAD_PROCESS_SHARED);
+  printf("pshared barrier init=%s\n", name(pthread_barrier_init(&sh->bar, &ba, 2)));
+  pthread_barrierattr_destroy(&ba);
+  printf("pshared sem_init=%d\n", sem_init(&sh->sem, 1, 0));
+  p = fork();
+  if (p == 0) {
+    pthread_rwlock_wrlock(&sh->rw);
+    usleep(150000);
+    pthread_rwlock_unlock(&sh->rw);
+    pthread_barrier_wait(&sh->bar);
+    usleep(50000);
+    sem_post(&sh->sem);
+    _exit(0);
+  }
+  usleep(50000);
+  printf("pshared tryrdlock while child writes=%s\n", name(pthread_rwlock_tryrdlock(&sh->rw)));
+  printf("pshared rdlock after child releases=%s\n", name(pthread_rwlock_rdlock(&sh->rw)));
+  pthread_rwlock_unlock(&sh->rw);
+  int b = pthread_barrier_wait(&sh->bar);
+  printf("pshared barrier passed=%d\n", b == 0 || b == PTHREAD_BARRIER_SERIAL_THREAD);
+  printf("pshared sem_wait woken by child=%d\n", sem_wait(&sh->sem));
+  waitpid(p, NULL, 0);
+
+  // Named semaphore shared between processes; sem_clockwait woken by sem_post.
+  char sem_name[64];
+  snprintf(sem_name, sizeof sem_name, "/fl_robust_%d", (int)getpid());
+  sem_t *named = sem_open(sem_name, O_CREAT | O_EXCL, 0600, 0);
+  if (named != SEM_FAILED) {
+    p = fork();
+    if (p == 0) {
+      sem_t *child = sem_open(sem_name, 0);
+      usleep(100000);
+      sem_post(child);
+      _exit(0);
+    }
+    struct timespec dl;
+    clock_gettime(CLOCK_MONOTONIC, &dl);
+    dl.tv_sec += 5;
+    printf("named sem_clockwait woken by child=%d\n", sem_clockwait(named, CLOCK_MONOTONIC, &dl));
+    waitpid(p, NULL, 0);
+    sem_close(named);
+    sem_unlink(sem_name);
+  }
   return 0;
 }
