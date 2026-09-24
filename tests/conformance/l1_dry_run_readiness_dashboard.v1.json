@@ -2684,7 +2684,7 @@
       "row_kind": "claim_control",
       "evidence_artifact": "tests/conformance/claim_reconciliation_report.v1.json",
       "field": "ground_truth.Implemented",
-      "expected_value": 2395,
+      "expected_value": 2441,
       "rationale": "The dashboard must expose the implemented-symbol count that underpins README and feature-parity claims."
     },
     {
@@ -4756,7 +4756,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "current_assessment.callthrough_pct",
-      "expected_value": 32,
+      "expected_value": 31,
       "rationale": "The dashboard must expose the explicit host-backed L1 interpose percentage."
     },
     {
@@ -4828,7 +4828,7 @@
       "row_kind": "promotion_state",
       "evidence_artifact": "tests/conformance/replacement_levels.json",
       "field": "levels.1.objective_gate.status_reason",
-      "expected_value": "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes.",
+      "expected_value": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T112959Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering) is green in both strict and hardened modes with no tracked known failures.",
       "rationale": "The dashboard must expose the exact reason the L1 objective gate passes."
     },
     {

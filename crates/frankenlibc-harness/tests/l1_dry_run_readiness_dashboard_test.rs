@@ -437,7 +437,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
         ),
         (
             "replacement-level-current-callthrough-pct",
-            ("current_assessment.callthrough_pct", json!(32)),
+            ("current_assessment.callthrough_pct", json!(31)),
         ),
         (
             "replacement-level-l1-status",
@@ -490,7 +490,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             (
                 "levels.1.objective_gate.status_reason",
                 json!(
-                    "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes."
+                    "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T112959Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering) is green in both strict and hardened modes with no tracked known failures."
                 ),
             ),
         ),
@@ -5202,7 +5202,7 @@ fn claim_reconciliation_rows_are_explicit() -> TestResult {
         ),
         (
             "claim-reconciliation-ground-truth-implemented",
-            ("ground_truth.Implemented", json!(2395)),
+            ("ground_truth.Implemented", json!(2441)),
         ),
         (
             "claim-reconciliation-ground-truth-callthrough-zero",
