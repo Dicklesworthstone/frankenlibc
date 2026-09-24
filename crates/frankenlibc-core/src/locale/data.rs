@@ -256,8 +256,14 @@ mod tests {
         assert_eq!(b.string(0), Some(&b"."[..]));
         assert_eq!(b.string(1), Some(&b","[..]));
         assert_eq!(b.string(2), None);
-        assert!(CategoryBlob::parse(2, &blob).is_none(), "wrong magic for LC_TIME");
-        assert!(CategoryBlob::parse(1, &blob[..10]).is_none(), "truncated table");
+        assert!(
+            CategoryBlob::parse(2, &blob).is_none(),
+            "wrong magic for LC_TIME"
+        );
+        assert!(
+            CategoryBlob::parse(1, &blob[..10]).is_none(),
+            "truncated table"
+        );
         assert!(LocaleArchive::parse(b"garbage").is_none());
     }
 

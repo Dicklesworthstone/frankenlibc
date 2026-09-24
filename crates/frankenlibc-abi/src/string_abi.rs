@@ -10045,6 +10045,20 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
 /// Caller must ensure both `s1` and `s2` are valid null-terminated strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int {
+    // A named LC_COLLATE with rules collates by the locale's weights.
+    if let Some(tables) = crate::locale_abi::named_collate()
+        && !s1.is_null()
+        && !s2.is_null()
+    {
+        // SAFETY: strcoll's contract: NUL-terminated strings.
+        let (a, b) = unsafe {
+            (
+                std::ffi::CStr::from_ptr(s1).to_bytes(),
+                std::ffi::CStr::from_ptr(s2).to_bytes(),
+            )
+        };
+        return tables.compare(a, b);
+    }
     // FrankenLibC uses the C/POSIX locale, where collation order IS byte order, so
     // strcoll is exactly strcmp (the core `strcoll` was already just `strcmp`).
     // Delegating to the strcmp ABI gives collation the fused single-pass

@@ -123,6 +123,11 @@ CORPUS_DIR="${RUN_DIR}/corpus"
 mkdir -p "${CORPUS_DIR}/tree/sub"
 printf 'alpha one\nbravo two\nalpha three\n' > "${CORPUS_DIR}/tree/a.txt"
 printf 'caf\xc3\xa9 \xe2\x82\xac \xc2\xab ok \xc2\xbb \xef\xbc\xa1\n' > "${CORPUS_DIR}/tree/u8.txt"
+printf 'banana\nApple\napple\n\xc3\x84pfel\nzebra\nZebra\n\xc3\xa9clair\neclair\n_under\n-dash\n10\n9\na b\nab\nfile-2\nfile_1\nFile3\n' > "${CORPUS_DIR}/tree/collate.txt"
+mkdir -p "${CORPUS_DIR}/tree/collate_dir"
+for name in apple Banana cherry "\xc3\x84pfel" Zulu "\xc3\xa9clair" eclair 10 9 file-2 file_1 File3 README readme; do
+  touch "${CORPUS_DIR}/tree/collate_dir/$(printf "${name}")"
+done
 printf 'charlie\n' > "${CORPUS_DIR}/tree/sub/b.txt"
 printf 'all:\n\t@echo made-$(words a b c)\n' > "${CORPUS_DIR}/Makefile"
 touch -t 202603230101.01 "${CORPUS_DIR}/tree" "${CORPUS_DIR}/tree/a.txt" \
@@ -775,6 +780,9 @@ EOF
   run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
+  # LC_COLLATE: sort and ls order by the locale's collation.
+  run_corpus_case "${mode}" "sort_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 sort "${tree}/collate.txt" || mode_failed=1
+  run_corpus_case "${mode}" "ls_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 ls "${tree}/collate_dir" || mode_failed=1
   # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1

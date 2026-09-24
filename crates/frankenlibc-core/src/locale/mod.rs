@@ -1,6 +1,7 @@
 //! Locale support.
 
 pub mod catgets;
+pub mod collate;
 pub mod data;
 pub mod strfmon;
 

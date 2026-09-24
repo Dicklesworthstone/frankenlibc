@@ -745,6 +745,13 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
     &LCONV
 }
 
+/// Collation tables when LC_COLLATE is on a named locale with rules
+/// (`None` for byte-order collation, including C and C.UTF-8).
+pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
+    let n = named(locale_core::LC_COLLATE)?;
+    frankenlibc_core::locale::collate::CollateTables::from_blob(&n.blob)
+}
+
 /// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
 /// Item indices are the LC_TIME `nl_item` offsets (ABDAY_1 = 0 ... T_FMT_AMPM = 43).
 pub(crate) fn named_time_locale() -> Option<frankenlibc_core::time::TimeLocale<'static>> {
