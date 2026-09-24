@@ -1,4 +1,4 @@
-name: Legacy host DNS integration
+name: Legacy host DNS source preparation
 
 on:
   push:
@@ -6,67 +6,74 @@ on:
     paths: ['.github/workflows/legacy-host-dns.yml']
   workflow_dispatch:
 
-# One-time source preparation only; no runner commits or ref updates.
-# The first implementation commit replaces this with read-only regression CI.
+# Temporary source preparation, NOT a Linux build or a runtime validation.
+# It writes content-addressed objects only; all main commits are explicit.
+# Replaced by the read-only Linux regression workflow with the source commit.
 permissions:
   contents: write
 
 jobs:
-  validate:
+  prepare:
     if: github.repository == 'Dicklesworthstone/frankenlibc' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
+    runs-on: macos-14
+    timeout-minutes: 15
     env:
-      CARGO_BUILD_JOBS: '2'
       PYTHONUNBUFFERED: '1'
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Read immutable reviewed preparation steps
+      - name: Read immutable reviewed source edits
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin 360e969015c28b73a22547cd6f03086dfd084e76
           git show 360e969015c28b73a22547cd6f03086dfd084e76:.github/workflows/legacy-host-dns.yml > "$RUNNER_TEMP/legacy-reviewed.yml"
           test "$(git hash-object "$RUNNER_TEMP/legacy-reviewed.yml")" = 5f817c35a49fa5597aef79d6af87678205428414
-          python3 -m pip install PyYAML==6.0.2
-      - name: Compile, exercise and store corrected source blobs
+          test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = 17295cedac5adce51b5c1fe872b1257f66732e90
+          python3 -m venv "$RUNNER_TEMP/legacy-venv"
+          "$RUNNER_TEMP/legacy-venv/bin/pip" install PyYAML==6.0.2
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt
+      - name: Apply, format and store prepared source blobs
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: python
         run: |
+          "$RUNNER_TEMP/legacy-venv/bin/python" - <<'PY'
           import hashlib, json, os, pathlib, subprocess, sys, urllib.request
           import yaml
           temp = pathlib.Path(os.environ['RUNNER_TEMP'])
           reviewed = yaml.safe_load((temp / 'legacy-reviewed.yml').read_text())
-          steps = reviewed['jobs']['validate']['steps']
-          # glibc distinguishes reverse from forward reentrant SERVFAIL returns.
           fixture = pathlib.Path('tests/conformance/legacy_dns_fixture.c')
           contents = fixture.read_text()
           old = 'check(rc == EAGAIN && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");'
           new = 'check(rc == 0 && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");'
           assert contents.count(old) == 1
           fixture.write_text(contents.replace(old, new, 1))
-          for step in steps:
-              if 'run' not in step or step['name'] == 'Store tested source blobs without moving any ref':
+          sources = {'fixture': fixture}
+          for step in reviewed['jobs']['validate']['steps']:
+              if step.get('name') not in ('Apply reviewed forward implementation', 'Apply reviewed reverse implementation'):
                   continue
               code = step['run']
-              if step['name'] == 'Apply reviewed reverse implementation':
+              stage = 'reverse' if 'reverse' in step['name'] else 'forward'
+              if stage == 'reverse':
                   assert code.count('return code;') == 1
                   code = code.replace('return code;', 'return 0;', 1)
+                  # Both reverse entry points report DNS failures via h_errno.
+                  # Do not manufacture the forward API's EAGAIN errno write.
+                  assert code.count('let (code, host_error) = legacy_host_lookup_error(error);') == 2
                   code = code.replace('let (code, host_error) = legacy_host_lookup_error(error);',
-                                      'let (_, host_error) = legacy_host_lookup_error(error);', 1)
-                  code = code.replace('if code != 0 { unsafe { set_abi_errno(code) }; }', '', 1)
-              print('::group::' + step['name'], flush=True)
-              if step.get('shell') == 'python':
-                  subprocess.run([sys.executable, '-c', code], check=True)
-              else:
-                  subprocess.run(['bash', '-euo', 'pipefail', '-c', code], check=True)
-              print('::endgroup::', flush=True)
-          # This job creates content-addressed objects only. The caller reviews
-          # each blob and advances main separately using non-forced GitHub writes.
+                                      'let (_, host_error) = legacy_host_lookup_error(error);')
+                  code = code.replace('if code != 0 { unsafe { set_abi_errno(code) }; }', '')
+              subprocess.run([sys.executable, '-c', code], check=True)
+              path = pathlib.Path('crates/frankenlibc-abi/src/resolv_abi.rs')
+              subprocess.run(['rustfmt', '--edition', '2024', str(path)], check=True)
+              snapshot = temp / ('legacy-' + stage + '.rs')
+              snapshot.write_bytes(path.read_bytes())
+              sources[stage] = snapshot
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          subprocess.run(['git', 'diff', '--stat'], check=True)
+          assert set(sources) == {'forward', 'reverse', 'fixture'}
           assert os.environ['GITHUB_REPOSITORY'] == 'Dicklesworthstone/frankenlibc'
-          sources = {'forward': temp / 'legacy-forward.rs', 'reverse': temp / 'legacy-reverse.rs', 'fixture': fixture}
           for stage, path in sources.items():
               content = path.read_bytes()
               expected = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
@@ -78,4 +85,6 @@ jobs:
               with urllib.request.urlopen(request, timeout=60) as response:
                   result = json.load(response)
               assert result['sha'] == expected
-              print('VERIFIED_' + stage.upper() + '_BLOB=' + expected, flush=True)
+              print('PREPARED_' + stage.upper() + '_BLOB=' + expected, flush=True)
+          print('Formatting and source preparation passed; Linux compilation and runtime tests are separate.')
+          PY
