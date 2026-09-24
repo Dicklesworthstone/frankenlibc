@@ -166,6 +166,8 @@ STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
 cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
+PTHREAD_ROBUST_BIN="${BIN_DIR}/fixture_pthread_robust"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_robust.c" -o "${PTHREAD_ROBUST_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -804,6 +806,9 @@ EOF
   # Thread cancellation at blocking points + cleanup handlers, static condvars
   # (bd-rc0923-epic-eeuy4f.24).
   run_corpus_case "${mode}" "pthread_cancel" "${PTHREAD_CANCEL_BIN}" || mode_failed=1
+  # Process-shared, robust and PI mutexes; process-shared condvars
+  # (bd-rc0923-epic-eeuy4f.15).
+  run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
   # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1

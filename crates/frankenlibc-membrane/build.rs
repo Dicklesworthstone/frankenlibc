@@ -759,7 +759,10 @@ const MEMORY_MODEL_SOURCES: &[MemoryModelSource] = &[
         // association CAS, seq load, waiter inc/dec, mutex release, association
         // clear and clock load now run in the shared condvar_wait_prepare /
         // condvar_wait_finish / condvar_timed_futex_op, with the same orderings.
-        expected_sites: 26,
+        // 26 -> 28 (bd-rc0923-epic-eeuy4f.15): process-shared condvars read the
+        // magic word (Acquire, futex_private_flag) and set it (Release,
+        // mark_process_shared), pairing with the existing init/adopt protocol.
+        expected_sites: 28,
         stop_at_cfg_test: true,
         optional: true, // Cross-crate: skip gracefully for standalone builds
     },

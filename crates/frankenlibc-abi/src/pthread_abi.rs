@@ -29,11 +29,11 @@ use frankenlibc_core::pthread::tls::{
     pthread_setspecific as core_pthread_setspecific,
 };
 use frankenlibc_core::pthread::{
-    CondvarData, MANAGED_CONDVAR_MAGIC, PTHREAD_COND_CLOCK_MONOTONIC, PTHREAD_COND_CLOCK_REALTIME,
-    THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle,
-    condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
-    condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
-    condvar_timed_futex_op as core_condvar_timed_futex_op,
+    CondvarData, MANAGED_CONDVAR_MAGIC, MANAGED_CONDVAR_PSHARED_MAGIC,
+    PTHREAD_COND_CLOCK_MONOTONIC, PTHREAD_COND_CLOCK_REALTIME, THREAD_DETACHED, THREAD_FINISHED,
+    THREAD_JOINED, ThreadHandle, condvar_broadcast as core_condvar_broadcast,
+    condvar_destroy as core_condvar_destroy, condvar_init as core_condvar_init,
+    condvar_signal as core_condvar_signal, condvar_timed_futex_op as core_condvar_timed_futex_op,
     condvar_wait_finish as core_condvar_wait_finish,
     condvar_wait_prepare as core_condvar_wait_prepare, create_thread as core_create_thread,
     detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
@@ -1012,7 +1012,7 @@ fn is_managed_condvar(cond: *mut libc::pthread_cond_t) -> bool {
     // SAFETY: alignment and non-null checked in `condvar_data_ptr`.
     let condvar = unsafe { &*cond_ptr };
     match condvar.magic.load(Ordering::Acquire) {
-        MANAGED_CONDVAR_MAGIC => true,
+        MANAGED_CONDVAR_MAGIC | MANAGED_CONDVAR_PSHARED_MAGIC => true,
         0 => adopt_static_condvar(condvar),
         _ => false,
     }
@@ -2345,13 +2345,17 @@ unsafe fn ext_mutex_lock(
             m.count.store(cur + 1, Ordering::Release);
             return 0;
         }
+        if mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE
+            && (!try_only || raw_type & (MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI) != 0)
+        {
+            // glibc's robust and PI trylock paths report EDEADLK to an
+            // errorcheck owner; its plain trylock reports EBUSY.
+            return libc::EDEADLK;
+        }
         if try_only {
             return libc::EBUSY;
         }
-        if mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE || robust {
-            return libc::EDEADLK;
-        }
-        // A normal non-robust mutex relocked by its owner deadlocks, as in glibc.
+        // A normal mutex (robust or not) relocked by its owner deadlocks, as in glibc.
     }
     let rc = if raw_type & MUTEX_FLAG_PI != 0 {
         ext_pi_acquire(&m, raw_type, tid, deadline, try_only)
@@ -3470,7 +3474,17 @@ pub unsafe extern "C" fn pthread_cond_init(
         }
     };
     // SAFETY: pointer validated/aligned above and points into caller-owned pthread_cond_t.
-    unsafe { core_condvar_init(cond_ptr, clock_id) }
+    let rc = unsafe { core_condvar_init(cond_ptr, clock_id) };
+    let mut pshared = libc::PTHREAD_PROCESS_PRIVATE;
+    if rc == 0
+        && !attr.is_null()
+        && unsafe { pthread_condattr_getpshared(attr, &mut pshared) } == 0
+        && pshared == libc::PTHREAD_PROCESS_SHARED
+    {
+        // SAFETY: initialized just above.
+        unsafe { &*cond_ptr }.mark_process_shared();
+    }
+    rc
 }
 
 /// POSIX `pthread_cond_destroy`.
@@ -3545,6 +3559,119 @@ impl Drop for CondWaitGuard {
     }
 }
 
+/// Block on a condvar's sequence word until it moves past `expected_seq`
+/// (0), the deadline passes (ETIMEDOUT), or a spurious wake (0). The futex
+/// wait is a cancellation point.
+fn cond_futex_wait(cv: &CondvarData, expected_seq: u32, abstime: Option<&libc::timespec>) -> c_int {
+    let seq_addr = &cv.seq as *const _ as usize;
+    let (futex_op, deadline, bitset) = match abstime {
+        None => ((libc::FUTEX_WAIT | cv.futex_private_flag()) as usize, 0, 0),
+        // libc::timespec is the kernel's 64-bit timespec on supported targets.
+        Some(ts) => (
+            core_condvar_timed_futex_op(cv) as usize,
+            ts as *const libc::timespec as usize,
+            u32::MAX as usize,
+        ),
+    };
+    loop {
+        // SAFETY: futex on the condvar sequence word with a live deadline.
+        let r = unsafe {
+            cancellation_point_syscall_raw(
+                libc::SYS_futex,
+                [
+                    seq_addr,
+                    futex_op,
+                    expected_seq as usize,
+                    deadline,
+                    0,
+                    bitset,
+                ],
+            )
+        };
+        match -r as c_int {
+            libc::EINTR if r < 0 => continue,
+            libc::ETIMEDOUT if r < 0 => break libc::ETIMEDOUT,
+            // Woken, sequence already moved (EAGAIN), or another error: the
+            // caller re-checks its predicate either way.
+            _ => break 0,
+        }
+    }
+}
+
+/// Re-takes a pshared/robust/PI mutex after a condvar wait, including when
+/// the wait is abandoned by a cancellation unwind.
+struct ExtCondWaitGuard<'a> {
+    cv: &'a CondvarData,
+    mutex: *mut libc::pthread_mutex_t,
+    saved_count: u32,
+    armed: bool,
+}
+
+impl ExtCondWaitGuard<'_> {
+    /// Deregister and re-take the mutex; returns the lock result.
+    fn finish(&mut self) -> c_int {
+        self.armed = false;
+        self.cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+        let raw_type = read_mutex_type_word(self.mutex);
+        let rc = unsafe { ext_mutex_lock(self.mutex, raw_type, None, false) };
+        if (rc == 0 || rc == libc::EOWNERDEAD)
+            && let Some(count_ptr) = mutex_lock_count_ptr(self.mutex)
+        {
+            unsafe { &*count_ptr }.store(self.saved_count.max(1), Ordering::Release);
+        }
+        rc
+    }
+}
+
+impl Drop for ExtCondWaitGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.finish();
+        }
+    }
+}
+
+/// Condvar wait whose mutex is process-shared, robust or PI: its lock word is
+/// not the private 0/1/2 word that core's prepare/finish release and re-take,
+/// so the mutex is released and re-acquired through the extended paths
+/// (EOWNERDEAD from the re-acquire is returned to the caller, as in glibc).
+unsafe fn cond_wait_extended_mutex(
+    cond_ptr: *mut CondvarData,
+    mutex: *mut libc::pthread_mutex_t,
+    raw_type: i32,
+    abstime: Option<&libc::timespec>,
+) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let tid = core_self_tid();
+    if m.owner.load(Ordering::Acquire) != tid || tid == MUTEX_NO_OWNER {
+        return libc::EPERM;
+    }
+    // SAFETY: validated by the caller.
+    let cv = unsafe { &*cond_ptr };
+    let expected_seq = cv.seq.load(Ordering::Acquire);
+    cv.nwaiters.fetch_add(1, Ordering::AcqRel);
+    // A recursive mutex is released completely for the wait.
+    let saved_count = m.count.swap(1, Ordering::AcqRel);
+    let mut guard = ExtCondWaitGuard {
+        cv,
+        mutex,
+        saved_count,
+        armed: true,
+    };
+    let unlock_rc = unsafe { ext_mutex_unlock(mutex, raw_type) };
+    if unlock_rc != 0 {
+        guard.armed = false;
+        cv.nwaiters.fetch_sub(1, Ordering::AcqRel);
+        m.count.store(saved_count, Ordering::Release);
+        return unlock_rc;
+    }
+    let rc = cond_futex_wait(cv, expected_seq, abstime);
+    let lock_rc = guard.finish();
+    if lock_rc != 0 { lock_rc } else { rc }
+}
+
 /// Shared body of `pthread_cond_wait` and `pthread_cond_timedwait`. Callers
 /// have rejected null pointers and invalid deadlines. The futex wait is a
 /// cancellation point.
@@ -3561,6 +3688,10 @@ unsafe fn cond_wait_common(
     let Some(cond_ptr) = condvar_data_ptr(cond) else {
         return libc::EINVAL;
     };
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { cond_wait_extended_mutex(cond_ptr, mutex, raw_type, abstime) };
+    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
@@ -3610,40 +3741,7 @@ unsafe fn cond_wait_common(
     guard.prepared = true;
 
     // SAFETY: `cond_ptr` was validated above.
-    let cv = unsafe { &*cond_ptr };
-    let seq_addr = &cv.seq as *const _ as usize;
-    let (futex_op, deadline, bitset) = match abstime {
-        None => ((libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG) as usize, 0, 0),
-        // libc::timespec is the kernel's 64-bit timespec on supported targets.
-        Some(ts) => (
-            core_condvar_timed_futex_op(cv) as usize,
-            ts as *const libc::timespec as usize,
-            u32::MAX as usize,
-        ),
-    };
-    let rc = loop {
-        // SAFETY: futex on the condvar sequence word with a live deadline.
-        let r = unsafe {
-            cancellation_point_syscall_raw(
-                libc::SYS_futex,
-                [
-                    seq_addr,
-                    futex_op,
-                    expected_seq as usize,
-                    deadline,
-                    0,
-                    bitset,
-                ],
-            )
-        };
-        match -r as c_int {
-            libc::EINTR if r < 0 => continue,
-            libc::ETIMEDOUT if r < 0 => break libc::ETIMEDOUT,
-            // Woken, sequence already moved (EAGAIN), or another error: the
-            // caller re-checks its predicate either way.
-            _ => break 0,
-        }
-    };
+    let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime);
     drop(guard);
     rc
 }

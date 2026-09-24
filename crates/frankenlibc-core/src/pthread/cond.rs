@@ -29,6 +29,9 @@ const FUTEX_WAIT_BITSET: i32 = 9;
 const FUTEX_CLOCK_REALTIME: i32 = 256;
 const FUTEX_BITSET_MATCH_ANY: u32 = 0xFFFF_FFFF;
 pub const MANAGED_CONDVAR_MAGIC: u32 = 0x4743_5658; // "GCVX"
+/// Magic of a `PTHREAD_PROCESS_SHARED` condvar: its futexes are shared, not
+/// process-private, so waiters and signallers may live in different processes.
+pub const MANAGED_CONDVAR_PSHARED_MAGIC: u32 = 0x4743_5853; // "GCXS"
 
 // ---------------------------------------------------------------------------
 // Condvar internal data structure (bd-gcy)
@@ -69,7 +72,25 @@ impl CondvarData {
 
     /// Returns true when the condvar was initialized by the native core.
     pub fn is_initialized(&self) -> bool {
-        self.magic.load(Ordering::Acquire) == MANAGED_CONDVAR_MAGIC
+        matches!(
+            self.magic.load(Ordering::Acquire),
+            MANAGED_CONDVAR_MAGIC | MANAGED_CONDVAR_PSHARED_MAGIC
+        )
+    }
+
+    /// Make an initialized condvar process-shared (`pthread_condattr_setpshared`).
+    pub fn mark_process_shared(&self) {
+        self.magic
+            .store(MANAGED_CONDVAR_PSHARED_MAGIC, Ordering::Release);
+    }
+
+    /// `FUTEX_PRIVATE_FLAG` for a process-private condvar, 0 for a shared one.
+    pub fn futex_private_flag(&self) -> i32 {
+        if self.magic.load(Ordering::Acquire) == MANAGED_CONDVAR_PSHARED_MAGIC {
+            0
+        } else {
+            FUTEX_PRIVATE_FLAG
+        }
     }
 }
 
@@ -139,7 +160,9 @@ pub unsafe fn condvar_signal(condvar_ptr: *mut CondvarData) -> i32 {
     if cv.has_waiters() {
         let seq_ptr = &cv.seq as *const AtomicU32 as *const u32;
         // SAFETY: seq_ptr is valid and aligned.
-        let _ = unsafe { syscall::sys_futex(seq_ptr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, 1, 0, 0, 0) };
+        let _ = unsafe {
+            syscall::sys_futex(seq_ptr, FUTEX_WAKE | cv.futex_private_flag(), 1, 0, 0, 0)
+        };
     }
     0
 }
@@ -165,7 +188,7 @@ pub unsafe fn condvar_broadcast(condvar_ptr: *mut CondvarData) -> i32 {
         let _ = unsafe {
             syscall::sys_futex(
                 seq_ptr,
-                FUTEX_WAKE | FUTEX_PRIVATE_FLAG,
+                FUTEX_WAKE | cv.futex_private_flag(),
                 i32::MAX as u32,
                 0,
                 0,
@@ -207,7 +230,7 @@ pub unsafe fn condvar_wait(condvar_ptr: *mut CondvarData, mutex_futex_word: *con
         let result = unsafe {
             syscall::sys_futex(
                 seq_ptr,
-                FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
+                FUTEX_WAIT | cv.futex_private_flag(),
                 expected_seq,
                 0,
                 0,
@@ -309,7 +332,7 @@ pub unsafe fn condvar_wait_finish(condvar_ptr: *mut CondvarData, mutex_futex_wor
 pub fn condvar_timed_futex_op(cv: &CondvarData) -> i32 {
     let clock = cv.clock_id.load(Ordering::Relaxed) as i32;
     FUTEX_WAIT_BITSET
-        | FUTEX_PRIVATE_FLAG
+        | cv.futex_private_flag()
         | if clock == PTHREAD_COND_CLOCK_REALTIME {
             FUTEX_CLOCK_REALTIME
         } else {
