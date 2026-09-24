@@ -609,14 +609,14 @@ pub unsafe extern "C-unwind" fn write(
 ///
 /// `fd` should be a live file descriptor owned by the caller process.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn close(fd: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn close(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 6, true);
         return -1;
     }
-    let rc = match syscall::sys_close(fd) {
+    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_close(fd)) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1470,7 +1470,11 @@ pub unsafe extern "C-unwind" fn fdatasync(fd: c_int) -> c_int {
 /// POSIX `open` — open a file descriptor.
 #[allow(invalid_runtime_symbol_definitions)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mode_t) -> c_int {
+pub unsafe extern "C-unwind" fn open(
+    path: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, path as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1482,7 +1486,11 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mod
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_openat(libc::AT_FDCWD, path as *const u8, flags, mode) } {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_openat(libc::AT_FDCWD, path as *const u8, flags, mode)
+        })
+    } {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1495,7 +1503,7 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: libc::mod
 
 /// POSIX `creat` — equivalent to `open(path, O_CREAT|O_WRONLY|O_TRUNC, mode)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn creat(path: *const c_char, mode: libc::mode_t) -> c_int {
+pub unsafe extern "C-unwind" fn creat(path: *const c_char, mode: libc::mode_t) -> c_int {
     unsafe { open(path, libc::O_CREAT | libc::O_WRONLY | libc::O_TRUNC, mode) }
 }
 
@@ -1889,7 +1897,7 @@ pub unsafe extern "C" fn flock(fd: c_int, operation: c_int) -> c_int {
 
 /// POSIX `openat` — open a file relative to a directory file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn openat(
+pub unsafe extern "C-unwind" fn openat(
     dirfd: c_int,
     path: *const c_char,
     flags: c_int,
@@ -1906,7 +1914,11 @@ pub unsafe extern "C" fn openat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_openat(dirfd, path as *const u8, flags, mode) } {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_openat(dirfd, path as *const u8, flags, mode)
+        })
+    } {
         Ok(fd) => fd,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -5992,7 +6004,7 @@ pub unsafe extern "C" fn arc4random_stir() {
 // our own entrypoints to avoid recursive self-resolution through interposition.
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn open64(
+pub unsafe extern "C-unwind" fn open64(
     pathname: *const c_char,
     flags: c_int,
     mode: libc::mode_t,
@@ -6772,13 +6784,17 @@ pub unsafe extern "C" fn mq_unlink(name: *const c_char) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_send(
+pub unsafe extern "C-unwind" fn mq_send(
     mqdes: c_int,
     msg_ptr: *const c_char,
     msg_len: usize,
     msg_prio: c_uint,
 ) -> c_int {
-    match unsafe { syscall::sys_mq_timedsend(mqdes, msg_ptr as *const u8, msg_len, msg_prio, 0) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_mq_timedsend(mqdes, msg_ptr as *const u8, msg_len, msg_prio, 0)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6788,14 +6804,16 @@ pub unsafe extern "C" fn mq_send(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_receive(
+pub unsafe extern "C-unwind" fn mq_receive(
     mqdes: c_int,
     msg_ptr: *mut c_char,
     msg_len: usize,
     msg_prio: *mut c_uint,
 ) -> isize {
     match unsafe {
-        syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, 0)
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_mq_timedreceive(mqdes, msg_ptr as *mut u8, msg_len, msg_prio as usize, 0)
+        })
     } {
         Ok(n) => n,
         Err(e) => {
@@ -6833,7 +6851,7 @@ pub unsafe extern "C" fn mq_setattr(
 
 /// `mq_timedreceive` — receive a message from a queue with timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_timedreceive(
+pub unsafe extern "C-unwind" fn mq_timedreceive(
     mqdes: c_int,
     msg_ptr: *mut c_char,
     msg_len: usize,
@@ -6841,13 +6859,15 @@ pub unsafe extern "C" fn mq_timedreceive(
     abs_timeout: *const libc::timespec,
 ) -> isize {
     match unsafe {
-        syscall::sys_mq_timedreceive(
-            mqdes,
-            msg_ptr as *mut u8,
-            msg_len,
-            msg_prio as usize,
-            abs_timeout as usize,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_mq_timedreceive(
+                mqdes,
+                msg_ptr as *mut u8,
+                msg_len,
+                msg_prio as usize,
+                abs_timeout as usize,
+            )
+        })
     } {
         Ok(n) => n,
         Err(e) => {
@@ -6859,7 +6879,7 @@ pub unsafe extern "C" fn mq_timedreceive(
 
 /// `mq_timedsend` — send a message to a queue with timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mq_timedsend(
+pub unsafe extern "C-unwind" fn mq_timedsend(
     mqdes: c_int,
     msg_ptr: *const c_char,
     msg_len: usize,
@@ -6867,13 +6887,15 @@ pub unsafe extern "C" fn mq_timedsend(
     abs_timeout: *const libc::timespec,
 ) -> c_int {
     match unsafe {
-        syscall::sys_mq_timedsend(
-            mqdes,
-            msg_ptr as *const u8,
-            msg_len,
-            msg_prio,
-            abs_timeout as usize,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_mq_timedsend(
+                mqdes,
+                msg_ptr as *const u8,
+                msg_len,
+                msg_prio,
+                abs_timeout as usize,
+            )
+        })
     } {
         Ok(()) => 0,
         Err(e) => {
@@ -13819,7 +13841,7 @@ const LOCKF_TEST: c_int = 3;
 
 /// `lockf` — apply, test or remove a POSIX lock on a file section.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
+pub unsafe extern "C-unwind" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(libc::EPERM) };
@@ -13844,22 +13866,34 @@ pub unsafe extern "C" fn lockf(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int
     let rc = match cmd {
         LOCKF_ULOCK => {
             lock.l_type = libc::F_UNLCK as libc::c_short;
-            unsafe { syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize) }
+            unsafe {
+                crate::pthread_abi::at_cancellation_point(|| {
+                    syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize)
+                })
+            }
         }
         LOCKF_LOCK => {
             lock.l_type = libc::F_WRLCK as libc::c_short;
             unsafe {
-                syscall::sys_fcntl(fd, libc::F_SETLKW, (&lock as *const libc::flock) as usize)
+                crate::pthread_abi::at_cancellation_point(|| {
+                    syscall::sys_fcntl(fd, libc::F_SETLKW, (&lock as *const libc::flock) as usize)
+                })
             }
         }
         LOCKF_TLOCK => {
             lock.l_type = libc::F_WRLCK as libc::c_short;
-            unsafe { syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize) }
+            unsafe {
+                crate::pthread_abi::at_cancellation_point(|| {
+                    syscall::sys_fcntl(fd, libc::F_SETLK, (&lock as *const libc::flock) as usize)
+                })
+            }
         }
         LOCKF_TEST => {
             lock.l_type = libc::F_WRLCK as libc::c_short;
             match unsafe {
-                syscall::sys_fcntl(fd, libc::F_GETLK, (&mut lock as *mut libc::flock) as usize)
+                crate::pthread_abi::at_cancellation_point(|| {
+                    syscall::sys_fcntl(fd, libc::F_GETLK, (&mut lock as *mut libc::flock) as usize)
+                })
             } {
                 Ok(_) => {
                     if lock.l_type == libc::F_UNLCK as libc::c_short
@@ -21422,7 +21456,7 @@ pub unsafe extern "C" fn fstatvfs64(fd: c_int, buf: *mut libc::statvfs) -> c_int
 
 /// `lockf64` — LFS alias for `lockf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lockf64(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
+pub unsafe extern "C-unwind" fn lockf64(fd: c_int, cmd: c_int, len: libc::off_t) -> c_int {
     unsafe { lockf(fd, cmd, len) }
 }
 
@@ -21434,9 +21468,11 @@ pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i
 
 /// `fcntl64` — LFS alias for `fcntl` (on 64-bit, identical ABI).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg: c_long = unsafe { (&mut args as *mut _ as *mut c_long).read() };
-    match unsafe { syscall::sys_fcntl(fd, cmd, arg as usize) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_fcntl(fd, cmd, arg as usize))
+    } {
         Ok(r) => r,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -25655,7 +25691,7 @@ pub unsafe extern "C" fn posix_fallocate64(fd: c_int, offset: i64, len: i64) -> 
 ///
 /// Native implementation: delegates to our own `openat()` (LFS is identical on 64-bit Linux).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn openat64(
+pub unsafe extern "C-unwind" fn openat64(
     dirfd: c_int,
     path: *const c_char,
     flags: c_int,

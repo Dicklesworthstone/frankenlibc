@@ -185,7 +185,7 @@ pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
+pub unsafe extern "C-unwind" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -199,7 +199,9 @@ pub unsafe extern "C" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_in
         return -1;
     }
 
-    match unsafe { syscall::sys_fcntl(fd, cmd, arg as usize) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_fcntl(fd, cmd, arg as usize))
+    } {
         Ok(val) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
             val

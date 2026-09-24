@@ -4,11 +4,14 @@
 //   - statically initialized condvars (PTHREAD_COND_INITIALIZER) work;
 //   - pthread_exit and pthread_testcancel run pthread_cleanup_push handlers;
 //   - pthread_cancel of a thread blocked in read, sleep, nanosleep, poll or
-//     pthread_cond_wait completes, runs its cleanup handlers (cond_wait's with
+//     pthread_cond_wait, open of a FIFO, or fcntl(F_OFD_SETLKW) completes, runs its cleanup handlers (cond_wait's with
 //     the mutex re-acquired), and pthread_join reports PTHREAD_CANCELED;
 //   - a thread with cancellation disabled is not cancelled while blocked.
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -70,6 +73,33 @@ static void *blocked_poll(void *arg) {
   pthread_cleanup_push(cleanup, "poll");
   poll(&p, 1, 100000);
   pthread_cleanup_pop(0);
+  return NULL;
+}
+
+static char fifo_path[64];
+static char lock_path[64];
+
+static void *blocked_fifo_open(void *arg) {
+  (void)arg;
+  pthread_cleanup_push(cleanup, "open(FIFO)");
+  int fd = open(fifo_path, O_RDONLY); // blocks until a writer opens it
+  if (fd >= 0) {
+    close(fd);
+  }
+  pthread_cleanup_pop(0);
+  return NULL;
+}
+
+static void *blocked_ofd_lock(void *arg) {
+  (void)arg;
+  int fd = open(lock_path, O_RDWR);
+  struct flock fl = {0};
+  fl.l_type = F_WRLCK;
+  fl.l_whence = SEEK_SET;
+  pthread_cleanup_push(cleanup, "fcntl(F_OFD_SETLKW)");
+  fcntl(fd, F_OFD_SETLKW, &fl); // main holds a conflicting OFD lock
+  pthread_cleanup_pop(0);
+  close(fd);
   return NULL;
 }
 
@@ -171,6 +201,25 @@ int main(void) {
   cancel_case("nanosleep", blocked_nanosleep);
   cancel_case("poll", blocked_poll);
   cancel_case("cond_wait", blocked_cond_wait);
+
+  snprintf(fifo_path, sizeof fifo_path, "/tmp/fl_cancel_fifo_%d", (int)getpid());
+  if (mkfifo(fifo_path, 0600) == 0) {
+    cancel_case("open(FIFO)", blocked_fifo_open);
+    unlink(fifo_path);
+  }
+
+  snprintf(lock_path, sizeof lock_path, "/tmp/fl_cancel_lock_%d", (int)getpid());
+  int holder = open(lock_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
+  if (holder >= 0) {
+    struct flock fl = {0};
+    fl.l_type = F_WRLCK;
+    fl.l_whence = SEEK_SET;
+    if (fcntl(holder, F_OFD_SETLK, &fl) == 0) {
+      cancel_case("fcntl(F_OFD_SETLKW)", blocked_ofd_lock);
+    }
+    close(holder);
+    unlink(lock_path);
+  }
   cancel_case("cancel disabled until testcancel", disabled_sleep);
 
   // The mutex is usable after a cancelled waiter's cleanup released it.

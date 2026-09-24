@@ -192,7 +192,7 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
 
 /// POSIX `msync` — synchronize a file with a memory map.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         addr as usize,
@@ -218,7 +218,11 @@ pub unsafe extern "C" fn msync(addr: *mut c_void, length: usize, flags: c_int) -
         flags
     };
 
-    let rc = match unsafe { syscall::sys_msync(addr as *mut u8, length, actual_flags) } {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_msync(addr as *mut u8, length, actual_flags)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
