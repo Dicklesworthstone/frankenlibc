@@ -1,8 +1,9 @@
 //! Bounded ELF dependency search, shared by the native group loader.
 //!
 //! Implements DT_RPATH inheritance, direct-only DT_RUNPATH, $ORIGIN and
-//! ${ORIGIN}, initial LD_LIBRARY_PATH and conventional x86_64 Linux paths.
-//! ld.so.cache, hwcap directories and $LIB/$PLATFORM remain unsupported.
+//! ${ORIGIN}, initial LD_LIBRARY_PATH, native-ABI ld.so.cache entries and
+//! conventional Linux paths. Hardware-capability directories and $LIB/$PLATFORM
+//! remain unsupported; the cache decoder only selects baseline entries.
 
 use std::ffi::OsStr;
 use std::fs::File;
@@ -11,6 +12,31 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_core::elf::{LoadedObject, ProgramType};
+
+#[path = "dlfcn_cache.rs"]
+mod cache;
+
+// Use one architecture-specific definition for fallback lookup and NODEFLIB
+// filtering of cache entries. In particular, AArch64 must not inherit x86 paths.
+const DEFAULT_DIRECTORIES: &[&str] = if cfg!(target_arch = "aarch64") {
+    &[
+        "/lib/aarch64-linux-gnu",
+        "/usr/lib/aarch64-linux-gnu",
+        "/lib64",
+        "/usr/lib64",
+        "/lib",
+        "/usr/lib",
+    ]
+} else {
+    &[
+        "/lib/x86_64-linux-gnu",
+        "/usr/lib/x86_64-linux-gnu",
+        "/lib64",
+        "/usr/lib64",
+        "/lib",
+        "/usr/lib",
+    ]
+};
 
 #[derive(Default)]
 pub(super) struct SearchPaths {
@@ -22,6 +48,7 @@ pub(super) struct SearchPaths {
 pub(super) struct SearchContext {
     pub(super) secure: bool,
     environment: Vec<PathBuf>,
+    cache: Option<cache::Cache>,
 }
 
 fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
@@ -57,7 +84,12 @@ impl SearchContext {
                 }
             }
         }
-        Self { secure, environment }
+        // A load group sees one immutable snapshot, including in secure mode:
+        // the administrator-maintained cache is independent of LD_* variables.
+        // Missing, oversized, or malformed files leave ordinary search intact.
+        let cache = bounded_file("/etc/ld.so.cache", cache::MAX_CACHE_BYTES)
+            .and_then(cache::Cache::from_bytes);
+        Self { secure, environment, cache }
     }
 }
 
@@ -114,15 +146,37 @@ impl SearchPaths {
         if self.runpath.is_none() {
             directories = self.child_rpaths(inherited);
         }
-        append_unique(&mut directories, &context.environment);
+        if !context.secure {
+            append_unique(&mut directories, &context.environment);
+        }
         if let Some(runpath) = &self.runpath { append_unique(&mut directories, runpath); }
-        if !self.no_default {
-            for directory in ["/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib64", "/usr/lib64", "/lib", "/usr/lib"] {
-                let path = PathBuf::from(directory);
-                if !directories.contains(&path) { directories.push(path); }
+        let mut candidates: Vec<PathBuf> = directories
+            .into_iter()
+            .map(|directory| directory.join(&name))
+            .collect();
+        // Cache entries are complete pathnames, not additional directories.
+        // They rank after RUNPATH and before the default directory fallback.
+        if let Some(cache) = &context.cache {
+            for path in cache.candidates(name.as_os_str().as_bytes()) {
+                if self.no_default
+                    && DEFAULT_DIRECTORIES.iter().any(|directory| path.starts_with(directory))
+                {
+                    continue;
+                }
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
             }
         }
-        Some(directories.into_iter().map(|directory| directory.join(&name)).collect())
+        if !self.no_default {
+            for directory in DEFAULT_DIRECTORIES {
+                let path = Path::new(directory).join(&name);
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
+            }
+        }
+        Some(candidates)
     }
 }
 
@@ -177,7 +231,7 @@ mod tests {
     #[test]
     fn runpath_does_not_inherit_and_overrides_own_rpath() {
         let paths = SearchPaths { rpath: vec!["/rpath".into()], runpath: Some(vec!["/runpath".into()]), no_default: true };
-        let context = SearchContext { secure: false, environment: vec!["/environment".into()] };
+        let context = SearchContext { secure: false, environment: vec!["/environment".into()], cache: None };
         let inherited = vec![PathBuf::from("/ancestor")];
         assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("/environment/libx.so"), PathBuf::from("/runpath/libx.so")]);
         assert_eq!(paths.child_rpaths(&inherited), inherited);
@@ -186,9 +240,106 @@ mod tests {
     #[test]
     fn rpath_search_precedes_environment_and_inherits() {
         let paths = SearchPaths { rpath: vec!["/rpath".into()], runpath: None, no_default: true };
-        let context = SearchContext { secure: false, environment: vec!["/environment".into()] };
+        let context = SearchContext { secure: false, environment: vec!["/environment".into()], cache: None };
         let inherited = vec![PathBuf::from("/ancestor")];
         assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("/rpath/libx.so"), PathBuf::from("/ancestor/libx.so"), PathBuf::from("/environment/libx.so")]);
         assert_eq!(paths.candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("sub/libx.so")]);
+    }
+
+    fn context_with_cache(paths: &[&[u8]], secure: bool) -> SearchContext {
+        let start = 48 + 24 * paths.len();
+        let mut bytes = vec![0u8; start];
+        bytes[..20].copy_from_slice(b"glibc-ld.so.cache1.1");
+        bytes[20..24].copy_from_slice(&(paths.len() as u32).to_ne_bytes());
+        for (i, path) in paths.iter().enumerate() {
+            let entry = 48 + 24 * i;
+            let key = bytes.len() as u32;
+            bytes.extend_from_slice(b"libx.so\0");
+            let value = bytes.len() as u32;
+            bytes.extend_from_slice(path);
+            bytes.push(0);
+            bytes[entry..entry + 4].copy_from_slice(&cache::native_flags().to_ne_bytes());
+            bytes[entry + 4..entry + 8].copy_from_slice(&key.to_ne_bytes());
+            bytes[entry + 8..entry + 12].copy_from_slice(&value.to_ne_bytes());
+        }
+        let length = (bytes.len() - start) as u32;
+        bytes[24..28].copy_from_slice(&length.to_ne_bytes());
+        SearchContext {
+            secure,
+            environment: vec!["/environment".into()],
+            cache: Some(cache::Cache::from_bytes(bytes).unwrap()),
+        }
+    }
+
+    #[test]
+    fn cache_is_after_runpath_before_defaults_and_is_not_a_directory() {
+        let paths = SearchPaths {
+            runpath: Some(vec!["/runpath".into()]),
+            ..SearchPaths::default()
+        };
+        let context = context_with_cache(&[b"/vendor/libx.so"], false);
+        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap();
+        assert_eq!(&candidates[..3], &[
+            PathBuf::from("/environment/libx.so"),
+            PathBuf::from("/runpath/libx.so"),
+            PathBuf::from("/vendor/libx.so"),
+        ]);
+        assert_eq!(candidates[3], Path::new(DEFAULT_DIRECTORIES[0]).join("libx.so"));
+        assert!(!candidates.contains(&PathBuf::from("/vendor/libx.so/libx.so")));
+    }
+
+    #[test]
+    fn nodeflib_skips_default_cache_entries_but_keeps_vendor_entries() {
+        let paths = SearchPaths { no_default: true, ..SearchPaths::default() };
+        let context = context_with_cache(&[
+            b"/lib/libx.so",
+            b"/lib64/libx.so",
+            b"/usr/lib/nested/libx.so",
+            b"/vendor/libx.so",
+            b"/liberal/libx.so",
+        ], false);
+        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap(), vec![
+            PathBuf::from("/environment/libx.so"),
+            PathBuf::from("/vendor/libx.so"),
+            PathBuf::from("/liberal/libx.so"),
+        ]);
+    }
+
+    #[test]
+    fn cache_preserves_rpath_inheritance_and_exact_path_bypass() {
+        let paths = SearchPaths {
+            rpath: vec!["/rpath".into()],
+            no_default: true,
+            ..SearchPaths::default()
+        };
+        let context = context_with_cache(&[b"/vendor/libx.so"], false);
+        let inherited = [PathBuf::from("/ancestor")];
+        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![
+            PathBuf::from("/rpath/libx.so"),
+            PathBuf::from("/ancestor/libx.so"),
+            PathBuf::from("/environment/libx.so"),
+            PathBuf::from("/vendor/libx.so"),
+        ]);
+        assert_eq!(paths.candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("sub/libx.so")]);
+    }
+
+    #[test]
+    fn secure_mode_uses_system_cache_but_never_environment_or_origin() {
+        let paths = SearchPaths { no_default: true, ..SearchPaths::default() };
+        let context = context_with_cache(&[b"/vendor/libx.so"], true);
+        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap(), vec![PathBuf::from("/vendor/libx.so")]);
+        assert!(paths.candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &context).is_none());
+    }
+
+    #[test]
+    fn duplicate_cache_paths_do_not_change_precedence_or_fallbacks() {
+        let paths = SearchPaths::default();
+        let context = context_with_cache(&[b"/environment/libx.so", b"/vendor/libx.so"], false);
+        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap();
+        assert_eq!(candidates.iter().filter(|path| **path == Path::new("/environment/libx.so")).count(), 1);
+        let mut missing = context;
+        missing.cache = None;
+        let without_cache = paths.candidates(b"libx.so", Path::new("/origin"), &[], &missing).unwrap();
+        assert_eq!(candidates.into_iter().filter(|path| path != Path::new("/vendor/libx.so")).collect::<Vec<_>>(), without_cache);
     }
 }
