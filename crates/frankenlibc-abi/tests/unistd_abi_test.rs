@@ -3084,32 +3084,91 @@ fn abi_argp_parse_empty_argp_matches_glibc_index_contracts() {
     assert_eq!(index, 0);
 }
 
+static ARGP_CALLS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Records each callback as "KEY next=N arg_num=M"; declines operands, like
+/// getent's parser.
+unsafe extern "C" fn argp_recording_parser(
+    key: c_int,
+    arg: *mut c_char,
+    state: *mut FixtureArgpState,
+) -> c_int {
+    let st = unsafe { &*state };
+    let name = match key {
+        0 => "ARG".to_string(),
+        0x100_0001 => "END".to_string(),
+        0x100_0002 => "NO_ARGS".to_string(),
+        0x100_0003 => "INIT".to_string(),
+        0x100_0004 => "SUCCESS".to_string(),
+        0x100_0005 => "ERROR".to_string(),
+        0x100_0006 => "ARGS".to_string(),
+        0x100_0007 => "FINI".to_string(),
+        k => format!("'{}'", k as u8 as char),
+    };
+    let arg = if arg.is_null() {
+        String::new()
+    } else {
+        format!(" {}", unsafe { std::ffi::CStr::from_ptr(arg) }.to_string_lossy())
+    };
+    ARGP_CALLS
+        .lock()
+        .unwrap()
+        .push(format!("{name}{arg} next={} arg_num={}", st.next, st.arg_num));
+    match key {
+        k if k == b'v' as c_int => 0,
+        0 | 0x100_0006 => libc::E2BIG, // ARGP_ERR_UNKNOWN for operands
+        _ => 0,
+    }
+}
+
 #[test]
-fn abi_argp_parse_nonempty_argp_remains_explicitly_unsupported() {
+fn abi_argp_parse_runs_the_parser_protocol_like_glibc() {
+    // Expected sequence captured from glibc 2.43 (fixture_argp.c
+    // "getent-shape-with-option"): the parser declines operands, so parsing
+    // stops at the first one and returns its index; NO_ARGS/END are skipped.
     let _guard = ARGP_GLOBAL_LOCK
         .lock()
         .unwrap_or_else(|err| err.into_inner());
+    ARGP_CALLS.lock().unwrap().clear();
+    #[repr(C)]
+    struct Opt(*const c_char, c_int, *const c_char, c_int, *const c_char, c_int);
+    let verbose = CString::new("verbose").unwrap();
+    let doc = CString::new("Be verbose").unwrap();
+    let options = [
+        Opt(verbose.as_ptr(), b'v' as c_int, std::ptr::null(), 0, doc.as_ptr(), 0),
+        Opt(std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null(), 0),
+    ];
     let mut argp_struct = empty_argp_storage();
-    argp_struct[0] = 1;
-    let prog = b"test\0";
-    let mut argv = [prog.as_ptr() as *mut c_char, std::ptr::null_mut()];
+    argp_struct[0] = options.as_ptr() as usize;
+    argp_struct[1] = argp_recording_parser as usize;
+    let args: Vec<CString> = ["getent", "-v", "passwd", "root"]
+        .iter()
+        .map(|s| CString::new(*s).unwrap())
+        .collect();
+    let mut argv: Vec<*mut c_char> = args.iter().map(|s| s.as_ptr().cast_mut()).collect();
     let mut index: c_int = -1;
-
-    clear_errno();
     let rc = unsafe {
         frankenlibc_abi::unistd_abi::argp_parse(
             argp_struct.as_ptr().cast(),
-            1,
+            4,
             argv.as_mut_ptr(),
-            0,
+            ARGP_NO_EXIT,
             &mut index,
             std::ptr::null_mut(),
         )
     };
-
-    assert_eq!(rc, libc::EINVAL);
-    assert_eq!(errno_value(), libc::EINVAL);
-    assert_eq!(index, -1);
+    assert_eq!((rc, index), (0, 2));
+    assert_eq!(
+        *ARGP_CALLS.lock().unwrap(),
+        [
+            "INIT next=0 arg_num=0",
+            "'v' next=2 arg_num=0",
+            "ARG passwd next=3 arg_num=0",
+            "ARGS next=2 arg_num=0",
+            "SUCCESS next=2 arg_num=0",
+            "FINI next=2 arg_num=0",
+        ]
+    );
 }
 
 #[test]
@@ -3230,9 +3289,10 @@ fn abi_argp_help_renders_literal_usage_and_doc_sections() {
     })
     .unwrap();
 
+    // glibc 2.43 output for the same argp and flags.
     assert_eq!(
         output,
-        "Usage: argp-demo INPUT [OUTPUT]\n\nbefore options\n\nafter options\n"
+        "Usage: argp-demo INPUT [OUTPUT]\nbefore options\n\nafter options\n"
     );
     assert_eq!(errno_value(), 0);
 }
@@ -3289,7 +3349,8 @@ fn abi_argp_help_renders_configured_bug_address() {
     })
     .unwrap();
 
-    assert_eq!(output, "\nReport bugs to bugs@example.test.\n");
+    // glibc 2.43: no leading blank line when nothing precedes it.
+    assert_eq!(output, "Report bugs to bugs@example.test.\n");
     assert_eq!(errno_value(), 0);
 }
 
@@ -3345,6 +3406,8 @@ fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
     argp_struct[2] = args_doc.as_ptr() as usize;
     argp_struct[3] = doc.as_ptr() as usize;
     let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+    // Without ARGP_NO_EXIT, ARGP_HELP_EXIT_OK exits (as in glibc).
+    state.flags = ARGP_NO_EXIT;
 
     clear_errno();
     let output = capture_argp_stream_output(|stream| unsafe {
@@ -3361,9 +3424,11 @@ fn abi_argp_state_help_renders_state_root_usage_and_docs_without_exiting() {
     })
     .unwrap();
 
+    // glibc 2.43 output for the same state and flags.
     assert_eq!(
         output,
-        "Usage: state-demo INPUT\n\nstate pre\n\nstate post\n"
+        "Usage: state-demo INPUT\nstate pre\nTry `state-demo --help' or `state-demo --usage' \
+         for more information.\n\nstate post\n"
     );
     assert_eq!(errno_value(), 0);
 }
@@ -3399,6 +3464,8 @@ fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
     let mut argp_struct = empty_argp_storage();
     argp_struct[2] = args_doc.as_ptr() as usize;
     let mut state = fixture_argp_state(argp_struct.as_ptr().cast(), name.as_ptr().cast_mut());
+    // argp_usage exits with argp_err_exit_status unless ARGP_NO_EXIT.
+    state.flags = ARGP_NO_EXIT;
 
     clear_errno();
     let output = capture_argp_stream_output(|stream| unsafe {
@@ -3407,7 +3474,12 @@ fn abi_argp_usage_renders_usage_to_state_error_stream_without_exiting() {
     })
     .unwrap();
 
-    assert_eq!(output, "Usage: usage-demo INPUT\n");
+    // glibc 2.43 output.
+    assert_eq!(
+        output,
+        "Usage: usage-demo INPUT\nTry `usage-demo --help' or `usage-demo --usage' for more \
+         information.\n"
+    );
     assert_eq!(errno_value(), 0);
 }
 
@@ -3447,7 +3519,12 @@ fn abi_argp_error_renders_formatted_diagnostic_to_state_error_stream() {
     })
     .unwrap();
 
-    assert_eq!(output, "diag-demo: bad option 7\n");
+    // glibc 2.43 (with a root argp; glibc crashes on a null one).
+    assert_eq!(
+        output,
+        "diag-demo: bad option 7\nTry `diag-demo --help' or `diag-demo --usage' for more \
+         information.\n"
+    );
     assert_eq!(errno_value(), 0);
 }
 
@@ -3476,7 +3553,11 @@ fn abi_argp_error_normalizes_negative_star_width_and_precision() {
     })
     .unwrap();
 
-    assert_eq!(output, "diag-demo: bad |42   | abcdef\n");
+    assert_eq!(
+        output,
+        "diag-demo: bad |42   | abcdef\nTry `diag-demo --help' or `diag-demo --usage' for more \
+         information.\n"
+    );
     assert_eq!(errno_value(), 0);
 }
 

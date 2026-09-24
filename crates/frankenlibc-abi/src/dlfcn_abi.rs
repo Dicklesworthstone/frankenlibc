@@ -301,6 +301,28 @@ unsafe fn host_dlsym(handle: *mut c_void, symbol: *const c_char) -> Option<*mut 
     Some(unsafe { host_dlsym(handle, symbol) })
 }
 
+/// The program's definition of data symbol `name`: the first definition in
+/// the global scope (the executable, then fl itself when preloaded), unless
+/// that is host libc's own copy — which only happens when neither the
+/// program nor fl exports the symbol (e.g. unit-test binaries) and must not
+/// shadow fl's statics. Null when there is no such definition, and in
+/// standalone builds. Used for program-settable variables such as
+/// `argp_program_version_hook`, whose executable definition interposes fl's
+/// copy for every reference except fl's own direct ones.
+pub(crate) unsafe fn program_data_symbol(name: &core::ffi::CStr) -> *mut c_void {
+    let Some(found) = (unsafe { host_dlsym(libc::RTLD_DEFAULT, name.as_ptr()) }) else {
+        return std::ptr::null_mut();
+    };
+    let host_own = name
+        .to_str()
+        .ok()
+        .and_then(crate::host_resolve::resolve_host_symbol_raw);
+    if found.is_null() || host_own == Some(found as usize) {
+        return std::ptr::null_mut();
+    }
+    found
+}
+
 unsafe fn host_dlvsym(
     handle: *mut c_void,
     symbol: *const c_char,

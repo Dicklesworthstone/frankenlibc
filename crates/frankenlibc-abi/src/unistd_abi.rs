@@ -25752,34 +25752,70 @@ pub unsafe extern "C" fn fts64_set(ftsp: *mut c_void, f_entry: *mut c_void, inst
 // ===========================================================================
 // Argp (argument parsing framework)
 // ===========================================================================
+//
+// Native GNU argp. The option scanner is `frankenlibc_core::argp::scan` (a
+// private, reentrant getopt: argp never touches the application's
+// optind/opterr); this layer owns the C structures and the parser-callback
+// protocol, reproduced from glibc's observable behaviour
+// (tests/integration/fixture_argp.c):
+//
+// * Every argp with options or a parser becomes a *group*, in pre-order.
+//   A group's input is its parent group's `child_inputs[i]` (filled by the
+//   parent's ARGP_KEY_INIT); an argp with neither passes its parent's
+//   routing through, so top-level groups get argp_parse's `input`.
+// * INIT runs forward with `next == 0`. Options reach their owning group at
+//   GNU getopt's `optind`. In PERMUTE mode operands are delivered after all
+//   options; an operand is offered to each group as ARG, then (with `next`
+//   rewound onto it) as ARGS. If nobody takes it, parsing stops there.
+// * `arg_num` is per group: the operands that group consumed so far
+//   (`next` advance, so a parser that eats extra operands counts them).
+// * Finish: with every operand consumed, `*arg_index` is stored, NO_ARGS runs
+//   forward on groups that consumed none, then END runs in reverse. Leftover
+//   operands are returned through `arg_index`, or are "Too many arguments"
+//   without one. Errors run ERROR forward; success runs SUCCESS in reverse;
+//   FINI always runs in reverse.
+// * Unless ARGP_NO_HELP, the parsed argp is wrapped in a top argp whose
+//   children add --help/-?, --usage, --program-name, --HANG and (with a
+//   version string or hook) -V/--version; `state->root_argp` is that wrapper.
+
+use frankenlibc_core::argp::scan as argp_scan;
+
+type ArgpParserFn = unsafe extern "C" fn(c_int, *mut c_char, *mut ArgpState) -> c_int;
+type ArgpHelpFilterFn = unsafe extern "C" fn(c_int, *const c_char, *mut c_void) -> *mut c_char;
+
+#[repr(C)]
+struct ArgpOption {
+    name: *const c_char,
+    key: c_int,
+    arg: *const c_char,
+    flags: c_int,
+    doc: *const c_char,
+    group: c_int,
+}
 
 #[repr(C)]
 struct ArgpHeader {
-    options: *const c_void,
-    parser: *const c_void,
+    options: *const ArgpOption,
+    parser: Option<ArgpParserFn>,
     args_doc: *const c_char,
     doc: *const c_char,
-    children: *const c_void,
-    help_filter: *const c_void,
+    children: *const ArgpChild,
+    help_filter: Option<ArgpHelpFilterFn>,
     argp_domain: *const c_char,
 }
 
-impl ArgpHeader {
-    fn is_empty(&self) -> bool {
-        self.options.is_null()
-            && self.parser.is_null()
-            && self.args_doc.is_null()
-            && self.doc.is_null()
-            && self.children.is_null()
-            && self.help_filter.is_null()
-            && self.argp_domain.is_null()
-    }
+#[repr(C)]
+struct ArgpChild {
+    argp: *const ArgpHeader,
+    flags: c_int,
+    header: *const c_char,
+    group: c_int,
 }
 
-#[allow(dead_code)]
+/// `struct argp_state`.
 #[repr(C)]
-struct ArgpStateHeader {
-    root_argp: *const c_void,
+struct ArgpState {
+    root_argp: *const ArgpHeader,
     argc: c_int,
     argv: *mut *mut c_char,
     next: c_int,
@@ -25795,6 +25831,28 @@ struct ArgpStateHeader {
     pstate: *mut c_void,
 }
 
+const ARGP_ERR_UNKNOWN: c_int = libc::E2BIG;
+const ARGP_KEY_ARG: c_int = 0;
+const ARGP_KEY_ARGS: c_int = 0x100_0006;
+const ARGP_KEY_END: c_int = 0x100_0001;
+const ARGP_KEY_NO_ARGS: c_int = 0x100_0002;
+const ARGP_KEY_INIT: c_int = 0x100_0003;
+const ARGP_KEY_FINI: c_int = 0x100_0007;
+const ARGP_KEY_SUCCESS: c_int = 0x100_0004;
+const ARGP_KEY_ERROR: c_int = 0x100_0005;
+
+const ARGP_NO_ERRS: c_uint = 0x02;
+const ARGP_NO_ARGS: c_uint = 0x04;
+const ARGP_IN_ORDER: c_uint = 0x08;
+const ARGP_NO_HELP: c_uint = 0x10;
+const ARGP_NO_EXIT: c_uint = 0x20;
+const ARGP_LONG_ONLY: c_uint = 0x40;
+
+const OPTION_ARG_OPTIONAL: c_int = 0x1;
+const OPTION_HIDDEN: c_int = 0x2;
+const OPTION_ALIAS: c_int = 0x4;
+const OPTION_DOC: c_int = 0x8;
+
 const ARGP_HELP_USAGE: c_uint = 0x01;
 const ARGP_HELP_SHORT_USAGE: c_uint = 0x02;
 const ARGP_HELP_SEE: c_uint = 0x04;
@@ -25804,14 +25862,105 @@ const ARGP_HELP_POST_DOC: c_uint = 0x20;
 const ARGP_HELP_BUG_ADDR: c_uint = 0x40;
 const ARGP_HELP_EXIT_ERR: c_uint = 0x100;
 const ARGP_HELP_EXIT_OK: c_uint = 0x200;
-const ARGP_NO_EXIT: c_uint = 0x20;
-const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
-const ARGP_HELP_STATE_NON_RENDERING_FLAGS: c_uint =
-    ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR | ARGP_HELP_EXIT_OK;
-const ARGP_HELP_STD_USAGE_PHASE1: c_uint =
-    ARGP_HELP_SHORT_USAGE | ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR;
+const ARGP_HELP_STD_ERR: c_uint = ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR;
+const ARGP_HELP_STD_USAGE: c_uint = ARGP_HELP_SHORT_USAGE | ARGP_HELP_SEE | ARGP_HELP_EXIT_ERR;
+const ARGP_HELP_STD_HELP: c_uint = ARGP_HELP_SHORT_USAGE
+    | ARGP_HELP_LONG
+    | ARGP_HELP_EXIT_OK
+    | ARGP_HELP_PRE_DOC
+    | ARGP_HELP_POST_DOC
+    | ARGP_HELP_BUG_ADDR;
 
-#[inline]
+/// Internal keys of the default help argp.
+const ARGP_KEY_USAGE_OPT: c_int = -3;
+const ARGP_KEY_PROGNAME_OPT: c_int = -2;
+const ARGP_KEY_HANG_OPT: c_int = -4;
+
+const ARGP_TEXT_SCAN_LIMIT: usize = 16 * 1024;
+
+/// Static argp tables made of raw pointers into `'static` data.
+#[repr(transparent)]
+struct StaticArgp<T>(T);
+// SAFETY: the wrapped tables are immutable and only point at 'static data.
+unsafe impl<T> Sync for StaticArgp<T> {}
+
+const fn argp_opt(
+    name: &'static core::ffi::CStr,
+    key: c_int,
+    arg: Option<&'static core::ffi::CStr>,
+    flags: c_int,
+    doc: &'static core::ffi::CStr,
+    group: c_int,
+) -> ArgpOption {
+    ArgpOption {
+        name: name.as_ptr(),
+        key,
+        arg: match arg {
+            Some(a) => a.as_ptr(),
+            None => core::ptr::null(),
+        },
+        flags,
+        doc: doc.as_ptr(),
+        group,
+    }
+}
+
+const ARGP_OPTION_END: ArgpOption = ArgpOption {
+    name: core::ptr::null(),
+    key: 0,
+    arg: core::ptr::null(),
+    flags: 0,
+    doc: core::ptr::null(),
+    group: 0,
+};
+
+static ARGP_DEFAULT_OPTIONS: StaticArgp<[ArgpOption; 5]> = StaticArgp([
+    argp_opt(c"help", b'?' as c_int, None, 0, c"Give this help list", -1),
+    argp_opt(c"usage", ARGP_KEY_USAGE_OPT, None, 0, c"Give a short usage message", 0),
+    argp_opt(
+        c"program-name",
+        ARGP_KEY_PROGNAME_OPT,
+        Some(c"NAME"),
+        OPTION_HIDDEN,
+        c"Set the program name",
+        0,
+    ),
+    argp_opt(
+        c"HANG",
+        ARGP_KEY_HANG_OPT,
+        Some(c"SECS"),
+        OPTION_ARG_OPTIONAL | OPTION_HIDDEN,
+        c"Hang for SECS seconds (default 3600)",
+        0,
+    ),
+    ARGP_OPTION_END,
+]);
+
+static ARGP_DEFAULT_ARGP: StaticArgp<ArgpHeader> = StaticArgp(ArgpHeader {
+    options: ARGP_DEFAULT_OPTIONS.0.as_ptr(),
+    parser: Some(argp_default_parser),
+    args_doc: core::ptr::null(),
+    doc: core::ptr::null(),
+    children: core::ptr::null(),
+    help_filter: None,
+    argp_domain: c"libc".as_ptr(),
+});
+
+static ARGP_VERSION_OPTIONS: StaticArgp<[ArgpOption; 2]> = StaticArgp([
+    argp_opt(c"version", b'V' as c_int, None, 0, c"Print program version", -1),
+    ARGP_OPTION_END,
+]);
+
+static ARGP_VERSION_ARGP: StaticArgp<ArgpHeader> = StaticArgp(ArgpHeader {
+    options: ARGP_VERSION_OPTIONS.0.as_ptr(),
+    parser: Some(argp_version_parser),
+    args_doc: core::ptr::null(),
+    doc: core::ptr::null(),
+    children: core::ptr::null(),
+    help_filter: None,
+    argp_domain: c"libc".as_ptr(),
+});
+
 unsafe fn argp_read_text(ptr: *const c_char) -> Option<Vec<u8>> {
     if ptr.is_null() {
         return None;
@@ -25831,183 +25980,290 @@ unsafe fn argp_write_bytes(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
             == bytes.len()
 }
 
-#[inline]
-unsafe fn argp_write_newline(stream: *mut libc::FILE) -> bool {
-    unsafe { argp_write_bytes(stream, b"\n") }
+fn argp_stderr() -> *mut libc::FILE {
+    unsafe { crate::stdio_abi::stderr }.cast()
 }
 
-#[inline]
-unsafe fn argp_write_text_line(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
-    (unsafe { argp_write_bytes(stream, bytes) })
-        && (bytes.ends_with(b"\n") || unsafe { argp_write_newline(stream) })
+fn argp_stdout() -> *mut libc::FILE {
+    unsafe { crate::stdio_abi::stdout }.cast()
 }
 
-unsafe fn argp_write_usage(
-    header: &ArgpHeader,
-    stream: *mut libc::FILE,
-    name: *mut c_char,
-) -> bool {
-    let program_name = unsafe { argp_read_text(name.cast_const()) };
-    let args_doc = unsafe { argp_read_text(header.args_doc) };
-
-    let mut line = Vec::from(&b"Usage:"[..]);
-    if let Some(name) = program_name.as_deref().filter(|name| !name.is_empty()) {
-        line.push(b' ');
-        line.extend_from_slice(name);
+/// Read one of the program-settable argp globals. Programs define these in
+/// the executable (getent, iconv and locale all define
+/// `argp_program_version_hook`), which interposes fl's copy for every
+/// reference except fl's own direct ones, so resolve through the global
+/// scope first and fall back to fl's own definition.
+unsafe fn argp_global_ptr(name: &core::ffi::CStr, own: *const *const c_void) -> *const c_void {
+    let found = unsafe { crate::dlfcn_abi::program_data_symbol(name) };
+    if found.is_null() {
+        return unsafe { *own };
     }
-    if let Some(args) = args_doc.as_deref().filter(|args| !args.is_empty()) {
-        line.push(b' ');
-        line.extend_from_slice(args);
-    }
-    line.push(b'\n');
-
-    unsafe { argp_write_bytes(stream, &line) }
+    // SAFETY: the symbol names a pointer-sized data object.
+    unsafe { *(found as *const *const c_void) }
 }
 
-unsafe fn argp_write_doc(header: &ArgpHeader, stream: *mut libc::FILE, flags: c_uint) -> bool {
-    let Some(doc) = (unsafe { argp_read_text(header.doc) }) else {
-        return true;
-    };
-    let (pre_doc, post_doc) = match doc.iter().position(|&byte| byte == b'\x0b') {
-        Some(split) => (&doc[..split], &doc[split + 1..]),
-        None => (&doc[..], &[][..]),
-    };
-
-    let mut ok = true;
-    if flags & (ARGP_HELP_LONG | ARGP_HELP_PRE_DOC) != 0 && !pre_doc.is_empty() {
-        ok &= unsafe { argp_write_newline(stream) };
-        ok &= unsafe { argp_write_text_line(stream, pre_doc) };
+unsafe fn argp_program_version_text() -> *const c_char {
+    unsafe {
+        argp_global_ptr(
+            c"argp_program_version",
+            (&raw const crate::glibc_internal_abi::argp_program_version).cast(),
+        )
     }
-    if flags & ARGP_HELP_POST_DOC != 0 && !post_doc.is_empty() {
-        ok &= unsafe { argp_write_newline(stream) };
-        ok &= unsafe { argp_write_text_line(stream, post_doc) };
-    }
-    ok
+    .cast()
 }
 
-unsafe fn argp_write_bug_address(stream: *mut libc::FILE) -> bool {
-    let bug_addr = unsafe { crate::glibc_internal_abi::argp_program_bug_address };
-    let Some(addr) = (unsafe { argp_read_text(bug_addr) }) else {
-        return true;
-    };
-    if addr.is_empty() {
-        return true;
+unsafe fn argp_program_version_hook_fn() -> *const c_void {
+    unsafe {
+        argp_global_ptr(
+            c"argp_program_version_hook",
+            (&raw const crate::glibc_internal_abi::argp_program_version_hook).cast(),
+        )
     }
-
-    let mut line = Vec::from(&b"\nReport bugs to "[..]);
-    line.extend_from_slice(&addr);
-    line.extend_from_slice(b".\n");
-    unsafe { argp_write_bytes(stream, &line) }
 }
 
-#[inline]
-fn argp_state_stream(
-    state: &ArgpStateHeader,
-    stream: *mut libc::FILE,
-    flags: c_uint,
-) -> *mut libc::FILE {
-    if !stream.is_null() {
-        return stream;
+unsafe fn argp_program_bug_address_text() -> *const c_char {
+    unsafe {
+        argp_global_ptr(
+            c"argp_program_bug_address",
+            (&raw const crate::glibc_internal_abi::argp_program_bug_address).cast(),
+        )
     }
-    if flags & ARGP_HELP_EXIT_OK != 0 && !state.out_stream.is_null() {
-        return state.out_stream;
-    }
-    if !state.err_stream.is_null() {
-        return state.err_stream;
-    }
-    state.out_stream
+    .cast()
 }
 
-#[inline]
-fn argp_diagnostic_stream_from_state(state: &ArgpStateHeader) -> *mut libc::FILE {
-    argp_state_stream(state, core::ptr::null_mut(), ARGP_HELP_EXIT_ERR)
+unsafe fn argp_err_exit_status_value() -> c_int {
+    let found = unsafe { crate::dlfcn_abi::program_data_symbol(c"argp_err_exit_status") };
+    if !found.is_null() {
+        return unsafe { *(found as *const c_int) };
+    }
+    unsafe { crate::glibc_internal_abi::argp_err_exit_status }
 }
 
-unsafe fn argp_diagnostic_stream(state: *mut c_void) -> *mut libc::FILE {
-    if state.is_null() {
-        return core::ptr::null_mut();
+fn argp_basename(bytes: &[u8]) -> &[u8] {
+    match bytes.iter().rposition(|&b| b == b'/') {
+        Some(slash) => &bytes[slash + 1..],
+        None => bytes,
     }
-    let state = unsafe { &*(state as *const ArgpStateHeader) };
-    argp_diagnostic_stream_from_state(state)
 }
 
-unsafe fn argp_write_diagnostic(state: *mut c_void, message: &[u8], errnum: c_int) -> bool {
-    if state.is_null() || (message.is_empty() && errnum == 0) {
-        return true;
+/// `argv[i]` as bytes (empty for a null element).
+unsafe fn argp_argv_bytes<'a>(argv: *mut *mut c_char, i: usize) -> &'a [u8] {
+    let p = unsafe { *argv.add(i) };
+    if p.is_null() {
+        return b"";
     }
+    unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes()
+}
 
-    let state = unsafe { &*(state as *const ArgpStateHeader) };
-    let stream = argp_diagnostic_stream_from_state(state);
-    if stream.is_null() {
-        return true;
-    }
+/// The caller's argv, as the core scanner sees it; rotations are applied to
+/// the real pointer array.
+struct ArgpArgv {
+    argc: usize,
+    argv: *mut *mut c_char,
+}
 
-    let mut line = Vec::with_capacity(message.len().saturating_add(64));
-    if let Some(name) = (unsafe { argp_read_text(state.name.cast_const()) })
-        && !name.is_empty()
-    {
-        line.extend_from_slice(&name);
-        line.extend_from_slice(b": ");
+impl argp_scan::ArgvView for ArgpArgv {
+    fn len(&self) -> usize {
+        self.argc
     }
-    line.extend_from_slice(message);
-    if errnum != 0 {
-        if !message.is_empty() {
-            line.extend_from_slice(b": ");
+    fn arg(&self, i: usize) -> &[u8] {
+        unsafe { argp_argv_bytes(self.argv, i) }
+    }
+    fn rotate(&mut self, bottom: usize, middle: usize, top: usize) {
+        // SAFETY: bottom <= middle <= top <= argc, argv has argc elements.
+        unsafe { std::slice::from_raw_parts_mut(self.argv.add(bottom), top - bottom) }
+            .rotate_left(middle - bottom);
+    }
+}
+
+/// Terminator test for option tables.
+fn argp_option_is_end(o: &ArgpOption) -> bool {
+    o.key == 0 && o.name.is_null() && o.doc.is_null() && o.group == 0
+}
+
+fn argp_option_is_short(o: &ArgpOption) -> bool {
+    o.flags & OPTION_DOC == 0 && (0x20..0x7f).contains(&o.key)
+}
+
+/// Iterate a C option table up to its terminator.
+unsafe fn argp_options<'a>(argp: &'a ArgpHeader) -> impl Iterator<Item = &'a ArgpOption> {
+    let mut p = argp.options;
+    std::iter::from_fn(move || {
+        if p.is_null() {
+            return None;
         }
-        let err_ptr = unsafe { crate::string_abi::strerror(errnum) };
-        if let Some(err_msg) = unsafe { argp_read_text(err_ptr) } {
-            line.extend_from_slice(&err_msg);
+        let o = unsafe { &*p };
+        if argp_option_is_end(o) {
+            return None;
+        }
+        p = unsafe { p.add(1) };
+        Some(o)
+    })
+}
+
+/// Iterate a C children table up to its terminator.
+unsafe fn argp_children<'a>(argp: &'a ArgpHeader) -> impl Iterator<Item = &'a ArgpChild> {
+    let mut p = argp.children;
+    std::iter::from_fn(move || {
+        if p.is_null() {
+            return None;
+        }
+        let c = unsafe { &*p };
+        if c.argp.is_null() {
+            return None;
+        }
+        p = unsafe { p.add(1) };
+        Some(c)
+    })
+}
+
+struct ArgpGroup {
+    argp: *const ArgpHeader,
+    parser: Option<ArgpParserFn>,
+    parent: Option<(usize, usize)>,
+    input: *mut c_void,
+    child_inputs: Vec<*mut c_void>,
+    hook: *mut c_void,
+    args_processed: c_uint,
+}
+
+/// Where a matched option goes: `(group, key passed to its parser)`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ArgpDispatch {
+    group: usize,
+    key: c_int,
+}
+
+struct ArgpParser {
+    groups: Vec<ArgpGroup>,
+    dispatch: Vec<ArgpDispatch>,
+    /// Long option name for each long scanner id (for diagnostics).
+    long_names: Vec<(usize, Vec<u8>)>,
+    scan: argp_scan::Options,
+}
+
+impl ArgpParser {
+    /// Build groups and scanner tables for `argp` (pre-order).
+    unsafe fn convert(&mut self, argp: *const ArgpHeader, parent: Option<(usize, usize)>) {
+        let Some(argp) = (unsafe { argp.as_ref() }) else {
+            return;
+        };
+        let group = if !argp.options.is_null() || argp.parser.is_some() {
+            let gi = self.groups.len();
+            let nchildren = unsafe { argp_children(argp) }.count();
+            self.groups.push(ArgpGroup {
+                argp,
+                parser: argp.parser,
+                parent,
+                input: core::ptr::null_mut(),
+                child_inputs: vec![core::ptr::null_mut(); nchildren],
+                hook: core::ptr::null_mut(),
+                args_processed: 0,
+            });
+            unsafe { self.add_options(argp, gi) };
+            Some(gi)
         } else {
-            line.extend_from_slice(b"Unknown error");
+            None
+        };
+        for (i, child) in unsafe { argp_children(argp) }.enumerate() {
+            let child_parent = match group {
+                Some(gi) => Some((gi, i)),
+                None => parent,
+            };
+            unsafe { self.convert(child.argp, child_parent) };
         }
     }
-    line.push(b'\n');
 
-    unsafe { argp_write_bytes(stream, &line) }
-}
-
-#[inline]
-unsafe fn argp_exit_unless_suppressed(state: &ArgpStateHeader, status: c_int) {
-    if state.flags & ARGP_NO_EXIT == 0 {
-        unsafe { crate::stdlib_abi::exit(status) };
-    }
-}
-
-unsafe fn argp_write_version(stream: *mut libc::FILE, state: *mut c_void) -> bool {
-    let hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
-    if !hook.is_null() {
-        type ArgpVersionHook = unsafe extern "C" fn(*mut libc::FILE, *mut c_void);
-        // SAFETY: `argp_program_version_hook` is the public GNU argp callback
-        // slot. A non-null value is required by that ABI to be a function with
-        // this exact signature.
-        let hook = unsafe { core::mem::transmute::<*mut c_void, ArgpVersionHook>(hook) };
-        unsafe { hook(stream, state) };
-        return true;
-    }
-
-    let version = unsafe { crate::glibc_internal_abi::argp_program_version };
-    let Some(version) = (unsafe { argp_read_text(version) }) else {
-        return false;
-    };
-    unsafe { argp_write_text_line(stream, &version) }
-}
-
-unsafe fn argp_parse_version_requested(argc: c_int, argv: *mut *mut c_char) -> bool {
-    for index in 1..argc as usize {
-        let arg = unsafe { *argv.add(index) };
-        if let Some(arg) = unsafe { argp_read_text(arg.cast_const()) }
-            && arg == b"--version"
-        {
-            return true;
+    fn dispatch_id(&mut self, d: ArgpDispatch) -> usize {
+        match self.dispatch.iter().position(|&x| x == d) {
+            Some(i) => i,
+            None => {
+                self.dispatch.push(d);
+                self.dispatch.len() - 1
+            }
         }
     }
-    false
+
+    unsafe fn add_options(&mut self, argp: &ArgpHeader, group: usize) {
+        let mut real: Option<&ArgpOption> = None;
+        for opt in unsafe { argp_options(argp) } {
+            if opt.flags & OPTION_ALIAS == 0 {
+                real = Some(opt);
+            }
+            let real = real.unwrap_or(opt);
+            if real.flags & OPTION_DOC != 0 {
+                continue;
+            }
+            let has_arg = if real.arg.is_null() {
+                argp_scan::HasArg::No
+            } else if real.flags & OPTION_ARG_OPTIONAL != 0 {
+                argp_scan::HasArg::Optional
+            } else {
+                argp_scan::HasArg::Required
+            };
+            if argp_option_is_short(opt) {
+                let id = self.dispatch_id(ArgpDispatch { group, key: opt.key });
+                self.scan.shorts.push(argp_scan::ShortOpt {
+                    ch: opt.key as u8,
+                    has_arg,
+                    id: id * 2,
+                });
+            }
+            if !opt.name.is_null() {
+                let key = if opt.key != 0 { opt.key } else { real.key };
+                let id = self.dispatch_id(ArgpDispatch { group, key });
+                let name = unsafe { std::ffi::CStr::from_ptr(opt.name) }.to_bytes().to_vec();
+                self.long_names.push((id * 2 + 1, name.clone()));
+                self.scan.longs.push(argp_scan::LongOpt {
+                    name,
+                    has_arg,
+                    id: id * 2 + 1,
+                });
+            }
+        }
+    }
+
+    /// Call group `gi`'s parser with the group's routing installed in `state`.
+    unsafe fn call(&mut self, gi: usize, state: &mut ArgpState, key: c_int, arg: *mut c_char) -> c_int {
+        let g = &mut self.groups[gi];
+        let Some(parser) = g.parser else {
+            return ARGP_ERR_UNKNOWN;
+        };
+        state.hook = g.hook;
+        state.input = g.input;
+        state.child_inputs = g.child_inputs.as_mut_ptr();
+        state.arg_num = g.args_processed;
+        let err = unsafe { parser(key, arg, state) };
+        self.groups[gi].hook = state.hook;
+        err
+    }
+
+    /// Offer the operand at `index` (with `state.next == index + 1`) to each
+    /// group as ARG, then as ARGS. `ARGP_ERR_UNKNOWN` means nobody took it
+    /// and `state.next` is left on it.
+    unsafe fn parse_arg(&mut self, state: &mut ArgpState, index: c_int) -> c_int {
+        let arg = unsafe { *state.argv.add(index as usize) };
+        for gi in 0..self.groups.len() {
+            state.next = index + 1;
+            let mut err = unsafe { self.call(gi, state, ARGP_KEY_ARG, arg) };
+            if err == ARGP_ERR_UNKNOWN {
+                state.next = index;
+                err = unsafe { self.call(gi, state, ARGP_KEY_ARGS, core::ptr::null_mut()) };
+            }
+            if err != ARGP_ERR_UNKNOWN {
+                if err == 0 {
+                    let g = &mut self.groups[gi];
+                    g.args_processed = g.args_processed.wrapping_add((state.next - index) as c_uint);
+                }
+                return err;
+            }
+        }
+        state.next = index;
+        ARGP_ERR_UNKNOWN
+    }
 }
 
-/// `argp_parse` — parse arguments using argp framework.
-///
-/// Native phase-1 support handles the common zeroed `struct argp` case as a
-/// successful no-op parse and its GNU `--version` built-in.
+/// `argp_parse` — parse arguments using the GNU argp framework.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_parse(
     argp: *const c_void,
@@ -26017,44 +26273,510 @@ pub unsafe extern "C" fn argp_parse(
     arg_index: *mut c_int,
     input: *mut c_void,
 ) -> c_int {
-    if argp.is_null() || argc < 0 || (argc > 0 && argv.is_null()) {
+    if argc < 0 || (argc > 0 && argv.is_null()) {
         unsafe { set_abi_errno(libc::EINVAL) };
         return libc::EINVAL;
     }
+    let user = argp.cast::<ArgpHeader>();
 
-    let header = unsafe { &*(argp as *const ArgpHeader) };
-    if header.is_empty() {
-        let version = unsafe { crate::glibc_internal_abi::argp_program_version };
-        let version_hook = unsafe { crate::glibc_internal_abi::argp_program_version_hook };
-        let version_available = !version.is_null() || !version_hook.is_null();
-        if version_available && unsafe { argp_parse_version_requested(argc, argv) } {
-            let stream = unsafe { crate::stdio_abi::stdout }.cast::<libc::FILE>();
-            if !unsafe { argp_write_version(stream, input) } {
-                unsafe { set_abi_errno(libc::EIO) };
-            }
-            if !arg_index.is_null() {
-                unsafe { *arg_index = argc };
-            }
-            if flags & ARGP_NO_EXIT == 0 {
-                unsafe { crate::stdlib_abi::exit(0) };
-            }
-            return 0;
+    // Default help/version children, under a wrapper argp.
+    let mut top_children: Vec<ArgpChild> = Vec::new();
+    let mut top = ArgpHeader {
+        options: core::ptr::null(),
+        parser: None,
+        args_doc: core::ptr::null(),
+        doc: core::ptr::null(),
+        children: core::ptr::null(),
+        help_filter: None,
+        argp_domain: core::ptr::null(),
+    };
+    let root: *const ArgpHeader = if flags & ARGP_NO_HELP == 0 {
+        let child = |argp: *const ArgpHeader| ArgpChild {
+            argp,
+            flags: 0,
+            header: core::ptr::null(),
+            group: 0,
+        };
+        if !user.is_null() {
+            top_children.push(child(user));
         }
-        if !arg_index.is_null() {
-            unsafe { *arg_index = argc.min(1) };
+        top_children.push(child(&ARGP_DEFAULT_ARGP.0));
+        if !unsafe { argp_program_version_text() }.is_null()
+            || !unsafe { argp_program_version_hook_fn() }.is_null()
+        {
+            top_children.push(child(&ARGP_VERSION_ARGP.0));
         }
-        return 0;
+        top_children.push(child(core::ptr::null()));
+        top.children = top_children.as_ptr();
+        &top
+    } else {
+        user
+    };
+
+    let posixly_correct = unsafe { crate::stdlib_abi::native_getenv(b"POSIXLY_CORRECT") };
+    let ordering = if flags & ARGP_IN_ORDER != 0 {
+        argp_scan::Ordering::ReturnInOrder
+    } else if flags & ARGP_NO_ARGS != 0 || !posixly_correct.is_null() {
+        argp_scan::Ordering::RequireOrder
+    } else {
+        argp_scan::Ordering::Permute
+    };
+    let mut parser = ArgpParser {
+        groups: Vec::new(),
+        dispatch: Vec::new(),
+        long_names: Vec::new(),
+        scan: argp_scan::Options {
+            shorts: Vec::new(),
+            longs: Vec::new(),
+            ordering,
+            long_only: flags & ARGP_LONG_ONLY != 0,
+            print_errors: flags & ARGP_NO_ERRS == 0,
+        },
+    };
+    unsafe { parser.convert(root, None) };
+
+    let name: *mut c_char = if argc > 0 && !unsafe { *argv }.is_null() {
+        let argv0 = unsafe { *argv };
+        let full = unsafe { std::ffi::CStr::from_ptr(argv0) }.to_bytes();
+        unsafe { argv0.add(full.len() - argp_basename(full).len()) }
+    } else {
+        unsafe { crate::startup_abi::program_invocation_short_name.load(std::sync::atomic::Ordering::Acquire) }
+            .cast()
+    };
+    let mut state = ArgpState {
+        root_argp: root,
+        argc,
+        argv,
+        next: 0,
+        flags,
+        arg_num: 0,
+        quoted: 0,
+        input,
+        child_inputs: core::ptr::null_mut(),
+        hook: core::ptr::null_mut(),
+        name,
+        err_stream: argp_stderr(),
+        out_stream: argp_stdout(),
+        pstate: core::ptr::null_mut(),
+    };
+    state.pstate = (&raw mut parser).cast();
+
+    // INIT, forward; each group's input comes from its parent's INIT.
+    let mut err = 0;
+    for gi in 0..parser.groups.len() {
+        parser.groups[gi].input = match parser.groups[gi].parent {
+            Some((p, i)) => parser.groups[p].child_inputs.get(i).copied().unwrap_or(core::ptr::null_mut()),
+            None => input,
+        };
+        err = unsafe { parser.call(gi, &mut state, ARGP_KEY_INIT, core::ptr::null_mut()) };
+        if err == ARGP_ERR_UNKNOWN {
+            err = 0;
+        }
+        if err != 0 {
+            break;
+        }
     }
 
-    unsafe { set_abi_errno(libc::EINVAL) };
-    libc::EINVAL
+    // Main loop. (With argc == 0 there is nothing to scan; glibc reads
+    // argv[1] and crashes.)
+    let mut arg_ebadkey = false;
+    if err == 0 && argc > 0 {
+        let mut view = ArgpArgv {
+            argc: argc as usize,
+            argv,
+        };
+        let mut scanner = argp_scan::Scanner::new();
+        let mut try_getopt = true;
+        loop {
+            if state.quoted != 0 && state.next < state.quoted {
+                state.quoted = 0;
+            }
+            if try_getopt && state.quoted == 0 {
+                scanner.optind = state.next.max(0) as usize;
+                let event = scanner.step(&mut view, &parser.scan);
+                state.next = scanner.optind as c_int;
+                match event {
+                    argp_scan::Event::End => {
+                        try_getopt = false;
+                        if state.next > 1
+                            && unsafe { argp_argv_bytes(argv, state.next as usize - 1) } == b"--"
+                        {
+                            state.quoted = state.next;
+                        }
+                    }
+                    argp_scan::Event::Error { message } => {
+                        if let Some(m) = message {
+                            unsafe { argp_write_bytes(argp_stderr(), &m) };
+                        }
+                        err = ARGP_ERR_UNKNOWN;
+                        break;
+                    }
+                    argp_scan::Event::Opt { id, arg } => {
+                        let d = parser.dispatch[id / 2];
+                        let arg_ptr = match arg {
+                            Some(p) => unsafe { (*argv.add(p.index)).add(p.offset) },
+                            None => core::ptr::null_mut(),
+                        };
+                        err = unsafe { parser.call(d.group, &mut state, d.key, arg_ptr) };
+                        if err == ARGP_ERR_UNKNOWN {
+                            // Options are routed to the group that declared
+                            // them, so a parser disowning one is a bug.
+                            let what = if id % 2 == 0 {
+                                format!("-{}", d.key as u8 as char).into_bytes()
+                            } else {
+                                let long = parser
+                                    .long_names
+                                    .iter()
+                                    .find(|(lid, _)| *lid == id)
+                                    .map_or(&b""[..], |(_, n)| n.as_slice());
+                                [&b"--"[..], long].concat()
+                            };
+                            let mut msg = what;
+                            msg.extend_from_slice(b": (PROGRAM ERROR) Option should have been recognized!?");
+                            unsafe { argp_error_bytes(&mut state, &msg) };
+                        }
+                        if err != 0 {
+                            break;
+                        }
+                        continue;
+                    }
+                    argp_scan::Event::Operand { index } => {
+                        err = unsafe { parser.parse_arg(&mut state, index as c_int) };
+                        if err != 0 {
+                            arg_ebadkey = err == ARGP_ERR_UNKNOWN;
+                            break;
+                        }
+                        continue;
+                    }
+                }
+            }
+            if state.next >= argc || flags & ARGP_NO_ARGS != 0 {
+                break;
+            }
+            let index = state.next;
+            state.next += 1;
+            err = unsafe { parser.parse_arg(&mut state, index) };
+            if err != 0 {
+                arg_ebadkey = err == ARGP_ERR_UNKNOWN;
+                break;
+            }
+        }
+    }
+
+    // Finish.
+    if err == ARGP_ERR_UNKNOWN && arg_ebadkey {
+        err = 0;
+    }
+    if err == 0 {
+        if state.next == argc {
+            if !arg_index.is_null() {
+                unsafe { *arg_index = state.next };
+            }
+            for gi in 0..parser.groups.len() {
+                if parser.groups[gi].args_processed == 0 {
+                    err = unsafe { parser.call(gi, &mut state, ARGP_KEY_NO_ARGS, core::ptr::null_mut()) };
+                    if err == ARGP_ERR_UNKNOWN {
+                        err = 0;
+                    }
+                    if err != 0 {
+                        break;
+                    }
+                }
+            }
+            if err == 0 {
+                for gi in (0..parser.groups.len()).rev() {
+                    err = unsafe { parser.call(gi, &mut state, ARGP_KEY_END, core::ptr::null_mut()) };
+                    if err == ARGP_ERR_UNKNOWN {
+                        err = 0;
+                    }
+                    if err != 0 {
+                        break;
+                    }
+                }
+            }
+        } else if !arg_index.is_null() {
+            unsafe { *arg_index = state.next };
+        } else {
+            if flags & ARGP_NO_ERRS == 0 && !state.err_stream.is_null() {
+                let mut msg = unsafe { argp_read_text(state.name) }.unwrap_or_default();
+                msg.extend_from_slice(b": Too many arguments\n");
+                unsafe { argp_write_bytes(state.err_stream, &msg) };
+            }
+            err = ARGP_ERR_UNKNOWN;
+        }
+    }
+    if err == ARGP_ERR_UNKNOWN {
+        unsafe { argp_state_help((&raw mut state).cast(), state.err_stream, ARGP_HELP_STD_ERR) };
+        err = libc::EINVAL;
+    }
+    if err != 0 {
+        for gi in 0..parser.groups.len() {
+            unsafe { parser.call(gi, &mut state, ARGP_KEY_ERROR, core::ptr::null_mut()) };
+        }
+    } else {
+        for gi in (0..parser.groups.len()).rev() {
+            let e = unsafe { parser.call(gi, &mut state, ARGP_KEY_SUCCESS, core::ptr::null_mut()) };
+            if e != 0 && e != ARGP_ERR_UNKNOWN && err == 0 {
+                err = e;
+            }
+        }
+    }
+    for gi in (0..parser.groups.len()).rev() {
+        unsafe { parser.call(gi, &mut state, ARGP_KEY_FINI, core::ptr::null_mut()) };
+    }
+    drop(top_children);
+    err
 }
 
-/// `argp_help` — print a bounded phase-1 argp help message.
-///
-/// This intentionally covers the literal `struct argp` text fields and a
-/// caller-provided stream. Option tables, child parsers, filters, and full
-/// argp state formatting remain explicit semantic-overlay follow-up work.
+/// Parser of the default help argp.
+unsafe extern "C" fn argp_default_parser(key: c_int, arg: *mut c_char, state: *mut ArgpState) -> c_int {
+    let st = unsafe { &mut *state };
+    match key {
+        k if k == b'?' as c_int => {
+            unsafe { argp_state_help(state.cast(), st.out_stream, ARGP_HELP_STD_HELP) };
+            0
+        }
+        ARGP_KEY_USAGE_OPT => {
+            unsafe {
+                argp_state_help(state.cast(), st.out_stream, ARGP_HELP_USAGE | ARGP_HELP_EXIT_OK)
+            };
+            0
+        }
+        ARGP_KEY_PROGNAME_OPT => {
+            if !arg.is_null() {
+                let full = unsafe { std::ffi::CStr::from_ptr(arg) }.to_bytes();
+                let short = unsafe { arg.add(full.len() - argp_basename(full).len()) };
+                st.name = short;
+                crate::startup_abi::program_invocation_name
+                    .store(arg, std::sync::atomic::Ordering::Release);
+                crate::startup_abi::program_invocation_short_name
+                    .store(short, std::sync::atomic::Ordering::Release);
+            }
+            0
+        }
+        ARGP_KEY_HANG_OPT => {
+            let secs = if arg.is_null() {
+                3600
+            } else {
+                unsafe { crate::stdlib_abi::atoi(arg) }
+            };
+            if secs > 0 {
+                unsafe { sleep(secs as c_uint) };
+            }
+            0
+        }
+        _ => ARGP_ERR_UNKNOWN,
+    }
+}
+
+/// Parser of the default version argp.
+unsafe extern "C" fn argp_version_parser(key: c_int, _arg: *mut c_char, state: *mut ArgpState) -> c_int {
+    if key != b'V' as c_int {
+        return ARGP_ERR_UNKNOWN;
+    }
+    let st = unsafe { &mut *state };
+    let hook = unsafe { argp_program_version_hook_fn() };
+    let version = unsafe { argp_program_version_text() };
+    if !hook.is_null() {
+        type ArgpVersionHook = unsafe extern "C" fn(*mut libc::FILE, *mut ArgpState);
+        // SAFETY: `argp_program_version_hook` is the public GNU argp callback
+        // slot; a non-null value has this signature by that ABI.
+        let hook = unsafe { core::mem::transmute::<*const c_void, ArgpVersionHook>(hook) };
+        unsafe { hook(st.out_stream, state) };
+    } else if let Some(mut text) = unsafe { argp_read_text(version) } {
+        text.push(b'\n');
+        unsafe { argp_write_bytes(st.out_stream, &text) };
+    } else {
+        unsafe { argp_error_bytes(st, b"(PROGRAM ERROR) No version known!?") };
+    }
+    if st.flags & ARGP_NO_EXIT == 0 {
+        unsafe { crate::stdlib_abi::exit(0) };
+    }
+    0
+}
+
+/// `argp_error` body: "NAME: MESSAGE\n" to the error stream, then the
+/// standard "Try ..." hint (which exits unless ARGP_NO_EXIT).
+unsafe fn argp_error_bytes(state: *mut ArgpState, message: &[u8]) {
+    let st = unsafe { state.as_ref() };
+    if st.is_some_and(|s| s.flags & ARGP_NO_ERRS != 0) {
+        return;
+    }
+    let stream = st.map_or_else(argp_stderr, |s| s.err_stream);
+    if stream.is_null() {
+        return;
+    }
+    let name = match st {
+        Some(s) => unsafe { argp_read_text(s.name) },
+        None => unsafe { argp_short_program_name() },
+    }
+    .unwrap_or_default();
+    let mut line = name;
+    line.extend_from_slice(b": ");
+    line.extend_from_slice(message);
+    line.push(b'\n');
+    unsafe { argp_write_bytes(stream, &line) };
+    unsafe { argp_state_help(state.cast(), stream, ARGP_HELP_STD_ERR) };
+}
+
+unsafe fn argp_short_program_name() -> Option<Vec<u8>> {
+    let p = crate::startup_abi::program_invocation_short_name.load(std::sync::atomic::Ordering::Acquire);
+    unsafe { argp_read_text(p.cast_const()) }
+}
+
+/// Layout parameters, updated by each help call from `ARGP_HELP_FMT`
+/// (cumulatively, as glibc does).
+static ARGP_HELP_PARAMS: std::sync::Mutex<Option<frankenlibc_core::argp::help::Uparams>> =
+    std::sync::Mutex::new(None);
+
+/// Convert a C argp tree for the formatter. `registry[id]` is the C argp
+/// behind each `HelpArgp::id`.
+unsafe fn argp_help_tree(
+    argp: &ArgpHeader,
+    registry: &mut Vec<*const ArgpHeader>,
+) -> frankenlibc_core::argp::help::HelpArgp {
+    use frankenlibc_core::argp::help as h;
+    let id = registry.len();
+    registry.push(argp);
+    let options = unsafe { argp_options(argp) }
+        .map(|o| h::HelpOption {
+            name: unsafe { argp_read_text(o.name) },
+            key: o.key,
+            arg: unsafe { argp_read_text(o.arg) },
+            flags: o.flags,
+            doc: unsafe { argp_read_text(o.doc) },
+            group: o.group,
+        })
+        .collect();
+    let children = unsafe { argp_children(argp) }
+        .map(|c| h::HelpChild {
+            argp: unsafe { argp_help_tree(&*c.argp, registry) },
+            header: unsafe { argp_read_text(c.header) },
+            group: c.group,
+        })
+        .collect();
+    h::HelpArgp {
+        id,
+        options,
+        args_doc: unsafe { argp_read_text(argp.args_doc) },
+        doc: unsafe { argp_read_text(argp.doc) },
+        children,
+        has_filter: argp.help_filter.is_some(),
+    }
+}
+
+/// Bridges the formatter to C `help_filter` callbacks.
+struct ArgpCFilter<'a> {
+    registry: &'a [*const ArgpHeader],
+    state: *const ArgpState,
+}
+
+impl frankenlibc_core::argp::help::HelpFilter for ArgpCFilter<'_> {
+    fn filter(&mut self, argp_id: usize, key: c_int, text: Option<&[u8]>) -> Option<Vec<u8>> {
+        let argp = self.registry[argp_id];
+        let Some(filter) = (unsafe { (*argp).help_filter }) else {
+            return text.map(<[u8]>::to_vec);
+        };
+        let owned = text.map(|t| {
+            let mut v = t.to_vec();
+            v.push(0);
+            v
+        });
+        let text_ptr = owned.as_ref().map_or(core::ptr::null(), |v| v.as_ptr().cast::<c_char>());
+        let input = unsafe { argp_input(argp, self.state) };
+        let out = unsafe { filter(key, text_ptr, input) };
+        if out.is_null() {
+            return None;
+        }
+        if out.cast_const() == text_ptr {
+            return text.map(<[u8]>::to_vec);
+        }
+        let result = unsafe { argp_read_text(out) };
+        unsafe { crate::malloc_abi::free(out.cast()) };
+        result
+    }
+}
+
+/// The input argp_parse routed to `argp`'s group (for help filters).
+unsafe fn argp_input(argp: *const ArgpHeader, state: *const ArgpState) -> *mut c_void {
+    let Some(state) = (unsafe { state.as_ref() }) else {
+        return core::ptr::null_mut();
+    };
+    let Some(parser) = (unsafe { state.pstate.cast::<ArgpParser>().as_ref() }) else {
+        return core::ptr::null_mut();
+    };
+    parser
+        .groups
+        .iter()
+        .find(|g| g.argp == argp)
+        .map_or(core::ptr::null_mut(), |g| g.input)
+}
+
+/// Render help for `argp` (flags per ARGP_HELP_*) to `stream`.
+unsafe fn argp_render_help(
+    argp: *const ArgpHeader,
+    state: *const ArgpState,
+    stream: *mut libc::FILE,
+    flags: c_uint,
+    name: &[u8],
+) {
+    use frankenlibc_core::argp::help as h;
+    let params = {
+        let mut guard = ARGP_HELP_PARAMS.lock().unwrap_or_else(|e| e.into_inner());
+        let params = guard.get_or_insert_with(h::Uparams::default);
+        let fmt = unsafe { crate::stdlib_abi::native_getenv(b"ARGP_HELP_FMT") };
+        let diags = match unsafe { argp_read_text(fmt) } {
+            Some(var) => params.apply_help_fmt(&var),
+            None => Vec::new(),
+        };
+        let params = *params;
+        drop(guard);
+        for d in diags {
+            unsafe { argp_failure_bytes(state.cast_mut(), 0, 0, Some(&d)) };
+        }
+        params
+    };
+    let empty = ArgpHeader {
+        options: core::ptr::null(),
+        parser: None,
+        args_doc: core::ptr::null(),
+        doc: core::ptr::null(),
+        children: core::ptr::null(),
+        help_filter: None,
+        argp_domain: core::ptr::null(),
+    };
+    let argp_ref = unsafe { argp.as_ref() }.unwrap_or(&empty);
+    let mut registry = Vec::new();
+    let tree = unsafe { argp_help_tree(argp_ref, &mut registry) };
+    let bug = unsafe { argp_read_text(argp_program_bug_address_text()) };
+    let ctx = h::HelpContext {
+        params,
+        name,
+        bug_address: bug.as_deref(),
+    };
+    // The duplicate-arguments note goes through the state's root argp's
+    // filter (none without a state).
+    let root = unsafe { state.as_ref() }.map(|s| s.root_argp);
+    let mut root_registry: Vec<*const ArgpHeader> = registry.clone();
+    let dup_note = root.and_then(|r| unsafe { r.as_ref() }).map(|r| {
+        let id = match root_registry.iter().position(|&a| a == r as *const ArgpHeader) {
+            Some(i) => i,
+            None => {
+                root_registry.push(r);
+                root_registry.len() - 1
+            }
+        };
+        (id, r.help_filter.is_some())
+    });
+    let mut filter = ArgpCFilter {
+        registry: &root_registry,
+        state,
+    };
+    let out = h::render(&tree, flags, &ctx, &mut filter, dup_note);
+    unsafe { argp_write_bytes(stream, &out) };
+}
+
+/// `argp_help` — print help for `argp` to `stream`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_help(
     argp: *const c_void,
@@ -26062,39 +26784,54 @@ pub unsafe extern "C" fn argp_help(
     flags: libc::c_uint,
     name: *mut c_char,
 ) {
-    if argp.is_null() || stream.is_null() || flags == 0 {
+    if stream.is_null() {
         return;
     }
+    let name = unsafe { argp_read_text(name) }.unwrap_or_default();
+    unsafe { argp_render_help(argp.cast(), core::ptr::null(), stream, flags, &name) };
+}
 
-    let header = unsafe { &*(argp as *const ArgpHeader) };
-    let mut ok = true;
-    if flags & (ARGP_HELP_USAGE | ARGP_HELP_SHORT_USAGE) != 0 {
-        ok &= unsafe { argp_write_usage(header, stream, name) };
+/// `argp_state_help` — print help from inside a parser, then exit as the
+/// flags request (unless ARGP_NO_EXIT). Silent under ARGP_NO_ERRS.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn argp_state_help(
+    state: *mut c_void,
+    stream: *mut libc::FILE,
+    flags: libc::c_uint,
+) {
+    // glibc dereferences a null state here and crashes; there is no help to
+    // give without the root argp, so do nothing.
+    let Some(st) = (unsafe { state.cast::<ArgpState>().as_ref() }) else {
+        return;
+    };
+    if st.flags & ARGP_NO_ERRS != 0 || stream.is_null() {
+        return;
     }
-    ok &= unsafe { argp_write_doc(header, stream, flags) };
-    if flags & ARGP_HELP_BUG_ADDR != 0 {
-        ok &= unsafe { argp_write_bug_address(stream) };
-    }
-    if !ok {
-        unsafe { set_abi_errno(libc::EIO) };
+    let name = unsafe { argp_read_text(st.name) }.unwrap_or_default();
+    unsafe { argp_render_help(st.root_argp, st, stream, flags, &name) };
+    if st.flags & ARGP_NO_EXIT == 0 {
+        if flags & ARGP_HELP_EXIT_ERR != 0 {
+            unsafe { crate::stdlib_abi::exit(argp_err_exit_status_value()) };
+        }
+        if flags & ARGP_HELP_EXIT_OK != 0 {
+            unsafe { crate::stdlib_abi::exit(0) };
+        }
     }
 }
 
-/// `argp_usage` — print bounded phase-1 usage from state.
-///
-/// The GNU standard-usage contract includes an exit flag; phase-1 renders and
-/// returns so tests and callers are not terminated before full argp support.
+/// `argp_usage` — standard usage message and exit.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_usage(state: *mut c_void) {
-    unsafe { argp_state_help(state, core::ptr::null_mut(), ARGP_HELP_STD_USAGE_PHASE1) };
+    // Null state: glibc crashes; nothing to report here.
+    if let Some(st) = unsafe { state.cast::<ArgpState>().as_ref() } {
+        unsafe { argp_state_help(state, st.err_stream, ARGP_HELP_STD_USAGE) };
+    }
 }
 
-/// `argp_error` — report a bounded formatted parsing diagnostic and exit unless suppressed.
+/// `argp_error` — "NAME: MESSAGE" plus the standard hint; exits unless
+/// ARGP_NO_EXIT.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut args: ...) {
-    if unsafe { argp_diagnostic_stream(state) }.is_null() {
-        return;
-    }
     let Some(fmt_bytes) = (unsafe { argp_read_text(fmt) }) else {
         return;
     };
@@ -26105,15 +26842,42 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
     let rendered =
         unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
-    if !unsafe { argp_write_diagnostic(state, &rendered, 0) } {
-        unsafe { set_abi_errno(libc::EIO) };
-    }
-    let state = unsafe { &*(state as *const ArgpStateHeader) };
-    let status = unsafe { crate::glibc_internal_abi::argp_err_exit_status };
-    unsafe { argp_exit_unless_suppressed(state, status) };
+    unsafe { argp_error_bytes(state.cast(), &rendered) };
 }
 
-/// `argp_failure` — report a bounded formatted parsing failure diagnostic and exit when requested.
+/// `argp_failure` body with the message already rendered.
+unsafe fn argp_failure_bytes(state: *mut ArgpState, status: c_int, errnum: c_int, message: Option<&[u8]>) {
+    let st = unsafe { state.as_ref() };
+    if st.is_some_and(|s| s.flags & ARGP_NO_ERRS != 0) {
+        return;
+    }
+    let stream = st.map_or_else(argp_stderr, |s| s.err_stream);
+    if stream.is_null() {
+        return;
+    }
+    let mut line = match st {
+        Some(s) => unsafe { argp_read_text(s.name) },
+        None => unsafe { argp_short_program_name() },
+    }
+    .unwrap_or_default();
+    if let Some(message) = message {
+        line.extend_from_slice(b": ");
+        line.extend_from_slice(message);
+    }
+    if errnum != 0 {
+        line.extend_from_slice(b": ");
+        let err_ptr = unsafe { crate::string_abi::strerror(errnum) };
+        line.extend_from_slice(&unsafe { argp_read_text(err_ptr) }.unwrap_or_else(|| b"Unknown error".to_vec()));
+    }
+    line.push(b'\n');
+    unsafe { argp_write_bytes(stream, &line) };
+    if status != 0 && st.is_none_or(|s| s.flags & ARGP_NO_EXIT == 0) {
+        unsafe { crate::stdlib_abi::exit(status) };
+    }
+}
+
+/// `argp_failure` — "NAME[: MESSAGE][: strerror(errnum)]"; exits with
+/// `status` when nonzero (unless ARGP_NO_EXIT).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn argp_failure(
     state: *mut c_void,
@@ -26122,50 +26886,15 @@ pub unsafe extern "C" fn argp_failure(
     fmt: *const c_char,
     mut args: ...
 ) {
-    if unsafe { argp_diagnostic_stream(state) }.is_null() {
-        return;
-    }
-    let rendered = if let Some(fmt_bytes) = unsafe { argp_read_text(fmt) } {
+    let rendered = unsafe { argp_read_text(fmt) }.map(|fmt_bytes| {
         use frankenlibc_core::stdio::printf::parse_format_string;
         let segments = parse_format_string(&fmt_bytes);
         let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
         let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
         extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
         unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) }
-    } else {
-        Vec::new()
-    };
-    if !unsafe { argp_write_diagnostic(state, &rendered, errnum) } {
-        unsafe { set_abi_errno(libc::EIO) };
-    }
-    if status != 0 {
-        let state = unsafe { &*(state as *const ArgpStateHeader) };
-        unsafe { argp_exit_unless_suppressed(state, status) };
-    }
-}
-
-/// `argp_state_help` — print bounded phase-1 help from state.
-///
-/// Phase-1 intentionally renders the stable `root_argp`/`name` state prefix
-/// and returns; glibc's process-exit behavior remains explicit follow-up work.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn argp_state_help(
-    state: *mut c_void,
-    stream: *mut libc::FILE,
-    flags: libc::c_uint,
-) {
-    if state.is_null() {
-        return;
-    }
-
-    let state = unsafe { &*(state as *const ArgpStateHeader) };
-    if state.root_argp.is_null() {
-        return;
-    }
-
-    let stream = argp_state_stream(state, stream, flags);
-    let render_flags = flags & !ARGP_HELP_STATE_NON_RENDERING_FLAGS;
-    unsafe { argp_help(state.root_argp, stream, render_flags, state.name) };
+    });
+    unsafe { argp_failure_bytes(state.cast(), status, errnum, rendered.as_deref()) };
 }
 
 // ===========================================================================

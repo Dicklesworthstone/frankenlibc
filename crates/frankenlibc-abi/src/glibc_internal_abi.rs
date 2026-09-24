@@ -5164,7 +5164,8 @@ pub unsafe extern "C" fn __mq_open_2(name: *const c_char, oflag: c_int) -> c_int
 // argp globals (4 symbols)
 // ==========================================================================
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut argp_err_exit_status: c_int = 1;
+// glibc's default is EX_USAGE (64).
+pub static mut argp_err_exit_status: c_int = 64;
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut argp_program_bug_address: *const c_char = std::ptr::null();
