@@ -92,21 +92,21 @@ impl<K> RbTree<K> {
     /// retained, matching POSIX `tsearch` semantics).
     pub fn insert<F: Fn(&K, &K) -> Ordering>(&mut self, key: K, cmp: &F) -> bool {
         let prev_len = self.len;
-        let new_root = Self::insert_rec(self.root.take(), key, cmp, &mut self.len);
-        let mut root = new_root;
-        // Root invariant: always black.
-        if let Some(ref mut r) = root {
-            r.color = Color::Black;
-        }
-        self.root = root;
+        self.insert_find(key, cmp);
         self.len > prev_len
     }
 
     /// Insert `key` if absent, and return a stable pointer to the key stored in
     /// the matching node (the newly inserted one, or the pre-existing equal key
-    /// that was retained). A single tree walk — unlike `insert` followed by a
-    /// separate `find`, this halves the comparator calls, which matters when the
-    /// comparator is an indirect C callback (POSIX `tsearch`).
+    /// that was retained). The comparator runs once per level — unlike `insert`
+    /// followed by a separate `find`, which doubles the calls, and that matters
+    /// when the comparator is an indirect C callback (POSIX `tsearch`).
+    ///
+    /// Unwind safety: every comparator call happens in a read-only descent
+    /// that records the path, before anything is modified. A comparator that
+    /// unwinds (a C++ exception thrown from a `tsearch` compar) therefore
+    /// leaves the tree exactly as it was, as glibc's does. The structural
+    /// insert then replays the recorded path without calling the comparator.
     ///
     /// The returned pointer stays valid across the rebalancing rotations: LLRB
     /// rotations only move the `Box` owners (the heap `Node` allocations never
@@ -114,8 +114,34 @@ impl<K> RbTree<K> {
     /// lifetime in the tree. The caller must not outlive the node (i.e. must not
     /// use the pointer after the key is deleted), exactly as POSIX requires.
     pub fn insert_find<F: Fn(&K, &K) -> Ordering>(&mut self, key: K, cmp: &F) -> *const K {
+        // Bit `i` of `path` is set when the descent went right at level `i`;
+        // the descent stops at `depth`, on the equal node or the empty slot.
+        // A red-black tree of fewer than 2^63 nodes is under 128 levels tall.
+        let mut path: u128 = 0;
+        let mut depth: u32 = 0;
+        let mut cur = self.root.as_deref();
+        while let Some(n) = cur {
+            cur = match cmp(&key, &n.key) {
+                Ordering::Less => n.left.as_deref(),
+                Ordering::Greater => {
+                    path |= 1u128 << depth;
+                    n.right.as_deref()
+                }
+                Ordering::Equal => break,
+            };
+            depth += 1;
+            debug_assert!(depth < 128, "red-black tree height exceeds 127");
+        }
         let mut found: *const K = core::ptr::null();
-        let new_root = Self::insert_find_rec(self.root.take(), key, cmp, &mut self.len, &mut found);
+        let new_root = Self::insert_along(
+            self.root.take(),
+            key,
+            path,
+            0,
+            depth,
+            &mut self.len,
+            &mut found,
+        );
         let mut root = new_root;
         if let Some(ref mut r) = root {
             r.color = Color::Black;
@@ -124,10 +150,15 @@ impl<K> RbTree<K> {
         found
     }
 
-    fn insert_find_rec<F: Fn(&K, &K) -> Ordering>(
+    /// Structural half of `insert_find`: follow the recorded `path` to
+    /// `depth`, insert there if the slot is empty (otherwise the node there is
+    /// the equal key), and rebalance every node on the way back up.
+    fn insert_along(
         node: Option<Box<Node<K>>>,
         key: K,
-        cmp: &F,
+        path: u128,
+        level: u32,
+        depth: u32,
         len: &mut usize,
         found: &mut *const K,
     ) -> Option<Box<Node<K>>> {
@@ -140,39 +171,13 @@ impl<K> RbTree<K> {
             }
             Some(h) => h,
         };
-        match cmp(&key, &h.key) {
-            Ordering::Less => h.left = Self::insert_find_rec(h.left.take(), key, cmp, len, found),
-            Ordering::Greater => {
-                h.right = Self::insert_find_rec(h.right.take(), key, cmp, len, found)
-            }
-            Ordering::Equal => {
-                // Key already present; retain existing and report its stable address.
-                *found = &h.key as *const K;
-            }
-        }
-        h = Self::fix_up(h);
-        Some(h)
-    }
-
-    fn insert_rec<F: Fn(&K, &K) -> Ordering>(
-        node: Option<Box<Node<K>>>,
-        key: K,
-        cmp: &F,
-        len: &mut usize,
-    ) -> Option<Box<Node<K>>> {
-        let mut h = match node {
-            None => {
-                *len += 1;
-                return Some(Node::new_red(key));
-            }
-            Some(h) => h,
-        };
-        match cmp(&key, &h.key) {
-            Ordering::Less => h.left = Self::insert_rec(h.left.take(), key, cmp, len),
-            Ordering::Greater => h.right = Self::insert_rec(h.right.take(), key, cmp, len),
-            Ordering::Equal => {
-                // Key already present; retain existing.
-            }
+        if level == depth {
+            // Key already present; retain existing and report its stable address.
+            *found = &h.key as *const K;
+        } else if path & (1u128 << level) == 0 {
+            h.left = Self::insert_along(h.left.take(), key, path, level + 1, depth, len, found);
+        } else {
+            h.right = Self::insert_along(h.right.take(), key, path, level + 1, depth, len, found);
         }
         h = Self::fix_up(h);
         Some(h)
@@ -686,6 +691,40 @@ mod tests {
         assert!(t.is_empty());
         assert_eq!(t.len(), 0);
         assert_eq!(t.find(&42, &cmp_i32), None);
+    }
+
+    /// A comparator that unwinds part-way through an insert (a C++ exception
+    /// thrown from a `tsearch` compar, modelled here as a panic) must leave
+    /// every node in place: glibc's tree survives, and so must ours.
+    #[test]
+    fn unwinding_comparator_leaves_tree_intact() {
+        let mut t = RbTree::new();
+        for k in 0..200i32 {
+            t.insert(k * 2, &cmp_i32);
+        }
+        for throw_after in [0usize, 1, 3, 6] {
+            let calls = Cell::new(0usize);
+            let throwing = |a: &i32, b: &i32| {
+                if calls.get() == throw_after {
+                    panic!("comparator unwinds");
+                }
+                calls.set(calls.get() + 1);
+                a.cmp(b)
+            };
+            let unwound = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                t.insert_find(301, &throwing);
+            }));
+            assert!(unwound.is_err(), "comparator should have unwound");
+            assert_eq!(t.len(), 200);
+            assert_llrb_invariants(&t);
+            for k in 0..200i32 {
+                assert_eq!(t.find(&(k * 2), &cmp_i32), Some(&(k * 2)));
+            }
+        }
+        // The tree is still fully usable afterwards.
+        assert!(t.insert(301, &cmp_i32));
+        assert_eq!(t.find(&301, &cmp_i32), Some(&301));
+        assert_llrb_invariants(&t);
     }
 
     #[test]
