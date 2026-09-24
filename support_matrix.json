@@ -2711,7 +2711,7 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Combines epoch_to_broken_down with format_asctime; pure Rust",
+      "strict_semantics": "localtime_r + asctime formatting; pure Rust, honours TZ",
       "hardened_semantics": "Pure Rust conversion with null pointer guard",
       "default_stub": false
     },
@@ -7614,7 +7614,7 @@
       "status": "WrapsHostLibc",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Thread-local buffer wrapping localtime_r. Returns pointer to static tm.",
+      "strict_semantics": "Static-tm wrapper over the native localtime_r TZ engine",
       "hardened_semantics": "Same. Null pointer returns NULL.",
       "default_stub": "Returns NULL"
     },
@@ -7623,8 +7623,8 @@
       "status": "RawSyscall",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Raw Linux syscall for time queries; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; defaults invalid clock_id to CLOCK_REALTIME",
+      "strict_semantics": "Native TZ engine (core time::tz): TZif v1-v3 from TZ / TZDIR / /etc/localtime via raw openat/read, POSIX TZ rules; fills tm_gmtoff/tm_zone; parity with glibc across a 44-zone 1900-2100 transition sweep",
+      "hardened_semantics": "Same as strict; null pointer returns NULL/EFAULT",
       "default_stub": false
     },
     {
@@ -8344,8 +8344,8 @@
       "status": "WrapsHostLibc",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Pure Rust broken_down_to_epoch with field normalization; UTC only",
-      "hardened_semantics": "Pure Rust conversion; normalizes fields, UTC only",
+      "strict_semantics": "Native TZ engine: local wall time to UTC honouring TZ, tm_isdst=-1 resolution across DST gaps/overlaps with glibc's last-offset hint; normalizes fields",
+      "hardened_semantics": "Same as strict",
       "default_stub": false
     },
     {
@@ -15117,8 +15117,8 @@
       "status": "Implemented",
       "module": "time_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to glibc tzset for timezone initialization.",
-      "hardened_semantics": "Same delegation.",
+      "strict_semantics": "Native: resolves TZ / /etc/localtime and publishes tzname/timezone/daylight like glibc",
+      "hardened_semantics": "Same as strict",
       "default_stub": "No-op"
     },
     {

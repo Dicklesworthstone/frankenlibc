@@ -2,13 +2,17 @@
 //! Structure-aware fuzz target for FrankenLibC time functions.
 //!
 //! Exercises `epoch_to_broken_down`, `broken_down_to_epoch` (round-trip),
-//! `format_asctime`, `format_strftime`, `difftime`, and clock validators.
+//! `format_asctime`, `format_strftime`, `difftime`, clock validators, and the
+//! time-zone engine (`tz::parse_tzif` on arbitrary bytes, `tz::parse_posix_tz`
+//! on arbitrary TZ strings, then lookup / globals / local-to-UTC on the zone).
 //!
 //! Invariants:
 //! - epoch_to_broken_down → broken_down_to_epoch round-trips exactly
 //! - format_asctime never panics and respects buffer bounds
 //! - format_strftime never panics on any format specifier byte
 //! - All validators are deterministic and total
+//! - TZif/POSIX-TZ parsing is total on hostile input; a parsed zone's lookup
+//!   is deterministic, and local_to_utc inverts lookup outside gaps/overlaps
 //!
 //! Bead: bd-2hh.4
 
@@ -41,13 +45,23 @@ struct TimeFuzzInput {
 const MAX_FMT: usize = 512;
 
 fuzz_target!(|input: TimeFuzzInput| {
-    match input.op % 6 {
+    match input.op % 8 {
         0 => fuzz_epoch_roundtrip(&input),
         1 => fuzz_broken_down_to_epoch(&input),
         2 => fuzz_asctime(&input),
         3 => fuzz_strftime(&input),
         4 => fuzz_difftime(&input),
         5 => fuzz_clock_validators(&input),
+        6 => {
+            if let Some(zone) = time::tz::parse_tzif(&input.fmt) {
+                fuzz_zone(&zone, input.epoch);
+            }
+        }
+        7 => {
+            if let Some(rule) = time::tz::parse_posix_tz(&input.fmt) {
+                fuzz_zone(&time::tz::Zone::from_posix(rule), input.epoch);
+            }
+        }
         _ => unreachable!(),
     }
 });
@@ -91,6 +105,7 @@ fn fuzz_broken_down_to_epoch(input: &TimeFuzzInput) {
         tm_wday: 0,
         tm_yday: 0,
         tm_isdst: 0,
+        ..Default::default()
     };
 
     // Must not panic
@@ -193,5 +208,26 @@ fn fuzz_clock_validators(input: &TimeFuzzInput) {
             "valid_clock_id({}) but not valid_clock_id_extended",
             input.clock_id
         );
+    }
+}
+
+/// Exercise a parsed zone: lookup, globals and local->UTC must not panic, and
+/// a local time that `lookup` produced (so it is not in a gap) must convert
+/// back to *an* instant showing that same local time. Checked only when the
+/// type is unchanged a day either side, where the offset search is exact.
+fn fuzz_zone(zone: &time::tz::Zone, epoch: i64) {
+    let t = epoch.clamp(-67_768_036_191_676_800, 67_767_976_233_316_800) / 1_000;
+    let ty = zone.lookup(t).clone();
+    assert_eq!(&ty, zone.lookup(t), "lookup not deterministic");
+    let _ = zone.globals();
+    let _ = zone.all_types();
+    let local = t + i64::from(ty.utoff);
+    let back = zone.local_to_utc(local, i32::from(ty.isdst));
+    let stable = [-86_400, 86_400]
+        .iter()
+        .all(|d| zone.lookup(t + d) == &ty);
+    if stable {
+        let shown = back + i64::from(zone.lookup(back).utoff);
+        assert_eq!(shown, local, "local_to_utc({local}) -> {back} shows {shown}; type {ty:?}");
     }
 }

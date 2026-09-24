@@ -746,7 +746,15 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         let mut width_override: Option<usize> = None;
         while i < fmt.len() && fmt[i].is_ascii_digit() {
             let digit = (fmt[i] - b'0') as usize;
-            width_override = Some(width_override.unwrap_or(0) * 10 + digit);
+            // Saturate: "%99999999999999999999Y" must not overflow (it wrapped
+            // to an arbitrary width in release); an oversized width simply
+            // exceeds the caller's buffer and strftime returns 0.
+            width_override = Some(
+                width_override
+                    .unwrap_or(0)
+                    .saturating_mul(10)
+                    .saturating_add(digit),
+            );
             i += 1;
         }
         if i >= fmt.len() {
@@ -2277,6 +2285,22 @@ mod tests {
         let mut buf = [0u8; 64];
         let n = format_strftime(b"%Y-%m-%d", &bd, &mut buf);
         assert_eq!(&buf[..n], b"2024-01-01");
+    }
+
+    #[test]
+    fn strftime_overflowing_width_fails_cleanly() {
+        // Found by fuzz_time: the width parse multiplied past usize::MAX.
+        let bd = epoch_to_broken_down(1_704_067_200);
+        let mut buf = [0u8; 64];
+        for fmt in [
+            &b"%99999999999999999999999Y"[..],
+            b"%_99999999999999999999999B",
+            b"%-99999999999999999999999c",
+        ] {
+            assert_eq!(format_strftime(fmt, &bd, &mut buf), 0);
+        }
+        let n = format_strftime(b"%05Y", &bd, &mut buf);
+        assert_eq!(&buf[..n], b"02024");
     }
 
     #[test]

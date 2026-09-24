@@ -762,6 +762,8 @@ EOF
     tz_case=$((tz_case + 1))
     run_corpus_case "${mode}" "localtime_tz_${tz_case}" /usr/bin/env "TZ=${tz_value}" "${LOCALTIME_TZ_BIN}" || mode_failed=1
   done
+  # Every transition 1900-2100 in 44 zones, bisected to the second (~7.9k lines).
+  run_corpus_case "${mode}" "localtime_tz_transition_sweep" "${LOCALTIME_TZ_BIN}" sweep || mode_failed=1
   run_corpus_case "${mode}" "date_tz_new_york" /usr/bin/env TZ=America/New_York LC_ALL=C date -d @1700000000 || mode_failed=1
   run_corpus_case "${mode}" "ls_long_tz_sydney" /usr/bin/env TZ=Australia/Sydney LC_ALL=C ls -l "${tree}/a.txt" "${tree}/sub" || mode_failed=1
   run_corpus_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1

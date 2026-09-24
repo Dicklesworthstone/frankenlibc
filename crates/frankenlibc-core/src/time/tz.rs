@@ -650,12 +650,20 @@ impl Zone {
             }
         }
         let std_off = std_off.or(dst_off).unwrap_or(self.types[0].utoff);
-        let dst_off = dst_off.unwrap_or(std_off);
+        // glibc sets `daylight` whenever the zone ever transitions into a
+        // daylight type, even one whose offset equals standard time
+        // (Europe/Istanbul's EEST +03, Africa/Casablanca's +00); it is 0 only
+        // for zones with no daylight type at all (Asia/Kathmandu, UTC).
+        let daylight = self
+            .transition_types
+            .iter()
+            .any(|&i| self.types[usize::from(i)].isdst)
+            || self.footer.as_ref().is_some_and(|f| f.dst.is_some());
         TzGlobals {
             std_abbr,
             dst_abbr,
             timezone: -i64::from(std_off),
-            daylight: std_off != dst_off,
+            daylight,
         }
     }
 
@@ -864,6 +872,27 @@ mod tests {
             ),
             ("EST", "EDT", 18_000, true)
         );
+    }
+
+    #[test]
+    fn tzif_daylight_tracks_any_dst_type_not_offset_difference() {
+        // (zone, glibc tzname[0], timezone, daylight); Istanbul's last DST
+        // (EEST) had the same +03 offset as today's standard time.
+        for (zone, std_abbr, tz, daylight) in [
+            ("Europe/Istanbul", "+03", -10_800, true),
+            ("Asia/Kathmandu", "+0545", -20_700, false),
+            ("Asia/Tokyo", "JST", -32_400, true),
+        ] {
+            let Ok(bytes) = std::fs::read(format!("/usr/share/zoneinfo/{zone}")) else {
+                continue; // tzdata not installed on this runner
+            };
+            let g = parse_tzif(&bytes).expect("valid TZif").globals();
+            assert_eq!(
+                (g.std_abbr.as_str(), g.timezone, g.daylight),
+                (std_abbr, tz, daylight),
+                "{zone}"
+            );
+        }
     }
 
     #[test]
