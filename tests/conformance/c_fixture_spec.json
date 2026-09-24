@@ -331,6 +331,56 @@
         "strict": { "expected_exit": 0, "expected_stdout_contains": "fixture_nss: PASS" },
         "hardened": { "expected_exit": 0, "expected_stdout_contains": "fixture_nss: PASS" }
       }
+    },
+    {
+      "id": "fixture_cxx_runtime",
+      "source": "tests/integration/fixture_cxx_runtime.cpp",
+      "description": "C++ runtime under preload: libstdc++ static locale init (newlocale(1<<LC_ALL)), exceptions via _dl_find_object, threads, call_once, container churn.",
+      "covered_symbols": [
+        "newlocale",
+        "pthread_once",
+        "_dl_find_object",
+        "pthread_create",
+        "pthread_mutex_lock",
+        "malloc",
+        "free"
+      ],
+      "covered_modules": [
+        "locale_abi",
+        "pthread_abi",
+        "glibc_internal_abi",
+        "malloc_abi"
+      ],
+      "tests": 7,
+      "compile_flags": [
+        "-O2",
+        "-Wall",
+        "-Wextra"
+      ],
+      "link_flags": [
+        "-pthread"
+      ],
+      "spec_traceability": {
+        "posix": [
+          "POSIX.1-2017 newlocale category_mask; pthread_once"
+        ],
+        "c11": [
+          "ISO C++17 [locale], [except], [thread] runtime requirements on the host C library"
+        ],
+        "internal": [
+          "bd-rc0923-epic-eeuy4f.2: glibc newlocale normalizes mask == 1<<LC_ALL; libgcc >= 12 has no dl_iterate_phdr fallback when _dl_find_object fails"
+        ]
+      },
+      "mode_expectations": {
+        "strict": {
+          "expected_exit": 0,
+          "expected_stdout_contains": "fixture_cxx_runtime: PASS"
+        },
+        "hardened": {
+          "expected_exit": 0,
+          "expected_stdout_contains": "fixture_cxx_runtime: PASS"
+        }
+      }
     }
   ],
   "execution": {
@@ -343,9 +393,9 @@
     "output_dir": "target/c_fixture_suite/"
   },
   "coverage_summary": {
-    "total_fixtures": 13,
-    "total_tests": 72,
-    "covered_symbols": 96,
+    "total_fixtures": 14,
+    "total_tests": 79,
+    "covered_symbols": 99,
     "covered_modules": [
       "malloc_abi",
       "string_abi",
@@ -429,10 +479,10 @@
     ]
   },
   "summary": {
-    "total_fixtures": 13,
-    "total_tests": 72,
-    "modules_covered": 13,
-    "symbols_covered": 96,
+    "total_fixtures": 14,
+    "total_tests": 79,
+    "modules_covered": 15,
+    "symbols_covered": 99,
     "execution_modes": 2
   }
 }

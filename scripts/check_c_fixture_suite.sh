@@ -120,13 +120,18 @@ PY
     )
     for src in "${fixture_sources[@]}"; do
         name="$(basename "${src}" .c)"
+        name="${name%.cpp}"
         flags=""
-        if [[ "${name}" == fixture_pthread* ]]; then
+        compiler=cc
+        if [[ "${src}" == *.cpp ]]; then
+            compiler=c++
+            flags="-pthread"
+        elif [[ "${name}" == fixture_pthread* ]]; then
             flags="-pthread"
         elif [[ "${name}" == "fixture_math" ]]; then
             flags="-lm"
         fi
-        if ! cc -O2 -Wall -Wextra "${src}" -o "${tmpdir}/${name}" ${flags} 2>/dev/null; then
+        if ! "${compiler}" -O2 -Wall -Wextra "${src}" -o "${tmpdir}/${name}" ${flags} 2>/dev/null; then
             echo "FAIL: ${name} does not compile"
             compile_fails=$((compile_fails + 1))
         fi

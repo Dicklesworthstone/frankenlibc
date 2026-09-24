@@ -147,17 +147,22 @@ fi
 
 for src in "${matched_sources[@]}"; do
   name="$(basename "${src}" .c)"
+  name="${name%.cpp}"
   bin="${BIN_DIR}/${name}"
 
   cflags="-O2 -Wall -Wextra"
   ldflags=""
-  if [[ "${name}" == fixture_pthread* ]]; then
+  compiler=cc
+  if [[ "${src}" == *.cpp ]]; then
+    compiler=c++
+    ldflags="-pthread"
+  elif [[ "${name}" == fixture_pthread* ]]; then
     ldflags="-pthread"
   elif [[ "${name}" == "fixture_math" ]]; then
     ldflags="-lm"
   fi
 
-  if cc ${cflags} "${src}" -o "${bin}" ${ldflags} 2>"${RUN_DIR}/${name}_compile.log"; then
+  if "${compiler}" ${cflags} "${src}" -o "${bin}" ${ldflags} 2>"${RUN_DIR}/${name}_compile.log"; then
     echo "[OK] ${name}"
     fixture_bins+=("${bin}")
   else
