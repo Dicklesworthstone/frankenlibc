@@ -159,6 +159,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
+cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
 cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
@@ -780,6 +782,10 @@ EOF
   run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
+  # LC_CTYPE: wide classification/case/width, every code point.
+  for wide_locale in C C.UTF-8 en_US.UTF-8; do
+    run_corpus_case "${mode}" "wide_ctype_${wide_locale//[.-]/_}" "${WIDE_CTYPE_BIN}" "${wide_locale}" || mode_failed=1
+  done
   # LC_COLLATE: sort and ls order by the locale's collation.
   run_corpus_case "${mode}" "sort_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 sort "${tree}/collate.txt" || mode_failed=1
   run_corpus_case "${mode}" "ls_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 ls "${tree}/collate_dir" || mode_failed=1
