@@ -41,6 +41,9 @@ mod ifunc;
 #[path = "dlfcn_binding.rs"]
 mod binding;
 
+#[path = "dlfcn_cxa.rs"]
+mod cxa;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -375,6 +378,7 @@ impl SymbolLookup for Resolver<'_> {
     fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
         if name == "__tls_get_addr" { return tls::resolver_address(version); }
         if name == "__cxa_thread_atexit_impl" { return thread_exit::resolver_address(version); }
+        if matches!(name, "__cxa_atexit" | "__cxa_finalize") { return cxa::resolver_address(name, version); }
         for dso in &self.scope {
             if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
                 // All IFUNC references belong to the explicit late pass.
@@ -660,15 +664,21 @@ fn collect_unreachable() -> Option<()> {
         for &id in &ids {
             let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
             dso.retiring = true;
-            callbacks.extend(dso.callbacks.fini.iter().copied());
+            callbacks.push((id, dso.callbacks.fini.clone()));
         }
         // Pin the WHOLE batch, not just the currently executing finalizer: a
         // dependency in a cycle may still call back into an earlier member.
         drop(dsos);
-        for address in callbacks {
-            // SAFETY: all validated callback mappings remain pinned above.
-            unsafe { lifecycle::call_fini(address) };
+        for (id, callbacks) in callbacks {
+            for address in callbacks {
+                // SAFETY: all validated callback mappings remain pinned above.
+                unsafe { lifecycle::call_fini(address) };
+            }
+            cxa::finalize_owners(&[id])?;
         }
+        // A later finalizer may register onto an earlier member of a cycle.
+        // Drain those entries too before dropping any mapping in this batch.
+        cxa::finalize_owners(&ids)?;
         let mut dsos = registry().lock().ok()?;
         dsos.retain(|dso| !ids.contains(&dso.id));
         // Nested closes can make an external provider unreachable. Recompute
