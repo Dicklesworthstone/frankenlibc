@@ -1710,6 +1710,54 @@ fn malloc_stats_reset_for_harness_clears_exported_snapshot() {
     assert_eq!(cleared["bytes_allocated"].as_u64(), Some(0));
 }
 
+/// Multi-threaded stats accumulate per thread and merge in batches of 256
+/// (bd-rc0923-epic-eeuy4f.26). A reader must still see every thread's unmerged
+/// remainder, including after those threads exit, and frees made by a thread
+/// other than the allocating one. 300 per thread leaves 44 unmerged in each, so
+/// a reader that skipped the per-thread sweep would see at most 4 * 256.
+#[test]
+fn multithreaded_stats_readers_see_unmerged_per_thread_batches() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::malloc_stats_init_for_tests();
+    let snapshot = |run: &str| -> serde_json::Value {
+        serde_json::from_str(export_alloc_stats_snapshot_jsonl("bd-26", run, "strict").trim())
+            .expect("allocator snapshot should parse")
+    };
+    let count = |value: &serde_json::Value, field: &str| value[field].as_u64().unwrap_or(0);
+
+    const THREADS: usize = 4;
+    const PER_THREAD: usize = 300;
+    let before = snapshot("before");
+    let workers: Vec<_> = (0..THREADS)
+        .map(|_| {
+            std::thread::spawn(|| {
+                let mut ptrs = [0usize; PER_THREAD];
+                for p in &mut ptrs {
+                    *p = unsafe { malloc(48) } as usize;
+                    assert_ne!(*p, 0);
+                }
+                ptrs
+            })
+        })
+        .collect();
+    let ptrs: Vec<[usize; PER_THREAD]> = workers.into_iter().map(|w| w.join().unwrap()).collect();
+    let allocated = snapshot("allocated");
+    let total = (THREADS * PER_THREAD) as u64;
+    assert!(
+        count(&allocated, "allocations_total") >= count(&before, "allocations_total") + total,
+        "before={before} after={allocated}"
+    );
+
+    for p in ptrs.iter().flatten() {
+        unsafe { free(*p as *mut c_void) };
+    }
+    let freed = snapshot("freed");
+    assert!(
+        count(&freed, "frees_total") >= count(&allocated, "frees_total") + total,
+        "allocated={allocated} freed={freed}"
+    );
+}
+
 /// The size-class ceiling is the boundary `segment_allocate` splits on, so pin
 /// BOTH sides of it (bd-dcrhgl).
 ///
@@ -2056,7 +2104,10 @@ fn calloc_after_realloc_shrink_and_free_is_zeroed() {
 // without it, and this test's contract IS the counter split. Also runs 30
 // 1MiB alloc/free cycles — run with the suite, not alongside timing tests.
 #[test]
-#[cfg_attr(not(feature = "alloc-path-telemetry"), ignore = "requires alloc-path-telemetry")]
+#[cfg_attr(
+    not(feature = "alloc-path-telemetry"),
+    ignore = "requires alloc-path-telemetry"
+)]
 fn swing2_large_alloc_path_attribution() {
     // bd-mqgee7: the large-allocation class (>32KiB MAX_SMALL) was never
     // measured — this pins WHICH malloc path serves it, so the certified
