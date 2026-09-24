@@ -4,6 +4,8 @@
 //! (`clock_gettime`, etc.) live in the ABI crate; this module provides
 //! validators and the `epoch_to_broken_down` converter.
 
+pub mod tz;
+
 /// Represents a timespec value (seconds + nanoseconds).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Timespec {
