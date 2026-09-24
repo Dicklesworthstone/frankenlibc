@@ -174,6 +174,9 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     // Run atfork prepare handlers (acquire locks in parent before fork).
     crate::pthread_abi::run_atfork_prepare();
+    // Stdio before the arena shards: normal code takes stdio locks and then
+    // allocates, and in hardened mode the registry's first use allocates.
+    let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Acquire ENVIRON_LOCK before fork so the child does not inherit a held
@@ -182,7 +185,6 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // no thread can ever release in the new address space. Mirrors the
     // pipeline atfork pattern. (REVIEW round 4: fork-after-setenv deadlock.)
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
-    let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
@@ -190,11 +192,6 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     let pid = raw_syscall::sys_clone_fork(libc::SIGCHLD as usize);
     drop(malloc_guard);
-    if pid == Ok(0) {
-        stdio_guard.release_in_child();
-    } else {
-        stdio_guard.release_in_parent();
-    }
     let pid = match pid {
         Ok(p) => p,
         Err(e) => {
@@ -220,6 +217,12 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
     drop(_environ_guard);
     drop(_pipeline_guard);
+    // After the arena guard is gone: the child side allocates.
+    if pid == 0 {
+        stdio_guard.release_in_child();
+    } else {
+        stdio_guard.release_in_parent();
+    }
 
     if pid == 0 {
         // Child: run child handlers to reinitialize state.

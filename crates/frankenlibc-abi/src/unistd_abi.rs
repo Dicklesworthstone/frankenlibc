@@ -5090,13 +5090,19 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // setenv via ENVIRON_LOCK before the syscall. (Same hazard class as
     // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
     crate::pthread_abi::run_atfork_prepare();
+    // Stdio before the arena shards: normal code takes stdio locks and then
+    // allocates, and in hardened mode the registry's first use allocates.
+    let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // SAFETY: fork via raw syscall
-    let pid = match syscall::sys_clone_fork(0) {
+    let pid = syscall::sys_clone_fork(0);
+    drop(malloc_guard);
+    let pid = match pid {
         Ok(p) => p,
         Err(_) => {
             drop(_environ_guard);
@@ -5112,6 +5118,12 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     }
     drop(_environ_guard);
     drop(_pipeline_guard);
+    // After the arena guard is gone: the child side allocates.
+    if pid == 0 {
+        stdio_guard.release_in_child();
+    } else {
+        stdio_guard.release_in_parent();
+    }
 
     if pid > 0 {
         // Parent: run atfork_parent for symmetry with fork(), then exit.
@@ -9478,6 +9490,9 @@ pub unsafe extern "C" fn forkpty(
     }
 
     crate::pthread_abi::run_atfork_prepare();
+    // Stdio before the arena shards: normal code takes stdio locks and then
+    // allocates, and in hardened mode the registry's first use allocates.
+    let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
@@ -9486,8 +9501,11 @@ pub unsafe extern "C" fn forkpty(
     // in-flight setenv before the clone.
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
-    let pid = match syscall::sys_clone_fork(libc::SIGCHLD as usize) {
+    let pid = syscall::sys_clone_fork(libc::SIGCHLD as usize);
+    drop(malloc_guard);
+    let pid = match pid {
         Ok(p) => p,
         Err(_) => {
             drop(_environ_guard);
@@ -9505,6 +9523,12 @@ pub unsafe extern "C" fn forkpty(
     }
     drop(_environ_guard);
     drop(_pipeline_guard);
+    // After the arena guard is gone: the child side allocates.
+    if pid == 0 {
+        stdio_guard.release_in_child();
+    } else {
+        stdio_guard.release_in_parent();
+    }
 
     if pid == 0 {
         crate::pthread_abi::run_atfork_child();

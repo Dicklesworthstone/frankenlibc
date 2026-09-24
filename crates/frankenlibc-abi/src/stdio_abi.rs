@@ -2087,9 +2087,8 @@ fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
     ensure_host_libio_exit_safe();
 
     use std::sync::atomic::Ordering;
-    let PTR = &REGISTRY_PTR;
     static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    let p = PTR.load(Ordering::Acquire);
+    let p = REGISTRY_PTR.load(Ordering::Acquire);
     if !p.is_null() {
         return unsafe { &*p };
     }
@@ -2099,12 +2098,12 @@ fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
         .is_ok()
     {
         let reg = Box::new(FastRegistryMutex::new(StreamRegistry::new()));
-        PTR.store(Box::into_raw(reg), Ordering::Release);
-        return unsafe { &*PTR.load(Ordering::Acquire) };
+        REGISTRY_PTR.store(Box::into_raw(reg), Ordering::Release);
+        return unsafe { &*REGISTRY_PTR.load(Ordering::Acquire) };
     }
     // Another thread is initializing — spin wait (no futex).
     loop {
-        let p = PTR.load(Ordering::Acquire);
+        let p = REGISTRY_PTR.load(Ordering::Acquire);
         if !p.is_null() {
             return unsafe { &*p };
         }
