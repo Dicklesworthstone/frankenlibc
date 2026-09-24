@@ -910,6 +910,9 @@ def validate_l1_objective_gate_consistency(
         "hardened_status": modes.get("hardened", {}).get("status"),
         "perf_failures": summary.get("perf_failures"),
         "signature_guard_failures": summary.get("signature_guard_failures"),
+        # A tracked known failure is not a pass: it blocks L1 even though the
+        # smoke counters account for it separately from failures.
+        "xfails": summary.get("xfails", 0),
     }
     smoke_expected_outcome = "pass"
     if not smoke_obligation:

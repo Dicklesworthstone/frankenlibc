@@ -354,8 +354,13 @@ def normalize_cases(report: dict[str, Any]) -> list[dict[str, Any]]:
 
 def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> dict[str, Any]:
     modes: dict[str, dict[str, Any]] = {}
+    # A tracked known failure (status "xfail") is counted in xfails only, for
+    # every failure kind: functional, perf, guard, valgrind, parity. It must
+    # still fail (an unexpected pass is XPASS in ld_preload_smoke.sh).
+    tracked = [case for case in cases if case.get("status") != "xfail"]
     for mode in ("strict", "hardened"):
-        mode_cases = [case for case in cases if case.get("mode") == mode]
+        all_mode_cases = [case for case in cases if case.get("mode") == mode]
+        mode_cases = [case for case in tracked if case.get("mode") == mode]
         mode_signature_guard = sum(1 for case in mode_cases if case.get("signature_guard_triggered"))
         mode_perf_failures = sum(
             1 for case in mode_cases if case.get("perf_required") and not case.get("perf_pass")
@@ -368,11 +373,11 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
         )
         mode_fails = sum(1 for case in mode_cases if case.get("status") == "fail")
         modes[mode] = {
-            "total_cases": len(mode_cases),
+            "total_cases": len(all_mode_cases),
             "passes": sum(1 for case in mode_cases if case.get("status") == "pass"),
             "fails": mode_fails,
             "skips": sum(1 for case in mode_cases if case.get("status") == "skip"),
-            "xfails": sum(1 for case in mode_cases if case.get("status") == "xfail"),
+            "xfails": sum(1 for case in all_mode_cases if case.get("status") == "xfail"),
             "signature_guard_failures": mode_signature_guard,
             "strict_parity_failures": mode_strict_parity_failures,
             "perf_failures": mode_perf_failures,
@@ -385,10 +390,10 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
                 mode_strict_parity_failures,
             ),
         }
-    signature_guard = sum(1 for case in cases if case.get("signature_guard_triggered"))
-    perf_failures = sum(1 for case in cases if case.get("perf_required") and not case.get("perf_pass"))
+    signature_guard = sum(1 for case in tracked if case.get("signature_guard_triggered"))
+    perf_failures = sum(1 for case in tracked if case.get("perf_required") and not case.get("perf_pass"))
     valgrind_failures = sum(
-        1 for case in cases if case.get("valgrind_checked") and not case.get("valgrind_pass")
+        1 for case in tracked if case.get("valgrind_checked") and not case.get("valgrind_pass")
     )
     fails = sum(1 for case in cases if case.get("status") == "fail")
     summary = {

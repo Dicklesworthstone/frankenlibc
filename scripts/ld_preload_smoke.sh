@@ -693,7 +693,9 @@ run_optional_case() {
 # Known failures, each tied to an open bead: "mode:label=bead ...". A listed
 # case that fails is reported as XFAIL (not PASS, not a gate failure); a listed
 # case that PASSES fails the run, so the entry must be removed with the fix.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
+# Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
+# is XPASS (a failure) so the entry is removed once fixed.
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-strict:fork_multithreaded_parent=bd-rc0923-epic-eeuy4f.25}"
 xfails=0
 
 known_failure_bead() {
@@ -951,8 +953,12 @@ with open(env["LD_PRELOAD_SMOKE_CASE_TSV"], "r", encoding="utf-8") as fh:
         )
 
 modes = {}
+# A tracked known failure (status "xfail") counts only in xfails, for every
+# failure kind, matching check_ld_preload_smoke_regeneration.sh.
+tracked = [c for c in cases if c["status"] != "xfail"]
 for mode in ("strict", "hardened"):
     mode_cases = [c for c in cases if c["mode"] == mode]
+    mode_tracked = [c for c in tracked if c["mode"] == mode]
     mode_signature_counts = Counter(
         c["failure_signature"] for c in mode_cases if c["failure_signature"] != "none"
     )
@@ -962,20 +968,20 @@ for mode in ("strict", "hardened"):
         "fails": sum(1 for c in mode_cases if c["status"] == "fail"),
         "xfails": sum(1 for c in mode_cases if c["status"] == "xfail"),
         "skips": sum(1 for c in mode_cases if c["status"] == "skip"),
-        "signature_guard_failures": sum(1 for c in mode_cases if c["signature_guard_triggered"]),
+        "signature_guard_failures": sum(1 for c in mode_tracked if c["signature_guard_triggered"]),
         "strict_parity_failures": sum(
             1
-            for c in mode_cases
+            for c in mode_tracked
             if c["parity_required"] and not c["parity_pass"]
         ),
         "perf_failures": sum(
             1
-            for c in mode_cases
+            for c in mode_tracked
             if c["perf_required"] and not c["perf_pass"]
         ),
         "valgrind_failures": sum(
             1
-            for c in mode_cases
+            for c in mode_tracked
             if c["valgrind_checked"] and not c["valgrind_pass"]
         ),
         "failure_signature_counts": dict(mode_signature_counts),
@@ -1010,9 +1016,9 @@ payload = {
         "fails": int(env["LD_PRELOAD_SMOKE_FAILS"]),
         "skips": int(env["LD_PRELOAD_SMOKE_SKIPS"]),
         "xfails": int(env.get("LD_PRELOAD_SMOKE_XFAILS", "0")),
-        "signature_guard_failures": sum(1 for c in cases if c["signature_guard_triggered"]),
-        "perf_failures": sum(1 for c in cases if c["perf_required"] and not c["perf_pass"]),
-        "valgrind_failures": sum(1 for c in cases if c["valgrind_checked"] and not c["valgrind_pass"]),
+        "signature_guard_failures": sum(1 for c in tracked if c["signature_guard_triggered"]),
+        "perf_failures": sum(1 for c in tracked if c["perf_required"] and not c["perf_pass"]),
+        "valgrind_failures": sum(1 for c in tracked if c["valgrind_checked"] and not c["valgrind_pass"]),
         "failure_signature_counts": dict(failure_signature_counts),
         "overall_failed": bool(int(env["LD_PRELOAD_SMOKE_OVERALL_FAILED"])),
     },

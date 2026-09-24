@@ -445,7 +445,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
         ),
         (
             "replacement-level-l1-objective-gate-status",
-            ("levels.1.objective_gate.status", json!("pass")),
+            ("levels.1.objective_gate.status", json!("blocked")),
         ),
         (
             "replacement-level-l1-promotion-outcome",
@@ -490,7 +490,7 @@ fn replacement_level_claim_control_rows_are_explicit() -> TestResult {
             (
                 "levels.1.objective_gate.status_reason",
                 json!(
-                    "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T174903Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes) is green in both strict and hardened modes with no tracked known failures."
+                    "The declared L1 interpose level remains the current taxonomy level, but the L1 objective gate is blocked: the real-world preload corpus (run rc0923-corpus-20260924T195208Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent) has no failures but one tracked known failure: fork_multithreaded_parent exceeds the strict perf-ratio budget (fork is ~4x glibc; bd-rc0923-epic-eeuy4f.25)."
                 ),
             ),
         ),
@@ -5073,7 +5073,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-run-id",
-            ("run_id", json!("rc0923-corpus-20260924T174903Z")),
+            ("run_id", json!("rc0923-corpus-20260924T195208Z")),
         ),
         (
             "ld-preload-smoke-lib-path",
@@ -5089,9 +5089,9 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ("ld-preload-smoke-stress-iters", ("stress_iters", json!(5))),
         (
             "ld-preload-smoke-total-cases",
-            ("summary.total_cases", json!(192)),
+            ("summary.total_cases", json!(194)),
         ),
-        ("ld-preload-smoke-passes", ("summary.passes", json!(188))),
+        ("ld-preload-smoke-passes", ("summary.passes", json!(189))),
         ("ld-preload-smoke-skips", ("summary.skips", json!(4))),
         (
             "ld-preload-smoke-no-signature-guard-failures",
@@ -5123,7 +5123,7 @@ fn ld_preload_smoke_rows_are_explicit() -> TestResult {
         ),
         (
             "ld-preload-smoke-hardened-passes",
-            ("modes.hardened.passes", json!(94)),
+            ("modes.hardened.passes", json!(95)),
         ),
         (
             "ld-preload-smoke-hardened-skips",

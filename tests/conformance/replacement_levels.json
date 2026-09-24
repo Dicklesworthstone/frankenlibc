@@ -81,8 +81,8 @@
       },
       "objective_gate": {
         "bead": "bd-gtf.4",
-        "status": "pass",
-        "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T174903Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes) is green in both strict and hardened modes with no tracked known failures.",
+        "status": "blocked",
+        "status_reason": "The declared L1 interpose level remains the current taxonomy level, but the L1 objective gate is blocked: the real-world preload corpus (run rc0923-corpus-20260924T195208Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent) has no failures but one tracked known failure: fork_multithreaded_parent exceeds the strict perf-ratio budget (fork is ~4x glibc; bd-rc0923-epic-eeuy4f.25).",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -135,17 +135,19 @@
               "strict_status": "green",
               "hardened_status": "green",
               "perf_failures": 0,
-              "signature_guard_failures": 0
+              "signature_guard_failures": 0,
+          "xfails": 0
             },
             "actual": {
-              "run_id": "rc0923-corpus-20260924T174903Z",
+              "run_id": "rc0923-corpus-20260924T195208Z",
               "overall_failed": false,
               "strict_status": "green",
               "hardened_status": "green",
               "perf_failures": 0,
-              "signature_guard_failures": 0
+              "signature_guard_failures": 0,
+          "xfails": 1
             },
-            "outcome": "pass"
+            "outcome": "blocked"
           },
           {
             "id": "claim_reconciliation_clean",
