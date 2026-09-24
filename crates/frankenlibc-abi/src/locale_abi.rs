@@ -234,6 +234,7 @@ pub fn locale_reset_active_charset_for_tests() {
     for slot in &NAMED {
         slot.store(std::ptr::null_mut(), Ordering::Release);
     }
+    CTYPE_TABLES.store(std::ptr::null_mut(), Ordering::Release);
     set_category_charset(locale_core::LC_ALL, Charset::Ascii);
 }
 
@@ -285,6 +286,46 @@ struct NamedCategory {
     category: c_int,
     name: Box<[u8]>,
     blob: CategoryBlob<'static>,
+    /// For LC_CTYPE: the wide-character class/case/width tables.
+    ctype: Option<frankenlibc_core::locale::data::CtypeTables<'static>>,
+}
+
+/// The wide-character tables of the active LC_CTYPE (null: see
+/// [`wide_ctype`]).
+static CTYPE_TABLES: AtomicPtr<frankenlibc_core::locale::data::CtypeTables<'static>> =
+    AtomicPtr::new(std::ptr::null_mut());
+
+/// How wide-character classification, case mapping and `wcwidth` behave.
+pub(crate) enum WideCtype {
+    /// The C/POSIX locale: ASCII only, as glibc's built-in C locale.
+    Ascii,
+    /// The active locale's compiled tables.
+    Tables(&'static frankenlibc_core::locale::data::CtypeTables<'static>),
+    /// UTF-8 with no locale data available: fl's built-in Unicode tables.
+    Builtin,
+}
+
+#[inline]
+pub(crate) fn wide_ctype() -> WideCtype {
+    // SAFETY: published pointers come from leaked, never-freed tables.
+    if let Some(t) = unsafe { CTYPE_TABLES.load(Ordering::Acquire).as_ref() } {
+        return WideCtype::Tables(t);
+    }
+    match active_charset() {
+        Charset::Ascii => WideCtype::Ascii,
+        Charset::Utf8 => WideCtype::Builtin,
+    }
+}
+
+/// glibc's C.UTF-8 is compiled locale data too; use it when installed so
+/// classification matches the system's Unicode version.
+fn c_utf8_ctype_tables() -> *mut frankenlibc_core::locale::data::CtypeTables<'static> {
+    static TABLES: OnceLock<usize> = OnceLock::new();
+    *TABLES.get_or_init(|| {
+        load_category(locale_core::LC_CTYPE, b"C.utf8")
+            .and_then(|n| n.ctype.as_ref())
+            .map_or(0, |t| (t as *const _) as usize)
+    }) as *mut _
 }
 
 /// Per-category named locale (by `category_slot`); null = built-in C data.
@@ -421,10 +462,17 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     }
     let mut stored = name.to_vec();
     stored.push(0);
+    let blob = blob?;
+    let ctype = if category == locale_core::LC_CTYPE {
+        frankenlibc_core::locale::data::CtypeTables::from_blob(&blob)
+    } else {
+        None
+    };
     let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
         category,
         name: stored.into_boxed_slice(),
-        blob: blob?,
+        blob,
+        ctype,
     }));
     loaded.push(entry);
     Some(entry)
@@ -461,6 +509,13 @@ fn apply_category(category: c_int, resolved: Resolved) {
         Resolved::Builtin(charset) => {
             NAMED[slot].store(std::ptr::null_mut(), Ordering::Release);
             set_category_charset(category, charset);
+            if category == locale_core::LC_CTYPE {
+                let tables = match charset {
+                    Charset::Ascii => std::ptr::null_mut(),
+                    Charset::Utf8 => c_utf8_ctype_tables(),
+                };
+                CTYPE_TABLES.store(tables, Ordering::Release);
+            }
         }
         Resolved::Named(n) => {
             NAMED[slot].store((n as *const NamedCategory).cast_mut(), Ordering::Release);
@@ -471,6 +526,12 @@ fn apply_category(category: c_int, resolved: Resolved) {
                 Charset::Ascii
             };
             set_category_charset(category, charset);
+            if category == locale_core::LC_CTYPE {
+                let tables = n.ctype.as_ref().map_or(std::ptr::null_mut(), |t| {
+                    (t as *const frankenlibc_core::locale::data::CtypeTables<'static>).cast_mut()
+                });
+                CTYPE_TABLES.store(tables, Ordering::Release);
+            }
             if category == locale_core::LC_CTYPE
                 && let Some(off) = n.blob.offset(14)
             {

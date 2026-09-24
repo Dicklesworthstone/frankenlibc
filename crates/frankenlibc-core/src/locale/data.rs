@@ -190,6 +190,129 @@ impl<'a> LocaleArchive<'a> {
     }
 }
 
+/// Wide-character class names, in the order [`CtypeTables`] indexes them.
+pub const WIDE_CLASSES: [&[u8]; 12] = [
+    b"upper", b"lower", b"alpha", b"digit", b"xdigit", b"space", b"print", b"graph", b"blank",
+    b"cntrl", b"punct", b"alnum",
+];
+
+/// The wide-character tables of an `LC_CTYPE` blob: one bitmap table per
+/// class, the `toupper`/`tolower` delta maps and the `wcwidth` byte table,
+/// all in glibc's three-level format (a header of `shift1, bound, shift2,
+/// mask2, mask3`, then level-1 offsets; a zero offset means "absent").
+#[derive(Clone, Copy, Debug)]
+pub struct CtypeTables<'a> {
+    classes: [&'a [u8]; 12],
+    toupper: &'a [u8],
+    tolower: &'a [u8],
+    width: &'a [u8],
+}
+
+/// Item `index` of `blob` up to the next item's offset (or the blob end).
+fn item_slice<'a>(blob: &CategoryBlob<'a>, index: usize) -> Option<&'a [u8]> {
+    let start = blob.offset(index)?;
+    let end = blob
+        .offset(index + 1)
+        .filter(|&e| e >= start)
+        .unwrap_or(blob.bytes().len());
+    blob.bytes().get(start..end)
+}
+
+/// Position of `name` in a NUL-separated name list (ended by an empty name).
+fn name_index(list: &[u8], name: &[u8]) -> Option<usize> {
+    list.split(|&b| b == 0)
+        .take_while(|n| !n.is_empty())
+        .position(|n| n == name)
+}
+
+impl<'a> CtypeTables<'a> {
+    /// LC_CTYPE items: 10 CLASS_NAMES, 11 MAP_NAMES, 12 WIDTH,
+    /// 17 CLASS_OFFSET, 18 MAP_OFFSET.
+    pub fn from_blob(blob: &CategoryBlob<'a>) -> Option<Self> {
+        let class_names = item_slice(blob, 10)?;
+        let map_names = item_slice(blob, 11)?;
+        let class_offset = blob.word(17)? as usize;
+        let map_offset = blob.word(18)? as usize;
+        let mut classes: [&'a [u8]; 12] = [&[]; 12];
+        for (slot, name) in classes.iter_mut().zip(WIDE_CLASSES) {
+            *slot = item_slice(blob, class_offset + name_index(class_names, name)?)?;
+        }
+        Some(Self {
+            classes,
+            toupper: item_slice(blob, map_offset + name_index(map_names, b"toupper")?)?,
+            tolower: item_slice(blob, map_offset + name_index(map_names, b"tolower")?)?,
+            width: item_slice(blob, 12)?,
+        })
+    }
+
+    /// Whether `wc` is in class `class` (index into [`WIDE_CLASSES`]).
+    pub fn is_class(&self, class: usize, wc: u32) -> bool {
+        let Some(table) = self.classes.get(class) else {
+            return false;
+        };
+        match leaf(table, wc, 5) {
+            Some((leaf_off, index)) => read_u32(table, leaf_off + index * 4)
+                .is_some_and(|word| (word >> (wc & 0x1f)) & 1 != 0),
+            None => false,
+        }
+    }
+
+    fn map(table: &[u8], wc: u32) -> u32 {
+        match leaf(table, wc, 0) {
+            Some((leaf_off, index)) => {
+                read_u32(table, leaf_off + index * 4).map_or(wc, |delta| wc.wrapping_add(delta))
+            }
+            None => wc,
+        }
+    }
+
+    pub fn to_upper(&self, wc: u32) -> u32 {
+        Self::map(self.toupper, wc)
+    }
+
+    pub fn to_lower(&self, wc: u32) -> u32 {
+        Self::map(self.tolower, wc)
+    }
+
+    /// `wcwidth`: the table byte, 0xff (and absent) meaning -1.
+    pub fn width(&self, wc: u32) -> i32 {
+        match leaf(self.width, wc, 0) {
+            Some((leaf_off, index)) => match self.width.get(leaf_off + index) {
+                Some(&0xff) | None => -1,
+                Some(&w) => i32::from(w),
+            },
+            None => -1,
+        }
+    }
+}
+
+/// Walk levels 1 and 2 of a three-level table; returns the level-3 block
+/// offset and the index within it (`(wc >> shift3) & mask3`).
+fn leaf(table: &[u8], wc: u32, shift3: u32) -> Option<(usize, usize)> {
+    let shift1 = read_u32(table, 0)?;
+    let bound = read_u32(table, 4)?;
+    let index1 = wc.checked_shr(shift1).unwrap_or(0);
+    if index1 >= bound {
+        return None;
+    }
+    let lookup1 = read_u32(table, 20 + index1 as usize * 4)? as usize;
+    if lookup1 == 0 {
+        return None;
+    }
+    let shift2 = read_u32(table, 8)?;
+    let mask2 = read_u32(table, 12)?;
+    let index2 = (wc.checked_shr(shift2).unwrap_or(0) & mask2) as usize;
+    let lookup2 = read_u32(table, lookup1 + index2 * 4)? as usize;
+    if lookup2 == 0 {
+        return None;
+    }
+    let mask3 = read_u32(table, 16)?;
+    Some((
+        lookup2,
+        (wc.checked_shr(shift3).unwrap_or(0) & mask3) as usize,
+    ))
+}
+
 /// glibc's codeset normalization for locale names: keep only letters
 /// (lower-cased) and digits; an all-digit result gets an `iso` prefix.
 /// `UTF-8` -> `utf8`, `ISO-8859-1` -> `iso88591`, `8859-1` -> `iso88591`.
@@ -265,6 +388,26 @@ mod tests {
             "truncated table"
         );
         assert!(LocaleArchive::parse(b"garbage").is_none());
+    }
+
+    #[test]
+    fn ctype_tables_from_c_utf8_if_present() {
+        let Ok(bytes) = std::fs::read("/usr/lib/locale/C.utf8/LC_CTYPE") else {
+            return;
+        };
+        let blob = CategoryBlob::parse(0, &bytes).expect("LC_CTYPE");
+        let t = CtypeTables::from_blob(&blob).expect("tables");
+        let alpha = 2;
+        assert!(
+            t.is_class(alpha, 'a' as u32) && t.is_class(alpha, 0xE9) && t.is_class(alpha, 0x4E00)
+        );
+        assert!(!t.is_class(alpha, '1' as u32));
+        assert_eq!(t.to_upper(0xE9), 0xC9);
+        assert_eq!(t.to_lower('A' as u32), 'a' as u32);
+        assert_eq!(t.width('a' as u32), 1);
+        assert_eq!(t.width(0x4E00), 2);
+        assert_eq!(t.width(0x0301), 0);
+        assert_eq!(t.width(0x07), -1);
     }
 
     #[test]

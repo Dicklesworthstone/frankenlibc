@@ -683,6 +683,7 @@ fn iswxdigit_identifies_hex_digits() {
 
 #[test]
 fn wcwidth_reports_display_width() {
+    let _utf8 = utf8_locale();
     assert_eq!(unsafe { wcwidth(b'A' as u32) }, 1);
     assert_eq!(unsafe { wcwidth(0x754c) }, 2); // CJK char '界'
     assert_eq!(unsafe { wcwidth(0) }, 0); // NUL
@@ -691,6 +692,24 @@ fn wcwidth_reports_display_width() {
     assert_eq!(unsafe { wcwidth(0x20D0) }, 0); // Combining Diacritical Marks for Symbols
     assert_eq!(unsafe { wcwidth(0x3099) }, 0); // COMBINING KATAKANA-HIRAGANA VOICED SOUND MARK
     assert_eq!(unsafe { wcwidth(0xFE20) }, 0); // Combining Half Marks
+}
+
+/// glibc's built-in C locale classifies, maps and measures ASCII only
+/// (measured on glibc 2.43: iswalpha(0xE9)=0, towupper(0xE9)=0xE9,
+/// wcwidth(0x754C)=-1, wcwidth(0x7F)=-1).
+#[test]
+fn wide_ctype_in_c_locale_is_ascii_only() {
+    let _lock = utf8_locale();
+    let c = std::ffi::CString::new("C").unwrap();
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c.as_ptr()) };
+    assert_eq!(unsafe { iswalpha(0xE9) }, 0);
+    assert_ne!(unsafe { iswalpha(b'z' as u32) }, 0);
+    assert_eq!(unsafe { towupper(0xE9) }, 0xE9);
+    assert_eq!(unsafe { towupper(b'q' as u32) }, b'Q' as u32);
+    assert_eq!(unsafe { wcwidth(0x754C) }, -1);
+    assert_eq!(unsafe { wcwidth(0x7F) }, -1);
+    assert_eq!(unsafe { wcwidth(b'A' as u32) }, 1);
+    assert_eq!(unsafe { wcwidth(0) }, 0);
 }
 
 // ── wctype / iswctype ───────────────────────────────────────────────────────
@@ -1397,6 +1416,7 @@ fn wcsnlen_stops_at_nul_and_bound() {
 
 #[test]
 fn wcswidth_reports_width_and_nonprintable() {
+    let _utf8 = utf8_locale();
     let printable: [libc::wchar_t; 3] = [b'A' as libc::wchar_t, 0x754c_i32, 0];
     let non_printable: [libc::wchar_t; 2] = [0x07, 0];
 

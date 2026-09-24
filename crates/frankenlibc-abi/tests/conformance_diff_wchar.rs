@@ -526,6 +526,8 @@ fn wchar_subprocess_child_invocation() {
         }
         let empty = std::ffi::CString::new("").unwrap();
         unsafe { setlocale(libc::LC_ALL, empty.as_ptr()) };
+        // fl's wcwidth follows fl's LC_CTYPE: adopt the same environment.
+        unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, empty.as_ptr()) };
 
         // (codepoint, label, expected fl behavior matches glibc)
         const CASES: &[(u32, &str)] = &[

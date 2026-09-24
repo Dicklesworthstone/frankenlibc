@@ -3759,65 +3759,149 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
 // ===========================================================================
 // Wide character classification functions (wctype.h)
 // ===========================================================================
+//
+// Behaviour follows the active LC_CTYPE: ASCII only in the C locale (as
+// glibc's built-in C locale), the installed locale's compiled tables for a
+// named locale or C.UTF-8, and fl's built-in Unicode tables otherwise.
+
+/// Class indices into `frankenlibc_core::locale::data::WIDE_CLASSES`.
+const WC_UPPER: usize = 0;
+const WC_LOWER: usize = 1;
+const WC_ALPHA: usize = 2;
+const WC_DIGIT: usize = 3;
+const WC_XDIGIT: usize = 4;
+const WC_SPACE: usize = 5;
+const WC_PRINT: usize = 6;
+const WC_GRAPH: usize = 7;
+const WC_BLANK: usize = 8;
+const WC_CNTRL: usize = 9;
+const WC_PUNCT: usize = 10;
+const WC_ALNUM: usize = 11;
+
+fn ascii_wide_class(class: usize, wc: u32) -> bool {
+    let Ok(c) = u8::try_from(wc) else {
+        return false;
+    };
+    if !c.is_ascii() {
+        return false;
+    }
+    match class {
+        WC_UPPER => c.is_ascii_uppercase(),
+        WC_LOWER => c.is_ascii_lowercase(),
+        WC_ALPHA => c.is_ascii_alphabetic(),
+        WC_DIGIT => c.is_ascii_digit(),
+        WC_XDIGIT => c.is_ascii_hexdigit(),
+        WC_SPACE => matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r'),
+        WC_PRINT => (0x20..=0x7e).contains(&c),
+        WC_GRAPH => (0x21..=0x7e).contains(&c),
+        WC_BLANK => c == b' ' || c == b'\t',
+        WC_CNTRL => c < 0x20 || c == 0x7f,
+        WC_PUNCT => c.is_ascii_punctuation(),
+        WC_ALNUM => c.is_ascii_alphanumeric(),
+        _ => false,
+    }
+}
+
+#[inline]
+fn wide_class(class: usize, wc: u32, builtin: fn(u32) -> bool) -> c_int {
+    c_int::from(match crate::locale_abi::wide_ctype() {
+        crate::locale_abi::WideCtype::Tables(t) => t.is_class(class, wc),
+        crate::locale_abi::WideCtype::Ascii => ascii_wide_class(class, wc),
+        crate::locale_abi::WideCtype::Builtin => builtin(wc),
+    })
+}
+
+#[inline]
+fn wide_width(wc: u32) -> c_int {
+    match crate::locale_abi::wide_ctype() {
+        crate::locale_abi::WideCtype::Tables(t) => t.width(wc),
+        crate::locale_abi::WideCtype::Ascii => match wc {
+            0 => 0,
+            0x20..=0x7e => 1,
+            _ => -1,
+        },
+        crate::locale_abi::WideCtype::Builtin => wchar_core::wcwidth(wc) as c_int,
+    }
+}
 
 /// POSIX `towupper` — convert wide character to uppercase.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towupper(wc: u32) -> u32 {
-    wchar_core::towupper(wc)
+    match crate::locale_abi::wide_ctype() {
+        crate::locale_abi::WideCtype::Tables(t) => t.to_upper(wc),
+        crate::locale_abi::WideCtype::Ascii => {
+            if (u32::from(b'a')..=u32::from(b'z')).contains(&wc) {
+                wc - 32
+            } else {
+                wc
+            }
+        }
+        crate::locale_abi::WideCtype::Builtin => wchar_core::towupper(wc),
+    }
 }
 
 /// POSIX `towlower` — convert wide character to lowercase.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn towlower(wc: u32) -> u32 {
-    wchar_core::towlower(wc)
+    match crate::locale_abi::wide_ctype() {
+        crate::locale_abi::WideCtype::Tables(t) => t.to_lower(wc),
+        crate::locale_abi::WideCtype::Ascii => {
+            if (u32::from(b'A')..=u32::from(b'Z')).contains(&wc) {
+                wc + 32
+            } else {
+                wc
+            }
+        }
+        crate::locale_abi::WideCtype::Builtin => wchar_core::towlower(wc),
+    }
 }
 
 /// POSIX `iswalnum` — test for alphanumeric wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswalnum(wc: u32) -> c_int {
-    wchar_core::iswalnum(wc) as c_int
+    wide_class(WC_ALNUM, wc, wchar_core::iswalnum)
 }
 
 /// POSIX `iswalpha` — test for alphabetic wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswalpha(wc: u32) -> c_int {
-    wchar_core::iswalpha(wc) as c_int
+    wide_class(WC_ALPHA, wc, wchar_core::iswalpha)
 }
 
 /// POSIX `iswdigit` — test for decimal digit wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswdigit(wc: u32) -> c_int {
-    wchar_core::iswdigit(wc) as c_int
+    wide_class(WC_DIGIT, wc, wchar_core::iswdigit)
 }
 
 /// POSIX `iswlower` — test for lowercase wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswlower(wc: u32) -> c_int {
-    wchar_core::iswlower(wc) as c_int
+    wide_class(WC_LOWER, wc, wchar_core::iswlower)
 }
 
 /// POSIX `iswupper` — test for uppercase wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswupper(wc: u32) -> c_int {
-    wchar_core::iswupper(wc) as c_int
+    wide_class(WC_UPPER, wc, wchar_core::iswupper)
 }
 
 /// POSIX `iswspace` — test for whitespace wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswspace(wc: u32) -> c_int {
-    wchar_core::iswspace(wc) as c_int
+    wide_class(WC_SPACE, wc, wchar_core::iswspace)
 }
 
 /// POSIX `iswprint` — test for printable wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswprint(wc: u32) -> c_int {
-    wchar_core::iswprint(wc) as c_int
+    wide_class(WC_PRINT, wc, wchar_core::iswprint)
 }
 
 /// `wcwidth` — determine display width of a wide character.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcwidth(wc: u32) -> c_int {
-    wchar_core::wcwidth(wc) as c_int
+    wide_width(wc)
 }
 
 // [End of wchar string functions]
@@ -3990,7 +4074,21 @@ pub unsafe extern "C" fn wcswidth(s: *const libc::wchar_t, n: usize) -> c_int {
     let len = unsafe { wcsnlen(s, n) };
     // SAFETY: `len <= n`; this limits reads to the caller-provided bound.
     let slice = unsafe { std::slice::from_raw_parts(s as *const u32, len) };
-    wide_core::wcswidth(slice, len) as c_int
+    if matches!(
+        crate::locale_abi::wide_ctype(),
+        crate::locale_abi::WideCtype::Builtin
+    ) {
+        return wide_core::wcswidth(slice, len) as c_int;
+    }
+    let mut total: c_int = 0;
+    for &wc in slice {
+        let w = wide_width(wc);
+        if w < 0 {
+            return -1;
+        }
+        total += w;
+    }
+    total
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6479,7 +6577,7 @@ pub unsafe extern "C" fn vfwscanf(
 /// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
-    wchar_core::iswblank(wc) as c_int
+    wide_class(WC_BLANK, wc, wchar_core::iswblank)
 }
 
 /// POSIX `iswcntrl` — test for control wide character.
@@ -6487,7 +6585,7 @@ pub unsafe extern "C" fn iswblank(wc: u32) -> c_int {
 /// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
-    wchar_core::iswcntrl(wc) as c_int
+    wide_class(WC_CNTRL, wc, wchar_core::iswcntrl)
 }
 
 /// POSIX `iswgraph` — test for graphic wide character.
@@ -6495,7 +6593,7 @@ pub unsafe extern "C" fn iswcntrl(wc: u32) -> c_int {
 /// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
-    wchar_core::iswgraph(wc) as c_int
+    wide_class(WC_GRAPH, wc, wchar_core::iswgraph)
 }
 
 /// POSIX `iswpunct` — test for punctuation wide character.
@@ -6503,7 +6601,7 @@ pub unsafe extern "C" fn iswgraph(wc: u32) -> c_int {
 /// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
-    wchar_core::iswpunct(wc) as c_int
+    wide_class(WC_PUNCT, wc, wchar_core::iswpunct)
 }
 
 /// POSIX `iswxdigit` — test for hexadecimal digit wide character.
@@ -6511,7 +6609,7 @@ pub unsafe extern "C" fn iswpunct(wc: u32) -> c_int {
 /// glibc-exact via the generated UTF-8 ctype table (bd-2g7oyh.254).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn iswxdigit(wc: u32) -> c_int {
-    wchar_core::iswxdigit(wc) as c_int
+    wide_class(WC_XDIGIT, wc, wchar_core::iswxdigit)
 }
 
 // ---------------------------------------------------------------------------

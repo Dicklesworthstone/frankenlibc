@@ -273,6 +273,8 @@ fn wctype_utf8_subprocess_invocation() {
     }
     let empty = std::ffi::CString::new("").unwrap();
     unsafe { setlocale(libc::LC_ALL, empty.as_ptr()) };
+    // fl's wide ctype follows fl's LC_CTYPE, so adopt the same environment.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, empty.as_ptr()) };
 
     let mut divs = Vec::new();
     for (wc, label) in UTF8_DIFF_CASES {
@@ -452,6 +454,8 @@ fn wctype_diff_coverage_report() {
 fn diff_towupper_multichar_returns_unchanged() {
     let utf8 = c"C.UTF-8";
     unsafe { libc::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
+    // fl's wide ctype follows fl's LC_CTYPE: select C.UTF-8 there too.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
     // Code points whose full uppercase is base+combining: glibc keeps them as-is.
     const UP_UNCHANGED: &[u32] = &[
         0x01F0, 0x0390, 0x03B0, 0x1E96, 0x1E97, 0x1E98, 0x1E99, 0x1E9A, 0x1F50, 0x1F52, 0x1F54,
@@ -482,6 +486,8 @@ fn diff_towupper_multichar_returns_unchanged() {
 fn diff_towupper_towlower_full_codepoint_sweep() {
     let utf8 = c"C.UTF-8";
     unsafe { libc::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
+    // fl's wide ctype follows fl's LC_CTYPE: select C.UTF-8 there too.
+    unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_CTYPE, utf8.as_ptr()) };
     let mut divs: Vec<String> = Vec::new();
     for cp in 0u32..=0x10FFFF {
         if (0xD800..=0xDFFF).contains(&cp) {
