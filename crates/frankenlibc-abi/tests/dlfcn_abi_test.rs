@@ -411,6 +411,51 @@ fn dlopen_nonexistent_library_returns_null() {
     );
 }
 
+/// Python loads every C extension by absolute path. The native loader cannot
+/// map ordinary glibc-linked DSOs (initial-exec TLS, deps owned by the host
+/// ld.so), and before bd-rc0923-epic-eeuy4f.3 that returned NULL with no host
+/// fallback, so `import sqlite3` failed under preload.
+#[test]
+fn dlopen_absolute_path_of_libc_linked_dso_resolves_and_runs() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let path = ["/usr/lib/x86_64-linux-gnu/libz.so.1", "/lib/x86_64-linux-gnu/libz.so.1"]
+        .into_iter()
+        .find(|p| std::path::Path::new(p).exists());
+    let Some(path) = path else {
+        panic!("libz.so.1 not installed; this gate needs a real libc-linked DSO");
+    };
+    let name = CString::new(path).unwrap();
+    let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
+    assert!(!handle.is_null(), "dlopen({path}) returned NULL: {:?}", unsafe {
+        let e = dlerror();
+        (!e.is_null()).then(|| CStr::from_ptr(e).to_string_lossy().into_owned())
+    });
+    let sym = CString::new("zlibVersion").unwrap();
+    let f = unsafe { dlsym(handle, sym.as_ptr()) };
+    assert!(!f.is_null(), "dlsym(zlibVersion) failed");
+    let zlib_version: unsafe extern "C" fn() -> *const std::ffi::c_char =
+        unsafe { std::mem::transmute(f) };
+    let v = unsafe { CStr::from_ptr(zlib_version()) }.to_string_lossy().into_owned();
+    assert!(v.starts_with('1'), "unexpected zlibVersion {v:?}");
+    assert_eq!(unsafe { dlclose(handle) }, 0);
+}
+
+#[test]
+fn dlopen_missing_absolute_path_reports_host_style_error() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let name = CString::new("/nonexistent_zzz_dir/libnope_12345.so").unwrap();
+    let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW) };
+    assert!(handle.is_null());
+    let err = unsafe { dlerror() };
+    assert!(!err.is_null(), "dlerror should be set");
+    let msg = unsafe { CStr::from_ptr(err) }.to_string_lossy().into_owned();
+    assert!(
+        msg.contains("/nonexistent_zzz_dir/libnope_12345.so")
+            && msg.contains("No such file or directory"),
+        "dlerror should carry the loader's reason, got {msg:?}"
+    );
+}
+
 #[test]
 fn dlsym_finds_known_symbol() {
     let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());

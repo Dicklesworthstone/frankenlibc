@@ -61,6 +61,97 @@ fn set_dlerror(msg: &'static [u8]) {
     }
 }
 
+/// Record a host-owned dlerror string (valid until the host's next dlerror on
+/// this thread, which is also glibc's lifetime rule for the returned text).
+#[cfg(not(feature = "standalone"))]
+fn set_dlerror_host(msg: *const c_char) {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        DLERROR_OWNED_TLS.with(|state| state.pending = msg as usize);
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        let _ = PENDING_PTR.try_with(|cell| cell.set(msg.cast::<u8>()));
+    }
+}
+
+/// Interpose-mode host `dlopen`, carrying the host's own error text through to
+/// our `dlerror` (e.g. "libfoo.so: cannot open shared object file: ...")
+/// instead of a generic message.
+#[cfg(not(feature = "standalone"))]
+unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut c_void {
+    type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type DlerrorFn = unsafe extern "C" fn() -> *const c_char;
+    let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") else {
+        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+        return std::ptr::null_mut();
+    };
+    let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+    let handle = unsafe { host_dlopen(filename, flags) };
+    if !handle.is_null() {
+        clear_dlerror();
+        return handle;
+    }
+    let host_msg = crate::host_resolve::resolve_host_symbol_raw("dlerror").map(|addr| {
+        let host_dlerror: DlerrorFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+        unsafe { host_dlerror() }
+    });
+    match host_msg {
+        Some(msg) if !msg.is_null() => set_dlerror_host(msg),
+        _ => set_dlerror(dlfcn_core::ERR_NOT_FOUND),
+    }
+    std::ptr::null_mut()
+}
+
+/// Pathname `dlopen` in interpose builds: the native loader is authoritative
+/// for objects it fully supports; anything it cannot load (initial-exec TLS,
+/// dependencies already owned by the host `ld.so`, unsupported relocations,
+/// or a missing file) goes to the host loader, which is still in the process
+/// at L0/L1. Failing instead broke every Python C extension import
+/// (bd-rc0923-epic-eeuy4f.3). Standalone builds never reach this function.
+#[cfg(not(feature = "standalone"))]
+unsafe fn dlopen_pathname(name: &[u8], filename: *const c_char, flags: c_int) -> *mut c_void {
+    if let Some(handle) = load_native_dso(name, flags) {
+        clear_dlerror();
+        return handle;
+    }
+    // Only regular files (or paths that do not exist, which the host reports
+    // precisely) go to the host: handing it a FIFO or device would block or
+    // have side effects the native loader deliberately refuses.
+    // SAFETY: `filename` is a bounded NUL-terminated string; `st` is a
+    // correctly sized stat buffer.
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    let stat_rc = unsafe {
+        frankenlibc_core::syscall::sys_newfstatat(
+            libc::AT_FDCWD,
+            filename.cast::<u8>(),
+            (&raw mut st).cast::<u8>(),
+            0,
+        )
+    };
+    let host_may_try = match stat_rc {
+        Ok(()) => (st.st_mode & libc::S_IFMT) == libc::S_IFREG,
+        Err(e) => e == libc::ENOENT || e == libc::ENOTDIR,
+    };
+    if !host_may_try {
+        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+        return std::ptr::null_mut();
+    }
+    NATIVE_PATHNAME_FALLBACKS.fetch_add(1, Ordering::Relaxed);
+    unsafe { host_dlopen_with_error(filename, flags) }
+}
+
+/// Count of pathname loads the native loader declined and the host served.
+#[cfg(not(feature = "standalone"))]
+static NATIVE_PATHNAME_FALLBACKS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(not(feature = "standalone"))]
+#[doc(hidden)]
+pub fn native_pathname_fallback_count() -> u64 {
+    NATIVE_PATHNAME_FALLBACKS.load(Ordering::Relaxed)
+}
+
 /// Clear the thread-local dlerror message.
 fn clear_dlerror() {
     #[cfg(feature = "owned-tls-cache")]
@@ -315,27 +406,10 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
             return open_main_program_handle();
         }
         if is_pathname(name) {
-            if let Some(handle) = load_native_dso(name, flags) {
-                clear_dlerror();
-                return handle;
-            }
-            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-            return std::ptr::null_mut();
+            return unsafe { dlopen_pathname(name, filename, flags) };
         }
         // During bootstrap, delegate to host dlopen for actual .so loading.
-        type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-        if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
-            let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-            let handle = unsafe { host_dlopen(filename, flags) };
-            if handle.is_null() {
-                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-            } else {
-                clear_dlerror();
-            }
-            return handle;
-        }
-        set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-        return std::ptr::null_mut();
+        return unsafe { host_dlopen_with_error(filename, flags) };
     }
 
     let (mode, decision) =
@@ -390,30 +464,11 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
         {
             open_main_program_handle()
         } else if is_pathname(name) {
-            if let Some(handle) = load_native_dso(name, flags) {
-                clear_dlerror();
-                handle
-            } else {
-                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-                std::ptr::null_mut()
-            }
+            unsafe { dlopen_pathname(name, filename, flags) }
         } else {
             // Bare SONAME search/dependency loading remains delegated while
-            // pathname DSOs use the native loader path above.
-            type DlopenFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
-            if let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlopen") {
-                let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-                let handle = unsafe { host_dlopen(filename, flags) };
-                if handle.is_null() {
-                    set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-                } else {
-                    clear_dlerror();
-                }
-                handle
-            } else {
-                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
-                std::ptr::null_mut()
-            }
+            // pathname DSOs try the native loader first (see dlopen_pathname).
+            unsafe { host_dlopen_with_error(filename, flags) }
         }
     };
     let adverse = handle.is_null();
