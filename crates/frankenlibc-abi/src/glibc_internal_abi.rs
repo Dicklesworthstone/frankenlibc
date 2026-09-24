@@ -5324,8 +5324,9 @@ pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_vo
             std::sync::atomic::AtomicUsize::new(0);
         let mut addr = HOST_DL_FIND_OBJECT.load(std::sync::atomic::Ordering::Acquire);
         if addr == 0 {
-            if let Some(resolved) = crate::host_resolve::resolve_loader_symbol_raw("_dl_find_object")
-            {
+            // glibc exports it from libc.so.6 (GLIBC_2.35), implemented over
+            // ld.so's link map.
+            if let Some(resolved) = crate::host_resolve::resolve_host_symbol_raw("_dl_find_object") {
                 HOST_DL_FIND_OBJECT.store(resolved, std::sync::atomic::Ordering::Release);
                 addr = resolved;
             }
