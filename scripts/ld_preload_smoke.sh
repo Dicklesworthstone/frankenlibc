@@ -166,6 +166,8 @@ STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
 cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
+FORK_MT_BIN="${BIN_DIR}/fixture_fork_mt"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_fork_mt.c" -o "${FORK_MT_BIN}"
 PTHREAD_ROBUST_BIN="${BIN_DIR}/fixture_pthread_robust"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_robust.c" -o "${PTHREAD_ROBUST_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
@@ -809,6 +811,9 @@ EOF
   # Process-shared, robust and PI mutexes; process-shared condvars
   # (bd-rc0923-epic-eeuy4f.15).
   run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
+  # fork/popen/system/posix_spawn while other threads are in malloc and stdio
+  # (bd-rc0923-epic-eeuy4f.5).
+  run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1
   # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1

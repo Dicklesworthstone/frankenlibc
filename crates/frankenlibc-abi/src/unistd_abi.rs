@@ -5102,6 +5102,10 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // SAFETY: fork via raw syscall
     let pid = syscall::sys_clone_fork(0);
     drop(malloc_guard);
+    if pid == Ok(0) {
+        // Membrane locks held by other parent threads are orphaned now.
+        frankenlibc_membrane::util::note_fork_child();
+    }
     let pid = match pid {
         Ok(p) => p,
         Err(_) => {
@@ -9505,6 +9509,10 @@ pub unsafe extern "C" fn forkpty(
 
     let pid = syscall::sys_clone_fork(libc::SIGCHLD as usize);
     drop(malloc_guard);
+    if pid == Ok(0) {
+        // Membrane locks held by other parent threads are orphaned now.
+        frankenlibc_membrane::util::note_fork_child();
+    }
     let pid = match pid {
         Ok(p) => p,
         Err(_) => {
@@ -29493,6 +29501,9 @@ pub unsafe extern "C" fn _Fork() -> c_int {
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
     let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
+    if ret == Ok(0) {
+        frankenlibc_membrane::util::note_fork_child();
+    }
 
     drop(_pipeline_guard);
 

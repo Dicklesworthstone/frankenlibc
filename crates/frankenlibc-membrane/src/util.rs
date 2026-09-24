@@ -1,10 +1,12 @@
 //! Shared utilities for the membrane crate.
 
+use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{
-    Mutex as StdMutex, MutexGuard as StdMutexGuard, RwLock as StdRwLock,
-    RwLockReadGuard as StdRwLockReadGuard, RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
+    RwLock as StdRwLock, RwLockReadGuard as StdRwLockReadGuard,
+    RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
 };
 
 /// Deterministic, integer-fast hasher for the crate's internal maps.
@@ -93,32 +95,232 @@ pub(crate) fn contention_backoff() {
     }
 }
 
-/// Mutex wrapper that recovers poisoned locks instead of panicking.
-#[derive(Debug)]
-pub(crate) struct NoPoisonMutex<T>(StdMutex<T>);
+/// Incremented in a forked child (see [`note_fork_child`]). A mutex whose
+/// holder stamped an older generation is held by a thread of the parent
+/// process, which does not exist in the child.
+static FORK_GENERATION: AtomicU32 = AtomicU32::new(0);
 
-pub(crate) type NoPoisonMutexGuard<'a, T> = StdMutexGuard<'a, T>;
+/// Called by the fork path in the child, immediately after the clone and
+/// before anything else runs (bd-rc0923-epic-eeuy4f.5).
+///
+/// Every membrane lock another thread held at the instant of the clone stays
+/// held in the child, whose single thread would then block forever on its
+/// first validation. With the generation bumped, such orphaned locks are
+/// taken over by the next locker instead.
+pub fn note_fork_child() {
+    FORK_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// The membrane's mutex: never poisons, and survives `fork` from a
+/// multithreaded parent (a lock held by a parent thread at the clone is taken
+/// over in the child rather than waited on forever). A futex word: 0 free,
+/// 1 held, 2 held with waiters; `holder_generation` is the fork generation the
+/// current holder locked it in.
+pub(crate) struct NoPoisonMutex<T> {
+    state: AtomicU32,
+    holder_generation: AtomicU32,
+    value: UnsafeCell<T>,
+}
+
+// SAFETY: access to `value` is serialized by `state` (a guard exists only
+// while the lock is held), exactly as for `std::sync::Mutex`.
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Sync for NoPoisonMutex<T> {}
+// SAFETY: as above.
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Send for NoPoisonMutex<T> {}
+
+impl<T> std::fmt::Debug for NoPoisonMutex<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NoPoisonMutex").finish_non_exhaustive()
+    }
+}
+
+/// Guard of a [`NoPoisonMutex`]; unlocks on drop.
+pub(crate) struct NoPoisonMutexGuard<'a, T> {
+    lock: &'a NoPoisonMutex<T>,
+    /// Guards are not `Send`, like `std::sync::MutexGuard`.
+    _not_send: std::marker::PhantomData<*const ()>,
+}
 
 impl<T> NoPoisonMutex<T> {
     pub(crate) const fn new(value: T) -> Self {
-        Self(StdMutex::new(value))
+        Self {
+            state: AtomicU32::new(0),
+            holder_generation: AtomicU32::new(0),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    fn guard(&self) -> NoPoisonMutexGuard<'_, T> {
+        self.holder_generation
+            .store(FORK_GENERATION.load(Ordering::Acquire), Ordering::Release);
+        NoPoisonMutexGuard {
+            lock: self,
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    /// Take over a lock whose holder belongs to an earlier fork generation.
+    fn try_take_orphan(&self) -> bool {
+        let generation = FORK_GENERATION.load(Ordering::Acquire);
+        let holder = self.holder_generation.load(Ordering::Acquire);
+        holder != generation
+            && self.state.load(Ordering::Acquire) != 0
+            && self
+                .holder_generation
+                .compare_exchange(holder, generation, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
     }
 
     pub(crate) fn lock(&self) -> NoPoisonMutexGuard<'_, T> {
-        match self.0.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+        if self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return self.guard();
+        }
+        loop {
+            if self.try_take_orphan() {
+                return self.guard();
+            }
+            if self.state.swap(2, Ordering::Acquire) == 0 {
+                return self.guard();
+            }
+            futex_wait(&self.state, 2);
         }
     }
 
     pub(crate) fn try_lock(&self) -> Option<NoPoisonMutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(guard) => Some(guard),
-            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
-            Err(TryLockError::WouldBlock) => None,
+        if self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+            || self.try_take_orphan()
+        {
+            Some(self.guard())
+        } else {
+            None
         }
     }
 }
+
+impl<T> std::ops::Deref for NoPoisonMutexGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: the guard proves the lock is held by this thread.
+        #[allow(unsafe_code)]
+        unsafe {
+            &*self.lock.value.get()
+        }
+    }
+}
+
+impl<T> std::ops::DerefMut for NoPoisonMutexGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: the guard proves exclusive access.
+        #[allow(unsafe_code)]
+        unsafe {
+            &mut *self.lock.value.get()
+        }
+    }
+}
+
+impl<T> Drop for NoPoisonMutexGuard<'_, T> {
+    fn drop(&mut self) {
+        if self.lock.state.swap(0, Ordering::Release) == 2 {
+            futex_wake_one(&self.lock.state);
+        }
+    }
+}
+
+/// Private FUTEX_WAIT on `word` while it equals `expected`. The membrane has
+/// no libc or core dependency, so the syscall is issued directly.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[allow(unsafe_code)]
+fn futex_wait(word: &AtomicU32, expected: u32) {
+    const FUTEX_WAIT_PRIVATE: usize = 128;
+    // SAFETY: futex on a live, aligned u32 with a null timeout; the kernel
+    // only reads the word.
+    unsafe {
+        futex_syscall(
+            word.as_ptr() as usize,
+            FUTEX_WAIT_PRIVATE,
+            expected as usize,
+        )
+    };
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[allow(unsafe_code)]
+fn futex_wake_one(word: &AtomicU32) {
+    const FUTEX_WAKE_PRIVATE: usize = 129;
+    // SAFETY: futex wake on a live, aligned u32.
+    unsafe { futex_syscall(word.as_ptr() as usize, FUTEX_WAKE_PRIVATE, 1) };
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(unsafe_code)]
+unsafe fn futex_syscall(uaddr: usize, op: usize, val: usize) {
+    const SYS_FUTEX: usize = 202;
+    // SAFETY: raw futex syscall; arguments are validated by the callers.
+    unsafe {
+        std::arch::asm!(
+            "syscall",
+            inlateout("rax") SYS_FUTEX => _,
+            in("rdi") uaddr,
+            in("rsi") op,
+            in("rdx") val,
+            in("r10") 0usize,
+            in("r8") 0usize,
+            in("r9") 0usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[allow(unsafe_code)]
+unsafe fn futex_syscall(uaddr: usize, op: usize, val: usize) {
+    const SYS_FUTEX: usize = 98;
+    // SAFETY: raw futex syscall; arguments are validated by the callers.
+    unsafe {
+        std::arch::asm!(
+            "svc 0",
+            in("x8") SYS_FUTEX,
+            inlateout("x0") uaddr => _,
+            in("x1") op,
+            in("x2") val,
+            in("x3") 0usize,
+            in("x4") 0usize,
+            in("x5") 0usize,
+            options(nostack),
+        );
+    }
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn futex_wait(_word: &AtomicU32, _expected: u32) {
+    std::thread::yield_now();
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn futex_wake_one(_word: &AtomicU32) {}
 
 /// RwLock wrapper that recovers poisoned locks instead of panicking.
 #[derive(Debug)]

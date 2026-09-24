@@ -192,6 +192,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     let pid = raw_syscall::sys_clone_fork(libc::SIGCHLD as usize);
     drop(malloc_guard);
+    if pid == Ok(0) {
+        // Membrane locks held by other parent threads are orphaned now.
+        frankenlibc_membrane::util::note_fork_child();
+    }
     let pid = match pid {
         Ok(p) => p,
         Err(e) => {
