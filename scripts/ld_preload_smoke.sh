@@ -680,7 +680,7 @@ run_optional_case() {
 # Known failures, each tied to an open bead: "mode:label=bead ...". A listed
 # case that fails is reported as XFAIL (not PASS, not a gate failure); a listed
 # case that PASSES fails the run, so the entry must be removed with the fix.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-strict:getent_ahosts_localhost=bd-rc0923-epic-eeuy4f.23 hardened:getent_ahosts_localhost=bd-rc0923-epic-eeuy4f.23}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
 xfails=0
 
 known_failure_bead() {

@@ -189,8 +189,269 @@ impl AddressPolicy {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Destination address selection (RFC 3484 / glibc's getaddrinfo sort)
+// ---------------------------------------------------------------------------
+
+/// One `getaddrinfo` result for [`destination_order`]: the destination,
+/// the source address a connected UDP socket would use (`None` when the
+/// destination is unreachable), and, for an IPv4 source, the prefix length
+/// of the interface address it belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DestinationCandidate {
+    pub dest: IpAddr,
+    pub source: Option<IpAddr>,
+    pub source_prefix_len: Option<u8>,
+}
+
+/// (prefix, prefix length, value) in IPv6 space; IPv4 is matched as
+/// `::ffff:a.b.c.d`. glibc's defaults (RFC 3484).
+const PRECEDENCE: [([u8; 16], u8, u8); 5] = [
+    ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128, 50),
+    (
+        [0x20, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        16,
+        30,
+    ),
+    ([0; 16], 96, 20),
+    (
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0],
+        96,
+        10,
+    ),
+    ([0; 16], 0, 40),
+];
+
+const LABELS: [([u8; 16], u8, u8); 8] = [
+    ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], 128, 0),
+    (
+        [0x20, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        16,
+        2,
+    ),
+    ([0; 16], 96, 3),
+    (
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 0, 0, 0, 0],
+        96,
+        4,
+    ),
+    (
+        [0xfe, 0xc0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        10,
+        5,
+    ),
+    ([0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 7, 6),
+    (
+        [0x20, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        32,
+        7,
+    ),
+    ([0; 16], 0, 1),
+];
+
+fn as_v6_octets(addr: IpAddr) -> [u8; 16] {
+    match addr {
+        IpAddr::V4(v4) => v4.to_ipv6_mapped().octets(),
+        IpAddr::V6(v6) => v6.octets(),
+    }
+}
+
+/// The first entry of `table` whose prefix matches, in table order: the
+/// tables list specific prefixes before `::/0`, and the more specific of
+/// two overlapping prefixes (`::1/128` vs `::/96`) first.
+fn table_lookup(table: &[([u8; 16], u8, u8)], addr: IpAddr) -> u8 {
+    let a = as_v6_octets(addr);
+    for (prefix, len, value) in table {
+        let full = usize::from(*len / 8);
+        let rem = len % 8;
+        if a[..full] != prefix[..full] {
+            continue;
+        }
+        if rem != 0 {
+            let mask = 0xffu8 << (8 - rem);
+            if a[full] & mask != prefix[full] & mask {
+                continue;
+            }
+        }
+        return *value;
+    }
+    0
+}
+
+fn precedence(addr: IpAddr) -> u8 {
+    table_lookup(&PRECEDENCE, addr)
+}
+
+fn label(addr: IpAddr) -> u8 {
+    table_lookup(&LABELS, addr)
+}
+
+/// RFC 3484 scope: link-local and loopback 2, site-local 5, multicast its
+/// scope field, IPv4 169.254/16 and 127/8 link-local, anything else global.
+fn scope(addr: IpAddr) -> u8 {
+    match addr {
+        IpAddr::V6(v6) => {
+            let o = v6.octets();
+            if o[0] == 0xff {
+                o[1] & 0x0f
+            } else if (o[0] == 0xfe && o[1] & 0xc0 == 0x80) || v6.is_loopback() {
+                2
+            } else if o[0] == 0xfe && o[1] & 0xc0 == 0xc0 {
+                5
+            } else {
+                14
+            }
+        }
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            if (o[0] == 169 && o[1] == 254) || o[0] == 127 {
+                2
+            } else {
+                14
+            }
+        }
+    }
+}
+
+/// Index of the highest set bit, 1-based (0 for 0), like `fls`.
+fn fls(x: u32) -> u32 {
+    32 - x.leading_zeros()
+}
+
+/// Rule 9's "common prefix" measure for two same-family candidates.
+fn prefix_bits(a: &DestinationCandidate, b: &DestinationCandidate) -> Option<(u32, u32)> {
+    let (sa, sb) = (a.source?, b.source?);
+    match (a.dest, sa, b.dest, sb) {
+        (IpAddr::V4(da), IpAddr::V4(sa), IpAddr::V4(db), IpAddr::V4(sb)) => {
+            // Only meaningful inside the source's subnet.
+            let bits = |d: Ipv4Addr, s: Ipv4Addr, len: Option<u8>| {
+                let (d, s) = (u32::from(d), u32::from(s));
+                let len = u32::from(len.unwrap_or(0)).min(32);
+                let mask = if len == 0 { 0 } else { u32::MAX << (32 - len) };
+                if s & mask == d & mask { fls(d ^ s) } else { 0 }
+            };
+            Some((
+                bits(da, sa, a.source_prefix_len),
+                bits(db, sb, b.source_prefix_len),
+            ))
+        }
+        (IpAddr::V6(da), IpAddr::V6(sa), IpAddr::V6(db), IpAddr::V6(sb)) => {
+            let word = |x: Ipv6Addr, i: usize| {
+                let o = x.octets();
+                u32::from_be_bytes([o[4 * i], o[4 * i + 1], o[4 * i + 2], o[4 * i + 3]])
+            };
+            // The first 32-bit word where either destination differs from
+            // its source.
+            let i = (0..4).find(|&i| word(da, i) != word(sa, i) || word(db, i) != word(sb, i))?;
+            Some((
+                fls(word(da, i) ^ word(sa, i)),
+                fls(word(db, i) ^ word(sb, i)),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn compare_destinations(
+    a: &DestinationCandidate,
+    ia: usize,
+    b: &DestinationCandidate,
+    ib: usize,
+) -> std::cmp::Ordering {
+    use std::cmp::Ordering as O;
+    // Rule 1: avoid unusable destinations.
+    match (a.source.is_some(), b.source.is_some()) {
+        (true, false) => return O::Less,
+        (false, true) => return O::Greater,
+        _ => {}
+    }
+    if let (Some(sa), Some(sb)) = (a.source, b.source) {
+        // Rule 2: prefer matching scope.
+        let ma = scope(a.dest) == scope(sa);
+        let mb = scope(b.dest) == scope(sb);
+        if ma != mb {
+            return if ma { O::Less } else { O::Greater };
+        }
+        // Rule 5: prefer matching label.
+        let la = label(a.dest) == label(sa);
+        let lb = label(b.dest) == label(sb);
+        if la != lb {
+            return if la { O::Less } else { O::Greater };
+        }
+    }
+    // Rule 6: prefer higher precedence.
+    let (pa, pb) = (precedence(a.dest), precedence(b.dest));
+    if pa != pb {
+        return pb.cmp(&pa);
+    }
+    // Rule 8: prefer smaller scope.
+    let (ca, cb) = (scope(a.dest), scope(b.dest));
+    if ca != cb {
+        return ca.cmp(&cb);
+    }
+    // Rule 9: longest matching prefix (same family, both reachable).
+    if a.dest.is_ipv4() == b.dest.is_ipv4()
+        && let Some((bits_a, bits_b)) = prefix_bits(a, b)
+        && bits_a != bits_b
+    {
+        return bits_a.cmp(&bits_b);
+    }
+    // Rule 10: keep the original order.
+    ia.cmp(&ib)
+}
+
+/// The order in which glibc's `getaddrinfo` returns `candidates`: indices
+/// into the slice, sorted by the destination address selection rules
+/// (unusable last, matching scope and label, precedence, smaller scope,
+/// longest matching prefix, then original order).
+pub fn destination_order(candidates: &[DestinationCandidate]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by(|&i, &j| compare_destinations(&candidates[i], i, &candidates[j], j));
+    order
+}
+
 #[cfg(test)]
 mod tests {
+    use super::{DestinationCandidate, destination_order};
+
+    fn cand(dest: &str, source: Option<&str>) -> DestinationCandidate {
+        DestinationCandidate {
+            dest: dest.parse().unwrap(),
+            source: source.map(|s| s.parse().unwrap()),
+            source_prefix_len: Some(32),
+        }
+    }
+
+    #[test]
+    fn glibc_destination_order_matches_observed_hosts() {
+        // localhost: ::1 (precedence 50) before 127.0.0.1 (10).
+        let c = [
+            cand("127.0.0.1", Some("127.0.0.1")),
+            cand("::1", Some("::1")),
+        ];
+        assert_eq!(destination_order(&c), [1, 0]);
+        // Dual-stack global: IPv6 (40) before IPv4 (10); family order kept.
+        let c = [
+            cand("142.251.14.102", Some("178.104.77.29")),
+            cand("142.251.14.139", Some("178.104.77.29")),
+            cand("2a00:1450:4001:c15::71", Some("2a01:4f8:1c1e:8113::1")),
+            cand("2a00:1450:4001:c15::65", Some("2a01:4f8:1c1e:8113::1")),
+        ];
+        assert_eq!(destination_order(&c), [2, 3, 0, 1]);
+        // Unreachable destinations go last.
+        let c = [
+            cand("2001:db8::1", None),
+            cand("192.0.2.1", Some("10.0.0.2")),
+        ];
+        assert_eq!(destination_order(&c), [1, 0]);
+        // Rule 9: the IPv6 destination sharing a longer prefix with the source first.
+        let c = [
+            cand("2001:db8:ffff::1", Some("2001:db8::9")),
+            cand("2001:db8::1", Some("2001:db8::9")),
+        ];
+        assert_eq!(destination_order(&c), [1, 0]);
+    }
+
     use super::*;
 
     fn policy(family: Family, mapped: bool, all: bool) -> AddressPolicy {

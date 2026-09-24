@@ -3080,6 +3080,12 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_MEMORY;
     }
 
+    // glibc orders the results by destination address selection (RFC 3484)
+    // whenever there is more than one.
+    if nodes.len() > 1 {
+        unsafe { sort_addrinfo_nodes(&mut nodes) };
+    }
+
     if canonname.is_some() {
         for node in nodes.iter().skip(1) {
             // SAFETY: null nodes were rejected above; these records are owned
@@ -3098,6 +3104,137 @@ pub unsafe extern "C" fn getaddrinfo(
     record_resolver_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, false);
     0
+}
+
+/// The IP address in a result's `ai_addr`.
+unsafe fn addrinfo_ip(ai: &libc::addrinfo) -> Option<std::net::IpAddr> {
+    if ai.ai_addr.is_null() {
+        return None;
+    }
+    match ai.ai_family {
+        libc::AF_INET if ai.ai_addrlen as usize >= size_of::<libc::sockaddr_in>() => {
+            // SAFETY: family and length checked.
+            let sin = unsafe { &*ai.ai_addr.cast::<libc::sockaddr_in>() };
+            Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).into())
+        }
+        libc::AF_INET6 if ai.ai_addrlen as usize >= size_of::<libc::sockaddr_in6>() => {
+            // SAFETY: family and length checked.
+            let sin6 = unsafe { &*ai.ai_addr.cast::<libc::sockaddr_in6>() };
+            Some(Ipv6Addr::from(sin6.sin6_addr.s6_addr).into())
+        }
+        _ => None,
+    }
+}
+
+/// The source address the kernel would use to reach this result, found as
+/// glibc does: connect a UDP socket to it and read back the local address.
+/// `None` when the destination is unreachable.
+unsafe fn probe_source_address(ai: &libc::addrinfo) -> Option<std::net::IpAddr> {
+    use frankenlibc_core::syscall as sys;
+    let fd = sys::sys_socket(
+        ai.ai_family,
+        libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
+        libc::IPPROTO_IP,
+    )
+    .ok()?;
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let mut len = size_of::<libc::sockaddr_storage>() as u32;
+    // SAFETY: ai_addr/ai_addrlen describe a valid sockaddr of this family;
+    // storage is large enough for any address.
+    let ok = unsafe { sys::sys_connect(fd, ai.ai_addr.cast(), ai.ai_addrlen).is_ok() }
+        && unsafe {
+            sys::sys_getsockname(
+                fd,
+                (&mut storage as *mut libc::sockaddr_storage).cast(),
+                &mut len,
+            )
+            .is_ok()
+        };
+    let _ = sys::sys_close(fd);
+    if !ok {
+        return None;
+    }
+    match i32::from(storage.ss_family) {
+        libc::AF_INET => {
+            // SAFETY: the kernel wrote a sockaddr_in.
+            let sin = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in>()
+            };
+            Some(Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr)).into())
+        }
+        libc::AF_INET6 => {
+            // SAFETY: the kernel wrote a sockaddr_in6.
+            let sin6 = unsafe {
+                &*(&storage as *const libc::sockaddr_storage).cast::<libc::sockaddr_in6>()
+            };
+            Some(Ipv6Addr::from(sin6.sin6_addr.s6_addr).into())
+        }
+        _ => None,
+    }
+}
+
+/// IPv4 interface addresses and their prefix lengths.
+fn ipv4_interface_prefixes() -> Vec<(Ipv4Addr, u8)> {
+    let mut out = Vec::new();
+    let mut head: *mut c_void = ptr::null_mut();
+    // SAFETY: fl's getifaddrs fills `head` with a list freed below.
+    if unsafe { crate::unistd_abi::getifaddrs(&mut head) } != 0 {
+        return out;
+    }
+    let mut cur = head.cast::<libc::ifaddrs>();
+    while let Some(ifa) = unsafe { cur.as_ref() } {
+        if !ifa.ifa_addr.is_null()
+            && !ifa.ifa_netmask.is_null()
+            && i32::from(unsafe { (*ifa.ifa_addr).sa_family }) == libc::AF_INET
+        {
+            // SAFETY: AF_INET entries carry sockaddr_in address and netmask.
+            let (addr, mask) = unsafe {
+                (
+                    &*ifa.ifa_addr.cast::<libc::sockaddr_in>(),
+                    &*ifa.ifa_netmask.cast::<libc::sockaddr_in>(),
+                )
+            };
+            out.push((
+                Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr)),
+                u32::from_be(mask.sin_addr.s_addr).count_ones() as u8,
+            ));
+        }
+        cur = ifa.ifa_next;
+    }
+    unsafe { crate::unistd_abi::freeifaddrs(head) };
+    out
+}
+
+/// Reorder `nodes` the way glibc's getaddrinfo does (RFC 3484 destination
+/// address selection over the connected-socket source of each result).
+unsafe fn sort_addrinfo_nodes(nodes: &mut Vec<*mut libc::addrinfo>) {
+    use frankenlibc_core::addrinfo::{DestinationCandidate, destination_order};
+    let mut v4_prefixes: Option<Vec<(Ipv4Addr, u8)>> = None;
+    let mut candidates = Vec::with_capacity(nodes.len());
+    for &node in nodes.iter() {
+        // SAFETY: non-null nodes built above.
+        let ai = unsafe { &*node };
+        let Some(dest) = (unsafe { addrinfo_ip(ai) }) else {
+            return;
+        };
+        let source = unsafe { probe_source_address(ai) };
+        let source_prefix_len = match source {
+            Some(std::net::IpAddr::V4(s)) => v4_prefixes
+                .get_or_insert_with(ipv4_interface_prefixes)
+                .iter()
+                .find(|(a, _)| *a == s)
+                .map(|(_, len)| *len),
+            _ => None,
+        };
+        candidates.push(DestinationCandidate {
+            dest,
+            source,
+            source_prefix_len,
+        });
+    }
+    let order = destination_order(&candidates);
+    let sorted: Vec<*mut libc::addrinfo> = order.iter().map(|&i| nodes[i]).collect();
+    *nodes = sorted;
 }
 
 /// POSIX `freeaddrinfo`.
