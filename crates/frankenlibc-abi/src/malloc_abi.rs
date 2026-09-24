@@ -991,11 +991,12 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
         return None;
     };
     let meta_base = meta_base as *mut SegmentSlotMeta;
-    for slot_index in 0..slot_count as usize {
-        // SAFETY: each iteration initializes one distinct, properly aligned
-        // object inside the sidecar mapping before any ownership publication.
-        unsafe { meta_base.add(slot_index).write(SegmentSlotMeta::new()) };
-    }
+    // A fresh anonymous mapping is demand-zero, and an all-zero word IS
+    // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
+    // is already initialized. Writing them anyway committed the whole sidecar
+    // (~1.1 MiB across a trivial process's startup segments), which every fork
+    // then copies (bd-rc0923-epic-eeuy4f.25).
+    const _: () = assert!(std::mem::size_of::<SegmentSlotMeta>() == 2);
 
     let base = arena_base + (raw_index << SEGMENT_SHIFT);
     // Derived once per segment, at initialization, off the same class index the
@@ -3327,9 +3328,14 @@ fn fallback_key(ptr: *mut c_void) -> Option<usize> {
     }
 }
 
+/// Locality-preserving: host allocations are 16-byte aligned and mostly
+/// contiguous, so neighbouring allocations share table pages (distinct keys
+/// within a 4 MiB window never collide) and a tcache-reused key lands on its old
+/// slot. A scattering hash touched ~260 distinct pages of each 2 MiB array during
+/// startup, and every one of them is copied by every fork (bd-rc0923-epic-eeuy4f.25).
 #[inline]
 fn fallback_start_index(key: usize) -> usize {
-    key.wrapping_mul(0x9e37_79b9_7f4a_7c15) % FALLBACK_ALLOC_TABLE_SLOTS
+    (key >> 4) % FALLBACK_ALLOC_TABLE_SLOTS
 }
 
 #[inline]
