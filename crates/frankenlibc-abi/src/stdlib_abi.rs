@@ -729,7 +729,7 @@ unsafe extern "C" {
 }
 
 #[inline]
-unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
+pub(crate) unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     unsafe { native_getenv_raw(name_bytes.as_ptr(), name_bytes.len()) }
 }
 

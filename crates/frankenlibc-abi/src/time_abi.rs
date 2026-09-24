@@ -853,6 +853,194 @@ unsafe fn write_tm(result: *mut libc::tm, bd: &time_core::BrokenDownTime) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Time zones (bd-rc0923-epic-eeuy4f.11)
+// ---------------------------------------------------------------------------
+//
+// fl used to be UTC-only: `localtime_r`/`mktime` ignored `TZ` and
+// `/etc/localtime`, so every non-UTC deployment logged wrong local times.
+// Resolution follows glibc: `TZ` unset -> `/etc/localtime`; `TZ=""` -> UTC;
+// optional leading `:`; absolute path -> that TZif file; otherwise a file
+// under `$TZDIR` (default `/usr/share/zoneinfo`), else a POSIX TZ string,
+// else UTC. `localtime_r` reuses the resolved zone (as glibc's does);
+// `localtime`, `mktime`, `ctime` and `tzset` re-check `TZ` first.
+
+use frankenlibc_core::time::tz as tz_core;
+use std::sync::atomic::AtomicPtr;
+
+struct TzState {
+    /// The `TZ` value this state was built from (`None` = unset).
+    key: Option<Vec<u8>>,
+    zone: tz_core::Zone,
+    /// NUL-terminated abbreviation per local type, matched by address.
+    names: Vec<(*const tz_core::LocalType, std::ffi::CString)>,
+}
+
+// SAFETY: a published TzState is immutable and never freed (a TZ change
+// publishes a new one), so sharing references across threads is sound.
+unsafe impl Sync for TzState {}
+unsafe impl Send for TzState {}
+
+impl TzState {
+    fn abbr_ptr(&self, ty: &tz_core::LocalType) -> *const std::ffi::c_char {
+        self.names
+            .iter()
+            .find(|(p, _)| std::ptr::eq(*p, ty))
+            .map_or(c"UTC".as_ptr(), |(_, s)| s.as_ptr())
+    }
+}
+
+static TZ_CURRENT: AtomicPtr<TzState> = AtomicPtr::new(std::ptr::null_mut());
+static TZ_UPDATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `TZ` as bytes, read from `environ` without allocating.
+fn tz_env_bytes() -> Option<&'static [u8]> {
+    // SAFETY: read-only walk of environ; the returned C string lives in the
+    // environment block and is only compared/copied before we return.
+    let p = unsafe { crate::stdlib_abi::native_getenv(b"TZ") };
+    if p.is_null() {
+        None
+    } else {
+        // SAFETY: getenv returns a NUL-terminated string.
+        Some(unsafe { std::ffi::CStr::from_ptr(p) }.to_bytes())
+    }
+}
+
+fn load_tzif(path: &[u8]) -> Option<tz_core::Zone> {
+    use std::os::unix::ffi::OsStrExt;
+    let bytes = std::fs::read(std::ffi::OsStr::from_bytes(path)).ok()?;
+    tz_core::parse_tzif(&bytes)
+}
+
+fn resolve_zone(env: Option<&[u8]>) -> tz_core::Zone {
+    let Some(value) = env else {
+        return load_tzif(b"/etc/localtime").unwrap_or_else(tz_core::Zone::utc);
+    };
+    let value = value.strip_prefix(b":").unwrap_or(value);
+    // glibc: an empty TZ means "Universal".
+    let value: &[u8] = if value.is_empty() { b"Universal" } else { value };
+    if value[0] == b'/' {
+        return load_tzif(value).unwrap_or_else(tz_core::Zone::utc);
+    }
+    // Relative names must stay inside the zoneinfo directory.
+    let escapes = value.split(|&c| c == b'/').any(|part| part == b"..");
+    if !escapes {
+        // SAFETY: read-only environ walk (see tz_env_bytes).
+        let dir_ptr = unsafe { crate::stdlib_abi::native_getenv(b"TZDIR") };
+        let dir: &[u8] = if dir_ptr.is_null() {
+            b"/usr/share/zoneinfo"
+        } else {
+            // SAFETY: getenv returns a NUL-terminated string.
+            unsafe { std::ffi::CStr::from_ptr(dir_ptr) }.to_bytes()
+        };
+        let mut path = dir.to_vec();
+        path.push(b'/');
+        path.extend_from_slice(value);
+        if let Some(zone) = load_tzif(&path) {
+            return zone;
+        }
+    }
+    if let Some(posix) = tz_core::parse_posix_tz(value) {
+        return tz_core::Zone::from_posix(posix);
+    }
+    // Neither a file nor a valid POSIX string: glibc reports UTC under the
+    // leading alphabetic name (e.g. "Universal"), or "UTC".
+    let name_len = value.iter().take_while(|c| c.is_ascii_alphabetic()).count();
+    match std::str::from_utf8(&value[..name_len]) {
+        Ok(name) if name_len >= 3 => tz_core::Zone::utc_named(name),
+        _ => tz_core::Zone::utc(),
+    }
+}
+
+/// Publish `tzname`/`timezone`/`daylight` for `state` (what glibc's tzset does).
+fn publish_tz_globals(state: &'static TzState) {
+    let g = state.zone.globals();
+    let intern = |name: &str| -> *mut std::ffi::c_char {
+        if name.is_empty() {
+            return c"".as_ptr().cast_mut();
+        }
+        state
+            .names
+            .iter()
+            .find(|(_, s)| s.as_bytes() == name.as_bytes())
+            .map_or(c"UTC".as_ptr(), |(_, s)| s.as_ptr())
+            .cast_mut()
+    };
+    let (std_name, dst_name) = (intern(&g.std_abbr), intern(&g.dst_abbr));
+    unsafe {
+        crate::glibc_internal_abi::tzname[0] = std_name;
+        crate::glibc_internal_abi::tzname[1] = dst_name;
+        crate::glibc_internal_abi::__tzname[0] = std_name;
+        crate::glibc_internal_abi::__tzname[1] = dst_name;
+        crate::glibc_internal_abi::timezone = g.timezone as std::ffi::c_long;
+        crate::glibc_internal_abi::__timezone = g.timezone as std::ffi::c_long;
+        crate::glibc_internal_abi::daylight = i32::from(g.daylight);
+        crate::glibc_internal_abi::__daylight = i32::from(g.daylight);
+    }
+}
+
+/// The current zone. `recheck` re-reads `TZ` and reloads when it changed.
+fn current_tz(recheck: bool) -> &'static TzState {
+    let cur = TZ_CURRENT.load(Ordering::Acquire);
+    // SAFETY: published states are leaked and never mutated.
+    if !cur.is_null() && (!recheck || unsafe { (*cur).key.as_deref() } == tz_env_bytes()) {
+        return unsafe { &*cur };
+    }
+    let _guard = TZ_UPDATE.lock().unwrap_or_else(|e| e.into_inner());
+    let env = tz_env_bytes();
+    let cur = TZ_CURRENT.load(Ordering::Acquire);
+    if !cur.is_null() && unsafe { (*cur).key.as_deref() } == env {
+        return unsafe { &*cur };
+    }
+    let state: &'static mut TzState = Box::leak(Box::new(TzState {
+        key: env.map(<[u8]>::to_vec),
+        zone: resolve_zone(env),
+        names: Vec::new(),
+    }));
+    let names: Vec<_> = state
+        .zone
+        .all_types()
+        .into_iter()
+        .map(|ty| {
+            let name = std::ffi::CString::new(ty.abbr.as_bytes())
+                .unwrap_or_else(|_| c"UTC".to_owned());
+            (ty as *const tz_core::LocalType, name)
+        })
+        .collect();
+    state.names = names;
+    let state: &'static TzState = state;
+    publish_tz_globals(state);
+    TZ_CURRENT.store((state as *const TzState).cast_mut(), Ordering::Release);
+    state
+}
+
+/// Broken-down local time for `epoch` in the current zone, with the glibc
+/// extension fields. `None` when the year does not fit `tm_year`.
+fn local_broken_down(
+    epoch: i64,
+    recheck: bool,
+) -> Option<(time_core::BrokenDownTime, i64, *const std::ffi::c_char)> {
+    let state = current_tz(recheck);
+    let ty = state.zone.lookup(epoch);
+    let mut bd = time_core::epoch_to_broken_down_checked(epoch.checked_add(i64::from(ty.utoff))?)?;
+    bd.tm_isdst = i32::from(ty.isdst);
+    bd.tm_gmtoff = i64::from(ty.utoff);
+    Some((bd, i64::from(ty.utoff), state.abbr_ptr(ty)))
+}
+
+/// Write a local broken-down time (from [`local_broken_down`]) into `result`.
+unsafe fn write_local_tm(
+    result: *mut libc::tm,
+    local: &(time_core::BrokenDownTime, i64, *const std::ffi::c_char),
+) {
+    unsafe {
+        write_tm(result, &local.0);
+        (*result).tm_isdst = local.0.tm_isdst;
+        (*result).tm_gmtoff = local.1;
+        (*result).tm_zone = local.2;
+    }
+}
+
 /// Read a `BrokenDownTime` from a `libc::tm`.
 #[inline]
 unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
@@ -929,7 +1117,7 @@ unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) 
     }
 }
 
-/// POSIX `localtime_r` — converts epoch seconds to broken-down UTC time.
+/// POSIX `localtime_r` — converts epoch seconds to broken-down local time.
 ///
 /// Writes the result into `result` and returns a pointer to it on success.
 /// Returns null on failure.
@@ -950,12 +1138,14 @@ pub unsafe extern "C" fn localtime_r(timer: *const i64, result: *mut libc::tm) -
     }
 
     let epoch = unsafe { *timer };
-    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+    // Uses the resolved zone without re-reading TZ, as glibc's localtime_r
+    // does (localtime/mktime/tzset re-check it).
+    let Some(local) = local_broken_down(epoch, false) else {
         // Year would overflow `tm_year` (c_int). Match glibc's NULL return.
         unsafe { set_abi_errno(errno::EOVERFLOW) };
         return std::ptr::null_mut();
     };
-    unsafe { write_tm(result, &bd) };
+    unsafe { write_local_tm(result, &local) };
     result
 }
 
@@ -1002,22 +1192,21 @@ pub unsafe extern "C" fn gmtime_r(timer: *const i64, result: *mut libc::tm) -> *
 
 /// POSIX `mktime` — converts broken-down local time to epoch seconds.
 ///
-/// Since we only support UTC, this is equivalent to `timegm`.
-/// Normalizes the `tm` structure fields and fills in `tm_wday` and `tm_yday`.
+/// Interprets the fields in the current time zone (`TZ` / `/etc/localtime`),
+/// normalizes them, and fills in `tm_wday`, `tm_yday`, `tm_isdst`,
+/// `tm_gmtoff` and `tm_zone`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
-    // Strict mode (DEFAULT deployed): fl is UTC-only, so mktime == timegm math. decide() is
-    // forced Allow for the Time family, observe() is telemetry-only, and glibc never validates
-    // the caller's tm pointer — so skip decide/observe/tracked-check and go straight to the
-    // shared normalization, exactly like timegm/gmtime_r (which this same bypass took from
-    // 1.65x-slower to parity). Byte-identical: same normalized tm + epoch, same NULL→EFAULT
-    // guard. Hardened mode keeps the full validate/deny/observe path below.
+    // Strict mode (DEFAULT deployed): decide() is forced Allow for the Time family,
+    // observe() is telemetry-only, and glibc never validates the caller's tm pointer —
+    // so skip decide/observe/tracked-check and go straight to the shared zone-aware
+    // normalization. Hardened mode keeps the full validate/deny/observe path below.
     if runtime_policy::strict_passthrough_active() {
         if tm.is_null() {
             unsafe { set_abi_errno(errno::EFAULT) };
             return -1;
         }
-        return unsafe { utc_normalize_to_epoch(tm) };
+        return unsafe { local_normalize_to_epoch(tm) };
     }
 
     let (_, decision) = runtime_policy::decide(
@@ -1045,12 +1234,35 @@ pub unsafe extern "C" fn mktime(tm: *mut libc::tm) -> i64 {
         return -1;
     }
 
-    // fl is UTC-only, so mktime == timegm mathematically. Shared conversion with the
-    // in-range fast path that fills tm_wday/tm_yday directly and skips the reverse-civil
-    // round trip (see utc_normalize_to_epoch); ~56ns → ~15ns of compute. Byte-identical.
-    let epoch = unsafe { utc_normalize_to_epoch(tm) };
+    let epoch = unsafe { local_normalize_to_epoch(tm) };
     runtime_policy::observe(ApiFamily::Time, decision.profile, 8, false);
     epoch
+}
+
+/// `mktime` core: interpret `*tm` as local wall-clock time in the current
+/// zone (re-reading `TZ` like glibc's mktime), resolve DST gaps/overlaps with
+/// `tm_isdst`, and write back the normalized local fields.
+unsafe fn local_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
+    let isdst = unsafe { (*tm).tm_isdst };
+    // Normalize the wall-clock fields as if they were UTC ("local seconds").
+    let local = unsafe { utc_normalize_to_epoch(tm) };
+    let state = current_tz(true);
+    // glibc's mktime starts from the offset its previous call used
+    // (process-wide, initially 0); mirror it so repeated-hour results agree.
+    static LAST_MKTIME_OFFSET: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    let hint = LAST_MKTIME_OFFSET.load(Ordering::Relaxed);
+    let (epoch, used) = state.zone.local_to_utc_with_hint(local, isdst, hint);
+    LAST_MKTIME_OFFSET.store(used, Ordering::Relaxed);
+    match local_broken_down(epoch, false) {
+        Some(out) => {
+            unsafe { write_local_tm(tm, &out) };
+            epoch
+        }
+        None => {
+            unsafe { set_abi_errno(errno::EOVERFLOW) };
+            -1
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1345,7 +1557,8 @@ pub unsafe extern "C" fn ctime_r(
     }
 
     let epoch = unsafe { *timer };
-    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+    // ctime_r is asctime_r(localtime_r(...)): local time, current zone.
+    let Some((bd, _, _)) = local_broken_down(epoch, false) else {
         return std::ptr::null_mut();
     };
     let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, ASCTIME_R_BUF_BYTES) };
@@ -1799,6 +2012,8 @@ pub unsafe extern "C" fn localtime(timer: *const i64) -> *mut libc::tm {
     {
         return std::ptr::null_mut();
     }
+    // glibc's localtime (unlike localtime_r) re-reads TZ on every call.
+    let _ = current_tz(true);
     with_localtime_buf(|buf| {
         let ptr = buf as *mut libc::tm;
         let result = unsafe { localtime_r(timer, ptr) };
@@ -1839,7 +2054,8 @@ pub unsafe extern "C" fn ctime(timer: *const i64) -> *mut std::ffi::c_char {
     // ctime == asctime(localtime(timer)); like asctime, the non-reentrant form
     // uses the wider buffer (no 26-byte cap) via format_asctime_full.
     let epoch = unsafe { *timer };
-    let Some(bd) = time_core::epoch_to_broken_down_checked(epoch) else {
+    // ctime is asctime(localtime(...)): re-checks TZ like glibc's localtime.
+    let Some((bd, _, _)) = local_broken_down(epoch, true) else {
         return std::ptr::null_mut();
     };
     with_ctime_buf(|buf| {
@@ -3026,33 +3242,19 @@ pub unsafe extern "C" fn strptime(
 }
 
 // ---------------------------------------------------------------------------
-// tzset — native implementation (UTC-only)
+// tzset — native implementation
 // ---------------------------------------------------------------------------
 
-/// POSIX `tzset` — initialize timezone conversion information.
-///
-/// FrankenLibC operates in UTC-only mode: no timezone database is loaded,
-/// `TZ` environment variable is not consulted, and all conversions assume UTC.
-/// This is intentional — timezone support requires significant complexity
-/// (Olson database parsing, DST rules) that is out of scope.
+/// POSIX `tzset` — initialize timezone conversion information from `TZ`
+/// (or `/etc/localtime` when unset) and publish `tzname`, `timezone` and
+/// `daylight`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tzset() {
-    // FrankenLibC is UTC-only, but glibc's tzset() always populates the public
-    // timezone globals — in particular tzname[0] must be a valid, non-NULL
-    // string (the `tzset(); puts(tzname[0])` idiom is common and would deref
-    // NULL here). Populate them with the UTC values. bd-vxpc1y.
-    static UTC: &[u8] = b"UTC\0";
-    let p = UTC.as_ptr() as *mut std::ffi::c_char;
-    unsafe {
-        crate::glibc_internal_abi::tzname[0] = p;
-        crate::glibc_internal_abi::tzname[1] = p;
-        crate::glibc_internal_abi::__tzname[0] = p;
-        crate::glibc_internal_abi::__tzname[1] = p;
-        crate::glibc_internal_abi::timezone = 0;
-        crate::glibc_internal_abi::__timezone = 0;
-        crate::glibc_internal_abi::daylight = 0;
-        crate::glibc_internal_abi::__daylight = 0;
-    }
+    // Re-read TZ, reload the zone if it changed, and publish tzname/timezone/
+    // daylight (done by current_tz on every (re)load; publish again so a
+    // caller that overwrote the globals sees them restored, as with glibc).
+    let state = current_tz(true);
+    publish_tz_globals(state);
 }
 
 // ---------------------------------------------------------------------------

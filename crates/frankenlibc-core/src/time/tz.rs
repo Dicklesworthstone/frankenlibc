@@ -66,6 +66,10 @@ pub struct Zone {
     transition_types: Vec<u8>,
     types: Vec<LocalType>,
     footer: Option<PosixTz>,
+    /// Returned when the zone has no usable type (never for parsed files).
+    fallback: LocalType,
+    /// `tzname[1]` is empty (see [`Zone::utc_named`]).
+    unnamed_dst: bool,
 }
 
 /// The values `tzset` publishes (`tzname`, `timezone`, `daylight`).
@@ -151,13 +155,16 @@ impl RuleDate {
 }
 
 impl PosixTz {
-    fn lookup(&self, t: i64) -> LocalType {
+    fn lookup(&self, t: i64) -> &LocalType {
         let Some(rule) = &self.dst else {
-            return self.std.clone();
+            return &self.std;
         };
         let std_off = i64::from(self.std.utoff);
         let dst_off = i64::from(rule.dst.utoff);
-        let year = year_of_days((t + std_off).div_euclid(SECS_PER_DAY));
+        // glibc computes rule instants for years <= 1970 as if in 1970
+        // (tzset.c compute_change), so earlier instants compare against the
+        // 1970 transitions; mirror that so pre-1970 times agree.
+        let year = year_of_days((t + std_off).div_euclid(SECS_PER_DAY)).max(1970);
         let in_dst = |y: i64| {
             let start =
                 rule.start.day_in_year(y) * SECS_PER_DAY + i64::from(rule.start_time) - std_off;
@@ -170,11 +177,7 @@ impl PosixTz {
         };
         // Decide within the local year; the neighbouring year covers instants
         // whose rule boundary crosses New Year.
-        if in_dst(year) {
-            rule.dst.clone()
-        } else {
-            self.std.clone()
-        }
+        if in_dst(year) { &rule.dst } else { &self.std }
     }
 
     fn globals(&self) -> TzGlobals {
@@ -513,6 +516,8 @@ pub fn parse_tzif(b: &[u8]) -> Option<Zone> {
         transition_types,
         types,
         footer,
+        fallback: LocalType::utc(),
+        unnamed_dst: false,
     })
 }
 
@@ -526,6 +531,22 @@ impl Zone {
         })
     }
 
+    /// UTC reported under `name`, with an empty `tzname[1]` — glibc's result
+    /// for a `TZ` value that is neither a zone file nor a valid POSIX string
+    /// (e.g. `TZ=""` becomes "Universal" when that file is absent).
+    #[must_use]
+    pub fn utc_named(name: &str) -> Self {
+        let mut zone = Self::utc();
+        zone.fallback = LocalType {
+            utoff: 0,
+            isdst: false,
+            abbr: name.to_string(),
+        };
+        zone.footer = None;
+        zone.unnamed_dst = true;
+        zone
+    }
+
     /// A zone defined only by a POSIX rule.
     #[must_use]
     pub fn from_posix(tz: PosixTz) -> Self {
@@ -534,6 +555,8 @@ impl Zone {
             transition_types: Vec::new(),
             types: Vec::new(),
             footer: Some(tz),
+            fallback: LocalType::utc(),
+            unnamed_dst: false,
         }
     }
 
@@ -546,17 +569,14 @@ impl Zone {
 
     /// The local-time type in effect at UTC instant `t`.
     #[must_use]
-    pub fn lookup(&self, t: i64) -> LocalType {
+    pub fn lookup(&self, t: i64) -> &LocalType {
         if self.transitions.is_empty() || t < self.transitions[0] {
             if self.transitions.is_empty()
                 && let Some(footer) = &self.footer
             {
                 return footer.lookup(t);
             }
-            return self
-                .first_standard_type()
-                .cloned()
-                .unwrap_or_else(LocalType::utc);
+            return self.first_standard_type().unwrap_or(&self.fallback);
         }
         let last = *self.transitions.last().unwrap_or(&i64::MIN);
         if t >= last
@@ -565,75 +585,143 @@ impl Zone {
             return footer.lookup(t);
         }
         let idx = self.transitions.partition_point(|&x| x <= t) - 1;
-        self.types[usize::from(self.transition_types[idx])].clone()
+        &self.types[usize::from(self.transition_types[idx])]
+    }
+
+    /// Every local-time type this zone can return from [`Self::lookup`], so
+    /// callers can pre-intern abbreviations and map results by address.
+    #[must_use]
+    pub fn all_types(&self) -> Vec<&LocalType> {
+        let mut out: Vec<&LocalType> = self.types.iter().collect();
+        if let Some(footer) = &self.footer {
+            out.push(&footer.std);
+            if let Some(rule) = &footer.dst {
+                out.push(&rule.dst);
+            }
+        }
+        out.push(&self.fallback);
+        out
     }
 
     /// Values for `tzname`, `timezone` and `daylight` (glibc semantics: the
     /// footer rule wins; otherwise the last standard/daylight types used).
     #[must_use]
     pub fn globals(&self) -> TzGlobals {
-        if let Some(footer) = &self.footer {
-            return footer.globals();
+        if self.types.is_empty() {
+            let mut g = self.footer.as_ref().map_or_else(
+                || {
+                    PosixTz {
+                        std: self.fallback.clone(),
+                        dst: None,
+                    }
+                    .globals()
+                },
+                PosixTz::globals,
+            );
+            if self.unnamed_dst {
+                g.dst_abbr = String::new();
+            }
+            return g;
         }
-        let mut std = self
-            .first_standard_type()
-            .cloned()
-            .unwrap_or_else(LocalType::utc);
-        let mut dst: Option<LocalType> = None;
-        for &i in &self.transition_types {
+        // glibc: names and offsets come from the most recent standard and
+        // daylight transitions (falling back to the type list when a kind
+        // never occurs in the transition table).
+        let name_of = |want_dst: bool| {
+            self.transition_types
+                .iter()
+                .rev()
+                .map(|&i| &self.types[usize::from(i)])
+                .chain(self.types.iter().rev())
+                .find(|t| t.isdst == want_dst)
+                .map(|t| t.abbr.clone())
+        };
+        let std_abbr = name_of(false).unwrap_or_default();
+        let dst_abbr = name_of(true).unwrap_or_else(|| std_abbr.clone());
+        let (mut std_off, mut dst_off) = (None, None);
+        for &i in self.transition_types.iter().rev() {
             let ty = &self.types[usize::from(i)];
             if ty.isdst {
-                dst = Some(ty.clone());
+                dst_off.get_or_insert(ty.utoff);
             } else {
-                std = ty.clone();
+                std_off.get_or_insert(ty.utoff);
+            }
+            if std_off.is_some() && dst_off.is_some() {
+                break;
             }
         }
+        let std_off = std_off.or(dst_off).unwrap_or(self.types[0].utoff);
+        let dst_off = dst_off.unwrap_or(std_off);
         TzGlobals {
-            timezone: -i64::from(std.utoff),
-            daylight: dst.is_some(),
-            dst_abbr: dst.map_or_else(|| std.abbr.clone(), |d| d.abbr),
-            std_abbr: std.abbr,
+            std_abbr,
+            dst_abbr,
+            timezone: -i64::from(std_off),
+            daylight: std_off != dst_off,
         }
     }
 
     /// Resolve a local wall-clock time (`local` = seconds since the epoch as
     /// if the wall clock were UTC) to a UTC instant, glibc-`mktime` style.
     /// `isdst` is the caller's `tm_isdst` (<0 = unknown).
+    ///
+    /// `hint` is the offset used by the previous resolution: glibc's mktime
+    /// starts its search from a process-wide "last offset" (initially 0), so
+    /// which side of a repeated hour it lands on depends on call history.
+    /// Returns the instant and the offset used, which the caller feeds back
+    /// as the next hint.
+    #[must_use]
+    pub fn local_to_utc_with_hint(&self, local: i64, isdst: i32, hint: i32) -> (i64, i32) {
+        let mut off = hint;
+        let mut converged = None;
+        for _ in 0..8 {
+            let ty = self.lookup(local - i64::from(off));
+            if ty.utoff == off {
+                converged = Some(ty.isdst);
+                break;
+            }
+            off = ty.utoff;
+        }
+        match converged {
+            Some(found_dst) => {
+                if isdst >= 0
+                    && found_dst != (isdst > 0)
+                    && let Some(alt) = self.consistent_offset(local, isdst > 0)
+                {
+                    return (local - i64::from(alt), alt);
+                }
+                if isdst >= 0
+                    && found_dst != (isdst > 0)
+                    && let Some(alt) = self.nearby_offset(local, isdst > 0)
+                {
+                    // The requested kind does not apply at this wall time:
+                    // reinterpret the fields with that kind's offset.
+                    return (local - i64::from(alt), alt);
+                }
+                (local - i64::from(off), off)
+            }
+            None => {
+                // Skipped hour: interpret with the offset in force before the gap.
+                let before = self.lookup(local - SECS_PER_DAY).utoff;
+                (local - i64::from(before), before)
+            }
+        }
+    }
+
+    /// Stateless form of [`Self::local_to_utc_with_hint`] starting from 0.
     #[must_use]
     pub fn local_to_utc(&self, local: i64, isdst: i32) -> i64 {
-        let mut offsets: Vec<i32> = Vec::with_capacity(4);
-        for probe in [local - SECS_PER_DAY, local, local + SECS_PER_DAY] {
-            let off = self.lookup(probe).utoff;
-            if !offsets.contains(&off) {
-                offsets.push(off);
-            }
-        }
-        // Offsets whose resulting instant really is in that offset.
-        let consistent: Vec<(i64, bool)> = offsets
-            .iter()
-            .filter_map(|&off| {
-                let t = local - i64::from(off);
-                let ty = self.lookup(t);
-                (ty.utoff == off).then_some((t, ty.isdst))
+        self.local_to_utc_with_hint(local, isdst, 0).0
+    }
+
+    /// An offset of the requested kind that is self-consistent at `local`
+    /// (the other interpretation of a repeated hour).
+    fn consistent_offset(&self, local: i64, want_dst: bool) -> Option<i32> {
+        [local - SECS_PER_DAY, local, local + SECS_PER_DAY]
+            .into_iter()
+            .map(|probe| self.lookup(probe).utoff)
+            .find(|&off| {
+                let ty = self.lookup(local - i64::from(off));
+                ty.utoff == off && ty.isdst == want_dst
             })
-            .collect();
-        if isdst >= 0 {
-            let want = isdst > 0;
-            if let Some(&(t, _)) = consistent.iter().find(|&&(_, d)| d == want) {
-                return t;
-            }
-            // The requested flag does not apply at this wall time: glibc
-            // reinterprets the fields with the offset of the requested kind.
-            if let Some(off) = self.nearby_offset(local, want) {
-                return local - i64::from(off);
-            }
-        }
-        match consistent.as_slice() {
-            // Ambiguous (repeated hour): glibc prefers the earlier instant.
-            [first, ..] => consistent.iter().map(|&(t, _)| t).min().unwrap_or(first.0),
-            // Skipped hour: interpret with the offset in force before the gap.
-            [] => local - i64::from(self.lookup(local - SECS_PER_DAY).utoff),
-        }
     }
 
     /// The offset of a type with the requested DST flag in force within about
