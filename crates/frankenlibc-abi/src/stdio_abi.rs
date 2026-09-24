@@ -2012,11 +2012,82 @@ fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
     ids
 }
 
+/// The stdio registries held across `fork` (bd-rc0923-epic-eeuy4f.5), as glibc
+/// holds its stream-list lock: a stream operation in another thread at the
+/// instant of the clone otherwise leaves a registry locked forever in the
+/// child, whose next fopen/fclose blocks. Dropping the guard (in the parent and
+/// in the child) unlocks them; none of these mutexes records an owner thread.
+pub(crate) struct StdioForkGuard {
+    _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
+    _streams: parking_lot::MutexGuard<'static, StreamRegistry>,
+    _cookies: std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>,
+}
+
+impl StdioForkGuard {
+    /// Parent side of `fork`: unlock normally.
+    pub(crate) fn release_in_parent(self) {
+        drop(self);
+    }
+
+    /// Child side of `fork`. The std mutexes unlock normally. The
+    /// parking_lot stream-registry mutex must not be unlocked: its slow path
+    /// hands the lock to a waiter recorded in parking_lot's table, and in the
+    /// child every such waiter is a parent thread that does not exist, so the
+    /// mutex would stay locked forever. Move the registry out and publish it
+    /// behind a fresh mutex; the old one is leaked and never touched again.
+    pub(crate) fn release_in_child(self) {
+        let StdioForkGuard {
+            _native,
+            _streams,
+            _cookies,
+        } = self;
+        // SAFETY: the child is single-threaded and the old mutex (with the
+        // value inside it) is never used again, so reading the value out is a
+        // move, not a copy.
+        let streams = unsafe { std::ptr::read(&*_streams as *const StreamRegistry) };
+        std::mem::forget(_streams);
+        let fresh = Box::into_raw(Box::new(FastRegistryMutex::new(streams)));
+        REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
+        drop(_native);
+        drop(_cookies);
+    }
+}
+
+/// Acquire every stdio registry lock. Other code may take these in any order,
+/// so they are taken all-or-nothing with try-locks and the attempt backs off
+/// instead of blocking while holding one.
+pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
+    loop {
+        if let Some(native) = crate::io_internal_abi::try_lock_native_stream_registry()
+            && let Ok(streams) = registry().try_lock()
+        {
+            let cookies = match cookie_registry().try_lock() {
+                Ok(guard) => Some(guard),
+                Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+            };
+            if let Some(cookies) = cookies {
+                return StdioForkGuard {
+                    _native: native,
+                    _streams: streams,
+                    _cookies: cookies,
+                };
+            }
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// The stream registry. A pointer so a forked child can replace the mutex
+/// (see `StdioForkGuard::release_in_child`).
+static REGISTRY_PTR: std::sync::atomic::AtomicPtr<FastRegistryMutex<StreamRegistry>> =
+    std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
 fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
     ensure_host_libio_exit_safe();
 
-    use std::sync::atomic::{AtomicPtr, Ordering};
-    static PTR: AtomicPtr<FastRegistryMutex<StreamRegistry>> = AtomicPtr::new(std::ptr::null_mut());
+    use std::sync::atomic::Ordering;
+    let PTR = &REGISTRY_PTR;
     static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let p = PTR.load(Ordering::Acquire);
     if !p.is_null() {

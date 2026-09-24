@@ -1506,6 +1506,16 @@ unsafe impl Sync for NativeStreamRegistry {}
 static NATIVE_STREAM_REGISTRY: std::sync::LazyLock<Mutex<NativeStreamRegistry>> =
     std::sync::LazyLock::new(|| Mutex::new(NativeStreamRegistry::new()));
 
+/// Non-blocking lock of the stream registry, for `fork` preparation.
+pub(crate) fn try_lock_native_stream_registry()
+-> Option<std::sync::MutexGuard<'static, NativeStreamRegistry>> {
+    match NATIVE_STREAM_REGISTRY.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 /// Flag to track if stdio chain has been initialized.
 static STDIO_CHAIN_INITIALIZED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -1779,9 +1789,8 @@ pub(crate) fn is_native_handle_slot_address(ptr: *mut c_void) -> bool {
         return false;
     }
     let registry = native_stream_registry();
-    (3..STREAM_REGISTRY_CAPACITY).any(|i| {
-        (&registry.slots[i].file as *const NativeFile as *mut c_void) == ptr
-    })
+    (3..STREAM_REGISTRY_CAPACITY)
+        .any(|i| (&registry.slots[i].file as *const NativeFile as *mut c_void) == ptr)
 }
 
 pub fn register_native_file_ptr(ptr: *mut c_void) {

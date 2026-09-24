@@ -2890,6 +2890,35 @@ impl FlatCombiningStats {
 
 static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
 
+/// Holds the allocator's stats spin lock across `fork` (bd-rc0923-epic-eeuy4f.5).
+/// Another thread holding it at the instant of the clone left it held forever
+/// in the child, whose next malloc/free spun at 100% CPU. Acquire it
+/// immediately before the clone and drop the guard immediately after, in the
+/// parent and in the child, before anything else allocates or frees.
+pub(crate) struct MallocForkGuard(Option<&'static FlatCombiningStats>);
+
+pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
+    let stats = GLOBAL_ALLOC_STATS.get();
+    if let Some(stats) = stats {
+        while stats
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+    }
+    MallocForkGuard(stats)
+}
+
+impl Drop for MallocForkGuard {
+    fn drop(&mut self) {
+        if let Some(stats) = self.0 {
+            stats.combiner_lock.store(false, Ordering::Release);
+        }
+    }
+}
+
 fn global_alloc_stats() -> Option<&'static FlatCombiningStats> {
     // Use get() not get_or_init() — OnceLock futex deadlocks during early init.
     // Stats are populated after prewarm. Before that, returns None (stats skipped).
