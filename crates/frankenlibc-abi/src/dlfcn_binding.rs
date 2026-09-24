@@ -93,16 +93,14 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
     let name = dso.object.symbol_name(symbol)?;
     let version = dso.object.symbol_version_by_index(index);
     // Native module IDs and native __dso_handle values must never reach the
-    // host runtime. These private runtime ABIs are not interposition points.
-    if symbol.is_undefined() {
-        let special = match name {
-            "__tls_get_addr" => Some(super::tls::resolver_address(version)),
-            "__cxa_thread_atexit_impl" => Some(super::thread_exit::resolver_address(version)),
-            _ => None,
-        };
-        if let Some(address) = special {
-            return Some(Definition { address: address?, provider: None, indirect: false });
-        }
+    // host runtime. Use the same version-checked private ABI path as ordinary
+    // resolution; prebinding must not bypass newly implemented runtime hooks.
+    if symbol.is_undefined() && matches!(name,
+        "__tls_get_addr" | "__cxa_thread_atexit_impl" | "__cxa_atexit" | "__cxa_finalize")
+    {
+        let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
+        let address = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version)?;
+        return Some(Definition { address, provider: None, indirect: false });
     }
     for provider in scope {
         if let Some(found) = provider.object.lookup_symbol_versioned(name, version) {
