@@ -14,6 +14,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cxxabi.h>
+
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -82,6 +84,30 @@ static int open_fd_count() {
   }
   closedir(d);
   return n;
+}
+
+// Thread cancellation is a forced unwind: C++ destructors on the cancelled
+// thread's stack run, and catch(abi::__forced_unwind&) sees it and must rethrow.
+static int cancel_pipe[2];
+struct Announce {
+  const char *what;
+  ~Announce() {
+    printf("  destructor ran: %s\n", what);
+    fflush(stdout);
+  }
+};
+static void *cancelled_in_read(void *) {
+  Announce guard{"read frame"};
+  try {
+    char c;
+    ssize_t n = read(cancel_pipe[0], &c, 1);
+    (void)n;
+  } catch (abi::__forced_unwind &) {
+    printf("  caught abi::__forced_unwind, rethrowing\n");
+    fflush(stdout);
+    throw;
+  }
+  return nullptr;
 }
 
 int main() {
@@ -162,6 +188,18 @@ int main() {
 
   // scandir releases its DIR when the filter unwinds (glibc does too).
   printf("scandir_fds_left_open=%d\n", open_fd_count() - fds_before);
+
+  printf("pthread_cancel of a thread blocked in read:\n");
+  fflush(stdout);
+  if (pipe(cancel_pipe) == 0) {
+    pthread_t t;
+    void *ret = nullptr;
+    pthread_create(&t, nullptr, cancelled_in_read, nullptr);
+    usleep(100000);
+    pthread_cancel(t);
+    pthread_join(t, &ret);
+    printf("  joined: %s\n", ret == PTHREAD_CANCELED ? "PTHREAD_CANCELED" : "returned");
+  }
 
   // Normal operation still works after all the unwinds.
   int again[] = {3, 1, 2};
