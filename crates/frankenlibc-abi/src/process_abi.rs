@@ -337,7 +337,7 @@ pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char)
 
 /// POSIX `waitpid` — wait for a child process to change state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn waitpid(
+pub unsafe extern "C-unwind" fn waitpid(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
@@ -362,7 +362,11 @@ pub unsafe extern "C" fn waitpid(
         options
     };
 
-    let rc = unsafe { raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut()) };
+    let rc = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
+        })
+    };
 
     match rc {
         Ok(child_pid) => {
@@ -383,7 +387,7 @@ pub unsafe extern "C" fn waitpid(
 
 /// POSIX `wait` — equivalent to `waitpid(-1, wstatus, 0)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wait(wstatus: *mut c_int) -> libc::pid_t {
+pub unsafe extern "C-unwind" fn wait(wstatus: *mut c_int) -> libc::pid_t {
     unsafe { waitpid(-1, wstatus, 0) }
 }
 
@@ -409,7 +413,7 @@ pub unsafe extern "C" fn wait3(
 
 /// BSD `wait4` — wait for a specific child with resource usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wait4(
+pub unsafe extern "C-unwind" fn wait4(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
@@ -423,7 +427,11 @@ pub unsafe extern "C" fn wait4(
         return -1;
     }
 
-    let rc = unsafe { raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8) };
+    let rc = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_wait4(pid, wstatus, options, rusage as *mut u8)
+        })
+    };
 
     match rc {
         Ok(child_pid) => {
@@ -444,7 +452,7 @@ pub unsafe extern "C" fn wait4(
 
 /// POSIX `waitid` — wait for a child process to change state (extended).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn waitid(
+pub unsafe extern "C-unwind" fn waitid(
     idtype: c_int,
     id: libc::id_t,
     infop: *mut libc::siginfo_t,
@@ -459,13 +467,15 @@ pub unsafe extern "C" fn waitid(
     }
 
     let rc = unsafe {
-        raw_syscall::sys_waitid(
-            idtype,
-            id,
-            infop as *mut u8,
-            options,
-            std::ptr::null_mut(), // rusage (5th arg)
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_waitid(
+                idtype,
+                id,
+                infop as *mut u8,
+                options,
+                std::ptr::null_mut(), // rusage (5th arg)
+            )
+        })
     };
 
     match rc {

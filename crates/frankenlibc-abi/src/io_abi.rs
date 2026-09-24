@@ -332,7 +332,7 @@ pub unsafe extern "C" fn ioctl(fd: c_int, request: libc::c_ulong, arg: libc::c_u
 
 /// POSIX `pread` — read from a file descriptor at a given offset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pread(
+pub unsafe extern "C-unwind" fn pread(
     fd: c_int,
     buf: *mut c_void,
     count: usize,
@@ -349,7 +349,11 @@ pub unsafe extern "C" fn pread(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pread64(fd, buf as *mut u8, count, offset)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -364,7 +368,7 @@ pub unsafe extern "C" fn pread(
 
 /// POSIX `pwrite` — write to a file descriptor at a given offset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwrite(
+pub unsafe extern "C-unwind" fn pwrite(
     fd: c_int,
     buf: *const c_void,
     count: usize,
@@ -382,7 +386,11 @@ pub unsafe extern "C" fn pwrite(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_pwrite64(fd, buf as *const u8, count, offset) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwrite64(fd, buf as *const u8, count, offset)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -401,7 +409,11 @@ pub unsafe extern "C" fn pwrite(
 
 /// POSIX `readv` — scatter read from a file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
+pub unsafe extern "C-unwind" fn readv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -424,7 +436,11 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_readv(fd, iov as *const u8, iovcnt) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_readv(fd, iov as *const u8, iovcnt)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -439,7 +455,7 @@ pub unsafe extern "C" fn readv(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
 
 /// POSIX `writev` — gather write to a file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn writev(
+pub unsafe extern "C-unwind" fn writev(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
@@ -466,7 +482,11 @@ pub unsafe extern "C" fn writev(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_writev(fd, iov as *const u8, iovcnt) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_writev(fd, iov as *const u8, iovcnt)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t

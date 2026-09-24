@@ -70,7 +70,11 @@ fn reject_efault() -> c_int {
 
 /// POSIX `poll` — wait for events on file descriptors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn poll(
+    fds: *mut libc::pollfd,
+    nfds: libc::nfds_t,
+    timeout: c_int,
+) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Poll, fds as usize, nfds as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -103,7 +107,11 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
 
     // SYS_poll doesn't exist on aarch64; use SYS_ppoll with timeout conversion.
     #[cfg(target_arch = "x86_64")]
-    let result = unsafe { raw_syscall::sys_poll(fds as *mut u8, actual_nfds as usize, timeout) };
+    let result = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_poll(fds as *mut u8, actual_nfds as usize, timeout)
+        })
+    };
     #[cfg(not(target_arch = "x86_64"))]
     let result = {
         // Convert millisecond timeout to timespec for ppoll.
@@ -123,13 +131,15 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
             ts_ptr = &ts_storage as *const libc::timespec;
         }
         unsafe {
-            raw_syscall::sys_ppoll(
-                fds as *mut u8,
-                actual_nfds as usize,
-                ts_ptr as *const u8,
-                std::ptr::null(),
-                0,
-            )
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_ppoll(
+                    fds as *mut u8,
+                    actual_nfds as usize,
+                    ts_ptr as *const u8,
+                    std::ptr::null(),
+                    0,
+                )
+            })
         }
     };
     let (rc, adverse) = match result {
@@ -149,7 +159,7 @@ pub unsafe extern "C" fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeou
 
 /// POSIX `ppoll` — poll with signal mask and timespec timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ppoll(
+pub unsafe extern "C-unwind" fn ppoll(
     fds: *mut libc::pollfd,
     nfds: libc::nfds_t,
     timeout_ts: *const libc::timespec,
@@ -212,13 +222,15 @@ pub unsafe extern "C" fn ppoll(
     // Use SYS_ppoll with sigset size parameter.
     let sigset_size = core::mem::size_of::<libc::c_ulong>();
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_ppoll(
-            fds as *mut u8,
-            actual_nfds as usize,
-            ts_ptr,
-            sigmask as *const u8,
-            sigset_size,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_ppoll(
+                fds as *mut u8,
+                actual_nfds as usize,
+                ts_ptr,
+                sigmask as *const u8,
+                sigset_size,
+            )
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -236,7 +248,7 @@ pub unsafe extern "C" fn ppoll(
 
 /// POSIX `select` — synchronous I/O multiplexing.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn select(
+pub unsafe extern "C-unwind" fn select(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -286,13 +298,15 @@ pub unsafe extern "C" fn select(
     // SYS_select doesn't exist on aarch64; use SYS_pselect6 with timeout conversion.
     #[cfg(target_arch = "x86_64")]
     let result = unsafe {
-        raw_syscall::sys_select(
-            actual_nfds,
-            readfds as *mut u8,
-            writefds as *mut u8,
-            exceptfds as *mut u8,
-            timeout as *mut u8,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_select(
+                actual_nfds,
+                readfds as *mut u8,
+                writefds as *mut u8,
+                exceptfds as *mut u8,
+                timeout as *mut u8,
+            )
+        })
     };
     #[cfg(not(target_arch = "x86_64"))]
     let result = {
@@ -313,14 +327,16 @@ pub unsafe extern "C" fn select(
             &ts_storage as *const libc::timespec
         };
         let res = unsafe {
-            raw_syscall::sys_pselect6(
-                actual_nfds,
-                readfds as *mut u8,
-                writefds as *mut u8,
-                exceptfds as *mut u8,
-                ts_ptr as *const u8,
-                std::ptr::null(),
-            )
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_pselect6(
+                    actual_nfds,
+                    readfds as *mut u8,
+                    writefds as *mut u8,
+                    exceptfds as *mut u8,
+                    ts_ptr as *const u8,
+                    std::ptr::null(),
+                )
+            })
         };
         if !timeout.is_null() {
             let tv = unsafe { &mut *timeout };
@@ -346,7 +362,7 @@ pub unsafe extern "C" fn select(
 
 /// POSIX `pselect` — select with signal mask and timespec timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pselect(
+pub unsafe extern "C-unwind" fn pselect(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -426,14 +442,16 @@ pub unsafe extern "C" fn pselect(
     };
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_pselect6(
-            actual_nfds,
-            readfds as *mut u8,
-            writefds as *mut u8,
-            exceptfds as *mut u8,
-            ts_ptr,
-            sig_ptr as *const u8,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_pselect6(
+                actual_nfds,
+                readfds as *mut u8,
+                writefds as *mut u8,
+                exceptfds as *mut u8,
+                ts_ptr,
+                sig_ptr as *const u8,
+            )
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -512,7 +530,7 @@ pub unsafe extern "C" fn epoll_ctl(
 
 /// Linux `epoll_wait` — wait for events on an epoll file descriptor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn epoll_wait(
+pub unsafe extern "C-unwind" fn epoll_wait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
@@ -530,14 +548,16 @@ pub unsafe extern "C" fn epoll_wait(
         return reject_efault();
     }
     match unsafe {
-        raw_syscall::sys_epoll_pwait(
-            epfd,
-            events as *mut u8,
-            maxevents,
-            timeout,
-            std::ptr::null(),
-            core::mem::size_of::<libc::c_ulong>(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_epoll_pwait(
+                epfd,
+                events as *mut u8,
+                maxevents,
+                timeout,
+                std::ptr::null(),
+                core::mem::size_of::<libc::c_ulong>(),
+            )
+        })
     } {
         Ok(n) => n,
         Err(e) => {
@@ -549,7 +569,7 @@ pub unsafe extern "C" fn epoll_wait(
 
 /// Linux `epoll_pwait` — wait for events with signal mask.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn epoll_pwait(
+pub unsafe extern "C-unwind" fn epoll_pwait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
@@ -577,14 +597,16 @@ pub unsafe extern "C" fn epoll_pwait(
         return reject_efault();
     }
     match unsafe {
-        raw_syscall::sys_epoll_pwait(
-            epfd,
-            events as *mut u8,
-            maxevents,
-            timeout,
-            sigmask as *const u8,
-            core::mem::size_of::<libc::c_ulong>(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_epoll_pwait(
+                epfd,
+                events as *mut u8,
+                maxevents,
+                timeout,
+                sigmask as *const u8,
+                core::mem::size_of::<libc::c_ulong>(),
+            )
+        })
     } {
         Ok(n) => n,
         Err(e) => {

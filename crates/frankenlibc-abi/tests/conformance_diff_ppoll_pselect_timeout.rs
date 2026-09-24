@@ -51,13 +51,13 @@ unsafe extern "C" {
     fn dlsym(handle: *mut c_void, symbol: *const i8) -> *mut c_void;
 }
 
-type PpollFn = unsafe extern "C" fn(
+type PpollFn = unsafe extern "C-unwind" fn(
     *mut libc::pollfd,
     libc::nfds_t,
     *const libc::timespec,
     *const libc::sigset_t,
 ) -> c_int;
-type PselectFn = unsafe extern "C" fn(
+type PselectFn = unsafe extern "C-unwind" fn(
     c_int,
     *mut libc::fd_set,
     *mut libc::fd_set,

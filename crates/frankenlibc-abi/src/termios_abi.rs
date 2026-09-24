@@ -1024,14 +1024,18 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tcdrain(fd: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn tcdrain(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
-    let rc = match unsafe { syscall::sys_ioctl(fd, libc::TCSBRK as usize, 1usize) } {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_ioctl(fd, libc::TCSBRK as usize, 1usize)
+        })
+    } {
         Ok(_) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

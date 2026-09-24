@@ -1430,7 +1430,10 @@ pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec)
 
 /// POSIX `nanosleep` — high-resolution sleep.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nanosleep(req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
+pub unsafe extern "C-unwind" fn nanosleep(
+    req: *const libc::timespec,
+    rem: *mut libc::timespec,
+) -> c_int {
     if req.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -1441,7 +1444,11 @@ pub unsafe extern "C" fn nanosleep(req: *const libc::timespec, rem: *mut libc::t
         return -1;
     }
 
-    match unsafe { raw_syscall::sys_nanosleep(req as *const u8, rem as *mut u8) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_nanosleep(req as *const u8, rem as *mut u8)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1456,7 +1463,7 @@ pub unsafe extern "C" fn nanosleep(req: *const libc::timespec, rem: *mut libc::t
 
 /// POSIX `clock_nanosleep` — high-resolution sleep with specified clock.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clock_nanosleep(
+pub unsafe extern "C-unwind" fn clock_nanosleep(
     clock_id: c_int,
     flags: c_int,
     req: *const libc::timespec,
@@ -1492,7 +1499,9 @@ pub unsafe extern "C" fn clock_nanosleep(
 
     // clock_nanosleep returns the error number directly (not via errno).
     let result = match unsafe {
-        raw_syscall::sys_clock_nanosleep(clock_id, flags, req as *const u8, rem as *mut u8)
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_clock_nanosleep(clock_id, flags, req as *const u8, rem as *mut u8)
+        })
     } {
         Ok(()) => 0,
         Err(e) => e, // Return error code directly, not via errno

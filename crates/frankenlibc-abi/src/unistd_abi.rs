@@ -1426,14 +1426,14 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buf: *mut c_char, bufsiz:
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fsync(fd: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn fsync(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match syscall::sys_fsync(fd) {
+    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fsync(fd)) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1445,14 +1445,14 @@ pub unsafe extern "C" fn fsync(fd: c_int) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fdatasync(fd: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn fdatasync(fd: c_int) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match syscall::sys_fdatasync(fd) {
+    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fdatasync(fd)) {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -6046,12 +6046,17 @@ pub unsafe extern "C" fn ftruncate64(fd: c_int, length: i64) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pread64(fd: c_int, buf: *mut c_void, count: usize, offset: i64) -> isize {
+pub unsafe extern "C-unwind" fn pread64(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> isize {
     unsafe { crate::io_abi::pread(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwrite64(
+pub unsafe extern "C-unwind" fn pwrite64(
     fd: c_int,
     buf: *const c_void,
     count: usize,
@@ -6214,15 +6219,18 @@ unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
 }
 
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
+    // Semaphore waits are cancellation points.
     match unsafe {
-        syscall::sys_futex(
-            word as *const u32,
-            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-            expected as u32,
-            0, // null timeout
-            0,
-            0,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_futex(
+                word as *const u32,
+                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                expected as u32,
+                0, // null timeout
+                0,
+                0,
+            )
+        })
     } {
         Ok(_) => 0,
         Err(e) => -e,
@@ -6278,15 +6286,18 @@ fn sem_futex_wait_timed(
         Ok(rel) => rel,
         Err(errno) => return -errno,
     };
+    // Semaphore waits are cancellation points.
     match unsafe {
-        syscall::sys_futex(
-            word as *const u32,
-            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-            expected as u32,
-            &rel as *const libc::timespec as usize,
-            0,
-            0,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_futex(
+                word as *const u32,
+                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                expected as u32,
+                &rel as *const libc::timespec as usize,
+                0,
+                0,
+            )
+        })
     } {
         Ok(_) => 0,
         Err(e) => -e,
@@ -6539,7 +6550,7 @@ pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
 
 /// POSIX `sem_wait` — decrement the semaphore, blocking if zero.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_wait(sem: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn sem_wait(sem: *mut c_void) -> c_int {
     if sem.is_null() {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
@@ -6634,7 +6645,7 @@ pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
 
 /// POSIX `sem_timedwait` — decrement with absolute timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_timedwait(
+pub unsafe extern "C-unwind" fn sem_timedwait(
     sem: *mut c_void,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
@@ -14361,7 +14372,7 @@ pub unsafe extern "C" fn msgctl(msqid: c_int, cmd: c_int, buf: *mut c_void) -> c
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn msgsnd(
+pub unsafe extern "C-unwind" fn msgsnd(
     msqid: c_int,
     msgp: *const c_void,
     msgsz: usize,
@@ -14397,7 +14408,11 @@ pub unsafe extern "C" fn msgsnd(
         return -1;
     }
 
-    let rc = match unsafe { syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg) } {
+    let rc = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -14414,7 +14429,7 @@ pub unsafe extern "C" fn msgsnd(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn msgrcv(
+pub unsafe extern "C-unwind" fn msgrcv(
     msqid: c_int,
     msgp: *mut c_void,
     msgsz: usize,
@@ -14452,7 +14467,9 @@ pub unsafe extern "C" fn msgrcv(
     }
 
     let rc = match unsafe {
-        syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg)
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg)
+        })
     } {
         Ok(n) => n as libc::ssize_t,
         Err(e) => {
@@ -14508,18 +14525,20 @@ pub unsafe extern "C" fn sigqueue(pid: libc::pid_t, sig: c_int, value: libc::sig
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigtimedwait(
+pub unsafe extern "C-unwind" fn sigtimedwait(
     set: *const c_void,
     info: *mut c_void,
     timeout: *const libc::timespec,
 ) -> c_int {
     match unsafe {
-        syscall::sys_rt_sigtimedwait(
-            set as *const u8,
-            info as *mut u8,
-            timeout as *const u8,
-            std::mem::size_of::<libc::c_ulong>(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_rt_sigtimedwait(
+                set as *const u8,
+                info as *mut u8,
+                timeout as *const u8,
+                std::mem::size_of::<libc::c_ulong>(),
+            )
+        })
     } {
         Ok(sig) => sig,
         Err(e) => {
@@ -14530,14 +14549,16 @@ pub unsafe extern "C" fn sigtimedwait(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn sigwaitinfo(set: *const c_void, info: *mut c_void) -> c_int {
     match unsafe {
-        syscall::sys_rt_sigtimedwait(
-            set as *const u8,
-            info as *mut u8,
-            std::ptr::null(),
-            std::mem::size_of::<libc::c_ulong>(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_rt_sigtimedwait(
+                set as *const u8,
+                info as *mut u8,
+                std::ptr::null(),
+                std::mem::size_of::<libc::c_ulong>(),
+            )
+        })
     } {
         Ok(sig) => sig,
         Err(e) => {

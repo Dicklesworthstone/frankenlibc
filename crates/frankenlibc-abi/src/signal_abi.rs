@@ -1219,7 +1219,7 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pause() -> c_int {
+pub unsafe extern "C-unwind" fn pause() -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1228,7 +1228,7 @@ pub unsafe extern "C" fn pause() -> c_int {
     }
 
     // pause always returns -1 with EINTR when interrupted.
-    let _ = raw_syscall::sys_pause();
+    let _ = crate::pthread_abi::at_cancellation_point(|| raw_syscall::sys_pause());
     unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1
@@ -1239,7 +1239,7 @@ pub unsafe extern "C" fn pause() -> c_int {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
+pub unsafe extern "C-unwind" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, mask as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1255,7 +1255,11 @@ pub unsafe extern "C" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
 
     let kernel_sigset_size = std::mem::size_of::<libc::c_ulong>();
     // sigsuspend always returns -1 with EINTR.
-    let _ = unsafe { raw_syscall::sys_rt_sigsuspend(mask as *const u8, kernel_sigset_size) };
+    let _ = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_rt_sigsuspend(mask as *const u8, kernel_sigset_size)
+        })
+    };
     unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1

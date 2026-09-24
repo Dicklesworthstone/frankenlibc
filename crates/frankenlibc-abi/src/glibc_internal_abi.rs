@@ -7358,7 +7358,7 @@ pub unsafe extern "C-unwind" fn scandirat64(
 }
 // sem_clockwait: timed semaphore wait with specified clock
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sem_clockwait(
+pub unsafe extern "C-unwind" fn sem_clockwait(
     sem: *mut c_void,
     clockid: c_int,
     abstime: *const c_void,
@@ -7405,14 +7405,16 @@ pub unsafe extern "C" fn sem_clockwait(
                     0
                 }));
         if let Err(err) = unsafe {
-            raw_syscall::sys_futex(
-                sem_val as *mut u32,
-                futex_op,
-                val as u32,
-                ts as usize,
-                std::ptr::null::<c_void>() as usize,
-                !0u32, // FUTEX_BITSET_MATCH_ANY
-            )
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_futex(
+                    sem_val as *mut u32,
+                    futex_op,
+                    val as u32,
+                    ts as usize,
+                    std::ptr::null::<c_void>() as usize,
+                    !0u32, // FUTEX_BITSET_MATCH_ANY
+                )
+            })
         } {
             if err == libc::ETIMEDOUT {
                 unsafe { crate::errno_abi::set_abi_errno(err) };

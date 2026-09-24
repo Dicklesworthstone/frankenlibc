@@ -146,7 +146,7 @@ pub unsafe extern "C" fn listen(sockfd: c_int, backlog: c_int) -> c_int {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn accept(
+pub unsafe extern "C-unwind" fn accept(
     sockfd: c_int,
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
@@ -165,7 +165,11 @@ pub unsafe extern "C" fn accept(
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_accept(sockfd, addr as *mut u8, addrlen) } {
+    let (rc, adverse) = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_accept(sockfd, addr as *mut u8, addrlen)
+        })
+    } {
         Ok(fd) => (fd, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -181,7 +185,7 @@ pub unsafe extern "C" fn accept(
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn connect(
+pub unsafe extern "C-unwind" fn connect(
     sockfd: c_int,
     addr: *const libc::sockaddr,
     addrlen: u32,
@@ -206,14 +210,17 @@ pub unsafe extern "C" fn connect(
         return -1;
     }
 
-    let (rc, adverse) =
-        match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
-            Ok(()) => (0, false),
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                (-1, true)
-            }
-        };
+    let (rc, adverse) = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen)
+        })
+    } {
+        Ok(()) => (0, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
+    };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
     rc
 }
@@ -223,7 +230,7 @@ pub unsafe extern "C" fn connect(
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn send(
+pub unsafe extern "C-unwind" fn send(
     sockfd: c_int,
     buf: *const c_void,
     len: usize,
@@ -254,7 +261,9 @@ pub unsafe extern "C" fn send(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -276,7 +285,12 @@ pub unsafe extern "C" fn send(
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize {
+pub unsafe extern "C-unwind" fn recv(
+    sockfd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    flags: c_int,
+) -> isize {
     if sockfd < 0 {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -302,14 +316,16 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_recvfrom(
-            sockfd,
-            buf as *mut u8,
-            len,
-            flags,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_recvfrom(
+                sockfd,
+                buf as *mut u8,
+                len,
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -331,7 +347,7 @@ pub unsafe extern "C" fn recv(sockfd: c_int, buf: *mut c_void, len: usize, flags
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sendto(
+pub unsafe extern "C-unwind" fn sendto(
     sockfd: c_int,
     buf: *const c_void,
     len: usize,
@@ -363,14 +379,16 @@ pub unsafe extern "C" fn sendto(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_sendto(
-            sockfd,
-            buf as *const u8,
-            len,
-            flags,
-            dest_addr as *const u8,
-            addrlen as usize,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_sendto(
+                sockfd,
+                buf as *const u8,
+                len,
+                flags,
+                dest_addr as *const u8,
+                addrlen as usize,
+            )
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -392,7 +410,7 @@ pub unsafe extern "C" fn sendto(
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn recvfrom(
+pub unsafe extern "C-unwind" fn recvfrom(
     sockfd: c_int,
     buf: *mut c_void,
     len: usize,
@@ -426,14 +444,16 @@ pub unsafe extern "C" fn recvfrom(
     }
 
     let (rc, adverse) = match unsafe {
-        raw_syscall::sys_recvfrom(
-            sockfd,
-            buf as *mut u8,
-            len,
-            flags,
-            src_addr as *mut u8,
-            addrlen,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_recvfrom(
+                sockfd,
+                buf as *mut u8,
+                len,
+                flags,
+                src_addr as *mut u8,
+                addrlen,
+            )
+        })
     } {
         Ok(n) => (n, false),
         Err(e) => {
@@ -716,7 +736,11 @@ pub unsafe extern "C" fn socketpair(
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
+pub unsafe extern "C-unwind" fn sendmsg(
+    sockfd: c_int,
+    msg: *const libc::msghdr,
+    flags: c_int,
+) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -736,7 +760,11 @@ pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags:
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_sendmsg(sockfd, msg as *const u8, flags) } {
+    let (rc, adverse) = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_sendmsg(sockfd, msg as *const u8, flags)
+        })
+    } {
         Ok(n) => (n, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -752,7 +780,11 @@ pub unsafe extern "C" fn sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags:
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
+pub unsafe extern "C-unwind" fn recvmsg(
+    sockfd: c_int,
+    msg: *mut libc::msghdr,
+    flags: c_int,
+) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -772,7 +804,11 @@ pub unsafe extern "C" fn recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c
         return -1;
     }
 
-    let (rc, adverse) = match unsafe { raw_syscall::sys_recvmsg(sockfd, msg as *mut u8, flags) } {
+    let (rc, adverse) = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_recvmsg(sockfd, msg as *mut u8, flags)
+        })
+    } {
         Ok(n) => (n, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -788,7 +824,7 @@ pub unsafe extern "C" fn recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn accept4(
+pub unsafe extern "C-unwind" fn accept4(
     sockfd: c_int,
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
@@ -808,14 +844,17 @@ pub unsafe extern "C" fn accept4(
         return -1;
     }
 
-    let (rc, adverse) =
-        match unsafe { raw_syscall::sys_accept4(sockfd, addr as *mut u8, addrlen, flags) } {
-            Ok(fd) => (fd, false),
-            Err(e) => {
-                unsafe { set_abi_errno(e) };
-                (-1, true)
-            }
-        };
+    let (rc, adverse) = match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_accept4(sockfd, addr as *mut u8, addrlen, flags)
+        })
+    } {
+        Ok(fd) => (fd, false),
+        Err(e) => {
+            unsafe { set_abi_errno(e) };
+            (-1, true)
+        }
+    };
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 15, adverse);
     rc
 }
