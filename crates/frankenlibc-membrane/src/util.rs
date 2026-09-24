@@ -3,7 +3,7 @@
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 use std::sync::{
     RwLock as StdRwLock, RwLockReadGuard as StdRwLockReadGuard,
     RwLockWriteGuard as StdRwLockWriteGuard, TryLockError,
@@ -357,6 +357,80 @@ impl<T> NoPoisonRwLock<T> {
     }
 }
 
+/// Heap value built on first use, without ever blocking.
+///
+/// Racing initializers each build a value; one installs its pointer and the
+/// others drop theirs. `OnceLock` instead parks losers on a futex, and a fork
+/// taken while its initializer runs leaves the child's cell stuck "running"
+/// forever (the hazard `NoPoisonMutex` is fork-aware against).
+pub(crate) struct LazyBox<T> {
+    ptr: AtomicPtr<T>,
+}
+
+// SAFETY: the pointee is shared by reference across threads once installed,
+// and moved with the box: the usual `Box<T>` + `&T` sharing bounds.
+#[allow(unsafe_code)]
+unsafe impl<T: Send + Sync> Sync for LazyBox<T> {}
+// SAFETY: as above.
+#[allow(unsafe_code)]
+unsafe impl<T: Send> Send for LazyBox<T> {}
+
+impl<T> LazyBox<T> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            ptr: AtomicPtr::new(std::ptr::null_mut()),
+        }
+    }
+
+    #[allow(unsafe_code)]
+    pub(crate) fn get(&self) -> Option<&T> {
+        let ptr = self.ptr.load(Ordering::Acquire);
+        // SAFETY: a non-null pointer came from `Box::into_raw` in
+        // `get_or_init`, is never replaced, and is freed only by `drop`.
+        (!ptr.is_null()).then(|| unsafe { &*ptr })
+    }
+
+    #[allow(unsafe_code)]
+    pub(crate) fn get_or_init(&self, init: impl FnOnce() -> T) -> &T {
+        if let Some(value) = self.get() {
+            return value;
+        }
+        let fresh = Box::into_raw(Box::new(init()));
+        match self.ptr.compare_exchange(
+            std::ptr::null_mut(),
+            fresh,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            // SAFETY: `fresh` is now the installed, never-replaced pointer.
+            Ok(_) => unsafe { &*fresh },
+            Err(installed) => {
+                // SAFETY: `fresh` lost the race and was never shared.
+                drop(unsafe { Box::from_raw(fresh) });
+                // SAFETY: as in `get`.
+                unsafe { &*installed }
+            }
+        }
+    }
+}
+
+impl<T> Default for LazyBox<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> Drop for LazyBox<T> {
+    #[allow(unsafe_code)]
+    fn drop(&mut self) {
+        let ptr = *self.ptr.get_mut();
+        if !ptr.is_null() {
+            // SAFETY: exclusive access; the pointer came from `Box::into_raw`.
+            drop(unsafe { Box::from_raw(ptr) });
+        }
+    }
+}
+
 /// Convert a Unix timestamp (days since 1970-01-01) to a civil date (year, month, day).
 ///
 /// Uses Howard Hinnant's algorithm for efficient conversion without loops.
@@ -399,4 +473,60 @@ pub fn now_utc_iso_like() -> String {
         seconds_of_day % 60,
         millis,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LazyBox;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Counted(Arc<AtomicUsize>);
+
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn lazy_box_builds_once_and_racers_drop_their_losing_values() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let builds = Arc::new(AtomicUsize::new(0));
+        let lazy = Arc::new(LazyBox::<Counted>::new());
+        assert!(lazy.get().is_none());
+
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let winners: Vec<usize> = (0..8)
+            .map(|_| {
+                let (lazy, drops, builds, barrier) =
+                    (lazy.clone(), drops.clone(), builds.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    let value = lazy.get_or_init(|| {
+                        builds.fetch_add(1, Ordering::SeqCst);
+                        Counted(drops)
+                    });
+                    value as *const Counted as usize
+                })
+            })
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        assert!(winners.iter().all(|ptr| *ptr == winners[0]));
+        assert_eq!(
+            lazy.get().map(|v| v as *const Counted as usize),
+            Some(winners[0])
+        );
+        let built = builds.load(Ordering::SeqCst);
+        assert!(built >= 1);
+        assert_eq!(
+            drops.load(Ordering::SeqCst),
+            built - 1,
+            "every loser dropped"
+        );
+
+        drop(Arc::try_unwrap(lazy).ok().expect("sole owner"));
+        assert_eq!(drops.load(Ordering::SeqCst), built, "winner freed on drop");
+    }
 }

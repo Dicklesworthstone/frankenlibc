@@ -2554,6 +2554,21 @@ impl Drop for ErrnoTransparencyGuard {
     }
 }
 
+/// `observe` into a kernel that already exists, never building one. For the
+/// observation `__libc_start_main` makes after `main` returns: constructing
+/// the kernel there, for a process about to exit, cost `/bin/true` 106 of its
+/// 918 startup page faults (bd-rc0923-epic-eeuy4f.25).
+pub(crate) fn observe_if_kernel_ready(
+    family: ApiFamily,
+    profile: ValidationProfile,
+    estimated_cost_ns: u64,
+    adverse: bool,
+) {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        observe(family, profile, estimated_cost_ns, adverse);
+    }
+}
+
 pub(crate) fn observe(
     family: ApiFamily,
     profile: ValidationProfile,

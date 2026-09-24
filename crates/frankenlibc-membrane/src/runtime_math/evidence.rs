@@ -19,6 +19,7 @@ use std::io::{self, ErrorKind, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 use std::time::Instant;
 
+use crate::util::LazyBox;
 use crate::util::NoPoisonMutex as Mutex;
 use serde_json::Value;
 
@@ -2637,7 +2638,10 @@ fn expect_artifact_refs(row: &Value) -> Result<(), RuntimeEvidenceRowValidationE
 /// Overwrite-on-full decision-card ring buffer.
 pub struct DecisionCardRingBuffer<const CAP: usize> {
     next_decision_id: AtomicU64,
-    slots: Vec<DecisionCardSlot>,
+    /// Built on first publish: most processes never publish, and writing all
+    /// CAP slots up front faulted in every page of them at kernel
+    /// construction (bd-rc0923-epic-eeuy4f.25).
+    slots: LazyBox<Vec<DecisionCardSlot>>,
 }
 
 struct DecisionCardSlot {
@@ -2663,13 +2667,9 @@ impl<const CAP: usize> Default for DecisionCardRingBuffer<CAP> {
 impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
     #[must_use]
     pub fn new() -> Self {
-        let mut slots = Vec::with_capacity(CAP);
-        for _ in 0..CAP {
-            slots.push(DecisionCardSlot::new());
-        }
         Self {
             next_decision_id: AtomicU64::new(0),
-            slots,
+            slots: LazyBox::new(),
         }
     }
 
@@ -2681,7 +2681,10 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
 
     pub fn publish(&self, decision_id: u64, card: DecisionCardV1) {
         let idx = (decision_id as usize) % CAP;
-        let slot = &self.slots[idx];
+        let slots = self
+            .slots
+            .get_or_init(|| (0..CAP).map(|_| DecisionCardSlot::new()).collect());
+        let slot = &slots[idx];
         debug_assert_eq!(card.decision_id, decision_id);
         *slot.card.lock() = card;
         slot.published_decision_id
@@ -2706,7 +2709,7 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
     #[must_use]
     pub fn snapshot_sorted(&self) -> Vec<DecisionCardV1> {
         let mut out = Vec::new();
-        for slot in &self.slots {
+        for slot in self.slots.get().into_iter().flatten() {
             let d1 = slot.published_decision_id.load(Ordering::Acquire);
             if d1 == 0 {
                 continue;
@@ -2735,7 +2738,8 @@ impl<const CAP: usize> DecisionCardRingBuffer<CAP> {
 /// 3. re-read published `seqno` with `Acquire` and accept iff unchanged
 pub struct EvidenceRingBuffer<const CAP: usize> {
     next_seqno: AtomicU64,
-    slots: Vec<EvidenceSlot>,
+    /// Built on first publish, as `DecisionCardRingBuffer::slots`.
+    slots: LazyBox<Vec<EvidenceSlot>>,
 }
 
 struct EvidenceSlot {
@@ -2762,13 +2766,9 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
     #[must_use]
     pub fn new() -> Self {
         // CAP is expected to be a smallish power of two, but we don't require it.
-        let mut slots = Vec::with_capacity(CAP);
-        for _ in 0..CAP {
-            slots.push(EvidenceSlot::new());
-        }
         Self {
             next_seqno: AtomicU64::new(0),
-            slots,
+            slots: LazyBox::new(),
         }
     }
 
@@ -2782,7 +2782,10 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
     /// Publish a record for a previously allocated seqno.
     pub fn publish(&self, seqno: u64, record: EvidenceSymbolRecord) {
         let idx = (seqno as usize) % CAP;
-        let slot = &self.slots[idx];
+        let slots = self
+            .slots
+            .get_or_init(|| (0..CAP).map(|_| EvidenceSlot::new()).collect());
+        let slot = &slots[idx];
         debug_assert_eq!(record.seqno(), seqno);
         // Write record under the slot mutex, then publish the seqno.
         // Readers will Acquire-load seqno and then lock/copy record.
@@ -2794,7 +2797,7 @@ impl<const CAP: usize> EvidenceRingBuffer<CAP> {
     #[must_use]
     pub fn snapshot_sorted(&self) -> Vec<EvidenceSymbolRecord> {
         let mut out = Vec::new();
-        for slot in &self.slots {
+        for slot in self.slots.get().into_iter().flatten() {
             let s1 = slot.published_seqno.load(Ordering::Acquire);
             if s1 == 0 {
                 continue;

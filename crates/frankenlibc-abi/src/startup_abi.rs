@@ -1047,7 +1047,12 @@ unsafe fn startup_phase0_impl(
     }
 
     path.push(StartupCheckpoint::Complete);
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 20, membrane_denied);
+    runtime_policy::observe_if_kernel_ready(
+        ApiFamily::Process,
+        decision.profile,
+        20,
+        membrane_denied,
+    );
     record_phase0_outcome(
         &path,
         StartupPolicyDecision::Allow,
