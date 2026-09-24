@@ -105,7 +105,8 @@ struct AllocatorReentrySlot {
     segment_local: UnsafeCell<SegmentLocalState>,
 }
 
-// SAFETY: a live kernel tid owns exactly one reentry slot.  The outer allocator
+// SAFETY: a live thread owns exactly one reentry slot: keyed by its TCB self
+// pointer, or (tid path) by its kernel tid; both are unique among live threads.  The outer allocator
 // guard changes `allocator_depth` from zero to one before any access to
 // `segment_local`, so only that owner can obtain its mutable reference.  A
 // signal/reentrant allocation fails the guard and uses the host/bootstrap path;
@@ -128,14 +129,13 @@ impl AllocatorReentrySlot {
 static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
     [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
 
-// Global last-thread cache to eliminate gettid syscalls for single-threaded programs.
-// Stores (tid << 32) | slot_index. Zero means "cache empty".
+// Global last-thread cache: the slot the single thread used last.
+// Stores (1 << 32) | slot_index. Zero means "cache empty".
 //
 // SAFETY: For single-threaded programs (like Python startup), this provides O(1) lookup
 // with zero syscalls after the first allocation. The syscall-free fast path keys on the
-// glibc TCB self pointer alone, which is conclusive only while the process is
-// single-threaded; once `MULTI_THREADED` latches, the fast path is bypassed and the live
-// kernel tid is verified instead (see `current_allocator_reentry_slot`).
+// glibc TCB self pointer alone. For a key-claimed slot that is always conclusive; for a
+// tid-claimed slot only while single-threaded (see `current_allocator_reentry_slot`).
 static LAST_THREAD_CACHE: AtomicU64 = AtomicU64::new(0);
 
 // Soundness latch for the syscall-free fast path (bd-35hjg.3.1).
@@ -177,6 +177,69 @@ fn note_thread_tid(tid: i32) {
     if observe_distinct_tid(&FIRST_OBSERVED_TID, tid) {
         MULTI_THREADED.store(true, Ordering::SeqCst);
     }
+}
+
+/// `tid` of a slot claimed by thread key rather than by kernel tid. Never a real tid,
+/// so the tid path neither matches nor claims such a slot: the two key spaces stay
+/// disjoint.
+const KEY_CLAIMED_TID: i32 = -1;
+
+/// Set, together with `MULTI_THREADED`, before FrankenLibC's own thread backend clones
+/// its first thread. Those threads are created without `CLONE_SETTLS` and share their
+/// creator's TCB self pointer, so from then on a thread key no longer identifies one
+/// live thread and slots are found by kernel tid only. (Latching `MULTI_THREADED` here
+/// also stops the single-threaded cache handing such a thread its creator's slot.)
+static NATIVE_THREAD_BACKEND: AtomicBool = AtomicBool::new(false);
+static FIRST_OBSERVED_KEY: AtomicUsize = AtomicUsize::new(0);
+
+/// Called by the native `pthread_create` before it clones.
+pub(crate) fn note_native_thread_backend() {
+    MULTI_THREADED.store(true, Ordering::SeqCst);
+    NATIVE_THREAD_BACKEND.store(true, Ordering::SeqCst);
+}
+
+/// `note_thread_tid` for the keyed path: a second distinct live key is a second thread.
+#[inline]
+fn note_thread_key(key: usize) {
+    // Read-only once latched: a compare-exchange here on every multi-threaded
+    // allocation bounced this line between all allocating cores.
+    if MULTI_THREADED.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Err(previous) =
+        FIRST_OBSERVED_KEY.compare_exchange(0, key, Ordering::AcqRel, Ordering::Acquire)
+        && previous != key
+    {
+        MULTI_THREADED.store(true, Ordering::SeqCst);
+    }
+}
+
+/// The slot owned by the thread whose TCB self pointer is `key`.
+///
+/// A TCB address belongs to one live thread at a time and is reused only after that
+/// thread has exited, so a key-claimed slot is never shared by two live threads, and a
+/// thread that inherits a dead thread's TCB inherits its idle slot and local caches.
+/// Unlike tids, TCBs are recycled by thread churn, which keeps the table from filling.
+fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentrySlot> {
+    let start = (key >> 4).wrapping_mul(0x9e37_79b1_85eb_ca87) >> 52;
+    for offset in 0..ALLOCATOR_REENTRY_SLOT_PROBE_LIMIT {
+        let slot = &ALLOCATOR_REENTRY_SLOTS[(start + offset) & ALLOCATOR_REENTRY_SLOT_MASK];
+        match slot.tid.load(Ordering::Acquire) {
+            KEY_CLAIMED_TID if slot.thread_key.load(Ordering::Acquire) == key => {
+                return Some(slot);
+            }
+            0 if slot
+                .tid
+                .compare_exchange(0, KEY_CLAIMED_TID, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok() =>
+            {
+                bind_slot_to_thread_key(slot, Some(key));
+                return Some(slot);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[inline]
@@ -283,61 +346,59 @@ fn allocator_reentry_slot_for_tid(
     None
 }
 
-/// Get the reentry slot for the current thread. Uses a global last-thread cache
-/// to eliminate gettid syscalls for single-threaded programs.
+/// Get the reentry slot for the current thread, without a syscall unless FrankenLibC's
+/// own thread backend is in use.
 ///
-/// Fast path (no syscall): while the process is single-threaded, a cached slot whose
-/// stored glibc TCB self pointer matches this thread is returned directly. Tids and TCB
-/// addresses cannot have been recycled with only one thread, so the key match is
-/// conclusive.
+/// Keyed path (the normal case): the slot is found by the TCB self pointer, which is
+/// unique among live threads. A global last-thread cache short-circuits the probe while
+/// single-threaded. This used to cost a `gettid` syscall per allocation once a second
+/// thread existed: multi-threaded malloc+free ran 36x (1 worker) to 490x (4 workers)
+/// slower than glibc (bd-rc0923-epic-eeuy4f.26).
 ///
-/// Slow path (one syscall): on a cache miss, a key mismatch, or once the process has gone
-/// multi-threaded (`MULTI_THREADED`), do gettid, probe for the slot keyed by the kernel
-/// tid, and update the cache. The kernel tid is unique among concurrently live threads,
-/// so it disambiguates threads that share a recycled TCB address (bd-35hjg.3.1).
-///
-/// This reduces gettid syscalls from O(allocations) to O(1) for single-threaded programs,
-/// fixing the ~650x Python startup regression (bd-35hjg).
+/// Tid path: when no TCB is set up yet, or after `note_native_thread_backend`, the slot
+/// is keyed by kernel tid (one syscall). The single-threaded cache still applies, and is
+/// bypassed once `MULTI_THREADED` latches, since a recycled TCB can then give a new
+/// thread an exited thread's key (bd-35hjg.3.1).
 #[inline]
 fn current_allocator_reentry_slot() -> Option<&'static AllocatorReentrySlot> {
     let thread_key = current_thread_key();
+    let keyed = thread_key.is_some() && !NATIVE_THREAD_BACKEND.load(Ordering::Relaxed);
 
-    // Fast path: check last-thread cache WITHOUT syscall. The cached slot is accepted
-    // only when its no-syscall thread key matches the current thread AND the process is
-    // still single-threaded. Once `MULTI_THREADED` latches, a recycled glibc TCB can give
-    // a freshly created thread the same key as an exited thread, so a key match alone is
-    // no longer sound and we fall through to verify the live kernel tid (bd-35hjg.3.1).
     let cached = LAST_THREAD_CACHE.load(Ordering::Relaxed);
     if cached != 0 {
         let cached_slot_idx = (cached & 0xFFFF_FFFF) as usize;
         if cached_slot_idx < ALLOCATOR_REENTRY_SLOT_COUNT {
             let slot = &ALLOCATOR_REENTRY_SLOTS[cached_slot_idx];
-            if slot_matches_thread_key(slot, thread_key) && !MULTI_THREADED.load(Ordering::Relaxed)
+            if slot_matches_thread_key(slot, thread_key)
+                && (!MULTI_THREADED.load(Ordering::Relaxed)
+                    || (keyed && slot.tid.load(Ordering::Relaxed) == KEY_CLAIMED_TID))
             {
                 return Some(slot);
             }
         }
     }
 
-    // Slow path: need to determine actual TID via syscall
-    let tid = raw_syscall::sys_gettid();
-    if tid <= 0 {
-        return None;
+    let slot = if let (true, Some(key)) = (keyed, thread_key) {
+        note_thread_key(key);
+        allocator_reentry_slot_for_key(key)?
+    } else {
+        let tid = raw_syscall::sys_gettid();
+        if tid <= 0 {
+            return None;
+        }
+        // Record this tid so a second distinct thread latches `MULTI_THREADED` and
+        // disables the syscall-free fast path before tid/TCB recycling can alias slots.
+        note_thread_tid(tid);
+        allocator_reentry_slot_for_tid(tid, thread_key)?
+    };
+
+    // Only while single-threaded: once several threads allocate, a shared last-thread
+    // word would bounce between their caches on every miss.
+    if !MULTI_THREADED.load(Ordering::Relaxed) {
+        let slot_idx = (slot as *const _ as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
+            / std::mem::size_of::<AllocatorReentrySlot>();
+        LAST_THREAD_CACHE.store(slot_idx as u64 | (1 << 32), Ordering::Relaxed);
     }
-
-    // Record this tid so a second distinct thread latches `MULTI_THREADED` and disables
-    // the syscall-free fast path before tid/TCB recycling can alias slots.
-    note_thread_tid(tid);
-
-    // Look up or create slot for this TID
-    let slot = allocator_reentry_slot_for_tid(tid, thread_key)?;
-
-    // Update global cache for next fast-path lookup
-    let slot_idx = (slot as *const _ as usize - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
-        / std::mem::size_of::<AllocatorReentrySlot>();
-    let packed = ((tid as u64) << 32) | (slot_idx as u64);
-    LAST_THREAD_CACHE.store(packed, Ordering::Relaxed);
-
     Some(slot)
 }
 

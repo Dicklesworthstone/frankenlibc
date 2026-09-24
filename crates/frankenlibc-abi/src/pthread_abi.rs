@@ -1642,6 +1642,9 @@ unsafe fn native_pthread_create(
         }
     }
 
+    // These threads share this thread's TCB self pointer; stop keying allocator
+    // slots by it before the clone.
+    crate::malloc_abi::note_native_thread_backend();
     let handle_ptr =
         match unsafe { core_create_thread(start_routine as usize, arg as usize, stack_size) } {
             Ok(ptr) => ptr,
