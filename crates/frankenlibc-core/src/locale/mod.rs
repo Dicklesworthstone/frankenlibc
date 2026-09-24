@@ -1,6 +1,7 @@
 //! Locale support.
 
 pub mod catgets;
+pub mod data;
 pub mod strfmon;
 
 /// POSIX locale category: character classification and conversion.
