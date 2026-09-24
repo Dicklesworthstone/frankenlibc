@@ -124,6 +124,42 @@ unsafe extern "C" {
     ) -> c_int;
     #[link_name = "hdestroy_r"]
     fn host_hdestroy_r(htab: *mut HostHsearchData);
+    #[link_name = "insque"]
+    fn host_insque(elem: *mut c_void, pred: *mut c_void);
+    #[link_name = "remque"]
+    fn host_remque(elem: *mut c_void);
+    #[link_name = "printf"]
+    fn host_printf(format: *const c_char, ...) -> c_int;
+    #[link_name = "dprintf"]
+    fn host_dprintf(fd: c_int, format: *const c_char, ...) -> c_int;
+    #[link_name = "asprintf"]
+    fn host_asprintf(strp: *mut *mut c_char, format: *const c_char, ...) -> c_int;
+    #[link_name = "vsnprintf"]
+    fn host_vsnprintf(
+        str_buf: *mut c_char,
+        size: usize,
+        format: *const c_char,
+        ap: *mut c_void,
+    ) -> c_int;
+    #[link_name = "vsprintf"]
+    fn host_vsprintf(str_buf: *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vdprintf"]
+    fn host_vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "vasprintf"]
+    fn host_vasprintf(strp: *mut *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
+    #[link_name = "dlvsym"]
+    fn host_dlvsym_direct(
+        handle: *mut c_void,
+        symbol: *const c_char,
+        version: *const c_char,
+    ) -> *mut c_void;
+    #[link_name = "dl_iterate_phdr"]
+    fn host_dl_iterate_phdr(callback: Option<DlIteratePhdrCallback>, data: *mut c_void) -> c_int;
+}
+
+// Host glibc search oracles, declared C-unwind to match fl's: both let a
+// comparator or walk action unwind through them.
+unsafe extern "C-unwind" {
     #[link_name = "tsearch"]
     fn host_tsearch(
         key: *const c_void,
@@ -163,54 +199,23 @@ unsafe extern "C" {
         width: usize,
         compar: SearchCompareFn,
     ) -> *mut c_void;
-    #[link_name = "insque"]
-    fn host_insque(elem: *mut c_void, pred: *mut c_void);
-    #[link_name = "remque"]
-    fn host_remque(elem: *mut c_void);
-    #[link_name = "printf"]
-    fn host_printf(format: *const c_char, ...) -> c_int;
-    #[link_name = "dprintf"]
-    fn host_dprintf(fd: c_int, format: *const c_char, ...) -> c_int;
-    #[link_name = "asprintf"]
-    fn host_asprintf(strp: *mut *mut c_char, format: *const c_char, ...) -> c_int;
-    #[link_name = "vsnprintf"]
-    fn host_vsnprintf(
-        str_buf: *mut c_char,
-        size: usize,
-        format: *const c_char,
-        ap: *mut c_void,
-    ) -> c_int;
-    #[link_name = "vsprintf"]
-    fn host_vsprintf(str_buf: *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vdprintf"]
-    fn host_vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "vasprintf"]
-    fn host_vasprintf(strp: *mut *mut c_char, format: *const c_char, ap: *mut c_void) -> c_int;
-    #[link_name = "dlvsym"]
-    fn host_dlvsym_direct(
-        handle: *mut c_void,
-        symbol: *const c_char,
-        version: *const c_char,
-    ) -> *mut c_void;
-    #[link_name = "dl_iterate_phdr"]
-    fn host_dl_iterate_phdr(callback: Option<DlIteratePhdrCallback>, data: *mut c_void) -> c_int;
 }
 
-type SearchCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type SearchCompareFn = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 type TreeInsertFn =
-    unsafe extern "C" fn(*const c_void, *mut *mut c_void, SearchCompareFn) -> *mut c_void;
+    unsafe extern "C-unwind" fn(*const c_void, *mut *mut c_void, SearchCompareFn) -> *mut c_void;
 type TreeFindFn =
-    unsafe extern "C" fn(*const c_void, *const *mut c_void, SearchCompareFn) -> *mut c_void;
+    unsafe extern "C-unwind" fn(*const c_void, *const *mut c_void, SearchCompareFn) -> *mut c_void;
 type TreeDeleteFn =
-    unsafe extern "C" fn(*const c_void, *mut *mut c_void, SearchCompareFn) -> *mut c_void;
-type LinearFindFn = unsafe extern "C" fn(
+    unsafe extern "C-unwind" fn(*const c_void, *mut *mut c_void, SearchCompareFn) -> *mut c_void;
+type LinearFindFn = unsafe extern "C-unwind" fn(
     *const c_void,
     *const c_void,
     *mut usize,
     usize,
     SearchCompareFn,
 ) -> *mut c_void;
-type LinearSearchFn = unsafe extern "C" fn(
+type LinearSearchFn = unsafe extern "C-unwind" fn(
     *const c_void,
     *mut c_void,
     *mut usize,
@@ -220,7 +225,7 @@ type LinearSearchFn = unsafe extern "C" fn(
 type QueueInsertFn = unsafe extern "C" fn(*mut c_void, *mut c_void);
 type QueueRemoveFn = unsafe extern "C" fn(*mut c_void);
 type DlIteratePhdrCallback =
-    unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int;
+    unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -2695,7 +2700,7 @@ unsafe extern "C" fn unistd_process_fixture_cxa_callback(_arg: *mut c_void) {
     UNISTD_PROCESS_FIXTURE_CXA_CALLBACKS.fetch_add(1, Ordering::SeqCst);
 }
 
-unsafe extern "C" fn search_int_compare(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn search_int_compare(a: *const c_void, b: *const c_void) -> c_int {
     let lhs = unsafe { *(a as *const c_int) };
     let rhs = unsafe { *(b as *const c_int) };
     if lhs < rhs {
@@ -3508,7 +3513,7 @@ unsafe extern "C" fn host_twalk_capture(nodep: *const c_void, visit: HostVisit, 
     });
 }
 
-unsafe extern "C" fn impl_twalk_capture(
+unsafe extern "C-unwind" fn impl_twalk_capture(
     nodep: *const c_void,
     visit: frankenlibc_abi::search_abi::Visit,
     level: c_int,
@@ -15261,7 +15266,7 @@ fn execute_dlvsym_case(
     })
 }
 
-unsafe extern "C" fn count_dl_iterate_phdr_callback(
+unsafe extern "C-unwind" fn count_dl_iterate_phdr_callback(
     _info: *mut libc::dl_phdr_info,
     _size: usize,
     data: *mut c_void,
@@ -16203,7 +16208,7 @@ const PTHREAD_SYNC_WAVE01_AMBIENT_POLICY: &str = "forbid_pthread_object_address_
 
 static PTHREAD_SYNC_ONCE_CALLS: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn pthread_sync_once_callback() {
+unsafe extern "C-unwind" fn pthread_sync_once_callback() {
     PTHREAD_SYNC_ONCE_CALLS.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -19845,7 +19850,7 @@ unsafe extern "C" fn c11_fixture_return_plus_seven(arg: *mut c_void) -> c_int {
     arg as usize as c_int + 7
 }
 
-extern "C" fn c11_once_fixture_callback() {
+extern "C-unwind" fn c11_once_fixture_callback() {
     C11_ONCE_FIXTURE_CALLS.fetch_add(1, Ordering::SeqCst);
 }
 

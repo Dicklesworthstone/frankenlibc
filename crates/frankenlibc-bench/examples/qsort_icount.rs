@@ -36,26 +36,26 @@ use std::ffi::c_void;
 // fl declares the comparator as `Option<fn>` (C's nullable pointer); glibc's
 // symbol has the same ABI. `Option<fn>` is null-optimised, so the two types are
 // layout-identical and the `transmute` below is the ABI-correct spelling.
-type ComparFn = unsafe extern "C" fn(*const c_void, *const c_void) -> i32;
-type QsortFn = unsafe extern "C" fn(*mut c_void, usize, usize, Option<ComparFn>);
+type ComparFn = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> i32;
+type QsortFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, Option<ComparFn>);
 
 /// The comparator every C program writes, overflow and all. Using the textbook
 /// form rather than a correct one is deliberate: it is what the fast lane has to
 /// cope with, and a driver that used `a < b ? -1 : ...` would measure a case the
 /// real world does not send.
-unsafe extern "C" fn cmp_i32_desc(a: *const c_void, b: *const c_void) -> i32 {
+unsafe extern "C-unwind" fn cmp_i32_desc(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: as `cmp_i32`.
     let (av, bv) = unsafe { (*(a as *const i32), *(b as *const i32)) };
     if bv < av { -1 } else if bv > av { 1 } else { 0 }
 }
 
-unsafe extern "C" fn cmp_i64_desc(a: *const c_void, b: *const c_void) -> i32 {
+unsafe extern "C-unwind" fn cmp_i64_desc(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: as `cmp_i64`.
     let (av, bv) = unsafe { (*(a as *const i64), *(b as *const i64)) };
     if bv < av { -1 } else if bv > av { 1 } else { 0 }
 }
 
-unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
+unsafe extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: the driver only passes pointers to 4-byte elements of its own
     // buffer when it selects this comparator.
     let (av, bv) = unsafe { (*(a as *const i32), *(b as *const i32)) };
@@ -68,7 +68,7 @@ unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
     }
 }
 
-unsafe extern "C" fn cmp_i64(a: *const c_void, b: *const c_void) -> i32 {
+unsafe extern "C-unwind" fn cmp_i64(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: the loop below only ever passes pointers to 8-byte elements of its
     // own buffer.
     let (av, bv) = unsafe { (*(a as *const i64), *(b as *const i64)) };
