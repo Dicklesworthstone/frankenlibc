@@ -41,6 +41,9 @@ mod ifunc;
 #[path = "dlfcn_binding.rs"]
 mod binding;
 
+#[path = "dlfcn_versions.rs"]
+mod versions;
+
 #[path = "dlfcn_cxa.rs"]
 mod cxa;
 
@@ -98,9 +101,11 @@ struct NativeDso {
     // DT_NEEDED order is the lookup scope; relocation-only providers are
     // lifetime edges, not additional members of a handle's lookup scope.
     needed: Vec<usize>,
+    needed_by_name: Vec<(String, usize)>,
     dependencies: Vec<usize>,
     mapping: Mapping,
     object: LoadedObject,
+    versions: versions::Table,
     callbacks: lifecycle::Callbacks,
     tls: Option<Arc<tls::Module>>,
     tls_relocations: Vec<Elf64Rela>,
@@ -119,6 +124,7 @@ struct PreparedDso {
     object: LoadedObject,
     image: LoadImage,
     needed: Vec<usize>,
+    needed_by_name: Vec<(String, usize)>,
     path: PathBuf,
     search: SearchPaths,
     inherited_rpaths: Vec<PathBuf>,
@@ -201,6 +207,7 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
     Some(PreparedDso {
         file, device, inode, bytes, object, image, needed: Vec::new(),
+        needed_by_name: Vec::new(),
         path, search, inherited_rpaths: Vec::new(), lifecycle,
     })
 }
@@ -211,10 +218,12 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
     while cursor < group.len() {
         let names = group[cursor].object.needed_libraries.clone();
         let mut needed = Vec::new();
+        let mut needed_by_name = Vec::new();
         for name in names {
             if !name.as_bytes().contains(&b'/') {
                 if let Some(index) = group.iter().position(|dso| dso.object.soname.as_deref() == Some(name.as_str())) {
                     if !needed.contains(&index) { needed.push(index); }
+                    needed_by_name.push((name, index));
                     continue;
                 }
             }
@@ -241,8 +250,10 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
             if !needed.contains(&index) {
                 needed.push(index);
             }
+            needed_by_name.push((name, index));
         }
         group[cursor].needed = needed;
+        group[cursor].needed_by_name = needed_by_name;
         cursor += 1;
     }
     Some(group)
@@ -293,7 +304,10 @@ fn reopen(dsos: &mut [NativeDso], index: usize, flags: c_int) -> Option<*mut c_v
     Some(handle(id))
 }
 
-fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<NativeDso> {
+fn map_object(
+    prepared: &PreparedDso, id: usize, needed: Vec<usize>,
+    needed_by_name: Vec<(String, usize)>,
+) -> Option<NativeDso> {
     let file = prepared.file.try_clone().ok()?;
     let len = prepared.image.memory.len();
     // SAFETY: independent anonymous mapping, writable only while relocating.
@@ -310,6 +324,7 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         .copy_from_slice(&prepared.image.memory);
     let mut object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
     let symbolic = binding::symbolic(&prepared.bytes, &object)?;
+    let versions = versions::Table::parse(&prepared.bytes, &object)?;
     let tls_relocations = tls::take_relocations(&mut object);
     Some(NativeDso {
         id,
@@ -322,8 +337,10 @@ fn map_object(prepared: &PreparedDso, id: usize, needed: Vec<usize>) -> Option<N
         symbolic,
         dependencies: needed.clone(),
         needed,
+        needed_by_name,
         mapping,
         object,
+        versions,
         callbacks: lifecycle::Callbacks::default(),
         tls: None,
         tls_relocations,
@@ -384,7 +401,9 @@ impl SymbolLookup for Resolver<'_> {
         if matches!(name, "__cxa_atexit" | "__cxa_finalize") { return cxa::resolver_address(name, version); }
         if matches!(name, "exit" | "_Exit" | "_exit" | "quick_exit") { return process_exit::resolver_address(name, version); }
         for dso in &self.scope {
-            if let Some(symbol) = dso.object.lookup_symbol_versioned(name, version) {
+            if let Some(symbol) = dso.versions.lookup(
+                &dso.object, name, version, versions::Lookup::Relocation { hidden: false },
+            ) {
                 // All IFUNC references belong to the explicit late pass.
                 if symbol.is_tls() || symbol.is_ifunc() { return None; }
                 let address = symbol.definition_address(dso.object.base)?;
@@ -442,7 +461,28 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         let needed = group[index].needed.iter()
             .map(|&dependency| ids[dependency])
             .collect::<Option<Vec<_>>>()?;
-        pending.push(map_object(&group[index], ids[index]?, needed)?);
+        let needed_by_name = group[index].needed_by_name.iter()
+            .map(|(name, dependency)| Some((name.clone(), ids[*dependency]?)))
+            .collect::<Option<Vec<_>>>()?;
+        pending.push(map_object(&group[index], ids[index]?, needed, needed_by_name)?);
+    }
+    // Version requirements are a dependency contract, not merely a filter on
+    // symbols that happen to be relocated. Validate against the named direct
+    // provider's ORIGINAL image before any resolver, initializer or publication.
+    for dso in &pending {
+        for requirement in &dso.versions.requirements {
+            let provider_id = dso.needed_by_name.iter()
+                .find(|(name, _)| name == &requirement.library)
+                .map(|(_, id)| *id)
+                .or_else(|| dso.needed.iter().copied().find(|&id| {
+                    find(&dsos, &pending, id).is_some_and(|provider| {
+                        provider.object.soname.as_deref() == Some(requirement.library.as_str())
+                    })
+                }))?;
+            if !find(&dsos, &pending, provider_id)?.versions.satisfies(requirement) {
+                return None;
+            }
+        }
     }
     let direct = binding::prepare(&dsos, &mut pending, root, flags)?;
     let indirect = ifunc::prepare(&dsos, &mut pending, root, flags)?;
@@ -627,7 +667,7 @@ pub(super) fn resolve_native_dso_symbol(
     dsos.iter().find(|dso| dso.id == id)?;
     for candidate in lookup_order(&dsos, &[], id) {
         let dso = dsos.iter().find(|dso| dso.id == candidate)?;
-        if let Some(symbol) = dso.object.lookup_symbol_versioned(symbol, version) {
+        if let Some(symbol) = dso.versions.lookup(&dso.object, symbol, version, versions::Lookup::Public) {
             if symbol.is_tls() {
                 let module = dso.tls.clone()?;
                 let offset = usize::try_from(symbol.st_value).ok()?;

@@ -117,9 +117,9 @@ fn definition<'a>(dso: &'a NativeDso, resolver: &Resolver<'a>, index: usize) -> 
         return Some(Definition::Tls(dso, symbol_offset(&dso.object, requested)?));
     }
     let name = dso.object.symbol_name(requested)?;
-    let version = dso.object.symbol_version_by_index(index);
+    let version = dso.versions.name(index);
     for provider in &resolver.scope {
-        if let Some(symbol) = provider.object.lookup_symbol_versioned(name, version) {
+        if let Some(symbol) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
             // A malformed or non-TLS definition is an error, not an unresolved
             // weak reference. Never conceal a type/version/bounds mismatch.
             return Some(Definition::Tls(provider, symbol_offset(&provider.object, symbol)?));

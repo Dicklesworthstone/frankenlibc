@@ -91,7 +91,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
         return symbol.is_weak().then_some(Definition { address: 0, provider: None, indirect: false });
     }
     let name = dso.object.symbol_name(symbol)?;
-    let version = dso.object.symbol_version_by_index(index);
+    let version = dso.versions.name(index);
     // Native module IDs and native __dso_handle values must never reach the
     // host runtime. Use the same version-checked private ABI path as ordinary
     // resolution; prebinding must not bypass newly implemented runtime hooks.
@@ -103,7 +103,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
         return Some(Definition { address, provider: None, indirect: false });
     }
     for provider in scope {
-        if let Some(found) = provider.object.lookup_symbol_versioned(name, version) {
+        if let Some(found) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
             if !found.is_defined() || matches!(found.st_other & 3, 1 | 2) { continue; }
             if found.is_tls() { return None; }
             return Some(Definition {
