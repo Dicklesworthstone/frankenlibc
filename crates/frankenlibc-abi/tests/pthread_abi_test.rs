@@ -1657,7 +1657,7 @@ fn key_default_is_null() {
 
 static ONCE_COUNTER: AtomicI32 = AtomicI32::new(0);
 
-unsafe extern "C" fn once_init_fn() {
+unsafe extern "C-unwind" fn once_init_fn() {
     ONCE_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -2321,7 +2321,7 @@ fn internal_rwlock_try() {
 
 static INTERNAL_ONCE_CTR: AtomicI32 = AtomicI32::new(0);
 
-unsafe extern "C" fn internal_once_fn() {
+unsafe extern "C-unwind" fn internal_once_fn() {
     INTERNAL_ONCE_CTR.fetch_add(1, Ordering::Relaxed);
 }
 

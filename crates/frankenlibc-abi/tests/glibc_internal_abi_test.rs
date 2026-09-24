@@ -3981,13 +3981,13 @@ fn twalk_r_counts_nodes() {
     use frankenlibc_abi::search_abi::{tdelete, tsearch};
     use std::os::raw::c_void;
 
-    unsafe extern "C" fn cmp(a: *const c_void, b: *const c_void) -> libc::c_int {
+    unsafe extern "C-unwind" fn cmp(a: *const c_void, b: *const c_void) -> libc::c_int {
         let a = a as usize;
         let b = b as usize;
         (a > b) as libc::c_int - (a < b) as libc::c_int
     }
 
-    unsafe extern "C" fn counter(
+    unsafe extern "C-unwind" fn counter(
         _node: *const c_void,
         visit: libc::c_int,
         _level: libc::c_int,

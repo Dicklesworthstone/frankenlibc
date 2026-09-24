@@ -62,12 +62,12 @@ mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-type FgetcFn = unsafe extern "C" fn(*mut c_void) -> c_int;
-type FgetsFn = unsafe extern "C" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
-type FreadFn = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
-type FtellFn = unsafe extern "C" fn(*mut c_void) -> c_long;
-type FeofFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FcloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type FgetcFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type FgetsFn = unsafe extern "C-unwind" fn(*mut c_char, c_int, *mut c_void) -> *mut c_char;
+type FreadFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type FtellFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_long;
+type FeofFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 
 const CONTENT: &str = "hello 42\nsecond line\n";
 

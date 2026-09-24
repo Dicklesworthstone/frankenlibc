@@ -14,7 +14,7 @@ static TEST_GUARD: Mutex<()> = Mutex::new(());
 
 static INIT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn increment_counter() {
+unsafe extern "C-unwind" fn increment_counter() {
     INIT_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -56,7 +56,7 @@ fn once_null_routine_is_einval() {
 
 static MT_INIT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn mt_increment_counter() {
+unsafe extern "C-unwind" fn mt_increment_counter() {
     MT_INIT_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -105,11 +105,11 @@ fn once_concurrent_threads_run_exactly_once() {
 static COUNTER_A: AtomicU32 = AtomicU32::new(0);
 static COUNTER_B: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn inc_a() {
+unsafe extern "C-unwind" fn inc_a() {
     COUNTER_A.fetch_add(1, Ordering::Relaxed);
 }
 
-unsafe extern "C" fn inc_b() {
+unsafe extern "C-unwind" fn inc_b() {
     COUNTER_B.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -157,7 +157,7 @@ fn once_triple_call_idempotent() {
 
 static SIDE_EFFECT: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn set_side_effect() {
+unsafe extern "C-unwind" fn set_side_effect() {
     SIDE_EFFECT.store(42, Ordering::Relaxed);
 }
 
@@ -177,7 +177,7 @@ fn once_routine_side_effect_visible_after_return() {
 
 static HEAVY_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn heavy_increment() {
+unsafe extern "C-unwind" fn heavy_increment() {
     HEAVY_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -233,7 +233,7 @@ fn once_both_null_is_einval() {
 
 static LATE_COUNTER: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn late_increment() {
+unsafe extern "C-unwind" fn late_increment() {
     LATE_COUNTER.fetch_add(1, Ordering::Relaxed);
 }
 

@@ -40,7 +40,7 @@ use std::ffi::c_void;
 unsafe fn capture(
     malloc_info: unsafe extern "C" fn(i32, *mut c_void) -> i32,
     fdopen: unsafe extern "C" fn(i32, *const i8) -> *mut c_void,
-    fflush: unsafe extern "C" fn(*mut c_void) -> i32,
+    fflush: unsafe extern "C-unwind" fn(*mut c_void) -> i32,
 ) -> String {
     let mut fds = [0i32; 2];
     // SAFETY: a fresh pipe pair.
@@ -103,7 +103,7 @@ fn size_entries(xml: &str) -> Vec<(usize, usize, usize, usize)> {
 }
 
 type FdopenFn = unsafe extern "C" fn(i32, *const i8) -> *mut c_void;
-type FflushFn = unsafe extern "C" fn(*mut c_void) -> i32;
+type FflushFn = unsafe extern "C-unwind" fn(*mut c_void) -> i32;
 type MallocInfoFn = unsafe extern "C" fn(i32, *mut c_void) -> i32;
 
 fn host_handle() -> *mut c_void {

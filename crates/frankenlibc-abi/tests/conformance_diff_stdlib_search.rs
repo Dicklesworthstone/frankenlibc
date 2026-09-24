@@ -17,6 +17,23 @@ use std::ffi::{c_int, c_void};
 
 use frankenlibc_abi::stdlib_abi as fl;
 
+// Host glibc oracle. Declared C-unwind because the comparators are: glibc
+// lets a comparator unwind through qsort/bsearch, and so does fl.
+mod host {
+    use std::ffi::{c_int, c_void};
+    type Compar = Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>;
+    unsafe extern "C-unwind" {
+        pub fn qsort(base: *mut c_void, nmemb: usize, size: usize, compar: Compar);
+        pub fn bsearch(
+            key: *const c_void,
+            base: *const c_void,
+            nmemb: usize,
+            size: usize,
+            compar: Compar,
+        ) -> *mut c_void;
+    }
+}
+
 #[derive(Debug)]
 struct Divergence {
     function: &'static str,
@@ -37,13 +54,13 @@ fn render_divs(divs: &[Divergence]) -> String {
     out
 }
 
-unsafe extern "C" fn cmp_int_asc(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_int_asc(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     av.cmp(&bv) as c_int
 }
 
-unsafe extern "C" fn cmp_int_desc(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_int_desc(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     bv.cmp(&av) as c_int
@@ -74,7 +91,7 @@ fn diff_qsort_int_ascending() {
         let sz = std::mem::size_of::<i32>();
         unsafe {
             fl::qsort(a_fl.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_asc));
-            libc::qsort(a_lc.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_asc));
+            host::qsort(a_lc.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_asc));
         }
         if a_fl != a_lc {
             divs.push(Divergence {
@@ -108,7 +125,7 @@ fn diff_qsort_int_descending() {
         let sz = std::mem::size_of::<i32>();
         unsafe {
             fl::qsort(a_fl.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_desc));
-            libc::qsort(a_lc.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_desc));
+            host::qsort(a_lc.as_mut_ptr() as *mut c_void, n, sz, Some(cmp_int_desc));
         }
         if a_fl != a_lc {
             divs.push(Divergence {
@@ -164,7 +181,7 @@ fn diff_bsearch_int_cases() {
             )
         };
         let r_lc = unsafe {
-            libc::bsearch(
+            host::bsearch(
                 &key as *const i32 as *const c_void,
                 arr.as_ptr() as *const c_void,
                 n,
@@ -205,7 +222,7 @@ fn diff_bsearch_int_cases() {
             )
         };
         let r_lc = unsafe {
-            libc::bsearch(
+            host::bsearch(
                 &key as *const i32 as *const c_void,
                 empty.as_ptr() as *const c_void,
                 0,

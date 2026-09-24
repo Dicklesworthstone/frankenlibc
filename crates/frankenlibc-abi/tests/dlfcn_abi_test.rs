@@ -290,7 +290,7 @@ fn native_dso_unload_preserves_global_symbol_precedence() {
     }
 }
 
-unsafe extern "C" fn record_first_phdr(
+unsafe extern "C-unwind" fn record_first_phdr(
     info: *mut libc::dl_phdr_info,
     size: usize,
     data: *mut c_void,

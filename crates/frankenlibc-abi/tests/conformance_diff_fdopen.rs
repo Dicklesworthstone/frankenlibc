@@ -19,10 +19,14 @@ mod g {
     unsafe extern "C" {
         pub fn open(p: *const c_char, flags: c_int, ...) -> c_int;
         pub fn fdopen(fd: c_int, mode: *const c_char) -> *mut c_void;
+        pub fn close(fd: c_int) -> c_int;
+    }
+    // Declared C-unwind to match fl's stdio entry points, which let a
+    // fopencookie callback unwind through them (as glibc's do).
+    unsafe extern "C-unwind" {
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fileno(f: *mut c_void) -> c_int;
         pub fn fclose(f: *mut c_void) -> c_int;
-        pub fn close(fd: c_int) -> c_int;
     }
 }
 use frankenlibc_abi::stdio_abi as fl;
@@ -48,9 +52,9 @@ type R = (bool, bool, usize, bool);
 fn read_via_fdopen(
     path: &CString,
     fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
-    fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
-    fileno: unsafe extern "C" fn(*mut c_void) -> c_int,
-    fclose: unsafe extern "C" fn(*mut c_void) -> c_int,
+    fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+    fileno: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
+    fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
 ) -> R {
     unsafe {
         let fd = g::open(path.as_ptr(), O_RDONLY);
@@ -85,7 +89,7 @@ fn fdopen_bad_mode_matches_glibc() {
     // mismatch is not validated by fdopen on Linux), so just compare behavior.
     let (p, c) = tmp();
     let probe = |fdopen: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void,
-                 fclose: unsafe extern "C" fn(*mut c_void) -> c_int| unsafe {
+                 fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int| unsafe {
         let fd = g::open(c.as_ptr(), O_WRONLY);
         if fd < 0 {
             return None;

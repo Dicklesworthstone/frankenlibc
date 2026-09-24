@@ -37,7 +37,7 @@ fn errno_now() -> c_int {
     unsafe { *errno_abi::__errno_location() }
 }
 
-unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
     let x = unsafe { *(a as *const i32) };
     let y = unsafe { *(b as *const i32) };
     (x > y) as c_int - (x < y) as c_int

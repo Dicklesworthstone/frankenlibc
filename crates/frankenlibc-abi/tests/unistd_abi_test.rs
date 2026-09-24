@@ -830,16 +830,16 @@ fn glob64_nomatch_returns_error() {
 // ftw / nftw tests
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" {
+unsafe extern "C-unwind" {
     fn ftw(
         dirpath: *const c_char,
-        func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        func: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
         nopenfd: c_int,
     ) -> c_int;
     fn nftw(
         dirpath: *const c_char,
         func: Option<
-            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,
@@ -850,7 +850,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 static FTW_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn ftw_counter(
+unsafe extern "C-unwind" fn ftw_counter(
     _path: *const c_char,
     _stat: *const libc::stat,
     _flag: c_int,
@@ -892,7 +892,7 @@ fn ftw_nonexistent_dir_returns_zero() {
     // ftw on a non-existent directory should call func with FTW_NS and return 0
     // (unless the callback returns non-zero)
     static NS_COUNT: AtomicUsize = AtomicUsize::new(0);
-    unsafe extern "C" fn ns_counter(
+    unsafe extern "C-unwind" fn ns_counter(
         _path: *const c_char,
         _stat: *const libc::stat,
         flag: c_int,
@@ -931,7 +931,7 @@ fn abi_ftw_rejects_tracked_unterminated_dirpath() {
 static NFTW_COUNT: AtomicUsize = AtomicUsize::new(0);
 static NFTW_MAX_LEVEL: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn nftw_counter(
+unsafe extern "C-unwind" fn nftw_counter(
     _path: *const c_char,
     _stat: *const libc::stat,
     _flag: c_int,
@@ -1000,7 +1000,7 @@ fn nftw_depth_flag_reports_dp() {
 
     static SAW_DP: AtomicBool = AtomicBool::new(false);
 
-    unsafe extern "C" fn check_dp(
+    unsafe extern "C-unwind" fn check_dp(
         _path: *const c_char,
         _stat: *const libc::stat,
         flag: c_int,

@@ -17,14 +17,18 @@ mod g {
     use super::*;
     unsafe extern "C" {
         pub fn fopen(path: *const c_char, mode: *const c_char) -> *mut File;
-        pub fn fclose(f: *mut File) -> c_int;
-        pub fn setvbuf(f: *mut File, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
-        pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut File) -> usize;
-        pub fn fflush(f: *mut File) -> c_int;
         pub fn __freadable(f: *mut File) -> c_int;
         pub fn __fwritable(f: *mut File) -> c_int;
         pub fn __flbf(f: *mut File) -> c_int;
         pub fn __fpending(f: *mut File) -> usize;
+    }
+    // Declared C-unwind to match fl's stdio entry points, which let a
+    // fopencookie callback unwind through them (as glibc's do).
+    unsafe extern "C-unwind" {
+        pub fn fclose(f: *mut File) -> c_int;
+        pub fn setvbuf(f: *mut File, buf: *mut c_char, mode: c_int, size: usize) -> c_int;
+        pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut File) -> usize;
+        pub fn fflush(f: *mut File) -> c_int;
     }
 }
 
@@ -181,17 +185,17 @@ mod dlsym_oracle;
 use frankenlibc_abi::stdio_abi::stdio_may_delegate_to_host_for_tests;
 
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut File;
-type FcloseFn = unsafe extern "C" fn(*mut File) -> c_int;
-type SetvbufFn = unsafe extern "C" fn(*mut File, *mut c_char, c_int, usize) -> c_int;
-type FflushFn = unsafe extern "C" fn(*mut File) -> c_int;
+type FcloseFn = unsafe extern "C-unwind" fn(*mut File) -> c_int;
+type SetvbufFn = unsafe extern "C-unwind" fn(*mut File, *mut c_char, c_int, usize) -> c_int;
+type FflushFn = unsafe extern "C-unwind" fn(*mut File) -> c_int;
 type FpendingFn = unsafe extern "C" fn(*mut File) -> usize;
-type FwriteFn = unsafe extern "C" fn(*const c_void, usize, usize, *mut File) -> usize;
+type FwriteFn = unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut File) -> usize;
 /// Declared VARIADIC on purpose. Calling a variadic C function through a
 /// fixed-arity pointer leaves `al` (the SysV vector-register count) unset, which
 /// glibc's `fprintf` prologue reads to decide whether to spill the XMM save
 /// area. Keeping the type variadic makes the call ABI-correct instead of
 /// happening to work.
-type FprintfFn = unsafe extern "C" fn(*mut File, *const c_char, ...) -> c_int;
+type FprintfFn = unsafe extern "C-unwind" fn(*mut File, *const c_char, ...) -> c_int;
 
 /// The buffer size glibc gives a fully buffered stream when `setvbuf` is called
 /// with a NULL `buf`. Measured, not assumed: `__fbufsize` reports 4096 for

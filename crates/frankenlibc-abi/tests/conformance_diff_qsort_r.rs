@@ -10,7 +10,7 @@
 
 use std::ffi::{c_int, c_void};
 
-type CmpR = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
+type CmpR = unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut c_void) -> c_int;
 
 // The host arm is resolved with `dlsym` rather than declared at link time.
 //
@@ -24,7 +24,7 @@ type CmpR = unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c
 // on an explicit `libc.so.6` handle is correct in either profile, and the
 // `assert_ne!` makes the remaining doubt a failing test rather than a silent
 // one.
-type QsortRFn = unsafe extern "C" fn(*mut c_void, usize, usize, CmpR, *mut c_void);
+type QsortRFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, CmpR, *mut c_void);
 
 union QsortRSym {
     raw: *mut c_void,
@@ -50,7 +50,7 @@ fn host_qsort_r() -> QsortRFn {
 /// Compares two i32 using the direction flag read from `arg` (1 = ascending,
 /// -1 = descending). Reading `arg` is the whole point: it must be the pointer
 /// the caller passed to qsort_r.
-unsafe extern "C" fn cmp_dir(a: *const c_void, b: *const c_void, arg: *mut c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_dir(a: *const c_void, b: *const c_void, arg: *mut c_void) -> c_int {
     let a = unsafe { *(a as *const i32) };
     let b = unsafe { *(b as *const i32) };
     let dir = unsafe { *(arg as *const i32) };
@@ -110,7 +110,7 @@ fn qsort_r_arg_pointer_is_delivered_verbatim() {
     // exact pointer handed to qsort_r (not NULL, not a copy of the value).
     use std::sync::atomic::{AtomicUsize, Ordering};
     static SEEN: AtomicUsize = AtomicUsize::new(0);
-    unsafe extern "C" fn rec(a: *const c_void, b: *const c_void, arg: *mut c_void) -> c_int {
+    unsafe extern "C-unwind" fn rec(a: *const c_void, b: *const c_void, arg: *mut c_void) -> c_int {
         SEEN.store(arg as usize, Ordering::Relaxed);
         let a = unsafe { *(a as *const i32) };
         let b = unsafe { *(b as *const i32) };

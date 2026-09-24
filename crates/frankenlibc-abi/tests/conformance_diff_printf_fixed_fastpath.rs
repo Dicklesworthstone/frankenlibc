@@ -37,8 +37,8 @@ use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::io::Read as _;
 use std::sync::{Mutex, MutexGuard};
 
-type Printf = unsafe extern "C" fn(*const c_char, ...) -> c_int;
-type Fflush = unsafe extern "C" fn(*mut c_void) -> c_int;
+type Printf = unsafe extern "C-unwind" fn(*const c_char, ...) -> c_int;
+type Fflush = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 
 union SymP {
     raw: *mut c_void,

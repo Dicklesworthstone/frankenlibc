@@ -4314,7 +4314,7 @@ fn setstate_r_rejects_tracked_too_short_statebuf() {
 // qsort_r test
 // ===========================================================================
 
-unsafe extern "C" fn cmp_int_with_ctx(
+unsafe extern "C-unwind" fn cmp_int_with_ctx(
     a: *const libc::c_void,
     b: *const libc::c_void,
     _ctx: *mut libc::c_void,
@@ -8681,7 +8681,7 @@ fn pidfile_write_overwrites_previous_content() {
 // mergesort / heapsort (BSD libc sort variants)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn cmp_i32(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_i32(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     av.cmp(&bv) as c_int
@@ -8836,7 +8836,7 @@ fn mergesort_is_stable_via_abi() {
         key: i32,
         idx: i32,
     }
-    unsafe extern "C" fn cmp_pair(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+    unsafe extern "C-unwind" fn cmp_pair(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
         let av = unsafe { *(a as *const Pair) };
         let bv = unsafe { *(b as *const Pair) };
         av.key.cmp(&bv.key) as c_int
@@ -9654,7 +9654,7 @@ fn getenv_r_rejects_tracked_unterminated_value_from_putenv() {
 // bsearch_r (NetBSD reentrant bsearch with thunk)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C" fn bsearch_r_cmp_int(
+unsafe extern "C-unwind" fn bsearch_r_cmp_int(
     a: *const std::ffi::c_void,
     b: *const std::ffi::c_void,
     _thunk: *mut std::ffi::c_void,
@@ -9664,7 +9664,7 @@ unsafe extern "C" fn bsearch_r_cmp_int(
     av.cmp(&bv) as c_int
 }
 
-unsafe extern "C" fn bsearch_r_cmp_int_with_thunk(
+unsafe extern "C-unwind" fn bsearch_r_cmp_int_with_thunk(
     a: *const std::ffi::c_void,
     b: *const std::ffi::c_void,
     thunk: *mut std::ffi::c_void,

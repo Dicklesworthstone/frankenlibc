@@ -17,20 +17,20 @@ use std::sync::Mutex;
 
 use frankenlibc_abi::search_abi as fl;
 
-unsafe extern "C" {
+unsafe extern "C-unwind" {
     fn lfind(
         key: *const c_void,
         base: *const c_void,
         nelp: *mut usize,
         width: usize,
-        compar: extern "C" fn(*const c_void, *const c_void) -> c_int,
+        compar: extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
     ) -> *mut c_void;
     fn lsearch(
         key: *const c_void,
         base: *mut c_void,
         nelp: *mut usize,
         width: usize,
-        compar: extern "C" fn(*const c_void, *const c_void) -> c_int,
+        compar: extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
     ) -> *mut c_void;
     fn hcreate(nel: usize) -> c_int;
     fn hsearch(item: HsearchEntry, action: c_int) -> *mut HsearchEntry;
@@ -79,7 +79,7 @@ fn fl_action_code(action: fl::Action) -> c_int {
 // Hash table is process-global; serialize.
 static HSEARCH_LOCK: Mutex<()> = Mutex::new(());
 
-extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     av - bv
@@ -147,8 +147,8 @@ fn diff_lfind_present_absent() {
                 &mut nel,
                 core::mem::size_of::<i32>(),
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(cmp_i32),
             )
         };
@@ -226,8 +226,8 @@ fn diff_lsearch_insert() {
                 &mut nel_fl,
                 core::mem::size_of::<i32>(),
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(cmp_i32),
             )
         };
@@ -454,7 +454,7 @@ fn diff_hsearch_r_find_missing_sets_esrch() {
 // tsearch / tfind / tdelete — fl-side LLRB validation (bd-srch-2)
 // ===========================================================================
 
-extern "C" fn tree_cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+extern "C-unwind" fn tree_cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     av - bv
@@ -474,8 +474,8 @@ fn fl_tsearch_insert_then_tfind_returns_match() {
                 kp,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -488,8 +488,8 @@ fn fl_tsearch_insert_then_tfind_returns_match() {
                 kp,
                 &root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -508,8 +508,8 @@ fn fl_tsearch_insert_then_tfind_returns_match() {
             mp,
             &root,
             core::mem::transmute::<
-                extern "C" fn(*const c_void, *const c_void) -> c_int,
-                unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
             >(tree_cmp_i32),
         )
     };
@@ -522,8 +522,8 @@ fn fl_tsearch_insert_then_tfind_returns_match() {
                 kp,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -552,8 +552,8 @@ fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
                 kp,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -565,8 +565,8 @@ fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
                 kp,
                 &root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -579,8 +579,8 @@ fn fl_tsearch_ascending_inserts_balanced_via_llrb() {
                 kp,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -608,8 +608,8 @@ fn fl_tsearch_descending_inserts_balanced() {
                 kp,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -621,8 +621,8 @@ fn fl_tsearch_descending_inserts_balanced() {
                 kp,
                 &root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -646,8 +646,8 @@ fn fl_tsearch_random_then_delete_half_stays_balanced() {
     }
     let cmp_fn = unsafe {
         core::mem::transmute::<
-            extern "C" fn(*const c_void, *const c_void) -> c_int,
-            unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+            extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+            unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
         >(tree_cmp_i32)
     };
     for k in &keys {
@@ -688,8 +688,8 @@ fn fl_lsearch_then_lfind_consistency() {
     let mut nel: usize = 0;
     let cmp_fn = unsafe {
         core::mem::transmute::<
-            extern "C" fn(*const c_void, *const c_void) -> c_int,
-            unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+            extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+            unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
         >(cmp_i32)
     };
     for &k in &[10, 20, 30, 40, 50] {
@@ -774,7 +774,7 @@ fn fl_hsearch_capacity_full_returns_null() {
 // tdestroy (GNU extension) — bd-srch-3
 // ===========================================================================
 
-extern "C" fn destroy_count_cb(_key: *mut c_void) {
+extern "C-unwind" fn destroy_count_cb(_key: *mut c_void) {
     DESTROY_COUNT.with(|c| c.set(c.get() + 1));
 }
 
@@ -794,8 +794,8 @@ fn fl_tdestroy_calls_free_node_for_every_key() {
                 &**k as *const _ as *const c_void,
                 &mut root,
                 core::mem::transmute::<
-                    extern "C" fn(*const c_void, *const c_void) -> c_int,
-                    unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                    extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                    unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
                 >(tree_cmp_i32),
             )
         };
@@ -822,8 +822,8 @@ fn fl_tdestroy_with_null_callback_is_safe() {
             &*k1 as *const _ as *const c_void,
             &mut root,
             core::mem::transmute::<
-                extern "C" fn(*const c_void, *const c_void) -> c_int,
-                unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+                extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
+                unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
             >(tree_cmp_i32),
         )
     };

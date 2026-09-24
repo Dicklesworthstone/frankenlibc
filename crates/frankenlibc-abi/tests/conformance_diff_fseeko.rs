@@ -19,6 +19,10 @@ mod g {
     use super::*;
     unsafe extern "C" {
         pub fn tmpfile() -> *mut c_void;
+    }
+    // Declared C-unwind to match fl's stdio entry points, which let a
+    // fopencookie callback unwind through them (as glibc's do).
+    unsafe extern "C-unwind" {
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fclose(f: *mut c_void) -> c_int;
@@ -35,7 +39,7 @@ type Walk = Vec<(c_int, i64, i32)>;
 
 fn read_byte(
     f: *mut c_void,
-    fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+    fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
 ) -> i32 {
     let mut b = [0u8; 1];
     let n = unsafe { fread(b.as_mut_ptr() as *mut c_void, 1, 1, f) };
@@ -45,9 +49,9 @@ fn read_byte(
 #[allow(clippy::too_many_arguments)]
 fn walk(
     open: unsafe extern "C" fn() -> *mut c_void,
-    fwrite: unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize,
-    fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
-    fclose: unsafe extern "C" fn(*mut c_void) -> c_int,
+    fwrite: unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut c_void) -> usize,
+    fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+    fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
     seek: &dyn Fn(*mut c_void, i64, c_int) -> c_int,
     tell: &dyn Fn(*mut c_void) -> i64,
 ) -> Walk {

@@ -40,6 +40,11 @@ mod g {
             mode: *const c_char,
             funcs: CookieIoFuncs,
         ) -> *mut c_void;
+        pub fn __errno_location() -> *mut c_int;
+    }
+    // Declared C-unwind to match fl's stdio entry points, which let a
+    // fopencookie callback unwind through them (as glibc's do).
+    unsafe extern "C-unwind" {
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fflush(f: *mut c_void) -> c_int;
@@ -47,7 +52,6 @@ mod g {
         pub fn fclose(f: *mut c_void) -> c_int;
         pub fn ferror(f: *mut c_void) -> c_int;
         pub fn feof(f: *mut c_void) -> c_int;
-        pub fn __errno_location() -> *mut c_int;
     }
 }
 use frankenlibc_abi::stdio_abi as fl;
@@ -122,7 +126,7 @@ struct WriteHookState {
     bytes: usize,
 }
 
-unsafe extern "C" fn recording_write(
+unsafe extern "C-unwind" fn recording_write(
     cookie: *mut c_void,
     _buf: *const c_char,
     count: usize,
@@ -213,7 +217,7 @@ fn fl_recording_write(mode: c_int) -> BufferedWriteObs {
 
 #[test]
 fn cookie_flush_short_write_does_not_retry_or_replay_output() {
-    unsafe extern "C" fn short_write(
+    unsafe extern "C-unwind" fn short_write(
         cookie: *mut c_void,
         buf: *const c_char,
         count: usize,
@@ -262,7 +266,7 @@ fn cookie_flush_short_write_does_not_retry_or_replay_output() {
 
 #[test]
 fn cookie_read_eintr_is_reported_without_retry() {
-    unsafe extern "C" fn interrupted_read(
+    unsafe extern "C-unwind" fn interrupted_read(
         cookie: *mut c_void,
         buf: *mut c_char,
         count: usize,

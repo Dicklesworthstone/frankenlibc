@@ -25,21 +25,21 @@ use std::ffi::{c_int, c_void};
 
 use frankenlibc_abi::search_abi as fl;
 
-unsafe extern "C" {
+unsafe extern "C-unwind" {
     fn tsearch(
         key: *const c_void,
         rootp: *mut *mut c_void,
-        compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+        compar: unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
     ) -> *mut c_void;
     fn tfind(
         key: *const c_void,
         rootp: *const *mut c_void,
-        compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+        compar: unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
     ) -> *mut c_void;
     fn tdelete(
         key: *const c_void,
         rootp: *mut *mut c_void,
-        compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+        compar: unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
     ) -> *mut c_void;
     fn twalk(root: *const c_void, action: unsafe extern "C" fn(*const c_void, c_int, c_int));
 }
@@ -52,7 +52,7 @@ thread_local! {
     static INORDER: RefCell<Vec<i64>> = const { RefCell::new(Vec::new()) };
 }
 
-unsafe extern "C" fn cmp(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i64) };
     let bv = unsafe { *(b as *const i64) };
     match av.cmp(&bv) {
@@ -73,7 +73,7 @@ unsafe extern "C" fn collect_glibc(node: *const c_void, visit: c_int, _level: c_
     }
 }
 
-unsafe extern "C" fn collect_fl(node: *const c_void, visit: fl::Visit, _level: c_int) {
+unsafe extern "C-unwind" fn collect_fl(node: *const c_void, visit: fl::Visit, _level: c_int) {
     let v = visit as i32;
     if v == 1 || v == 3 {
         let keyp = unsafe { *(node as *const *const c_void) };

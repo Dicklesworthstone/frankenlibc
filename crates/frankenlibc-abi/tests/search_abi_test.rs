@@ -471,7 +471,7 @@ fn hsearch_rejects_tracked_unterminated_key() {
 // ===========================================================================
 
 /// Integer comparison function for tree operations.
-unsafe extern "C" fn int_compare(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn int_compare(a: *const c_void, b: *const c_void) -> c_int {
     let va = a as usize as i64;
     let vb = b as usize as i64;
     if va < vb {
@@ -562,7 +562,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 static WALK_COUNT: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn walk_counter(_node: *const c_void, _visit: Visit, _level: c_int) {
+unsafe extern "C-unwind" fn walk_counter(_node: *const c_void, _visit: Visit, _level: c_int) {
     WALK_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -598,7 +598,7 @@ fn tree_walk() {
 // Linear search: lfind / lsearch
 // ===========================================================================
 
-unsafe extern "C" fn int_array_compare(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn int_array_compare(a: *const c_void, b: *const c_void) -> c_int {
     let va = unsafe { *(a as *const i32) };
     let vb = unsafe { *(b as *const i32) };
     if va == vb { 0 } else { 1 }
@@ -1105,7 +1105,7 @@ fn tdelete_from_empty_tree() {
 
 static WALK_R_COUNT: AtomicU32 = AtomicU32::new(0);
 
-unsafe extern "C" fn walk_r_counter(
+unsafe extern "C-unwind" fn walk_r_counter(
     _node: *const c_void,
     _visit: c_int,
     _level: c_int,

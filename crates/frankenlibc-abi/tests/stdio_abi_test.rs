@@ -402,7 +402,7 @@ struct CookieState {
     write_calls: usize,
 }
 
-unsafe extern "C" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -426,7 +426,7 @@ unsafe extern "C" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: u
     n as isize
 }
 
-unsafe extern "C" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count: usize) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -456,7 +456,7 @@ unsafe extern "C" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count
     to_write as isize
 }
 
-unsafe extern "C" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
+unsafe extern "C-unwind" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
     if cookie.is_null() || offset.is_null() {
         return -1;
     }
@@ -478,7 +478,7 @@ unsafe extern "C" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: 
     0
 }
 
-unsafe extern "C" fn cookie_close(cookie: *mut c_void) -> c_int {
+unsafe extern "C-unwind" fn cookie_close(cookie: *mut c_void) -> c_int {
     if cookie.is_null() {
         return -1;
     }
@@ -768,7 +768,7 @@ fn fopencookie_close_short_write_matches_glibc() {
     // glibc treats a short cookie write as an error for that one flush, sets
     // the error indicator, discards the un-writable remainder, and reports the
     // failure from the next flush attempt and from fclose — it does NOT retry.
-    unsafe extern "C" fn short_write(
+    unsafe extern "C-unwind" fn short_write(
         cookie: *mut c_void,
         buf: *const c_char,
         count: usize,
@@ -779,7 +779,7 @@ fn fopencookie_close_short_write_matches_glibc() {
         output.extend_from_slice(unsafe { std::slice::from_raw_parts(buf.cast(), count) });
         count as isize
     }
-    unsafe extern "C" fn noop_close(_cookie: *mut c_void) -> c_int {
+    unsafe extern "C-unwind" fn noop_close(_cookie: *mut c_void) -> c_int {
         0
     }
 
@@ -6481,7 +6481,7 @@ struct FunopenState {
     closed: bool,
 }
 
-unsafe extern "C" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+unsafe extern "C-unwind" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     let avail = s.data.len().saturating_sub(s.pos);
     let take = avail.min(n as usize);
@@ -6494,7 +6494,7 @@ unsafe extern "C" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n: c_int)
     take as c_int
 }
 
-unsafe extern "C" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+unsafe extern "C-unwind" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, n as usize) };
     s.data.extend_from_slice(bytes);
@@ -6502,7 +6502,7 @@ unsafe extern "C" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_i
     n
 }
 
-unsafe extern "C" fn funop_seek(cookie: *mut c_void, offset: i64, whence: c_int) -> i64 {
+unsafe extern "C-unwind" fn funop_seek(cookie: *mut c_void, offset: i64, whence: c_int) -> i64 {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     let new_pos = match whence {
         libc::SEEK_SET => offset,
@@ -6517,7 +6517,7 @@ unsafe extern "C" fn funop_seek(cookie: *mut c_void, offset: i64, whence: c_int)
     new_pos
 }
 
-unsafe extern "C" fn funop_close(cookie: *mut c_void) -> c_int {
+unsafe extern "C-unwind" fn funop_close(cookie: *mut c_void) -> c_int {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     s.closed = true;
     0
@@ -6705,7 +6705,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         pos: usize,
     }
 
-    unsafe extern "C" fn read_fn(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
+    unsafe extern "C-unwind" fn read_fn(cookie: *mut c_void, buf: *mut c_char, n: c_int) -> c_int {
         // SAFETY: cookie is the Box we handed to funopen and is live for the call.
         let state = unsafe { &mut *(cookie as *mut Cookie) };
         let want = (n as usize).min(state.data.len().saturating_sub(state.pos));
@@ -6717,7 +6717,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         want as c_int
     }
 
-    unsafe extern "C" fn write_fn(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+    unsafe extern "C-unwind" fn write_fn(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
         // SAFETY: as above.
         let state = unsafe { &mut *(cookie as *mut Cookie) };
         // SAFETY: buf holds `n` readable bytes per the BSD contract.
@@ -6731,7 +6731,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         n
     }
 
-    unsafe extern "C" fn seek_fn(
+    unsafe extern "C-unwind" fn seek_fn(
         cookie: *mut c_void,
         off: libc::off_t,
         whence: c_int,
@@ -6752,7 +6752,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         target as libc::off_t
     }
 
-    unsafe extern "C" fn close_fn(_cookie: *mut c_void) -> c_int {
+    unsafe extern "C-unwind" fn close_fn(_cookie: *mut c_void) -> c_int {
         0
     }
 

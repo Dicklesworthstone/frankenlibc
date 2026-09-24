@@ -16,29 +16,29 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 use frankenlibc_abi::unistd_abi as fl;
 
-unsafe extern "C" {
+unsafe extern "C-unwind" {
     fn ftw(
         dirpath: *const c_char,
-        cb: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        cb: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
         nopenfd: c_int,
     ) -> c_int;
     fn nftw(
         dirpath: *const c_char,
         cb: Option<
-            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,
     ) -> c_int;
     fn ftw64(
         dirpath: *const c_char,
-        cb: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+        cb: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
         nopenfd: c_int,
     ) -> c_int;
     fn nftw64(
         dirpath: *const c_char,
         cb: Option<
-            unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,
@@ -69,7 +69,7 @@ const FTW_DEPTH: c_int = 8; // post-order (was 4 — pre-bd-ftw-4 bug, FTW_CHDIR
 static COLLECTOR: Mutex<Vec<(String, c_int)>> = Mutex::new(Vec::new());
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn collect_ftw(
+unsafe extern "C-unwind" fn collect_ftw(
     path: *const c_char,
     _st: *const libc::stat,
     typeflag: c_int,
@@ -87,7 +87,7 @@ unsafe extern "C" fn collect_ftw(
     0
 }
 
-unsafe extern "C" fn collect_nftw(
+unsafe extern "C-unwind" fn collect_nftw(
     path: *const c_char,
     _st: *const libc::stat,
     typeflag: c_int,
@@ -214,7 +214,7 @@ fn run_nftw64(use_fl: bool, base: &std::path::Path, flags: c_int) -> Vec<(String
     COUNT.store(0, Ordering::Relaxed);
     let cbase = CString::new(base.to_string_lossy().as_bytes()).unwrap();
     let r = if use_fl {
-        let callback: unsafe extern "C" fn(
+        let callback: unsafe extern "C-unwind" fn(
             *const c_char,
             *const libc::stat,
             c_int,
@@ -385,7 +385,7 @@ fn diff_lfs64_nonexistent_dir_errors_match() {
     assert_eq!(r_ftw_fl, -1, "fl::ftw64 nonexistent must return -1");
     assert_eq!(r_ftw_lc, -1, "host ftw64 nonexistent must return -1");
 
-    let callback: unsafe extern "C" fn(
+    let callback: unsafe extern "C-unwind" fn(
         *const c_char,
         *const libc::stat,
         c_int,
@@ -408,7 +408,7 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-unsafe extern "C" fn record_depth_fl(
+unsafe extern "C-unwind" fn record_depth_fl(
     path: *const c_char,
     _st: *const libc::stat,
     typeflag: c_int,
@@ -422,7 +422,7 @@ unsafe extern "C" fn record_depth_fl(
     0
 }
 
-unsafe extern "C" fn record_depth_lc(
+unsafe extern "C-unwind" fn record_depth_lc(
     path: *const c_char,
     _st: *const libc::stat,
     typeflag: c_int,
@@ -576,7 +576,7 @@ static AR_FIRED: AtomicBool = AtomicBool::new(false);
 static AR_LOG: Mutex<Vec<Visit>> = Mutex::new(Vec::new());
 static AR_BASE: Mutex<String> = Mutex::new(String::new());
 
-unsafe extern "C" fn action_cb(
+unsafe extern "C-unwind" fn action_cb(
     path: *const c_char,
     _st: *const libc::stat,
     typeflag: c_int,
@@ -1069,7 +1069,7 @@ fn diff_nftw64_actionretval_matches_nftw() {
 
     AR_LOG.lock().unwrap_or_else(|e| e.into_inner()).clear();
     AR_FIRED.store(false, Ordering::Relaxed);
-    let callback: unsafe extern "C" fn(
+    let callback: unsafe extern "C-unwind" fn(
         *const c_char,
         *const libc::stat,
         c_int,

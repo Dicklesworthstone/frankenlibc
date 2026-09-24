@@ -12,7 +12,7 @@ use std::ffi::{c_int, c_void};
 
 use frankenlibc_abi::search_abi::{lfind as fl_lfind, lsearch as fl_lsearch};
 
-type Cmp = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type Cmp = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 
 // The host arm is resolved with `dlsym` rather than declared at link time.
 //
@@ -29,9 +29,9 @@ type Cmp = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
 // the `assert_ne!` below turns the remaining doubt into a failing test rather
 // than a silent one.
 type LfindFn =
-    unsafe extern "C" fn(*const c_void, *const c_void, *mut usize, usize, Cmp) -> *mut c_void;
+    unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut usize, usize, Cmp) -> *mut c_void;
 type LsearchFn =
-    unsafe extern "C" fn(*const c_void, *mut c_void, *mut usize, usize, Cmp) -> *mut c_void;
+    unsafe extern "C-unwind" fn(*const c_void, *mut c_void, *mut usize, usize, Cmp) -> *mut c_void;
 
 union LfindSym {
     raw: *mut c_void,
@@ -73,7 +73,7 @@ fn host_lsearch() -> LsearchFn {
     unsafe { LsearchSym { raw }.function }
 }
 
-unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
     let a = unsafe { *(a as *const i32) };
     let b = unsafe { *(b as *const i32) };
     (a > b) as c_int - (a < b) as c_int

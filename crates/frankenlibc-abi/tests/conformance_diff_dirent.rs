@@ -15,7 +15,7 @@ use std::io::Write;
 
 use frankenlibc_abi::dirent_abi as fl;
 
-unsafe extern "C" {
+unsafe extern "C-unwind" {
     #[link_name = "alphasort"]
     fn host_alphasort(a: *mut *const libc::dirent, b: *mut *const libc::dirent) -> c_int;
     #[link_name = "alphasort64"]
@@ -35,17 +35,17 @@ unsafe extern "C" {
     fn host_scandir(
         path: *const c_char,
         namelist: *mut *mut *mut libc::dirent,
-        filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+        filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int>,
         compar: Option<
-            unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+            unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
         >,
     ) -> c_int;
     fn scandir64(
         path: *const c_char,
         namelist: *mut *mut *mut libc::dirent64,
-        filter: Option<unsafe extern "C" fn(*const libc::dirent64) -> c_int>,
+        filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent64) -> c_int>,
         compar: Option<
-            unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+            unsafe extern "C-unwind" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
         >,
     ) -> c_int;
     #[link_name = "versionsort"]
@@ -107,8 +107,8 @@ fn dirent_named(name: &[u8]) -> libc::dirent {
 }
 
 type DirentComparator =
-    unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
-type DirentFilter = unsafe extern "C" fn(*const libc::dirent) -> c_int;
+    unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
+type DirentFilter = unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int;
 type DirEntrySet = BTreeSet<(Vec<u8>, u8)>;
 type FdIdentity = (libc::dev_t, libc::ino_t, libc::mode_t);
 type FdopendirWalk = (DirEntrySet, FdIdentity);
@@ -662,8 +662,8 @@ fn scandir_names_lc(
 
 fn scandir64_names_fl(
     dir: &std::path::Path,
-    filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
-    compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+    filter: Option<unsafe extern "C-unwind" fn(*const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
 ) -> Result<Vec<Vec<u8>>, String> {
     let cp = cstr_path(dir);
     let mut namelist: *mut *mut c_void = std::ptr::null_mut();
@@ -698,9 +698,9 @@ fn scandir64_names_fl(
 
 fn scandir64_names_lc(
     dir: &std::path::Path,
-    filter: Option<unsafe extern "C" fn(*const libc::dirent64) -> c_int>,
+    filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent64) -> c_int>,
     compar: Option<
-        unsafe extern "C" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+        unsafe extern "C-unwind" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
     >,
 ) -> Result<Vec<Vec<u8>>, String> {
     let cp = cstr_path(dir);
@@ -879,7 +879,7 @@ fn diff_scandir64_mixed_directory() {
     );
 }
 
-unsafe extern "C" fn keep_a_prefix64_void(entry: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn keep_a_prefix64_void(entry: *const c_void) -> c_int {
     if entry.is_null() {
         return 0;
     }
@@ -888,7 +888,7 @@ unsafe extern "C" fn keep_a_prefix64_void(entry: *const c_void) -> c_int {
     c_int::from(name.first() == Some(&b'a'))
 }
 
-unsafe extern "C" fn keep_a_prefix64(entry: *const libc::dirent64) -> c_int {
+unsafe extern "C-unwind" fn keep_a_prefix64(entry: *const libc::dirent64) -> c_int {
     if entry.is_null() {
         return 0;
     }
@@ -1020,7 +1020,7 @@ fn diff_fdopendir_bad_fd_errno() {
     );
 }
 
-unsafe extern "C" fn keep_a_prefix(entry: *const libc::dirent) -> c_int {
+unsafe extern "C-unwind" fn keep_a_prefix(entry: *const libc::dirent) -> c_int {
     if entry.is_null() {
         return 0;
     }

@@ -45,9 +45,9 @@ use std::io::Write;
 mod dlsym_oracle;
 use dlsym_oracle::host_fn;
 
-type FscanfFn = unsafe extern "C" fn(*mut c_void, *const c_char, ...) -> c_int;
+type FscanfFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, ...) -> c_int;
 type FopenFn = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type FcloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FcloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 
 /// What one arm produced: the return code and both destinations.
 #[derive(Debug, PartialEq, Eq)]
@@ -242,7 +242,7 @@ fn fscanf_exact_char_on_an_fl_owned_stream_matches_glibc_cursor_and_eof() {
 
 #[test]
 fn scanf_and_its_isoc_aliases_exact_char_matches_glibc_on_stdin() {
-    type ScanfFn = unsafe extern "C" fn(*const c_char, ...) -> c_int;
+    type ScanfFn = unsafe extern "C-unwind" fn(*const c_char, ...) -> c_int;
 
     let glibc_scanf: ScanfFn = unsafe {
         host_fn(

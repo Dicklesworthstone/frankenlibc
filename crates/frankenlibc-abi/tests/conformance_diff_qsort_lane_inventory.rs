@@ -62,6 +62,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// avoid paying `O(n log n)` times.
 static CALLS: AtomicUsize = AtomicUsize::new(0);
 
+// Host glibc oracle, declared C-unwind to match the comparators.
+unsafe extern "C-unwind" {
+    #[link_name = "qsort"]
+    fn host_qsort(
+        base: *mut c_void,
+        nmemb: usize,
+        size: usize,
+        compar: Option<extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
+    );
+}
+
 fn reset() {
     CALLS.store(0, Ordering::Relaxed);
 }
@@ -73,7 +84,7 @@ macro_rules! counting_cmp {
     ($name:ident, $ty:ty) => {
         /// Natural ascending comparator for `$ty`, written the way C callers
         /// write it (subtraction, not `Ord::cmp`), counting its own calls.
-        extern "C" fn $name(a: *const c_void, b: *const c_void) -> c_int {
+        extern "C-unwind" fn $name(a: *const c_void, b: *const c_void) -> c_int {
             CALLS.fetch_add(1, Ordering::Relaxed);
             // SAFETY: qsort hands back element pointers into the caller's own
             // array, each at least `size_of::<$ty>()` bytes wide.
@@ -102,7 +113,7 @@ struct Wide16 {
     key: i64,
     _pad: i64,
 }
-extern "C" fn cmp_wide16(a: *const c_void, b: *const c_void) -> c_int {
+extern "C-unwind" fn cmp_wide16(a: *const c_void, b: *const c_void) -> c_int {
     CALLS.fetch_add(1, Ordering::Relaxed);
     // SAFETY: both pointers address 16-byte elements of the caller's array.
     let (x, y) = unsafe { (*(a as *const Wide16), *(b as *const Wide16)) };
@@ -141,7 +152,7 @@ fn both(
     bytes: &[u8],
     width: usize,
     n: usize,
-    cmp: extern "C" fn(*const c_void, *const c_void) -> c_int,
+    cmp: extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
 ) -> (usize, usize) {
     let mut fl_buf = bytes.to_vec();
     reset();
@@ -156,7 +167,7 @@ fn both(
     reset();
     // SAFETY: same shape, glibc's own entry point.
     unsafe {
-        libc::qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(cmp));
+        host_qsort(gl_buf.as_mut_ptr() as *mut c_void, n, width, Some(cmp));
     }
     let gl_calls = calls();
 
@@ -192,7 +203,7 @@ fn the_deployed_qsort_lane_inventory_is_what_head_actually_has() {
         &str,
         usize,
         Expect,
-        extern "C" fn(*const c_void, *const c_void) -> c_int,
+        extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
         &str,
     )] = &[
         (

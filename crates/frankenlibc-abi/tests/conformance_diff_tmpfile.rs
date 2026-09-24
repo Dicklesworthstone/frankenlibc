@@ -18,6 +18,10 @@ mod g {
     unsafe extern "C" {
         pub fn tmpfile() -> *mut c_void;
         pub fn tmpfile64() -> *mut c_void;
+    }
+    // Declared C-unwind to match fl's stdio entry points, which let a
+    // fopencookie callback unwind through them (as glibc's do).
+    unsafe extern "C-unwind" {
         pub fn fwrite(p: *const c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fread(p: *mut c_void, sz: usize, n: usize, f: *mut c_void) -> usize;
         pub fn fseek(f: *mut c_void, off: c_long, whence: c_int) -> c_int;
@@ -35,11 +39,11 @@ type RT = (bool, usize, c_long, usize, bool);
 
 fn round_trip(
     open: unsafe extern "C" fn() -> *mut c_void,
-    fwrite: unsafe extern "C" fn(*const c_void, usize, usize, *mut c_void) -> usize,
-    fread: unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
-    fseek: unsafe extern "C" fn(*mut c_void, c_long, c_int) -> c_int,
-    ftell: unsafe extern "C" fn(*mut c_void) -> c_long,
-    fclose: unsafe extern "C" fn(*mut c_void) -> c_int,
+    fwrite: unsafe extern "C-unwind" fn(*const c_void, usize, usize, *mut c_void) -> usize,
+    fread: unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize,
+    fseek: unsafe extern "C-unwind" fn(*mut c_void, c_long, c_int) -> c_int,
+    ftell: unsafe extern "C-unwind" fn(*mut c_void) -> c_long,
+    fclose: unsafe extern "C-unwind" fn(*mut c_void) -> c_int,
 ) -> RT {
     unsafe {
         let f = open();

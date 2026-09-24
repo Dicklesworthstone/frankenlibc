@@ -363,7 +363,7 @@ fn diff_pthread_once_idempotency() {
     use std::sync::atomic::{AtomicU32, Ordering};
     static FL_INVOCATIONS: AtomicU32 = AtomicU32::new(0);
     static LC_INVOCATIONS: AtomicU32 = AtomicU32::new(0);
-    unsafe extern "C" fn fl_init() {
+    unsafe extern "C-unwind" fn fl_init() {
         FL_INVOCATIONS.fetch_add(1, Ordering::SeqCst);
     }
     extern "C" fn lc_init() {

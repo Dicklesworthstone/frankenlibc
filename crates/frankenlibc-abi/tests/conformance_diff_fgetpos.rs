@@ -58,14 +58,14 @@ fn tmp_with(content: &[u8]) -> (std::path::PathBuf, CString) {
 // ---------------------------------------------------------------------------
 
 type Fopen = unsafe extern "C" fn(*const c_char, *const c_char) -> *mut c_void;
-type Fclose = unsafe extern "C" fn(*mut c_void) -> c_int;
-type Fread = unsafe extern "C" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
-type Ftell = unsafe extern "C" fn(*mut c_void) -> c_long;
-type Fgetpos = unsafe extern "C" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
-type Fsetpos = unsafe extern "C" fn(*mut c_void, *const libc::fpos_t) -> c_int;
-type Fgetpos64 = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
-type Fsetpos64 = unsafe extern "C" fn(*mut c_void, *const c_void) -> c_int;
-type Ftello64 = unsafe extern "C" fn(*mut c_void) -> i64;
+type Fclose = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
+type Fread = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, *mut c_void) -> usize;
+type Ftell = unsafe extern "C-unwind" fn(*mut c_void) -> c_long;
+type Fgetpos = unsafe extern "C-unwind" fn(*mut c_void, *mut libc::fpos_t) -> c_int;
+type Fsetpos = unsafe extern "C-unwind" fn(*mut c_void, *const libc::fpos_t) -> c_int;
+type Fgetpos64 = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int;
+type Fsetpos64 = unsafe extern "C-unwind" fn(*mut c_void, *const c_void) -> c_int;
+type Ftello64 = unsafe extern "C-unwind" fn(*mut c_void) -> i64;
 
 /// One implementation's entry points, all resolved to the same provider.
 struct Streams {

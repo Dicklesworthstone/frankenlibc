@@ -33,13 +33,13 @@ thread_local! {
     static TRACE: RefCell<Vec<(i32, i32, i64)>> = const { RefCell::new(Vec::new()) };
 }
 
-unsafe extern "C" fn cmp(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp(a: *const c_void, b: *const c_void) -> c_int {
     let av = unsafe { *(a as *const i64) };
     let bv = unsafe { *(b as *const i64) };
     (av - bv).signum() as c_int
 }
 
-unsafe extern "C" fn act(node: *const c_void, visit: fl::Visit, level: c_int) {
+unsafe extern "C-unwind" fn act(node: *const c_void, visit: fl::Visit, level: c_int) {
     // `node`, cast to void**, dereferences to the stored key pointer.
     let keyp = unsafe { *(node as *const *const c_void) };
     let key = unsafe { *(keyp as *const i64) };

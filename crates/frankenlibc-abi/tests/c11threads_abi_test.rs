@@ -528,7 +528,7 @@ fn test_mtx_multi_threaded_contention() {
 
 static ONCE_COUNTER: AtomicI32 = AtomicI32::new(0);
 
-extern "C" fn once_init_func() {
+extern "C-unwind" fn once_init_func() {
     ONCE_COUNTER.fetch_add(1, Ordering::SeqCst);
 }
 
@@ -785,7 +785,7 @@ fn test_thrd_join_propagates_large() {
 
 static MULTI_ONCE_COUNTER: AtomicI32 = AtomicI32::new(0);
 
-extern "C" fn multi_once_func() {
+extern "C-unwind" fn multi_once_func() {
     MULTI_ONCE_COUNTER.fetch_add(1, Ordering::SeqCst);
 }
 

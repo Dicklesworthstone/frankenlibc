@@ -10,11 +10,11 @@
 
 use std::ffi::{c_int, c_void};
 
-type Cmp = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type Cmp = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 
 mod g {
     use super::*;
-    unsafe extern "C" {
+    unsafe extern "C-unwind" {
         pub fn bsearch(
             key: *const c_void,
             base: *const c_void,
@@ -42,7 +42,7 @@ mod g {
 use frankenlibc_abi::search_abi::{lfind as fl_lfind, lsearch as fl_lsearch};
 use frankenlibc_abi::stdlib_abi::bsearch as fl_bsearch;
 
-unsafe extern "C" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> c_int {
     let x = unsafe { *(a as *const i32) };
     let y = unsafe { *(b as *const i32) };
     (x > y) as c_int - (x < y) as c_int
