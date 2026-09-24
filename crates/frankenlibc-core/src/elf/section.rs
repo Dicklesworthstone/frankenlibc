@@ -233,9 +233,22 @@ pub fn parse_section_headers(
     shentsize: u16,
     shnum: u16,
 ) -> ElfResult<Vec<Elf64SectionHeader>> {
-    let shoff = shoff as usize;
-    let shentsize = shentsize as usize;
-    let shnum = shnum as usize;
+    let shoff = usize::try_from(shoff).map_err(|_| ElfError::InvalidOffset {
+        kind: "section header table",
+        offset: shoff,
+    })?;
+    let shentsize = usize::from(shentsize);
+    let shnum = usize::from(shnum);
+
+    // Validate the stride before allocation or parsing. Otherwise a zero or
+    // undersized entry can reuse the same bytes as many overlapping headers,
+    // or read beyond the table extent that was checked below.
+    if shnum != 0 && shentsize < Elf64SectionHeader::SIZE {
+        return Err(ElfError::InvalidOffset {
+            kind: "section header entry size",
+            offset: shentsize as u64,
+        });
+    }
 
     // Validate bounds
     let end_offset = shoff
@@ -262,7 +275,8 @@ pub fn parse_section_headers(
     let mut headers = Vec::with_capacity(shnum);
     for i in 0..shnum {
         let offset = shoff + i * shentsize;
-        let header = Elf64SectionHeader::parse(&data[offset..])?;
+        // The checked table extent and minimum stride prove this record fits.
+        let header = Elf64SectionHeader::parse(&data[offset..offset + Elf64SectionHeader::SIZE])?;
         headers.push(header);
     }
 
@@ -296,5 +310,60 @@ mod tests {
         assert!(flags.is_executable());
         assert!(!flags.is_writable());
         assert!(!flags.is_tls());
+    }
+
+    #[test]
+    fn table_rejects_every_undersized_stride() {
+        // Extra file bytes must not turn an undersized table record into a
+        // valid header by letting its parser read outside that record.
+        let data = [0u8; Elf64SectionHeader::SIZE * 2];
+        for stride in 0..Elf64SectionHeader::SIZE as u16 {
+            assert!(
+                matches!(
+                    parse_section_headers(&data, 0, stride, 1),
+                    Err(ElfError::InvalidOffset {
+                        kind: "section header entry size",
+                        ..
+                    })
+                ),
+                "stride={stride}"
+            );
+        }
+        assert!(parse_section_headers(&data, 0, 0, u16::MAX).is_err());
+    }
+
+    #[test]
+    fn table_rejects_overflow_and_truncated_extents() {
+        let data = [0u8; Elf64SectionHeader::SIZE];
+        let stride = Elf64SectionHeader::SIZE as u16;
+        for offset in [u64::MAX, u64::MAX - 8, 1u64 << 32] {
+            assert!(parse_section_headers(&data, offset, stride, 1).is_err());
+        }
+        assert!(parse_section_headers(&data, 0, stride, 2).is_err());
+        assert!(parse_section_headers(&data, 1, stride, 1).is_err());
+        assert!(parse_section_headers(&data[..data.len() - 1], 0, stride, 1).is_err());
+    }
+
+    #[test]
+    fn table_preserves_empty_and_exact_size_records() {
+        assert!(parse_section_headers(&[], 0, 0, 0).unwrap().is_empty());
+        let data = [0u8; Elf64SectionHeader::SIZE * 2];
+        let headers = parse_section_headers(&data, 0, Elf64SectionHeader::SIZE as u16, 2).unwrap();
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn table_respects_offset_and_padded_stride() {
+        let offset = 7usize;
+        let stride = Elf64SectionHeader::SIZE + 8;
+        let mut data = vec![0xff; offset + 2 * stride];
+        data[offset..offset + Elf64SectionHeader::SIZE].fill(0);
+        data[offset + stride..offset + stride + Elf64SectionHeader::SIZE].fill(0);
+        data[offset..offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        data[offset + stride..offset + stride + 4].copy_from_slice(&2u32.to_le_bytes());
+        let headers = parse_section_headers(&data, offset as u64, stride as u16, 2).unwrap();
+        assert_eq!(headers.len(), 2);
+        assert_eq!(headers[0].sh_name, 1);
+        assert_eq!(headers[1].sh_name, 2);
     }
 }

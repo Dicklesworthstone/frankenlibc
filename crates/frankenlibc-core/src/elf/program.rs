@@ -217,9 +217,22 @@ pub fn parse_program_headers(
     phentsize: u16,
     phnum: u16,
 ) -> ElfResult<Vec<Elf64ProgramHeader>> {
-    let phoff = phoff as usize;
-    let phentsize = phentsize as usize;
-    let phnum = phnum as usize;
+    let phoff = usize::try_from(phoff).map_err(|_| ElfError::InvalidOffset {
+        kind: "program header table",
+        offset: phoff,
+    })?;
+    let phentsize = usize::from(phentsize);
+    let phnum = usize::from(phnum);
+
+    // Validate the stride before allocation or parsing. Otherwise a zero or
+    // undersized entry can reuse the same bytes as many overlapping headers,
+    // or read beyond the table extent that was checked below.
+    if phnum != 0 && phentsize < Elf64ProgramHeader::SIZE {
+        return Err(ElfError::InvalidOffset {
+            kind: "program header entry size",
+            offset: phentsize as u64,
+        });
+    }
 
     // Validate bounds
     let end_offset = phoff
@@ -246,7 +259,8 @@ pub fn parse_program_headers(
     let mut headers = Vec::with_capacity(phnum);
     for i in 0..phnum {
         let offset = phoff + i * phentsize;
-        let header = Elf64ProgramHeader::parse(&data[offset..])?;
+        // The checked table extent and minimum stride prove this record fits.
+        let header = Elf64ProgramHeader::parse(&data[offset..offset + Elf64ProgramHeader::SIZE])?;
         headers.push(header);
     }
 
@@ -322,5 +336,60 @@ mod tests {
             ProgramType::GnuRelro
         ));
         assert!(matches!(ProgramType::from(999), ProgramType::Unknown(999)));
+    }
+
+    #[test]
+    fn table_rejects_every_undersized_stride() {
+        // Extra file bytes must not turn an undersized table record into a
+        // valid header by letting its parser read outside that record.
+        let data = [0u8; Elf64ProgramHeader::SIZE * 2];
+        for stride in 0..Elf64ProgramHeader::SIZE as u16 {
+            assert!(
+                matches!(
+                    parse_program_headers(&data, 0, stride, 1),
+                    Err(ElfError::InvalidOffset {
+                        kind: "program header entry size",
+                        ..
+                    })
+                ),
+                "stride={stride}"
+            );
+        }
+        assert!(parse_program_headers(&data, 0, 0, u16::MAX).is_err());
+    }
+
+    #[test]
+    fn table_rejects_overflow_and_truncated_extents() {
+        let data = [0u8; Elf64ProgramHeader::SIZE];
+        let stride = Elf64ProgramHeader::SIZE as u16;
+        for offset in [u64::MAX, u64::MAX - 8, 1u64 << 32] {
+            assert!(parse_program_headers(&data, offset, stride, 1).is_err());
+        }
+        assert!(parse_program_headers(&data, 0, stride, 2).is_err());
+        assert!(parse_program_headers(&data, 1, stride, 1).is_err());
+        assert!(parse_program_headers(&data[..data.len() - 1], 0, stride, 1).is_err());
+    }
+
+    #[test]
+    fn table_preserves_empty_and_exact_size_records() {
+        assert!(parse_program_headers(&[], 0, 0, 0).unwrap().is_empty());
+        let data = [0u8; Elf64ProgramHeader::SIZE * 2];
+        let headers = parse_program_headers(&data, 0, Elf64ProgramHeader::SIZE as u16, 2).unwrap();
+        assert_eq!(headers.len(), 2);
+    }
+
+    #[test]
+    fn table_respects_offset_and_padded_stride() {
+        let offset = 7usize;
+        let stride = Elf64ProgramHeader::SIZE + 8;
+        let mut data = vec![0xff; offset + 2 * stride];
+        data[offset..offset + Elf64ProgramHeader::SIZE].fill(0);
+        data[offset + stride..offset + stride + Elf64ProgramHeader::SIZE].fill(0);
+        data[offset..offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        data[offset + stride..offset + stride + 4].copy_from_slice(&2u32.to_le_bytes());
+        let headers = parse_program_headers(&data, offset as u64, stride as u16, 2).unwrap();
+        assert_eq!(headers.len(), 2);
+        assert_eq!(headers[0].p_type, ProgramType::Load);
+        assert_eq!(headers[1].p_type, ProgramType::Dynamic);
     }
 }
