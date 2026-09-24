@@ -397,22 +397,57 @@ fn is_pathname(name: &[u8]) -> bool {
 #[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void {
-    // In standalone mode, only NULL filename (main program) is supported
     #[cfg(feature = "standalone")]
     {
-        if filename.is_null() {
-            clear_dlerror();
-            return open_main_program_handle();
-        }
+        // There is no host loader to repair a rejected native transaction.
+        // Validate flags even for the main-program handle, before side effects.
         if !dlfcn_core::valid_flags(flags) {
             set_dlerror(dlfcn_core::ERR_INVALID_FLAGS);
             return std::ptr::null_mut();
         }
-        // Standalone mode: dynamic loading not supported
-        set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
-        return std::ptr::null_mut();
+        if filename.is_null() {
+            clear_dlerror();
+            return open_main_program_handle();
+        }
+        // SAFETY: this is the ABI's existing bounded caller-string reader.
+        let Some(name) = (unsafe { bounded_cstr_bytes(filename) }) else {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            return std::ptr::null_mut();
+        };
+        if name.is_empty()
+            || ((flags & dlfcn_core::RTLD_NOLOAD) != 0 && library_alias_matches(name))
+        {
+            clear_dlerror();
+            return open_main_program_handle();
+        }
+        // Until native name search is installed, never interpret a bare name
+        // as an implicit current-directory pathname.
+        if !is_pathname(name) {
+            set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
+            return std::ptr::null_mut();
+        }
+        return match load_native_dso(name, flags) {
+            Some(handle) => {
+                clear_dlerror();
+                handle
+            }
+            None => {
+                set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+                std::ptr::null_mut()
+            }
+        };
     }
     #[cfg(not(feature = "standalone"))]
+    {
+        // SAFETY: forward the original ABI arguments to the interpose path.
+        unsafe { dlopen_interpose(filename, flags) }
+    }
+}
+
+// Keep host-only names out of standalone type checking, not merely behind
+// an unreachable early return. Interpose/bootstrap behavior is unchanged.
+#[cfg(not(feature = "standalone"))]
+unsafe fn dlopen_interpose(filename: *const c_char, flags: c_int) -> *mut c_void {
     if runtime_policy::bootstrap_passthrough_active() {
         if filename.is_null() {
             clear_dlerror();
@@ -517,7 +552,7 @@ pub unsafe extern "C" fn dlopen(filename: *const c_char, flags: c_int) -> *mut c
 #[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void {
-    // Standalone mode: only resolve exported symbols for main program handle
+    // Standalone lookups stay entirely within the owned loader namespace.
     #[cfg(feature = "standalone")]
     {
         if symbol.is_null() {
@@ -532,7 +567,7 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             return std::ptr::null_mut();
         }
         let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
-        // In standalone mode, only main program handle and RTLD_DEFAULT are valid
+        // Preserve the existing main-program and exported-symbol lookup scope.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
             let sym = resolve_exported_symbol(symbol_name);
             if sym.is_null() {
@@ -542,7 +577,19 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             }
             return sym;
         }
-        // Other handles not supported in standalone mode
+        if let Some(symbol) = resolve_native_dso_symbol(handle, symbol_name, None) {
+            return match symbol {
+                Some(address) => {
+                    clear_dlerror();
+                    address
+                }
+                None => {
+                    set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+                    std::ptr::null_mut()
+                }
+            };
+        }
+        // An unknown or stale handle is never handed to a host resolver.
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return std::ptr::null_mut();
     }
@@ -707,7 +754,7 @@ pub unsafe extern "C" fn dlvsym(
     symbol: *const c_char,
     version: *const c_char,
 ) -> *mut c_void {
-    // Standalone mode: only resolve exported symbols for main program handle
+    // Native handles use their own version tables, not the libc export list.
     #[cfg(feature = "standalone")]
     {
         if symbol.is_null() || version.is_null() {
@@ -729,7 +776,7 @@ pub unsafe extern "C" fn dlvsym(
         }
         let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
         let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
-        // In standalone mode, only main program handle and RTLD_DEFAULT are valid
+        // The libc-version allowlist applies only to this exported-symbol scope.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
             if version_supported(version_name) {
                 let sym = resolve_exported_symbol(symbol_name);
@@ -741,7 +788,19 @@ pub unsafe extern "C" fn dlvsym(
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
         }
-        // Other handles not supported in standalone mode
+        if let Some(symbol) = resolve_native_dso_symbol(handle, symbol_name, Some(version_name)) {
+            return match symbol {
+                Some(address) => {
+                    clear_dlerror();
+                    address
+                }
+                None => {
+                    set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+                    std::ptr::null_mut()
+                }
+            };
+        }
+        // Reject foreign and stale handles without host delegation.
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return std::ptr::null_mut();
     }
@@ -921,7 +980,7 @@ pub unsafe extern "C" fn dlvsym(
 #[allow(unreachable_code)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
-    // Standalone mode: only main program handle is valid
+    // Close owned handles through the native dependency/lifecycle collector.
     #[cfg(feature = "standalone")]
     {
         if handle.is_null() {
@@ -937,7 +996,15 @@ pub unsafe extern "C" fn dlclose(handle: *mut c_void) -> c_int {
             }
             return rc;
         }
-        // Other handles not supported in standalone mode
+        if let Some(rc) = close_native_dso(handle) {
+            if rc == 0 {
+                clear_dlerror();
+            } else {
+                set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
+            }
+            return rc;
+        }
+        // A foreign or stale handle cannot name a host-owned object here.
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return -1;
     }

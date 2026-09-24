@@ -15,6 +15,7 @@ use super::{InitState, OPERATIONS, cxa, ifunc, lifecycle, registry, thread_exit}
 // without holding a second mutex across user code. 0=idle, 1=TLS/C++, 2=FINI,
 // 3=complete. Recursive exit resumes the queue instead of repeating callbacks.
 static PHASE: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(feature = "standalone"))]
 static HOST_INSTALLED: AtomicBool = AtomicBool::new(false);
 static OWNED_INSTALLED: AtomicBool = AtomicBool::new(false);
 
@@ -25,6 +26,9 @@ pub(super) fn unloading() -> bool { PHASE.load(Ordering::Relaxed) >= 2 }
 
 pub(super) fn install() -> Option<()> {
     let _operation = OPERATIONS.lock();
+    // A standalone process has no host on_exit. Requiring that symbol
+    // would reject every otherwise valid native DSO before publication.
+    #[cfg(not(feature = "standalone"))]
     if !HOST_INSTALLED.load(Ordering::Relaxed) {
         let address = crate::host_resolve::resolve_host_symbol_raw("on_exit")?;
         type OnExit = unsafe extern "C" fn(
