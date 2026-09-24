@@ -82,7 +82,7 @@
       "objective_gate": {
         "bead": "bd-gtf.4",
         "status": "pass",
-        "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T112959Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering) is green in both strict and hardened modes with no tracked known failures.",
+        "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the L1 objective gate passes: the real-world preload corpus (run rc0923-corpus-20260924T115503Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp) is green in both strict and hardened modes with no tracked known failures.",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -138,7 +138,7 @@
               "signature_guard_failures": 0
             },
             "actual": {
-              "run_id": "rc0923-corpus-20260924T112959Z",
+              "run_id": "rc0923-corpus-20260924T115503Z",
               "overall_failed": false,
               "strict_status": "green",
               "hardened_status": "green",

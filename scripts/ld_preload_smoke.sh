@@ -161,6 +161,8 @@ STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
 cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
+SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
+cc -O2 -D_FORTIFY_SOURCE=2 "${ROOT}/tests/integration/fixture_setjmp_guard.c" -o "${SETJMP_GUARD_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
 cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
@@ -789,6 +791,9 @@ EOF
   # LC_COLLATE: sort and ls order by the locale's collation.
   run_corpus_case "${mode}" "sort_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 sort "${tree}/collate.txt" || mode_failed=1
   run_corpus_case "${mode}" "ls_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 ls "${tree}/collate_dir" || mode_failed=1
+  # setjmp/longjmp (bd-rc0923-epic-eeuy4f.12): glibc pointer mangling of the
+  # saved rbp/rsp/rip and __longjmp_chk's stack-direction check.
+  run_corpus_case "${mode}" "setjmp_guard" "${SETJMP_GUARD_BIN}" || mode_failed=1
   # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1
