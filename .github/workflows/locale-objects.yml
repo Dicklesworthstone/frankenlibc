@@ -1,0 +1,75 @@
+name: Native locale objects
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/locale_abi*'
+      - 'crates/frankenlibc-abi/src/locale_abi/**'
+      - 'crates/frankenlibc-abi/src/locale_objects*'
+      - 'crates/frankenlibc-abi/src/string_abi*'
+      - 'crates/frankenlibc-abi/src/time_abi*'
+      - 'crates/frankenlibc-abi/src/wchar_abi*'
+      - 'crates/frankenlibc-core/src/locale/**'
+      - 'tests/integration/fixture_locale_objects.c'
+      - '.github/workflows/locale-objects.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  locale:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt, clippy
+      - name: Install named locale data
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y locales
+          sudo localedef -i de_DE -f UTF-8 de_DE.UTF-8
+          sudo localedef -i fr_FR -f UTF-8 fr_FR.UTF-8
+      - name: Preserve reproducible offline diagnosis inputs
+        if: github.run_number == 1
+        run: |
+          cargo fetch
+          mkdir -p artifacts/locale-build-inputs
+          git archive HEAD | gzip > artifacts/locale-build-inputs/source.tar.gz
+          cp Cargo.lock artifacts/locale-build-inputs/Cargo.lock
+          tar -C "$HOME" -czf artifacts/locale-build-inputs/rust.tar.gz .rustup/toolchains/nightly-2026-08-31-x86_64-unknown-linux-gnu .cargo/registry
+          tar -C /usr/lib -czf artifacts/locale-build-inputs/locales.tar.gz locale
+      - uses: actions/upload-artifact@v4
+        if: github.run_number == 1
+        with:
+          name: locale-build-inputs
+          path: artifacts/locale-build-inputs/
+          retention-days: 1
+      - name: Build release ABI and optimized C caller
+        run: |
+          mkdir -p artifacts/locale-results
+          cargo build -p frankenlibc-abi --release
+          cc -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_locale_objects.c -o artifacts/locale-results/probe
+      - name: Compare independent host and deployed strict and hardened cases
+        shell: bash
+        run: |
+          failed=0
+          for case in lifecycle composition threads named; do
+            if ! timeout 30 artifacts/locale-results/probe "$case" > "artifacts/locale-results/$case.host" 2>&1; then failed=1; fi
+            for mode in strict hardened; do
+              if ! timeout 30 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" artifacts/locale-results/probe "$case" > "artifacts/locale-results/$case.$mode" 2>&1; then failed=1; fi
+              if ! diff -u "artifacts/locale-results/$case.host" "artifacts/locale-results/$case.$mode"; then failed=1; fi
+              cat "artifacts/locale-results/$case.$mode"
+            done
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: locale-results
+          path: artifacts/locale-results/
+          retention-days: 7
