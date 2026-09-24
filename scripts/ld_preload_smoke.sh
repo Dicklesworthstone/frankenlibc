@@ -152,6 +152,8 @@ LOCALTIME_TZ_BIN="${BIN_DIR}/fixture_localtime_tz"
 cc -O2 "${ROOT}/tests/integration/fixture_localtime_tz.c" -o "${LOCALTIME_TZ_BIN}"
 ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
+STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
+cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
 cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
@@ -769,6 +771,10 @@ EOF
   done
   # Every transition 1900-2100 in 44 zones, bisected to the second (~7.9k lines).
   run_corpus_case "${mode}" "localtime_tz_transition_sweep" "${LOCALTIME_TZ_BIN}" sweep || mode_failed=1
+  # Named locales (bd-rc0923-epic-eeuy4f.10): LC_TIME formatting.
+  run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
   # GNU argp (bd-rc0923-epic-eeuy4f.7): parser protocol, help layout, and
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1

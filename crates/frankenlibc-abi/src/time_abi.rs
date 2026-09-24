@@ -1589,6 +1589,11 @@ pub unsafe extern "C" fn strftime(
     format: *const std::ffi::c_char,
     tm: *const libc::tm,
 ) -> usize {
+    // LC_TIME on a named locale: names, AM/PM and %c/%x/%X/%r come from the
+    // locale's data, so none of the C-locale fast paths below apply.
+    if let Some(loc) = crate::locale_abi::named_time_locale() {
+        return unsafe { strftime_named(s, maxsize, format, tm, &loc) };
+    }
     // Strict-mode fast path (DEFAULT deployed): `Time` `decide()` always-Allows in strict, so skip
     // decide()/observe() + `tracked_region_fits` ×2 + `known_remaining` (registry lookup) and scan
     // the format to NUL directly. Byte-identical for valid inputs (0 on null/zero args or
@@ -1870,6 +1875,37 @@ pub unsafe extern "C" fn strftime(
     let result = time_core::format_strftime(fmt, &bd, buf);
     runtime_policy::observe(ApiFamily::Time, decision.profile, 6, result == 0);
     result
+}
+
+/// `strftime` under a named LC_TIME: the validated general path with the
+/// locale's time data.
+#[cold]
+#[inline(never)]
+unsafe fn strftime_named(
+    s: *mut std::ffi::c_char,
+    maxsize: usize,
+    format: *const std::ffi::c_char,
+    tm: *const libc::tm,
+    loc: &time_core::TimeLocale<'_>,
+) -> usize {
+    if s.is_null() || format.is_null() || tm.is_null() || maxsize == 0 {
+        return 0;
+    }
+    if !runtime_policy::strict_passthrough_active()
+        && (!tracked_region_fits(s.cast(), maxsize) || !tracked_required_object_fits(tm))
+    {
+        return 0;
+    }
+    let (fmt_len, terminated) = unsafe { scan_c_string(format, known_remaining(format as usize)) };
+    if !terminated {
+        return 0;
+    }
+    let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
+    let mut bd = unsafe { read_tm(tm) };
+    unsafe { read_tm_zone(tm, &mut bd) };
+    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+    time_core::format_strftime_locale(fmt, &bd, buf, loc)
 }
 
 // ---------------------------------------------------------------------------

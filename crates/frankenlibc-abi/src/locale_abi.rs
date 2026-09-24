@@ -745,6 +745,24 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
     &LCONV
 }
 
+/// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
+/// Item indices are the LC_TIME `nl_item` offsets (ABDAY_1 = 0 ... T_FMT_AMPM = 43).
+pub(crate) fn named_time_locale() -> Option<frankenlibc_core::time::TimeLocale<'static>> {
+    let n = named(locale_core::LC_TIME)?;
+    let s = |i: usize| n.blob.string(i).unwrap_or(b"");
+    Some(frankenlibc_core::time::TimeLocale {
+        abday: std::array::from_fn(s),
+        day: std::array::from_fn(|i| s(7 + i)),
+        abmon: std::array::from_fn(|i| s(14 + i)),
+        mon: std::array::from_fn(|i| s(26 + i)),
+        am_pm: [s(38), s(39)],
+        d_t_fmt: s(40),
+        d_fmt: s(41),
+        t_fmt: s(42),
+        t_fmt_ampm: s(43),
+    })
+}
+
 /// `localeconv`'s result when LC_NUMERIC or LC_MONETARY is on a named
 /// locale. Like glibc, one process-wide struct refilled on each call.
 struct NamedLconvCell(std::cell::UnsafeCell<LConv>);

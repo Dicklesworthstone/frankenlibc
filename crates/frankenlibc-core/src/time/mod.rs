@@ -589,6 +589,63 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
         return format_strftime_full_weekday(bd.tm_wday, buf);
     }
 
+    format_strftime_general(fmt, bd, buf, None)
+}
+
+/// LC_TIME data `strftime` consults: names, AM/PM strings and the formats
+/// behind `%c`, `%x`, `%X` and `%r`.
+#[derive(Clone, Copy, Debug)]
+pub struct TimeLocale<'a> {
+    pub abday: [&'a [u8]; 7],
+    pub day: [&'a [u8]; 7],
+    pub abmon: [&'a [u8]; 12],
+    pub mon: [&'a [u8]; 12],
+    pub am_pm: [&'a [u8]; 2],
+    pub d_t_fmt: &'a [u8],
+    pub d_fmt: &'a [u8],
+    pub t_fmt: &'a [u8],
+    pub t_fmt_ampm: &'a [u8],
+}
+
+/// `strftime` under a named locale's LC_TIME data.
+pub fn format_strftime_locale(
+    fmt: &[u8],
+    bd: &BrokenDownTime,
+    buf: &mut [u8],
+    loc: &TimeLocale<'_>,
+) -> usize {
+    format_strftime_general(fmt, bd, buf, Some(loc))
+}
+
+/// Expand a composite's sub-format: through the C fast paths when there is
+/// no locale, else through the locale-aware general loop.
+fn format_strftime_sub(
+    sub: &[u8],
+    bd: &BrokenDownTime,
+    buf: &mut [u8],
+    loc: Option<&TimeLocale<'_>>,
+) -> usize {
+    match loc {
+        None => format_strftime(sub, bd, buf),
+        Some(_) => format_strftime_general(sub, bd, buf, loc),
+    }
+}
+
+/// The general directive loop, shared by the C and locale formatters.
+fn format_strftime_general(
+    fmt: &[u8],
+    bd: &BrokenDownTime,
+    buf: &mut [u8],
+    loc: Option<&TimeLocale<'_>>,
+) -> usize {
+    if !fmt.contains(&b'%') {
+        if fmt.len() >= buf.len() {
+            return 0;
+        }
+        buf[..fmt.len()].copy_from_slice(fmt);
+        buf[fmt.len()] = 0;
+        return fmt.len();
+    }
     let mut pos = 0usize;
     let mut i = 0usize;
 
@@ -881,7 +938,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     // (%FT%T was 377ns vs 17ns for "%Y-%m-%d %H:%M:%S"; strftime_survey).
                     // A composite sub-format is never empty, so n==0 means the output
                     // buffer overflowed — propagate it exactly like `push!`.
-                    let n = format_strftime($sub, bd, &mut buf[pos..]);
+                    let n = format_strftime_sub($sub, bd, &mut buf[pos..], loc);
                     if n == 0 {
                         return 0;
                     }
@@ -890,7 +947,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                     // Case-transform or width-override on a composite: needs the whole
                     // expansion materialized first (rare — `%^c`, `%20D`, …).
                     let mut scratch = [0u8; 256];
-                    let n = format_strftime($sub, bd, &mut scratch);
+                    let n = format_strftime_sub($sub, bd, &mut scratch, loc);
                     let src: &[u8] = &scratch[..n];
                     let fits = width_override.map_or(true, |w| src.len() >= w);
                     if !needs_case && fits {
@@ -925,7 +982,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             // the index, so tm_wday=8 wrongly printed "Mon").
             b'a' => {
                 let name: &[u8] = if (0..=6).contains(&bd.tm_wday) {
-                    WDAY_NAMES[bd.tm_wday as usize]
+                    loc.map_or(WDAY_NAMES[bd.tm_wday as usize], |l| l.abday[bd.tm_wday as usize])
                 } else {
                     b"?"
                 };
@@ -933,7 +990,9 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'A' => {
                 let name: &[u8] = if (0..=6).contains(&bd.tm_wday) {
-                    WDAY_FULL_NAMES[bd.tm_wday as usize].as_bytes()
+                    loc.map_or(WDAY_FULL_NAMES[bd.tm_wday as usize].as_bytes(), |l| {
+                        l.day[bd.tm_wday as usize]
+                    })
                 } else {
                     b"?"
                 };
@@ -941,7 +1000,7 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'b' | b'h' => {
                 let name: &[u8] = if (0..=11).contains(&bd.tm_mon) {
-                    MON_NAMES[bd.tm_mon as usize]
+                    loc.map_or(MON_NAMES[bd.tm_mon as usize], |l| l.abmon[bd.tm_mon as usize])
                 } else {
                     b"?"
                 };
@@ -949,15 +1008,17 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
             }
             b'B' => {
                 let name: &[u8] = if (0..=11).contains(&bd.tm_mon) {
-                    MON_FULL_NAMES[bd.tm_mon as usize].as_bytes()
+                    loc.map_or(MON_FULL_NAMES[bd.tm_mon as usize].as_bytes(), |l| {
+                        l.mon[bd.tm_mon as usize]
+                    })
                 } else {
                     b"?"
                 };
                 push_str_field!(name, true, true);
             }
             b'c' => {
-                // Preferred date/time, C locale: "%a %b %e %H:%M:%S %Y".
-                push_composite!(b"%a %b %e %H:%M:%S %Y");
+                // Preferred date/time: the locale's D_T_FMT (C: "%a %b %e %H:%M:%S %Y").
+                push_composite!(loc.map_or(&b"%a %b %e %H:%M:%S %Y"[..], |l| l.d_t_fmt));
             }
             b'C' => {
                 // %C is the bare-decimal century (year / 100). glibc uses
@@ -1016,15 +1077,31 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_str_field!(b"\n", true, false);
             }
             b'p' => {
-                let s: &[u8] = if bd.tm_hour < 12 { b"AM" } else { b"PM" };
+                let s: &[u8] = match loc {
+                    Some(l) => l.am_pm[usize::from(bd.tm_hour >= 12)],
+                    None if bd.tm_hour < 12 => b"AM",
+                    None => b"PM",
+                };
                 push_str_field!(s, true, false);
             }
             b'P' => {
-                let s: &[u8] = if bd.tm_hour < 12 { b"am" } else { b"pm" };
+                let lower: Vec<u8>;
+                let s: &[u8] = match loc {
+                    Some(l) => {
+                        lower = l.am_pm[usize::from(bd.tm_hour >= 12)].to_ascii_lowercase();
+                        &lower
+                    }
+                    None if bd.tm_hour < 12 => b"am",
+                    None => b"pm",
+                };
                 push_str_field!(s, false, false);
             }
             b'r' => {
-                push_composite!(b"%I:%M:%S %p");
+                // T_FMT_AMPM; glibc falls back to the POSIX form when empty.
+                push_composite!(match loc {
+                    Some(l) if !l.t_fmt_ampm.is_empty() => l.t_fmt_ampm,
+                    _ => &b"%I:%M:%S %p"[..],
+                });
             }
             b'R' => {
                 push_composite!(b"%H:%M");
@@ -1075,10 +1152,10 @@ pub fn format_strftime(fmt: &[u8], bd: &BrokenDownTime, buf: &mut [u8]) -> usize
                 push_dec_mod!(wnum, 2, Pad::Zero);
             }
             b'x' => {
-                push_composite!(b"%m/%d/%y");
+                push_composite!(loc.map_or(&b"%m/%d/%y"[..], |l| l.d_fmt));
             }
             b'X' => {
-                push_composite!(b"%H:%M:%S");
+                push_composite!(loc.map_or(&b"%H:%M:%S"[..], |l| l.t_fmt));
             }
             b'y' => {
                 push_dec_mod!((bd.tm_year as i64 + 1900).rem_euclid(100), 2, Pad::Zero);
