@@ -1234,27 +1234,58 @@ fn res_ownok_matches_host_owner_names() {
 // gconv shims over native iconv
 // ===========================================================================
 
-#[test]
-fn gconv_open_and_close_roundtrip() {
-    let to = CString::new("UTF-16LE").unwrap();
-    let from = CString::new("UTF-8").unwrap();
-    let mut handle = ptr::null_mut();
+/// glibc's `struct gconv_spec` (>= 2.32).
+#[repr(C)]
+struct GconvSpec {
+    fromcode: *mut c_char,
+    tocode: *mut c_char,
+    translit: bool,
+    ignore: bool,
+}
 
-    let rc = unsafe { __gconv_open(to.as_ptr(), from.as_ptr(), &mut handle, 0) };
-    assert_eq!(rc, 0);
+fn empty_gconv_spec() -> GconvSpec {
+    GconvSpec {
+        fromcode: ptr::null_mut(),
+        tocode: ptr::null_mut(),
+        translit: false,
+        ignore: false,
+    }
+}
+
+#[test]
+fn gconv_spec_parses_suffixes_and_opens_like_glibc() {
+    // iconv(1) calls __gconv_create_spec(&spec, from, to) then
+    // __gconv_open(&spec, &cd, 0) and passes cd to iconv()/iconv_close().
+    let from = CString::new("UTF-8").unwrap();
+    let to = CString::new("utf-16le//translit,IGNORE").unwrap();
+    let mut spec = empty_gconv_spec();
+    let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
+    let ret = unsafe { __gconv_create_spec(spec_ptr, from.as_ptr(), to.as_ptr()) };
+    assert_eq!(ret, spec_ptr);
+    assert_eq!(unsafe { CStr::from_ptr(spec.fromcode) }.to_bytes(), b"UTF-8");
+    assert_eq!(unsafe { CStr::from_ptr(spec.tocode) }.to_bytes(), b"utf-16le");
+    assert!(spec.translit && spec.ignore);
+
+    let mut handle = ptr::null_mut();
+    assert_eq!(unsafe { __gconv_open(spec_ptr, &mut handle, 0) }, 0);
     assert!(!handle.is_null());
+    unsafe { __gconv_destroy_spec(spec_ptr) };
+    assert!(spec.fromcode.is_null() && spec.tocode.is_null());
     assert_eq!(unsafe { __gconv_close(handle) }, 0);
 }
 
 #[test]
 fn gconv_open_unsupported_codec_returns_noconv() {
-    let to = CString::new("EBCDIC").unwrap();
     let from = CString::new("UTF-8").unwrap();
+    let to = CString::new("NO-SUCH-CODESET").unwrap();
+    let mut spec = empty_gconv_spec();
+    let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
+    assert_eq!(unsafe { __gconv_create_spec(spec_ptr, from.as_ptr(), to.as_ptr()) }, spec_ptr);
     let mut handle = ptr::null_mut();
-
-    let rc = unsafe { __gconv_open(to.as_ptr(), from.as_ptr(), &mut handle, 0) };
-    assert_eq!(rc, -1);
+    // glibc's __GCONV_NOCONV is 1.
+    assert_eq!(unsafe { __gconv_open(spec_ptr, &mut handle, 0) }, 1);
     assert!(handle.is_null());
+    unsafe { __gconv_destroy_spec(spec_ptr) };
 }
 
 #[test]
@@ -1262,46 +1293,22 @@ fn gconv_close_rejects_null_handle() {
     assert_eq!(unsafe { __gconv_close(ptr::null_mut()) }, -1);
 }
 
-// ---------------------------------------------------------------------------
-// __gconv_create_spec / __gconv_destroy_spec — native safe-default tests
-// ---------------------------------------------------------------------------
-
 #[test]
-fn gconv_create_spec_null_returns_noconv() {
-    let rc = unsafe { __gconv_create_spec(ptr::null_mut()) };
-    assert_eq!(rc, -1); // GCONV_NOCONV
-}
-
-#[test]
-fn gconv_create_spec_valid_buffer_returns_ok_and_zeroes() {
-    let mut buf = [0xFFu8; 64];
-    let rc = unsafe { __gconv_create_spec(buf.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0); // GCONV_OK
-    assert!(buf.iter().all(|&b| b == 0), "spec buffer should be zeroed");
+fn gconv_create_spec_null_arguments_return_null() {
+    let name = CString::new("UTF-8").unwrap();
+    let mut spec = empty_gconv_spec();
+    let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
+    assert!(unsafe { __gconv_create_spec(ptr::null_mut(), name.as_ptr(), name.as_ptr()) }.is_null());
+    assert!(unsafe { __gconv_create_spec(spec_ptr, ptr::null(), name.as_ptr()) }.is_null());
 }
 
 #[test]
 fn gconv_destroy_spec_null_is_safe_noop() {
-    // Must not panic or crash
     unsafe { __gconv_destroy_spec(ptr::null_mut()) };
 }
 
-#[test]
-fn gconv_destroy_spec_valid_buffer_is_safe_noop() {
-    let mut buf = [0u8; 64];
-    unsafe { __gconv_destroy_spec(buf.as_mut_ptr().cast()) };
-}
-
-#[test]
-fn gconv_create_destroy_roundtrip() {
-    let mut buf = [0xFFu8; 64];
-    let rc = unsafe { __gconv_create_spec(buf.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0);
-    unsafe { __gconv_destroy_spec(buf.as_mut_ptr().cast()) };
-}
-
 // ---------------------------------------------------------------------------
-// __gconv_get_* database accessors — native safe-default tests
+// __gconv_get_* database accessors
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1310,8 +1317,19 @@ fn gconv_get_alias_db_returns_null() {
 }
 
 #[test]
-fn gconv_get_cache_returns_null() {
-    assert!(unsafe { __gconv_get_cache() }.is_null());
+fn gconv_get_cache_maps_the_system_cache() {
+    // iconv -l reads charset names straight from this mapping.
+    let cache = unsafe { __gconv_get_cache() };
+    let present = ["/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache", "/usr/lib64/gconv/gconv-modules.cache", "/usr/lib/gconv/gconv-modules.cache"]
+        .iter()
+        .any(|p| std::path::Path::new(p).exists());
+    if !present || std::env::var_os("GCONV_PATH").is_some() {
+        assert!(cache.is_null());
+        return;
+    }
+    assert!(!cache.is_null());
+    let magic = unsafe { cache.cast::<u32>().read() };
+    assert_eq!(magic, 0x2001_0324, "GCONVCACHE_MAGIC");
 }
 
 #[test]
@@ -1337,7 +1355,7 @@ fn gconv_step_returns_noconv_and_zeroes_written() {
             &mut written,
         )
     };
-    assert_eq!(rc, -1); // GCONV_NOCONV
+    assert_eq!(rc, 1); // glibc __GCONV_NOCONV
     assert_eq!(written, 0, "written count should be zeroed");
 }
 
@@ -1354,7 +1372,7 @@ fn gconv_step_null_written_ptr_does_not_crash() {
             ptr::null_mut(),
         )
     };
-    assert_eq!(rc, -1); // GCONV_NOCONV
+    assert_eq!(rc, 1); // glibc __GCONV_NOCONV
 }
 
 // ---------------------------------------------------------------------------
@@ -1373,7 +1391,7 @@ fn gconv_transliterate_returns_noconv() {
             ptr::null(),
         )
     };
-    assert_eq!(rc, -1); // GCONV_NOCONV
+    assert_eq!(rc, 1); // glibc __GCONV_NOCONV
 }
 
 // ===========================================================================

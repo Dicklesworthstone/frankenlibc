@@ -122,6 +122,7 @@ cc -O2 "${ROOT}/tests/integration/link_test.c" -o "${INTEGRATION_BIN}"
 CORPUS_DIR="${RUN_DIR}/corpus"
 mkdir -p "${CORPUS_DIR}/tree/sub"
 printf 'alpha one\nbravo two\nalpha three\n' > "${CORPUS_DIR}/tree/a.txt"
+printf 'caf\xc3\xa9 \xe2\x82\xac \xc2\xab ok \xc2\xbb \xef\xbc\xa1\n' > "${CORPUS_DIR}/tree/u8.txt"
 printf 'charlie\n' > "${CORPUS_DIR}/tree/sub/b.txt"
 printf 'all:\n\t@echo made-$(words a b c)\n' > "${CORPUS_DIR}/Makefile"
 touch -t 202603230101.01 "${CORPUS_DIR}/tree" "${CORPUS_DIR}/tree/a.txt" \
@@ -149,6 +150,8 @@ SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_small_stack_threads.c" -o "${SMALL_STACK_BIN}"
 LOCALTIME_TZ_BIN="${BIN_DIR}/fixture_localtime_tz"
 cc -O2 "${ROOT}/tests/integration/fixture_localtime_tz.c" -o "${LOCALTIME_TZ_BIN}"
+ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
+cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
 cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
@@ -780,6 +783,11 @@ EOF
   # Exits 64 (EX_USAGE); the status is part of the compared output.
   run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1
   run_corpus_case "${mode}" "iconv_usage" /usr/bin/env LC_ALL=C iconv --usage || mode_failed=1
+  # iconv //TRANSLIT, //IGNORE and iconv(1) itself (bd-rc0923-epic-eeuy4f.22).
+  run_corpus_case "${mode}" "iconv_flags" "${ICONV_FLAGS_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_translit" /usr/bin/env LC_ALL=C iconv -f UTF-8 -t ASCII//TRANSLIT "${tree}/u8.txt" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_omit_invalid" bash -c "LC_ALL=C iconv -c -f UTF-8 -t ASCII '${tree}/u8.txt' 2>&1; echo rc=\$?" || mode_failed=1
+  run_corpus_case "${mode}" "iconv_prog_list" /usr/bin/env LC_ALL=C iconv -l || mode_failed=1
   run_corpus_case "${mode}" "date_tz_new_york" /usr/bin/env TZ=America/New_York LC_ALL=C date -d @1700000000 || mode_failed=1
   run_corpus_case "${mode}" "ls_long_tz_sydney" /usr/bin/env TZ=Australia/Sydney LC_ALL=C ls -l "${tree}/a.txt" "${tree}/sub" || mode_failed=1
   run_corpus_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1

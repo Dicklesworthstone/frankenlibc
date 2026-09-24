@@ -6,6 +6,7 @@ use crate::errno;
 use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdInt, num::SimdUint};
 
 mod big5hkscs_tables;
+mod translit_c;
 mod cjk_tables;
 mod cp932_tables;
 mod euc_jp_ms_tables;
@@ -3038,6 +3039,12 @@ pub struct IconvDescriptor {
     /// (NULL inbuf) emits SI if still shifted, like ISO-2022-KR.
     ibm930_out_shifted: bool,
     ibm930_in_shifted: bool,
+    /// `tocode` carried `//TRANSLIT`: an unrepresentable character is
+    /// replaced from the C-locale transliteration table (default `?`).
+    translit: bool,
+    /// `tocode` carried `//IGNORE`: unrepresentable characters and invalid
+    /// input are skipped, and the call then reports `EILSEQ`.
+    ignore: bool,
 }
 
 const REVERSE_DIRECT_PAGES: usize = 8;
@@ -42106,6 +42113,8 @@ pub fn iconv_open_detailed(
     tocode: &[u8],
     fromcode: &[u8],
 ) -> Result<(IconvDescriptor, IconvDispatchMetadata), IconvOpenError> {
+    let (tocode, to_flags) = split_iconv_suffix(tocode);
+    let (fromcode, _) = split_iconv_suffix(fromcode);
     let to_lookup = classify_encoding(tocode);
     let from_lookup = classify_encoding(fromcode);
 
@@ -42178,9 +42187,36 @@ pub fn iconv_open_detailed(
             iso2022cnext_out_ann_ss3: 0,
             ibm930_out_shifted: false,
             ibm930_in_shifted: false,
+            translit: to_flags.translit,
+            ignore: to_flags.ignore,
         },
         dispatch,
     ))
+}
+
+/// Error-handling suffixes of an iconv charset name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct IconvSuffixFlags {
+    translit: bool,
+    ignore: bool,
+}
+
+/// Split `NAME//TRANSLIT//IGNORE` (also `NAME//TRANSLIT,IGNORE`, any case)
+/// into the charset name and its flags. Unknown suffixes are ignored, as in
+/// glibc; only the `tocode` flags affect a conversion.
+fn split_iconv_suffix(code: &[u8]) -> (&[u8], IconvSuffixFlags) {
+    let Some(slash) = code.iter().position(|&b| b == b'/') else {
+        return (code, IconvSuffixFlags::default());
+    };
+    let mut flags = IconvSuffixFlags::default();
+    for token in code[slash..].split(|&b| b == b'/' || b == b',') {
+        if token.eq_ignore_ascii_case(b"TRANSLIT") {
+            flags.translit = true;
+        } else if token.eq_ignore_ascii_case(b"IGNORE") {
+            flags.ignore = true;
+        }
+    }
+    (&code[..slash], flags)
 }
 
 /// Opens a character set conversion descriptor.
@@ -48360,6 +48396,142 @@ fn eilseq(in_consumed: usize, out_written: usize) -> IconvError {
 }
 
 pub fn iconv(
+    cd: &mut IconvDescriptor,
+    inbuf: Option<&[u8]>,
+    outbuf: &mut [u8],
+) -> Result<IconvResult, IconvError> {
+    let Some(input) = inbuf else {
+        return iconv_core(cd, None, outbuf);
+    };
+    let mut in_pos = 0usize;
+    let mut out_pos = 0usize;
+    let mut non_reversible = 0usize;
+    let mut skipped = false;
+    loop {
+        match iconv_core(cd, Some(&input[in_pos..]), &mut outbuf[out_pos..]) {
+            Ok(r) => {
+                in_pos += r.in_consumed;
+                out_pos += r.out_written;
+                non_reversible += r.non_reversible;
+                break;
+            }
+            Err(e) => {
+                in_pos += e.in_consumed;
+                out_pos += e.out_written;
+                if e.code != ICONV_EILSEQ {
+                    return Err(IconvError {
+                        code: e.code,
+                        in_consumed: in_pos,
+                        out_written: out_pos,
+                    });
+                }
+                let rest = &input[in_pos..];
+                match decode_char(cd.from, rest) {
+                    Ok((ch, len)) if len > 0 => {
+                        // glibc's converters drop Unicode tag characters that
+                        // the target cannot represent, silently.
+                        if ('\u{E0000}'..='\u{E007F}').contains(&ch) {
+                            in_pos += len;
+                            continue;
+                        }
+                        if cd.translit {
+                            match translit_into(cd, ch, &mut outbuf[out_pos..]) {
+                                TranslitOutcome::Written(n) => {
+                                    in_pos += len;
+                                    out_pos += n;
+                                    non_reversible += 1;
+                                    continue;
+                                }
+                                TranslitOutcome::NoRoom => {
+                                    return Err(IconvError {
+                                        code: ICONV_E2BIG,
+                                        in_consumed: in_pos,
+                                        out_written: out_pos,
+                                    });
+                                }
+                                TranslitOutcome::Unrepresentable => {}
+                            }
+                        }
+                        if cd.ignore {
+                            in_pos += len;
+                            skipped = true;
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if cd.ignore && !rest.is_empty() {
+                            in_pos += 1;
+                            skipped = true;
+                            continue;
+                        }
+                    }
+                }
+                return Err(IconvError {
+                    code: ICONV_EILSEQ,
+                    in_consumed: in_pos,
+                    out_written: out_pos,
+                });
+            }
+        }
+    }
+    if skipped {
+        return Err(IconvError {
+            code: ICONV_EILSEQ,
+            in_consumed: in_pos,
+            out_written: out_pos,
+        });
+    }
+    Ok(IconvResult {
+        non_reversible,
+        in_consumed: in_pos,
+        out_written: out_pos,
+    })
+}
+
+enum TranslitOutcome {
+    Written(usize),
+    NoRoom,
+    Unrepresentable,
+}
+
+/// Write `ch`'s C-locale transliteration (or the default `?`) in `cd`'s
+/// target encoding. The replacement is ASCII, so it is converted through a
+/// copy of `cd` whose source is ASCII; the target-side state (pending BOM,
+/// shift state) carries over, the source side is restored.
+fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> TranslitOutcome {
+    let cp = ch as u32;
+    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT.binary_search_by_key(&cp, |&(c, _)| c) {
+        Ok(i) => [translit_c::C_TRANSLIT[i].1, b"?"],
+        Err(_) => [b"?", b"?"],
+    };
+    for replacement in candidates {
+        if replacement.is_empty() {
+            return TranslitOutcome::Written(0);
+        }
+        let mut tmp = *cd;
+        tmp.from = Encoding::Ascii;
+        tmp.fast_ascii = pair_is_ascii_identity(Encoding::Ascii, cd.to);
+        tmp.sb_translation = build_sb_translation(Encoding::Ascii, cd.to);
+        tmp.from_decode = build_from_decode(Encoding::Ascii);
+        tmp.from_bom_pending = false;
+        match iconv_core(&mut tmp, Some(replacement), out) {
+            Ok(r) => {
+                tmp.from = cd.from;
+                tmp.fast_ascii = cd.fast_ascii;
+                tmp.sb_translation = cd.sb_translation;
+                tmp.from_decode = cd.from_decode;
+                tmp.from_bom_pending = cd.from_bom_pending;
+                *cd = tmp;
+                return TranslitOutcome::Written(r.out_written);
+            }
+            Err(e) if e.code == ICONV_E2BIG => return TranslitOutcome::NoRoom,
+            Err(_) => {}
+        }
+    }
+    TranslitOutcome::Unrepresentable
+}
+
+fn iconv_core(
     cd: &mut IconvDescriptor,
     inbuf: Option<&[u8]>,
     outbuf: &mut [u8],

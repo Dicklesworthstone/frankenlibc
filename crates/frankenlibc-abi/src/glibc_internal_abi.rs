@@ -29,7 +29,8 @@ type SizeT = usize;
 type SSizeT = isize;
 
 const GCONV_OK: c_int = 0;
-const GCONV_NOCONV: c_int = -1;
+// glibc's `__GCONV_NOCONV` (enum: OK=0, NOCONV=1, NODB, NOMEM, ...).
+const GCONV_NOCONV: c_int = 1;
 const ICONV_ERROR_VALUE: usize = usize::MAX;
 const HOSTID_PATH: &[u8] = b"/etc/hostid\0";
 const DNS_CSTR_SCAN_LIMIT: usize = frankenlibc_core::resolv::dns_name::NS_MAXDNAME;
@@ -9336,75 +9337,156 @@ pub unsafe extern "C" fn __lll_lock_wake_private(futex: *mut c_int, private: c_i
 // gconv (iconv internals) — GLIBC_PRIVATE
 // ---------------------------------------------------------------------------
 
-/// `__gconv_open` — open a gconv conversion descriptor.
+/// glibc's `struct gconv_spec` (glibc >= 2.32): what `__gconv_create_spec`
+/// parses out of the `iconv_open`-style names. iconv(1) sets `ignore` itself
+/// for `-c` before calling `__gconv_open`.
+#[repr(C)]
+struct GconvSpec {
+    fromcode: *mut c_char,
+    tocode: *mut c_char,
+    translit: bool,
+    ignore: bool,
+}
+
+/// Charset part of an iconv name (up to the first `/`), NUL-terminated,
+/// malloc'd (freed by `__gconv_destroy_spec`).
+unsafe fn gconv_spec_name(code: *const c_char) -> *mut c_char {
+    let bytes = unsafe { std::ffi::CStr::from_ptr(code) }.to_bytes();
+    let name = &bytes[..bytes.iter().position(|&b| b == b'/').unwrap_or(bytes.len())];
+    let p = unsafe { super::malloc_abi::malloc(name.len() + 1) }.cast::<c_char>();
+    if !p.is_null() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(name.as_ptr().cast::<c_char>(), p, name.len());
+            *p.add(name.len()) = 0;
+        }
+    }
+    p
+}
+
+/// `__gconv_create_spec(spec, fromcode, tocode)` — parse iconv names and
+/// their `//TRANSLIT`/`//IGNORE` suffixes (from `tocode`, as glibc does)
+/// into `spec`. Returns `spec`, or null on allocation failure. GLIBC_PRIVATE.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_create_spec(
+    spec: *mut c_void,
+    fromcode: *const c_char,
+    tocode: *const c_char,
+) -> *mut c_void {
+    if spec.is_null() || fromcode.is_null() || tocode.is_null() {
+        return std::ptr::null_mut();
+    }
+    let to_bytes = unsafe { std::ffi::CStr::from_ptr(tocode) }.to_bytes();
+    let mut translit = false;
+    let mut ignore = false;
+    if let Some(slash) = to_bytes.iter().position(|&b| b == b'/') {
+        for token in to_bytes[slash..].split(|&b| b == b'/' || b == b',') {
+            translit |= token.eq_ignore_ascii_case(b"TRANSLIT");
+            ignore |= token.eq_ignore_ascii_case(b"IGNORE");
+        }
+    }
+    let from = unsafe { gconv_spec_name(fromcode) };
+    let to = unsafe { gconv_spec_name(tocode) };
+    if from.is_null() || to.is_null() {
+        unsafe {
+            super::malloc_abi::free(from.cast());
+            super::malloc_abi::free(to.cast());
+        }
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        spec.cast::<GconvSpec>().write(GconvSpec {
+            fromcode: from,
+            tocode: to,
+            translit,
+            ignore,
+        })
+    };
+    spec
+}
+
+/// `__gconv_destroy_spec` — free the names `__gconv_create_spec` allocated.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __gconv_destroy_spec(spec: *mut c_void) {
+    let Some(spec) = (unsafe { spec.cast::<GconvSpec>().as_mut() }) else {
+        return;
+    };
+    unsafe {
+        super::malloc_abi::free(spec.fromcode.cast());
+        super::malloc_abi::free(spec.tocode.cast());
+    }
+    spec.fromcode = std::ptr::null_mut();
+    spec.tocode = std::ptr::null_mut();
+}
+
+/// `__gconv_open(spec, &handle, flags)` — open a conversion for a parsed
+/// spec. The handle is an fl `iconv_t`, so the program's later `iconv()` and
+/// `iconv_close()` calls (which bind to fl) operate on it. GLIBC_PRIVATE.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gconv_open(
-    toset: *const c_char,
-    fromset: *const c_char,
+    spec: *mut c_void,
     handle: *mut *mut c_void,
     _flags: c_int,
 ) -> c_int {
-    if handle.is_null() {
+    let Some(spec) = (unsafe { spec.cast::<GconvSpec>().as_ref() }) else {
+        return GCONV_NOCONV;
+    };
+    if handle.is_null() || spec.fromcode.is_null() || spec.tocode.is_null() {
         return GCONV_NOCONV;
     }
-    let descriptor = unsafe { super::iconv_abi::iconv_open(toset, fromset) };
-    unsafe {
-        *handle = if descriptor as usize == ICONV_ERROR_VALUE {
-            std::ptr::null_mut()
-        } else {
-            descriptor
-        };
+    let mut to = unsafe { std::ffi::CStr::from_ptr(spec.tocode) }.to_bytes().to_vec();
+    to.extend_from_slice(b"//");
+    if spec.translit {
+        to.extend_from_slice(b"TRANSLIT,");
     }
+    if spec.ignore {
+        to.extend_from_slice(b"IGNORE");
+    }
+    to.push(0);
+    let descriptor = unsafe { super::iconv_abi::iconv_open(to.as_ptr().cast(), spec.fromcode) };
     if descriptor as usize == ICONV_ERROR_VALUE {
-        GCONV_NOCONV
-    } else {
-        GCONV_OK
-    }
-}
-
-/// `__gconv_create_spec` — create conversion spec. GLIBC_PRIVATE.
-///
-/// Native safe-default: zero-initialise the caller-provided spec buffer and
-/// return success.  The spec is an opaque struct used only by glibc-internal
-/// iconv machinery; our iconv surface (`iconv_open`/`iconv`/`iconv_close`)
-/// handles conversion without the gconv step-chain, so a zeroed spec is inert.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __gconv_create_spec(spec: *mut c_void) -> c_int {
-    if spec.is_null() {
+        unsafe { *handle = std::ptr::null_mut() };
         return GCONV_NOCONV;
     }
-    // Zero 64 bytes — enough to cover the gconv_spec struct on all arches.
-    // SAFETY: spec points to caller-allocated memory; we write a conservative
-    // upper-bound size of zeroes matching glibc's __gconv_spec layout.
-    unsafe { std::ptr::write_bytes(spec.cast::<u8>(), 0, 64) };
+    unsafe { *handle = descriptor };
     GCONV_OK
-}
-
-/// `__gconv_destroy_spec` — destroy conversion spec. GLIBC_PRIVATE.
-///
-/// Native safe-default: no-op.  The spec created by `__gconv_create_spec` is
-/// an inert zeroed buffer; there is nothing to release.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __gconv_destroy_spec(_spec: *mut c_void) {
-    // Intentional no-op — our create_spec allocates nothing.
 }
 
 /// `__gconv_get_alias_db` — get alias database. GLIBC_PRIVATE.
 ///
-/// Native safe-default: return null.  FrankenLibC does not maintain a gconv
-/// alias database; our iconv layer handles encoding name resolution directly.
+/// Returns null: fl keeps no glibc alias tree. iconv(1) only walks it when
+/// there is no gconv module cache (see `__gconv_get_cache`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gconv_get_alias_db() -> *mut c_void {
     std::ptr::null_mut()
 }
 
-/// `__gconv_get_cache` — get gconv cache. GLIBC_PRIVATE.
+/// The system gconv module cache, mapped read-only, or null.
+static GCONV_CACHE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+
+/// `__gconv_get_cache` — the loaded gconv module cache. GLIBC_PRIVATE.
 ///
-/// Native safe-default: return null.  FrankenLibC does not maintain a gconv
-/// module cache; encoding conversion is handled by our iconv implementation.
+/// Like glibc: the system `gconv-modules.cache` mapped read-only (never
+/// when `GCONV_PATH` is set), validated by its magic number, else null.
+/// iconv(1) reads the charset names for `iconv -l` straight from it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __gconv_get_cache() -> *mut c_void {
-    std::ptr::null_mut()
+    *GCONV_CACHE.get_or_init(|| {
+        if !unsafe { super::stdlib_abi::native_getenv(b"GCONV_PATH") }.is_null() {
+            return 0;
+        }
+        const GCONVCACHE_MAGIC: u32 = 0x2001_0324;
+        let Ok(bytes) = std::fs::read("/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache")
+            .or_else(|_| std::fs::read("/usr/lib64/gconv/gconv-modules.cache"))
+            .or_else(|_| std::fs::read("/usr/lib/gconv/gconv-modules.cache"))
+        else {
+            return 0;
+        };
+        if bytes.len() < 12 || u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != GCONVCACHE_MAGIC {
+            return 0;
+        }
+        // Process-lifetime, read-only after this point.
+        Box::leak(bytes.into_boxed_slice()).as_ptr() as usize
+    }) as *mut c_void
 }
 
 /// `__gconv_get_modules_db` — get modules database. GLIBC_PRIVATE.
