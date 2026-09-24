@@ -2827,18 +2827,30 @@ impl FlatCombiningStats {
     /// `merge_and_reset` for a `record_slot_mt_stats` delta, whose net fields are
     /// two's-complement and may be negative.
     fn merge_signed_and_reset(&self, delta: &mut MallocStatsState) {
+        while !self.try_merge_signed_and_reset(delta) {
+            std::hint::spin_loop();
+        }
+    }
+
+    /// `merge_signed_and_reset` unless another thread holds the combiner lock;
+    /// `false` leaves `delta` untouched for a later merge.
+    fn try_merge_signed_and_reset(&self, delta: &mut MallocStatsState) -> bool {
         if delta.allocation_events == 0 && delta.free_events == 0 {
-            return;
+            return true;
         }
         fn add_signed(total: usize, delta: usize) -> usize {
-            (total as i128 + delta as isize as i128).clamp(0, usize::MAX as i128) as usize
+            if (delta as isize) < 0 {
+                total.saturating_sub(delta.wrapping_neg())
+            } else {
+                total.saturating_add(delta)
+            }
         }
-        while self
+        if self
             .combiner_lock
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            std::hint::spin_loop();
+            return false;
         }
         // SAFETY: `combiner_lock` is held exclusively for this merge.
         unsafe {
@@ -2856,6 +2868,7 @@ impl FlatCombiningStats {
         }
         *delta = MallocStatsState::new();
         self.combiner_lock.store(false, Ordering::Release);
+        true
     }
 
     fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
@@ -3041,14 +3054,15 @@ fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
 }
 
 /// Events a thread accumulates in its slot before merging into the global stats.
-const MT_STATS_MERGE_EVENTS: usize = 64;
+const MT_STATS_MERGE_EVENTS: usize = 256;
 
 /// Multi-threaded stats recording (bd-rc0923-epic-eeuy4f.26).
 ///
 /// Taking the one global combiner lock on every malloc and free serialized all
 /// allocating threads (55% of cycles at 4 workers). Each thread instead adds a
 /// signed delta to its own slot, under a per-slot lock that only a stats reader
-/// ever contends, and merges it every `MT_STATS_MERGE_EVENTS` events. A free
+/// ever contends, and merges it every `MT_STATS_MERGE_EVENTS` events, or later if
+/// another thread holds the combiner then. A free
 /// may be of another thread's allocation, so the net fields (`active_allocations`,
 /// `live_bytes`, `per_size_class`) are two's-complement deltas. Readers merge
 /// every slot first (`merge_all_slot_mt_stats`), so counts stay exact;
@@ -3080,8 +3094,9 @@ fn record_slot_mt_stats(
         }
         _ => {}
     }
+    // Never wait for the combiner here: while another thread merges, keep batching.
     if pending.allocation_events + pending.free_events >= MT_STATS_MERGE_EVENTS {
-        global.merge_signed_and_reset(pending);
+        let _ = global.try_merge_signed_and_reset(pending);
     }
     slot.mt_stats_lock.store(false, Ordering::Release);
 }
