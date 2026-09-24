@@ -196,12 +196,12 @@ static COMPOSITE_BUF: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 /// locale it answers the bare name. The field ORDER is glibc's, not the numeric
 /// category order — see `locale_core::COMPOSITE_ORDER`.
 fn lc_all_report() -> *const c_char {
-    let first = decode_charset(ACTIVE_CHARSET[0].load(Ordering::Acquire));
-    let uniform = ACTIVE_CHARSET
+    let first = category_name(locale_core::COMPOSITE_ORDER[0].1);
+    if locale_core::COMPOSITE_ORDER
         .iter()
-        .all(|slot| decode_charset(slot.load(Ordering::Acquire)) == first);
-    if uniform {
-        return locale_name_for(first).as_ptr() as *const c_char;
+        .all(|(_, cat)| category_name(*cat) == first)
+    {
+        return first.as_ptr() as *const c_char;
     }
 
     let mut buf = COMPOSITE_BUF.lock().unwrap_or_else(|e| e.into_inner());
@@ -212,10 +212,8 @@ fn lc_all_report() -> *const c_char {
         }
         buf.extend_from_slice(name.as_bytes());
         buf.push(b'=');
-        let charset = category_charset(*cat);
-        // `locale_name_for` returns a NUL-terminated static; the composite
-        // wants the text only.
-        let text = locale_name_for(charset);
+        // Names are NUL-terminated statics; the composite wants the text only.
+        let text = category_name(*cat);
         buf.extend_from_slice(&text[..text.len() - 1]);
     }
     buf.push(0);
@@ -233,6 +231,9 @@ pub fn locale_reset_active_charset_for_tests() {
     // EVERY category, not just LC_CTYPE. A reset that left one category on
     // C.UTF-8 would make the next arm's `setlocale(LC_ALL, NULL)` return a
     // composite string, which is exactly the cross-arm leak this exists to stop.
+    for slot in &NAMED {
+        slot.store(std::ptr::null_mut(), Ordering::Release);
+    }
     set_category_charset(locale_core::LC_ALL, Charset::Ascii);
 }
 
@@ -271,88 +272,228 @@ fn charset_for_request(name: &[u8]) -> Option<Charset> {
     }
 }
 
-/// The charset a locale NAME implies, after glibc has admitted that NAME.
-///
-/// This deliberately stays wider than [`charset_for_request`]: an installed
-/// `en_US.UTF-8` is a UTF-8 locale even though FrankenLibC cannot represent its
-/// collation and formatting tables. The name must nevertheless be loadable by
-/// the host first. Parsing a `.UTF-8` suffix alone accepts absent locales,
-/// whereas glibc makes `setlocale(category, "")` fail and leaves the active
-/// locale unchanged.
-fn env_charset_for_name(name: &[u8]) -> Charset {
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(b".utf-8") || lower.ends_with(b".utf8") {
-        Charset::Utf8
-    } else {
-        Charset::Ascii
-    }
+// ---------------------------------------------------------------------------
+// Named locales: glibc's compiled locale data
+// ---------------------------------------------------------------------------
+
+use frankenlibc_core::locale::data::{CategoryBlob, LocaleArchive, name_candidates};
+
+/// One category of a named locale: the name `setlocale` reports (as the
+/// caller spelled it, NUL-terminated) and the compiled blob. Loaded once per
+/// (category, name) and kept for the process lifetime, like glibc's data.
+struct NamedCategory {
+    category: c_int,
+    name: Box<[u8]>,
+    blob: CategoryBlob<'static>,
 }
 
-/// Does host glibc load `name` for this locale category?
-///
-/// Locale availability is not a pathname predicate: common distributions put
-/// generated locales in glibc's binary locale archive. Resolve glibc's
-/// `newlocale`/`freelocale` through `RTLD_NEXT` so this ABI export does not
-/// recurse into FrankenLibC when it is preloaded. The `1 << category` mask is
-/// glibc's `LC_<category>_MASK` definition; `LC_ALL` is the one pseudo-category
-/// and uses the libc-provided all-category mask instead.
-fn host_locale_is_available(category: c_int, name: &[u8]) -> bool {
-    let Ok(name) = CString::new(name) else {
-        return false;
-    };
-    let category_mask = if category == locale_core::LC_ALL {
-        libc::LC_ALL_MASK
-    } else {
-        1_i32 << category
-    };
+/// Per-category named locale (by `category_slot`); null = built-in C data.
+static NAMED: [AtomicPtr<NamedCategory>; locale_core::CATEGORY_COUNT] =
+    [const { AtomicPtr::new(std::ptr::null_mut()) }; locale_core::CATEGORY_COUNT];
 
-    type HostNewlocale = unsafe extern "C" fn(c_int, *const c_char, LocaleT) -> LocaleT;
-    type HostFreelocale = unsafe extern "C" fn(LocaleT);
+/// Whether any category is on a named locale (keeps the C fast paths free
+/// of per-category loads until one is).
+static NAMED_ANY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-    // SAFETY: both versioned symbols are glibc's declared `locale.h` ABI; the
-    // bounded input above is NUL-terminated, and a non-null locale_t returned
-    // by newlocale is released exactly once by the matching host freelocale.
+/// Every category ever loaded, reused for later requests.
+static LOADED: Mutex<Vec<&'static NamedCategory>> = Mutex::new(Vec::new());
+
+#[inline]
+fn named(category: c_int) -> Option<&'static NamedCategory> {
+    if !NAMED_ANY.load(Ordering::Acquire) {
+        return None;
+    }
+    let slot = locale_core::category_slot(category)?;
+    // SAFETY: published pointers come from leaked `NamedCategory` values.
+    unsafe { NAMED[slot].load(Ordering::Acquire).as_ref() }
+}
+
+/// Map a whole file read-only for the process lifetime.
+fn map_file(path: &[u8]) -> Option<&'static [u8]> {
+    let mut cpath = path.to_vec();
+    cpath.push(0);
+    // SAFETY: NUL-terminated path; the mapping is never unmapped.
     unsafe {
-        let newlocale =
-            crate::host_resolve::host_dlvsym_next_raw(c"newlocale".as_ptr(), c"GLIBC_2.3".as_ptr());
-        let freelocale = crate::host_resolve::host_dlvsym_next_raw(
-            c"freelocale".as_ptr(),
-            c"GLIBC_2.3".as_ptr(),
-        );
-        if newlocale.is_null() || freelocale.is_null() {
-            return false;
-        }
-        let newlocale: HostNewlocale = core::mem::transmute(newlocale);
-        let freelocale: HostFreelocale = core::mem::transmute(freelocale);
-        let locale = newlocale(category_mask, name.as_ptr(), std::ptr::null_mut());
-        if locale.is_null() {
-            return false;
-        }
-        freelocale(locale);
-        true
+        let fd = frankenlibc_core::syscall::sys_openat(
+            libc::AT_FDCWD,
+            cpath.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC,
+            0,
+        )
+        .ok()?;
+        let mut st: libc::stat = std::mem::zeroed();
+        let ok =
+            frankenlibc_core::syscall::sys_fstat(fd, (&mut st as *mut libc::stat).cast()).is_ok();
+        let len = st.st_size as usize;
+        let map = if ok && len > 0 {
+            frankenlibc_core::syscall::sys_mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_PRIVATE,
+                fd,
+                0,
+            )
+            .ok()
+        } else {
+            None
+        };
+        let _ = frankenlibc_core::syscall::sys_close(fd);
+        map.map(|p| std::slice::from_raw_parts(p.cast_const(), len))
     }
 }
 
-/// Resolve the empty locale name -- "adopt the environment" -- for ONE category.
-///
-/// POSIX precedence, which glibc implements and fl ignored entirely: `LC_ALL`,
-/// then the category's own variable, then `LANG`, then `"C"`. A variable that is
-/// set but EMPTY does not count as set.
-///
-/// Measured on live glibc 2.42, `setlocale(LC_ALL, "")` under `env -i`:
-///
-/// ```text
-///   (nothing set)     "C"        ANSI_X3.4-1968  MB_CUR_MAX 1
-///   LANG=C            "C"        ANSI_X3.4-1968  MB_CUR_MAX 1
-///   LANG=C.UTF-8      "C.UTF-8"  UTF-8           MB_CUR_MAX 6
-///   LC_ALL=C.UTF-8    "C.UTF-8"  UTF-8           MB_CUR_MAX 6
-///   LC_CTYPE=C.UTF-8  LC_CTYPE=C.UTF-8;LC_NUMERIC=C;...  UTF-8  MB_CUR_MAX 6
-/// ```
-///
-/// The last row is why this resolves PER CATEGORY rather than once for the
-/// process: one `LC_CTYPE` in the environment moves that category alone and
-/// leaves the rest in C, and `setlocale` then reports the composite string.
-fn env_charset_for_category(category: c_int) -> Option<Charset> {
+/// The system locale archive (glibc's default location).
+fn locale_archive() -> Option<LocaleArchive<'static>> {
+    static ARCHIVE: OnceLock<Option<LocaleArchive<'static>>> = OnceLock::new();
+    *ARCHIVE.get_or_init(|| LocaleArchive::parse(map_file(b"/usr/lib/locale/locale-archive")?))
+}
+
+/// The file a category lives in inside an unpacked locale directory.
+fn category_file(category: c_int) -> Option<&'static [u8]> {
+    Some(match category {
+        0 => b"LC_CTYPE",
+        1 => b"LC_NUMERIC",
+        2 => b"LC_TIME",
+        3 => b"LC_COLLATE",
+        4 => b"LC_MONETARY",
+        5 => b"LC_MESSAGES/SYS_LC_MESSAGES",
+        7 => b"LC_PAPER",
+        8 => b"LC_NAME",
+        9 => b"LC_ADDRESS",
+        10 => b"LC_TELEPHONE",
+        11 => b"LC_MEASUREMENT",
+        12 => b"LC_IDENTIFICATION",
+        _ => return None,
+    })
+}
+
+/// Load one category of locale `name`, as glibc does: with `LOCPATH` set,
+/// only its directories; otherwise the locale archive, then the unpacked
+/// `/usr/lib/locale/<name>/` directory. Each source is tried with the name
+/// as given and with its codeset normalized (`en_US.UTF-8` -> `en_US.utf8`).
+fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory> {
+    if name.contains(&b'/') || name == b"." || name == b".." {
+        return None;
+    }
+    let mut loaded = LOADED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = loaded
+        .iter()
+        .find(|n| n.category == category && n.name[..n.name.len() - 1] == *name)
+    {
+        return Some(hit);
+    }
+    let file = category_file(category)?;
+    let locpath = std::env::var_os("LOCPATH").filter(|v| !v.is_empty());
+    let mut blob = None;
+    'search: for candidate in name_candidates(name) {
+        let dirs: Vec<Vec<u8>> = match &locpath {
+            Some(paths) => paths
+                .as_bytes()
+                .split(|&b| b == b':')
+                .filter(|d| !d.is_empty())
+                .map(<[u8]>::to_vec)
+                .collect(),
+            None => {
+                if let Some(archive) = locale_archive()
+                    && let Some(blobs) = archive.find(&candidate)
+                    && let Some(b) = blobs[category as usize]
+                {
+                    blob = Some(b);
+                    break 'search;
+                }
+                vec![b"/usr/lib/locale".to_vec()]
+            }
+        };
+        for dir in dirs {
+            let mut path = dir;
+            path.push(b'/');
+            path.extend_from_slice(&candidate);
+            path.push(b'/');
+            path.extend_from_slice(file);
+            if let Some(bytes) = map_file(&path)
+                && let Some(b) = CategoryBlob::parse(category as usize, bytes)
+            {
+                blob = Some(b);
+                break 'search;
+            }
+        }
+    }
+    let mut stored = name.to_vec();
+    stored.push(0);
+    let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
+        category,
+        name: stored.into_boxed_slice(),
+        blob: blob?,
+    }));
+    loaded.push(entry);
+    Some(entry)
+}
+
+/// What a requested locale name selects for one category.
+#[derive(Clone, Copy)]
+enum Resolved {
+    Builtin(Charset),
+    Named(&'static NamedCategory),
+}
+
+fn resolve_category(category: c_int, name: &[u8]) -> Option<Resolved> {
+    if let Some(charset) = charset_for_request(name) {
+        return Some(Resolved::Builtin(charset));
+    }
+    load_category(category, name).map(Resolved::Named)
+}
+
+/// The codec a named LC_CTYPE implies.
+fn named_charset(n: &NamedCategory) -> Charset {
+    // CODESET is LC_CTYPE item 14.
+    match n.blob.string(14) {
+        Some(cs) if cs.eq_ignore_ascii_case(b"UTF-8") => Charset::Utf8,
+        _ => Charset::Ascii,
+    }
+}
+
+fn apply_category(category: c_int, resolved: Resolved) {
+    let Some(slot) = locale_core::category_slot(category) else {
+        return;
+    };
+    match resolved {
+        Resolved::Builtin(charset) => {
+            NAMED[slot].store(std::ptr::null_mut(), Ordering::Release);
+            set_category_charset(category, charset);
+        }
+        Resolved::Named(n) => {
+            NAMED[slot].store((n as *const NamedCategory).cast_mut(), Ordering::Release);
+            NAMED_ANY.store(true, Ordering::Release);
+            let charset = if category == locale_core::LC_CTYPE {
+                named_charset(n)
+            } else {
+                Charset::Ascii
+            };
+            set_category_charset(category, charset);
+            if category == locale_core::LC_CTYPE
+                && let Some(off) = n.blob.offset(14)
+            {
+                ACTIVE_CODESET_PTR.store(
+                    n.blob.bytes()[off..].as_ptr().cast::<c_char>().cast_mut(),
+                    Ordering::Release,
+                );
+            }
+        }
+    }
+}
+
+/// The name `setlocale` reports for one category.
+fn category_name(category: c_int) -> &'static [u8] {
+    match named(category) {
+        Some(n) => &n.name,
+        None => locale_name_for(category_charset(category)),
+    }
+}
+
+/// The environment's locale name for one category: `LC_ALL`, then the
+/// category's own variable, then `LANG`, then `"C"`; empty values don't count.
+fn env_name_for_category(category: c_int) -> Vec<u8> {
     fn var(name: &str) -> Option<Vec<u8>> {
         let value = std::env::var_os(name)?;
         let bytes = value.as_os_str().as_bytes().to_vec();
@@ -362,22 +503,30 @@ fn env_charset_for_category(category: c_int) -> Option<Charset> {
         .iter()
         .find(|(_, cat)| *cat == category)
         .map(|(name, _)| *name);
-    match var("LC_ALL")
+    var("LC_ALL")
         .or_else(|| specific.and_then(var))
         .or_else(|| var("LANG"))
-    {
-        Some(name) if host_locale_is_available(category, &name) => {
-            Some(env_charset_for_name(&name))
-        }
-        // glibc returns NULL when its environment-selected locale is absent;
-        // do not mutate FrankenLibC's active state before setlocale reports it.
-        Some(_) => None,
-        // Nothing set: the C locale, NOT UTF-8. fl answered UTF-8 here
-        // unconditionally, which is the defect b5aef5e3a fixed for the startup
-        // locale surviving at this entry point (bd-9t8wzq, bd-1kxrmz).
-        None => Some(Charset::Ascii),
-    }
+        .unwrap_or_else(|| b"C".to_vec())
 }
+
+/// Parse glibc's `LC_CTYPE=..;LC_NUMERIC=..;...` composite name into one
+/// name per category (in `COMPOSITE_ORDER` slots), or `None` if malformed.
+fn parse_composite(name: &[u8]) -> Option<Vec<(c_int, Vec<u8>)>> {
+    let mut out = Vec::new();
+    for field in name.split(|&b| b == b';') {
+        let eq = field.iter().position(|&b| b == b'=')?;
+        let (key, value) = (&field[..eq], &field[eq + 1..]);
+        let (_, cat) = locale_core::COMPOSITE_ORDER
+            .iter()
+            .find(|(n, _)| n.as_bytes() == key)?;
+        if value.is_empty() {
+            return None;
+        }
+        out.push((*cat, value.to_vec()));
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 /// POSIX C-locale radix character.
 static C_LOCALE_RADIX: &[u8] = b".\0";
 /// POSIX C-locale thousands separator (empty string).
@@ -481,7 +630,7 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return if category == locale_core::LC_ALL {
             lc_all_report()
         } else {
-            locale_name_for(category_charset(category)).as_ptr() as *const c_char
+            category_name(category).as_ptr() as *const c_char
         };
     }
 
@@ -492,57 +641,64 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
         return std::ptr::null();
     };
 
-    // An empty name means "adopt the environment", resolved per category.
-    if name.is_empty() {
-        if category == locale_core::LC_ALL {
-            let mut resolved =
-                [(locale_core::LC_CTYPE, Charset::Ascii); locale_core::CATEGORY_COUNT];
-            for (slot, (_, cat)) in locale_core::COMPOSITE_ORDER.iter().enumerate() {
-                let Some(charset) = env_charset_for_category(*cat) else {
+    // Resolve every affected category first and apply only if all load:
+    // glibc leaves the locale untouched when any part of a request fails.
+    let requests: Vec<(c_int, Vec<u8>)> = if category == locale_core::LC_ALL {
+        if name.is_empty() {
+            locale_core::COMPOSITE_ORDER
+                .iter()
+                .map(|(_, cat)| (*cat, env_name_for_category(*cat)))
+                .collect()
+        } else if name.contains(&b'=') {
+            match parse_composite(&name) {
+                Some(fields) => fields,
+                None => {
                     unsafe { set_abi_errno(libc::ENOENT) };
                     runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
                     return std::ptr::null();
-                };
-                resolved[slot] = (*cat, charset);
-            }
-            for (cat, charset) in resolved {
-                set_category_charset(cat, charset);
+                }
             }
         } else {
-            let Some(charset) = env_charset_for_category(category) else {
+            locale_core::COMPOSITE_ORDER
+                .iter()
+                .map(|(_, cat)| (*cat, name.clone()))
+                .collect()
+        }
+    } else if name.is_empty() {
+        vec![(category, env_name_for_category(category))]
+    } else {
+        vec![(category, name.clone())]
+    };
+
+    let mut resolved = Vec::with_capacity(requests.len());
+    for (cat, req) in &requests {
+        match resolve_category(*cat, req) {
+            Some(r) => resolved.push((*cat, r)),
+            None if mode.heals_enabled() => {
+                // Hardened: report the current locale instead of failing;
+                // an unknown NAME must not re-encode the caller's data.
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
+                return if category == locale_core::LC_ALL {
+                    lc_all_report()
+                } else {
+                    category_name(category).as_ptr() as *const c_char
+                };
+            }
+            None => {
                 unsafe { set_abi_errno(libc::ENOENT) };
                 runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
                 return std::ptr::null();
-            };
-            set_category_charset(category, charset);
+            }
         }
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
-        return if category == locale_core::LC_ALL {
-            lc_all_report()
-        } else {
-            locale_name_for(category_charset(category)).as_ptr() as *const c_char
-        };
     }
-
-    if let Some(charset) = charset_for_request(&name) {
-        // The selection and the report are one step: whatever name goes back to
-        // the caller, CODESET, MB_CUR_MAX and the codec already agree with it.
-        // A non-`LC_ALL` category moves ONLY itself, which is the whole point of
-        // per-category state — `setlocale(LC_NUMERIC, "C.UTF-8")` must not hand
-        // the caller a UTF-8 codec.
-        set_category_charset(category, charset);
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
-        locale_name_for(charset).as_ptr() as *const c_char
-    } else if mode.heals_enabled() {
-        // Hardened: fall back instead of failing. The active charset is left
-        // alone — healing an unknown NAME must not silently re-encode the
-        // caller's data underneath it.
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-        locale_name_for(category_charset(category)).as_ptr() as *const c_char
+    for (cat, r) in resolved {
+        apply_category(cat, r);
+    }
+    runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, false);
+    if category == locale_core::LC_ALL {
+        lc_all_report()
     } else {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-        std::ptr::null()
+        category_name(category).as_ptr() as *const c_char
     }
 }
 
@@ -570,6 +726,9 @@ pub(crate) fn mb_cur_max() -> libc::size_t {
 /// Returns a pointer to a static `struct lconv` with C-locale defaults.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn localeconv() -> *const LConv {
+    if let Some(lconv) = named_localeconv() {
+        return lconv;
+    }
     // Deployed strict mode can only return Allow for Locale, and this
     // input-free entrypoint always returns the same immutable C-locale table.
     // Skip the observation-only policy round trip; hardened mode and tests keep
@@ -584,6 +743,107 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
     }
     runtime_policy::observe(ApiFamily::Locale, decision.profile, 4, false);
     &LCONV
+}
+
+/// `localeconv`'s result when LC_NUMERIC or LC_MONETARY is on a named
+/// locale. Like glibc, one process-wide struct refilled on each call.
+struct NamedLconvCell(std::cell::UnsafeCell<LConv>);
+// SAFETY: POSIX makes localeconv's result non-reentrant; concurrent callers
+// racing on it is the documented C contract, as in glibc.
+unsafe impl Sync for NamedLconvCell {}
+static NAMED_LCONV: NamedLconvCell = NamedLconvCell(std::cell::UnsafeCell::new(LConv {
+    decimal_point: std::ptr::null(),
+    thousands_sep: std::ptr::null(),
+    grouping: std::ptr::null(),
+    int_curr_symbol: std::ptr::null(),
+    currency_symbol: std::ptr::null(),
+    mon_decimal_point: std::ptr::null(),
+    mon_thousands_sep: std::ptr::null(),
+    mon_grouping: std::ptr::null(),
+    positive_sign: std::ptr::null(),
+    negative_sign: std::ptr::null(),
+    int_frac_digits: 127,
+    frac_digits: 127,
+    p_cs_precedes: 127,
+    p_sep_by_space: 127,
+    n_cs_precedes: 127,
+    n_sep_by_space: 127,
+    p_sign_posn: 127,
+    n_sign_posn: 127,
+    int_p_cs_precedes: 127,
+    int_p_sep_by_space: 127,
+    int_n_cs_precedes: 127,
+    int_n_sep_by_space: 127,
+    int_p_sign_posn: 127,
+    int_n_sign_posn: 127,
+}));
+
+fn named_localeconv() -> Option<*const LConv> {
+    let numeric = named(locale_core::LC_NUMERIC);
+    let monetary = named(locale_core::LC_MONETARY);
+    if numeric.is_none() && monetary.is_none() {
+        return None;
+    }
+    let string = |n: Option<&'static NamedCategory>, index: usize, c_value: *const c_char| {
+        n.and_then(|n| {
+            n.blob
+                .offset(index)
+                .map(|off| n.blob.bytes()[off..].as_ptr().cast::<c_char>())
+        })
+        .unwrap_or(c_value)
+    };
+    // A grouping of CHAR_MAX (either signedness) means "no grouping": "".
+    let grouping = |n: Option<&'static NamedCategory>, index: usize| {
+        let p = string(n, index, c"".as_ptr());
+        // SAFETY: blob strings are NUL-terminated within the mapping.
+        match unsafe { *p.cast::<u8>() } {
+            0x7f | 0xff => c"".as_ptr(),
+            _ => p,
+        }
+    };
+    let byte = |index: usize| {
+        monetary
+            .and_then(|n| n.blob.byte(index))
+            .map_or(127, |b| b as c_char)
+    };
+    let c = &LCONV;
+    let lconv = LConv {
+        decimal_point: string(numeric, 0, c.decimal_point),
+        thousands_sep: string(numeric, 1, c.thousands_sep),
+        grouping: if numeric.is_some() {
+            grouping(numeric, 2)
+        } else {
+            c.grouping
+        },
+        int_curr_symbol: string(monetary, 0, c.int_curr_symbol),
+        currency_symbol: string(monetary, 1, c.currency_symbol),
+        mon_decimal_point: string(monetary, 2, c.mon_decimal_point),
+        mon_thousands_sep: string(monetary, 3, c.mon_thousands_sep),
+        mon_grouping: if monetary.is_some() {
+            grouping(monetary, 4)
+        } else {
+            c.mon_grouping
+        },
+        positive_sign: string(monetary, 5, c.positive_sign),
+        negative_sign: string(monetary, 6, c.negative_sign),
+        int_frac_digits: byte(7),
+        frac_digits: byte(8),
+        p_cs_precedes: byte(9),
+        p_sep_by_space: byte(10),
+        n_cs_precedes: byte(11),
+        n_sep_by_space: byte(12),
+        p_sign_posn: byte(13),
+        n_sign_posn: byte(14),
+        int_p_cs_precedes: byte(16),
+        int_p_sep_by_space: byte(17),
+        int_n_cs_precedes: byte(18),
+        int_n_sep_by_space: byte(19),
+        int_p_sign_posn: byte(20),
+        int_n_sign_posn: byte(21),
+    };
+    // SAFETY: see NamedLconvCell.
+    unsafe { *NAMED_LCONV.0.get() = lconv };
+    Some(NAMED_LCONV.0.get().cast_const())
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +1044,18 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
     value
 }
 
+/// `nl_langinfo` for a category on a named locale: the item straight from
+/// the compiled blob (`""` for an index the blob does not have).
+#[inline(always)]
+fn named_langinfo(item: libc::nl_item) -> Option<*const c_char> {
+    let n = named(((item as u32) >> 16) as c_int)?;
+    let index = ((item as u32) & 0xffff) as usize;
+    Some(match n.blob.offset(index) {
+        Some(off) => n.blob.bytes()[off..].as_ptr().cast::<c_char>(),
+        None => c"".as_ptr(),
+    })
+}
+
 #[inline(always)]
 fn active_codeset_ptr() -> *const c_char {
     ACTIVE_CODESET_PTR.load(Ordering::Acquire)
@@ -796,6 +1068,9 @@ fn active_codeset_ptr() -> *const c_char {
 /// glibc's C locale. Unsupported items return `""`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
+    if let Some(value) = named_langinfo(item) {
+        return value;
+    }
     // Strict mode cannot repair or deny this scalar selector, and every result
     // points into the immutable C-locale table. LC_TIME selectors (offsets 0..=49)
     // and non-CODESET items are charset-independent, avoiding an Acquire load
@@ -1069,9 +1344,15 @@ fn locale_handle_for(charset: Charset) -> LocaleT {
 /// `_l` entrypoints did implicitly before there was more than one locale.
 #[inline]
 fn charset_for_handle(handle: LocaleT) -> Charset {
-    if std::ptr::eq(handle.cast::<GlibcLocaleStruct>(), std::ptr::addr_of!(C_LOCALE_HANDLE)) {
+    if std::ptr::eq(
+        handle.cast::<GlibcLocaleStruct>(),
+        std::ptr::addr_of!(C_LOCALE_HANDLE),
+    ) {
         Charset::Ascii
-    } else if std::ptr::eq(handle.cast::<GlibcLocaleStruct>(), std::ptr::addr_of!(UTF8_LOCALE_HANDLE)) {
+    } else if std::ptr::eq(
+        handle.cast::<GlibcLocaleStruct>(),
+        std::ptr::addr_of!(UTF8_LOCALE_HANDLE),
+    ) {
         Charset::Utf8
     } else {
         active_charset()
@@ -1134,30 +1415,42 @@ pub unsafe extern "C" fn newlocale(
     };
     let _ = base;
 
-    // POSIX gives `newlocale` the same empty-name rule as `setlocale`: "" is the
-    // environment's locale, not a synonym for UTF-8. An fl handle carries one
-    // charset, and the codec is what it is used for, so LC_CTYPE decides.
-    if name.is_empty() {
-        let Some(charset) = env_charset_for_category(locale_core::LC_CTYPE) else {
-            unsafe { set_abi_errno(libc::ENOENT) };
-            runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
-            return std::ptr::null_mut();
+    // Every category in the mask must load, as in glibc; "" is the
+    // environment's locale per category. An fl handle carries one codec, so
+    // LC_CTYPE (when in the mask) decides it.
+    let mask = normalize_newlocale_category_mask(category_mask);
+    let mut ctype_charset = None;
+    for (_, cat) in locale_core::COMPOSITE_ORDER.iter() {
+        if mask & (1 << *cat) == 0 {
+            continue;
+        }
+        let req = if name.is_empty() {
+            env_name_for_category(*cat)
+        } else {
+            name.clone()
         };
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
-        return locale_handle_for(charset);
+        match resolve_category(*cat, &req) {
+            Some(resolved) => {
+                if *cat == locale_core::LC_CTYPE {
+                    ctype_charset = Some(match resolved {
+                        Resolved::Builtin(cs) => cs,
+                        Resolved::Named(n) => named_charset(n),
+                    });
+                }
+            }
+            None if mode.heals_enabled() => {
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+                return locale_handle_for(active_charset());
+            }
+            None => {
+                unsafe { set_abi_errno(libc::ENOENT) };
+                runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
+                return std::ptr::null_mut();
+            }
+        }
     }
-
-    if let Some(charset) = charset_for_request(&name) {
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
-        locale_handle_for(charset)
-    } else if mode.heals_enabled() {
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
-        locale_handle_for(active_charset())
-    } else {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, true);
-        std::ptr::null_mut()
-    }
+    runtime_policy::observe(ApiFamily::Locale, decision.profile, 6, false);
+    locale_handle_for(ctype_charset.unwrap_or_else(active_charset))
 }
 
 /// POSIX `uselocale` — set thread-local locale.

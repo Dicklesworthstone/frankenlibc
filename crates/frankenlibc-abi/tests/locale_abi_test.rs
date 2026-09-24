@@ -629,7 +629,9 @@ fn newlocale_invalid_name_with_base_still_fails() {
     let base = unsafe { newlocale(libc::LC_ALL_MASK, c_name.as_ptr(), ptr::null_mut()) };
     assert!(!base.is_null());
 
-    let invalid = CString::new("en_US.UTF-8").unwrap();
+    // A name no system installs (en_US.UTF-8 is a real, loadable locale now
+    // that fl reads compiled locale data).
+    let invalid = CString::new("xx_NONEXISTENT.UTF-8").unwrap();
     let loc = unsafe { newlocale(libc::LC_ALL_MASK, invalid.as_ptr(), base) };
     assert!(
         loc.is_null(),
