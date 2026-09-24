@@ -58,6 +58,9 @@ pub enum Ordering {
 /// Read access to argv plus the one mutation getopt performs.
 pub trait ArgvView {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn arg(&self, i: usize) -> &[u8];
     /// Rotate `[bottom, top)` left by `middle - bottom`, so the elements in
     /// `[middle, top)` come first.
@@ -195,8 +198,7 @@ impl Scanner {
             let dashes = if cur.get(1) == Some(&b'-') { 2 } else { 1 };
             if !opts.longs.is_empty()
                 && (dashes == 2
-                    || (opts.long_only
-                        && (cur.len() > 2 || short_lookup(opts, cur[1]).is_none())))
+                    || (opts.long_only && (cur.len() > 2 || short_lookup(opts, cur[1]).is_none())))
             {
                 if let Some(ev) = self.long_option(argv, opts, dashes) {
                     return ev;
@@ -243,7 +245,10 @@ impl Scanner {
         match found.has_arg {
             HasArg::No => {
                 self.nextchar = (rest < elem_len).then_some((idx, rest));
-                Event::Opt { id: found.id, arg: None }
+                Event::Opt {
+                    id: found.id,
+                    arg: None,
+                }
             }
             HasArg::Optional => {
                 self.nextchar = None;
@@ -251,10 +256,16 @@ impl Scanner {
                     self.optind += 1;
                     Event::Opt {
                         id: found.id,
-                        arg: Some(ArgPos { index: idx, offset: rest }),
+                        arg: Some(ArgPos {
+                            index: idx,
+                            offset: rest,
+                        }),
                     }
                 } else {
-                    Event::Opt { id: found.id, arg: None }
+                    Event::Opt {
+                        id: found.id,
+                        arg: None,
+                    }
                 }
             }
             HasArg::Required => {
@@ -263,11 +274,17 @@ impl Scanner {
                     self.optind += 1;
                     Event::Opt {
                         id: found.id,
-                        arg: Some(ArgPos { index: idx, offset: rest }),
+                        arg: Some(ArgPos {
+                            index: idx,
+                            offset: rest,
+                        }),
                     }
                 } else if self.optind >= argc {
                     let message = opts.print_errors.then(|| {
-                        diag(argv.arg(0), &[b"option requires an argument -- '", &[c], b"'"])
+                        diag(
+                            argv.arg(0),
+                            &[b"option requires an argument -- '", &[c], b"'"],
+                        )
                     });
                     Event::Error { message }
                 } else {
@@ -345,7 +362,12 @@ impl Scanner {
                 let message = opts.print_errors.then(|| {
                     diag(
                         argv.arg(0),
-                        &[b"option '", prefix, &opt.name, b"' doesn't allow an argument"],
+                        &[
+                            b"option '",
+                            prefix,
+                            &opt.name,
+                            b"' doesn't allow an argument",
+                        ],
                     )
                 });
                 return Some(Event::Error { message });
@@ -375,7 +397,10 @@ impl Scanner {
                 arg: Some(ArgPos { index, offset: 0 }),
             });
         }
-        Some(Event::Opt { id: opt.id, arg: None })
+        Some(Event::Opt {
+            id: opt.id,
+            arg: None,
+        })
     }
 }
 
@@ -407,15 +432,43 @@ mod tests {
     fn opts(ordering: Ordering) -> Options {
         Options {
             shorts: vec![
-                ShortOpt { ch: b'v', has_arg: HasArg::No, id: 1 },
-                ShortOpt { ch: b'o', has_arg: HasArg::Required, id: 2 },
-                ShortOpt { ch: b'p', has_arg: HasArg::Optional, id: 3 },
+                ShortOpt {
+                    ch: b'v',
+                    has_arg: HasArg::No,
+                    id: 1,
+                },
+                ShortOpt {
+                    ch: b'o',
+                    has_arg: HasArg::Required,
+                    id: 2,
+                },
+                ShortOpt {
+                    ch: b'p',
+                    has_arg: HasArg::Optional,
+                    id: 3,
+                },
             ],
             longs: vec![
-                LongOpt { name: b"verbose".to_vec(), has_arg: HasArg::No, id: 1 },
-                LongOpt { name: b"out".to_vec(), has_arg: HasArg::Required, id: 2 },
-                LongOpt { name: b"output".to_vec(), has_arg: HasArg::Required, id: 2 },
-                LongOpt { name: b"opt".to_vec(), has_arg: HasArg::Optional, id: 3 },
+                LongOpt {
+                    name: b"verbose".to_vec(),
+                    has_arg: HasArg::No,
+                    id: 1,
+                },
+                LongOpt {
+                    name: b"out".to_vec(),
+                    has_arg: HasArg::Required,
+                    id: 2,
+                },
+                LongOpt {
+                    name: b"output".to_vec(),
+                    has_arg: HasArg::Required,
+                    id: 2,
+                },
+                LongOpt {
+                    name: b"opt".to_vec(),
+                    has_arg: HasArg::Optional,
+                    id: 3,
+                },
             ],
             ordering,
             long_only: false,
@@ -442,7 +495,10 @@ mod tests {
                 }
                 Event::End => format!("end@{}", s.optind),
                 Event::Error { message } => {
-                    format!("err:{}", String::from_utf8_lossy(message.as_deref().unwrap_or(b"")))
+                    format!(
+                        "err:{}",
+                        String::from_utf8_lossy(message.as_deref().unwrap_or(b""))
+                    )
                 }
             };
             out.push((text, s.optind));
@@ -454,11 +510,18 @@ mod tests {
 
     #[test]
     fn permute_defers_rotation_and_reports_gnu_optind() {
-        let mut a = argv(&["prog", "-v", "a", "-o", "F", "b", "--out=G", "c", "-oH", "d"]);
+        let mut a = argv(&[
+            "prog", "-v", "a", "-o", "F", "b", "--out=G", "c", "-oH", "d",
+        ]);
         let r = run(&mut a, &opts(Ordering::Permute));
         let got: Vec<_> = r.iter().map(|(t, i)| format!("{t}@{i}")).collect();
         assert_eq!(got, ["1:-@2", "2:F@5", "2:G@7", "2:H@9", "end@6@6"]);
-        assert_eq!(a, argv(&["prog", "-v", "-o", "F", "--out=G", "-oH", "a", "b", "c", "d"]));
+        assert_eq!(
+            a,
+            argv(&[
+                "prog", "-v", "-o", "F", "--out=G", "-oH", "a", "b", "c", "d"
+            ])
+        );
     }
 
     #[test]
@@ -466,7 +529,12 @@ mod tests {
         let mut a = argv(&["prog", "-vvoFILE", "-vp", "-pX"]);
         let r = run(&mut a, &opts(Ordering::Permute));
         let got: Vec<_> = r.iter().map(|(t, i)| format!("{t}@{i}")).collect();
-        assert_eq!(got, ["1:-@1", "1:-@1", "2:FILE@2", "1:-@2", "3:-@3", "3:X@4", "end@4@4"]);
+        assert_eq!(
+            got,
+            [
+                "1:-@1", "1:-@1", "2:FILE@2", "1:-@2", "3:-@3", "3:X@4", "end@4@4"
+            ]
+        );
     }
 
     #[test]
@@ -499,14 +567,30 @@ mod tests {
             "err:prog: option '--o' is ambiguous; possibilities: '--out' '--opt'\n"
         );
         for (args, msg) in [
-            (&["prog", "--nope=1"][..], "prog: unrecognized option '--nope=1'\n"),
-            (&["prog", "--verbose=1"], "prog: option '--verbose' doesn't allow an argument\n"),
-            (&["prog", "--ou"], "prog: option '--out' requires an argument\n"),
+            (
+                &["prog", "--nope=1"][..],
+                "prog: unrecognized option '--nope=1'\n",
+            ),
+            (
+                &["prog", "--verbose=1"],
+                "prog: option '--verbose' doesn't allow an argument\n",
+            ),
+            (
+                &["prog", "--ou"],
+                "prog: option '--out' requires an argument\n",
+            ),
             (&["prog", "-z"], "prog: invalid option -- 'z'\n"),
-            (&["prog", "a", "-o"], "prog: option requires an argument -- 'o'\n"),
+            (
+                &["prog", "a", "-o"],
+                "prog: option requires an argument -- 'o'\n",
+            ),
         ] {
             let mut a = argv(args);
-            assert_eq!(run(&mut a, &o).last().unwrap().0, format!("err:{msg}"), "{args:?}");
+            assert_eq!(
+                run(&mut a, &o).last().unwrap().0,
+                format!("err:{msg}"),
+                "{args:?}"
+            );
         }
     }
 

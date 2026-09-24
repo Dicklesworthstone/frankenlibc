@@ -25916,7 +25916,14 @@ const ARGP_OPTION_END: ArgpOption = ArgpOption {
 
 static ARGP_DEFAULT_OPTIONS: StaticArgp<[ArgpOption; 5]> = StaticArgp([
     argp_opt(c"help", b'?' as c_int, None, 0, c"Give this help list", -1),
-    argp_opt(c"usage", ARGP_KEY_USAGE_OPT, None, 0, c"Give a short usage message", 0),
+    argp_opt(
+        c"usage",
+        ARGP_KEY_USAGE_OPT,
+        None,
+        0,
+        c"Give a short usage message",
+        0,
+    ),
     argp_opt(
         c"program-name",
         ARGP_KEY_PROGNAME_OPT,
@@ -25947,7 +25954,14 @@ static ARGP_DEFAULT_ARGP: StaticArgp<ArgpHeader> = StaticArgp(ArgpHeader {
 });
 
 static ARGP_VERSION_OPTIONS: StaticArgp<[ArgpOption; 2]> = StaticArgp([
-    argp_opt(c"version", b'V' as c_int, None, 0, c"Print program version", -1),
+    argp_opt(
+        c"version",
+        b'V' as c_int,
+        None,
+        0,
+        c"Print program version",
+        -1,
+    ),
     ARGP_OPTION_END,
 ]);
 
@@ -26086,7 +26100,7 @@ fn argp_option_is_short(o: &ArgpOption) -> bool {
 }
 
 /// Iterate a C option table up to its terminator.
-unsafe fn argp_options<'a>(argp: &'a ArgpHeader) -> impl Iterator<Item = &'a ArgpOption> {
+unsafe fn argp_options(argp: &ArgpHeader) -> impl Iterator<Item = &ArgpOption> {
     let mut p = argp.options;
     std::iter::from_fn(move || {
         if p.is_null() {
@@ -26102,7 +26116,7 @@ unsafe fn argp_options<'a>(argp: &'a ArgpHeader) -> impl Iterator<Item = &'a Arg
 }
 
 /// Iterate a C children table up to its terminator.
-unsafe fn argp_children<'a>(argp: &'a ArgpHeader) -> impl Iterator<Item = &'a ArgpChild> {
+unsafe fn argp_children(argp: &ArgpHeader) -> impl Iterator<Item = &ArgpChild> {
     let mut p = argp.children;
     std::iter::from_fn(move || {
         if p.is_null() {
@@ -26202,7 +26216,10 @@ impl ArgpParser {
                 argp_scan::HasArg::Required
             };
             if argp_option_is_short(opt) {
-                let id = self.dispatch_id(ArgpDispatch { group, key: opt.key });
+                let id = self.dispatch_id(ArgpDispatch {
+                    group,
+                    key: opt.key,
+                });
                 self.scan.shorts.push(argp_scan::ShortOpt {
                     ch: opt.key as u8,
                     has_arg,
@@ -26212,7 +26229,9 @@ impl ArgpParser {
             if !opt.name.is_null() {
                 let key = if opt.key != 0 { opt.key } else { real.key };
                 let id = self.dispatch_id(ArgpDispatch { group, key });
-                let name = unsafe { std::ffi::CStr::from_ptr(opt.name) }.to_bytes().to_vec();
+                let name = unsafe { std::ffi::CStr::from_ptr(opt.name) }
+                    .to_bytes()
+                    .to_vec();
                 self.long_names.push((id * 2 + 1, name.clone()));
                 self.scan.longs.push(argp_scan::LongOpt {
                     name,
@@ -26224,7 +26243,13 @@ impl ArgpParser {
     }
 
     /// Call group `gi`'s parser with the group's routing installed in `state`.
-    unsafe fn call(&mut self, gi: usize, state: &mut ArgpState, key: c_int, arg: *mut c_char) -> c_int {
+    unsafe fn call(
+        &mut self,
+        gi: usize,
+        state: &mut ArgpState,
+        key: c_int,
+        arg: *mut c_char,
+    ) -> c_int {
         let g = &mut self.groups[gi];
         let Some(parser) = g.parser else {
             return ARGP_ERR_UNKNOWN;
@@ -26253,7 +26278,9 @@ impl ArgpParser {
             if err != ARGP_ERR_UNKNOWN {
                 if err == 0 {
                     let g = &mut self.groups[gi];
-                    g.args_processed = g.args_processed.wrapping_add((state.next - index) as c_uint);
+                    g.args_processed = g
+                        .args_processed
+                        .wrapping_add((state.next - index) as c_uint);
                 }
                 return err;
             }
@@ -26340,7 +26367,8 @@ pub unsafe extern "C" fn argp_parse(
         let full = unsafe { std::ffi::CStr::from_ptr(argv0) }.to_bytes();
         unsafe { argv0.add(full.len() - argp_basename(full).len()) }
     } else {
-        unsafe { crate::startup_abi::program_invocation_short_name.load(std::sync::atomic::Ordering::Acquire) }
+        crate::startup_abi::program_invocation_short_name
+            .load(std::sync::atomic::Ordering::Acquire)
             .cast()
     };
     let mut state = ArgpState {
@@ -26365,7 +26393,11 @@ pub unsafe extern "C" fn argp_parse(
     let mut err = 0;
     for gi in 0..parser.groups.len() {
         parser.groups[gi].input = match parser.groups[gi].parent {
-            Some((p, i)) => parser.groups[p].child_inputs.get(i).copied().unwrap_or(core::ptr::null_mut()),
+            Some((p, i)) => parser.groups[p]
+                .child_inputs
+                .get(i)
+                .copied()
+                .unwrap_or(core::ptr::null_mut()),
             None => input,
         };
         err = unsafe { parser.call(gi, &mut state, ARGP_KEY_INIT, core::ptr::null_mut()) };
@@ -26432,7 +26464,9 @@ pub unsafe extern "C" fn argp_parse(
                                 [&b"--"[..], long].concat()
                             };
                             let mut msg = what;
-                            msg.extend_from_slice(b": (PROGRAM ERROR) Option should have been recognized!?");
+                            msg.extend_from_slice(
+                                b": (PROGRAM ERROR) Option should have been recognized!?",
+                            );
                             unsafe { argp_error_bytes(&mut state, &msg) };
                         }
                         if err != 0 {
@@ -26474,7 +26508,9 @@ pub unsafe extern "C" fn argp_parse(
             }
             for gi in 0..parser.groups.len() {
                 if parser.groups[gi].args_processed == 0 {
-                    err = unsafe { parser.call(gi, &mut state, ARGP_KEY_NO_ARGS, core::ptr::null_mut()) };
+                    err = unsafe {
+                        parser.call(gi, &mut state, ARGP_KEY_NO_ARGS, core::ptr::null_mut())
+                    };
                     if err == ARGP_ERR_UNKNOWN {
                         err = 0;
                     }
@@ -26485,7 +26521,8 @@ pub unsafe extern "C" fn argp_parse(
             }
             if err == 0 {
                 for gi in (0..parser.groups.len()).rev() {
-                    err = unsafe { parser.call(gi, &mut state, ARGP_KEY_END, core::ptr::null_mut()) };
+                    err =
+                        unsafe { parser.call(gi, &mut state, ARGP_KEY_END, core::ptr::null_mut()) };
                     if err == ARGP_ERR_UNKNOWN {
                         err = 0;
                     }
@@ -26529,7 +26566,11 @@ pub unsafe extern "C" fn argp_parse(
 }
 
 /// Parser of the default help argp.
-unsafe extern "C" fn argp_default_parser(key: c_int, arg: *mut c_char, state: *mut ArgpState) -> c_int {
+unsafe extern "C" fn argp_default_parser(
+    key: c_int,
+    arg: *mut c_char,
+    state: *mut ArgpState,
+) -> c_int {
     let st = unsafe { &mut *state };
     match key {
         k if k == b'?' as c_int => {
@@ -26538,7 +26579,11 @@ unsafe extern "C" fn argp_default_parser(key: c_int, arg: *mut c_char, state: *m
         }
         ARGP_KEY_USAGE_OPT => {
             unsafe {
-                argp_state_help(state.cast(), st.out_stream, ARGP_HELP_USAGE | ARGP_HELP_EXIT_OK)
+                argp_state_help(
+                    state.cast(),
+                    st.out_stream,
+                    ARGP_HELP_USAGE | ARGP_HELP_EXIT_OK,
+                )
             };
             0
         }
@@ -26570,7 +26615,11 @@ unsafe extern "C" fn argp_default_parser(key: c_int, arg: *mut c_char, state: *m
 }
 
 /// Parser of the default version argp.
-unsafe extern "C" fn argp_version_parser(key: c_int, _arg: *mut c_char, state: *mut ArgpState) -> c_int {
+unsafe extern "C" fn argp_version_parser(
+    key: c_int,
+    _arg: *mut c_char,
+    state: *mut ArgpState,
+) -> c_int {
     if key != b'V' as c_int {
         return ARGP_ERR_UNKNOWN;
     }
@@ -26620,7 +26669,8 @@ unsafe fn argp_error_bytes(state: *mut ArgpState, message: &[u8]) {
 }
 
 unsafe fn argp_short_program_name() -> Option<Vec<u8>> {
-    let p = crate::startup_abi::program_invocation_short_name.load(std::sync::atomic::Ordering::Acquire);
+    let p = crate::startup_abi::program_invocation_short_name
+        .load(std::sync::atomic::Ordering::Acquire);
     unsafe { argp_read_text(p.cast_const()) }
 }
 
@@ -26682,7 +26732,9 @@ impl frankenlibc_core::argp::help::HelpFilter for ArgpCFilter<'_> {
             v.push(0);
             v
         });
-        let text_ptr = owned.as_ref().map_or(core::ptr::null(), |v| v.as_ptr().cast::<c_char>());
+        let text_ptr = owned
+            .as_ref()
+            .map_or(core::ptr::null(), |v| v.as_ptr().cast::<c_char>());
         let input = unsafe { argp_input(argp, self.state) };
         let out = unsafe { filter(key, text_ptr, input) };
         if out.is_null() {
@@ -26759,7 +26811,7 @@ unsafe fn argp_render_help(
     let root = unsafe { state.as_ref() }.map(|s| s.root_argp);
     let mut root_registry: Vec<*const ArgpHeader> = registry.clone();
     let dup_note = root.and_then(|r| unsafe { r.as_ref() }).map(|r| {
-        let id = match root_registry.iter().position(|&a| a == r as *const ArgpHeader) {
+        let id = match root_registry.iter().position(|&a| std::ptr::eq(a, r)) {
             Some(i) => i,
             None => {
                 root_registry.push(r);
@@ -26846,7 +26898,12 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
 }
 
 /// `argp_failure` body with the message already rendered.
-unsafe fn argp_failure_bytes(state: *mut ArgpState, status: c_int, errnum: c_int, message: Option<&[u8]>) {
+unsafe fn argp_failure_bytes(
+    state: *mut ArgpState,
+    status: c_int,
+    errnum: c_int,
+    message: Option<&[u8]>,
+) {
     let st = unsafe { state.as_ref() };
     if st.is_some_and(|s| s.flags & ARGP_NO_ERRS != 0) {
         return;
@@ -26867,7 +26924,9 @@ unsafe fn argp_failure_bytes(state: *mut ArgpState, status: c_int, errnum: c_int
     if errnum != 0 {
         line.extend_from_slice(b": ");
         let err_ptr = unsafe { crate::string_abi::strerror(errnum) };
-        line.extend_from_slice(&unsafe { argp_read_text(err_ptr) }.unwrap_or_else(|| b"Unknown error".to_vec()));
+        line.extend_from_slice(
+            &unsafe { argp_read_text(err_ptr) }.unwrap_or_else(|| b"Unknown error".to_vec()),
+        );
     }
     line.push(b'\n');
     unsafe { argp_write_bytes(stream, &line) };

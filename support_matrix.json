@@ -1528,42 +1528,42 @@
       "symbol": "argp_error",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp link-compatible no-op reporting helper until full argp state formatting",
+      "notes": "Native; 'NAME: MESSAGE' + standard hint, exits with argp_err_exit_status unless ARGP_NO_EXIT/NO_ERRS",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_failure",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp link-compatible no-op reporting helper until full argp state formatting",
+      "notes": "Native; 'NAME[: MESSAGE][: strerror]', exits with status when nonzero unless ARGP_NO_EXIT",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_help",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp phase-1 native literal usage/doc rendering; option tables and filters deferred",
+      "notes": "Native GNU argp help/usage formatter (core::argp::help): option layout, clusters, help filters, ARGP_HELP_FMT, glibc line-wrapping; byte parity with glibc",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_parse",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp phase-1 native empty-parser parity; non-empty parser returns EINVAL until full argp support",
+      "notes": "Native GNU argp: parser groups, ARGP_KEY_* protocol, reentrant GNU option scanner (core::argp::scan), default --help/--usage/--version children; byte parity with glibc on tests/integration/fixture_argp.c",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_state_help",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp phase-1 state helper renders bounded literal usage/doc output via state.root_argp/name; exit semantics and full state formatting deferred",
+      "notes": "Native; renders state->root_argp help and exits per ARGP_HELP_EXIT_* unless ARGP_NO_EXIT (null state: no-op, glibc crashes)",
       "module": "unistd_abi"
     },
     {
       "symbol": "argp_usage",
       "header": "<argp.h>",
       "status": "Implemented",
-      "notes": "GNU argp phase-1 usage helper renders bounded state.root_argp/name usage to state err_stream; exit semantics deferred",
+      "notes": "Native; standard usage + 'Try ...' hint to state->err_stream, exits with argp_err_exit_status unless ARGP_NO_EXIT",
       "module": "unistd_abi"
     },
     {

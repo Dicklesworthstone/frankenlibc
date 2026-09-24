@@ -372,11 +372,11 @@ fn close_main_program_handle() -> c_int {
 
 #[path = "dlfcn_native.rs"]
 mod native;
+#[cfg(not(feature = "standalone"))]
+use native::host_may_load_declined_object;
 use native::{
     close_native_dso, load_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol,
 };
-#[cfg(not(feature = "standalone"))]
-use native::host_may_load_declined_object;
 
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;

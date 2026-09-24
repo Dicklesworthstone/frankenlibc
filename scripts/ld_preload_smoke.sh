@@ -773,7 +773,8 @@ EOF
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
   run_corpus_case "${mode}" "getent_help" /usr/bin/env LC_ALL=C getent --help || mode_failed=1
-  run_corpus_case "${mode}" "getent_usage_error" /usr/bin/env LC_ALL=C getent -z passwd || mode_failed=1
+  # Exits 64 (EX_USAGE); the status is part of the compared output.
+  run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1
   run_corpus_case "${mode}" "iconv_usage" /usr/bin/env LC_ALL=C iconv --usage || mode_failed=1
   run_corpus_case "${mode}" "date_tz_new_york" /usr/bin/env TZ=America/New_York LC_ALL=C date -d @1700000000 || mode_failed=1
   run_corpus_case "${mode}" "ls_long_tz_sydney" /usr/bin/env TZ=Australia/Sydney LC_ALL=C ls -l "${tree}/a.txt" "${tree}/sub" || mode_failed=1

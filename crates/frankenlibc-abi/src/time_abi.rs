@@ -918,7 +918,11 @@ fn resolve_zone(env: Option<&[u8]>) -> tz_core::Zone {
     };
     let value = value.strip_prefix(b":").unwrap_or(value);
     // glibc: an empty TZ means "Universal".
-    let value: &[u8] = if value.is_empty() { b"Universal" } else { value };
+    let value: &[u8] = if value.is_empty() {
+        b"Universal"
+    } else {
+        value
+    };
     if value[0] == b'/' {
         return load_tzif(value).unwrap_or_else(tz_core::Zone::utc);
     }
@@ -1002,8 +1006,8 @@ fn current_tz(recheck: bool) -> &'static TzState {
         .all_types()
         .into_iter()
         .map(|ty| {
-            let name = std::ffi::CString::new(ty.abbr.as_bytes())
-                .unwrap_or_else(|_| c"UTC".to_owned());
+            let name =
+                std::ffi::CString::new(ty.abbr.as_bytes()).unwrap_or_else(|_| c"UTC".to_owned());
             (ty as *const tz_core::LocalType, name)
         })
         .collect();

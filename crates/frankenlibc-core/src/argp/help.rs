@@ -379,7 +379,10 @@ impl Fmt {
             }
 
             let mut len = self.buf.len() - buf;
-            let nl_found = self.buf[buf..].iter().position(|&b| b == b'\n').map(|i| buf + i);
+            let nl_found = self.buf[buf..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|i| buf + i);
             if self.point_col < 0 {
                 self.point_col = 0;
             }
@@ -467,7 +470,6 @@ impl Fmt {
             }
 
             let end_of_buffer = nextline == buf + len + 1;
-            let mut nl = nl;
             if (if end_of_buffer {
                 self.cap.saturating_sub(nl) < wmargin + 1
             } else {
@@ -477,7 +479,8 @@ impl Fmt {
                 if self.cap - self.buf.len() > wmargin + 1 {
                     // Open a gap for the margin.
                     let gap = nl + 1 + wmargin - nextline;
-                    self.buf.splice(nextline..nextline, std::iter::repeat_n(0u8, gap));
+                    self.buf
+                        .splice(nextline..nextline, std::iter::repeat_n(0u8, gap));
                     nextline = nl + 1 + wmargin;
                     len = self.buf.len() - buf;
                     self.buf[nl] = b'\n';
@@ -712,8 +715,10 @@ impl Hol {
 
     fn entry_cmp(&self, e1: &Entry, e2: &Entry) -> std::cmp::Ordering {
         use std::cmp::Ordering as O;
-        let base_group =
-            |e: &Entry| e.cluster.map_or(e.group, |c| self.clusters[self.cluster_base(c)].group);
+        let base_group = |e: &Entry| {
+            e.cluster
+                .map_or(e.group, |c| self.clusters[self.cluster_base(c)].group)
+        };
         let c = group_cmp(base_group(e1), base_group(e2));
         if c != O::Equal {
             return c;
@@ -758,9 +763,15 @@ impl Hol {
             }
             return e1.ord.cmp(&e2.ord);
         }
-        let first1 = short1.or_else(|| long1.and_then(|l| l.first().copied())).unwrap_or(0);
-        let first2 = short2.or_else(|| long2.and_then(|l| l.first().copied())).unwrap_or(0);
-        let lower = first1.to_ascii_lowercase().cmp(&first2.to_ascii_lowercase());
+        let first1 = short1
+            .or_else(|| long1.and_then(|l| l.first().copied()))
+            .unwrap_or(0);
+        let first2 = short2
+            .or_else(|| long2.and_then(|l| l.first().copied()))
+            .unwrap_or(0);
+        let lower = first1
+            .to_ascii_lowercase()
+            .cmp(&first2.to_ascii_lowercase());
         if lower != O::Equal {
             return lower;
         }
@@ -905,7 +916,10 @@ pub fn render(
         let mut order: Vec<usize> = (0..hol.entries.len()).collect();
         order.sort_by(|&a, &b| hol.entry_cmp(&hol.entries[a], &hol.entries[b]));
         let mut entries: Vec<Option<Entry>> = hol.entries.drain(..).map(Some).collect();
-        hol.entries = order.iter().map(|&i| entries[i].take().expect("entry")).collect();
+        hol.entries = order
+            .iter()
+            .map(|&i| entries[i].take().expect("entry"))
+            .collect();
         Some(hol)
     } else {
         None
@@ -917,7 +931,11 @@ pub fn render(
         let mut first_pattern = true;
         loop {
             let old_wm = fs.set_wmargin(up.usage_indent as isize);
-            let mut line = if first_pattern { b"Usage:".to_vec() } else { b"  or: ".to_vec() };
+            let mut line = if first_pattern {
+                b"Usage:".to_vec()
+            } else {
+                b"  or: ".to_vec()
+            };
             line.push(b' ');
             line.extend_from_slice(ctx.name);
             fs.printf(&line);
@@ -1089,7 +1107,11 @@ fn hol_usage(hol: &Hol, fs: &mut Fmt) {
 /// Number of argps in the tree whose args_doc has several alternatives.
 fn args_levels(argp: &HelpArgp) -> usize {
     usize::from(argp.args_doc.as_ref().is_some_and(|d| d.contains(&b'\n')))
-        + argp.children.iter().map(|c| args_levels(&c.argp)).sum::<usize>()
+        + argp
+            .children
+            .iter()
+            .map(|c| args_levels(&c.argp))
+            .sum::<usize>()
 }
 
 /// Print this pattern's args_doc alternatives; true if more patterns remain.
@@ -1150,13 +1172,18 @@ fn argp_doc(
     filter: &mut dyn HelpFilter,
 ) -> bool {
     let mut anything = false;
-    let inp: Option<&[u8]> = argp.doc.as_deref().and_then(|doc| {
-        match doc.iter().position(|&b| b == b'\x0b') {
-            Some(vt) => Some(if post { &doc[vt + 1..] } else { &doc[..vt] }),
-            None => (!post).then_some(doc),
-        }
-    });
-    let key = if post { KEY_HELP_POST_DOC } else { KEY_HELP_PRE_DOC };
+    let inp: Option<&[u8]> =
+        argp.doc
+            .as_deref()
+            .and_then(|doc| match doc.iter().position(|&b| b == b'\x0b') {
+                Some(vt) => Some(if post { &doc[vt + 1..] } else { &doc[..vt] }),
+                None => (!post).then_some(doc),
+            });
+    let key = if post {
+        KEY_HELP_POST_DOC
+    } else {
+        KEY_HELP_PRE_DOC
+    };
     let text = filter_doc(filter, argp.id, argp.has_filter, key, inp);
     if let Some(text) = text {
         if pre_blank {
@@ -1169,24 +1196,32 @@ fn argp_doc(
         }
         anything = true;
     }
-    if post && argp.has_filter {
-        if let Some(text) = filter.filter(argp.id, KEY_HELP_EXTRA, None) {
-            if anything || pre_blank {
-                fs.putc(b'\n');
-            }
-            fs.write(&text);
-            let lm = fs.lmargin();
-            if fs.point() > lm {
-                fs.putc(b'\n');
-            }
-            anything = true;
+    if post
+        && argp.has_filter
+        && let Some(text) = filter.filter(argp.id, KEY_HELP_EXTRA, None)
+    {
+        if anything || pre_blank {
+            fs.putc(b'\n');
         }
+        fs.write(&text);
+        let lm = fs.lmargin();
+        if fs.point() > lm {
+            fs.putc(b'\n');
+        }
+        anything = true;
     }
     for child in &argp.children {
         if first_only && anything {
             break;
         }
-        anything |= argp_doc(&child.argp, post, anything || pre_blank, first_only, fs, filter);
+        anything |= argp_doc(
+            &child.argp,
+            post,
+            anything || pre_blank,
+            first_only,
+            fs,
+            filter,
+        );
     }
     anything
 }
@@ -1250,7 +1285,9 @@ fn comma(
         if let Some(cl) = entry.cluster {
             let cluster = &p.hol.clusters[cl];
             if cluster.header.as_ref().is_some_and(|h| !h.is_empty())
-                && pe.is_none_or(|pe| pe.cluster != Some(cl) && !p.hol.cluster_is_child(pe.cluster, cl))
+                && pe.is_none_or(|pe| {
+                    pe.cluster != Some(cl) && !p.hol.cluster_is_child(pe.cluster, cl)
+                })
             {
                 let old_wm = fs.wmargin();
                 let header = cluster.header.clone();
@@ -1275,7 +1312,11 @@ fn comma(
 
 fn print_arg(fs: &mut Fmt, real: &HelpOption, req: (&[u8], &[u8]), opt: (&[u8], &[u8])) {
     if let Some(arg) = &real.arg {
-        let (pre, post) = if real.flags & OPTION_ARG_OPTIONAL != 0 { opt } else { req };
+        let (pre, post) = if real.flags & OPTION_ARG_OPTIONAL != 0 {
+            opt
+        } else {
+            req
+        };
         let mut s = pre.to_vec();
         s.extend_from_slice(arg);
         s.extend_from_slice(post);
@@ -1317,13 +1358,21 @@ fn hol_entry_help(
 
     if odoc(real) {
         fs.set_wmargin(up.doc_opt_col as isize);
-        for o in entry.opts.iter().filter(|o| o.name.is_some() && ovisible(o)) {
+        for o in entry
+            .opts
+            .iter()
+            .filter(|o| o.name.is_some() && ovisible(o))
+        {
             comma(&mut p, up.doc_opt_col.max(0) as usize, fs, hstate, filter);
             fs.write(o.name.as_deref().unwrap_or(b""));
         }
     } else {
         fs.set_wmargin(up.long_opt_col as isize);
-        for o in entry.opts.iter().filter(|o| o.name.is_some() && ovisible(o)) {
+        for o in entry
+            .opts
+            .iter()
+            .filter(|o| o.name.is_some() && ovisible(o))
+        {
             comma(&mut p, up.long_opt_col.max(0) as usize, fs, hstate, filter);
             let mut s = b"--".to_vec();
             s.extend_from_slice(o.name.as_deref().unwrap_or(b""));
@@ -1335,14 +1384,28 @@ fn hol_entry_help(
     fs.set_lmargin(0);
     if p.first {
         if !oshort(real) && real.name.is_none() {
-            print_header(fs, hstate, up, filter, real.doc.as_deref(), entry.argp_id, entry.has_filter);
+            print_header(
+                fs,
+                hstate,
+                up,
+                filter,
+                real.doc.as_deref(),
+                entry.argp_id,
+                entry.has_filter,
+            );
         } else {
             fs.set_lmargin(old_lm);
             fs.set_wmargin(old_wm);
             return;
         }
     } else {
-        let fstr = filter_doc(filter, entry.argp_id, entry.has_filter, real.key, real.doc.as_deref());
+        let fstr = filter_doc(
+            filter,
+            entry.argp_id,
+            entry.has_filter,
+            real.key,
+            real.doc.as_deref(),
+        );
         if let Some(s) = fstr.filter(|s| !s.is_empty()) {
             let col = fs.point();
             let doc_col = up.opt_doc_col.max(0) as usize;
@@ -1465,12 +1528,21 @@ mod tests {
     #[test]
     fn help_fmt_parsing_is_cumulative_and_validated() {
         let mut up = Uparams::default();
-        assert!(up.apply_help_fmt(b"rmargin=50, opt-doc-col=20,no-dup-args-note").is_empty());
-        assert_eq!((up.rmargin, up.opt_doc_col, up.dup_args_note), (50, 20, false));
+        assert!(
+            up.apply_help_fmt(b"rmargin=50, opt-doc-col=20,no-dup-args-note")
+                .is_empty()
+        );
+        assert_eq!(
+            (up.rmargin, up.opt_doc_col, up.dup_args_note),
+            (50, 20, false)
+        );
         assert!(up.apply_help_fmt(b"dup-args").is_empty());
         assert_eq!((up.rmargin, up.dup_args), (50, true));
         let d = up.apply_help_fmt(b"header-col=60");
-        assert_eq!(d, [b"ARGP_HELP_FMT: rmargin value is less than or equal to header-col".to_vec()]);
+        assert_eq!(
+            d,
+            [b"ARGP_HELP_FMT: rmargin value is less than or equal to header-col".to_vec()]
+        );
         assert_eq!(up.header_col, 1, "rejected settings are not applied");
         let d = up.apply_help_fmt(b"bogus=3,rmargin,!x");
         assert_eq!(

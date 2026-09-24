@@ -191,6 +191,7 @@ impl FallbackTls {
         unsafe { (*spill.add(key_id - FALLBACK_INLINE_KEYS)).set(entry) };
     }
 
+    #[cfg(test)]
     fn clear_all(&self) {
         for slot in &self.inline {
             slot.set(TlsEntry::default());
@@ -205,7 +206,10 @@ impl FallbackTls {
             // SAFETY: `spill` came from `Box::into_raw` of a boxed slice of
             // exactly FALLBACK_SPILL_KEYS entries and is no longer reachable.
             drop(unsafe {
-                Box::from_raw(core::ptr::slice_from_raw_parts_mut(spill, FALLBACK_SPILL_KEYS))
+                Box::from_raw(core::ptr::slice_from_raw_parts_mut(
+                    spill,
+                    FALLBACK_SPILL_KEYS,
+                ))
             });
         }
     }
@@ -1429,7 +1433,10 @@ mod tests {
             DTOR_COUNT.fetch_add(1, AtomicOrdering::SeqCst);
         }
         let tid = current_tid();
-        assert!(table_lookup(tid).is_null(), "test starts on fallback TLS path");
+        assert!(
+            table_lookup(tid).is_null(),
+            "test starts on fallback TLS path"
+        );
         let mut keys = Vec::new();
         for _ in 0..40 {
             keys.push(create_key(Some(dtor)));
@@ -1439,7 +1446,11 @@ mod tests {
         FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "read must not allocate"));
         assert_eq!(pthread_setspecific(high, 0x5151), 0);
         assert_eq!(pthread_getspecific(high), 0x5151);
-        assert_eq!(pthread_getspecific(keys[38]), 0, "neighbouring spill key unaffected");
+        assert_eq!(
+            pthread_getspecific(keys[38]),
+            0,
+            "neighbouring spill key unaffected"
+        );
         teardown_thread_tls(tid);
         assert_eq!(DTOR_COUNT.load(AtomicOrdering::SeqCst), 1);
         FALLBACK_TLS_VALUES.with(|f| assert!(f.spill.get().is_null(), "teardown frees spill"));

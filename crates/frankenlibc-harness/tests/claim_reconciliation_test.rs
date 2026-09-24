@@ -300,7 +300,7 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "The checked curated preload smoke battery has 138 pass / 0 fail / 4 optional skips across strict and hardened modes, with no tracked known failures. Both strict and hardened modes are green, with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions, TZ-aware `localtime`/`date`/`ls -l` across eight zone settings plus a 44-zone 1900-2100 transition sweep) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: `getent` (argp) and named-locale formatting remain broken and are tracked. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
+            "The checked curated preload smoke battery has 152 pass / 0 fail / 4 optional skips across strict and hardened modes, with no tracked known failures. Both strict and hardened modes are green, with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions, TZ-aware `localtime`/`date`/`ls -l` across eight zone settings plus a 44-zone 1900-2100 transition sweep, GNU argp parsing/help byte parity and glibc's argp tools `getent`/`iconv`) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: named-locale formatting remains broken and is tracked. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
     assert_ne!(
@@ -374,7 +374,7 @@ fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke-summary.md");
 
-    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T063332Z`, checked September 24, 2026) reports 138 passes / 0 fails / 4 skips overall, with strict 69/0/2 and hardened 69/0/2 across the curated preload smoke battery.";
+    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T075200Z`, checked September 24, 2026) reports 152 passes / 0 fails / 4 skips overall, with strict 76/0/2 and hardened 76/0/2 across the curated preload smoke battery.";
     let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
     let readme = std::fs::read_to_string(&readme_src).expect("README.md should exist");
     assert!(

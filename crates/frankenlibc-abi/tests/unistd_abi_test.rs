@@ -3108,12 +3108,15 @@ unsafe extern "C" fn argp_recording_parser(
     let arg = if arg.is_null() {
         String::new()
     } else {
-        format!(" {}", unsafe { std::ffi::CStr::from_ptr(arg) }.to_string_lossy())
+        format!(
+            " {}",
+            unsafe { std::ffi::CStr::from_ptr(arg) }.to_string_lossy()
+        )
     };
-    ARGP_CALLS
-        .lock()
-        .unwrap()
-        .push(format!("{name}{arg} next={} arg_num={}", st.next, st.arg_num));
+    ARGP_CALLS.lock().unwrap().push(format!(
+        "{name}{arg} next={} arg_num={}",
+        st.next, st.arg_num
+    ));
     match key {
         k if k == b'v' as c_int => 0,
         0 | 0x100_0006 => libc::E2BIG, // ARGP_ERR_UNKNOWN for operands
@@ -3131,12 +3134,33 @@ fn abi_argp_parse_runs_the_parser_protocol_like_glibc() {
         .unwrap_or_else(|err| err.into_inner());
     ARGP_CALLS.lock().unwrap().clear();
     #[repr(C)]
-    struct Opt(*const c_char, c_int, *const c_char, c_int, *const c_char, c_int);
+    struct Opt(
+        *const c_char,
+        c_int,
+        *const c_char,
+        c_int,
+        *const c_char,
+        c_int,
+    );
     let verbose = CString::new("verbose").unwrap();
     let doc = CString::new("Be verbose").unwrap();
     let options = [
-        Opt(verbose.as_ptr(), b'v' as c_int, std::ptr::null(), 0, doc.as_ptr(), 0),
-        Opt(std::ptr::null(), 0, std::ptr::null(), 0, std::ptr::null(), 0),
+        Opt(
+            verbose.as_ptr(),
+            b'v' as c_int,
+            std::ptr::null(),
+            0,
+            doc.as_ptr(),
+            0,
+        ),
+        Opt(
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
+        ),
     ];
     let mut argp_struct = empty_argp_storage();
     argp_struct[0] = options.as_ptr() as usize;
