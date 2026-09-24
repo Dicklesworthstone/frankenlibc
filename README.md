@@ -45,7 +45,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind a glibc-shaped A
 | Large classified ABI surface | **4,119 exported symbols** all classified |
 | Native ownership is substantial and measured | **2,441 `Implemented` + 414 `RawSyscall` = 2,855 / 4,119 (69.3% native coverage)** |
 | Host-backed interpose subset is explicit | **1,264 `WrapsHostLibc` (30.7%), 0 `GlibcCallThrough`, 0 `Stub`** |
-| Interposition exercises real workloads today | Curated smoke battery: **60 passes / 0 fails / 4 optional skips** across strict + hardened modes, backed by the checked smoke artifact (see `docs/planning/COMPATIBILITY.md`) |
+| Interposition exercises real workloads today | Real-world preload corpus: **111 passes / 0 fails / 4 optional skips** (+1 tracked hardened xfail) across strict + hardened modes with byte-exact parity against host glibc, including git, sed, tar -z, C++ programs and Python C extensions; backed by the checked smoke artifact (see `docs/planning/COMPATIBILITY.md`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
 | Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
 | Verification is first-class | Harness CLI, **134 fixture families**, **282 completion-contract artifacts**, **69 CLI-contract manifests** subject to ~50 meta-gates each, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings |
@@ -213,7 +213,7 @@ User-facing support and replacement claims must keep these fields separate:
 ### Curated LD_PRELOAD Smoke Battery
 
 Canonical smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json`.
-Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `SnowyMill-ldfix-20260603T034530Z`, checked June 3, 2026) reports 60 passes / 0 fails / 4 skips overall, with strict 30/0/2 and hardened 30/0/2 across the curated preload smoke battery.
+Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T041607Z`, checked September 24, 2026) reports 111 passes / 0 fails / 4 skips overall, with strict 56/0/2 and hardened 55/0/2 across the curated preload smoke battery. One further hardened case, `sed_substitute`, is a tracked known failure (xfail, `bd-rc0923-epic-eeuy4f.20`): hardened mode corrupts GNU sed output whenever a regex is used.
 
 | Mode | Pass | Fail | Skip | Programs exercised |
 |---|---:|---:|---:|---|
@@ -225,7 +225,7 @@ Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1
 |---|---|
 | Coreutils | `/bin/ls -la /tmp`, `/bin/cat /etc/hosts`, `/bin/echo`, `/usr/bin/env`, `/bin/sort`, `/usr/bin/wc` |
 
-The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. The checked curated preload smoke battery is green in both strict and hardened modes, with optional skips tracked separately from failures. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
+The checked curated preload smoke battery has 111 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 tracked hardened xfail. Strict mode is green; hardened mode is red on the one xfail (`sed_substitute`), with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: `getent` (argp), local time under `TZ`, and named-locale formatting remain broken and are tracked. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.
 
 ---
 
@@ -1460,7 +1460,7 @@ The remaining hard areas are difficult for real systems reasons, not because the
 
 - The current shipping artifact is the **interpose** shared library, not a fully standalone libc replacement.
 - The deployment model is `LD_PRELOAD`; setuid/setgid binaries are out of scope because the kernel loader ignores `LD_PRELOAD` for them.
-- The curated preload smoke battery currently has 60 pass / 0 fail / 4 optional skips across strict and hardened modes; see `docs/planning/COMPATIBILITY.md` for workload status details.
+- The preload smoke battery currently has 111 pass / 0 fail / 4 optional skips plus 1 tracked hardened xfail across strict and hardened modes; see `docs/planning/COMPATIBILITY.md` for workload status details.
 - Hardened mode is fixture-and-oracle-verified for the defined healing taxonomy; that is not a blanket production-readiness claim for arbitrary workloads.
 - Performance: strict-mode overhead is budgeted at < 20 ns/call and hardened-mode at < 200 ns/call; perf gates measure rather than assume, and regressions surface in `scripts/check_perf_regression_gate.sh`.
 - The README summarizes current reality; canonical truth lives in generated reports and gates.
@@ -1537,7 +1537,7 @@ The membrane crate's `build.rs` will fail loudly if Cholesky verification trips 
 
 ### Is FrankenLibC a drop-in replacement for glibc today?
 
-The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`, with 69.3% native coverage in the classified surface and a checked curated strict + hardened smoke battery at 60 passes / 0 fails / 4 optional skips. A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the 30.7% host-backed wrapper subset and by L2/L3 contracts; it is not yet declared ready. The interpose artifact is real and works on many real-program smoke cases today, but the checked smoke artifact is the source of truth for workload status.
+The practical artifact today is `libfrankenlibc_abi.so` used via `LD_PRELOAD`, with 69.3% native coverage in the classified surface and a checked strict + hardened real-world smoke battery at 111 passes / 0 fails / 4 optional skips (plus 1 tracked hardened xfail). A fully standalone replacement artifact (`libfrankenlibc_replace.so`) is gated by eliminating the 30.7% host-backed wrapper subset and by L2/L3 contracts; it is not yet declared ready. The interpose artifact is real and works on many real-program smoke cases today, but the checked smoke artifact is the source of truth for workload status.
 
 ### Does it implement a lot of symbols natively?
 
@@ -3951,7 +3951,7 @@ Selected project health snapshot:
 | Shell scripts (CI / gates / smoke / perf) | 554 |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,030 lines (SOS synthesis + barrier audit) |
-| Curated `LD_PRELOAD` smoke battery | 60 pass / 0 fail / 4 optional skip, strict + hardened checked artifact green |
+| Curated `LD_PRELOAD` smoke battery | 111 pass / 0 fail / 4 optional skip + 1 tracked hardened xfail; strict green, hardened red on that xfail |
 
 ---
 

@@ -1,51 +1,60 @@
 {
   "schema_version": "v1",
-  "bead": "bd-3rw.5.1",
-  "source_report_path": "target/ld_preload_smoke/SnowyMill-ldfix-20260603T034530Z/abi_compat_report.json",
-  "run_id": "SnowyMill-ldfix-20260603T034530Z",
-  "checked_at_utc": "2026-06-03T03:45:30Z",
-  "checked_date_display": "June 3, 2026",
-  "lib_path": "/data/tmp/cargo-target-ldfix/release/libfrankenlibc_abi.so",
+  "bead": "bd-rc0923-epic-eeuy4f.4",
+  "source_report_path": "target/ld_preload_smoke/rc0923-corpus-20260924T041607Z/abi_compat_report.json",
+  "run_id": "rc0923-corpus-20260924T041607Z",
+  "checked_at_utc": "2026-09-24T04:16:43Z",
+  "checked_date_display": "September 24, 2026",
+  "lib_path": "/data/tmp/claude-1000/-data-projects-frankenlibc/08825a4c-4f5a-4c63-8388-328486052003/scratchpad/smokelib/libfrankenlibc_abi.so",
   "timeout_seconds": 10,
   "stress_iters": 5,
   "summary": {
-    "total_cases": 64,
-    "passes": 60,
+    "total_cases": 116,
+    "passes": 111,
     "fails": 0,
     "skips": 4,
     "signature_guard_failures": 0,
     "perf_failures": 0,
     "valgrind_failures": 0,
-    "overall_failed": false
+    "overall_failed": false,
+    "xfails": 1
   },
   "modes": {
     "strict": {
-      "total_cases": 32,
-      "passes": 30,
+      "total_cases": 58,
+      "passes": 56,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
       "strict_parity_failures": 0,
       "perf_failures": 0,
       "valgrind_failures": 0,
-      "status": "green"
+      "status": "green",
+      "xfails": 0
     },
     "hardened": {
-      "total_cases": 32,
-      "passes": 30,
+      "total_cases": 58,
+      "passes": 55,
       "fails": 0,
       "skips": 2,
       "signature_guard_failures": 0,
-      "strict_parity_failures": 0,
+      "strict_parity_failures": 1,
       "perf_failures": 0,
       "valgrind_failures": 0,
-      "status": "green"
+      "status": "red",
+      "xfails": 1
     }
   },
-  "optional_skip_binaries": ["nginx", "redis-cli"],
+  "optional_skip_binaries": [
+    "nginx",
+    "redis-cli"
+  ],
   "notes": [
-    "This checked-in summary is the canonical source for README smoke-status claims.",
-    "The four skips come from the two optional binary probes across strict and hardened modes.",
-    "The June 3, 2026 regeneration is green: strict and hardened mode both pass the sort fixture, sort stress cases, sqlite3 probe, parity checks, and perf guards."
-  ]
+    "This checked-in summary is the canonical source for README smoke-status claims; regenerate it only from an executed run (scripts/check_ld_preload_smoke_regeneration.sh).",
+    "Since bd-rc0923-epic-eeuy4f.4 the battery includes a real-world corpus: GNU FILE-layout fixture (10 constructors), sed, grep, awk, find, tar gzip/xz round-trips, gzip, make, perl, git log/status/diff, a C++ runtime program, Python C extensions and subprocess. The earlier 60/0/4 battery ran only trivial programs and stayed green while git/sed/C++/python-extensions/tar -z were broken under preload.",
+    "Parity is enforced in strict AND hardened mode. The four skips are the optional redis-cli/nginx probes. The one xfail is hardened sed_substitute (garbage output), tracked by bd-rc0923-epic-eeuy4f.20; the gate fails if it unexpectedly passes.",
+    "Not yet covered (tracked, fail today): getent/argp (bd-rc0923-epic-eeuy4f.7), local time under TZ (.11), named-locale formatting (.10)."
+  ],
+  "source_commit": "061b048e9ede561e3956918d61c423a9a7ea61fb",
+  "lib_sha256": "b2fbe7e6d2e18a5a4184a7c4265ba8f5cd7e9f5c5d2e291e714bff642456499b"
 }

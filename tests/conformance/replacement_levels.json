@@ -81,8 +81,8 @@
       },
       "objective_gate": {
         "bead": "bd-gtf.4",
-        "status": "pass",
-        "status_reason": "The declared L1 interpose level remains the current taxonomy level, and the current L1 objective-gate evidence bundle is passing with checked curated preload smoke green in strict and hardened modes.",
+        "status": "blocked",
+        "status_reason": "The declared L1 interpose level remains the current taxonomy level, but the L1 objective gate is blocked: the real-world preload corpus (run rc0923-corpus-20260924T041607Z) is green in strict mode and red in hardened mode on one tracked known failure (hardened sed_substitute output corruption, bd-rc0923-epic-eeuy4f.20).",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -138,14 +138,14 @@
               "signature_guard_failures": 0
             },
             "actual": {
-              "run_id": "SnowyMill-ldfix-20260603T034530Z",
+              "run_id": "rc0923-corpus-20260924T041607Z",
               "overall_failed": false,
               "strict_status": "green",
-              "hardened_status": "green",
+              "hardened_status": "red",
               "perf_failures": 0,
               "signature_guard_failures": 0
             },
-            "outcome": "pass"
+            "outcome": "blocked"
           },
           {
             "id": "claim_reconciliation_clean",

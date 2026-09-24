@@ -300,7 +300,7 @@ fn claim_reconciliation_detects_readme_smoke_overclaim_and_routes_replacement_ow
     let mutated_readme = std::fs::read_to_string(&readme_src)
         .expect("README.md should exist")
         .replace(
-            "The checked curated preload smoke battery has 60 pass / 0 fail / 4 optional skips across strict and hardened modes. The checked curated preload smoke battery is green in both strict and hardened modes, with optional skips tracked separately from failures. This is a curated workload signal, not broad production workload readiness; non-curated workload stability and release-claim closure for L2/L3 replacement levels remain active work. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
+            "The checked curated preload smoke battery has 111 pass / 0 fail / 4 optional skips across strict and hardened modes, plus 1 tracked hardened xfail. Strict mode is green; hardened mode is red on the one xfail (`sed_substitute`), with optional skips tracked separately from failures. Since 2026-09-24 the battery includes a real-world corpus (glibc `FILE` layout fixture, sed, grep, awk, find, tar gzip/xz, make, perl, git, a C++ runtime program, Python C extensions) with parity enforced in both modes; the earlier trivial-program battery stayed green while all of those were broken. It is still not broad production workload readiness: `getent` (argp), local time under `TZ`, and named-locale formatting remain broken and are tracked. The strict/hardened mode dichotomy itself is not a research artifact; it runs real binaries today.",
             "The latest broad preload smoke run is **fully green** and both strict and hardened modes pass all workloads.",
         );
     assert_ne!(
@@ -374,7 +374,7 @@ fn claim_reconciliation_detects_readme_smoke_summary_drift_and_routes_owner() {
     let readme_src = repo_root.join("README.md");
     let mutated_readme_path = unique_temp_path("claim-reconciliation-readme-smoke-summary.md");
 
-    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `SnowyMill-ldfix-20260603T034530Z`, checked June 3, 2026) reports 60 passes / 0 fails / 4 skips overall, with strict 30/0/2 and hardened 30/0/2 across the curated preload smoke battery.";
+    let canonical = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `rc0923-corpus-20260924T041607Z`, checked September 24, 2026) reports 111 passes / 0 fails / 4 skips overall, with strict 56/0/2 and hardened 55/0/2 across the curated preload smoke battery.";
     let stale = "Canonical checked smoke artifact: `tests/conformance/ld_preload_smoke_summary.v1.json` (run `20260404T011731Z`, checked April 4, 2026) reports 58 passes / 0 fails / 6 skips overall, with strict 29/0/3 and hardened 29/0/3 across the curated preload smoke battery.";
     let readme = std::fs::read_to_string(&readme_src).expect("README.md should exist");
     assert!(

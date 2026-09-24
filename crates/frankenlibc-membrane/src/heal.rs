@@ -8,7 +8,7 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 /// Actions the membrane can take to heal an unsafe operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,8 +61,9 @@ pub struct HealingPolicy {
     pub safe_defaults: AtomicU64,
     /// Safe variant upgrades.
     pub variant_upgrades: AtomicU64,
-    /// Whether structured healing logging is enabled.
-    healing_logging_enabled: AtomicBool,
+    /// Structured healing logging: 0 = follow `FRANKENLIBC_HEAL_LOG`
+    /// (resolved lazily), 1 = forced off, 2 = forced on.
+    healing_logging: AtomicU8,
     /// Monotone decision id for healing evidence rows.
     healing_log_decision_seq: AtomicU64,
     /// Bounded JSONL healing evidence ring buffer.
@@ -73,7 +74,11 @@ impl HealingPolicy {
     /// Create a new policy with zeroed counters.
     #[must_use]
     pub fn new() -> Self {
-        let logging_enabled = heal_logging_enabled_by_default();
+        // No environment access here: this runs inside the GLOBAL_POLICY
+        // LazyLock, and `std::env::var` calls fl's own exported memcpy/strlen,
+        // whose hardened paths record heals through `global_healing_policy()`
+        // — re-entering the LazyLock that is still initializing and blocking
+        // the process forever on the first heal (bd-rc0923-epic-eeuy4f.9).
         Self {
             total_heals: AtomicU64::new(0),
             size_clamps: AtomicU64::new(0),
@@ -83,7 +88,7 @@ impl HealingPolicy {
             realloc_as_mallocs: AtomicU64::new(0),
             safe_defaults: AtomicU64::new(0),
             variant_upgrades: AtomicU64::new(0),
-            healing_logging_enabled: AtomicBool::new(logging_enabled),
+            healing_logging: AtomicU8::new(0),
             healing_log_decision_seq: AtomicU64::new(0),
             healing_logs: Mutex::new(VecDeque::with_capacity(HEALING_LOG_CAPACITY)),
         }
@@ -91,8 +96,17 @@ impl HealingPolicy {
 
     /// Enable or disable structured healing evidence logging.
     pub fn set_healing_logging_enabled(&self, enabled: bool) {
-        self.healing_logging_enabled
-            .store(enabled, Ordering::Relaxed);
+        self.healing_logging
+            .store(if enabled { 2 } else { 1 }, Ordering::Relaxed);
+    }
+
+    #[inline]
+    fn healing_logging_active(&self) -> bool {
+        match self.healing_logging.load(Ordering::Relaxed) {
+            1 => false,
+            2 => true,
+            _ => heal_logging_env_enabled(),
+        }
     }
 
     /// Clear buffered healing evidence rows.
@@ -197,7 +211,7 @@ impl HealingPolicy {
     }
 
     fn emit_healing_log(&self, action: &HealingAction) {
-        if !action.is_heal() || !self.healing_logging_enabled.load(Ordering::Relaxed) {
+        if !action.is_heal() || !self.healing_logging_active() {
             return;
         }
 
@@ -245,6 +259,29 @@ impl HealingPolicy {
 impl Default for HealingPolicy {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// `FRANKENLIBC_HEAL_LOG`, resolved once and reentrancy-safe: a heal recorded
+/// while the variable is being read (the read itself runs fl string ops)
+/// sees "off" instead of recursing.
+fn heal_logging_env_enabled() -> bool {
+    // 0 = unresolved, 1 = resolving, 2 = off, 3 = on.
+    static STATE: AtomicU8 = AtomicU8::new(0);
+    match STATE.load(Ordering::Acquire) {
+        2 | 1 => false,
+        3 => true,
+        _ => {
+            if STATE
+                .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return STATE.load(Ordering::Acquire) == 3;
+            }
+            let on = heal_logging_enabled_by_default();
+            STATE.store(if on { 3 } else { 2 }, Ordering::Release);
+            on
+        }
     }
 }
 

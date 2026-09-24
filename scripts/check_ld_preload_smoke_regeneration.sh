@@ -198,7 +198,9 @@ OPTIONAL_SKIP_CASES = {
     "redis_cli_version": "redis-cli",
     "nginx_version": "nginx",
 }
-VALID_STATUSES = {"pass", "fail", "skip"}
+# "xfail": a known failure listed in ld_preload_smoke.sh KNOWN_FAILING_CASES
+# with its tracking bead (bd-rc0923-epic-eeuy4f.4); counted apart from passes.
+VALID_STATUSES = {"pass", "fail", "skip", "xfail"}
 VALID_MODES = {"strict", "hardened"}
 
 errors: list[str] = []
@@ -345,7 +347,7 @@ def normalize_cases(report: dict[str, Any]) -> list[dict[str, Any]]:
         if case.get("mode") not in VALID_MODES:
             errors.append(f"smoke_report.cases[{index}].mode must be strict or hardened")
         if case.get("status") not in VALID_STATUSES:
-            errors.append(f"smoke_report.cases[{index}].status must be pass/fail/skip")
+            errors.append(f"smoke_report.cases[{index}].status must be pass/fail/skip/xfail")
         cases.append(case)
     return cases
 
@@ -370,6 +372,7 @@ def summary_from_cases(cases: list[dict[str, Any]], report: dict[str, Any]) -> d
             "passes": sum(1 for case in mode_cases if case.get("status") == "pass"),
             "fails": mode_fails,
             "skips": sum(1 for case in mode_cases if case.get("status") == "skip"),
+            "xfails": sum(1 for case in mode_cases if case.get("status") == "xfail"),
             "signature_guard_failures": mode_signature_guard,
             "strict_parity_failures": mode_strict_parity_failures,
             "perf_failures": mode_perf_failures,
@@ -594,7 +597,7 @@ def validate_trace(trace_rows: list[dict[str, Any]], cases: list[dict[str, Any]]
         row_status = row.get("status")
         row_run_id = row.get("run_id")
         event = row.get("event")
-        if event in {"case_pass", "case_fail", "case_skip_optional_binary_missing"}:
+        if event in {"case_pass", "case_fail", "case_xfail", "case_skip_optional_binary_missing"}:
             if isinstance(row_mode, str) and isinstance(row_case, str) and isinstance(row_status, str):
                 indexed[(row_mode, row_case, row_status)] += 1
         for field in ["timestamp", "event", "mode", "case", "status", "run_id"]:
@@ -624,6 +627,7 @@ def append_case_log(case: dict[str, Any], report_ref: str, trace_ref: str, run_i
         "pass": "smoke_case_pass",
         "fail": "smoke_case_fail",
         "skip": "smoke_case_skip",
+        "xfail": "smoke_case_xfail",
     }.get(status, "smoke_case_unknown")
     case_events.append(
         {
