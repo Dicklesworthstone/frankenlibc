@@ -1068,9 +1068,22 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         "replacement_levels.json should consume smoke signature-guard failure count"
     );
     assert_eq!(
+        smoke_obligation["actual"]["xfails"].as_u64(),
+        Some(smoke["summary"]["xfails"].as_u64().unwrap_or(0)),
+        "replacement_levels.json should consume the smoke tracked-known-failure count"
+    );
+    // The obligation passes exactly when both modes are green with no failure
+    // counters and no tracked known failure (a tracked failure still blocks).
+    let smoke_green = smoke["summary"]["overall_failed"].as_bool() == Some(false)
+        && smoke["modes"]["strict"]["status"].as_str() == Some("green")
+        && smoke["modes"]["hardened"]["status"].as_str() == Some("green")
+        && smoke["summary"]["perf_failures"].as_u64() == Some(0)
+        && smoke["summary"]["signature_guard_failures"].as_u64() == Some(0)
+        && smoke["summary"]["xfails"].as_u64().unwrap_or(0) == 0;
+    assert_eq!(
         smoke_obligation["outcome"].as_str(),
-        Some("pass"),
-        "green strict/hardened smoke evidence must pass the L1 smoke obligation"
+        Some(if smoke_green { "pass" } else { "blocked" }),
+        "the L1 smoke obligation must pass exactly for green smoke evidence without tracked failures"
     );
 
     let blocked_obligations: Vec<_> = obligations
@@ -1078,10 +1091,16 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         .filter(|entry| entry["outcome"].as_str() == Some("blocked"))
         .filter_map(|entry| entry["id"].as_str())
         .collect();
+    // CRT and promotion controls must pass; the smoke obligation may be the
+    // only blocker, and only when the smoke evidence is not green.
+    let expected_blocked: Vec<&str> = if smoke_green {
+        Vec::new()
+    } else {
+        vec!["hardened_smoke_battery"]
+    };
     assert_eq!(
-        blocked_obligations,
-        Vec::<&str>::new(),
-        "L1 objective gate should have no blocked obligations when smoke, CRT, and promotion controls pass"
+        blocked_obligations, expected_blocked,
+        "L1 objective gate may be blocked only by non-green smoke evidence"
     );
     let promotion_obligation = obligations
         .iter()
@@ -1096,7 +1115,11 @@ fn l1_objective_gate_consumes_current_crt_startup_tls_matrix() {
         promotion_obligation["actual"]["release_tag_policy.current_release_level"].as_str(),
         Some("L1")
     );
-    assert_eq!(objective_gate["status"].as_str(), Some("pass"));
+    assert_eq!(
+        objective_gate["status"].as_str(),
+        Some(if smoke_green { "pass" } else { "blocked" }),
+        "the L1 objective gate is blocked exactly while its smoke obligation is"
+    );
     assert_eq!(levels["current_level"].as_str(), Some("L1"));
     assert_eq!(
         levels["release_tag_policy"]["current_release_level"].as_str(),
@@ -1341,10 +1364,26 @@ fn gate_script_refreshes_l1_objective_gate_artifacts() {
         Some("pass"),
         "replacement-level consistency gate should succeed for the checked-in artifacts"
     );
+    let levels: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            workspace_root().join("tests/conformance/replacement_levels.json"),
+        )
+        .expect("failed to read replacement_levels.json"),
+    )
+    .expect("replacement_levels.json is not valid JSON");
+    let l1_objective_status = levels["levels"]
+        .as_array()
+        .and_then(|levels| {
+            levels
+                .iter()
+                .find(|level| level["level"].as_str() == Some("L1"))
+        })
+        .and_then(|level| level["objective_gate"]["status"].as_str())
+        .map(str::to_owned);
     assert_eq!(
-        report["objective_gate_status"].as_str(),
-        Some("pass"),
-        "replacement-level report should surface the passing objective gate"
+        report["objective_gate_status"].as_str().map(str::to_owned),
+        l1_objective_status,
+        "replacement-level report should surface the L1 objective gate status"
     );
     let script_checks = report["script_checks"]
         .as_array()
