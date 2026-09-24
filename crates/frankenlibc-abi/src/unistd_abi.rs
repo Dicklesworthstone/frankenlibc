@@ -5058,6 +5058,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     crate::pthread_abi::run_atfork_prepare();
     let _pipeline_guard =
         crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
 
     // SAFETY: fork via raw syscall
@@ -5070,6 +5071,11 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         }
     };
 
+    if pid == 0 {
+        // SAFETY: freshly forked child (single thread); parent_tid was read
+        // by the forking thread before the clone. See adopt_in_fork_child.
+        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+    }
     drop(_environ_guard);
     drop(_pipeline_guard);
 
@@ -9391,6 +9397,7 @@ pub unsafe extern "C" fn forkpty(
     // so any held environ lock from another parent thread becomes a stuck lock
     // in the child address space. Acquiring here forces serialization with any
     // in-flight setenv before the clone.
+    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
 
     let pid = match syscall::sys_clone_fork(libc::SIGCHLD as usize) {
@@ -9404,6 +9411,11 @@ pub unsafe extern "C" fn forkpty(
         }
     };
 
+    if pid == 0 {
+        // SAFETY: freshly forked child (single thread); parent_tid was read
+        // by the forking thread before the clone. See adopt_in_fork_child.
+        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+    }
     drop(_environ_guard);
     drop(_pipeline_guard);
 

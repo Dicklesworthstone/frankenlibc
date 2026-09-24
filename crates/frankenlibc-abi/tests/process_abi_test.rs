@@ -780,6 +780,41 @@ fn fork_and_waitpid_child_exits_zero() {
     assert_eq!(libc::WEXITSTATUS(status), 0, "child exit code should be 0");
 }
 
+/// A child that forks again (tar -z, shells, make) must not hang. fork holds
+/// ENVIRON_LOCK across the clone; its owner is recorded by TID, and the child's
+/// TID differs, so before bd-rc0923-epic-eeuy4f.5 the child's guard drop was a
+/// no-op and its own fork spun forever on the stale owner.
+#[test]
+fn fork_inside_forked_child_does_not_hang() {
+    let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let pid = unsafe { fork() };
+    assert!(pid >= 0, "fork should succeed");
+    if pid == 0 {
+        // Bound the child: a regression turns into SIGALRM, not a hung suite.
+        unsafe { libc::alarm(10) };
+        let grandchild = unsafe { fork() };
+        if grandchild == 0 {
+            unsafe { libc::_exit(7) };
+        }
+        if grandchild < 0 {
+            unsafe { libc::_exit(3) };
+        }
+        let mut st: c_int = 0;
+        let w = unsafe { waitpid(grandchild, &mut st, 0) };
+        let ok = w == grandchild && libc::WIFEXITED(st) && libc::WEXITSTATUS(st) == 7;
+        unsafe { libc::_exit(if ok { 0 } else { 4 }) };
+    }
+    let mut status: c_int = 0;
+    let waited = unsafe { waitpid(pid, &mut status, 0) };
+    assert_eq!(waited, pid);
+    assert!(
+        libc::WIFEXITED(status),
+        "child did not exit normally (signal {} — alarm means the nested fork hung)",
+        libc::WTERMSIG(status)
+    );
+    assert_eq!(libc::WEXITSTATUS(status), 0, "nested fork/wait failed in child");
+}
+
 #[test]
 fn fork_and_waitpid_child_exits_nonzero() {
     let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());

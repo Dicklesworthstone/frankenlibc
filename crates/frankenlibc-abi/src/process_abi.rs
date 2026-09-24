@@ -181,6 +181,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // first getenv/setenv after fork would deadlock waiting for a lock that
     // no thread can ever release in the new address space. Mirrors the
     // pipeline atfork pattern. (REVIEW round 4: fork-after-setenv deadlock.)
+    let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
 
     let pid = match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
@@ -198,7 +199,14 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     // Both parent and child release their copies of these guards. The ABI lock
     // state lives inline in the static; the guard's Drop releases the lock
-    // owned by the current thread on each side of fork.
+    // owned by the current thread on each side of fork. The child's thread has
+    // a new TID, so ownership must be handed to it first or the drop is a
+    // silent no-op and the lock stays held forever (bd-rc0923-epic-eeuy4f.5).
+    if pid == 0 {
+        // SAFETY: freshly forked child (single thread); parent_tid was read
+        // by the forking thread before the clone.
+        unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
+    }
     drop(_environ_guard);
     drop(_pipeline_guard);
 

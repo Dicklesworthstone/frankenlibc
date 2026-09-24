@@ -137,6 +137,33 @@ impl<T> AbiReentrantMutex<T> {
         self.unlock_for_tid(current_tid());
     }
 
+    /// Call in a `fork` child for a lock the forking thread held across the
+    /// clone. The child's only thread has a new TID, so ownership recorded
+    /// under the parent's TID would make the guard's drop a silent no-op and
+    /// leave the lock held forever: the next `fork`/`setenv` in the child
+    /// spun at 100% CPU (`tar -czf`, bd-rc0923-epic-eeuy4f.5). Transfers
+    /// ownership (and recursion depth) to the child's thread.
+    ///
+    /// # Safety
+    ///
+    /// Must only be called in a freshly forked child, before any other thread
+    /// exists, with `parent_tid` read by the forking thread before the clone.
+    #[inline]
+    pub(crate) unsafe fn adopt_in_fork_child(&self, parent_tid: i32) {
+        let _ = self.owner_tid.compare_exchange(
+            parent_tid,
+            current_tid(),
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        );
+    }
+
+    /// TID used for ownership, exposed so fork paths can record the parent's.
+    #[inline]
+    pub(crate) fn current_owner_tid() -> i32 {
+        current_tid()
+    }
+
     #[inline]
     fn try_lock_for_tid(&self, tid: i32) -> bool {
         if self.owner_tid.load(Ordering::Acquire) == tid {
