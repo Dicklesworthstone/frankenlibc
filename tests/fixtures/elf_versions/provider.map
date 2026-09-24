@@ -1,0 +1,6 @@
+VERS_1 {
+    global: api; retired; data; tls_value; dispatch;
+    local: api_old; api_new; retired_old; recent_private; data_old; data_new;
+           tls_old; tls_new; dispatch_old; dispatch_new;
+};
+VERS_2 { global: api; recent; data; tls_value; dispatch; } VERS_1;
