@@ -788,21 +788,36 @@ impl NativeFile {
     }
 
     pub fn invalidate(&mut self) {
-        self.with_locked_mut(|state| {
-            state.magic = 0;
-            state.buffer_base = ptr::null_mut();
-            state.buffer_pos = ptr::null_mut();
-            state.buffer_end = ptr::null_mut();
-            state.buffer_capacity = 0;
-            state.eof = false;
-            state.error = false;
-            state.ungetc = None;
-            state.open_flags = 0;
-            state.generation = state.generation.saturating_add(1);
-            state.healing_budget = 0;
-            state.fingerprint = [0; 16];
-            state.runtime_math_hooks = NativeFileRuntimeMathHooks::new();
-        });
+        self.with_locked_mut(Self::reset_locked_state);
+        self.reset_unlocked_fields();
+    }
+
+    /// `invalidate` for a stream no other thread can reach yet (registry
+    /// construction): skips the lock, whose two `gettid` syscalls per slot
+    /// were 512 of the ~700 syscalls of every process's startup
+    /// (bd-rc0923-epic-eeuy4f.25).
+    fn invalidate_unshared(&mut self) {
+        Self::reset_locked_state(self._frankenlibc_state.locked.get_mut().get_mut());
+        self.reset_unlocked_fields();
+    }
+
+    fn reset_locked_state(state: &mut NativeFileLocked) {
+        state.magic = 0;
+        state.buffer_base = ptr::null_mut();
+        state.buffer_pos = ptr::null_mut();
+        state.buffer_end = ptr::null_mut();
+        state.buffer_capacity = 0;
+        state.eof = false;
+        state.error = false;
+        state.ungetc = None;
+        state.open_flags = 0;
+        state.generation = state.generation.saturating_add(1);
+        state.healing_budget = 0;
+        state.fingerprint = [0; 16];
+        state.runtime_math_hooks = NativeFileRuntimeMathHooks::new();
+    }
+
+    fn reset_unlocked_fields(&mut self) {
         self._io_file = _IO_FILE_Layout::new(-1);
         self._io_file._flags = 0;
         self.sync_lock_ptr();
@@ -1295,7 +1310,7 @@ struct StreamSlot {
 impl StreamSlot {
     fn empty() -> Self {
         let mut file = NativeFile::new(-1, 0, NativeFileBufMode::None);
-        file.invalidate();
+        file.invalidate_unshared();
         Self {
             state: SLOT_FREE,
             file,

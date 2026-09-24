@@ -112,6 +112,12 @@ impl<T> AbiReentrantMutex<T> {
         }
     }
 
+    /// Exclusive access proves no other thread holds or can take the lock.
+    #[inline]
+    pub(crate) fn get_mut(&mut self) -> &mut T {
+        self.value.get_mut()
+    }
+
     #[inline]
     pub(crate) fn try_lock(&self) -> Option<AbiReentrantMutexGuard<'_, T>> {
         let tid = current_tid();

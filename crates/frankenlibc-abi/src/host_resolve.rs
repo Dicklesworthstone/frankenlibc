@@ -284,91 +284,198 @@ struct Elf64Sym {
     st_size: u64,
 }
 
+const SHT_GNU_HASH: u32 = 0x6fff_fff6;
+
+/// Compares only `symbol.len() + 1` bytes: scanning every candidate name to its
+/// NUL first made each lookup read the whole string table.
 fn symbol_name_matches(strtab: &[u8], name_offset: u32, symbol: &[u8]) -> bool {
     let start = name_offset as usize;
-    if start >= strtab.len() {
-        return false;
-    }
-    let rest = &strtab[start..];
-    let Some(end) = rest.iter().position(|byte| *byte == 0) else {
+    let Some(end) = start.checked_add(symbol.len()) else {
         return false;
     };
-    &rest[..end] == symbol
+    strtab.get(start..end) == Some(symbol) && strtab.get(end) == Some(&0)
+}
+
+fn gnu_hash(name: &[u8]) -> u32 {
+    name.iter().fold(5381u32, |h, byte| {
+        h.wrapping_mul(33).wrapping_add(u32::from(*byte))
+    })
+}
+
+/// Walks the image's `.gnu.hash` chain (the loader's own lookup structure)
+/// for `wanted`, yielding symbol indices whose hash matches. Every defined
+/// symbol of that name lies in one chain, kept in `.dynsym` order, so the first
+/// acceptable candidate is the one the linear scan finds. Allocation-free: this
+/// runs while host malloc itself is being resolved.
+struct GnuHashChain<'a> {
+    table: &'a [u8],
+    chain_at: usize,
+    symoffset: usize,
+    hash: u32,
+    next_index: Option<usize>,
+}
+
+impl<'a> GnuHashChain<'a> {
+    /// `None` when the table is malformed; the caller then scans linearly.
+    fn new(table: &'a [u8], wanted: &[u8]) -> Option<Self> {
+        let nbuckets = gnu_hash_word(table, 0)? as usize;
+        let symoffset = gnu_hash_word(table, 1)? as usize;
+        let bloom_words = gnu_hash_word(table, 2)? as usize;
+        if nbuckets == 0 {
+            return None;
+        }
+        // ELFCLASS64 bloom words are 8 bytes, i.e. two u32 slots each.
+        let buckets_at = 4usize.checked_add(bloom_words.checked_mul(2)?)?;
+        let chain_at = buckets_at.checked_add(nbuckets)?;
+        let hash = gnu_hash(wanted);
+        let first = gnu_hash_word(table, buckets_at + hash as usize % nbuckets)? as usize;
+        if first != 0 && first < symoffset {
+            return None;
+        }
+        Some(Self {
+            table,
+            chain_at,
+            symoffset,
+            hash,
+            next_index: (first != 0).then_some(first),
+        })
+    }
+}
+
+impl Iterator for GnuHashChain<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        loop {
+            let index = self.next_index.take()?;
+            let chain_hash = gnu_hash_word(
+                self.table,
+                self.chain_at.checked_add(index - self.symoffset)?,
+            )?;
+            if chain_hash & 1 == 0 {
+                self.next_index = index.checked_add(1);
+            }
+            if chain_hash | 1 == self.hash | 1 {
+                return Some(index);
+            }
+        }
+    }
+}
+
+fn gnu_hash_word(table: &[u8], index: usize) -> Option<u32> {
+    let at = index.checked_mul(4)?;
+    let bytes = table.get(at..at.checked_add(4)?)?;
+    Some(u32::from_ne_bytes(bytes.try_into().ok()?))
+}
+
+/// An image's `.dynsym` with its string table and, when present and linked to
+/// it, its `.gnu.hash` table.
+struct DynamicSymbols<'a> {
+    strtab: &'a [u8],
+    sym_bytes: &'a [u8],
+    sym_entsize: usize,
+    gnu_hash: Option<&'a [u8]>,
+}
+
+impl<'a> DynamicSymbols<'a> {
+    fn parse(data: &'a [u8]) -> Option<Self> {
+        let ehdr = data.get(..std::mem::size_of::<Elf64Ehdr>())?;
+        // SAFETY: slice length checked above and ELF header is plain-old-data.
+        let ehdr = unsafe { &*(ehdr.as_ptr().cast::<Elf64Ehdr>()) };
+        if ehdr.e_ident[..4] != ELF_MAGIC {
+            return None;
+        }
+        let shoff = ehdr.e_shoff as usize;
+        let shentsize = ehdr.e_shentsize as usize;
+        let shnum = ehdr.e_shnum as usize;
+        if shentsize < std::mem::size_of::<Elf64Shdr>() || shnum == 0 {
+            return None;
+        }
+        let section = |idx: usize| -> Option<&'a Elf64Shdr> {
+            let off = shoff.checked_add(idx.checked_mul(shentsize)?)?;
+            let end = off.checked_add(std::mem::size_of::<Elf64Shdr>())?;
+            let shdr_bytes = data.get(off..end)?;
+            // SAFETY: bounded by the mmap slice and section headers are POD.
+            Some(unsafe { &*(shdr_bytes.as_ptr().cast::<Elf64Shdr>()) })
+        };
+        let contents = |shdr: &Elf64Shdr| -> Option<&'a [u8]> {
+            let start = shdr.sh_offset as usize;
+            data.get(start..start.checked_add(shdr.sh_size as usize)?)
+        };
+
+        let mut dynsym: Option<(usize, &Elf64Shdr)> = None;
+        let mut gnu_hash: Option<&Elf64Shdr> = None;
+        for idx in 0..shnum {
+            let shdr = section(idx)?;
+            if shdr.sh_type == SHT_DYNSYM && dynsym.is_none() {
+                dynsym = Some((idx, shdr));
+            } else if shdr.sh_type == SHT_GNU_HASH && gnu_hash.is_none() {
+                gnu_hash = Some(shdr);
+            }
+        }
+        let (dynsym_index, dynsym) = dynsym?;
+        let linked = dynsym.sh_link as usize;
+        if linked >= shnum {
+            return None;
+        }
+        Some(Self {
+            strtab: contents(section(linked)?)?,
+            sym_bytes: contents(dynsym)?,
+            sym_entsize: (dynsym.sh_entsize as usize).max(std::mem::size_of::<Elf64Sym>()),
+            gnu_hash: gnu_hash
+                .filter(|shdr| shdr.sh_link as usize == dynsym_index)
+                .and_then(contents),
+        })
+    }
+
+    fn count(&self) -> usize {
+        self.sym_bytes.len() / self.sym_entsize
+    }
+
+    fn symbol(&self, index: usize) -> Option<&'a Elf64Sym> {
+        let offset = index.checked_mul(self.sym_entsize)?;
+        let entry = self
+            .sym_bytes
+            .get(offset..offset.checked_add(std::mem::size_of::<Elf64Sym>())?)?;
+        // SAFETY: bounded by the mmap slice and symbol entries are POD.
+        Some(unsafe { &*(entry.as_ptr().cast::<Elf64Sym>()) })
+    }
+
+    /// First defined symbol named `wanted` in `.dynsym` order.
+    fn find_defined(&self, wanted: &[u8], use_gnu_hash: bool) -> Option<&'a Elf64Sym> {
+        let mut hashed = self
+            .gnu_hash
+            .filter(|_| use_gnu_hash)
+            .and_then(|table| GnuHashChain::new(table, wanted));
+        let mut linear = 0..self.count();
+        loop {
+            let index = match hashed.as_mut() {
+                Some(chain) => chain.next(),
+                None => linear.next(),
+            }?;
+            let sym = self.symbol(index)?;
+            if sym.st_shndx != 0
+                && sym.st_value != 0
+                && symbol_name_matches(self.strtab, sym.st_name, wanted)
+            {
+                return Some(sym);
+            }
+        }
+    }
 }
 
 fn resolve_symbol_from_data(base: usize, data: &[u8], symbol: &str) -> Option<usize> {
-    let ehdr = data.get(..std::mem::size_of::<Elf64Ehdr>())?;
-    // SAFETY: slice length checked above and ELF header is plain-old-data.
-    let ehdr = unsafe { &*(ehdr.as_ptr().cast::<Elf64Ehdr>()) };
-    if ehdr.e_ident[..4] != ELF_MAGIC {
-        return None;
+    let sym = DynamicSymbols::parse(data)?.find_defined(symbol.as_bytes(), true)?;
+    let addr = base.saturating_add(sym.st_value as usize);
+    // STT_GNU_IFUNC (type 10): st_value points to a resolver function
+    // that returns the actual implementation address. Call it.
+    if sym.st_info & 0xf == 10 {
+        // SAFETY: resolver is a function at `addr` with signature () -> *mut ().
+        type IfuncResolver = unsafe extern "C" fn() -> usize;
+        let resolver: IfuncResolver = unsafe { core::mem::transmute(addr) };
+        return Some(unsafe { resolver() });
     }
-    let shoff = ehdr.e_shoff as usize;
-    let shentsize = ehdr.e_shentsize as usize;
-    let shnum = ehdr.e_shnum as usize;
-    if shentsize < std::mem::size_of::<Elf64Shdr>() || shnum == 0 {
-        return None;
-    }
-
-    let mut dynsym: Option<&Elf64Shdr> = None;
-    let mut dynstr: Option<&Elf64Shdr> = None;
-    for idx in 0..shnum {
-        let off = shoff.checked_add(idx.checked_mul(shentsize)?)?;
-        let end = off.checked_add(std::mem::size_of::<Elf64Shdr>())?;
-        let shdr_bytes = data.get(off..end)?;
-        // SAFETY: bounded by the mmap slice and section headers are POD.
-        let shdr = unsafe { &*(shdr_bytes.as_ptr().cast::<Elf64Shdr>()) };
-        if shdr.sh_type == SHT_DYNSYM {
-            dynsym = Some(shdr);
-            let linked = shdr.sh_link as usize;
-            if linked >= shnum {
-                return None;
-            }
-            let linked_off = shoff.checked_add(linked.checked_mul(shentsize)?)?;
-            let linked_end = linked_off.checked_add(std::mem::size_of::<Elf64Shdr>())?;
-            let linked_bytes = data.get(linked_off..linked_end)?;
-            // SAFETY: bounded by the mmap slice and section headers are POD.
-            dynstr = Some(unsafe { &*(linked_bytes.as_ptr().cast::<Elf64Shdr>()) });
-            break;
-        }
-    }
-
-    let dynsym = dynsym?;
-    let dynstr = dynstr?;
-    let str_start = dynstr.sh_offset as usize;
-    let str_end = str_start.checked_add(dynstr.sh_size as usize)?;
-    let strtab = data.get(str_start..str_end)?;
-    let sym_start = dynsym.sh_offset as usize;
-    let sym_size = dynsym.sh_size as usize;
-    let sym_entsize = (dynsym.sh_entsize as usize).max(std::mem::size_of::<Elf64Sym>());
-    let sym_end = sym_start.checked_add(sym_size)?;
-    let sym_bytes = data.get(sym_start..sym_end)?;
-    let wanted = symbol.as_bytes();
-    let mut offset = 0usize;
-    while offset.checked_add(std::mem::size_of::<Elf64Sym>())? <= sym_bytes.len() {
-        let entry = &sym_bytes[offset..offset + std::mem::size_of::<Elf64Sym>()];
-        // SAFETY: bounded by the mmap slice and symbol entries are POD.
-        let sym = unsafe { &*(entry.as_ptr().cast::<Elf64Sym>()) };
-        if sym.st_shndx != 0
-            && sym.st_value != 0
-            && symbol_name_matches(strtab, sym.st_name, wanted)
-        {
-            let addr = base.saturating_add(sym.st_value as usize);
-            // STT_GNU_IFUNC (type 10): st_value points to a resolver function
-            // that returns the actual implementation address. Call it.
-            let sym_type = sym.st_info & 0xf;
-            if sym_type == 10 {
-                // SAFETY: resolver is a function at `addr` with signature () -> *mut ().
-                type IfuncResolver = unsafe extern "C" fn() -> usize;
-                let resolver: IfuncResolver = unsafe { core::mem::transmute(addr) };
-                let resolved = unsafe { resolver() };
-                return Some(resolved);
-            }
-            return Some(addr);
-        }
-        offset = offset.checked_add(sym_entsize)?;
-    }
-    None
+    Some(addr)
 }
 
 #[allow(unreachable_code)]
@@ -835,7 +942,7 @@ pub(crate) fn host_errno(default_errno: c_int) -> c_int {
 mod tests {
     use std::ffi::c_char;
 
-    use super::{bounded_c_string_len, contains_bytes};
+    use super::{DynamicSymbols, bounded_c_string_len, contains_bytes};
 
     #[test]
     fn bounded_c_string_len_accepts_terminated_input() {
@@ -853,6 +960,56 @@ mod tests {
         let len = unsafe { bounded_c_string_len(input.as_ptr().cast::<c_char>(), input.len()) };
 
         assert_eq!(len, None);
+    }
+
+    /// The `.gnu.hash` lookup must pick exactly the symbol the linear scan
+    /// picks, for every defined name of the real host libc and loader
+    /// (including multiply-versioned names such as `memcpy`).
+    #[test]
+    fn gnu_hash_lookup_matches_linear_scan_for_every_host_symbol() {
+        let mut images = 0usize;
+        for path in [
+            "/lib/x86_64-linux-gnu/libc.so.6",
+            "/lib64/ld-linux-x86-64.so.2",
+        ] {
+            let Ok(data) = std::fs::read(path) else {
+                continue;
+            };
+            let table = DynamicSymbols::parse(&data).expect("parse .dynsym");
+            assert!(table.gnu_hash.is_some(), "{path} has no .gnu.hash");
+            let mut checked = 0usize;
+            for index in 0..table.count() {
+                let sym = table.symbol(index).expect("symbol");
+                if sym.st_shndx == 0 || sym.st_value == 0 {
+                    continue;
+                }
+                let start = sym.st_name as usize;
+                let len = table.strtab[start..]
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .expect("terminated name");
+                let name = &table.strtab[start..start + len];
+                let hashed = table.find_defined(name, true).map(|s| s as *const _);
+                let linear = table.find_defined(name, false).map(|s| s as *const _);
+                assert!(hashed.is_some(), "{path}: {:?} not found via hash", name);
+                assert_eq!(
+                    hashed,
+                    linear,
+                    "{path}: {:?}",
+                    String::from_utf8_lossy(name)
+                );
+                checked += 1;
+            }
+            assert!(checked > 20, "{path}: only {checked} symbols checked");
+            assert!(
+                table
+                    .find_defined(b"no_such_symbol_frankenlibc", true)
+                    .is_none()
+            );
+            assert!(table.find_defined(b"", true).is_none());
+            images += 1;
+        }
+        assert!(images > 0, "no host libc/loader image found to check");
     }
 
     #[test]
