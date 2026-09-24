@@ -5707,9 +5707,9 @@ unsafe fn finish_walk(
 ///
 /// Now a thin shim over `frankenlibc_core::ftw::walk_tree` (bd-ftw-3).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ftw(
+pub unsafe extern "C-unwind" fn ftw(
     dirpath: *const c_char,
-    func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+    func: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
     _nopenfd: c_int,
 ) -> c_int {
     let Some(callback) = func else {
@@ -5756,10 +5756,10 @@ struct FtwInfo {
 /// FTW_MOUNT (stay on same filesystem). FTW_CHDIR is accepted but
 /// not honored by the core walker (caller can chdir before calling).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nftw(
+pub unsafe extern "C-unwind" fn nftw(
     dirpath: *const c_char,
     func: Option<
-        unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+        unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
     >,
     _nopenfd: c_int,
     flags: c_int,
@@ -17667,7 +17667,7 @@ pub unsafe extern "C" fn globfree64(pglob: *mut c_void) {
 
 /// `nftw64` — on x86_64, identical to `nftw` (LFS transparent).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn nftw64(
+pub unsafe extern "C-unwind" fn nftw64(
     dirpath: *const c_char,
     fn_: *const c_void,
     nopenfd: c_int,
@@ -17675,7 +17675,7 @@ pub unsafe extern "C" fn nftw64(
 ) -> c_int {
     // On x86_64, stat == stat64, so nftw64 == nftw. Delegate to native nftw.
     let func: Option<
-        unsafe extern "C" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+        unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
     > = unsafe { std::mem::transmute(fn_) }; // ubs:ignore — nftw64 callback ABI matches nftw on x86_64
     unsafe { nftw(dirpath, func, nopenfd, flags) }
 }
@@ -17685,7 +17685,7 @@ pub unsafe extern "C" fn nftw64(
 /// On 64-bit Linux, dirent64 == dirent, so this delegates to the
 /// native alphasort implementation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int {
+pub unsafe extern "C-unwind" fn alphasort64(a: *mut *const c_void, b: *mut *const c_void) -> c_int {
     unsafe {
         crate::dirent_abi::alphasort(a as *mut *const libc::dirent, b as *mut *const libc::dirent)
     }
@@ -22352,7 +22352,7 @@ pub unsafe extern "C" fn __fxstatat64(
 
 /// `versionsort64` — version-aware directory sort for 64-bit dirents.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn versionsort64(
+pub unsafe extern "C-unwind" fn versionsort64(
     a: *mut *const libc::dirent,
     b: *mut *const libc::dirent,
 ) -> c_int {
@@ -25592,9 +25592,9 @@ pub unsafe extern "C" fn lio_listio64(
 ///
 /// Native implementation: delegates to our own `ftw()` (LFS identical on 64-bit, stat == stat64).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ftw64(
+pub unsafe extern "C-unwind" fn ftw64(
     path: *const c_char,
-    func: Option<unsafe extern "C" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
+    func: Option<unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int) -> c_int>,
     maxfds: c_int,
 ) -> c_int {
     unsafe { ftw(path, func, maxfds) }

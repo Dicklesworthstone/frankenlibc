@@ -4412,7 +4412,11 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     // "buffer full" handler would, cost one write(2) per character. Our
     // buffer is not full, so just append through the buffered path.
     if c == libc::EOF {
-        return if unsafe { crate::stdio_abi::fflush(fp) } == 0 { 0 } else { libc::EOF };
+        return if unsafe { crate::stdio_abi::fflush(fp) } == 0 {
+            0
+        } else {
+            libc::EOF
+        };
     }
     unsafe { crate::stdio_abi::fputc(c, fp) }
 }
@@ -5336,7 +5340,8 @@ pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_vo
         if addr == 0 {
             // glibc exports it from libc.so.6 (GLIBC_2.35), implemented over
             // ld.so's link map.
-            if let Some(resolved) = crate::host_resolve::resolve_host_symbol_raw("_dl_find_object") {
+            if let Some(resolved) = crate::host_resolve::resolve_host_symbol_raw("_dl_find_object")
+            {
                 HOST_DL_FIND_OBJECT.store(resolved, std::sync::atomic::Ordering::Release);
                 addr = resolved;
             }
@@ -7305,7 +7310,7 @@ pub unsafe extern "C" fn scalbnl(x: f64, n: c_int) -> f64 {
 }
 // scandirat: native — scan directory relative to fd
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scandirat(
+pub unsafe extern "C-unwind" fn scandirat(
     dirfd: c_int,
     dirp: *const c_char,
     namelist: *mut *mut *mut c_void,
@@ -7329,79 +7334,20 @@ pub unsafe extern "C" fn scandirat(
         let _ = raw_syscall::sys_close(fd);
         return -1;
     }
-    // Use scandir-style iteration
-    type FilterFn = unsafe extern "C" fn(*const libc::dirent) -> c_int;
+    type FilterFn = unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int;
     type ComparFn =
-        unsafe extern "C" fn(*const *const libc::dirent, *const *const libc::dirent) -> c_int;
-    let filter_fn: Option<FilterFn> = if filter.is_null() {
-        None
-    } else {
-        Some(unsafe { std::mem::transmute::<*mut c_void, FilterFn>(filter) })
-    };
-    let mut entries: Vec<*mut libc::dirent> = Vec::new();
-    loop {
-        let entry = unsafe { crate::dirent_abi::readdir(dir) };
-        if entry.is_null() {
-            break;
-        }
-        let include = match filter_fn {
-            Some(f) => {
-                let rc = unsafe { f(entry) };
-                rc != 0
-            }
-            None => true,
-        };
-        if include {
-            let ent_size = std::mem::size_of::<libc::dirent>();
-            // POSIX scandir contract: caller frees each namelist[i] and
-            // the namelist array via free(). Route through FrankenLibC's
-            // allocator entrypoint so replacement builds keep ownership local.
-            let copy = unsafe { crate::malloc_abi::malloc(ent_size) } as *mut libc::dirent;
-            if copy.is_null() {
-                // Cleanup on OOM
-                for e in &entries {
-                    unsafe { crate::malloc_abi::free(*e as *mut c_void) };
-                }
-                unsafe { crate::dirent_abi::closedir(dir) };
-                return -1;
-            }
-            unsafe { std::ptr::copy_nonoverlapping(entry, copy, 1) };
-            entries.push(copy);
-        }
-    }
-    unsafe { crate::dirent_abi::closedir(dir) };
-    if !compar.is_null() {
-        let cmp: ComparFn = unsafe { std::mem::transmute::<*mut c_void, ComparFn>(compar) };
-        entries.sort_by(|a, b| {
-            let r = unsafe {
-                cmp(
-                    a as *const _ as *const *const libc::dirent,
-                    b as *const _ as *const *const libc::dirent,
-                )
-            };
-            r.cmp(&0)
-        });
-    }
-    let count = entries.len() as c_int;
-    // Same caller-frees contract for the array.
-    let arr = unsafe {
-        crate::malloc_abi::malloc(entries.len() * std::mem::size_of::<*mut libc::dirent>())
-    } as *mut *mut c_void;
-    if arr.is_null() && !entries.is_empty() {
-        for e in &entries {
-            unsafe { crate::malloc_abi::free(*e as *mut c_void) };
-        }
-        return -1;
-    }
-    for (i, e) in entries.iter().enumerate() {
-        unsafe { *arr.add(i) = *e as *mut c_void };
-    }
-    unsafe { *namelist = arr };
-    count
+        unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int;
+    // SAFETY: NULL maps to None; otherwise the caller passed C function
+    // pointers of these scandir callback types.
+    let filter_fn = (!filter.is_null())
+        .then(|| unsafe { std::mem::transmute::<*mut c_void, FilterFn>(filter) });
+    let compar_fn = (!compar.is_null())
+        .then(|| unsafe { std::mem::transmute::<*mut c_void, ComparFn>(compar) });
+    unsafe { crate::dirent_abi::scandir_dir(dir, namelist.cast(), filter_fn, compar_fn) }
 }
 // scandirat64: on 64-bit Linux, identical to scandirat
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scandirat64(
+pub unsafe extern "C-unwind" fn scandirat64(
     dirfd: c_int,
     dirp: *const c_char,
     namelist: *mut *mut *mut c_void,
@@ -9147,11 +9093,11 @@ pub unsafe extern "C" fn __inet6_scopeid_pton(
 // ---------------------------------------------------------------------------
 // Internal tree-search aliases (__tsearch, __tfind, __tdelete, __twalk, __twalk_r)
 // ---------------------------------------------------------------------------
-type TreeCompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type TreeCompareFn = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 
 /// `__tsearch` — internal tsearch alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __tsearch(
+pub unsafe extern "C-unwind" fn __tsearch(
     key: *const c_void,
     rootp: *mut *mut c_void,
     compar: TreeCompareFn,
@@ -9161,7 +9107,7 @@ pub unsafe extern "C" fn __tsearch(
 
 /// `__tfind` — internal tfind alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __tfind(
+pub unsafe extern "C-unwind" fn __tfind(
     key: *const c_void,
     rootp: *const *mut c_void,
     compar: TreeCompareFn,
@@ -9171,7 +9117,7 @@ pub unsafe extern "C" fn __tfind(
 
 /// `__tdelete` — internal tdelete alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __tdelete(
+pub unsafe extern "C-unwind" fn __tdelete(
     key: *const c_void,
     rootp: *mut *mut c_void,
     compar: TreeCompareFn,
@@ -9181,18 +9127,18 @@ pub unsafe extern "C" fn __tdelete(
 
 /// `__twalk` — internal twalk alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __twalk(
+pub unsafe extern "C-unwind" fn __twalk(
     root: *const c_void,
-    action: unsafe extern "C" fn(*const c_void, crate::search_abi::Visit, c_int),
+    action: unsafe extern "C-unwind" fn(*const c_void, crate::search_abi::Visit, c_int),
 ) {
     unsafe { crate::search_abi::twalk(root, action) }
 }
 
 /// `__twalk_r` — reentrant tree walk with closure data (native).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __twalk_r(
+pub unsafe extern "C-unwind" fn __twalk_r(
     root: *const c_void,
-    action: unsafe extern "C" fn(*const c_void, c_int, c_int, *mut c_void),
+    action: unsafe extern "C-unwind" fn(*const c_void, c_int, c_int, *mut c_void),
     closure: *mut c_void,
 ) {
     unsafe { crate::search_abi::twalk_r(root, action, closure) }
@@ -9353,7 +9299,10 @@ struct GconvSpec {
 /// `__gconv_destroy_spec`).
 unsafe fn gconv_spec_name(code: *const c_char) -> *mut c_char {
     let bytes = unsafe { std::ffi::CStr::from_ptr(code) }.to_bytes();
-    let name = &bytes[..bytes.windows(2).position(|w| w == b"//").unwrap_or(bytes.len())];
+    let name = &bytes[..bytes
+        .windows(2)
+        .position(|w| w == b"//")
+        .unwrap_or(bytes.len())];
     let p = unsafe { super::malloc_abi::malloc(name.len() + 1) }.cast::<c_char>();
     if !p.is_null() {
         unsafe {
@@ -9434,7 +9383,9 @@ pub unsafe extern "C" fn __gconv_open(
     if handle.is_null() || spec.fromcode.is_null() || spec.tocode.is_null() {
         return GCONV_NOCONV;
     }
-    let mut to = unsafe { std::ffi::CStr::from_ptr(spec.tocode) }.to_bytes().to_vec();
+    let mut to = unsafe { std::ffi::CStr::from_ptr(spec.tocode) }
+        .to_bytes()
+        .to_vec();
     to.extend_from_slice(b"//");
     if spec.translit {
         to.extend_from_slice(b"TRANSLIT,");
@@ -9482,7 +9433,9 @@ pub unsafe extern "C" fn __gconv_get_cache() -> *mut c_void {
         else {
             return 0;
         };
-        if bytes.len() < 12 || u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != GCONVCACHE_MAGIC {
+        if bytes.len() < 12
+            || u32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != GCONVCACHE_MAGIC
+        {
             return 0;
         }
         // Process-lifetime, read-only after this point.

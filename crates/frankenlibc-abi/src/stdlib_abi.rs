@@ -1973,11 +1973,11 @@ fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn qsort(
+pub unsafe extern "C-unwind" fn qsort(
     base: *mut c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
 ) {
     if base.is_null() || nmemb == 0 || size == 0 {
         return;
@@ -2055,11 +2055,11 @@ pub unsafe extern "C" fn qsort(
 /// Caller must ensure `base` is valid for `nmemb * size` writable
 /// bytes and `compar` (if non-NULL) is a valid C function pointer.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn mergesort(
+pub unsafe extern "C-unwind" fn mergesort(
     base: *mut c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
 ) -> c_int {
     if size == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
@@ -2109,11 +2109,11 @@ pub unsafe extern "C" fn mergesort(
 ///
 /// Same as [`mergesort`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn heapsort(
+pub unsafe extern "C-unwind" fn heapsort(
     base: *mut c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
 ) -> c_int {
     if size == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
@@ -2287,7 +2287,7 @@ unsafe fn strict_bsearch_raw(
     base: *const c_void,
     nmemb: usize,
     size: usize,
-    compar: unsafe extern "C" fn(*const c_void, *const c_void) -> c_int,
+    compar: unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int,
 ) -> *mut c_void {
     let base = base.cast::<u8>();
     let mut low = 0usize;
@@ -2316,12 +2316,12 @@ unsafe fn strict_bsearch_raw(
 /// evidence. Production calls use [`bsearch`].
 #[doc(hidden)]
 #[inline(never)]
-pub unsafe extern "C" fn bsearch_strict_slice_for_bench(
+pub unsafe extern "C-unwind" fn bsearch_strict_slice_for_bench(
     key: *const c_void,
     base: *const c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
 ) -> *mut c_void {
     if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
         return ptr::null_mut();
@@ -2347,12 +2347,12 @@ pub unsafe extern "C" fn bsearch_strict_slice_for_bench(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn bsearch(
+pub unsafe extern "C-unwind" fn bsearch(
     key: *const c_void,
     base: *const c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int>,
 ) -> *mut c_void {
     if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
         return ptr::null_mut();
@@ -4341,11 +4341,11 @@ pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
 ///
 /// The comparator receives the context pointer as its third argument.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn qsort_r(
+pub unsafe extern "C-unwind" fn qsort_r(
     base: *mut c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
     arg: *mut c_void,
 ) {
     let Some(cmp_fn) = compar else {
@@ -4418,12 +4418,12 @@ pub unsafe extern "C" fn qsort_r(
 /// comparator reads. `compar`, when set, must be safe to invoke
 /// with `(key, mid_elem, thunk)` triples.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn bsearch_r(
+pub unsafe extern "C-unwind" fn bsearch_r(
     key: *const c_void,
     base: *const c_void,
     nmemb: usize,
     size: usize,
-    compar: Option<unsafe extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
     thunk: *mut c_void,
 ) -> *mut c_void {
     if key.is_null() || base.is_null() || nmemb == 0 || size == 0 {
@@ -5453,7 +5453,10 @@ pub extern "C" fn get_avphys_pages() -> c_long {
 // POSIX/GNU binary tree search exports live in search_abi.rs. Keep this
 // non-exported delegate for internal callers that still route through
 // stdlib_abi while avoiding a duplicate release symbol.
-pub unsafe extern "C" fn tdestroy(root: *mut c_void, freefn: unsafe extern "C" fn(*mut c_void)) {
+pub unsafe extern "C-unwind" fn tdestroy(
+    root: *mut c_void,
+    freefn: unsafe extern "C-unwind" fn(*mut c_void),
+) {
     // SAFETY: `search_abi::tdestroy` owns the current opaque tree layout and
     // performs the same GNU post-order callback contract.
     unsafe { crate::search_abi::tdestroy(root, Some(freefn)) };

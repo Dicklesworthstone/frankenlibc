@@ -2343,18 +2343,20 @@ const ONCE_INIT: i32 = 0;
 const ONCE_IN_PROGRESS: i32 = 1;
 const ONCE_DONE: i32 = 2;
 
-#[cfg(not(all(feature = "standalone", feature = "owned-unwind-stub")))]
-fn run_pthread_once_init(routine: unsafe extern "C" fn()) -> Result<(), ()> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        unsafe { routine() };
-    }))
-    .map_err(|_| ())
-}
+/// Returns the once word to INIT and wakes waiters if `init_routine` unwinds
+/// (a C++ exception, or a forced unwind from thread cancellation). As in
+/// glibc, the unwind keeps propagating to the caller and the next
+/// `pthread_once` on the same control runs the routine again.
+struct OnceResetOnUnwind<'a>(&'a AtomicI32);
 
-#[cfg(all(feature = "standalone", feature = "owned-unwind-stub"))]
-fn run_pthread_once_init(routine: unsafe extern "C" fn()) -> Result<(), ()> {
-    unsafe { routine() };
-    Ok(())
+impl Drop for OnceResetOnUnwind<'_> {
+    fn drop(&mut self) {
+        self.0.store(ONCE_INIT, Ordering::Release);
+        #[cfg(target_os = "linux")]
+        {
+            let _ = futex_wake_private(self.0, i32::MAX);
+        }
+    }
 }
 
 fn reset_mutex_registry_for_tests() {
@@ -3547,9 +3549,9 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// Guarantees that `init_routine` is called exactly once, even when multiple
 /// threads call `pthread_once` concurrently with the same `once_control`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_once(
+pub unsafe extern "C-unwind" fn pthread_once(
     once_control: *mut libc::pthread_once_t,
-    init_routine: Option<unsafe extern "C" fn()>,
+    init_routine: Option<unsafe extern "C-unwind" fn()>,
 ) -> c_int {
     if once_control.is_null() {
         return libc::EINVAL;
@@ -3576,30 +3578,17 @@ pub unsafe extern "C" fn pthread_once(
                 Ordering::Acquire,
             ) {
                 Ok(_) => {
-                    // We won; run the init routine. The default lane catches
-                    // panics so the once word can be reset. The standalone
-                    // owned-unwind experiment builds for abort-on-panic and
-                    // avoids linking std panic TLS here.
-                    let result = run_pthread_once_init(routine);
-                    match result {
-                        Ok(()) => {
-                            state.store(ONCE_DONE, Ordering::Release);
-                            #[cfg(target_os = "linux")]
-                            {
-                                let _ = futex_wake_private(state, i32::MAX);
-                            }
-                            return 0;
-                        }
-                        Err(_) => {
-                            // Reset to ONCE_INIT so another thread can retry.
-                            state.store(ONCE_INIT, Ordering::Release);
-                            #[cfg(target_os = "linux")]
-                            {
-                                let _ = futex_wake_private(state, i32::MAX);
-                            }
-                            return libc::EINVAL;
-                        }
+                    // We won; run the init routine. If it unwinds, the guard
+                    // resets the word so another caller can retry.
+                    let reset = OnceResetOnUnwind(state);
+                    unsafe { routine() };
+                    core::mem::forget(reset);
+                    state.store(ONCE_DONE, Ordering::Release);
+                    #[cfg(target_os = "linux")]
+                    {
+                        let _ = futex_wake_private(state, i32::MAX);
                     }
+                    return 0;
                 }
                 Err(_) => {
                     // State changed concurrently. Loop and retry.
@@ -6902,9 +6891,9 @@ pub unsafe extern "C" fn __pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_r
 
 /// `__pthread_once` — internal alias.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_once(
+pub unsafe extern "C-unwind" fn __pthread_once(
     once: *mut libc::pthread_once_t,
-    init: Option<unsafe extern "C" fn()>,
+    init: Option<unsafe extern "C-unwind" fn()>,
 ) -> c_int {
     unsafe { pthread_once(once, init) }
 }

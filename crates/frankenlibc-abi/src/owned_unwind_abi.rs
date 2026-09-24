@@ -709,7 +709,7 @@ fn collect_loaded_eh_frame_ranges() -> Vec<OwnedLoadedEhFrameRange> {
     ranges
 }
 
-unsafe extern "C" fn collect_loaded_eh_frame_ranges_callback(
+unsafe extern "C-unwind" fn collect_loaded_eh_frame_ranges_callback(
     info: *mut libc::dl_phdr_info,
     _size: usize,
     data: *mut c_void,

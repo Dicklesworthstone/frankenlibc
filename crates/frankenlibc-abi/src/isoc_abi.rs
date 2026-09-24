@@ -39,14 +39,14 @@ type WcharT = i32;
 
 /// `__isoc23_scanf` — C23 alias for scanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc23_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { crate::stdio_abi::vscanf(format, ap) }
 }
 
 /// `__isoc23_fscanf` — C23 alias for fscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_fscanf(
+pub unsafe extern "C-unwind" fn __isoc23_fscanf(
     stream: *mut c_void,
     format: *const c_char,
     mut args: ...
@@ -224,13 +224,13 @@ pub unsafe extern "C" fn __isoc23_swscanf(
 
 /// `__isoc23_vscanf` — C23 alias for vscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc23_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
     unsafe { crate::stdio_abi::vscanf(format, ap) }
 }
 
 /// `__isoc23_vfscanf` — C23 alias for vfscanf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc23_vfscanf(
+pub unsafe extern "C-unwind" fn __isoc23_vfscanf(
     stream: *mut c_void,
     format: *const c_char,
     ap: *mut c_void,

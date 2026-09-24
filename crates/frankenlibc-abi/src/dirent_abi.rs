@@ -508,7 +508,7 @@ pub unsafe extern "C" fn readdir64(dirp: *mut DIR) -> *mut c_void {
 ///
 /// Implements strcmp semantics on d_name for use with scandir.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn alphasort(
+pub unsafe extern "C-unwind" fn alphasort(
     a: *mut *const libc::dirent,
     b: *mut *const libc::dirent,
 ) -> c_int {
@@ -550,7 +550,7 @@ pub unsafe extern "C" fn alphasort(
 ///
 /// Like `alphasort` but uses `strverscmp` for version-aware ordering.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn versionsort(
+pub unsafe extern "C-unwind" fn versionsort(
     a: *mut *const libc::dirent,
     b: *mut *const libc::dirent,
 ) -> c_int {
@@ -577,13 +577,53 @@ pub unsafe extern "C" fn versionsort(
 /// Opens the directory at `path`, reads all entries (applying `filter`
 /// if provided), sorts with `compar` if provided, and returns the
 /// result in a malloc-allocated array that the caller must free.
+/// Everything `scandir` owns while user callbacks run: the open directory,
+/// the copied entries and the result array. Dropping it releases all of them,
+/// so an error return or a `filter`/`compar` callback that unwinds (a C++
+/// exception) leaks nothing — glibc's scandir runs the same cleanup on unwind.
+/// A successful scan hands the entries to the caller with `into_namelist`.
+struct ScandirState {
+    dir: *mut DIR,
+    entries: Vec<*mut libc::dirent>,
+    array: *mut *mut libc::dirent,
+}
+
+impl ScandirState {
+    fn close_dir(&mut self) {
+        if !self.dir.is_null() {
+            unsafe { closedir(self.dir) };
+            self.dir = std::ptr::null_mut();
+        }
+    }
+
+    /// Transfer ownership of `array` and the entries it points to.
+    fn into_namelist(mut self) -> *mut *mut libc::dirent {
+        let array = self.array;
+        self.array = std::ptr::null_mut();
+        self.entries.clear();
+        array
+    }
+}
+
+impl Drop for ScandirState {
+    fn drop(&mut self) {
+        self.close_dir();
+        for &e in &self.entries {
+            unsafe { crate::malloc_abi::free(e as *mut c_void) };
+        }
+        if !self.array.is_null() {
+            unsafe { crate::malloc_abi::free(self.array as *mut c_void) };
+        }
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scandir(
+pub unsafe extern "C-unwind" fn scandir(
     path: *const c_char,
     namelist: *mut *mut *mut libc::dirent,
-    filter: Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+    filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int>,
     compar: Option<
-        unsafe extern "C" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+        unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
     >,
 ) -> c_int {
     if path.is_null() || namelist.is_null() {
@@ -595,11 +635,27 @@ pub unsafe extern "C" fn scandir(
     if dir.is_null() {
         return -1; // errno set by opendir
     }
+    unsafe { scandir_dir(dir, namelist, filter, compar) }
+}
 
-    let mut entries: Vec<*mut libc::dirent> = Vec::new();
+/// Body of `scandir`/`scandirat` once the directory is open: takes ownership
+/// of `dir` and closes it on every path.
+pub(crate) unsafe fn scandir_dir(
+    dir: *mut DIR,
+    namelist: *mut *mut *mut libc::dirent,
+    filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int>,
+    compar: Option<
+        unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+    >,
+) -> c_int {
+    let mut state = ScandirState {
+        dir,
+        entries: Vec::new(),
+        array: std::ptr::null_mut(),
+    };
 
     loop {
-        let entry = unsafe { readdir(dir) };
+        let entry = unsafe { readdir(state.dir) };
         if entry.is_null() {
             break;
         }
@@ -620,63 +676,47 @@ pub unsafe extern "C" fn scandir(
             // so replacement builds do not retain a host libc escape hatch.
             let copy = unsafe { crate::malloc_abi::malloc(size) } as *mut libc::dirent;
             if copy.is_null() {
-                for &e in &entries {
-                    unsafe { crate::malloc_abi::free(e as *mut c_void) };
-                }
-                unsafe { closedir(dir) };
+                drop(state);
                 unsafe { set_abi_errno(errno::ENOMEM) };
                 return -1;
             }
             unsafe { std::ptr::copy_nonoverlapping(entry, copy, 1) };
-            entries.push(copy);
+            state.entries.push(copy);
         }
     }
 
-    unsafe { closedir(dir) };
+    state.close_dir();
 
-    let count = entries.len();
+    let count = state.entries.len();
 
     // Prevent integer overflow in array size calculation.
     // libc::dirent is large (~280 bytes), and namelist is an array of pointers.
     if count > (usize::MAX / std::mem::size_of::<*mut libc::dirent>()) {
-        for &e in &entries {
-            unsafe { crate::malloc_abi::free(e as *mut c_void) };
-        }
+        drop(state);
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
     }
 
     // Allocate the namelist array through our allocator so replacement-mode
-    // scans stay free of direct host libc calls.
-    if count == 0 {
-        // Empty result — allocate a minimal array
-        let array = unsafe { crate::malloc_abi::malloc(std::mem::size_of::<*mut libc::dirent>()) }
-            as *mut *mut libc::dirent;
-        if array.is_null() {
-            unsafe { set_abi_errno(errno::ENOMEM) };
-            return -1;
-        }
-        unsafe { *namelist = array };
-        return 0;
-    }
-
-    let array_size = count * std::mem::size_of::<*mut libc::dirent>();
-    let array = unsafe { crate::malloc_abi::malloc(array_size) } as *mut *mut libc::dirent;
-    if array.is_null() {
-        for &e in &entries {
-            unsafe { crate::malloc_abi::free(e as *mut c_void) };
-        }
+    // scans stay free of direct host libc calls. An empty result still gets a
+    // minimal array.
+    let array_size = count.max(1) * std::mem::size_of::<*mut libc::dirent>();
+    state.array = unsafe { crate::malloc_abi::malloc(array_size) } as *mut *mut libc::dirent;
+    if state.array.is_null() {
+        drop(state);
         unsafe { set_abi_errno(errno::ENOMEM) };
         return -1;
     }
 
-    for (i, &e) in entries.iter().enumerate() {
-        unsafe { *array.add(i) = e };
+    for (i, &e) in state.entries.iter().enumerate() {
+        unsafe { *state.array.add(i) = e };
     }
 
     // Sort if comparator provided
-    if let Some(cmp) = compar {
-        let slice = unsafe { std::slice::from_raw_parts_mut(array, count) };
+    if let Some(cmp) = compar
+        && count > 0
+    {
+        let slice = unsafe { std::slice::from_raw_parts_mut(state.array, count) };
         slice.sort_unstable_by(|a, b| {
             let pa = a as *const *mut libc::dirent as *mut *const libc::dirent;
             let pb = b as *const *mut libc::dirent as *mut *const libc::dirent;
@@ -685,7 +725,7 @@ pub unsafe extern "C" fn scandir(
         });
     }
 
-    unsafe { *namelist = array };
+    unsafe { *namelist = state.into_namelist() };
     count as c_int
 }
 
@@ -697,11 +737,11 @@ pub unsafe extern "C" fn scandir(
 ///
 /// On 64-bit Linux, dirent and dirent64 have identical layouts.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scandir64(
+pub unsafe extern "C-unwind" fn scandir64(
     path: *const c_char,
     namelist: *mut *mut *mut c_void,
-    filter: Option<unsafe extern "C" fn(*const c_void) -> c_int>,
-    compar: Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
+    filter: Option<unsafe extern "C-unwind" fn(*const c_void) -> c_int>,
+    compar: Option<unsafe extern "C-unwind" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
 ) -> c_int {
     // On 64-bit Linux, dirent64 == dirent. Transmute function pointers.
     unsafe {
@@ -709,13 +749,15 @@ pub unsafe extern "C" fn scandir64(
             path,
             namelist as *mut *mut *mut libc::dirent,
             std::mem::transmute::<
-                Option<unsafe extern "C" fn(*const c_void) -> c_int>,
-                Option<unsafe extern "C" fn(*const libc::dirent) -> c_int>,
+                Option<unsafe extern "C-unwind" fn(*const c_void) -> c_int>,
+                Option<unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int>,
             >(filter),
             std::mem::transmute::<
-                Option<unsafe extern "C" fn(*mut *const c_void, *mut *const c_void) -> c_int>,
                 Option<
-                    unsafe extern "C" fn(
+                    unsafe extern "C-unwind" fn(*mut *const c_void, *mut *const c_void) -> c_int,
+                >,
+                Option<
+                    unsafe extern "C-unwind" fn(
                         *mut *const libc::dirent,
                         *mut *const libc::dirent,
                     ) -> c_int,

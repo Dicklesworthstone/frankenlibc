@@ -1158,8 +1158,7 @@ impl FastFixedMemRead {
         if self.handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&self.handle) {
             // SAFETY: a non-legacy id is the address of the stream's live
             // NativeFile handle; `_flags` is its first, aligned int field.
-            let word =
-                unsafe { std::sync::atomic::AtomicI32::from_ptr(self.handle as *mut i32) };
+            let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(self.handle as *mut i32) };
             let bit = io_internal_abi::glibc_flag_bits::EOF_SEEN;
             if eof {
                 word.fetch_or(bit, Ordering::Relaxed);
@@ -3301,7 +3300,7 @@ fn raw_isatty(fd: c_int) -> bool {
 
 /// POSIX `fclose`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fclose(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     let id = canonical_stream_id(stream);
     if id == 0 {
         return libc::EOF;
@@ -3455,7 +3454,7 @@ pub unsafe fn fflush_managed_only_for_abort() -> c_int {
 
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
     // MT-safe cell-cache fast path (see feof): a threaded fflush-per-write (durability-logging)
     // loop otherwise pays `canonical_stream_id` (×3) + decide + `stream_cell` PER CALL. A gen-valid
     // hit is a non-cookie non-mem fd stream (primed by the loop's fputc/write), so the slow path's
@@ -3597,7 +3596,7 @@ pub unsafe extern "C" fn fflush(stream: *mut c_void) -> c_int {
 
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     // Single-threaded inline read fast path: a byte already buffered for a cached, clean
     // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
     // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
@@ -3764,7 +3763,7 @@ pub unsafe extern "C" fn fgetc(stream: *mut c_void) -> c_int {
 
 /// POSIX `fputc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let byte = c as u8;
 
     // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
@@ -4099,7 +4098,11 @@ unsafe fn read_cached_ascii_line_wide_inner(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_void) -> *mut c_char {
+pub unsafe extern "C-unwind" fn fgets(
+    buf: *mut c_char,
+    size: c_int,
+    stream: *mut c_void,
+) -> *mut c_char {
     if buf.is_null() || size <= 0 {
         return std::ptr::null_mut();
     }
@@ -4315,7 +4318,7 @@ pub unsafe extern "C" fn fgets(buf: *mut c_char, size: c_int, stream: *mut c_voi
 
 /// POSIX `fputs`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
     if s.is_null() {
         return libc::EOF;
     }
@@ -4523,7 +4526,7 @@ pub unsafe extern "C" fn fputs(s: *const c_char, stream: *mut c_void) -> c_int {
 
 /// POSIX `fread`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fread(
+pub unsafe extern "C-unwind" fn fread(
     ptr: *mut c_void,
     size: usize,
     nmemb: usize,
@@ -4704,7 +4707,7 @@ pub unsafe extern "C" fn fread(
 
 /// POSIX `fwrite`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwrite(
+pub unsafe extern "C-unwind" fn fwrite(
     ptr: *const c_void,
     size: usize,
     nmemb: usize,
@@ -4956,7 +4959,7 @@ unsafe fn fd_seek_locked(
 
 /// POSIX `fseek`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whence: c_int) -> c_int {
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -5106,7 +5109,7 @@ pub unsafe extern "C" fn fseek(stream: *mut c_void, offset: c_long, whence: c_in
 
 /// POSIX `ftell`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
+pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -5162,19 +5165,19 @@ pub unsafe extern "C" fn ftell(stream: *mut c_void) -> c_long {
 
 /// POSIX `fseeko` — fseek with off_t offset (identical on LP64).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fseeko(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn fseeko(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
     unsafe { fseek(stream, offset as c_long, whence) }
 }
 
 /// POSIX `ftello` — ftell with off_t return (identical on LP64).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ftello(stream: *mut c_void) -> i64 {
+pub unsafe extern "C-unwind" fn ftello(stream: *mut c_void) -> i64 {
     unsafe { ftell(stream) as i64 }
 }
 
 /// POSIX `rewind`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn rewind(stream: *mut c_void) {
+pub unsafe extern "C-unwind" fn rewind(stream: *mut c_void) {
     // rewind is fseek(stream, 0, SEEK_SET) + clearerr.
     unsafe { fseek(stream, 0, libc::SEEK_SET) };
 
@@ -5194,7 +5197,7 @@ pub unsafe extern "C" fn rewind(stream: *mut c_void) {
 
 /// POSIX `feof`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn feof(stream: *mut c_void) -> c_int {
     // Single-threaded inline fast path: the pointer-keyed write cache only ever holds
     // non-cookie, non-mem fd streams, so `sync_fast_fixed_mem_read_to_stream` is a no-op
     // for a cached stream (fast_fixed_mem_read(id) == None) — reading `is_eof()` directly
@@ -5233,7 +5236,7 @@ pub unsafe extern "C" fn feof(stream: *mut c_void) -> c_int {
 
 /// POSIX `ferror`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn ferror(stream: *mut c_void) -> c_int {
     // Single-threaded inline fast path (see feof): cached => non-mem fd stream => read
     // `is_error()` directly, skipping the 3 per-call locks. Byte-identical.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
@@ -5265,7 +5268,7 @@ pub unsafe extern "C" fn ferror(stream: *mut c_void) -> c_int {
 
 /// POSIX `clearerr`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
+pub unsafe extern "C-unwind" fn clearerr(stream: *mut c_void) {
     // ST fast path: a cache hit is a non-mem fd stream (fast_fixed_mem_read(id)==None), so
     // the slow path reduces to `s.clear_err()` — do it directly, skipping the 3 per-call
     // locks. Byte-identical. Mutating, but ST-gated ⇒ unique access.
@@ -5305,7 +5308,7 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
 
 /// POSIX `ungetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     if c == libc::EOF {
         return libc::EOF;
     }
@@ -5353,7 +5356,7 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
 
 /// POSIX `fileno`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fileno(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fileno(stream: *mut c_void) -> c_int {
     // ST fast path: a cache hit is a non-cookie non-mem fd stream, so `is_mem_backed()`
     // is false and the slow path returns `s.fd()` — read it directly, skipping the 3
     // per-call locks (native + registry_contains + registry). Byte-identical. (feof A/B:
@@ -5404,7 +5407,7 @@ const GLIBC_DEFAULT_STREAM_BUFSIZ: usize = 4096;
 
 /// POSIX `setvbuf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setvbuf(
+pub unsafe extern "C-unwind" fn setvbuf(
     stream: *mut c_void,
     _buf: *mut c_char,
     mode: c_int,
@@ -5465,7 +5468,7 @@ pub unsafe extern "C" fn setvbuf(
 
 /// POSIX `setbuf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
+pub unsafe extern "C-unwind" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
     if buf.is_null() {
         unsafe {
             setvbuf(stream, std::ptr::null_mut(), 2 /* _IONBF */, 0)
@@ -5483,14 +5486,14 @@ pub unsafe extern "C" fn setbuf(stream: *mut c_void, buf: *mut c_char) {
 
 /// POSIX `putchar`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putchar(c: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn putchar(c: c_int) -> c_int {
     // POSIX: putchar(c) is equivalent to fputc(c, stdout).
     unsafe { fputc(c, active_stdout_stream()) }
 }
 
 /// POSIX `puts`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
+pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
     if s.is_null() {
         return libc::EOF;
     }
@@ -5568,7 +5571,7 @@ pub unsafe extern "C" fn puts(s: *const c_char) -> c_int {
 
 /// POSIX `getchar`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getchar() -> c_int {
+pub unsafe extern "C-unwind" fn getchar() -> c_int {
     unsafe { fgetc(STDIN_SENTINEL as *mut c_void) }
 }
 
@@ -8472,7 +8475,7 @@ pub unsafe extern "C" fn sprintf(
 
 /// POSIX `fprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fprintf(
+pub unsafe extern "C-unwind" fn fprintf(
     stream: *mut c_void,
     format: *const c_char,
     mut args: ...
@@ -8714,7 +8717,7 @@ pub unsafe extern "C" fn fprintf(
 
 /// POSIX `printf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn printf(format: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -9748,7 +9751,7 @@ unsafe fn try_vprintf_exact_stream(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfprintf(
+pub unsafe extern "C-unwind" fn vfprintf(
     stream: *mut c_void,
     format: *const c_char,
     ap: *mut c_void,
@@ -9956,7 +9959,7 @@ pub unsafe extern "C" fn vfprintf(
 
 /// POSIX `vprintf` — format to stdout from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -10932,7 +10935,7 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
 
 /// POSIX `fscanf` — scan formatted input from stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fscanf(
+pub unsafe extern "C-unwind" fn fscanf(
     stream: *mut c_void,
     format: *const c_char,
     mut args: ...
@@ -11009,7 +11012,7 @@ pub unsafe extern "C" fn fscanf(
 
 /// POSIX `scanf` — scan formatted input from stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn scanf(format: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -11153,7 +11156,7 @@ pub unsafe extern "C" fn vsscanf(
 
 /// POSIX `vfscanf` — scan formatted input from stream with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfscanf(
+pub unsafe extern "C-unwind" fn vfscanf(
     stream: *mut c_void,
     format: *const c_char,
     ap: *mut c_void,
@@ -11220,7 +11223,7 @@ pub unsafe extern "C" fn vfscanf(
 
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
     unsafe { vfscanf(STDIN_SENTINEL as *mut c_void, format, ap) }
 }
 
@@ -11378,13 +11381,13 @@ pub(crate) unsafe fn vscanf_write_one(
 
 /// POSIX `getc` — identical to `fgetc` but as a function (not macro).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getc(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn getc(stream: *mut c_void) -> c_int {
     unsafe { fgetc(stream) }
 }
 
 /// POSIX `putc` — identical to `fputc` but as a function (not macro).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putc(c: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn putc(c: c_int, stream: *mut c_void) -> c_int {
     unsafe { fputc(c, stream) }
 }
 
@@ -11397,7 +11400,7 @@ pub unsafe extern "C" fn putc(c: c_int, stream: *mut c_void) -> c_int {
 /// Stores the current value of the stream's file position into `*pos`.
 /// Returns 0 on success, -1 on error with errno set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) -> c_int {
+pub unsafe extern "C-unwind" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) -> c_int {
     if stream.is_null() || pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -11462,7 +11465,7 @@ pub unsafe extern "C" fn fgetpos(stream: *mut c_void, pos: *mut libc::fpos_t) ->
 /// Restores the file position from `*pos` (previously set by `fgetpos`).
 /// Returns 0 on success, -1 on error with errno set.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) -> c_int {
+pub unsafe extern "C-unwind" fn fsetpos(stream: *mut c_void, pos: *const libc::fpos_t) -> c_int {
     if stream.is_null() || pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -11611,7 +11614,7 @@ fn fd_decimal_into(n: u32, buf: &mut [u8]) -> usize {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn freopen(
+pub unsafe extern "C-unwind" fn freopen(
     pathname: *const c_char,
     mode: *const c_char,
     stream: *mut c_void,
@@ -11986,7 +11989,7 @@ unsafe fn getdelim_finish(buf: &[u8], lineptr: *mut *mut c_char, n: *mut usize) 
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getdelim(
+pub unsafe extern "C-unwind" fn getdelim(
     lineptr: *mut *mut c_char,
     n: *mut usize,
     delim: c_int,
@@ -12092,7 +12095,7 @@ pub unsafe extern "C" fn getdelim(
 ///
 /// Equivalent to `getdelim(lineptr, n, '\n', stream)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getline(
+pub unsafe extern "C-unwind" fn getline(
     lineptr: *mut *mut c_char,
     n: *mut usize,
     stream: *mut c_void,
@@ -12135,7 +12138,7 @@ pub unsafe extern "C" fn getline(
 ///
 /// Same as [`getline`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __getline(
+pub unsafe extern "C-unwind" fn __getline(
     lineptr: *mut *mut c_char,
     n: *mut usize,
     stream: *mut c_void,
@@ -12342,7 +12345,7 @@ static POPEN_PIDS: Mutex<Option<ArtifactHashMap<usize, i32>>> = Mutex::new(None)
 /// that reads from the child's stdout. If `"w"`, returns a stream that writes
 /// to the child's stdin.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *mut c_void {
+pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char) -> *mut c_void {
     if command.is_null() || typ.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return std::ptr::null_mut();
@@ -12525,7 +12528,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
 ///
 /// Returns the child's exit status, or -1 on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pclose(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn pclose(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -12573,7 +12576,7 @@ pub unsafe extern "C" fn fopen64(pathname: *const c_char, mode: *const c_char) -
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn freopen64(
+pub unsafe extern "C-unwind" fn freopen64(
     pathname: *const c_char,
     mode: *const c_char,
     stream: *mut c_void,
@@ -12587,17 +12590,17 @@ pub unsafe extern "C" fn tmpfile64() -> *mut c_void {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn fseeko64(stream: *mut c_void, offset: i64, whence: c_int) -> c_int {
     unsafe { fseeko(stream, offset, whence) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ftello64(stream: *mut c_void) -> i64 {
+pub unsafe extern "C-unwind" fn ftello64(stream: *mut c_void) -> i64 {
     unsafe { ftello(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_int {
     if pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -12606,7 +12609,7 @@ pub unsafe extern "C" fn fgetpos64(stream: *mut c_void, pos: *mut c_void) -> c_i
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c_int {
     if pos.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -12630,10 +12633,10 @@ pub unsafe extern "C" fn fsetpos64(stream: *mut c_void, pos: *const c_void) -> c
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct CookieIoFuncs {
-    pub read: Option<unsafe extern "C" fn(*mut c_void, *mut c_char, usize) -> isize>,
-    pub write: Option<unsafe extern "C" fn(*mut c_void, *const c_char, usize) -> isize>,
-    pub seek: Option<unsafe extern "C" fn(*mut c_void, *mut i64, c_int) -> c_int>,
-    pub close: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    pub read: Option<unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, usize) -> isize>,
+    pub write: Option<unsafe extern "C-unwind" fn(*mut c_void, *const c_char, usize) -> isize>,
+    pub seek: Option<unsafe extern "C-unwind" fn(*mut c_void, *mut i64, c_int) -> c_int>,
+    pub close: Option<unsafe extern "C-unwind" fn(*mut c_void) -> c_int>,
 }
 
 /// Metadata for a cookie-backed stream.
@@ -12984,7 +12987,7 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setlinebuf(stream: *mut c_void) {
+pub unsafe extern "C-unwind" fn setlinebuf(stream: *mut c_void) {
     let _ = unsafe { setvbuf(stream, std::ptr::null_mut(), 1, 0) };
 }
 
@@ -13132,22 +13135,22 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getc_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn getc_unlocked(stream: *mut c_void) -> c_int {
     unsafe { getc(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn putc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
     unsafe { putc(c, stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fgetc_unlocked(stream: *mut c_void) -> c_int {
     unsafe { fgetc(stream) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fputc_unlocked(c: c_int, stream: *mut c_void) -> c_int {
     unsafe { fputc(c, stream) }
 }
 
@@ -13422,10 +13425,10 @@ pub unsafe extern "C" fn fopencookie(
 // `fopencookie`. The close adapter invokes the user's closefn (if any)
 // and then frees the trampoline regardless of its result.
 
-type FunopenReadFn = unsafe extern "C" fn(*mut c_void, *mut c_char, c_int) -> c_int;
-type FunopenWriteFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int) -> c_int;
-type FunopenSeekFn = unsafe extern "C" fn(*mut c_void, i64, c_int) -> i64;
-type FunopenCloseFn = unsafe extern "C" fn(*mut c_void) -> c_int;
+type FunopenReadFn = unsafe extern "C-unwind" fn(*mut c_void, *mut c_char, c_int) -> c_int;
+type FunopenWriteFn = unsafe extern "C-unwind" fn(*mut c_void, *const c_char, c_int) -> c_int;
+type FunopenSeekFn = unsafe extern "C-unwind" fn(*mut c_void, i64, c_int) -> i64;
+type FunopenCloseFn = unsafe extern "C-unwind" fn(*mut c_void) -> c_int;
 
 #[repr(C)]
 struct FunopenTrampoline {
@@ -13436,7 +13439,7 @@ struct FunopenTrampoline {
     closefn: Option<FunopenCloseFn>,
 }
 
-unsafe extern "C" fn funopen_trampoline_read(
+unsafe extern "C-unwind" fn funopen_trampoline_read(
     cookie: *mut c_void,
     buf: *mut c_char,
     nbytes: usize,
@@ -13452,7 +13455,7 @@ unsafe extern "C" fn funopen_trampoline_read(
     rc as isize
 }
 
-unsafe extern "C" fn funopen_trampoline_write(
+unsafe extern "C-unwind" fn funopen_trampoline_write(
     cookie: *mut c_void,
     buf: *const c_char,
     nbytes: usize,
@@ -13468,7 +13471,7 @@ unsafe extern "C" fn funopen_trampoline_write(
     rc as isize
 }
 
-unsafe extern "C" fn funopen_trampoline_seek(
+unsafe extern "C-unwind" fn funopen_trampoline_seek(
     cookie: *mut c_void,
     offset: *mut i64,
     whence: c_int,
@@ -13493,7 +13496,7 @@ unsafe extern "C" fn funopen_trampoline_seek(
     0
 }
 
-unsafe extern "C" fn funopen_trampoline_close(cookie: *mut c_void) -> c_int {
+unsafe extern "C-unwind" fn funopen_trampoline_close(cookie: *mut c_void) -> c_int {
     // SAFETY: cookie was set by funopen to a leaked Box<FunopenTrampoline>;
     // we now reclaim ownership and drop it after the user's closefn runs.
     let tr_box = unsafe { Box::from_raw(cookie as *mut FunopenTrampoline) };
@@ -13590,19 +13593,19 @@ pub unsafe extern "C" fn funopen(
 
 /// GNU `feof_unlocked` — test end-of-file indicator without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn feof_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn feof_unlocked(stream: *mut c_void) -> c_int {
     unsafe { feof(stream) }
 }
 
 /// GNU `ferror_unlocked` — test error indicator without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ferror_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn ferror_unlocked(stream: *mut c_void) -> c_int {
     unsafe { ferror(stream) }
 }
 
 /// GNU `fflush_unlocked` — flush stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fflush_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fflush_unlocked(stream: *mut c_void) -> c_int {
     unsafe { fflush(stream) }
 }
 
@@ -13746,19 +13749,19 @@ pub unsafe extern "C" fn mktemp(template: *mut c_char) -> *mut c_char {
 
 /// `getchar_unlocked` — read a character from stdin without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getchar_unlocked() -> c_int {
+pub unsafe extern "C-unwind" fn getchar_unlocked() -> c_int {
     unsafe { getchar() }
 }
 
 /// `putchar_unlocked` — write a character to stdout without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putchar_unlocked(c: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn putchar_unlocked(c: c_int) -> c_int {
     unsafe { putchar(c) }
 }
 
 /// `fread_unlocked` — binary stream input without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fread_unlocked(
+pub unsafe extern "C-unwind" fn fread_unlocked(
     ptr: *mut c_void,
     size: usize,
     nmemb: usize,
@@ -13769,7 +13772,7 @@ pub unsafe extern "C" fn fread_unlocked(
 
 /// `fwrite_unlocked` — binary stream output without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwrite_unlocked(
+pub unsafe extern "C-unwind" fn fwrite_unlocked(
     ptr: *const c_void,
     size: usize,
     nmemb: usize,
@@ -13780,7 +13783,7 @@ pub unsafe extern "C" fn fwrite_unlocked(
 
 /// `fgets_unlocked` — get a string from stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgets_unlocked(
+pub unsafe extern "C-unwind" fn fgets_unlocked(
     buf: *mut c_char,
     size: c_int,
     stream: *mut c_void,
@@ -13790,26 +13793,26 @@ pub unsafe extern "C" fn fgets_unlocked(
 
 /// `fputs_unlocked` — put a string to stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fputs_unlocked(s: *const c_char, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fputs_unlocked(s: *const c_char, stream: *mut c_void) -> c_int {
     unsafe { fputs(s, stream) }
 }
 
 /// `clearerr_unlocked` — clear stream error/EOF indicators without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn clearerr_unlocked(stream: *mut c_void) {
+pub unsafe extern "C-unwind" fn clearerr_unlocked(stream: *mut c_void) {
     unsafe { clearerr(stream) }
 }
 
 /// `fileno_unlocked` — get file descriptor from stream without locking.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fileno_unlocked(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fileno_unlocked(stream: *mut c_void) -> c_int {
     unsafe { fileno(stream) }
 }
 
 /// `setbuffer` — set buffering for a stream (BSD extension).
 /// Equivalent to `setvbuf(stream, buf, buf ? _IOFBF : _IONBF, BUFSIZ)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn setbuffer(stream: *mut c_void, buf: *mut c_char, size: usize) {
+pub unsafe extern "C-unwind" fn setbuffer(stream: *mut c_void, buf: *mut c_char, size: usize) {
     if stream.is_null() {
         return;
     }
@@ -13827,7 +13830,7 @@ pub unsafe extern "C" fn setbuffer(stream: *mut c_void, buf: *mut c_char, size: 
 
 /// `__isoc99_scanf` — C99-conformant scanf (alias for scanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_scanf(format: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc99_scanf(format: *const c_char, mut args: ...) -> c_int {
     let ap = std::ptr::addr_of_mut!(args).cast::<c_void>();
     unsafe { vscanf(format, ap) }
 }
@@ -13905,7 +13908,7 @@ pub unsafe extern "C" fn __isoc99_sscanf(
 
 /// `__isoc99_fscanf` — C99-conformant fscanf (alias for fscanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_fscanf(
+pub unsafe extern "C-unwind" fn __isoc99_fscanf(
     stream: *mut c_void,
     format: *const c_char,
     mut args: ...
@@ -13916,7 +13919,7 @@ pub unsafe extern "C" fn __isoc99_fscanf(
 
 /// `__isoc99_vscanf` — C99-conformant vscanf (alias for vscanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __isoc99_vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
     unsafe { vscanf(format, ap) }
 }
 
@@ -13932,7 +13935,7 @@ pub unsafe extern "C" fn __isoc99_vsscanf(
 
 /// `__isoc99_vfscanf` — C99-conformant vfscanf (alias for vfscanf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __isoc99_vfscanf(
+pub unsafe extern "C-unwind" fn __isoc99_vfscanf(
     stream: *mut c_void,
     format: *const c_char,
     ap: *mut c_void,
@@ -13946,7 +13949,7 @@ pub unsafe extern "C" fn __isoc99_vfscanf(
 
 /// `getw` — read an int from a stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getw(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn getw(stream: *mut c_void) -> c_int {
     let mut val: c_int = 0;
     let n = unsafe {
         fread(
@@ -13961,7 +13964,7 @@ pub unsafe extern "C" fn getw(stream: *mut c_void) -> c_int {
 
 /// `putw` — write an int to a stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn putw(w: c_int, stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn putw(w: c_int, stream: *mut c_void) -> c_int {
     let n = unsafe {
         fwrite(
             &w as *const c_int as *const c_void,
@@ -14140,7 +14143,7 @@ fn fgetln_current_buffer(stream: *mut c_void) -> Option<(*mut c_char, usize)> {
 /// `stream` must be a valid `FILE *`. `len`, when non-NULL, must
 /// point to writable `size_t` storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_char {
+pub unsafe extern "C-unwind" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_char {
     if stream.is_null() {
         if !len.is_null() {
             // SAFETY: caller-supplied writable slot.
@@ -14181,7 +14184,7 @@ pub unsafe extern "C" fn fgetln(stream: *mut c_void, len: *mut usize) -> *mut c_
 ///
 /// `stream`, when non-NULL, must be a valid `FILE *`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fpurge(stream: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn fpurge(stream: *mut c_void) -> c_int {
     if stream.is_null() {
         // BSD spec: NULL stream is undefined; we choose to return EOF.
         return -1;
@@ -14221,7 +14224,7 @@ const FPARSELN_DEFAULT_DELIM: [u8; 3] = *b"\\\n#";
 /// `stream` must be a valid `FILE *`. `len`/`lineno`/`delim`, when
 /// non-NULL, must point to writable storage of the appropriate type.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fparseln(
+pub unsafe extern "C-unwind" fn fparseln(
     stream: *mut c_void,
     len: *mut usize,
     lineno: *mut usize,

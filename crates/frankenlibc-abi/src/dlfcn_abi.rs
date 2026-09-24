@@ -9,9 +9,9 @@ use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 #[cfg(feature = "standalone")]
-use frankenlibc_core::elf::{Elf64ProgramHeader, ProgramType};
-#[cfg(feature = "standalone")]
 use frankenlibc_core::elf::ElfLoader;
+#[cfg(feature = "standalone")]
+use frankenlibc_core::elf::{Elf64ProgramHeader, ProgramType};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::runtime_policy;
@@ -273,11 +273,11 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
                 as usize) as *mut c_void
         }
         b"printf" => {
-            (crate::stdio_abi::printf as unsafe extern "C" fn(*const c_char, ...) -> c_int as usize)
-                as *mut c_void
+            (crate::stdio_abi::printf as unsafe extern "C-unwind" fn(*const c_char, ...) -> c_int
+                as usize) as *mut c_void
         }
         b"puts" => {
-            (crate::stdio_abi::puts as unsafe extern "C" fn(*const c_char) -> c_int as usize)
+            (crate::stdio_abi::puts as unsafe extern "C-unwind" fn(*const c_char) -> c_int as usize)
                 as *mut c_void
         }
         b"strlen" => {
@@ -1101,8 +1101,10 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 /// into resolve_host_symbol_raw.
 #[allow(clippy::needless_return)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn dl_iterate_phdr(
-    callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+pub unsafe extern "C-unwind" fn dl_iterate_phdr(
+    callback: Option<
+        unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
+    >,
     data: *mut c_void,
 ) -> c_int {
     #[cfg(feature = "standalone")]
@@ -1111,8 +1113,10 @@ pub unsafe extern "C" fn dl_iterate_phdr(
     }
     #[cfg(not(feature = "standalone"))]
     {
-        type DlIteratePhdrFn = unsafe extern "C" fn(
-            Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+        type DlIteratePhdrFn = unsafe extern "C-unwind" fn(
+            Option<
+                unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
+            >,
             *mut c_void,
         ) -> c_int;
         if callback.is_none() {
@@ -1158,7 +1162,9 @@ struct StandalonePhdrObject {
 
 #[cfg(feature = "standalone")]
 unsafe fn standalone_dl_iterate_phdr(
-    callback: Option<unsafe extern "C" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int>,
+    callback: Option<
+        unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
+    >,
     data: *mut c_void,
 ) -> c_int {
     let Some(callback) = callback else {

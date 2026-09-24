@@ -342,7 +342,7 @@ pub enum Visit {
 }
 
 /// Comparison function type for tree operations.
-type CompareFn = unsafe extern "C" fn(*const c_void, *const c_void) -> c_int;
+type CompareFn = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 
 #[inline]
 fn make_cmp_closure(compar: CompareFn) -> impl Fn(&OpaqueKey, &OpaqueKey) -> Ordering {
@@ -360,7 +360,7 @@ fn make_cmp_closure(compar: CompareFn) -> impl Fn(&OpaqueKey, &OpaqueKey) -> Ord
 
 /// POSIX `tsearch` — search or insert into a binary tree (LLRB-backed).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tsearch(
+pub unsafe extern "C-unwind" fn tsearch(
     key: *const c_void,
     rootp: *mut *mut c_void,
     compar: CompareFn,
@@ -426,7 +426,7 @@ pub unsafe extern "C" fn tsearch(
 
 /// POSIX `tfind` — find a key in a binary tree without inserting.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tfind(
+pub unsafe extern "C-unwind" fn tfind(
     key: *const c_void,
     rootp: *const *mut c_void,
     compar: CompareFn,
@@ -444,7 +444,7 @@ pub unsafe extern "C" fn tfind(
 
 /// POSIX `tdelete` — delete a key from a binary tree.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tdelete(
+pub unsafe extern "C-unwind" fn tdelete(
     key: *const c_void,
     rootp: *mut *mut c_void,
     compar: CompareFn,
@@ -491,9 +491,9 @@ pub unsafe extern "C" fn tdelete(
 /// `conformance_diff_tsearch`; fl's own deterministic depth/shape is pinned by
 /// `tsearch_twalk_shape_pin`. fl's balanced tree is the more useful guarantee.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn twalk(
+pub unsafe extern "C-unwind" fn twalk(
     root: *const c_void,
-    action: unsafe extern "C" fn(*const c_void, Visit, c_int),
+    action: unsafe extern "C-unwind" fn(*const c_void, Visit, c_int),
 ) {
     if root.is_null() {
         return;
@@ -513,9 +513,9 @@ pub unsafe extern "C" fn twalk(
 
 /// GNU `twalk_r` — traverse a binary tree with closure data (reentrant).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn twalk_r(
+pub unsafe extern "C-unwind" fn twalk_r(
     root: *const c_void,
-    action: unsafe extern "C" fn(*const c_void, c_int, c_int, *mut c_void),
+    action: unsafe extern "C-unwind" fn(*const c_void, c_int, c_int, *mut c_void),
     closure: *mut c_void,
 ) {
     if root.is_null() {
@@ -543,9 +543,9 @@ pub unsafe extern "C" fn twalk_r(
 ///
 /// `free_node` may be NULL if the keys do not need freeing.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tdestroy(
+pub unsafe extern "C-unwind" fn tdestroy(
     root: *mut c_void,
-    free_node: Option<unsafe extern "C" fn(*mut c_void)>,
+    free_node: Option<unsafe extern "C-unwind" fn(*mut c_void)>,
 ) {
     if root.is_null() {
         return;
@@ -576,7 +576,7 @@ fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
 /// abi remains responsible only for raw-pointer / C-comparator
 /// adaptation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lfind(
+pub unsafe extern "C-unwind" fn lfind(
     key: *const c_void,
     base: *const c_void,
     nelp: *mut usize,
@@ -611,7 +611,7 @@ pub unsafe extern "C" fn lfind(
 
 /// POSIX `lsearch` — linear search with insert if not found.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn lsearch(
+pub unsafe extern "C-unwind" fn lsearch(
     key: *const c_void,
     base: *mut c_void,
     nelp: *mut usize,

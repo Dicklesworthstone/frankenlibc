@@ -480,14 +480,15 @@ pub unsafe extern "C" fn tss_delete(key: TssT) {
 
 /// C11 `call_once` — execute a callable exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn call_once(flag: *mut OnceFlag, func: Option<extern "C" fn()>) {
+pub unsafe extern "C-unwind" fn call_once(
+    flag: *mut OnceFlag,
+    func: Option<unsafe extern "C-unwind" fn()>,
+) {
     if !tracked_required_object_fits(flag) || func.is_none() {
         return;
     }
     // C11 call_once returns void (unlike pthread_once which returns int).
-    let init_routine =
-        func.map(|f| unsafe { std::mem::transmute::<extern "C" fn(), unsafe extern "C" fn()>(f) });
-    unsafe { crate::pthread_abi::pthread_once(flag, init_routine) };
+    unsafe { crate::pthread_abi::pthread_once(flag, func) };
 }
 
 // ===========================================================================
