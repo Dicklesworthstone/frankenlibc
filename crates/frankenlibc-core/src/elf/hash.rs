@@ -95,9 +95,12 @@ impl GnuHashHeader {
 
     /// Calculate the total size of the hash table (header + bloom + buckets).
     ///
-    /// Note: This doesn't include the chain array which has variable length.
+    /// This excludes the variable-length chain array. Saturates if the size
+    /// cannot be represented on the current platform; parsing checks it exactly.
     pub fn header_and_bloom_and_buckets_size(&self) -> usize {
-        Self::SIZE + (self.bloom_size as usize * 8) + (self.nbuckets as usize * 4)
+        Self::SIZE
+            .saturating_add((self.bloom_size as usize).saturating_mul(8))
+            .saturating_add((self.nbuckets as usize).saturating_mul(4))
     }
 }
 
@@ -119,12 +122,20 @@ impl GnuHashTable {
     pub fn parse(data: &[u8]) -> Option<Self> {
         let header = GnuHashHeader::parse(data)?;
 
-        // Calculate offsets
+        // These values control division, shifts, and allocation below. Reject
+        // invalid metadata before using it, including in debug/checked builds.
+        if header.nbuckets == 0
+            || !header.bloom_size.is_power_of_two()
+            || header.bloom_shift >= u32::BITS
+        {
+            return None;
+        }
+
         let bloom_start = GnuHashHeader::SIZE;
-        let bloom_size_bytes = header.bloom_size as usize * 8;
-        let buckets_start = bloom_start + bloom_size_bytes;
-        let buckets_size_bytes = header.nbuckets as usize * 4;
-        let chains_start = buckets_start + buckets_size_bytes;
+        let bloom_size_bytes = usize::try_from(header.bloom_size).ok()?.checked_mul(8)?;
+        let buckets_start = bloom_start.checked_add(bloom_size_bytes)?;
+        let buckets_size_bytes = usize::try_from(header.nbuckets).ok()?.checked_mul(4)?;
+        let chains_start = buckets_start.checked_add(buckets_size_bytes)?;
 
         // Validate we have enough data for at least the fixed parts
         if data.len() < chains_start {
@@ -142,6 +153,15 @@ impl GnuHashTable {
         // Chains extend to end of section (variable length)
         let chains = parse_u32_words(&data[chains_start..])?;
 
+        // Zero denotes an empty bucket, even when symoffset is zero. Every
+        // nonempty bucket must refer to a chain word that is actually present.
+        for &bucket in &buckets {
+            if bucket != 0 {
+                let chain_index = usize::try_from(bucket.checked_sub(header.symoffset)?).ok()?;
+                chains.get(chain_index)?;
+            }
+        }
+
         Some(Self {
             header,
             bloom,
@@ -155,8 +175,10 @@ impl GnuHashTable {
     /// Returns `false` if the symbol definitely doesn't exist.
     /// Returns `true` if it might exist (requires bucket lookup to confirm).
     pub fn bloom_check(&self, hash: u32) -> bool {
-        if self.bloom.is_empty() {
-            return true; // No bloom filter, can't exclude
+        // The header is public and can be changed after parsing, so do not
+        // rely solely on parse-time validation to make the shift safe.
+        if self.bloom.is_empty() || self.header.bloom_shift >= u32::BITS {
+            return false;
         }
 
         let word_idx = (hash / 64) as usize % self.bloom.len();
@@ -180,11 +202,14 @@ impl GnuHashTable {
 
         let bucket_idx = (hash % self.header.nbuckets) as usize;
         let mut sym_idx = *self.buckets.get(bucket_idx)?;
-        if sym_idx < self.header.symoffset {
+        if sym_idx == 0 || sym_idx < self.header.symoffset {
             return None;
         }
 
         loop {
+            if sym_idx as usize >= dynsym.len() {
+                return None;
+            }
             let chain_idx = sym_idx.checked_sub(self.header.symoffset)? as usize;
             let chain = *self.chains.get(chain_idx)?;
             if (chain | 1) == (hash | 1)
@@ -225,14 +250,14 @@ impl ElfHashTable {
         let nbucket = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
         let nchain = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
 
-        let required_size = 8 + (nbucket as usize + nchain as usize) * 4;
-        if data.len() < required_size {
+        let buckets_start = 8usize;
+        let buckets_size = usize::try_from(nbucket).ok()?.checked_mul(4)?;
+        let chains_size = usize::try_from(nchain).ok()?.checked_mul(4)?;
+        let buckets_end = buckets_start.checked_add(buckets_size)?;
+        let chains_end = buckets_end.checked_add(chains_size)?;
+        if data.len() < chains_end {
             return None;
         }
-
-        let buckets_start = 8;
-        let buckets_end = buckets_start + nbucket as usize * 4;
-        let chains_end = buckets_end + nchain as usize * 4;
         let buckets = parse_u32_words(&data[buckets_start..buckets_end])?;
         let chains = parse_u32_words(&data[buckets_end..chains_end])?;
 
@@ -261,8 +286,12 @@ impl ElfHashTable {
         let bucket_idx = hash % self.nbucket;
         let mut sym_idx = *self.buckets.get(bucket_idx as usize)?;
 
-        while sym_idx != 0 {
-            if sym_idx as usize >= self.nchain as usize {
+        // A valid chain visits each non-null symbol at most once. Bound the
+        // walk by the available symbol/chain entries so corrupt self-links or
+        // multi-node cycles cannot hang the loader. No per-lookup allocation.
+        let max_steps = self.chains.len().min(dynsym.len());
+        for _ in 0..max_steps {
+            if sym_idx == 0 || sym_idx >= self.nchain || sym_idx as usize >= dynsym.len() {
                 return None;
             }
             if symbol_name_matches(dynsym, dynstr, sym_idx as usize, name) {
@@ -468,5 +497,145 @@ mod tests {
         assert_ne!(h1, h2);
         assert_ne!(h2, h3);
         assert_ne!(h1, h3);
+    }
+
+    fn symbol(name_offset: u32) -> Elf64Symbol {
+        Elf64Symbol {
+            st_name: name_offset,
+            st_info: 0x12,
+            st_other: 0,
+            st_shndx: 1,
+            st_value: 0x1000,
+            st_size: 0,
+        }
+    }
+
+    fn sysv_table(chains: &[u32]) -> ElfHashTable {
+        let mut data = Vec::new();
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&(chains.len() as u32).to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        for chain in chains {
+            data.extend_from_slice(&chain.to_le_bytes());
+        }
+        ElfHashTable::parse(&data).unwrap()
+    }
+
+    fn gnu_table_bytes(shift: u32) -> Vec<u8> {
+        let mut data = Vec::new();
+        for word in [1u32, 1, 1, shift] {
+            data.extend_from_slice(&word.to_le_bytes());
+        }
+        // An all-ones bloom word makes positive and negative lookups walk
+        // the chain, independently of the selected valid shift.
+        data.extend_from_slice(&u64::MAX.to_le_bytes());
+        data.extend_from_slice(&1u32.to_le_bytes());
+        data.extend_from_slice(&(gnu_hash(b"foo") | 1).to_le_bytes());
+        data
+    }
+
+    #[test]
+    fn sysv_cyclic_chains_terminate() {
+        let dynsym = [symbol(0), symbol(1), symbol(5), symbol(9)];
+        for chains in [vec![0, 1], vec![0, 2, 1], vec![0, 2, 3, 2]] {
+            let table = sysv_table(&chains);
+            assert_eq!(
+                table.lookup(0, b"missing", &dynsym, b"\0foo\0bar\0baz\0"),
+                None
+            );
+            assert_eq!(
+                table.lookup(0, b"foo", &dynsym, b"\0foo\0bar\0baz\0"),
+                Some(1)
+            );
+        }
+    }
+
+    #[test]
+    fn sysv_walk_preserves_long_chain_hits_and_rejects_bad_indexes() {
+        let dynsym = [symbol(0), symbol(1), symbol(5), symbol(9)];
+        let dynstr = b"\0foo\0bar\0baz\0";
+        let table = sysv_table(&[0, 2, 3, 0]);
+        assert_eq!(table.lookup(0, b"baz", &dynsym, dynstr), Some(3));
+        assert_eq!(table.lookup(0, b"missing", &dynsym, dynstr), None);
+        assert_eq!(table.lookup(0, b"baz", &dynsym[..2], dynstr), None);
+        assert_eq!(table.lookup(0, b"baz", &[], dynstr), None);
+        let table = sysv_table(&[0, u32::MAX]);
+        assert_eq!(table.lookup(0, b"missing", &dynsym, dynstr), None);
+    }
+
+    #[test]
+    fn hash_parsers_reject_unrepresentable_or_truncated_counts() {
+        let mut sysv = vec![0xff; 8];
+        assert!(ElfHashTable::parse(&sysv).is_none());
+        sysv[..4].copy_from_slice(&1u32.to_le_bytes());
+        assert!(ElfHashTable::parse(&sysv).is_none());
+        let mut gnu = gnu_table_bytes(5);
+        gnu[..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(GnuHashTable::parse(&gnu).is_none());
+        gnu[..4].copy_from_slice(&1u32.to_le_bytes());
+        gnu[8..12].copy_from_slice(&(1u32 << 31).to_le_bytes());
+        assert!(GnuHashTable::parse(&gnu).is_none());
+    }
+
+    #[test]
+    fn gnu_rejects_invalid_bloom_metadata() {
+        for shift in [32, 64, u32::MAX] {
+            assert!(GnuHashTable::parse(&gnu_table_bytes(shift)).is_none());
+        }
+        for size in [0u32, 3] {
+            let mut data = gnu_table_bytes(5);
+            data[8..12].copy_from_slice(&size.to_le_bytes());
+            assert!(GnuHashTable::parse(&data).is_none());
+        }
+        let mut data = gnu_table_bytes(5);
+        data[..4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(GnuHashTable::parse(&data).is_none());
+    }
+
+    #[test]
+    fn gnu_lookup_handles_all_valid_shifts_and_mutated_header() {
+        let dynsym = [symbol(0), symbol(1)];
+        for shift in 0..u32::BITS {
+            let mut table = GnuHashTable::parse(&gnu_table_bytes(shift)).unwrap();
+            assert_eq!(table.lookup(b"foo", &dynsym, b"\0foo\0"), Some(1));
+            table.header.bloom_shift = u32::MAX;
+            assert!(!table.bloom_check(gnu_hash(b"foo")));
+            assert_eq!(table.lookup(b"foo", &dynsym, b"\0foo\0"), None);
+        }
+    }
+
+    #[test]
+    fn gnu_rejects_truncated_and_out_of_range_buckets() {
+        let data = gnu_table_bytes(5);
+        for len in 0..data.len() {
+            assert!(GnuHashTable::parse(&data[..len]).is_none(), "len={len}");
+        }
+        let mut data = data;
+        data[24..28].copy_from_slice(&2u32.to_le_bytes());
+        assert!(GnuHashTable::parse(&data).is_none());
+        data[24..28].copy_from_slice(&1u32.to_le_bytes());
+        data[4..8].copy_from_slice(&2u32.to_le_bytes());
+        assert!(GnuHashTable::parse(&data).is_none());
+    }
+
+    #[test]
+    fn gnu_empty_bucket_never_resolves_the_null_symbol() {
+        let mut data = gnu_table_bytes(5);
+        data[4..8].copy_from_slice(&0u32.to_le_bytes());
+        data[24..28].copy_from_slice(&0u32.to_le_bytes());
+        let table = GnuHashTable::parse(&data).unwrap();
+        // Even a name/hash collision at dynsym[0] cannot make an empty
+        // bucket look populated.
+        assert_eq!(table.lookup(b"foo", &[symbol(1)], b"\0foo\0"), None);
+    }
+
+    #[test]
+    fn gnu_unterminated_chain_and_short_symbol_table_terminate() {
+        let mut data = gnu_table_bytes(5);
+        data[28..32].copy_from_slice(&(gnu_hash(b"foo") & !1).to_le_bytes());
+        let table = GnuHashTable::parse(&data).unwrap();
+        let dynsym = [symbol(0), symbol(1)];
+        assert_eq!(table.lookup(b"missing", &dynsym, b"\0foo\0"), None);
+        assert_eq!(table.lookup(b"foo", &dynsym[..1], b"\0foo\0"), None);
     }
 }
