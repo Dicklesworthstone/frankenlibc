@@ -1545,6 +1545,21 @@ impl Drop for StreamGuard<'_> {
     }
 }
 
+/// Mirror after a mutation made through the single-threaded raw cache, which
+/// bypasses the cell guard. Only the raw paths that can change EOF/ERR call
+/// this (fgets, getdelim, wide line reads, ungetc, clearerr); the `try_*_fast`
+/// helpers only succeed when the operation fits the existing buffer, and the
+/// cache is populated only from the locked slow path, so their first use is
+/// always mirrored.
+#[inline]
+fn mirror_raw_cached(stream: *mut c_void, p: *mut StdioStream) {
+    let handle = stream as usize;
+    if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        // SAFETY: `p` is the cache hit for `stream` (ST-gated, gen-valid).
+        mirror_stream_flags(handle, unsafe { &*p });
+    }
+}
+
 #[inline]
 fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
@@ -1882,14 +1897,6 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
 /// registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
 fn write_cache_store(id: usize, ptr: *mut StdioStream) {
-    // Streams behind a glibc-layout FILE handle (ids outside the legacy
-    // synthetic window) must be mutated under their cell guard so EOF/ERR/
-    // orientation reach the handle that glibc's inline macros read
-    // (bd-rc0923-epic-eeuy4f.1). This raw cache bypasses the guard, so it only
-    // serves the standard streams and legacy ids.
-    if !(STDIN_SENTINEL..0x2000_0000).contains(&id) {
-        return;
-    }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
     // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
     // only runs on a full cache miss (a lookup hit returns before storing), so `id` is not
@@ -2350,6 +2357,7 @@ pub unsafe fn bench_fgets_newpath(
         let max = (size - 1) as usize;
         let dst = unsafe { std::slice::from_raw_parts_mut(buf as *mut u8, max) };
         let (written, had_error) = unsafe { fgets_fill_stream(&mut *p, dst) };
+        mirror_raw_cached(stream, p);
         if (written == 0 && max > 0) || had_error {
             return std::ptr::null_mut();
         }
@@ -4057,6 +4065,15 @@ pub(crate) unsafe fn read_cached_ascii_line_wide(
     dst: &mut [u32],
 ) -> Option<(usize, bool)> {
     let p = write_cache_lookup_by_stream(stream)?;
+    let result = unsafe { read_cached_ascii_line_wide_inner(p, dst) };
+    mirror_raw_cached(stream, p);
+    result
+}
+
+unsafe fn read_cached_ascii_line_wide_inner(
+    p: *mut StdioStream,
+    dst: &mut [u32],
+) -> Option<(usize, bool)> {
     // SAFETY: ST-gated + generation-valid cache hit gives unique stream access.
     let s = unsafe { &mut *p };
     match s.read_ascii_line_into_wide(dst) {
@@ -5255,6 +5272,7 @@ pub unsafe extern "C" fn clearerr(stream: *mut c_void) {
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
         unsafe { (*p).clear_err() };
+        mirror_raw_cached(stream, p);
         return;
     }
     // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per
@@ -5298,11 +5316,9 @@ pub unsafe extern "C" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     // The common ungetc-after-fgetc parser pattern leaves the stream cached, so this hits.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
-        return if unsafe { (*p).ungetc(c as u8) } {
-            c
-        } else {
-            libc::EOF
-        };
+        let pushed = unsafe { (*p).ungetc(c as u8) };
+        mirror_raw_cached(stream, p);
+        return if pushed { c } else { libc::EOF };
     }
     // MT-safe cell-cache fast path (see feof): a threaded ungetc-after-fgetc parser loop otherwise
     // pays the map lock per call (the ST cache above is `__libc_single_threaded`-gated). A gen-valid
@@ -11992,6 +12008,7 @@ pub unsafe extern "C" fn getdelim(
         buf.clear();
         // SAFETY: ST-gated + gen-valid ⇒ unique &mut for this call.
         unsafe { getdelim_fill_stream(&mut *p, delim_byte, buf) };
+        mirror_raw_cached(stream, p);
         return unsafe { getdelim_finish(buf, lineptr, n) };
     }
     // MT-safe cell-cache fast path (see fgets): the ST cache above is `__libc_single_threaded`-
