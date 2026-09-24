@@ -1135,15 +1135,37 @@ struct FastFixedMemRead {
     pos: AtomicUsize,
     eof: AtomicBool,
     closed: AtomicBool,
+    /// The stream's glibc-layout FILE handle (its id), whose `_flags` EOF bit
+    /// must track `eof`: this lock-free path never passes a cell guard, and
+    /// callers read the bit with `feof_unlocked` (bd-rc0923-epic-eeuy4f.1).
+    handle: usize,
 }
 
 impl FastFixedMemRead {
-    fn new(data: Vec<u8>) -> Self {
+    fn new(data: Vec<u8>, handle: usize) -> Self {
         Self {
             data,
             pos: AtomicUsize::new(0),
             eof: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            handle,
+        }
+    }
+
+    #[inline]
+    fn set_eof(&self, eof: bool) {
+        self.eof.store(eof, Ordering::Release);
+        if self.handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&self.handle) {
+            // SAFETY: a non-legacy id is the address of the stream's live
+            // NativeFile handle; `_flags` is its first, aligned int field.
+            let word =
+                unsafe { std::sync::atomic::AtomicI32::from_ptr(self.handle as *mut i32) };
+            let bit = io_internal_abi::glibc_flag_bits::EOF_SEEN;
+            if eof {
+                word.fetch_or(bit, Ordering::Relaxed);
+            } else {
+                word.fetch_and(!bit, Ordering::Relaxed);
+            }
         }
     }
 
@@ -1155,7 +1177,7 @@ impl FastFixedMemRead {
         loop {
             let pos = self.pos.load(Ordering::Acquire);
             if pos >= self.data.len() {
-                self.eof.store(true, Ordering::Release);
+                self.set_eof(true);
                 return None;
             }
             if self
@@ -1163,7 +1185,7 @@ impl FastFixedMemRead {
                 .compare_exchange_weak(pos, pos + 1, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                self.eof.store(false, Ordering::Release);
+                self.set_eof(false);
                 return Some(self.data[pos]);
             }
         }
@@ -1193,7 +1215,7 @@ impl FastFixedMemRead {
                 .is_ok()
             {
                 dst[..n].copy_from_slice(&self.data[pos..pos + n]);
-                self.eof.store(want > avail, Ordering::Release);
+                self.set_eof(want > avail);
                 return Some(n);
             }
         }
@@ -1230,8 +1252,7 @@ impl FastFixedMemRead {
                 .is_ok()
             {
                 dst[..n].copy_from_slice(&self.data[pos..pos + n]);
-                self.eof
-                    .store(nl.is_none() && want > avail, Ordering::Release);
+                self.set_eof(nl.is_none() && want > avail);
                 return Some(n);
             }
         }
@@ -1256,7 +1277,7 @@ impl FastFixedMemRead {
         }
         let next = next as usize;
         self.pos.store(next, Ordering::Release);
-        self.eof.store(false, Ordering::Release);
+        self.set_eof(false);
         Some(next)
     }
 
@@ -1296,7 +1317,7 @@ fn fast_fixed_mem_reads() -> &'static FastRegistryMutex<FastFixedMemReadMap> {
 static FIXED_MEM_CURSOR_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn register_fast_fixed_mem_read(id: usize, data: Vec<u8>) {
-    let cursor = Arc::new(FastFixedMemRead::new(data));
+    let cursor = Arc::new(FastFixedMemRead::new(data, id));
     FIXED_MEM_CURSOR_COUNT.fetch_add(1, Ordering::Release);
     let mut map = fast_fixed_mem_reads()
         .lock()
@@ -1861,6 +1882,14 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
 /// registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
 fn write_cache_store(id: usize, ptr: *mut StdioStream) {
+    // Streams behind a glibc-layout FILE handle (ids outside the legacy
+    // synthetic window) must be mutated under their cell guard so EOF/ERR/
+    // orientation reach the handle that glibc's inline macros read
+    // (bd-rc0923-epic-eeuy4f.1). This raw cache bypasses the guard, so it only
+    // serves the standard streams and legacy ids.
+    if !(STDIN_SENTINEL..0x2000_0000).contains(&id) {
+        return;
+    }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
     // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
     // only runs on a full cache miss (a lookup hit returns before storing), so `id` is not
@@ -2639,10 +2668,13 @@ fn maybe_unregister_dynamic_native_stream(stream: *mut c_void) {
     }
 }
 
+/// `fileno` is what glibc reports in `_fileno` for this kind of memory stream:
+/// -2 for fmemopen, -1 for open_memstream/open_wmemstream.
 pub(crate) fn register_memory_stream_with_native_handle(
     stream: StdioStream,
     backing: io_internal_abi::NativeFileBacking,
     open_flags: OpenFlags,
+    fileno: c_int,
 ) -> *mut c_void {
     let file = io_internal_abi::NativeFile::new_with_backing(
         backing,
@@ -2669,7 +2701,7 @@ pub(crate) fn register_memory_stream_with_native_handle(
     unsafe {
         io_internal_abi::reset_stdio_handle_header(
             native_ptr,
-            -1,
+            fileno,
             initial_glibc_flags(&open_flags, false, BufMode::Full),
         );
     }
@@ -2756,7 +2788,13 @@ unsafe fn write_bytes_without_runtime_policy(
 
     let write_result = match stream_obj.buffer_write(bytes) {
         Some(result) => result,
-        None => return 0,
+        None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
     };
     let flushed_from_buffer = write_result.flushed_from_buffer;
     let total_written = if write_result.flush_needed {
@@ -3813,6 +3851,8 @@ pub unsafe extern "C" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let write_result = match s.buffer_write(&single_byte) {
         Some(result) => result,
         None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, true);
             return libc::EOF;
         }
@@ -4747,6 +4787,8 @@ pub unsafe extern "C" fn fwrite(
     let write_result = match s.buffer_write(src) {
         Some(result) => result,
         None => {
+            // Not open for writing: glibc sets EBADF alongside the error flag.
+            unsafe { set_abi_errno(errno::EBADF) };
             runtime_policy::observe(
                 ApiFamily::Stdio,
                 decision.profile,
@@ -13178,6 +13220,7 @@ pub unsafe extern "C" fn fmemopen(
             owns: buf.is_null(),
         },
         open_flags,
+        -2,
     );
     if handle.is_null() {
         return std::ptr::null_mut();
@@ -13249,6 +13292,7 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
             writable: true,
             ..Default::default()
         },
+        -1,
     );
     if handle.is_null() {
         unsafe { free(initial_buf.cast::<c_void>()) };

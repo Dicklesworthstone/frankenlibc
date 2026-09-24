@@ -8290,6 +8290,7 @@ pub unsafe extern "C" fn open_wmemstream(bufp: *mut *mut u32, sizep: *mut usize)
             writable: true,
             ..Default::default()
         },
+        -1,
     );
     if handle.is_null() {
         unsafe {

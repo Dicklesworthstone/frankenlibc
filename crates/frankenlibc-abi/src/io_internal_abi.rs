@@ -1754,7 +1754,8 @@ pub(crate) const IO_FILE_MODE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layo
 
 /// Rewrite the caller-visible header of a registered handle after the stream
 /// behind it changed identity (`freopen`): new fd, open-mode bits, and a
-/// fresh (unoriented, no EOF/ERR) state.
+/// fresh (unoriented, no EOF/ERR) state. `fd` is stored verbatim in
+/// `_fileno` (glibc: -1 for open_memstream, -2 for fmemopen/fopencookie).
 ///
 /// # Safety
 ///
@@ -1765,7 +1766,7 @@ pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glib
     // SAFETY: caller guarantees `ptr` is a live NativeFile.
     unsafe {
         (*file)._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
-        (*file)._io_file._fileno = if fd < 0 { -2 } else { fd };
+        (*file)._io_file._fileno = fd;
         (*file)._io_file._mode = 0;
     }
 }
