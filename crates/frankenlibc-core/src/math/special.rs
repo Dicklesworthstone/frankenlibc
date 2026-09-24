@@ -180,6 +180,7 @@ fn p1evl(x: f64, c: &[f64]) -> f64 {
 /// Γ(x) for `x` in `(0, 13]` via recurrence reduction to `[2,3]` + Cephes
 /// rational minimax. The caller gates the domain; here everything stays finite.
 #[inline]
+#[allow(clippy::approx_constant)] // γ spelled out beside its formula.
 fn tgamma_reduced(mut x: f64) -> f64 {
     let mut z = 1.0f64;
     while x >= 3.0 {
@@ -340,6 +341,7 @@ mod lgamma_half_integer {
     type Dd = (f64, f64);
 
     /// Split of ln(2) to 106-bit precision.
+    #[allow(clippy::approx_constant)] // hi is written exactly, as the split's first half.
     const LN2: Dd = (
         0.693_147_180_559_945_286_226_763_982_995_180_413_126_945_495_605_468_75e0,
         2.319_046_813_846_299_615_494_855_463_875_39e-17,
