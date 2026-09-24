@@ -143,6 +143,11 @@ use crate::wchar_abi::{
 // `setjmp` produces the jmp_buf, so resolving `longjmp` to glibc would hand one
 // implementation's environment to the other's unwinder — undefined, and silently
 // dependent on link order. The rest follow the same rule as the block above.
+// (Release x86_64/aarch64 name `crate::setjmp_abi::longjmp` directly.)
+#[cfg(all(
+    not(debug_assertions),
+    not(any(target_arch = "x86_64", target_arch = "aarch64"))
+))]
 use crate::setjmp_abi::longjmp;
 use crate::stdio_abi::fgetc;
 use crate::unistd_abi::getlogin_r;
@@ -1468,6 +1473,10 @@ pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
             raw_syscall::sys_exit_group(128 + libc::SIGSEGV)
         }
     }
+    #[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+    if unsafe { longjmp_target_is_uninitialized_frame(env) } {
+        unsafe { __fortify_fail(c"longjmp causes uninitialized stack frame".as_ptr()) }
+    }
     #[cfg(any(debug_assertions, target_arch = "x86_64", target_arch = "aarch64"))]
     {
         unsafe { crate::setjmp_abi::longjmp(env, val) }
@@ -1479,6 +1488,41 @@ pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
     {
         unsafe { longjmp(env, val) }
     }
+}
+
+/// glibc's `__longjmp_chk` stack-direction rule: a jump may only unwind toward
+/// older frames (a higher stack address). Jumping below the current stack
+/// pointer is allowed only when running on the alternate signal stack and the
+/// target lies outside it (leaving a signal handler for the interrupted stack).
+/// If `sigaltstack` cannot be queried the check is skipped, as glibc does.
+#[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+unsafe fn longjmp_target_is_uninitialized_frame(env: *mut c_void) -> bool {
+    // SAFETY: the caller passes a jmp_buf filled by our `__sigsetjmp`; word 6
+    // holds the saved rsp mangled with the TCB pointer guard at %fs:0x30.
+    let target_sp = unsafe {
+        let mangled = *env.cast::<u64>().add(6);
+        let guard: u64;
+        core::arch::asm!("mov {}, qword ptr fs:[0x30]", out(reg) guard, options(nostack, readonly));
+        mangled.rotate_right(0x11) ^ guard
+    };
+    let current_sp: u64;
+    // SAFETY: reading rsp has no side effects.
+    unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_sp, options(nomem, nostack)) };
+    if target_sp >= current_sp {
+        return false;
+    }
+    let mut ss = core::mem::MaybeUninit::<libc::stack_t>::zeroed();
+    // SAFETY: querying the current alternate stack into a local stack_t.
+    if unsafe { raw_syscall::sys_sigaltstack(std::ptr::null(), ss.as_mut_ptr().cast()) }.is_err() {
+        return false;
+    }
+    // SAFETY: the kernel filled `ss` on success.
+    let ss = unsafe { ss.assume_init() };
+    if ss.ss_flags & libc::SS_ONSTACK == 0 {
+        return true;
+    }
+    let top = (ss.ss_sp as u64).wrapping_add(ss.ss_size as u64);
+    top.wrapping_sub(target_sp) < ss.ss_size as u64
 }
 
 // ── poll ───────────────────────────────────────────────────────────────────

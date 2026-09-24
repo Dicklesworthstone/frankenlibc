@@ -614,11 +614,17 @@ The loader is intentionally narrow at L1 (interpose); the broad dynamic-linking 
 
 ## setjmp / longjmp — Guarded Non-Local Jumps
 
-`setjmp`/`longjmp` are inherently unsafe at the ABI level. The implementation adds guard metadata to make corruption and misuse detectable.
+`setjmp`/`longjmp` are inherently unsafe at the ABI level: a writable `jmp_buf` holds a stack pointer and a return address.
 
-### Jump Buffer Layout
+### Release builds (the shipped `libfrankenlibc_abi.so`)
 
-The 128-byte `JmpBuf` (16 × `u64`) reserves the first six slots for membrane metadata:
+The x86_64 release path (`setjmp_abi.rs`, naked asm) uses glibc's exact 200-byte `jmp_buf` layout and stores the saved `rbp`, `rsp` and `rip` **mangled exactly as glibc's `PTR_MANGLE`**: `rol(value ^ pointer_guard, 17)`, with the per-process random guard the loader seeds from `AT_RANDOM` at `%fs:0x30`. An attacker who overwrites a `jmp_buf` therefore cannot aim `rip`/`rsp` without knowing the guard, and buffers stay byte-compatible with glibc's own `__libc_longjmp` (used on cancellation unwind buffers). `__longjmp_chk` (`_FORTIFY_SOURCE`) enforces glibc's stack-direction rule and aborts with `*** longjmp causes uninitialized stack frame ***` on a jump into a frame that already returned. `tests/integration/fixture_setjmp_guard.c` checks all of this byte-for-byte against glibc in the preload smoke corpus (`setjmp_guard`). The aarch64 release path does not mangle yet.
+
+The guard metadata below is **not** in release builds: it does not fit glibc's layout, and rejecting cross-thread jumps would diverge from glibc in strict mode.
+
+### Debug/test builds: guarded `JmpBuf`
+
+Under `debug_assertions`/`test`, the 128-byte `JmpBuf` (16 × `u64`) reserves the first six slots for membrane metadata:
 
 | Slot | Content |
 |---:|---|
@@ -3313,9 +3319,9 @@ Every category of detectable issue and what surfaces it:
 | Foreign-free (pointer not from us) | Bloom + arena absence | `IgnoreForeignFree` |
 | Out-of-bounds size argument | Bounds check vs `user_size` | `ClampSize` |
 | Realloc of freed pointer | Arena state `Freed` / `Quarantined` | `ReallocAsMalloc` |
-| Cross-thread `longjmp` | Owner-thread guard check | `ForeignContext` error |
-| Mode-tag mismatch (`longjmp` from wrong mode) | Mode tag check | `ModeMismatch` error |
-| Corrupted `JmpBuf` | Guard checksum check | `CorruptedContext` error |
+| Cross-thread `longjmp` | Owner-thread guard check (debug/test builds only) | `ForeignContext` error |
+| Mode-tag mismatch (`longjmp` from wrong mode) | Mode tag check (debug/test builds only) | `ModeMismatch` error |
+| Corrupted `JmpBuf` | Guard checksum check (debug/test builds); release: glibc pointer mangling, so an overwritten `rip`/`rsp` demangles to junk | `CorruptedContext` error (debug); crash instead of hijack (release) |
 | Use of destroyed mutex | Mutex state `Destroyed` | Return `EINVAL` |
 | Recursive `ERRORCHECK` mutex lock | Mutex state `LockedBySelf` + type | Return `EDEADLK` |
 | Unlock by non-owner | Mutex state check | Return `EPERM` |

@@ -240,22 +240,28 @@ fn restore_entrypoint(env: *mut c_void, val: c_int, is_signal_variant: bool) -> 
 // Native setjmp/longjmp via per-ISA global_asm!
 // ===========================================================================
 //
-// x86_64 jmp_buf layout (our own, self-consistent under LD_PRELOAD):
+// x86_64 jmp_buf layout (identical to glibc's):
 //   [0]:  rbx         (8 bytes)
-//   [8]:  rbp         (8 bytes)
+//   [8]:  rbp         (8 bytes, mangled)
 //   [16]: r12         (8 bytes)
 //   [24]: r13         (8 bytes)
 //   [32]: r14         (8 bytes)
 //   [40]: r15         (8 bytes)
-//   [48]: rsp         (8 bytes, caller's stack pointer)
-//   [56]: rip         (8 bytes, return address)
+//   [48]: rsp         (8 bytes, caller's stack pointer, mangled)
+//   [56]: rip         (8 bytes, return address, mangled)
 //   [64]: savemask    (4 bytes, int flag)
 //   [72]: saved_mask  (128 bytes, __sigset_t for signal mask)
 //
 // Total: 200 bytes — matches glibc's sizeof(sigjmp_buf) on x86_64.
 //
-// Under LD_PRELOAD, both setjmp and longjmp are our implementations,
-// so the jmp_buf layout only needs to be self-consistent.
+// rbp, rsp and rip are stored mangled exactly as glibc's PTR_MANGLE does:
+// `rol(value ^ pointer_guard, 17)`, where pointer_guard is the per-process
+// random word the dynamic loader seeds from AT_RANDOM into the TCB at
+// %fs:0x30. Without it an attacker who can overwrite a jmp_buf controls rip
+// and rsp directly. Native threads are created without CLONE_SETTLS and
+// share that TCB word, and host threads carry glibc's copy, so every thread
+// sees the same guard; buffers are byte-compatible with glibc's own
+// `__libc_longjmp` (used on cancellation unwind buffers).
 
 #[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
@@ -285,16 +291,23 @@ pub unsafe extern "C" fn __sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_i
     std::arch::naked_asm!(
         // Save callee-saved registers.
         "mov [rdi + 0],  rbx",
-        "mov [rdi + 8],  rbp",
+        "mov rax, rbp",
+        "xor rax, qword ptr fs:[0x30]",
+        "rol rax, 0x11",
+        "mov [rdi + 8],  rax",
         "mov [rdi + 16], r12",
         "mov [rdi + 24], r13",
         "mov [rdi + 32], r14",
         "mov [rdi + 40], r15",
-        // Save caller's rsp (rsp currently points at return address).
+        // Save caller's rsp (rsp currently points at return address), mangled.
         "lea rax, [rsp + 8]",
+        "xor rax, qword ptr fs:[0x30]",
+        "rol rax, 0x11",
         "mov [rdi + 48], rax",
-        // Save return address.
+        // Save return address, mangled.
         "mov rax, [rsp]",
+        "xor rax, qword ptr fs:[0x30]",
+        "rol rax, 0x11",
         "mov [rdi + 56], rax",
         // Save savemask flag.
         "mov [rdi + 64], esi",
@@ -344,17 +357,26 @@ pub unsafe extern "C" fn longjmp(_env: *mut c_void, _val: c_int) -> ! {
         "syscall",
         "mov rdi, r9",
         "4:",
+        // Demangle rsp, rbp and the return address into scratch registers
+        // before touching any callee-saved register.
+        "mov rdx, [rdi + 48]",
+        "ror rdx, 0x11",
+        "xor rdx, qword ptr fs:[0x30]",
+        "mov rsi, [rdi + 8]",
+        "ror rsi, 0x11",
+        "xor rsi, qword ptr fs:[0x30]",
+        "mov rcx, [rdi + 56]",
+        "ror rcx, 0x11",
+        "xor rcx, qword ptr fs:[0x30]",
         // Restore callee-saved registers.
         "mov rbx, [rdi + 0]",
-        "mov rbp, [rdi + 8]",
+        "mov rbp, rsi",
         "mov r12, [rdi + 16]",
         "mov r13, [rdi + 24]",
         "mov r14, [rdi + 32]",
         "mov r15, [rdi + 40]",
-        // Load return address before restoring rsp.
-        "mov rcx, [rdi + 56]",
         // Restore stack pointer.
-        "mov rsp, [rdi + 48]",
+        "mov rsp, rdx",
         // Set return value and jump to saved return address.
         "mov eax, r8d",
         "jmp rcx",

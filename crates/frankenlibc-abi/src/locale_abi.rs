@@ -1036,7 +1036,6 @@ const _: () = assert!(libc::THOUSEP == 65537);
 const _: () = assert!(libc::YESEXPR == 327680);
 const _: () = assert!(libc::NOEXPR == 327681);
 const _: () = assert!(libc::CRNCYSTR == 262159);
-const _: () = assert!(262151 - (4 << 16) == 7);
 const _: () = assert!(libc::CRNCYSTR - (4 << 16) == 15);
 const _: () = assert!(libc::RADIXCHAR - (1 << 16) == 0);
 const _: () = assert!(libc::THOUSEP - (1 << 16) == 1);
