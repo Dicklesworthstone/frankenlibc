@@ -134,6 +134,20 @@ const MUTEX_TYPE_OFFSET: usize = MUTEX_MAGIC_OFFSET + std::mem::size_of::<Atomic
 const MUTEX_OWNER_OFFSET: usize = MUTEX_TYPE_OFFSET + std::mem::size_of::<AtomicI32>();
 const MUTEX_LOCK_COUNT_OFFSET: usize = MUTEX_OWNER_OFFSET + std::mem::size_of::<AtomicI32>();
 const RWLOCK_MAGIC_OFFSET: usize = std::mem::size_of::<AtomicI32>();
+/// Owner process id of a robust/process-shared mutex (bd-rc0923-epic-eeuy4f.24):
+/// Layout: [lock_word][magic][type|flags][owner_tid][lock_count][owner_pid].
+const MUTEX_OWNER_PID_OFFSET: usize = MUTEX_LOCK_COUNT_OFFSET + std::mem::size_of::<AtomicU32>();
+/// The type word keeps the POSIX type in its low byte and these flags above it.
+const MUTEX_TYPE_MASK: i32 = 0xff;
+const MUTEX_FLAG_PSHARED: i32 = 1 << 8;
+const MUTEX_FLAG_ROBUST: i32 = 1 << 9;
+const MUTEX_FLAG_PI: i32 = 1 << 10;
+/// Robust mutex acquired from a dead owner and not yet marked consistent.
+const MUTEX_FLAG_INCONSISTENT: i32 = 1 << 11;
+/// Robust mutex unlocked while inconsistent: every later lock fails.
+const MUTEX_FLAG_NOTRECOVERABLE: i32 = 1 << 12;
+/// Flags that route a mutex off the private 0/1/2 fast path.
+const MUTEX_EXTENDED_FLAGS: i32 = MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI;
 
 struct ManagedThreadRecord {
     handle_raw: usize,
@@ -869,7 +883,16 @@ fn read_mutex_type(mutex: *mut libc::pthread_mutex_t) -> i32 {
     };
     // SAFETY: alignment and non-null checked above.
     let mtype = unsafe { &*type_ptr };
-    mtype.load(Ordering::Acquire)
+    mtype.load(Ordering::Acquire) & MUTEX_TYPE_MASK
+}
+
+/// The type word including the extended-mutex flags.
+fn read_mutex_type_word(mutex: *mut libc::pthread_mutex_t) -> i32 {
+    let Some(type_ptr) = mutex_type_ptr(mutex) else {
+        return PTHREAD_MUTEX_NORMAL_TYPE;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_type_ptr`.
+    unsafe { &*type_ptr }.load(Ordering::Acquire)
 }
 
 fn clear_managed_mutex(mutex: *mut libc::pthread_mutex_t) {
@@ -2178,6 +2201,372 @@ fn futex_unlock_normal(word: &AtomicI32) -> c_int {
     }
 }
 
+/// Returns a pointer to the owner pid field of a managed mutex.
+fn mutex_owner_pid_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI32> {
+    if mutex.is_null() {
+        return None;
+    }
+    // SAFETY: small in-object offset from a non-null mutex.
+    let ptr = unsafe { mutex.cast::<u8>().add(MUTEX_OWNER_PID_OFFSET) };
+    if !(ptr as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return None;
+    }
+    Some(ptr.cast::<AtomicI32>())
+}
+
+// ---------------------------------------------------------------------------
+// Process-shared, robust and priority-inheritance mutexes
+// (bd-rc0923-epic-eeuy4f.15)
+// ---------------------------------------------------------------------------
+//
+// Process-shared mutexes use shared (non-private) futexes so waiters in other
+// processes mapping the same memory are woken. Robust mutexes record the
+// owner's pid and tid; a waiter polls owner liveness with tgkill(pid, tid, 0)
+// and takes a dead owner's lock with EOWNERDEAD. (The kernel's robust list
+// would be the zero-poll alternative, but each thread has exactly one and on
+// host threads glibc owns it.) Priority-inheritance mutexes use the kernel's
+// FUTEX_LOCK_PI protocol, whose lock word holds the owner tid.
+
+const FUTEX_PI_WAITERS: i32 = 0x8000_0000_u32 as i32;
+const FUTEX_PI_OWNER_DIED: i32 = 0x4000_0000;
+const FUTEX_PI_TID_MASK: i32 = 0x3fff_ffff;
+/// How often a waiter on a robust mutex re-checks that the owner is alive.
+const ROBUST_OWNER_POLL_NS: i64 = 20_000_000;
+
+struct ExtMutex<'a> {
+    word: &'a AtomicI32,
+    type_word: &'a AtomicI32,
+    owner: &'a AtomicI32,
+    count: &'a AtomicU32,
+    owner_pid: &'a AtomicI32,
+}
+
+fn ext_mutex_fields<'a>(mutex: *mut libc::pthread_mutex_t) -> Option<ExtMutex<'a>> {
+    // SAFETY: every pointer is alignment-checked and lies inside the caller's
+    // pthread_mutex_t, which outlives the lock/unlock call.
+    unsafe {
+        Some(ExtMutex {
+            word: &*mutex_word_ptr(mutex)?,
+            type_word: &*mutex_type_ptr(mutex)?,
+            owner: &*mutex_owner_ptr(mutex)?,
+            count: &*mutex_lock_count_ptr(mutex)?,
+            owner_pid: &*mutex_owner_pid_ptr(mutex)?,
+        })
+    }
+}
+
+fn futex_private_bit(raw_type: i32) -> c_int {
+    if raw_type & MUTEX_FLAG_PSHARED != 0 {
+        0
+    } else {
+        libc::FUTEX_PRIVATE_FLAG
+    }
+}
+
+/// A recorded owner that no longer exists.
+fn mutex_owner_dead(pid: i32, tid: i32) -> bool {
+    pid > 0 && tid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH)
+}
+
+/// Nanoseconds from now until an absolute CLOCK_REALTIME deadline.
+fn realtime_remaining_ns(deadline: &libc::timespec) -> i64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: valid out-pointer for clock_gettime.
+    let _ = unsafe {
+        raw_syscall::sys_clock_gettime(
+            libc::CLOCK_REALTIME,
+            &mut now as *mut libc::timespec as *mut u8,
+        )
+    };
+    (deadline.tv_sec - now.tv_sec).saturating_mul(1_000_000_000) + (deadline.tv_nsec - now.tv_nsec)
+}
+
+/// Block while `word == expected` for at most `timeout_ns` (None: forever).
+fn ext_futex_wait(word: &AtomicI32, expected: i32, raw_type: i32, timeout_ns: Option<i64>) {
+    let ts = timeout_ns.map(|ns| libc::timespec {
+        tv_sec: ns / 1_000_000_000,
+        tv_nsec: ns % 1_000_000_000,
+    });
+    let ts_ptr = ts
+        .as_ref()
+        .map_or(0, |t| t as *const libc::timespec as usize);
+    // SAFETY: futex wait on the caller's lock word with a live timeout.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAIT | futex_private_bit(raw_type),
+            expected as u32,
+            ts_ptr,
+            0,
+            0,
+        )
+    };
+}
+
+fn ext_futex_wake(word: &AtomicI32, raw_type: i32, count: i32) {
+    // SAFETY: futex wake on the caller's lock word.
+    let _ = unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            libc::FUTEX_WAKE | futex_private_bit(raw_type),
+            count as u32,
+            0,
+            0,
+            0,
+        )
+    };
+}
+
+/// Lock, trylock or timedlock a process-shared, robust or PI mutex.
+unsafe fn ext_mutex_lock(
+    mutex: *mut libc::pthread_mutex_t,
+    raw_type: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let mtype = raw_type & MUTEX_TYPE_MASK;
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let tid = core_self_tid();
+    if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+        return libc::ENOTRECOVERABLE;
+    }
+    if m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER {
+        if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
+            let cur = m.count.load(Ordering::Relaxed);
+            if cur == u32::MAX {
+                return libc::EAGAIN;
+            }
+            m.count.store(cur + 1, Ordering::Release);
+            return 0;
+        }
+        if try_only {
+            return libc::EBUSY;
+        }
+        if mtype == PTHREAD_MUTEX_ERRORCHECK_TYPE || robust {
+            return libc::EDEADLK;
+        }
+        // A normal non-robust mutex relocked by its owner deadlocks, as in glibc.
+    }
+    let rc = if raw_type & MUTEX_FLAG_PI != 0 {
+        ext_pi_acquire(&m, raw_type, tid, deadline, try_only)
+    } else {
+        ext_acquire(&m, raw_type, tid, deadline, try_only)
+    };
+    if rc != 0 && rc != libc::EOWNERDEAD {
+        return rc;
+    }
+    m.owner.store(tid, Ordering::Release);
+    m.owner_pid
+        .store(raw_syscall::sys_getpid(), Ordering::Release);
+    m.count.store(1, Ordering::Release);
+    if rc == libc::EOWNERDEAD {
+        m.type_word
+            .fetch_or(MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
+    }
+    rc
+}
+
+/// 0/1/2 futex acquire with shared futexes and dead-owner takeover.
+fn ext_acquire(
+    m: &ExtMutex<'_>,
+    raw_type: i32,
+    tid: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    if m.word
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        return 0;
+    }
+    loop {
+        if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+            return libc::ENOTRECOVERABLE;
+        }
+        if robust {
+            let owner = m.owner.load(Ordering::Acquire);
+            if mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), owner)
+                && m.owner
+                    .compare_exchange(owner, tid, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+            {
+                // The lock word stays held; mark it contended so our unlock
+                // wakes anyone else who queued behind the dead owner.
+                m.word.store(2, Ordering::Release);
+                return libc::EOWNERDEAD;
+            }
+        }
+        if try_only {
+            return if m
+                .word
+                .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                0
+            } else {
+                libc::EBUSY
+            };
+        }
+        if m.word.swap(2, Ordering::Acquire) == 0 {
+            return 0;
+        }
+        let mut timeout = robust.then_some(ROBUST_OWNER_POLL_NS);
+        if let Some(deadline) = deadline {
+            let remaining = realtime_remaining_ns(deadline);
+            if remaining <= 0 {
+                return libc::ETIMEDOUT;
+            }
+            timeout = Some(timeout.map_or(remaining, |t| t.min(remaining)));
+        }
+        ext_futex_wait(m.word, 2, raw_type, timeout);
+    }
+}
+
+/// FUTEX_LOCK_PI acquire; the lock word holds the owner tid.
+fn ext_pi_acquire(
+    m: &ExtMutex<'_>,
+    raw_type: i32,
+    tid: i32,
+    deadline: Option<&libc::timespec>,
+    try_only: bool,
+) -> c_int {
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    loop {
+        if m.word
+            .compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            return 0;
+        }
+        if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
+            return libc::ENOTRECOVERABLE;
+        }
+        let observed = m.word.load(Ordering::Acquire);
+        let holder = observed & FUTEX_PI_TID_MASK;
+        let holder_gone = observed & FUTEX_PI_OWNER_DIED != 0
+            || (holder != 0 && mutex_owner_dead(m.owner_pid.load(Ordering::Acquire), holder));
+        if robust && holder_gone {
+            if m.word
+                .compare_exchange(
+                    observed,
+                    tid | (observed & FUTEX_PI_WAITERS),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                return libc::EOWNERDEAD;
+            }
+            continue;
+        }
+        if try_only {
+            return libc::EBUSY;
+        }
+        // FUTEX_LOCK_PI takes an absolute CLOCK_REALTIME deadline.
+        let ts_ptr = deadline.map_or(0, |d| d as *const libc::timespec as usize);
+        // SAFETY: PI futex on the caller's lock word with a live deadline.
+        let r = unsafe {
+            raw_syscall::sys_futex(
+                m.word as *const AtomicI32 as *const u32,
+                libc::FUTEX_LOCK_PI | futex_private_bit(raw_type),
+                0,
+                ts_ptr,
+                0,
+                0,
+            )
+        };
+        match r {
+            Ok(_) => {
+                if m.word.load(Ordering::Acquire) & FUTEX_PI_OWNER_DIED != 0 {
+                    m.word.fetch_and(!FUTEX_PI_OWNER_DIED, Ordering::AcqRel);
+                    return libc::EOWNERDEAD;
+                }
+                return 0;
+            }
+            Err(libc::ETIMEDOUT) => return libc::ETIMEDOUT,
+            Err(libc::EINTR) | Err(libc::EAGAIN) => continue,
+            // The holder no longer exists and the mutex is not robust: glibc
+            // blocks such a locker forever; so does fl.
+            Err(_) if !robust => loop {
+                let forever = libc::timespec {
+                    tv_sec: 3600,
+                    tv_nsec: 0,
+                };
+                // SAFETY: plain sleep.
+                let _ = unsafe {
+                    raw_syscall::sys_nanosleep(
+                        &forever as *const libc::timespec as *const u8,
+                        std::ptr::null_mut(),
+                    )
+                };
+            },
+            Err(_) => continue,
+        }
+    }
+}
+
+/// Unlock a process-shared, robust or PI mutex.
+unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> c_int {
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let mtype = raw_type & MUTEX_TYPE_MASK;
+    let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let tid = core_self_tid();
+    let owned = m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER;
+    if !owned && (robust || mtype != PTHREAD_MUTEX_NORMAL_TYPE || raw_type & MUTEX_FLAG_PI != 0) {
+        return libc::EPERM;
+    }
+    if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
+        let cur = m.count.load(Ordering::Relaxed);
+        if cur > 1 {
+            m.count.store(cur - 1, Ordering::Release);
+            return 0;
+        }
+    }
+    let mut wake_all = false;
+    if robust && raw_type & MUTEX_FLAG_INCONSISTENT != 0 {
+        // Unlocked without pthread_mutex_consistent: the state is lost.
+        m.type_word
+            .fetch_or(MUTEX_FLAG_NOTRECOVERABLE, Ordering::AcqRel);
+        wake_all = true;
+    }
+    m.owner.store(MUTEX_NO_OWNER, Ordering::Release);
+    m.owner_pid.store(0, Ordering::Release);
+    m.count.store(0, Ordering::Release);
+    if raw_type & MUTEX_FLAG_PI != 0 {
+        if m.word
+            .compare_exchange(tid, 0, Ordering::Release, Ordering::Relaxed)
+            .is_err()
+        {
+            // SAFETY: PI unlock on the caller's lock word.
+            let _ = unsafe {
+                raw_syscall::sys_futex(
+                    m.word as *const AtomicI32 as *const u32,
+                    libc::FUTEX_UNLOCK_PI | futex_private_bit(raw_type),
+                    0,
+                    0,
+                    0,
+                    0,
+                )
+            };
+        }
+        return 0;
+    }
+    if m.word.swap(0, Ordering::Release) == 2 || wake_all {
+        ext_futex_wake(m.word, raw_type, if wake_all { i32::MAX } else { 1 });
+    }
+    0
+}
+
 fn futex_rwlock_rdlock(word: &AtomicI32) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
@@ -2735,13 +3124,19 @@ pub unsafe extern "C" fn pthread_mutex_init(
         if !mutexattr_word_valid(word) {
             return libc::EINVAL;
         }
-        if decode_mutexattr_protocol(word) != libc::PTHREAD_PRIO_NONE
-            || decode_mutexattr_pshared(word) != libc::PTHREAD_PROCESS_PRIVATE
-            || decode_mutexattr_robust(word) != libc::PTHREAD_MUTEX_STALLED
-        {
-            return libc::EINVAL;
+        let mut flags = 0;
+        if decode_mutexattr_pshared(word) == libc::PTHREAD_PROCESS_SHARED {
+            flags |= MUTEX_FLAG_PSHARED;
         }
-        decode_mutexattr_type(word)
+        if decode_mutexattr_robust(word) == libc::PTHREAD_MUTEX_ROBUST {
+            flags |= MUTEX_FLAG_ROBUST;
+        }
+        // PTHREAD_PRIO_PROTECT is accepted and behaves like PRIO_NONE: fl does
+        // not raise the locking thread to the priority ceiling.
+        if decode_mutexattr_protocol(word) == libc::PTHREAD_PRIO_INHERIT {
+            flags |= MUTEX_FLAG_PI;
+        }
+        decode_mutexattr_type(word) | flags
     };
 
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
@@ -2771,6 +3166,10 @@ pub unsafe extern "C" fn pthread_mutex_init(
     mtype.store(mutex_type, Ordering::Release);
     owner.store(MUTEX_NO_OWNER, Ordering::Release);
     count.store(0, Ordering::Release);
+    if let Some(pid_ptr) = mutex_owner_pid_ptr(mutex) {
+        // SAFETY: alignment checked; within pthread_mutex_t storage.
+        unsafe { &*pid_ptr }.store(0, Ordering::Release);
+    }
     0
 }
 
@@ -2819,6 +3218,10 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut libc::pthread_mutex_t) -> c_int {
     if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_lock(mutex, raw_type, None, false) };
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
@@ -2891,6 +3294,10 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
     if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_lock(mutex, raw_type, None, true) };
+    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
@@ -2960,6 +3367,10 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut libc::pthread_mutex_t
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut libc::pthread_mutex_t) -> c_int {
     if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
+    }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        return unsafe { ext_mutex_unlock(mutex, raw_type) };
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
@@ -6012,6 +6423,11 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     if !is_managed_mutex(mutex) {
         return libc::EINVAL;
     }
+    let raw_type = read_mutex_type_word(mutex);
+    if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
+        // SAFETY: abstime is non-null and validated above.
+        return unsafe { ext_mutex_lock(mutex, raw_type, Some(&*abstime), false) };
+    }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
     };
@@ -6135,11 +6551,20 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut libc::pthread_mute
     if mutex.is_null() {
         return libc::EINVAL;
     }
-    // Robust mutex initialization is currently rejected by pthread_mutex_init,
-    // so native mutexes cannot enter the EOWNERDEAD state. Match glibc's
-    // contract for non-robust or not-owner-dead mutexes instead of reporting a
-    // successful repair that did not happen.
-    libc::EINVAL
+    let raw_type = read_mutex_type_word(mutex);
+    let (Some(type_ptr), Some(owner_ptr)) = (mutex_type_ptr(mutex), mutex_owner_ptr(mutex)) else {
+        return libc::EINVAL;
+    };
+    // Only the thread that acquired a robust mutex with EOWNERDEAD may repair it.
+    if raw_type & MUTEX_FLAG_ROBUST == 0
+        || raw_type & MUTEX_FLAG_INCONSISTENT == 0
+        || unsafe { &*owner_ptr }.load(Ordering::Acquire) != core_self_tid()
+    {
+        return libc::EINVAL;
+    }
+    // SAFETY: alignment checked in `mutex_type_ptr`.
+    unsafe { &*type_ptr }.fetch_and(!MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
+    0
 }
 
 /// GNU `pthread_mutex_clocklock` — lock with specific clock timeout.
