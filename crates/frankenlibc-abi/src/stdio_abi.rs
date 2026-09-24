@@ -1543,6 +1543,17 @@ fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     if next != current {
         word.store(next, Ordering::Relaxed);
     }
+    // `_mode` (orientation), read by fwide-aware callers and gnulib.
+    // SAFETY: same object; `_mode` is an aligned int inside `_IO_FILE`.
+    let mode = unsafe {
+        std::sync::atomic::AtomicI32::from_ptr(
+            (handle + io_internal_abi::IO_FILE_MODE_OFFSET) as *mut i32,
+        )
+    };
+    let orientation = stream.effective_orientation().signum();
+    if mode.load(Ordering::Relaxed) != orientation {
+        mode.store(orientation, Ordering::Relaxed);
+    }
 }
 
 /// glibc `_flags` for a newly opened stream (matches e.g. 0xfbad2488 for
@@ -2656,8 +2667,11 @@ pub(crate) fn register_memory_stream_with_native_handle(
     // SAFETY: native_ptr is the registered NativeFile; `_flags` is its first
     // field. Set the observable open-mode bits (the memory backing has no fd).
     unsafe {
-        *(native_ptr as *mut i32) =
-            initial_glibc_flags(&open_flags, false, BufMode::Full) | (0xFBAD_0000u32 as i32);
+        io_internal_abi::reset_stdio_handle_header(
+            native_ptr,
+            -1,
+            initial_glibc_flags(&open_flags, false, BufMode::Full),
+        );
     }
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());
     reg.insert_stream_with_handle(native_ptr as usize, stream, native_ptr as usize);
@@ -11741,7 +11755,22 @@ pub unsafe extern "C" fn freopen(
     }
 
     let new_stream = StdioStream::new(fd, open_flags);
-    reg.insert_stream(id, new_stream);
+    // Keep the caller's FILE * valid and truthful: same handle, new fd and
+    // mode bits, EOF/ERR/orientation reset (bd-rc0923-epic-eeuy4f.1).
+    let handle = if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
+        // SAFETY: `id` is a registered fl handle (checked just above).
+        unsafe {
+            io_internal_abi::reset_stdio_handle_header(
+                id as *mut c_void,
+                fd,
+                initial_glibc_flags(&open_flags, true, new_stream.buf_mode()),
+            );
+        }
+        id
+    } else {
+        0
+    };
+    reg.insert_stream_with_handle(id, new_stream, handle);
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
     id as *mut c_void
@@ -12419,6 +12448,10 @@ pub unsafe extern "C" fn popen(command: *const c_char, typ: *const c_char) -> *m
     }
 
     let id = canonical_stream_id(fp);
+    // glibc's popen streams are byte-oriented from creation (_mode == -1).
+    if let Some(cell) = stream_cell(id) {
+        cell.lock().set_orientation(-1);
+    }
     {
         let mut guard = POPEN_PIDS.lock().unwrap_or_else(|e| e.into_inner());
         let map = guard.get_or_insert_with(artifact_hash_map);
@@ -13128,12 +13161,14 @@ pub unsafe extern "C" fn fmemopen(
         }
     };
 
-    let stream = if fast_read_data.is_some() {
+    let mut stream = if fast_read_data.is_some() {
         // bd-rv2gv6 read-only: cursor owns the content; stream tracks position.
         StdioStream::new_mem_fixed_readonly(content_len, open_flags)
     } else {
         StdioStream::new_mem_fixed(data, content_len, open_flags)
     };
+    // glibc's fmemopen streams are byte-oriented from creation (_mode == -1).
+    stream.set_orientation(-1);
     let handle = register_memory_stream_with_native_handle(
         stream,
         io_internal_abi::NativeFileBacking::MemoryFixed {
@@ -13279,7 +13314,9 @@ pub unsafe extern "C" fn fopencookie(
     // Cookie streams have no kernel fd, but they still use the ordinary stdio
     // write buffer.  This makes the default `_IOFBF` behavior observable before
     // the callback is invoked, exactly as it is for glibc cookie streams.
-    let stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+    let mut stream = StdioStream::with_mode(-1, open_flags, BufMode::Full);
+    // glibc's fopencookie streams are byte-oriented from creation (_mode == -1).
+    stream.set_orientation(-1);
     let (id, handle) = alloc_stream_handle(-1, &open_flags, BufMode::Full);
 
     let mut reg = registry().lock().unwrap_or_else(|e| e.into_inner());

@@ -482,6 +482,16 @@ impl StdioStream {
         }
     }
 
+    /// Orientation as glibc reports it in `FILE::_mode`: explicit orientation,
+    /// or byte (-1) once any byte I/O happened on an unoriented stream.
+    pub fn effective_orientation(&self) -> i32 {
+        if self.flags.orientation == 0 && self.flags.io_started {
+            -1
+        } else {
+            self.flags.orientation
+        }
+    }
+
     /// Give a [`Self::new_mem_fixed_readonly`] stream its bytes.
     ///
     /// That constructor leaves the generic backing empty because the ABI's
@@ -582,6 +592,12 @@ impl StdioStream {
     /// sticky thereafter. Returns the resulting orientation (>0 wide, <0 byte,
     /// 0 unset).
     pub fn set_orientation(&mut self, mode: i32) -> i32 {
+        // Byte I/O on an unoriented stream fixes it as byte-oriented (glibc:
+        // `fwide(fp, 0)` after `putc` returns -1, and `fwide(fp, 1)` cannot
+        // switch it afterwards).
+        if self.flags.orientation == 0 && self.flags.io_started {
+            self.flags.orientation = -1;
+        }
         if self.flags.orientation == 0 && mode != 0 {
             self.flags.orientation = if mode > 0 { 1 } else { -1 };
         }

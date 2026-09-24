@@ -1739,12 +1739,35 @@ pub(crate) fn register_stdio_handle(
 ) -> Option<*mut c_void> {
     let mut file = NativeFile::new(fd, native_open_flags, NativeFileBufMode::None);
     file._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
+    // glibc marks fd-less streams (fmemopen, fopencookie) with _fileno == -2.
+    file._io_file._fileno = if fd < 0 { -2 } else { fd };
     let mut reg = native_stream_registry();
     let slot = reg.register(file)?;
     let ptr = reg.get_mut(slot)? as *mut NativeFile as *mut c_void;
     drop(reg);
     register_native_file_ptr(ptr);
     Some(ptr)
+}
+
+/// Byte offset of `_IO_FILE::_mode` (stream orientation) in a handle.
+pub(crate) const IO_FILE_MODE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _mode);
+
+/// Rewrite the caller-visible header of a registered handle after the stream
+/// behind it changed identity (`freopen`): new fd, open-mode bits, and a
+/// fresh (unoriented, no EOF/ERR) state.
+///
+/// # Safety
+///
+/// `ptr` must be a live handle from [`register_stdio_handle`] or a memory
+/// stream registered with a native handle.
+pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glibc_flags: i32) {
+    let file = ptr.cast::<NativeFile>();
+    // SAFETY: caller guarantees `ptr` is a live NativeFile.
+    unsafe {
+        (*file)._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
+        (*file)._io_file._fileno = if fd < 0 { -2 } else { fd };
+        (*file)._io_file._mode = 0;
+    }
 }
 
 /// True when `ptr` is the address of one of FrankenLibC's dynamic `FILE`
