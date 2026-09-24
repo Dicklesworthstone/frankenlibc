@@ -483,7 +483,7 @@ pub(crate) unsafe fn sys_write_fd(fd: c_int, buf: *const c_void, count: usize) -
 ///
 /// `buf` must be valid for writes of up to `count` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc::ssize_t {
+pub unsafe extern "C-unwind" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -522,8 +522,13 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
     let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
-    // SAFETY: syscall wrapper expects raw fd/buffer/count.
-    let rc = unsafe { sys_read_fd(fd, buf, effective_count) };
+    // SAFETY: raw fd/buffer/count for read(2); read is a cancellation point.
+    let rc = unsafe {
+        crate::pthread_abi::cancellation_point_syscall(
+            libc::SYS_read,
+            [fd as usize, buf as usize, effective_count, 0, 0, 0],
+        )
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -539,7 +544,11 @@ pub unsafe extern "C" fn read(fd: c_int, buf: *mut c_void, count: usize) -> libc
 ///
 /// `buf` must be valid for reads of up to `count` bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> libc::ssize_t {
+pub unsafe extern "C-unwind" fn write(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+) -> libc::ssize_t {
     if buf.is_null() && count > 0 {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -578,8 +587,13 @@ pub unsafe extern "C" fn write(fd: c_int, buf: *const c_void, count: usize) -> l
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
     let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
-    // SAFETY: syscall wrapper expects raw fd/buffer/count.
-    let rc = unsafe { sys_write_fd(fd, buf, effective_count) };
+    // SAFETY: raw fd/buffer/count for write(2); write is a cancellation point.
+    let rc = unsafe {
+        crate::pthread_abi::cancellation_point_syscall(
+            libc::SYS_write,
+            [fd as usize, buf as usize, effective_count, 0, 0, 0],
+        )
+    };
     runtime_policy::observe(
         ApiFamily::Stdio,
         decision.profile,
@@ -2481,7 +2495,7 @@ pub unsafe extern "C" fn alarm(seconds: u32) -> u32 {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sleep(seconds: u32) -> u32 {
+pub unsafe extern "C-unwind" fn sleep(seconds: u32) -> u32 {
     let req = libc::timespec {
         tv_sec: seconds as libc::time_t,
         tv_nsec: 0,
@@ -2490,11 +2504,14 @@ pub unsafe extern "C" fn sleep(seconds: u32) -> u32 {
         tv_sec: 0,
         tv_nsec: 0,
     };
+    // sleep is a cancellation point.
     match unsafe {
-        syscall::sys_nanosleep(
-            (&req) as *const _ as *const u8,
-            (&mut rem) as *mut _ as *mut u8,
-        )
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_nanosleep(
+                (&req) as *const _ as *const u8,
+                (&mut rem) as *mut _ as *mut u8,
+            )
+        })
     } {
         Ok(()) => 0,
         Err(e) => {
@@ -2513,12 +2530,17 @@ pub unsafe extern "C" fn sleep(seconds: u32) -> u32 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn usleep(usec: u32) -> c_int {
+pub unsafe extern "C-unwind" fn usleep(usec: u32) -> c_int {
     let req = libc::timespec {
         tv_sec: (usec / 1_000_000) as libc::time_t,
         tv_nsec: ((usec % 1_000_000) * 1_000) as libc::c_long,
     };
-    match unsafe { syscall::sys_nanosleep((&req) as *const _ as *const u8, std::ptr::null_mut()) } {
+    // usleep is a cancellation point.
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_nanosleep((&req) as *const _ as *const u8, std::ptr::null_mut())
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

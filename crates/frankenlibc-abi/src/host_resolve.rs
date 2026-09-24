@@ -16,6 +16,11 @@ static HOST_PTHREAD_CANCEL: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SETCANCELSTATE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SETCANCELTYPE: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_TESTCANCEL: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_REGISTER_CANCEL: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_UNREGISTER_CANCEL: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_REGISTER_CANCEL_DEFER: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_UNWIND_NEXT: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_DETACH: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EXIT: AtomicUsize = AtomicUsize::new(0);
@@ -520,6 +525,20 @@ pub(crate) fn bootstrap_host_symbols() {
         ("pthread_setcancelstate", &HOST_PTHREAD_SETCANCELSTATE),
         ("pthread_setcanceltype", &HOST_PTHREAD_SETCANCELTYPE),
         ("pthread_testcancel", &HOST_PTHREAD_TESTCANCEL),
+        ("__pthread_register_cancel", &HOST_PTHREAD_REGISTER_CANCEL),
+        (
+            "__pthread_unregister_cancel",
+            &HOST_PTHREAD_UNREGISTER_CANCEL,
+        ),
+        (
+            "__pthread_register_cancel_defer",
+            &HOST_PTHREAD_REGISTER_CANCEL_DEFER,
+        ),
+        (
+            "__pthread_unregister_cancel_restore",
+            &HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE,
+        ),
+        ("__pthread_unwind_next", &HOST_PTHREAD_UNWIND_NEXT),
         ("pthread_join", &HOST_PTHREAD_JOIN),
         ("pthread_detach", &HOST_PTHREAD_DETACH),
         ("pthread_exit", &HOST_PTHREAD_EXIT),
@@ -595,21 +614,52 @@ pub(crate) fn host_pthread_cancel_raw() -> Option<unsafe extern "C" fn(libc::pth
 }
 
 pub(crate) fn host_pthread_setcancelstate_raw()
--> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
+-> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> i32> {
     load_host_symbol(&HOST_PTHREAD_SETCANCELSTATE).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
 pub(crate) fn host_pthread_setcanceltype_raw()
--> Option<unsafe extern "C" fn(c_int, *mut c_int) -> i32> {
+-> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> i32> {
     load_host_symbol(&HOST_PTHREAD_SETCANCELTYPE).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
-pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C" fn()> {
+pub(crate) fn host_pthread_testcancel_raw() -> Option<unsafe extern "C-unwind" fn()> {
     load_host_symbol(&HOST_PTHREAD_TESTCANCEL).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
+/// glibc's C cleanup-handler registration (`pthread_cleanup_push` without
+/// `-fexceptions`). `__pthread_unwind_next` continues a cancellation unwind.
+pub(crate) fn host_pthread_register_cancel_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void)>
+{
+    load_host_symbol(&HOST_PTHREAD_REGISTER_CANCEL)
+        .map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_unregister_cancel_raw()
+-> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
+    load_host_symbol(&HOST_PTHREAD_UNREGISTER_CANCEL)
+        .map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_register_cancel_defer_raw()
+-> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
+    load_host_symbol(&HOST_PTHREAD_REGISTER_CANCEL_DEFER)
+        .map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_unregister_cancel_restore_raw()
+-> Option<unsafe extern "C-unwind" fn(*mut c_void)> {
+    load_host_symbol(&HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE)
+        .map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+pub(crate) fn host_pthread_unwind_next_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !>
+{
+    load_host_symbol(&HOST_PTHREAD_UNWIND_NEXT).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
 pub(crate) fn host_pthread_join_raw()
--> Option<unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
+-> Option<unsafe extern "C-unwind" fn(libc::pthread_t, *mut *mut c_void) -> i32> {
     load_host_symbol(&HOST_PTHREAD_JOIN).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
@@ -617,7 +667,7 @@ pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern "C" fn(libc::pth
     load_host_symbol(&HOST_PTHREAD_DETACH).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 
-pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C" fn(*mut c_void) -> !> {
+pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !> {
     load_host_symbol(&HOST_PTHREAD_EXIT).map(|addr| unsafe { core::mem::transmute(addr) })
 }
 

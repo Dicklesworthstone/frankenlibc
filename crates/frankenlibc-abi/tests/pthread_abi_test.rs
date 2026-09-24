@@ -2363,19 +2363,68 @@ fn internal_mutexattr_aliases() {
 }
 
 // ===========================================================================
-// pthread_cancel register/unregister stubs (no-op)
+// pthread_cleanup_push/pop machinery
 // ===========================================================================
 
+/// Room for glibc's `__pthread_unwind_buf_t` (a jmp_buf plus four pointers).
+#[repr(C, align(16))]
+struct UnwindBuf([u8; 256]);
+
 #[test]
-fn cancel_register_unregister_stubs() {
+fn cancel_register_unregister_balance() {
+    // Register/unregister pairs (the C `pthread_cleanup_push`/`pop` expansion)
+    // must leave the thread's cleanup chain as they found it.
     unsafe {
-        let mut buf = [0u8; 64];
-        __pthread_register_cancel(buf.as_mut_ptr() as *mut c_void);
-        __pthread_unregister_cancel(buf.as_mut_ptr() as *mut c_void);
-        __pthread_register_cancel_defer(buf.as_mut_ptr() as *mut c_void);
-        __pthread_unregister_cancel_restore(buf.as_mut_ptr() as *mut c_void);
-        __pthread_cleanup_routine(buf.as_mut_ptr() as *mut c_void);
+        let mut outer = UnwindBuf([0; 256]);
+        let mut inner = UnwindBuf([0; 256]);
+        __pthread_register_cancel(outer.0.as_mut_ptr() as *mut c_void);
+        __pthread_register_cancel(inner.0.as_mut_ptr() as *mut c_void);
+        __pthread_unregister_cancel(inner.0.as_mut_ptr() as *mut c_void);
+        __pthread_unregister_cancel(outer.0.as_mut_ptr() as *mut c_void);
+        let mut deferred = UnwindBuf([0; 256]);
+        __pthread_register_cancel_defer(deferred.0.as_mut_ptr() as *mut c_void);
+        __pthread_unregister_cancel_restore(deferred.0.as_mut_ptr() as *mut c_void);
     }
+}
+
+static CLEANUP_ROUTINE_RUNS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+unsafe extern "C-unwind" fn count_cleanup(arg: *mut c_void) {
+    assert_eq!(arg as usize, 0x5eed);
+    CLEANUP_ROUTINE_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CleanupFrame {
+    routine: Option<unsafe extern "C-unwind" fn(*mut c_void)>,
+    arg: *mut c_void,
+    do_it: c_int,
+    cancel_type: c_int,
+}
+
+#[test]
+fn cleanup_routine_runs_handler_only_when_do_it() {
+    // glibc's `__pthread_cleanup_routine` (the -fexceptions cleanup frame):
+    // `if (frame->__do_it) frame->__cancel_routine(frame->__cancel_arg)`.
+    let before = CLEANUP_ROUTINE_RUNS.load(std::sync::atomic::Ordering::SeqCst);
+    let mut skip = CleanupFrame {
+        routine: Some(count_cleanup),
+        arg: 0x5eed as *mut c_void,
+        do_it: 0,
+        cancel_type: 0,
+    };
+    let mut run = CleanupFrame { do_it: 1, ..skip };
+    unsafe {
+        __pthread_cleanup_routine((&mut skip as *mut CleanupFrame).cast());
+        __pthread_cleanup_routine((&mut run as *mut CleanupFrame).cast());
+        __pthread_cleanup_routine(std::ptr::null_mut());
+    }
+    assert_eq!(
+        CLEANUP_ROUTINE_RUNS.load(std::sync::atomic::Ordering::SeqCst) - before,
+        1
+    );
 }
 
 // ===========================================================================

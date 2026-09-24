@@ -50,13 +50,15 @@ use crate::host_resolve::{
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
-    host_pthread_join_raw as resolved_thread_join_raw,
-    host_pthread_self_raw as resolved_thread_self_raw,
+    host_pthread_join_raw as resolved_thread_join_raw, host_pthread_register_cancel_defer_raw,
+    host_pthread_register_cancel_raw, host_pthread_self_raw as resolved_thread_self_raw,
     host_pthread_setcancelstate_raw as resolved_thread_setcancelstate_raw,
     host_pthread_setcanceltype_raw as resolved_thread_setcanceltype_raw,
     host_pthread_testcancel_raw as resolved_thread_testcancel_raw,
     host_pthread_timedjoin_np_raw as resolved_thread_timedjoin_np_raw,
     host_pthread_tryjoin_np_raw as resolved_thread_tryjoin_np_raw,
+    host_pthread_unregister_cancel_raw, host_pthread_unregister_cancel_restore_raw,
+    host_pthread_unwind_next_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -2642,7 +2644,10 @@ pub unsafe extern "C" fn pthread_create(
 /// by our native path, delegate to the host glibc so pthread_create's
 /// host-path threads can actually be joined (bd-21ypi).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_join(thread: libc::pthread_t, retval: *mut *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn pthread_join(
+    thread: libc::pthread_t,
+    retval: *mut *mut c_void,
+) -> c_int {
     if !force_native_threading_enabled()
         && !is_managed_thread_handle(thread)
         && let Some(host_join) = resolved_thread_join_raw()
@@ -2686,7 +2691,7 @@ pub unsafe extern "C" fn __pthread_create(
 ///
 /// Same as [`pthread_join`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_join(
+pub unsafe extern "C-unwind" fn __pthread_join(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
 ) -> c_int {
@@ -4442,7 +4447,10 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn pthread_setcancelstate(
+    state: c_int,
+    oldstate: *mut c_int,
+) -> c_int {
     if state != PTHREAD_CANCEL_ENABLE_STATE && state != PTHREAD_CANCEL_DISABLE_STATE {
         return libc::EINVAL;
     }
@@ -4471,7 +4479,7 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, oldstate: *mut c_i
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
     if typ != PTHREAD_CANCEL_DEFERRED_TYPE && typ != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE {
         return libc::EINVAL;
     }
@@ -4513,7 +4521,10 @@ pub unsafe extern "C" fn __pthread_self() -> libc::pthread_t {
 ///
 /// Same as [`pthread_setcancelstate`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_setcancelstate(state: c_int, oldstate: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __pthread_setcancelstate(
+    state: c_int,
+    oldstate: *mut c_int,
+) -> c_int {
     unsafe { pthread_setcancelstate(state, oldstate) }
 }
 
@@ -4523,12 +4534,99 @@ pub unsafe extern "C" fn __pthread_setcancelstate(state: c_int, oldstate: *mut c
 ///
 /// Same as [`pthread_setcanceltype`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mut c_int) -> c_int {
     unsafe { pthread_setcanceltype(typ, oldtype) }
 }
 
+// ===========================================================================
+// Cancellation points (bd-rc0923-epic-eeuy4f.24)
+// ===========================================================================
+//
+// Threads are host (glibc) threads by default, so pthread_cancel is glibc's:
+// it marks the target and sends SIGCANCEL. glibc >= 2.41 acts on a DEFERRED
+// request only when SIGCANCEL interrupts its own syscall bridge
+// (__syscall_cancel_arch), and installs the handler SA_RESTART, so a thread
+// blocked in one of fl's raw syscalls had the syscall restarted forever and
+// pthread_cancel never completed. fl uses glibc's pre-2.41 scheme instead: the
+// thread runs as ASYNCHRONOUS for exactly the blocking syscall. Switching to
+// asynchronous acts on a request that is already pending; one that arrives
+// while blocked is acted on by glibc's handler. Either way the forced unwind
+// runs the thread's cleanup handlers and crosses fl's C-unwind entry points.
+
+/// Issue one blocking syscall as a POSIX cancellation point. Returns the
+/// syscall result, or -1 with errno set.
+pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 6]) -> isize {
+    let ret = unsafe { cancellation_point_syscall_raw(nr, args) };
+    if (-4095..0).contains(&ret) {
+        unsafe { set_abi_errno(-ret as c_int) };
+        return -1;
+    }
+    ret
+}
+
+/// [`cancellation_point_syscall`] returning the raw kernel result (a negated
+/// errno on failure).
+#[inline]
+pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usize; 6]) -> isize {
+    // SAFETY: the caller supplies a valid syscall number and arguments.
+    unsafe {
+        at_cancellation_point(|| {
+            raw_syscall::syscall6(
+                nr as usize,
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                args[4],
+                args[5],
+            ) as isize
+        })
+    }
+}
+
+/// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
+/// point.
+///
+/// Unwind safety: an asynchronous cancellation starts a forced unwind whose
+/// interrupted instruction is the `syscall` inside `blocking_syscall`. The
+/// unwinder consults a frame's personality routine only when the frame has a
+/// language-specific data area, and Rust's personality treats an address
+/// outside every call site as "must not unwind". This function therefore stays
+/// out of line and owns nothing with a destructor (`blocking_syscall` must
+/// capture only plain values and `R` must not need dropping), so neither it
+/// nor the closure has an LSDA and the unwind passes through to the callers.
+#[inline(never)]
+pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() -> R) -> R {
+    let set_type = cancellation_window_hook();
+    let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
+    if let Some(set) = set_type {
+        unsafe { set(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type) };
+    }
+    let ret = blocking_syscall();
+    if let Some(set) = set_type
+        && old_type != PTHREAD_CANCEL_ASYNCHRONOUS_TYPE
+    {
+        unsafe { set(old_type, std::ptr::null_mut()) };
+    }
+    ret
+}
+
+/// The host `pthread_setcanceltype` when the calling thread can be cancelled
+/// through glibc: only another thread can cancel it, and only host threads
+/// are cancelled by glibc.
+#[inline]
+fn cancellation_window_hook() -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        return None;
+    }
+    if current_threading_backend() != THREAD_BACKEND_HOST {
+        return None;
+    }
+    resolved_thread_setcanceltype_raw()
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_testcancel() {
+pub unsafe extern "C-unwind" fn pthread_testcancel() {
     if !force_native_threading_enabled()
         && current_threading_backend() == THREAD_BACKEND_HOST
         && let Some(host_testcancel) = resolved_thread_testcancel_raw()
@@ -6204,7 +6302,7 @@ pub unsafe extern "C" fn pthread_cond_clockwait(
 /// Native implementation: waits for thread completion using futex with timeout.
 /// Returns `ETIMEDOUT` if the thread hasn't finished by the deadline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_timedjoin_np(
+pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
     abstime: *const libc::timespec,
@@ -6366,7 +6464,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
 /// Native implementation: converts the clock-specific deadline to CLOCK_REALTIME
 /// and delegates to `pthread_timedjoin_np`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_clockjoin_np(
+pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
     thread: libc::pthread_t,
     retval: *mut *mut c_void,
     clockid: c_int,
@@ -6583,7 +6681,7 @@ pub unsafe extern "C" fn pthread_yield() -> c_int {
 
 /// POSIX `pthread_exit` — terminate calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
+pub unsafe extern "C-unwind" fn pthread_exit(retval: *mut c_void) -> ! {
     let tid = core_self_tid();
     if let Some(handle_ptr) = core_handle_for_tid(tid) {
         unsafe { core_exit_current_thread(handle_ptr, retval as usize) };
@@ -6604,7 +6702,7 @@ pub unsafe extern "C" fn pthread_exit(retval: *mut c_void) -> ! {
 ///
 /// Same as [`pthread_exit`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_exit(retval: *mut c_void) -> ! {
+pub unsafe extern "C-unwind" fn __pthread_exit(retval: *mut c_void) -> ! {
     unsafe { pthread_exit(retval) }
 }
 
@@ -6950,25 +7048,82 @@ pub unsafe extern "C" fn __pthread_setspecific(
     unsafe { pthread_setspecific(key, value) }
 }
 
-/// `__pthread_register_cancel` — cancellation cleanup registration (no-op stub).
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_register_cancel(_buf: *mut c_void) {}
+/// Whether the calling thread's cancellation state lives in glibc's TCB.
+/// Native threads share the creating thread's TCB, so they must never be
+/// linked into glibc's per-thread cleanup chain.
+fn host_cancellation_thread() -> bool {
+    current_threading_backend() == THREAD_BACKEND_HOST
+}
 
-/// `__pthread_unregister_cancel` — cancellation cleanup unregistration (no-op stub).
+/// `__pthread_register_cancel` — C `pthread_cleanup_push` (built without
+/// `-fexceptions`) links its unwind buffer into the thread's cleanup chain
+/// here; a cancellation or `pthread_exit` then runs the handler. On host
+/// threads that chain is glibc's.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_unregister_cancel(_buf: *mut c_void) {}
+pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(register) = host_pthread_register_cancel_raw()
+    {
+        unsafe { register(buf) };
+    }
+}
 
-/// `__pthread_register_cancel_defer` — deferred cancellation registration (no-op stub).
+/// `__pthread_unregister_cancel` — `pthread_cleanup_pop` counterpart of
+/// [`__pthread_register_cancel`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_register_cancel_defer(_buf: *mut c_void) {}
+pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unregister) = host_pthread_unregister_cancel_raw()
+    {
+        unsafe { unregister(buf) };
+    }
+}
 
-/// `__pthread_unregister_cancel_restore` — deferred cancellation restore (no-op stub).
+/// `__pthread_register_cancel_defer` — `pthread_cleanup_push_defer_np`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_unregister_cancel_restore(_buf: *mut c_void) {}
+pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(register) = host_pthread_register_cancel_defer_raw()
+    {
+        unsafe { register(buf) };
+    }
+}
 
-/// `__pthread_cleanup_routine` — cleanup routine handler (no-op stub).
+/// `__pthread_unregister_cancel_restore` — `pthread_cleanup_pop_restore_np`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_cleanup_routine(_buf: *mut c_void) {}
+pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unregister) = host_pthread_unregister_cancel_restore_raw()
+    {
+        unsafe { unregister(buf) };
+    }
+}
+
+/// glibc's `struct __pthread_cleanup_frame` (the `-fexceptions` C variant of
+/// `pthread_cleanup_push`, whose frame is run by a cleanup attribute).
+#[repr(C)]
+pub struct PthreadCleanupFrame {
+    cancel_routine: Option<unsafe extern "C-unwind" fn(*mut c_void)>,
+    cancel_arg: *mut c_void,
+    do_it: c_int,
+    cancel_type: c_int,
+}
+
+/// `__pthread_cleanup_routine` — run a `-fexceptions` cleanup frame's handler
+/// when it is popped with a nonzero `execute` or unwound through.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn __pthread_cleanup_routine(frame: *mut PthreadCleanupFrame) {
+    if frame.is_null() {
+        return;
+    }
+    // SAFETY: the frame is the caller's live cleanup frame.
+    let frame = unsafe { &*frame };
+    if frame.do_it != 0
+        && let Some(routine) = frame.cancel_routine
+    {
+        unsafe { routine(frame.cancel_arg) };
+    }
+}
 
 /// `__pthread_get_minstack` — get minimum stack size for a given attr.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -6976,9 +7131,16 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
     libc::PTHREAD_STACK_MIN
 }
 
-/// `__pthread_unwind_next` — internal unwinding (no-op stub — process aborts).
+/// `__pthread_unwind_next` — continue a cancellation unwind to the next
+/// registered cleanup buffer (called from the C `pthread_cleanup_push`
+/// expansion after running a handler). Only glibc's chain exists.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pthread_unwind_next(_buf: *mut c_void) {
+pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
+    if host_cancellation_thread()
+        && let Some(unwind_next) = host_pthread_unwind_next_raw()
+    {
+        unsafe { unwind_next(buf) };
+    }
     std::process::abort();
 }
 
