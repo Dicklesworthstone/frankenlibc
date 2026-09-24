@@ -4417,6 +4417,19 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         .or_else(|| segment_remaining(addr))
         .or_else(|| {
             validate_ptr(addr)
+                // Only a LIVE allocation's extent is a bound. A freed or
+                // quarantined record describes memory the host allocator may
+                // already have handed out again (hardened arena blocks come
+                // from host malloc, and bootstrap/passthrough allocations
+                // share its heap); clamping to the dead block's size silently
+                // dropped copies into the new owner — `env FOO=bar prog` lost
+                // FOO and GNU sed printed garbage (bd-rc0923-epic-eeuy4f.20).
+                .filter(|abs| {
+                    matches!(
+                        abs.state,
+                        SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
+                    )
+                })
                 .and_then(|abs| abs.remaining)
                 .or_else(|| fallback_remaining(addr))
         })
