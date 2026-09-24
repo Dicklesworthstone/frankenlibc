@@ -9348,11 +9348,12 @@ struct GconvSpec {
     ignore: bool,
 }
 
-/// Charset part of an iconv name (up to the first `/`), NUL-terminated,
-/// malloc'd (freed by `__gconv_destroy_spec`).
+/// Charset part of an iconv name (up to the first `//`; single slashes are
+/// part of names like `ISO-10646/UCS4`), NUL-terminated, malloc'd (freed by
+/// `__gconv_destroy_spec`).
 unsafe fn gconv_spec_name(code: *const c_char) -> *mut c_char {
     let bytes = unsafe { std::ffi::CStr::from_ptr(code) }.to_bytes();
-    let name = &bytes[..bytes.iter().position(|&b| b == b'/').unwrap_or(bytes.len())];
+    let name = &bytes[..bytes.windows(2).position(|w| w == b"//").unwrap_or(bytes.len())];
     let p = unsafe { super::malloc_abi::malloc(name.len() + 1) }.cast::<c_char>();
     if !p.is_null() {
         unsafe {
@@ -9378,7 +9379,7 @@ pub unsafe extern "C" fn __gconv_create_spec(
     let to_bytes = unsafe { std::ffi::CStr::from_ptr(tocode) }.to_bytes();
     let mut translit = false;
     let mut ignore = false;
-    if let Some(slash) = to_bytes.iter().position(|&b| b == b'/') {
+    if let Some(slash) = to_bytes.windows(2).position(|w| w == b"//") {
         for token in to_bytes[slash..].split(|&b| b == b'/' || b == b',') {
             translit |= token.eq_ignore_ascii_case(b"TRANSLIT");
             ignore |= token.eq_ignore_ascii_case(b"IGNORE");

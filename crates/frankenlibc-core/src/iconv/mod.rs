@@ -3104,6 +3104,13 @@ impl SingleByteReverse {
 }
 
 impl IconvDescriptor {
+    /// Whether `tocode` asked for `//IGNORE` (skipped input is reported by
+    /// glibc through the descriptor's "encountered illegal input" flag).
+    #[must_use]
+    pub fn ignores_errors(&self) -> bool {
+        self.ignore
+    }
+
     #[must_use]
     pub const fn dispatch_metadata(&self) -> IconvDispatchMetadata {
         self.dispatch
@@ -42202,10 +42209,12 @@ struct IconvSuffixFlags {
 }
 
 /// Split `NAME//TRANSLIT//IGNORE` (also `NAME//TRANSLIT,IGNORE`, any case)
-/// into the charset name and its flags. Unknown suffixes are ignored, as in
-/// glibc; only the `tocode` flags affect a conversion.
+/// into the charset name and its flags. The name ends at the first `//`:
+/// single slashes belong to names such as `ISO-10646/UCS4` and
+/// `ISO/TR_11548-1`. Unknown suffixes are ignored, as in glibc; only the
+/// `tocode` flags affect a conversion.
 fn split_iconv_suffix(code: &[u8]) -> (&[u8], IconvSuffixFlags) {
-    let Some(slash) = code.iter().position(|&b| b == b'/') else {
+    let Some(slash) = code.windows(2).position(|w| w == b"//") else {
         return (code, IconvSuffixFlags::default());
     };
     let mut flags = IconvSuffixFlags::default();

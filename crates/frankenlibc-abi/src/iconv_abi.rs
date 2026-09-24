@@ -91,10 +91,64 @@ fn lock_descriptor(handle: &IconvHandle) -> MutexGuard<'_, IconvDescriptor> {
     handle.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
+/// What an `iconv_t` points at: glibc's `struct __gconv_info` with one
+/// step. Programs built against glibc peek into it; iconv(1) (glibc >= 2.41)
+/// decides its `-c` exit status from `__data[i].__flags` bit 30
+/// ("encountered illegal input"), which is set when an //IGNORE conversion
+/// skips input. fl keeps its descriptor in the registry keyed by this block's
+/// address.
+#[repr(C)]
+struct GconvInfoShim {
+    nsteps: usize,
+    steps: *const GconvStepShim,
+    data: [GconvStepDataShim; 1],
+}
+
+/// glibc's `struct __gconv_step_data` (48 bytes).
+#[repr(C)]
+struct GconvStepDataShim {
+    outbuf: *mut u8,
+    outbufend: *mut u8,
+    flags: c_int,
+    invocation_counter: c_int,
+    internal_use: c_int,
+    statep: *mut c_void,
+    state: [u8; 8],
+}
+
+/// glibc's `struct __gconv_step`, all fields empty.
+#[repr(C)]
+struct GconvStepShim {
+    fields: [usize; 13],
+}
+
+#[repr(transparent)]
+struct SyncStep(GconvStepShim);
+// SAFETY: immutable, zero-filled.
+unsafe impl Sync for SyncStep {}
+static EMPTY_GCONV_STEP: SyncStep = SyncStep(GconvStepShim { fields: [0; 13] });
+
+/// `__GCONV_IS_LAST`, set on the final step like glibc.
+const GCONV_IS_LAST: c_int = 0x0001;
+/// glibc's internal "encountered illegal input" step flag (bit 30).
+const GCONV_ENCOUNTERED_ILLEGAL_INPUT: c_int = 0x4000_0000;
+
 fn register_handle(descriptor: IconvDescriptor) -> *mut c_void {
-    let handle = Arc::new(Mutex::new(descriptor));
-    let raw = Arc::into_raw(Arc::clone(&handle)) as *mut c_void;
-    lock_handles().insert(raw as usize, handle);
+    let shim = Box::new(GconvInfoShim {
+        nsteps: 1,
+        steps: &EMPTY_GCONV_STEP.0,
+        data: [GconvStepDataShim {
+            outbuf: std::ptr::null_mut(),
+            outbufend: std::ptr::null_mut(),
+            flags: GCONV_IS_LAST,
+            invocation_counter: 0,
+            internal_use: 0,
+            statep: std::ptr::null_mut(),
+            state: [0; 8],
+        }],
+    });
+    let raw = Box::into_raw(shim).cast::<c_void>();
+    lock_handles().insert(raw as usize, Arc::new(Mutex::new(descriptor)));
     raw
 }
 
@@ -102,11 +156,17 @@ fn lookup_handle(ptr: *mut c_void) -> Option<IconvHandle> {
     lock_handles().get(&(ptr as usize)).cloned()
 }
 
+/// Mark the handle's step as having skipped illegal input.
+///
+/// SAFETY: `ptr` is a live handle from `register_handle`.
+unsafe fn note_illegal_input(ptr: *mut c_void) {
+    unsafe { (*ptr.cast::<GconvInfoShim>()).data[0].flags |= GCONV_ENCOUNTERED_ILLEGAL_INPUT };
+}
+
+/// SAFETY: callers only release a handle after removing its registry entry,
+/// which proves the block is live and not yet released.
 unsafe fn release_raw_handle(ptr: *mut c_void) {
-    // SAFETY: callers only release raw handles after removing a matching entry
-    // from the registry, which proves the raw Arc strong reference is live and
-    // has not been consumed by a prior close.
-    unsafe { drop(Arc::from_raw(ptr.cast::<Mutex<IconvDescriptor>>())) };
+    unsafe { drop(Box::from_raw(ptr.cast::<GconvInfoShim>())) };
 }
 
 unsafe fn apply_progress(
@@ -138,6 +198,21 @@ unsafe fn apply_progress(
             }
         }
     }
+}
+
+/// Replace an empty charset name with `nl_langinfo(CODESET)`, keeping any
+/// `//` suffix.
+unsafe fn resolve_locale_charset(code: Vec<u8>) -> Vec<u8> {
+    let name_len = code.windows(2).position(|w| w == b"//").unwrap_or(code.len());
+    if name_len != 0 {
+        return code;
+    }
+    let codeset = unsafe { crate::locale_abi::nl_langinfo(libc::CODESET) };
+    let Some(mut name) = (unsafe { read_bounded_cstr(codeset) }) else {
+        return code;
+    };
+    name.extend_from_slice(&code);
+    name
 }
 
 /// `iconv_open(tocode, fromcode)` -> descriptor or `(iconv_t)-1` with errno.
@@ -180,6 +255,12 @@ pub unsafe extern "C" fn iconv_open(tocode: *const c_char, fromcode: *const c_ch
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
         return iconv_error_handle();
     };
+
+    // An empty charset name (before any `//` suffix) means the current
+    // locale's codeset, as in glibc; iconv(1) relies on it when -f or -t is
+    // omitted.
+    let to = unsafe { resolve_locale_charset(to) };
+    let from = unsafe { resolve_locale_charset(from) };
 
     if frankenlibc_membrane::config::safety_level().heals_enabled()
         && hardened_iconv_open_denied(&to, &from)
@@ -385,6 +466,10 @@ pub unsafe extern "C" fn iconv(
             result.non_reversible
         }
         Err(err) => {
+            if err.code == errno::EILSEQ && descriptor.ignores_errors() {
+                // SAFETY: `cd` resolved to a live registry entry above.
+                unsafe { note_illegal_input(cd) };
+            }
             // SAFETY: progress fields are validated by core conversion logic.
             unsafe {
                 apply_progress(
@@ -442,8 +527,8 @@ pub unsafe extern "C" fn iconv_close(cd: *mut c_void) -> c_int {
         }
     };
 
-    // SAFETY: registry removal above proves the raw Arc strong reference is
-    // still live and has not been consumed by an earlier close.
+    // SAFETY: registry removal above proves the handle block is still live
+    // and has not been released by an earlier close.
     unsafe { release_raw_handle(cd) };
 
     let rc = match Arc::try_unwrap(handle) {
