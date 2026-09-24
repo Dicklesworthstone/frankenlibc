@@ -156,6 +156,19 @@ fn fake_cases(canonical: &Value) -> Vec<Value> {
                 true,
             ));
         }
+        // Tracked known failures (KNOWN_FAILING_CASES): each one really
+        // fails (here: for perf) but is reported with status "xfail".
+        let xfails = canonical["modes"][mode]["xfails"].as_u64().unwrap_or(0) as usize;
+        for index in 0..xfails {
+            let mut case = failing_smoke_case(
+                mode,
+                &format!("synthetic_xfail_{index:02}"),
+                false,
+                true,
+            );
+            case["status"] = json!("xfail");
+            cases.push(case);
+        }
         for case in ["redis_cli_version", "nginx_version"] {
             cases.push(smoke_case(mode, case, "skip"));
         }
@@ -221,6 +234,7 @@ fn fake_trace(report: &Value) -> String {
             "pass" => "case_pass",
             "fail" => "case_fail",
             "skip" => "case_skip_optional_binary_missing",
+            "xfail" => "case_xfail",
             _ => "case_fail",
         };
         rows.push(json!({
