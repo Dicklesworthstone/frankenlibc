@@ -34,6 +34,9 @@ use std::{
     ops::Range,
 };
 
+#[path = "dynamic_segment.rs"]
+mod dynamic_segment;
+
 const LOAD_PAGE_SIZE: u64 = 4096;
 const DT_NULL: i64 = 0;
 const DT_NEEDED: i64 = 1;
@@ -852,6 +855,21 @@ impl ElfLoader {
         let dynamic_phdr = program_headers
             .iter()
             .find(|ph| matches!(ph.p_type, ProgramType::Dynamic));
+
+        // An ELF runtime image need not carry a section-header table.
+        // Resolve its dynamic metadata through PT_LOAD instead of accepting
+        // an object with silently empty symbol and relocation tables.
+        if section_headers.is_empty()
+            && let Some(dynamic_phdr) = dynamic_phdr
+        {
+            return dynamic_segment::parse(
+                data,
+                &header,
+                &program_headers,
+                dynamic_phdr,
+                self.ctx.base,
+            );
+        }
 
         // Extract dynamic info from PT_DYNAMIC segment
         let dynamic_metadata = parse_dynamic_metadata(data, &section_headers, self.ctx.base)?;
