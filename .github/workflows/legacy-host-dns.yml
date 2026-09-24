@@ -1,90 +1,56 @@
-name: Legacy host DNS source preparation
+name: Legacy host DNS integration
 
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/legacy-host-dns.yml']
+    paths:
+      - 'crates/frankenlibc-abi/**'
+      - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'tests/conformance/legacy_dns_fixture.c'
+      - '.github/workflows/legacy-host-dns.yml'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
   workflow_dispatch:
 
-# Temporary source preparation, NOT a Linux build or a runtime validation.
-# It writes content-addressed objects only; all main commits are explicit.
-# Replaced by the read-only Linux regression workflow with the source commit.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  prepare:
-    if: github.repository == 'Dicklesworthstone/frankenlibc' && github.ref == 'refs/heads/main'
-    runs-on: macos-14
-    timeout-minutes: 15
+  legacy-dns:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
     env:
-      PYTHONUNBUFFERED: '1'
+      CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Read immutable reviewed source edits
+      - name: Install repository toolchain
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin 360e969015c28b73a22547cd6f03086dfd084e76
-          git show 360e969015c28b73a22547cd6f03086dfd084e76:.github/workflows/legacy-host-dns.yml > "$RUNNER_TEMP/legacy-reviewed.yml"
-          test "$(git hash-object "$RUNNER_TEMP/legacy-reviewed.yml")" = 5f817c35a49fa5597aef79d6af87678205428414
-          test "$(git hash-object crates/frankenlibc-abi/src/resolv_abi.rs)" = 17295cedac5adce51b5c1fe872b1257f66732e90
-          python3 -m venv "$RUNNER_TEMP/legacy-venv"
-          "$RUNNER_TEMP/legacy-venv/bin/pip" install PyYAML==6.0.2
           toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt
-      - name: Apply, format and store prepared source blobs
-        env:
-          GH_TOKEN: ${{ github.token }}
+          rustc --version
+      - name: Compile and run independent host oracle
         run: |
-          "$RUNNER_TEMP/legacy-venv/bin/python" - <<'PY'
-          import hashlib, json, os, pathlib, subprocess, sys, urllib.request
-          import yaml
-          temp = pathlib.Path(os.environ['RUNNER_TEMP'])
-          reviewed = yaml.safe_load((temp / 'legacy-reviewed.yml').read_text())
-          fixture = pathlib.Path('tests/conformance/legacy_dns_fixture.c')
-          contents = fixture.read_text()
-          old = 'check(rc == EAGAIN && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");'
-          new = 'check(rc == 0 && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");'
-          assert contents.count(old) == 1
-          fixture.write_text(contents.replace(old, new, 1))
-          sources = {'fixture': fixture}
-          for step in reviewed['jobs']['validate']['steps']:
-              if step.get('name') not in ('Apply reviewed forward implementation', 'Apply reviewed reverse implementation'):
-                  continue
-              code = step['run']
-              stage = 'reverse' if 'reverse' in step['name'] else 'forward'
-              if stage == 'reverse':
-                  assert code.count('return code;') == 1
-                  code = code.replace('return code;', 'return 0;', 1)
-                  # Both reverse entry points report DNS failures via h_errno.
-                  # Do not manufacture the forward API's EAGAIN errno write.
-                  assert code.count('let (code, host_error) = legacy_host_lookup_error(error);') == 2
-                  code = code.replace('let (code, host_error) = legacy_host_lookup_error(error);',
-                                      'let (_, host_error) = legacy_host_lookup_error(error);')
-                  code = code.replace('if code != 0 { unsafe { set_abi_errno(code) }; }', '')
-              subprocess.run([sys.executable, '-c', code], check=True)
-              path = pathlib.Path('crates/frankenlibc-abi/src/resolv_abi.rs')
-              subprocess.run(['rustfmt', '--edition', '2024', str(path)], check=True)
-              snapshot = temp / ('legacy-' + stage + '.rs')
-              snapshot.write_bytes(path.read_bytes())
-              sources[stage] = snapshot
-          subprocess.run(['git', 'diff', '--check'], check=True)
-          subprocess.run(['git', 'diff', '--stat'], check=True)
-          assert set(sources) == {'forward', 'reverse', 'fixture'}
-          assert os.environ['GITHUB_REPOSITORY'] == 'Dicklesworthstone/frankenlibc'
-          for stage, path in sources.items():
-              content = path.read_bytes()
-              expected = hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
-              request = urllib.request.Request(
-                  'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs',
-                  data=json.dumps({'content': content.decode(), 'encoding': 'utf-8'}).encode(),
-                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'},
-                  method='POST')
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  result = json.load(response)
-              assert result['sha'] == expected
-              print('PREPARED_' + stage.upper() + '_BLOB=' + expected, flush=True)
-          print('Formatting and source preparation passed; Linux compilation and runtime tests are separate.')
-          PY
+          set -euo pipefail
+          cc -std=c11 -Wall -Wextra -Werror tests/conformance/legacy_dns_fixture.c -lresolv -ldl -o "$RUNNER_TEMP/legacy-dns"
+          sudo "$RUNNER_TEMP/legacy-dns" forward
+          sudo "$RUNNER_TEMP/legacy-dns" reverse
+      - name: Build actual release ABI
+        run: cargo build --release -p frankenlibc-abi --lib --keep-going
+      - name: Exercise native forward host lookups in strict and hardened modes
+        run: |
+          set -euo pipefail
+          so="$PWD/target/release/libfrankenlibc_abi.so"
+          test -f "$so"
+          for mode in strict hardened; do
+            sudo env FRANKENLIBC_MODE="$mode" "$RUNNER_TEMP/legacy-dns" forward "$so"
+          done
+      - name: DNS transport unit tests
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --lib --no-fail-fast dns_transport -- --test-threads=1 | tee "$RUNNER_TEMP/dns-transport-tests.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "$RUNNER_TEMP/dns-transport-tests.log"

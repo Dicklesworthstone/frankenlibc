@@ -1659,54 +1659,78 @@ fn gethostbyname_ipv4_address(address: &[u8]) -> Option<Ipv4Addr> {
         .or_else(|| v6.is_loopback().then_some(Ipv4Addr::LOCALHOST))
 }
 
-/// Borrowed: the returned target aliases either the caller's name or the
-/// hosts-backend snapshot. TLS and reentrant result writers copy it before the
-/// backend borrow ends, so no allocation is needed on the hot lookup path.
-fn resolve_gethostbyname_target(name: Option<&CStr>, repair: bool) -> Option<GethostbynameTarget> {
-    if let Some(name_cstr) = name {
-        if let Ok(node) = name_cstr.to_str()
-            && let Ok(v4) = node.parse::<Ipv4Addr>()
-        {
-            return Some(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
-        }
+/// Resolve legacy IPv4 hosts through numeric, files, then native DNS.
+/// Release the backend borrow before performing network I/O.
+fn resolve_gethostbyname_target(name: Option<&CStr>) -> Result<GethostbynameTarget, c_int> {
+    use frankenlibc_core::addrinfo::{AddressPolicy, Family};
+    let name_cstr = name
+        .filter(|name| !name.to_bytes().is_empty())
+        .ok_or(libc::EAI_NONAME)?;
+    if let Ok(node) = name_cstr.to_str()
+        && let Ok(v4) = node.parse::<Ipv4Addr>()
+    {
+        return Ok(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
+    }
+    let target = with_hosts_backend_snapshot(|content, _generation| {
+        let mut target: Option<GethostbynameTarget> = None;
+        frankenlibc_core::resolv::for_each_hosts_match_entry(
+            content,
+            name_cstr.to_bytes(),
+            |entry| {
+                let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
+                    return false;
+                };
+                if let Some(target) = &mut target {
+                    target.append_row(entry.canonical_name(), entry.aliases(), address);
+                } else {
+                    target = Some(GethostbynameTarget::seeded(
+                        entry.canonical_name(),
+                        entry.aliases(),
+                        address,
+                    ));
+                }
+                false
+            },
+        );
+        target
+    })
+    .ok()
+    .flatten();
+    if let Some(target) = target {
+        return Ok(target);
+    }
+    // Ordinary lookup failure is not memory corruption. Neither mode
+    // may silently redirect a missing DNS name to localhost.
+    let (addresses, canonical_name) = native_dns_resolve(
+        name_cstr.to_bytes(),
+        AddressPolicy::new(Family::Inet, false, false),
+    )?;
+    if addresses.ipv4.is_empty() {
+        return Err(libc::EAI_NONAME);
+    }
+    let query_name = name_cstr.to_bytes();
+    let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+    let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+    let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+        Vec::new()
+    } else {
+        vec![query_name.to_vec()]
+    };
+    Ok(GethostbynameTarget {
+        name: canonical_name,
+        aliases,
+        addresses: addresses.ipv4,
+    })
+}
 
-        let target = with_hosts_backend_snapshot(|content, _generation| {
-            let mut target: Option<GethostbynameTarget> = None;
-            frankenlibc_core::resolv::for_each_hosts_match_entry(
-                content,
-                name_cstr.to_bytes(),
-                |entry| {
-                    let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
-                        return false;
-                    };
-                    if let Some(target) = &mut target {
-                        target.append_row(entry.canonical_name(), entry.aliases(), address);
-                    } else {
-                        target = Some(GethostbynameTarget::seeded(
-                            entry.canonical_name(),
-                            entry.aliases(),
-                            address,
-                        ));
-                    }
-                    false
-                },
-            );
-            target
-        })
-        .ok()
-        .flatten();
-        if target.is_some() {
-            return target;
-        }
+/// Definitive negatives complete a lookup (zero return, null result);
+/// transient DNS failures remain retryable in both legacy entry points.
+fn legacy_host_lookup_error(error: c_int) -> (c_int, c_int) {
+    match error {
+        libc::EAI_AGAIN => (libc::EAGAIN, 2), // TRY_AGAIN
+        libc::EAI_NONAME => (0, HOST_NOT_FOUND_ERRNO),
+        _ => (0, NO_RECOVERY_ERRNO),
     }
-    if repair {
-        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-        return Some(GethostbynameTarget::numeric(
-            b"localhost".as_slice(),
-            Ipv4Addr::LOCALHOST,
-        ));
-    }
-    None
 }
 
 /// Bench-only: reconstruct the per-call `to_vec()` needle allocation that
@@ -2369,6 +2393,16 @@ fn native_dns_query(
     result
 }
 
+/// Use the normal resolver configuration unless an explicit backend override
+/// is selected, following the hosts/services backend convention.
+fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
+    let path = configured_backend_path("/etc/resolv.conf", "FRANKENLIBC_RESOLV_CONF");
+    match std::fs::read(path) {
+        Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
+        Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
+    }
+}
+
 /// Preserve the difference between a missing name and a temporary DNS failure.
 fn native_dns_resolve(
     hostname: &[u8],
@@ -2382,10 +2416,7 @@ fn native_dns_resolve(
 > {
     use frankenlibc_core::dns_transport::ResolveError;
 
-    let config = match std::fs::read("/etc/resolv.conf") {
-        Ok(content) => frankenlibc_core::resolv::ResolverConfig::parse(&content),
-        Err(_) => frankenlibc_core::resolv::ResolverConfig::default(),
-    };
+    let config = native_dns_config();
     let mut canonical_name = None;
     policy
         .resolve_dns_with(|want_v4, want_v6| {
@@ -3777,7 +3808,7 @@ fn copy_to_cchar_buf(dst: &mut [c_char], src: &[u8]) {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
-    let (mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         0,
@@ -3792,7 +3823,6 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
     // SAFETY: gethostbyname requires a C-string name; opt_cstr rejects known
     // malloc-backed unterminated inputs before creating the view.
     let name_cstr = match unsafe { opt_cstr(name) } {
@@ -3806,10 +3836,17 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut c_void {
             return ptr::null_mut();
         }
     };
-    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
-        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
-        return ptr::null_mut();
+    let target = match resolve_gethostbyname_target(name_cstr) {
+        Ok(target) => target,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
     };
 
     // SAFETY: pointer returned references thread-local hostent storage.
@@ -3827,7 +3864,7 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     result: *mut *mut c_void,
     h_errnop: *mut c_int,
 ) -> c_int {
-    let (mode, decision) = runtime_policy::decide(
+    let (_, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         name as usize,
         buflen,
@@ -3846,7 +3883,6 @@ pub(crate) unsafe fn gethostbyname_r_impl(
         return libc::EACCES;
     }
 
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
     // SAFETY: gethostbyname_r has the same C-string name contract.
     let name_cstr = match unsafe { opt_cstr(name) } {
         Ok(value) => value,
@@ -3857,11 +3893,18 @@ pub(crate) unsafe fn gethostbyname_r_impl(
             return libc::EINVAL;
         }
     };
-    let Some(target) = resolve_gethostbyname_target(name_cstr, repair) else {
-        // SAFETY: optional h_errno pointer from caller.
-        unsafe { set_h_errnop(h_errnop, HOST_NOT_FOUND_ERRNO) };
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-        return libc::ENOENT;
+    let target = match resolve_gethostbyname_target(name_cstr) {
+        Ok(target) => target,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            // SAFETY: optional caller-provided h_errno pointer.
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
+            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return code;
+        }
     };
 
     // SAFETY: all pointers/length validated within helper.

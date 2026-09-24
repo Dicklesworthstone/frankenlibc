@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
               "temporary PTR failure remains temporary");
         result = (struct hostent *)(uintptr_t)1;
         rc = lookup_addr_r(&ip, sizeof(ip), AF_INET, &storage, buf, sizeof(buf), &result, &herr);
-        check(rc == EAGAIN && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");
+        check(rc == 0 && result == NULL && herr == TRY_AGAIN, "reentrant temporary reverse failure");
     }
     alarm(0);
     printf("PASS: %u checks (%s, %s, %s)\n", checks, argv[1],
