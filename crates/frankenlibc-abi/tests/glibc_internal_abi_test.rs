@@ -1290,7 +1290,8 @@ fn gconv_open_unsupported_codec_returns_noconv() {
 
 #[test]
 fn gconv_close_rejects_null_handle() {
-    assert_eq!(unsafe { __gconv_close(ptr::null_mut()) }, -1);
+    // __GCONV_NOCONV (glibc itself would dereference the null handle).
+    assert_eq!(unsafe { __gconv_close(ptr::null_mut()) }, 1);
 }
 
 #[test]
