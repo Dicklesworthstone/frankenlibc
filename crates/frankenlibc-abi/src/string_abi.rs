@@ -10295,6 +10295,25 @@ unsafe fn regex_compiled_from_buffer(
     Some(unsafe { &*handle.compiled })
 }
 
+/// Initialize a `regex_t` whose prior contents are indeterminate.
+///
+/// POSIX `regcomp` takes uninitialized storage (the normal `regex_t re;` on the
+/// stack), so it must never interpret what is already there. Releasing it
+/// first dereferenced stack garbage and SIGSEGV'd inside `regcomp`
+/// (bd-rc0923-epic-eeuy4f.4 corpus finding). Recompiling without `regfree`
+/// leaks the old compile, exactly as glibc does.
+fn regex_reset_uninitialized(layout: &mut RegexBufferLayout) {
+    layout.buffer = core::ptr::null_mut();
+    layout.allocated = 0;
+    layout.used = 0;
+    layout.syntax = 0;
+    layout.fastmap = core::ptr::null_mut();
+    layout.translate = core::ptr::null_mut();
+    layout.re_nsub = 0;
+    layout.flags = 0;
+    layout.reserved = [0; 7];
+}
+
 unsafe fn regex_release_buffer(layout: &mut RegexBufferLayout) {
     let handle_ptr = layout.buffer as *mut RegexHandle;
     if !handle_ptr.is_null() {
@@ -10418,7 +10437,7 @@ pub unsafe extern "C" fn regcomp(
     let Some(layout) = (unsafe { regex_buffer_layout(preg) }) else {
         return regex::REG_BADPAT;
     };
-    unsafe { regex_release_buffer(layout) };
+    regex_reset_uninitialized(layout);
 
     let Some(pat_bytes) = (unsafe { read_c_string_bytes_with_nul(pattern) }) else {
         return regex::REG_BADPAT;

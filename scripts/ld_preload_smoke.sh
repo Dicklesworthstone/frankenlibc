@@ -31,7 +31,7 @@ esac
 export RCH_REQUIRE_REMOTE=1
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-10}"
 STRESS_ITERS="${STRESS_ITERS:-5}"
-ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict}"
+ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES:-strict,hardened}"
 ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES:-strict}"
 PERF_RATIO_MAX_PPM="${PERF_RATIO_MAX_PPM:-2000000}"
 VALGRIND_POLICY="${VALGRIND_POLICY:-auto}" # auto|off|required
@@ -112,6 +112,39 @@ fi
 
 INTEGRATION_BIN="${BIN_DIR}/link_test"
 cc -O2 "${ROOT}/tests/integration/link_test.c" -o "${INTEGRATION_BIN}"
+
+# Real-world corpus (bd-rc0923-epic-eeuy4f.4). The curated battery above only
+# ran trivial programs, so git/sed (FILE* layout), every C++ binary (locale_t,
+# _dl_find_object), Python C extensions (pathname dlopen) and tar -z (nested
+# fork) were all broken under preload while it stayed green. Fixtures are
+# prepared once WITHOUT the preload so baseline and preload runs are
+# read-only and deterministic.
+CORPUS_DIR="${RUN_DIR}/corpus"
+mkdir -p "${CORPUS_DIR}/tree/sub"
+printf 'alpha one\nbravo two\nalpha three\n' > "${CORPUS_DIR}/tree/a.txt"
+printf 'charlie\n' > "${CORPUS_DIR}/tree/sub/b.txt"
+printf 'all:\n\t@echo made-$(words a b c)\n' > "${CORPUS_DIR}/Makefile"
+touch -t 202603230101.01 "${CORPUS_DIR}/tree" "${CORPUS_DIR}/tree/a.txt" \
+  "${CORPUS_DIR}/tree/sub" "${CORPUS_DIR}/tree/sub/b.txt"
+CORPUS_GIT_READY=0
+if command -v git >/dev/null 2>&1; then
+  (
+    cd "${CORPUS_DIR}/tree" &&
+      export GIT_AUTHOR_NAME=fl GIT_AUTHOR_EMAIL=fl@example.invalid \
+        GIT_COMMITTER_NAME=fl GIT_COMMITTER_EMAIL=fl@example.invalid \
+        GIT_AUTHOR_DATE='2026-03-23T01:01:01Z' GIT_COMMITTER_DATE='2026-03-23T01:01:01Z' &&
+      git init -q -b main . && git add a.txt && git commit -q -m first &&
+      git add sub/b.txt && git commit -q -m second &&
+      printf 'alpha changed\n' >> a.txt
+  ) >/dev/null 2>&1 && CORPUS_GIT_READY=1
+fi
+CXX_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CXX_BIN="${BIN_DIR}/fixture_cxx_runtime"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_cxx_runtime.cpp" -o "${CXX_BIN}" || CXX_BIN=""
+fi
+FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 
 NONTRIVIAL_BIN=""
 NONTRIVIAL_DESC=""
@@ -659,6 +692,33 @@ EOF
   run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
   run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
+
+  # --- real-world corpus (bd-rc0923-epic-eeuy4f.4) ---
+  local tree="${CORPUS_DIR}/tree"
+  for layout_case in fopen fdopen tmpfile fmemopen open_memstream popen fopencookie error freopen reuse; do
+    run_case "${mode}" "stdio_file_layout_${layout_case}" "${FILE_LAYOUT_BIN}" "${layout_case}" || mode_failed=1
+  done
+  run_case "${mode}" "sed_substitute" /usr/bin/env LC_ALL=C sed -e 's/alpha/ALPHA/g' "${tree}/a.txt" || mode_failed=1
+  run_case "${mode}" "grep_recursive" /usr/bin/env LC_ALL=C grep -rn alpha "${tree}/a.txt" "${tree}/sub" || mode_failed=1
+  run_optional_case "awk" "${mode}" "awk_fields" awk '{n+=length($2)} END {print NR, n}' "${tree}/a.txt" || mode_failed=1
+  run_case "${mode}" "find_sorted" bash -c "find '${tree}' -name '*.txt' | LC_ALL=C sort" || mode_failed=1
+  run_case "${mode}" "tar_gzip_roundtrip" bash -c "tar --owner=0 --group=0 -czf - -C '${tree}' a.txt sub | tar -tzvf -" || mode_failed=1
+  run_optional_case "xz" "${mode}" "tar_xz_roundtrip" bash -c "tar --owner=0 --group=0 -cJf - -C '${tree}' a.txt sub | tar -tJvf -" || mode_failed=1
+  run_case "${mode}" "gzip_roundtrip" bash -c "gzip -9c '${tree}/a.txt' | gzip -dc" || mode_failed=1
+  run_optional_case "make" "${mode}" "make_tiny" make -s -C "${CORPUS_DIR}" -f "${CORPUS_DIR}/Makefile" || mode_failed=1
+  run_optional_case "perl" "${mode}" "perl_regex" perl -ne 'print "$1\n" if /^(\w+) t/' "${tree}/a.txt" || mode_failed=1
+  if [[ "${CORPUS_GIT_READY}" -eq 1 ]]; then
+    run_case "${mode}" "git_log_stat" /usr/bin/env LC_ALL=C git -C "${tree}" log --stat --format='%H %s' || mode_failed=1
+    run_case "${mode}" "git_status" /usr/bin/env LC_ALL=C git -C "${tree}" status --short || mode_failed=1
+    run_case "${mode}" "git_diff" /usr/bin/env LC_ALL=C git -C "${tree}" diff --no-color || mode_failed=1
+  fi
+  if [[ -n "${CXX_BIN}" ]]; then
+    run_case "${mode}" "cxx_runtime" "${CXX_BIN}" || mode_failed=1
+  fi
+  if [[ "${NONTRIVIAL_BIN}" == "python3" ]]; then
+    run_case "${mode}" "python3_c_extensions" python3 -c "import sqlite3, ssl, ctypes, decimal, json, hashlib, zlib; print(sqlite3.connect(':memory:').execute('select 6*7').fetchone()[0], hashlib.sha256(b'x').hexdigest()[:8], decimal.Decimal('1.1') + decimal.Decimal('2.2'))" || mode_failed=1
+    run_case "${mode}" "python3_subprocess" python3 -c "import subprocess; print(subprocess.run(['echo', 'sub'], capture_output=True, text=True).stdout.strip())" || mode_failed=1
+  fi
 
   for i in $(seq 1 "${STRESS_ITERS}"); do
     run_case "${mode}" "stress_link_${i}" "${INTEGRATION_BIN}" || mode_failed=1
