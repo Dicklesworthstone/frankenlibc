@@ -5307,10 +5307,38 @@ pub static mut mallwatch: *mut c_void = std::ptr::null_mut();
 // ==========================================================================
 // _dl_find_object: glibc 2.35+ dynamic linker API for unwinding — return -1 (not found)
 // Used by libgcc_s unwinder to find .eh_frame for a given PC address.
-// When not available, libgcc falls back to dl_iterate_phdr.
+//
+// libgcc (GCC >= 12 on glibc >= 2.35) does NOT fall back to dl_iterate_phdr
+// when this symbol exists and fails: `_Unwind_Find_FDE` returns "no FDE" and
+// every C++ `throw` ends in std::terminate. The previous `-1` stub therefore
+// aborted every C++ exception under preload (bd-rc0923-epic-eeuy4f.2). In
+// interpose builds the host dynamic linker owns the link map of every object
+// it loaded, so delegate to its implementation. Objects mapped by fl's native
+// loader are not in that map; they report not-found (tracked on the bead).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _dl_find_object(_address: *mut c_void, _result: *mut c_void) -> c_int {
-    -1 // not found — triggers fallback to dl_iterate_phdr
+pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_void) -> c_int {
+    #[cfg(not(feature = "standalone"))]
+    {
+        type HostDlFindObject = unsafe extern "C" fn(*mut c_void, *mut c_void) -> c_int;
+        static HOST_DL_FIND_OBJECT: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        let mut addr = HOST_DL_FIND_OBJECT.load(std::sync::atomic::Ordering::Acquire);
+        if addr == 0 {
+            if let Some(resolved) = crate::host_resolve::resolve_loader_symbol_raw("_dl_find_object")
+            {
+                HOST_DL_FIND_OBJECT.store(resolved, std::sync::atomic::Ordering::Release);
+                addr = resolved;
+            }
+        }
+        if addr != 0 && addr != _dl_find_object as usize {
+            // SAFETY: resolved from the already-loaded host dynamic linker,
+            // which exports `_dl_find_object(void *, struct dl_find_object *)`.
+            let host: HostDlFindObject = unsafe { core::mem::transmute(addr) };
+            return unsafe { host(address, result) };
+        }
+    }
+    let _ = (address, result);
+    -1
 }
 // _dl_mcount_wrapper: profiling callback — no-op when profiling disabled
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
