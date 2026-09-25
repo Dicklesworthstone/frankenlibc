@@ -356,6 +356,107 @@ fn wide_fortify_wrappers_count_wide_characters_not_bytes() {
         );
     }
 
+    // --- __wcscat_chk / __wcsncat_chk: strlen(dest)+appended+1 wide chars ---
+    // The first cell of each pair is one the byte view got wrong: fl aborted a
+    // 30-character append into a 40-wide-char destination (120 bytes > 40).
+    fn dst_ab() -> Vec<u32> {
+        let mut d = wide_dst();
+        d[0] = b'a' as u32;
+        d[1] = b'b' as u32;
+        d
+    }
+    {
+        let (_, hf, mf, _) = both!(
+            "__wcscat_chk",
+            Cpy,
+            frankenlibc_abi::fortify_abi::__wcscat_chk,
+            ()
+        );
+        for (label, destlen, abort) in [
+            ("__wcscat_chk dest=2 src=30 destlen=40", 40usize, false),
+            ("__wcscat_chk dest=2 src=30 destlen=20", 20, true),
+        ] {
+            check!(
+                label,
+                abort,
+                || {
+                    let mut d = dst_ab();
+                    let s = wide_src(30);
+                    // SAFETY: destination is 4096 wide chars; `destlen` is the CLAIMED size.
+                    unsafe { hf(d.as_mut_ptr(), s.as_ptr(), destlen) };
+                },
+                || {
+                    let mut d = dst_ab();
+                    let s = wide_src(30);
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), s.as_ptr(), destlen) };
+                }
+            );
+        }
+    }
+    {
+        let (_, hf, mf, _) = both!(
+            "__wcsncat_chk",
+            NCpy,
+            frankenlibc_abi::fortify_abi::__wcsncat_chk,
+            ()
+        );
+        for (label, destlen, abort) in [
+            ("__wcsncat_chk dest=2 n=30 destlen=40", 40usize, false),
+            ("__wcsncat_chk dest=2 n=30 destlen=20", 20, true),
+        ] {
+            check!(
+                label,
+                abort,
+                || {
+                    let mut d = dst_ab();
+                    let s = wide_src(300);
+                    // SAFETY: as for __wcscat_chk; at most 30 are appended.
+                    unsafe { hf(d.as_mut_ptr(), s.as_ptr(), 30, destlen) };
+                },
+                || {
+                    let mut d = dst_ab();
+                    let s = wide_src(300);
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), s.as_ptr(), 30, destlen) };
+                }
+            );
+        }
+    }
+
+    // --- __swprintf_chk: aborts iff maxlen > slen, both in wide chars ---
+    // `swprintf (buf, 128, ...)` into a `wchar_t[128]` is the ordinary fortified
+    // call; the byte view compared 128 against 128 / 4 and aborted it.
+    {
+        type Swp = unsafe extern "C" fn(*mut u32, usize, i32, usize, *const u32, ...) -> i32;
+        let (_, hf, mf, _) = both!(
+            "__swprintf_chk",
+            Swp,
+            frankenlibc_abi::fortify_abi::__swprintf_chk,
+            ()
+        );
+        let fmt = [b'%' as u32, b'd' as u32, 0];
+        for (label, maxlen, abort) in [
+            ("__swprintf_chk maxlen=128 slen=128", 128usize, false),
+            ("__swprintf_chk maxlen=129 slen=128", 129, true),
+        ] {
+            check!(
+                label,
+                abort,
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: destination is 4096 wide chars; 128 is the CLAIMED size.
+                    unsafe { hf(d.as_mut_ptr(), maxlen, 1, 128, fmt.as_ptr(), 42i32) };
+                },
+                || {
+                    let mut d = wide_dst();
+                    // SAFETY: as above, against fl.
+                    unsafe { mf(d.as_mut_ptr(), maxlen, 1, 128, fmt.as_ptr(), 42i32) };
+                }
+            );
+        }
+    }
+
     println!("compared {compared} wide-fortify cells, {aborts} host aborts");
     for b in &bad {
         println!("  {b}");

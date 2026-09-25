@@ -1014,13 +1014,16 @@ pub unsafe extern "C" fn __wcscat_chk(
     src: *const WcharT,
     destlen: usize,
 ) -> *mut WcharT {
-    let dest_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    // `destlen` counts WIDE CHARACTERS (`__glibc_objsize (dst) / sizeof
+    // (wchar_t)`), as for `__wcscpy_chk`. Converting it from bytes again
+    // aborted at a quarter of the real capacity: `wcscat` of 30 characters
+    // onto "ab" in a `wchar_t[100]` aborted where glibc runs.
+    let dest_units = (destlen != usize::MAX).then_some(destlen);
     let dlen = unsafe { checked_wide_len(dest.cast_const(), dest_units) };
     let src_limit = dest_units.map(|units| units.saturating_sub(dlen));
     let slen = unsafe { checked_wide_len(src, src_limit) };
     let total_units = checked_wide_add(checked_wide_add(dlen, slen), 1);
-    let total_bytes = checked_wide_bytes(total_units);
-    if destlen != usize::MAX && total_bytes > destlen {
+    if destlen != usize::MAX && total_units > destlen {
         unsafe { __chk_fail() }
     }
     let copy_bytes = checked_wide_bytes(checked_wide_add(slen, 1));
@@ -1035,7 +1038,8 @@ pub unsafe extern "C" fn __wcsncat_chk(
     n: usize,
     destlen: usize,
 ) -> *mut WcharT {
-    let dest_units = (destlen != usize::MAX).then(|| wide_units_from_bytes(destlen));
+    // `destlen` counts wide characters; see `__wcscat_chk`.
+    let dest_units = (destlen != usize::MAX).then_some(destlen);
     let dlen = unsafe { checked_wide_len(dest.cast_const(), dest_units) };
     let src_scan_units = if let Some(units) = dest_units {
         let used_units = checked_wide_add(dlen, 1);
@@ -1048,8 +1052,7 @@ pub unsafe extern "C" fn __wcsncat_chk(
     };
     let slen = unsafe { checked_wide_nlen(src, src_scan_units) };
     let total_units = checked_wide_add(checked_wide_add(dlen, slen), 1);
-    let total_bytes = checked_wide_bytes(total_units);
-    if destlen != usize::MAX && total_bytes > destlen {
+    if destlen != usize::MAX && total_units > destlen {
         unsafe { __chk_fail() }
     }
     for i in 0..slen {
@@ -1133,7 +1136,11 @@ pub unsafe extern "C" fn __swprintf_chk(
     fmt: *const WcharT,
     mut args: ...
 ) -> c_int {
-    if buflen != usize::MAX && maxlen > buflen / 4 {
+    // `buflen` counts wide characters (`__glibc_objsize (s) / sizeof
+    // (wchar_t)`); glibc aborts exactly when `maxlen > buflen`. Dividing by 4
+    // again aborted every fortified `swprintf (buf, sizeof buf / sizeof *buf,
+    // ...)` with a known-size buffer.
+    if maxlen > buflen {
         unsafe { __chk_fail() }
     }
     let ap = &mut args as *mut _ as *mut c_void;
@@ -1149,7 +1156,8 @@ pub unsafe extern "C" fn __vswprintf_chk(
     fmt: *const WcharT,
     ap: *mut c_void,
 ) -> c_int {
-    if buflen != usize::MAX && maxlen > buflen / 4 {
+    // `buflen` counts wide characters; see `__swprintf_chk`.
+    if maxlen > buflen {
         unsafe { __chk_fail() }
     }
     unsafe { vswprintf(buf, maxlen, fmt, ap) }
@@ -1220,12 +1228,12 @@ pub unsafe extern "C" fn __vfwprintf_chk(
 /// reaches its overflow check once the read fills the clamped buffer, so a short
 /// line survives a large `n` and a long line does not.
 ///
-/// The units look wrong and are not: `n` counts WIDE CHARACTERS while `buflen`
-/// counts BYTES, and glibc compares them directly — the same shape as
-/// `__fgets_chk`'s `n > buflen`. Matching that is deliberate.
+/// Both `n` and `buflen` count WIDE CHARACTERS: the header passes
+/// `__glibc_objsize (s) / sizeof (wchar_t)`, and glibc compares them directly.
 ///
 /// # Safety
-/// `buf` must be writable for `buflen` bytes and `stream` a valid `FILE*`.
+/// `buf` must be writable for `buflen` wide characters and `stream` a valid
+/// `FILE*`.
 unsafe fn fgetws_chk_common(
     buf: *mut WcharT,
     buflen: usize,
@@ -1239,19 +1247,19 @@ unsafe fn fgetws_chk_common(
         return unsafe { fgetws(buf, n, stream) };
     }
 
-    // Inside glibc's static bound: pass through untouched. This deliberately
-    // inherits glibc's own gap — `n = 65` with `buflen = 256` may write 260 bytes
-    // — because diverging by aborting MORE is the defect being fixed here, and
-    // fl's contract is glibc's behaviour rather than a stricter one.
+    // Inside glibc's static bound: pass through untouched.
     if (n as usize) <= buflen {
         // SAFETY: caller's contract.
         return unsafe { fgetws(buf, n, stream) };
     }
 
-    // `n` exceeds the byte size, so bound the read to what the buffer holds,
+    // `n` exceeds the buffer, so bound the read to what the buffer holds,
     // INCLUDING the terminator `fgetws` always writes. No overflow is possible
-    // past this point whatever the content is.
-    let cap_wide = buflen / core::mem::size_of::<WcharT>();
+    // past this point whatever the content is. `buflen` counts wide characters
+    // (`__glibc_objsize (s) / sizeof (wchar_t)`): dividing it again bounded
+    // the read at a quarter of the buffer, so `fgetws (buf[64], 100, fp)`
+    // aborted on a 30-character line glibc reads (it aborts from 63).
+    let cap_wide = buflen;
     if cap_wide == 0 {
         // Not even room for the terminator.
         unsafe { __chk_fail() }

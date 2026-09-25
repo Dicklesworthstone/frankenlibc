@@ -605,7 +605,7 @@ fn wcscat_chk_safe() {
     dest[1] = 0;
     let src: [WcharT; 3] = [b'Y' as WcharT, b'Z' as WcharT, 0];
     unsafe {
-        __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), 8 * 4);
+        __wcscat_chk(dest.as_mut_ptr(), src.as_ptr(), dest.len());
     }
     assert_eq!(dest[0], b'X' as WcharT);
     assert_eq!(dest[1], b'Y' as WcharT);
@@ -630,7 +630,7 @@ fn wcsncat_chk_safe() {
     let src: [WcharT; 4] = [b'B' as WcharT, b'C' as WcharT, b'D' as WcharT, 0];
     // Append at most 2 wide chars
     unsafe {
-        __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 2, 8 * 4);
+        __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 2, dest.len());
     }
     assert_eq!(dest[0], b'A' as WcharT);
     assert_eq!(dest[1], b'B' as WcharT);
@@ -643,14 +643,7 @@ fn wcsncat_chk_n_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("wcsncat_chk n over real buffer", || {
         let mut dest = [b'A' as WcharT, 0];
         let src: [WcharT; 2] = [b'B' as WcharT, 0];
-        unsafe {
-            __wcsncat_chk(
-                dest.as_mut_ptr(),
-                src.as_ptr(),
-                1,
-                std::mem::size_of_val(&dest),
-            )
-        };
+        unsafe { __wcsncat_chk(dest.as_mut_ptr(), src.as_ptr(), 1, dest.len()) };
     });
 }
 
@@ -2440,9 +2433,9 @@ fn swprintf_chk_basic() {
     let ret = unsafe {
         __swprintf_chk(
             dest.as_mut_ptr(),
-            32,     // maxlen in wchar_t
-            0,      // flag
-            32 * 4, // destlen in bytes
+            32, // maxlen in wchar_t
+            0,  // flag
+            32, // destlen in wchar_t
             fmt.as_ptr(),
             99i32,
         )
@@ -2460,15 +2453,7 @@ fn swprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("swprintf_chk maxlen over real buffer", || {
         let mut dest = [0 as WcharT; 2];
         let fmt: [WcharT; 1] = [0];
-        unsafe {
-            __swprintf_chk(
-                dest.as_mut_ptr(),
-                3,
-                0,
-                std::mem::size_of_val(&dest),
-                fmt.as_ptr(),
-            )
-        };
+        unsafe { __swprintf_chk(dest.as_mut_ptr(), 3, 0, dest.len(), fmt.as_ptr()) };
     });
 }
 
@@ -2477,14 +2462,7 @@ fn vswprintf_chk_maxlen_over_real_buffer_aborts_child_process() {
     assert_child_sigabrt("vswprintf_chk maxlen over real buffer", || {
         let mut dest = [0 as WcharT; 2];
         let fmt: [WcharT; 1] = [0];
-        unsafe {
-            call_vswprintf_chk(
-                dest.as_mut_ptr(),
-                3,
-                std::mem::size_of_val(&dest),
-                fmt.as_ptr(),
-            )
-        };
+        unsafe { call_vswprintf_chk(dest.as_mut_ptr(), 3, dest.len(), fmt.as_ptr()) };
     });
 }
 

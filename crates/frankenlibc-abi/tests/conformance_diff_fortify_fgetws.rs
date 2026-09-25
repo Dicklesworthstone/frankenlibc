@@ -19,9 +19,11 @@
 //! `n` and `size` alone. Two conditions fit every observed row — `n > buflen` AND
 //! the content did not actually fit.
 //!
-//! Note the units look wrong and are not: `n` counts WIDE CHARACTERS while
-//! `buflen` counts BYTES, and glibc compares them directly, the same shape as
-//! `__fgets_chk`. fl now matches that.
+//! Both `n` and the claimed size count WIDE CHARACTERS: glibc's header passes
+//! `__glibc_objsize (s) / sizeof (wchar_t)`. fl once divided the size by
+//! `sizeof (wchar_t)` again when clamping the read, so with `n` over the size
+//! it aborted lines glibc reads -- a 30-character line into a 64-wide-char
+//! buffer (the "n over size, line fits" rows below).
 //!
 //! EVERY CASE RUNS IN A FORKED CHILD with a bounded wait, so a `__chk_fail` abort
 //! is an observation rather than the end of the test binary, and the run cannot
@@ -44,7 +46,7 @@ enum Outcome {
 unsafe fn probe(
     f: unsafe extern "C" fn(*mut i32, usize, i32, *mut c_void) -> *mut i32,
     path: &std::ffi::CStr,
-    size_bytes: usize,
+    claimed_size: usize,
     n: i32,
 ) -> Outcome {
     let mut fds = [0i32; 2];
@@ -62,10 +64,10 @@ unsafe fn probe(
             if fp.is_null() {
                 libc::_exit(101);
             }
-            // A generously sized real buffer: `size_bytes` is the CLAIMED size the
+            // A generously sized real buffer: `claimed_size` is the CLAIMED size the
             // check reasons about, which is what varies between cases.
             let mut real = [0i32; 4096];
-            let got = f(real.as_mut_ptr(), size_bytes, n, fp.cast::<c_void>());
+            let got = f(real.as_mut_ptr(), claimed_size, n, fp.cast::<c_void>());
             let byte = if got.is_null() { b"n" } else { b"o" };
             libc::write(fds[1], byte.as_ptr().cast::<c_void>(), 1);
             libc::_exit(0);
@@ -126,13 +128,14 @@ fn host_chk(name: &std::ffi::CStr) -> ChkFn {
 /// The cases where fl's OLD static rule and glibc disagree, plus the boundary
 /// rows that pin the two-condition rule.
 const CASES: &[(&str, usize, i32)] = &[
-    // (label, claimed size in BYTES, n in wide chars)
+    // (label, claimed size in wide chars, n in wide chars)
     ("large n, ample buffer", 4096, 2000), // old fl: 8000 > 4096 -> ABORT. glibc: ok.
     ("n just over size/4", 256, 65),       // old fl: 260 > 256 -> ABORT.  glibc: ok.
     ("n far over size/4", 256, 100),       // old fl: ABORT.               glibc: ok.
     ("n equals size", 256, 256),           // boundary: not > size.        glibc: ok.
     ("n one over size", 256, 257),         // > size: content decides.
     ("tiny buffer, large n", 8, 64),       // > size and cannot fit.       glibc: ABORT.
+    ("n over size, line fits", 64, 100),   // mid(30) fits in 64, not 16.  glibc: ok.
     ("negative n", 256, -1),               // NULL, never abort.
     ("zero n", 256, 0),                    // NULL, never abort.
 ];
@@ -141,11 +144,16 @@ const CASES: &[(&str, usize, i32)] = &[
 fn fgetws_chk_matches_host_glibc_on_cases_that_discriminate() {
     let short = write_temp("fl_fgetws_short.txt", "hello world\n");
     let long = write_temp("fl_fgetws_long.txt", &format!("{}\n", "x".repeat(300)));
+    let mid = write_temp("fl_fgetws_mid.txt", &format!("{}\n", "m".repeat(30)));
     let host = host_chk(c"__fgetws_chk");
 
     let mut compared = 0usize;
     let mut aborts_seen = 0usize;
-    for (content_label, path) in [("short(12)", &short), ("long(300)", &long)] {
+    for (content_label, path) in [
+        ("short(12)", &short),
+        ("mid(30)", &mid),
+        ("long(300)", &long),
+    ] {
         for &(label, size, n) in CASES {
             // SAFETY: both arms take the same readable file and claimed size.
             let host_out = unsafe { probe(host, path, size, n) };
@@ -154,7 +162,7 @@ fn fgetws_chk_matches_host_glibc_on_cases_that_discriminate() {
                 unsafe { probe(frankenlibc_abi::fortify_abi::__fgetws_chk, path, size, n) };
             assert_eq!(
                 fl_out, host_out,
-                "{content_label} {label} (size={size} bytes, n={n}): fl={fl_out:?} \
+                "{content_label} {label} (size={size} wide chars, n={n}): fl={fl_out:?} \
                  glibc={host_out:?}"
             );
             compared += 1;
@@ -167,7 +175,7 @@ fn fgetws_chk_matches_host_glibc_on_cases_that_discriminate() {
     // NON-VACUITY, asserted as the positive fact rather than a count of rows: if
     // no case aborted, the gate is only checking that nothing ever fails, and it
     // would pass against an implementation with the check deleted entirely.
-    assert_eq!(compared, CASES.len() * 2, "not every case ran");
+    assert_eq!(compared, CASES.len() * 3, "not every case ran");
     assert!(
         aborts_seen >= 2,
         "host glibc aborted on only {aborts_seen} of {compared} cases — the matrix \
