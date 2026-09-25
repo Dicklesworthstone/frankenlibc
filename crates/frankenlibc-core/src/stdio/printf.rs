@@ -3819,7 +3819,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn grouping(separator: &[u8], rule: &[u8]) -> NumericGrouping {
         let mut g = NumericGrouping {
             separator: [0; 7],
