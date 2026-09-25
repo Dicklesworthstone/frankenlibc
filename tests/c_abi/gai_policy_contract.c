@@ -2,12 +2,14 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <ifaddrs.h>
 #include <netdb.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -19,6 +21,7 @@
 static const char hosts[] = "127.0.0.2 policy.test\n::1 policy.test\n";
 static char jail[1024];
 static unsigned stamp;
+static unsigned passed, failed, skipped;
 static void die(const char *what) { perror(what); exit(2); }
 static void put(const char *path, const char *text) {
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
@@ -85,6 +88,96 @@ static const struct test_case cases[] = {
     {"reload_disabled", "precedence ::ffff:0:0/96 100\n", "precedence ::1/128 100\n", V4_FIRST, V4_FIRST},
     {"reload_enabled", "reload yes\nprecedence ::ffff:0:0/96 100\n", "reload yes\nprecedence ::1/128 100\n", V4_FIRST, V6_FIRST},
 };
+static void run_case(const struct test_case *test) {
+    outside_put("gai.conf", test->config);
+    fflush(NULL);
+    pid_t child = fork();
+    if (child < 0) die("fork");
+    if (!child) {
+        alarm(10);
+        if (chroot(jail) || chdir("/")) {
+            if (errno == EPERM || errno == EACCES) _exit(77);
+            die("chroot");
+        }
+        char result[128];
+        if (snapshot(result)) _exit(1);
+        printf("%s initial=%s\n", test->name, result);
+        int okay = !strcmp(result, test->expected);
+        if (test->replacement) {
+            put("/etc/gai.conf", test->replacement);
+            if (snapshot(result)) _exit(1);
+            printf("%s after=%s\n", test->name, result);
+            okay &= !strcmp(result, test->expected_after);
+        }
+        fflush(NULL);
+        _exit(okay ? 0 : 1);
+    }
+    int status;
+    while (waitpid(child, &status, 0) < 0) { if (errno != EINTR) die("waitpid"); }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 77) {
+        ++skipped; printf("SKIP %s: chroot permission unavailable\n", test->name);
+    } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        ++passed; printf("PASS %s\n", test->name);
+    } else { ++failed; printf("FAIL %s status=%d\n", test->name, status); }
+}
+
+/* UDP connect/getsockname asks the kernel for its selected source. No packets
+ * are sent, no external services are contacted, and no routes are modified. */
+static int source_for(uint32_t destination, uint32_t *source) {
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) return 0;
+    struct sockaddr_in peer = {.sin_family = AF_INET, .sin_port = htons(9)}, local;
+    peer.sin_addr.s_addr = htonl(destination);
+    socklen_t length = sizeof local;
+    int okay = connect(fd, (struct sockaddr *)&peer, sizeof peer) == 0 &&
+        getsockname(fd, (struct sockaddr *)&local, &length) == 0;
+    if (okay) *source = ntohl(local.sin_addr.s_addr);
+    close(fd);
+    return okay;
+}
+static void ipv4_pair(const char *name, uint32_t first, uint32_t second, int reverse) {
+    char a[INET_ADDRSTRLEN], b[INET_ADDRSTRLEN], records[256], expected[128];
+    struct in_addr aa = {htonl(first)}, bb = {htonl(second)};
+    if (!inet_ntop(AF_INET, &aa, a, sizeof a) || !inet_ntop(AF_INET, &bb, b, sizeof b)) die("pair address");
+    snprintf(records, sizeof records, "%s policy.test\n%s policy.test\n", a, b);
+    snprintf(expected, sizeof expected, "%s,%s", reverse ? b : a, reverse ? a : b);
+    outside_put("hosts", records);
+    const struct test_case test = {name, "", NULL, expected, NULL};
+    run_case(&test);
+}
+static void prefix_contract(void) {
+    const uint32_t off_a = 0xc0000201u, off_b = 0xc6336401u; /* Documentation networks. */
+    uint32_t source, other, mask = 0;
+    if (!source_for(off_a, &source) || !source_for(off_b, &other) || source != other) goto unavailable;
+    struct ifaddrs *interfaces = NULL;
+    if (getifaddrs(&interfaces)) goto unavailable;
+    for (struct ifaddrs *it = interfaces; it; it = it->ifa_next) {
+        if (it->ifa_addr && it->ifa_netmask && it->ifa_addr->sa_family == AF_INET &&
+            ntohl(((struct sockaddr_in *)it->ifa_addr)->sin_addr.s_addr) == source) {
+            mask = ntohl(((struct sockaddr_in *)it->ifa_netmask)->sin_addr.s_addr);
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+    uint32_t near = source ^ 1u, far = source ^ 3u, hostmask = ~mask;
+    if (!mask || hostmask < 7 || (hostmask & (hostmask + 1)) != 0 ||
+        (source >> 24) == 127 || (source >> 16) == 0xa9fe ||
+        (near & mask) != (source & mask) || (far & mask) != (source & mask) ||
+        !(near & hostmask) || (near & hostmask) == hostmask ||
+        !(far & hostmask) || (far & hostmask) == hostmask ||
+        (off_a & mask) == (source & mask) || (off_b & mask) == (source & mask) ||
+        !source_for(near, &other) || other != source ||
+        !source_for(far, &other) || other != source) goto unavailable;
+    ipv4_pair("prefix_on_link_beats_off_link", off_a, near, 1);
+    ipv4_pair("prefix_on_link_keeps_priority", near, off_a, 0);
+    ipv4_pair("prefix_longer_match_first", far, near, 1);
+    ipv4_pair("prefix_off_link_order_preserved", off_a, off_b, 0);
+    ipv4_pair("prefix_off_link_reverse_order_preserved", off_b, off_a, 0);
+    return;
+unavailable:
+    ++skipped;
+    puts("SKIP IPv4 prefix cases: need a shared source route and an ordinary IPv4 subnet");
+}
 int main(void) {
     char template[] = "/tmp/frankenlibc-gai-policy-XXXXXX";
     char *created = mkdtemp(template);
@@ -96,40 +189,10 @@ int main(void) {
     outside_put("hosts", hosts);
     outside_put("nsswitch.conf", "hosts: files\n");
     outside_put("host.conf", "multi on\n");
-    unsigned passed = 0, failed = 0, skipped = 0;
     for (size_t i = 0; i < sizeof cases / sizeof cases[0]; ++i) {
-        const struct test_case *test = &cases[i];
-        outside_put("gai.conf", test->config);
-        fflush(NULL);
-        pid_t child = fork();
-        if (child < 0) die("fork");
-        if (!child) {
-            alarm(10);
-            if (chroot(jail) || chdir("/")) {
-                if (errno == EPERM || errno == EACCES) _exit(77);
-                die("chroot");
-            }
-            char result[128];
-            if (snapshot(result)) _exit(1);
-            printf("%s initial=%s\n", test->name, result);
-            int okay = !strcmp(result, test->expected);
-            if (test->replacement) {
-                put("/etc/gai.conf", test->replacement);
-                if (snapshot(result)) _exit(1);
-                printf("%s after=%s\n", test->name, result);
-                okay &= !strcmp(result, test->expected_after);
-            }
-            fflush(NULL);
-            _exit(okay ? 0 : 1);
-        }
-        int status;
-        while (waitpid(child, &status, 0) < 0) { if (errno != EINTR) die("waitpid"); }
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 77) {
-            ++skipped; printf("SKIP %s: chroot permission unavailable\n", test->name);
-        } else if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            ++passed; printf("PASS %s\n", test->name);
-        } else { ++failed; printf("FAIL %s status=%d\n", test->name, status); }
+        run_case(&cases[i]);
     }
+    prefix_contract();
     const char *names[] = {"hosts", "nsswitch.conf", "gai.conf", "host.conf"};
     for (size_t i = 0; i < 4; ++i) {
         snprintf(directory, sizeof directory, "%s/etc/%s", jail, names[i]);

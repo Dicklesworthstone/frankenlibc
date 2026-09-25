@@ -317,40 +317,25 @@ fn scope(addr: IpAddr) -> u8 {
     }
 }
 
-/// Index of the highest set bit, 1-based (0 for 0), like `fls`.
-fn fls(x: u32) -> u32 {
-    32 - x.leading_zeros()
-}
-
-/// Rule 9's "common prefix" measure for two same-family candidates.
-fn prefix_bits(a: &DestinationCandidate, b: &DestinationCandidate) -> Option<(u32, u32)> {
-    let (sa, sb) = (a.source?, b.source?);
-    match (a.dest, sa, b.dest, sb) {
-        (IpAddr::V4(da), IpAddr::V4(sa), IpAddr::V4(db), IpAddr::V4(sb)) => {
-            // Only meaningful inside the source's subnet.
-            let bits = |d: Ipv4Addr, s: Ipv4Addr, len: Option<u8>| {
-                let (d, s) = (u32::from(d), u32::from(s));
-                let len = u32::from(len.unwrap_or(0)).min(32);
-                let mask = if len == 0 { 0 } else { u32::MAX << (32 - len) };
-                if s & mask == d & mask { fls(d ^ s) } else { 0 }
-            };
-            Some((
-                bits(da, sa, a.source_prefix_len),
-                bits(db, sb, b.source_prefix_len),
-            ))
+/// Rule 9 score: larger means a longer source/destination common prefix.
+/// IPv4 off-subnet destinations get zero, matching glibc's restriction of
+/// longest-prefix sorting to the source subnet. Using the XOR's highest set
+/// bit instead would also give off-subnet addresses zero, accidentally ranking
+/// them ahead of every nonidentical on-link destination.
+fn common_prefix_bits(candidate: &DestinationCandidate) -> Option<u32> {
+    match (candidate.dest, candidate.source?) {
+        (IpAddr::V4(destination), IpAddr::V4(source)) => {
+            let (destination, source) = (u32::from(destination), u32::from(source));
+            let length = u32::from(candidate.source_prefix_len.unwrap_or(0)).min(32);
+            let mask = if length == 0 { 0 } else { u32::MAX << (32 - length) };
+            Some(if source & mask == destination & mask {
+                (destination ^ source).leading_zeros()
+            } else {
+                0
+            })
         }
-        (IpAddr::V6(da), IpAddr::V6(sa), IpAddr::V6(db), IpAddr::V6(sb)) => {
-            let word = |x: Ipv6Addr, i: usize| {
-                let o = x.octets();
-                u32::from_be_bytes([o[4 * i], o[4 * i + 1], o[4 * i + 2], o[4 * i + 3]])
-            };
-            // The first 32-bit word where either destination differs from
-            // its source.
-            let i = (0..4).find(|&i| word(da, i) != word(sa, i) || word(db, i) != word(sb, i))?;
-            Some((
-                fls(word(da, i) ^ word(sa, i)),
-                fls(word(db, i) ^ word(sb, i)),
-            ))
+        (IpAddr::V6(destination), IpAddr::V6(source)) => {
+            Some((u128::from(destination) ^ u128::from(source)).leading_zeros())
         }
         _ => None,
     }
@@ -396,10 +381,10 @@ fn compare_destinations(
     }
     // Rule 9: longest matching prefix (same family, both reachable).
     if a.dest.is_ipv4() == b.dest.is_ipv4()
-        && let Some((bits_a, bits_b)) = prefix_bits(a, b)
+        && let (Some(bits_a), Some(bits_b)) = (common_prefix_bits(a), common_prefix_bits(b))
         && bits_a != bits_b
     {
-        return bits_a.cmp(&bits_b);
+        return bits_b.cmp(&bits_a);
     }
     // Rule 10: keep the original order.
     ia.cmp(&ib)
@@ -476,6 +461,85 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn prefix_rule_prefers_on_link_over_off_link_in_either_input_order() {
+        let mut on_link = cand("192.0.2.2", Some("192.0.2.1"));
+        let mut off_link = cand("198.51.100.1", Some("192.0.2.1"));
+        on_link.source_prefix_len = Some(24);
+        off_link.source_prefix_len = Some(24);
+        assert_eq!(common_prefix_bits(&on_link), Some(30));
+        assert_eq!(common_prefix_bits(&off_link), Some(0));
+        assert_eq!(destination_order(&[off_link, on_link]), [1, 0]);
+        assert_eq!(destination_order(&[on_link, off_link]), [0, 1]);
+    }
+
+    #[test]
+    fn prefix_rule_preserves_order_between_off_link_addresses() {
+        let mut a = cand("198.51.100.1", Some("192.0.2.1"));
+        let mut b = cand("203.0.113.1", Some("192.0.2.1"));
+        a.source_prefix_len = Some(24);
+        b.source_prefix_len = Some(24);
+        assert_eq!(destination_order(&[a, b]), [0, 1]);
+        assert_eq!(destination_order(&[b, a]), [0, 1]);
+    }
+
+    #[test]
+    fn prefix_rule_counts_every_ipv4_bit_without_reversing_the_score() {
+        let source = u32::from(Ipv4Addr::new(192, 0, 2, 1));
+        for bit in 0..32 {
+            let candidate = DestinationCandidate {
+                dest: IpAddr::V4(Ipv4Addr::from(source ^ (1u32 << (31 - bit)))),
+                source: Some(IpAddr::V4(Ipv4Addr::from(source))),
+                source_prefix_len: Some(0),
+            };
+            assert_eq!(common_prefix_bits(&candidate), Some(bit));
+        }
+        let exact = cand("192.0.2.1", Some("192.0.2.1"));
+        assert_eq!(common_prefix_bits(&exact), Some(32));
+    }
+
+    #[test]
+    fn prefix_rule_handles_host_routes_and_unknown_prefixes() {
+        let mut candidate = cand("192.0.2.2", Some("192.0.2.1"));
+        assert_eq!(common_prefix_bits(&candidate), Some(0));
+        candidate.source_prefix_len = None;
+        assert_eq!(common_prefix_bits(&candidate), Some(30));
+        candidate.source_prefix_len = Some(255);
+        assert_eq!(common_prefix_bits(&candidate), Some(0));
+        candidate.source = None;
+        assert_eq!(common_prefix_bits(&candidate), None);
+        candidate.source = Some(IpAddr::V6(Ipv6Addr::LOCALHOST));
+        assert_eq!(common_prefix_bits(&candidate), None);
+    }
+
+    #[test]
+    fn prefix_rule_counts_all_ipv6_words_and_exact_matches() {
+        let source: Ipv6Addr = "2001:db8:1234:5678:abcd:ef01:2345:6789".parse().unwrap();
+        for bit in 0..128 {
+            let candidate = DestinationCandidate {
+                dest: IpAddr::V6(Ipv6Addr::from(u128::from(source) ^ (1u128 << (127 - bit)))),
+                source: Some(IpAddr::V6(source)),
+                source_prefix_len: None,
+            };
+            assert_eq!(common_prefix_bits(&candidate), Some(bit));
+        }
+        let exact = cand("2001:db8::1", Some("2001:db8::1"));
+        assert_eq!(common_prefix_bits(&exact), Some(128));
+    }
+
+    #[test]
+    fn prefix_rule_orders_by_score_without_disturbing_equal_prefixes() {
+        let source = Some("2001:db8::1");
+        let candidates = [
+            cand("2001:db8:8000::1", source),
+            cand("2001:db8::8000:1", source),
+            cand("2001:db8::3", source),
+            cand("2001:db8::2", source),
+            cand("2001:db8::1", source),
+        ];
+        assert_eq!(destination_order(&candidates), [4, 2, 3, 1, 0]);
+    }
 
     fn policy(family: Family, mapped: bool, all: bool) -> AddressPolicy {
         AddressPolicy::new(family, mapped, all)
