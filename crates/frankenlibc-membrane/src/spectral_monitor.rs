@@ -112,6 +112,8 @@ pub struct SpectralMonitor {
     write_pos: usize,
     /// Number of observations recorded (capped at SPECTRAL_WINDOW).
     count: usize,
+    /// Observations ever recorded (uncapped): the recompute cadence.
+    observations: u64,
     /// Running column sums for incremental mean computation.
     sums: [f64; OBS_DIM],
     /// Current phase state.
@@ -141,6 +143,7 @@ impl SpectralMonitor {
             window: [Observation::ZERO; SPECTRAL_WINDOW],
             write_pos: 0,
             count: 0,
+            observations: 0,
             sums: [0.0; OBS_DIM],
             phase: PhaseState::Stationary,
             transition_streak: 0,
@@ -178,8 +181,14 @@ impl SpectralMonitor {
             self.count += 1;
         }
 
+        self.observations += 1;
+
         // Recompute spectral signature every 16 observations once we have enough data.
-        if self.count >= OBS_DIM * 2 && self.count.is_multiple_of(16) {
+        // Keyed on the uncapped count: `count` saturates at SPECTRAL_WINDOW (64,
+        // itself a multiple of 16), so once the window filled this recomputed on
+        // every observation, 7% of an uncached hardened validation
+        // (bd-rc0923-epic-eeuy4f.9).
+        if self.count >= OBS_DIM * 2 && self.observations.is_multiple_of(16) {
             self.recompute_spectrum();
         }
     }
