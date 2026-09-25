@@ -50,6 +50,25 @@ const EWMA_ALPHA: f64 = 0.03;
 const BETA_ALPHA0: f64 = 1.0;
 const BETA_BETA0: f64 = 1.0;
 
+/// `1 / (r + HAZARD_LAMBDA)` and `1 / (BETA_ALPHA0 + BETA_BETA0 + r + 1)` per
+/// run length. A run-length slot `r` has seen `r + 1` observations (a reset
+/// slot starts at 1, growth adds 1), except the one chain grown from the
+/// initial no-data prior, which has seen `r`. So both divisions in the
+/// per-observation O(MAX_RUN_LENGTH) update are table lookups for every slot
+/// but that one. Two divides per slot per observation made this controller
+/// the largest single cost of a hardened call (bd-rc0923-epic-eeuy4f.9).
+const RUN_LENGTH_RECIPROCALS: ([f64; MAX_RUN_LENGTH], [f64; MAX_RUN_LENGTH]) = {
+    let mut hazard = [0.0; MAX_RUN_LENGTH];
+    let mut inv_denom = [0.0; MAX_RUN_LENGTH];
+    let mut r = 0;
+    while r < MAX_RUN_LENGTH {
+        hazard[r] = 1.0 / (r as f64 + HAZARD_LAMBDA);
+        inv_denom[r] = 1.0 / (BETA_ALPHA0 + BETA_BETA0 + r as f64 + 1.0);
+        r += 1;
+    }
+    (hazard, inv_denom)
+};
+
 /// Numerical floor for active posterior mass.
 ///
 /// Entries below this value are treated as inactive in horizon trimming.
@@ -211,9 +230,12 @@ impl ChangepointController {
                 // Beta-Bernoulli predictive likelihood for this run length:
                 // P(x=1 | data_r) = (alpha0 + k_r) / (alpha0 + beta0 + n_r)
                 let alpha_post = BETA_ALPHA0 + run_adverse[r];
-                let beta_post = BETA_BETA0 + (run_total[r] - run_adverse[r]);
-                let denom = alpha_post + beta_post;
-                let pred_adverse = alpha_post / denom;
+                let inv_denom = if run_total[r] == r as f64 + 1.0 {
+                    RUN_LENGTH_RECIPROCALS.1[r]
+                } else {
+                    1.0 / (BETA_ALPHA0 + BETA_BETA0 + run_total[r])
+                };
+                let pred_adverse = alpha_post * inv_denom;
                 let likelihood = if adverse {
                     pred_adverse
                 } else {
@@ -221,7 +243,7 @@ impl ChangepointController {
                 };
 
                 let weighted = prior * likelihood;
-                let hazard = 1.0 / (r as f64 + HAZARD_LAMBDA);
+                let hazard = RUN_LENGTH_RECIPROCALS.0[r];
 
                 // Reset contribution.
                 reset_mass += weighted * hazard;
