@@ -17,6 +17,8 @@ __thread int gp_tls = VALUE * 10;
 static int implementation(void) { return VALUE * 100; }
 static int (*resolver(void))(void) { return implementation; }
 int gp_ifunc(void) __attribute__((ifunc("resolver")));
+static int (*zero_resolver(void))(void) { return 0; }
+int gp_zero(void) __attribute__((ifunc("zero_resolver")));
 "#;
 const CONSUMER: &str = r#"
 extern int gp_function(void);
@@ -84,6 +86,42 @@ impl Loader {
         handle
     }
 
+    fn lookup(&self, handle: *mut c_void, name: &CStr, version: Option<&CStr>) -> (*mut c_void, bool) {
+        // SAFETY: fixture handles remain open and both strings are terminated.
+        unsafe {
+            if self.native { let _ = dlfcn_abi::dlerror(); }
+            else { let _ = libc::dlerror(); }
+            let address = match (self.native, version) {
+                (true, None) => dlfcn_abi::dlsym(handle, name.as_ptr()),
+                (true, Some(version)) => dlfcn_abi::dlvsym(handle, name.as_ptr(), version.as_ptr()),
+                (false, None) => libc::dlsym(handle, name.as_ptr()),
+                (false, Some(version)) => libc::dlvsym(handle, name.as_ptr(), version.as_ptr()),
+            };
+            let failed = if self.native { !dlfcn_abi::dlerror().is_null() }
+                else { !libc::dlerror().is_null() };
+            (address, failed)
+        }
+    }
+
+    fn function(&self, handle: *mut c_void, name: &CStr, version: Option<&CStr>) -> c_int {
+        let (address, failed) = self.lookup(handle, name, version);
+        assert!(!failed && !address.is_null(), "function lookup {name:?}");
+        // SAFETY: our C fixture defines the named function as int(void),
+        // and its provider is not closed until this call has returned.
+        let function: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(address) };
+        unsafe { function() }
+    }
+
+    fn main_handle(&self) -> *mut c_void {
+        // SAFETY: NULL selects the main-program handle with valid flags.
+        let handle = unsafe {
+            if self.native { dlfcn_abi::dlopen(std::ptr::null(), libc::RTLD_NOW) }
+            else { libc::dlopen(std::ptr::null(), libc::RTLD_NOW) }
+        };
+        assert!(!handle.is_null(), "main handle: {}", self.error());
+        handle
+    }
+
     fn value(&self, handle: *mut c_void) -> c_int {
         // SAFETY: the fixture exports int gp_observe(void), and its owning
         // handle remains live throughout lookup and the call.
@@ -106,6 +144,15 @@ impl Loader {
 }
 
 fn scenario(loader: &Loader, root: &Path, case: &str) {
+    if case == "main_lookup" { main_lookup(loader, root); return; }
+    if case == "null_ifunc" {
+        let handle = loader.open(root, "gp_a", libc::RTLD_NOW);
+        assert_eq!(loader.lookup(handle, c"gp_zero", None), (std::ptr::null_mut(), false));
+        assert_eq!(loader.lookup(handle, c"gp_zero", Some(c"GP_1")), (std::ptr::null_mut(), false));
+        assert_eq!(loader.lookup(handle, c"gp_zero", Some(c"GP_MISSING")), (std::ptr::null_mut(), true));
+        loader.close(handle);
+        return;
+    }
     let global = libc::RTLD_NOW | libc::RTLD_GLOBAL;
     let promote = global | libc::RTLD_NOLOAD;
     let a = loader.open(root, "gp_a", if case == "repeat" { global } else { libc::RTLD_NOW });
@@ -142,6 +189,52 @@ fn scenario(loader: &Loader, root: &Path, case: &str) {
     loader.close(a);
 }
 
+fn main_lookup(loader: &Loader, root: &Path) {
+    let main = loader.main_handle();
+    let a = loader.open(root, "gp_a", libc::RTLD_NOW);
+    assert_eq!(loader.lookup(main, c"gp_function", None), (std::ptr::null_mut(), true),
+        "LOCAL objects must stay invisible to the main handle");
+    assert_eq!(loader.function(a, c"gp_function", None), 1);
+    let b = loader.open(root, "gp_b", libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    assert_eq!(loader.function(main, c"gp_function", None), 2);
+    assert_eq!(loader.function(main, c"gp_function", Some(c"GP_1")), 2);
+    assert_eq!(loader.lookup(main, c"gp_function", Some(c"GP_MISSING")), (std::ptr::null_mut(), true));
+    let promoted = loader.open(root, "gp_a", libc::RTLD_NOW | libc::RTLD_GLOBAL | libc::RTLD_NOLOAD);
+    assert_eq!(loader.function(main, c"gp_function", None), 2, "late promotion must append");
+    assert_eq!(loader.function(main, c"gp_ifunc", Some(c"GP_1")), 200);
+    assert_eq!(loader.lookup(main, c"gp_zero", None), (std::ptr::null_mut(), false));
+    assert_eq!(loader.lookup(main, c"gp_zero", Some(c"GP_1")), (std::ptr::null_mut(), false));
+    let (tls, failed) = loader.lookup(main, c"gp_tls", Some(c"GP_1"));
+    assert!(!failed && !tls.is_null());
+    assert_eq!(tls, loader.lookup(b, c"gp_tls", None).0);
+    // SAFETY: gp_tls is an initialized int in this thread's live module.
+    assert_eq!(unsafe { *tls.cast::<c_int>() }, 20);
+    let main_address = main as usize;
+    let native = loader.native;
+    let other_tls = std::thread::spawn(move || {
+        let loader = Loader { native };
+        let (address, failed) = loader.lookup(main_address as *mut c_void, c"gp_tls", None);
+        assert!(!failed && !address.is_null());
+        // SAFETY: the parent retains both providers until this thread joins.
+        unsafe {
+            assert_eq!(*address.cast::<c_int>(), 20);
+            *address.cast::<c_int>() = 91;
+        }
+        address as usize
+    }).join().expect("TLS lookup thread");
+    assert_ne!(other_tls, tls as usize, "each thread needs its own TLS block");
+    assert_eq!(unsafe { *tls.cast::<c_int>() }, 20);
+    loader.close(b);
+    // Unlike RTLD_DEFAULT, lookup through an explicit main handle must not
+    // make the provider a permanent dependency of the calling executable.
+    assert_eq!(loader.function(main, c"gp_function", None), 1);
+    assert_eq!(loader.function(main, c"gp_ifunc", Some(c"GP_1")), 100);
+    loader.close(promoted);
+    loader.close(a);
+    assert_eq!(loader.lookup(main, c"gp_function", None), (std::ptr::null_mut(), true));
+    loader.close(main);
+}
+
 #[test]
 fn native_global_promotion_matches_host() {
     if let Ok(case) = std::env::var("FRANKEN_GLOBAL_CASE") {
@@ -153,7 +246,9 @@ fn native_global_promotion_matches_host() {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let root = std::env::temp_dir().join(format!("franken-global-{}-{stamp}", std::process::id()));
     fixtures(&root);
-    for case in ["promotion", "repeat", "group", "deepbind", "rollback"] {
+    let mut cases = vec!["promotion", "repeat", "group", "deepbind", "rollback", "null_ifunc"];
+    if cfg!(feature = "standalone") { cases.push("main_lookup"); }
+    for case in cases {
         for backend in ["host", "native"] {
             let output = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", "native_global_promotion_matches_host", "--nocapture"])

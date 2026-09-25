@@ -562,15 +562,23 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             return std::ptr::null_mut();
         }
         let symbol_name = unsafe { std::slice::from_raw_parts(symbol as *const u8, symbol_len) };
-        // Preserve the existing main-program and exported-symbol lookup scope.
+        // Builtins retain their existing precedence. An explicit main handle
+        // additionally sees live GLOBAL plugins, but never LOCAL-only objects.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
             let sym = resolve_exported_symbol(symbol_name);
-            if sym.is_null() {
-                set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
-            } else {
+            if !sym.is_null() {
                 clear_dlerror();
+                return sym;
             }
-            return sym;
+            if is_main_program_handle(handle)
+                && let Some(Some(address)) = resolve_native_dso_symbol(handle, symbol_name, None)
+            {
+                // A resolved IFUNC is allowed to return NULL without an error.
+                clear_dlerror();
+                return address;
+            }
+            set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
         }
         if let Some(symbol) = resolve_native_dso_symbol(handle, symbol_name, None) {
             return match symbol {
@@ -692,8 +700,9 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
     }
 
     if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, None) {
+        // NULL can be a successful IFUNC result; absence is represented by None.
+        let adverse = native_sym.is_none();
         let sym = native_sym.unwrap_or(std::ptr::null_mut());
-        let adverse = sym.is_null();
         if adverse {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         } else {
@@ -779,6 +788,15 @@ pub unsafe extern "C" fn dlvsym(
                     clear_dlerror();
                     return sym;
                 }
+            }
+            // Plugin versions are defined by the object's own version table,
+            // not the GLIBC allowlist used for the builtin export surface.
+            if is_main_program_handle(handle)
+                && let Some(Some(address)) =
+                    resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
+            {
+                clear_dlerror();
+                return address;
             }
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
             return std::ptr::null_mut();
@@ -923,8 +941,9 @@ pub unsafe extern "C" fn dlvsym(
     }
 
     if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, Some(version_name)) {
+        // NULL can be a successful IFUNC result; absence is represented by None.
+        let adverse = native_sym.is_none();
         let sym = native_sym.unwrap_or(std::ptr::null_mut());
-        let adverse = sym.is_null();
         if adverse {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         } else {

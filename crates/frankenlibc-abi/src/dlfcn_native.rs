@@ -853,7 +853,14 @@ pub(super) fn resolve_native_dso_symbol(
     symbol_name: &[u8],
     version_name: Option<&[u8]>,
 ) -> Option<Option<*mut c_void>> {
-    let id = native_dso_id_from_handle(handle)?;
+    // Only the standalone main-program handle owns this native global scope.
+    // RTLD_DEFAULT/RTLD_NEXT need caller-relative scope and lifetime handling;
+    // never silently interpret either pseudo-handle as this explicit handle.
+    let id = if cfg!(feature = "standalone") && super::is_main_program_handle(handle) {
+        None
+    } else {
+        Some(native_dso_id_from_handle(handle)?)
+    };
     if ifunc::active() { return Some(None); }
     let symbol = std::str::from_utf8(symbol_name).ok()?;
     let version = match version_name {
@@ -862,8 +869,13 @@ pub(super) fn resolve_native_dso_symbol(
     };
     let _operation = OPERATIONS.lock();
     let dsos = registry().lock().ok()?;
-    dsos.iter().find(|dso| dso.id == id)?;
-    for candidate in lookup_order(&dsos, &[], id) {
+    let order = if let Some(id) = id {
+        dsos.iter().find(|dso| dso.id == id)?;
+        lookup_order(&dsos, &[], id)
+    } else {
+        global_scope_order(&dsos)
+    };
+    for candidate in order {
         let dso = dsos.iter().find(|dso| dso.id == candidate)?;
         if let Some(symbol) = dso.versions.lookup(&dso.object, symbol, version, versions::Lookup::Public) {
             if symbol.is_tls() {
@@ -875,7 +887,10 @@ pub(super) fn resolve_native_dso_symbol(
             if symbol.is_ifunc() {
                 let address = usize::try_from(symbol.definition_address(dso.object.base)?).ok()?;
                 drop(dsos);
-                return Some(ifunc::resolve_symbol(id, address).map(|address| address as *mut c_void));
+                // A main-handle lookup has no owning DSO. Retain an indirect
+                // implementation through the selected provider, not a fake ID.
+                return Some(ifunc::resolve_symbol(id.unwrap_or(candidate), address)
+                    .map(|address| address as *mut c_void));
             }
             return Some(symbol.definition_address(dso.object.base).map(|address| address as *mut c_void));
         }
