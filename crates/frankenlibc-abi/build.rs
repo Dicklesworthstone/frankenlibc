@@ -852,6 +852,33 @@ fn main() {
         println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={version_script}");
     }
 
+    // Bind the library's references to its own functions locally, as glibc
+    // does with its internal aliases. Otherwise each of ~600 GOT entries
+    // (abort, close, cos, ...) is resolved by a symbol lookup in every process
+    // that loads the library -- ~80 us of /bin/true's startup
+    // (bd-rc0923-epic-eeuy4f.25) -- and an executable that defines one of
+    // those names (say `open`) captures the library's internal calls to it.
+    // Data symbols are unaffected, so a copy-relocated `stdout`, `environ` or
+    // `optind` still resolves to the executable's copy. The malloc family
+    // stays preemptible, as in glibc: an application that supplies its own
+    // malloc must receive the library's allocations and frees too.
+    println!("cargo:rustc-cdylib-link-arg=-Wl,-Bsymbolic-functions");
+    for symbol in [
+        "malloc",
+        "free",
+        "calloc",
+        "realloc",
+        "reallocarray",
+        "memalign",
+        "aligned_alloc",
+        "posix_memalign",
+        "valloc",
+        "pvalloc",
+        "malloc_usable_size",
+    ] {
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--export-dynamic-symbol={symbol}");
+    }
+
     let audit_json = r#"{
   "schema_version": "v1",
   "artifact": "simd_isomorphism_audit",

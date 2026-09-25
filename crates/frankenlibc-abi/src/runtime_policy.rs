@@ -1777,11 +1777,29 @@ fn record_last_explainability(
     let _ = with_last_explainability(|slot| *slot = Some(explainability));
 }
 
+#[inline]
 fn kernel() -> Option<&'static RuntimeMathKernel> {
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
+        // Fast path: already initialized.
+        // SAFETY: once READY, KERNEL_PTR is valid and never changes.
+        let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
+        return Some(unsafe { &*ptr });
+    }
+    kernel_init()
+}
+
+/// [`kernel`]'s initialization path, kept out of line. With the kernel's
+/// constructor inlined, `kernel` had a ~158 KiB stack frame, and its prologue
+/// probed all 38 pages of it on EVERY call, fast path included. After a fork
+/// each probed page is copy-on-write shared, so a parent and child that
+/// merely looked up the kernel copied 38 stack pages each: ~76 of the ~170
+/// page faults that made fork+exit+wait ~3.5x glibc (bd-rc0923-epic-eeuy4f.25).
+#[cold]
+#[inline(never)]
+fn kernel_init() -> Option<&'static RuntimeMathKernel> {
     let state = KERNEL_STATE.load(AtomicOrdering::Acquire);
 
     if state == STATE_READY {
-        // Fast path: already initialized.
         // SAFETY: once READY, KERNEL_PTR is valid and never changes.
         let ptr = KERNEL_PTR.load(AtomicOrdering::Acquire);
         return Some(unsafe { &*ptr });

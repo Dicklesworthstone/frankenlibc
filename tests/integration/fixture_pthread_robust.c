@@ -247,9 +247,17 @@ int main(void) {
   printf("pshared barrier init=%s\n", name(pthread_barrier_init(&sh->bar, &ba, 2)));
   pthread_barrierattr_destroy(&ba);
   printf("pshared sem_init=%d\n", sem_init(&sh->sem, 1, 0));
+  // The child reports holding the write lock before the parent probes it. A
+  // fixed sleep instead let a slow-to-schedule child lose the race: the
+  // parent's tryrdlock then succeeded, it kept one of its two read locks, and
+  // the child's wrlock waited on it forever while the parent sat in the
+  // barrier.
+  int held[2];
+  if (pipe(held) != 0) return 1;
   p = fork();
   if (p == 0) {
     pthread_rwlock_wrlock(&sh->rw);
+    if (write(held[1], "w", 1) != 1) _exit(1);
     usleep(150000);
     pthread_rwlock_unlock(&sh->rw);
     pthread_barrier_wait(&sh->bar);
@@ -257,7 +265,10 @@ int main(void) {
     sem_post(&sh->sem);
     _exit(0);
   }
-  usleep(50000);
+  char token;
+  if (read(held[0], &token, 1) != 1) return 1;
+  close(held[0]);
+  close(held[1]);
   printf("pshared tryrdlock while child writes=%s\n", name(pthread_rwlock_tryrdlock(&sh->rw)));
   printf("pshared rdlock after child releases=%s\n", name(pthread_rwlock_rdlock(&sh->rw)));
   pthread_rwlock_unlock(&sh->rw);
