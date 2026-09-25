@@ -48509,9 +48509,9 @@ enum TranslitOutcome {
 /// shift state) carries over, the source side is restored.
 fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> TranslitOutcome {
     let cp = ch as u32;
-    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT.binary_search_by_key(&cp, |&(c, _)| c) {
-        Ok(i) => [translit_c::C_TRANSLIT[i].1, b"?"],
-        Err(_) => [b"?", b"?"],
+    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT_PACKED.lookup(cp) {
+        Some(replacement) => [replacement, b"?"],
+        None => [b"?", b"?"],
     };
     for replacement in candidates {
         if replacement.is_empty() {

@@ -8,7 +8,60 @@
 //! replacement means the character is dropped (still counted as an
 //! irreversible conversion). Sorted by code point for binary search.
 
-pub(super) static C_TRANSLIT: [(u32, &[u8]); 1656] = [
+/// Packed, pointer-free form of [`C_TRANSLIT`], built at compile time.
+///
+/// As a `static` of `(u32, &[u8])` the table needed one load-time relocation
+/// per entry (1634 of the library's ~11k), and the loader dirtied its pages
+/// in every process, whether or not it ever transliterated
+/// (bd-rc0923-epic-eeuy4f.25). Offsets into one byte blob need none.
+pub(super) struct PackedTranslit {
+    keys: [u32; C_TRANSLIT.len()],
+    spans: [(u32, u16); C_TRANSLIT.len()],
+    bytes: [u8; TRANSLIT_BYTES],
+}
+
+impl PackedTranslit {
+    /// The C-locale transliteration of `code_point`, if it has one.
+    pub(super) fn lookup(&self, code_point: u32) -> Option<&[u8]> {
+        let index = self.keys.binary_search(&code_point).ok()?;
+        let (start, len) = self.spans[index];
+        self.bytes.get(start as usize..start as usize + len as usize)
+    }
+}
+
+const TRANSLIT_BYTES: usize = {
+    let mut total = 0;
+    let mut i = 0;
+    while i < C_TRANSLIT.len() {
+        total += C_TRANSLIT[i].1.len();
+        i += 1;
+    }
+    total
+};
+
+pub(super) static C_TRANSLIT_PACKED: PackedTranslit = {
+    let mut keys = [0u32; C_TRANSLIT.len()];
+    let mut spans = [(0u32, 0u16); C_TRANSLIT.len()];
+    let mut bytes = [0u8; TRANSLIT_BYTES];
+    let mut offset = 0;
+    let mut i = 0;
+    while i < C_TRANSLIT.len() {
+        let (key, replacement) = C_TRANSLIT[i];
+        keys[i] = key;
+        spans[i] = (offset as u32, replacement.len() as u16);
+        let mut j = 0;
+        while j < replacement.len() {
+            bytes[offset + j] = replacement[j];
+            j += 1;
+        }
+        offset += replacement.len();
+        i += 1;
+    }
+    PackedTranslit { keys, spans, bytes }
+};
+
+/// Source table, used only at compile time to build [`C_TRANSLIT_PACKED`].
+const C_TRANSLIT: [(u32, &[u8]); 1656] = [
     (0xA0, b" "),
     (0xA9, b"(C)"),
     (0xAB, b"<<"),
