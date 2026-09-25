@@ -82,7 +82,18 @@ impl L2Bitmap {
     }
 }
 
+/// The page oracle's lock, held across `fork`.
+#[must_use]
+pub struct PageOracleForkGuard<'a>(
+    #[allow(dead_code)] crate::bravo::BravoForkGuard<'a, ArtifactHashMap<usize, Arc<L2Bitmap>>>,
+);
+
 impl PageOracle {
+    /// Hold the L2 map lock across `fork`; see `BravoRwLock::fork_guard`.
+    pub fn atfork_prepare(&self) -> PageOracleForkGuard<'_> {
+        PageOracleForkGuard(self.l2_maps.fork_guard())
+    }
+
     /// Create a new empty page oracle.
     #[must_use]
     pub fn new() -> Self {

@@ -19,7 +19,8 @@
 #![allow(unsafe_code)]
 
 use crate::util::{
-    NoPoisonMutex as Mutex, NoPoisonRwLock as RwLock, NoPoisonRwLockReadGuard as RwLockReadGuard,
+    NoPoisonMutex as Mutex, NoPoisonMutexGuard as MutexGuard, NoPoisonRwLock as RwLock,
+    NoPoisonRwLockReadGuard as RwLockReadGuard, NoPoisonRwLockWriteGuard as RwLockWriteGuard,
     contention_backoff,
 };
 use std::cell::UnsafeCell;
@@ -135,6 +136,16 @@ struct WriterBiasReset<'a, T: Send + Sync> {
     lock: &'a BravoRwLock<T>,
 }
 
+/// Exclusive hold of a [`BravoRwLock`] across `fork`, from
+/// [`BravoRwLock::fork_guard`]. Fields drop in declaration order: the base
+/// write lock, then reader bias is restored, then the writer gate.
+#[must_use]
+pub struct BravoForkGuard<'a, T: Send + Sync> {
+    _base: RwLockWriteGuard<'a, ()>,
+    _reset: WriterBiasReset<'a, T>,
+    _gate: MutexGuard<'a, ()>,
+}
+
 /// Shared read guard returned by [`BravoRwLock::read`].
 #[must_use]
 pub struct BravoReadGuard<'a, T: Send + Sync> {
@@ -205,6 +216,25 @@ impl<T: Send + Sync> BravoRwLock<T> {
     {
         let guard = self.read();
         f(&guard)
+    }
+
+    /// Hold the lock exclusively, as `with_write` does, until the guard drops:
+    /// for a `fork` prepare handler, so that no other thread holds it at the
+    /// clone. Its base is a std `RwLock`, which a child cannot recover once a
+    /// dead thread held it (hardened fixture_fork_mt: the child blocked in
+    /// `PageOracle::query` -> `read_contended`).
+    pub fn fork_guard(&self) -> BravoForkGuard<'_, T> {
+        let gate = self.writer_gate.lock();
+        self.writer_pending.store(true, Ordering::Release);
+        self.reader_bias_enabled.store(false, Ordering::Release);
+        let reset = WriterBiasReset { lock: self };
+        let base = self.base.write();
+        let _ = self.wait_for_visible_readers();
+        BravoForkGuard {
+            _base: base,
+            _reset: reset,
+            _gate: gate,
+        }
     }
 
     /// Mutate the protected value with exclusive access.

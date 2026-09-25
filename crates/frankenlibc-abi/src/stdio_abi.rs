@@ -2021,6 +2021,7 @@ pub(crate) struct StdioForkGuard {
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
     _streams: parking_lot::MutexGuard<'static, StreamRegistry>,
     _cookies: std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>,
+    _foreign: std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>,
 }
 
 impl StdioForkGuard {
@@ -2040,6 +2041,7 @@ impl StdioForkGuard {
             _native,
             _streams,
             _cookies,
+            _foreign,
         } = self;
         // SAFETY: the child is single-threaded and the old mutex (with the
         // value inside it) is never used again, so reading the value out is a
@@ -2050,6 +2052,7 @@ impl StdioForkGuard {
         REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
         drop(_native);
         drop(_cookies);
+        drop(_foreign);
     }
 }
 
@@ -2066,11 +2069,14 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                 Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
                 Err(std::sync::TryLockError::WouldBlock) => None,
             };
-            if let Some(cookies) = cookies {
+            if let Some(cookies) = cookies
+                && let Some(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
+            {
                 return StdioForkGuard {
                     _native: native,
                     _streams: streams,
                     _cookies: cookies,
+                    _foreign: foreign,
                 };
             }
         }

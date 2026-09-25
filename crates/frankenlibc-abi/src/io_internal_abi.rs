@@ -1531,6 +1531,21 @@ pub(crate) fn try_lock_native_stream_registry()
     }
 }
 
+/// Initialize the stdio lazies a fork child could otherwise inherit mid-init:
+/// a `LazyLock` another thread was initializing at the clone stays "running"
+/// forever in the child (fixture_fork_mt: a child blocked in
+/// `lookup_adopted_foreign` -> `Once::call`), then try-lock the foreign
+/// adoption map for the fork guard.
+pub(crate) fn try_lock_foreign_adoption_map()
+-> Option<std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>> {
+    std::sync::LazyLock::force(&NATIVE_FILE_BLOOM);
+    match FOREIGN_ADOPTION_MAP.try_lock() {
+        Ok(guard) => Some(guard),
+        Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
 /// Flag to track if stdio chain has been initialized.
 static STDIO_CHAIN_INITIALIZED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

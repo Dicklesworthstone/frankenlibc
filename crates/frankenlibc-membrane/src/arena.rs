@@ -135,12 +135,13 @@ pub struct AllocationResult {
 }
 
 /// Guard representing all locked arena shards during a fork.
+///
+/// A fixed array, not a Vec: the pipeline takes this while it already holds
+/// the page oracle's lock exclusively, and allocating (or freeing a Vec
+/// buffer on drop) goes through the membrane, which takes that lock.
 pub struct ArenaAtforkGuard<'a> {
-    // Declared (so dropped) first: dropping `_guards` frees its Vec buffer,
-    // and that free can drain quarantine, which takes `large`. Dropped after,
-    // it self-deadlocked the forking thread (hardened fixture_fork_mt hung).
     _large: MutexGuard<'a, std::collections::BTreeSet<usize>>,
-    _guards: Vec<MutexGuard<'a, ArenaShard>>,
+    _guards: [MutexGuard<'a, ArenaShard>; NUM_SHARDS],
 }
 
 /// Raw extent (header through canary) up to which an allocation is found by
@@ -167,13 +168,11 @@ impl AllocationArena {
     /// This ensures the arena is in a consistent state and no other thread
     /// is actively modifying it when the fork occurs.
     pub fn atfork_prepare(&self) -> ArenaAtforkGuard<'_> {
-        let mut guards = Vec::with_capacity(NUM_SHARDS);
-        for shard in self.shards.iter() {
-            guards.push(shard.lock());
-        }
+        // Shards in index order, then `large` (as in `drain_quarantine`).
+        let guards = std::array::from_fn(|index| self.shards[index].lock());
         ArenaAtforkGuard {
-            _guards: guards,
             _large: self.large.lock(),
+            _guards: guards,
         }
     }
 

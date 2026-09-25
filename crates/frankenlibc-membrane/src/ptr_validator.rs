@@ -245,6 +245,13 @@ impl ValidationSecurityContext {
 use crate::ebr::QuarantineEbr;
 use std::sync::Arc;
 
+/// Locks held across `fork` by [`ValidationPipeline::atfork_prepare`].
+#[must_use]
+pub struct PipelineAtforkGuard<'a> {
+    _arena: crate::arena::ArenaAtforkGuard<'a>,
+    _page_oracle: crate::page_oracle::PageOracleForkGuard<'a>,
+}
+
 /// The validation pipeline with all backing data structures.
 pub struct ValidationPipeline {
     /// The allocation arena.
@@ -676,8 +683,18 @@ impl ValidationPipeline {
 
     /// Prepare for a fork by acquiring all internal locks.
     /// Returns a guard that, when dropped, releases the locks.
-    pub fn atfork_prepare(&self) -> crate::arena::ArenaAtforkGuard<'_> {
-        self.arena.atfork_prepare()
+    ///
+    /// The page oracle before the arena shards: `free` holds a page-oracle
+    /// read while it locks a shard, so the reverse order deadlocked a fork
+    /// against a concurrent free (hardened fixture_fork_mt: fork waiting for
+    /// page-oracle readers to drain while holding every shard). The arena
+    /// guard does not allocate, so taking it under the page lock is safe.
+    pub fn atfork_prepare(&self) -> PipelineAtforkGuard<'_> {
+        let page_oracle = self.page_oracle.atfork_prepare();
+        PipelineAtforkGuard {
+            _arena: self.arena.atfork_prepare(),
+            _page_oracle: page_oracle,
+        }
     }
 
     /// Run a pointer through the validation pipeline.
@@ -1860,6 +1877,7 @@ impl ValidationPipeline {
     /// for any blocks that were fully deallocated (drained from quarantine).
     pub fn free(&self, ptr: *mut u8) -> FreeResult {
         let (result, drained) = self.arena.free(ptr);
+        let retired_any = !drained.is_empty();
 
         for entry in drained {
             let oracle = std::sync::Arc::clone(&self.page_oracle);
@@ -1872,6 +1890,15 @@ impl ValidationPipeline {
                     AllocationArena::deallocate_drained(std::slice::from_ref(&entry));
                 }
             });
+        }
+        // Nothing else advances the epoch outside tests, so retired blocks
+        // were never reclaimed: every hardened allocation leaked once it left
+        // the arena quarantine (2M malloc/free pairs peaked at 654 MB RSS vs
+        // glibc's 2 MB, and forks of that address space stalled for ~70 s in
+        // clone). Advance whenever this free retired something; the collector
+        // reclaims what every pinned reader has moved past.
+        if retired_any {
+            let _ = self.collector.try_advance();
         }
 
         result
