@@ -13,6 +13,9 @@
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 
+/// Offered observations per change-point detector update.
+const CHANGEPOINT_CADENCE: u64 = 16;
+
 // Hardware boundary: policy arithmetic must not alter the C caller's fenv.
 // Kept here (rather than only in the ABI guard) because pointer validation owns
 // a separate kernel. This implementation covers the supported x86_64 ABI.
@@ -1153,6 +1156,9 @@ pub struct RuntimeMathKernel {
     cached_topos_state: AtomicU8,
     cached_audit_state: AtomicU8,
     cached_changepoint_state: AtomicU8,
+    /// Observations offered to the change-point detector; it runs on every
+    /// `CHANGEPOINT_CADENCE`-th (see its call site).
+    changepoint_cadence: AtomicU64,
     cached_conformal_state: AtomicU8,
     cached_loss_minimizer_state: AtomicU8,
     cached_loss_posterior_ppm: AtomicU64,
@@ -1401,6 +1407,7 @@ impl RuntimeMathKernel {
             cached_topos_state: AtomicU8::new(0),
             cached_audit_state: AtomicU8::new(0),
             cached_changepoint_state: AtomicU8::new(0),
+            changepoint_cadence: AtomicU64::new(0),
             cached_conformal_state: AtomicU8::new(0),
             cached_loss_minimizer_state: AtomicU8::new(0),
             cached_loss_posterior_ppm: AtomicU64::new(500_000),
@@ -3211,7 +3218,19 @@ impl RuntimeMathKernel {
         // Feed Bayesian change-point detector with adverse indicator.
         // The run-length posterior tracks abrupt shifts in failure rates
         // that gradual EWMA smoothers miss entirely.
-        if ProbePlan::includes_mask(probe_mask, Probe::Changepoint) {
+        // Every CHANGEPOINT_CADENCE-th observation: one BOCPD update walks all
+        // MAX_RUN_LENGTH run-length slots (~1.8us, measured), which the design
+        // scheduler's cost table prices at 8ns, so the probe was always
+        // selected and was 21% of an uncached hardened validation
+        // (bd-rc0923-epic-eeuy4f.9). Uniform subsampling of a Bernoulli
+        // stream keeps the detector's rate estimates unbiased; it trades
+        // detection lag (in observations) for cost.
+        if ProbePlan::includes_mask(probe_mask, Probe::Changepoint)
+            && self
+                .changepoint_cadence
+                .fetch_add(1, Ordering::Relaxed)
+                .is_multiple_of(CHANGEPOINT_CADENCE)
+        {
             let cp_code = {
                 let mut cp = self.changepoint.lock();
                 cp.observe(adverse);
