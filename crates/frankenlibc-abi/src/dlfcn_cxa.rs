@@ -107,18 +107,25 @@ impl Drop for CallPins {
 
 fn drain(mut matches: impl FnMut(&Entry) -> bool) -> Option<()> {
     if ifunc::active() { return None; }
-    let _operation = OPERATIONS.lock();
     loop {
-        let mut entries = ENTRIES.lock().ok()?;
-        let Some(index) = entries.iter().rposition(&mut matches) else { return Some(()); };
-        let pins = CallPins::acquire(&entries[index])?;
-        let entry = entries.remove(index);
-        drop(entries);
+        let (entry, pins) = {
+            let _operation = OPERATIONS.lock();
+            let mut entries = ENTRIES.lock().ok()?;
+            let Some(index) = entries.iter().rposition(&mut matches) else { return Some(()); };
+            let pins = CallPins::acquire(&entries[index])?;
+            (entries.remove(index), pins)
+        };
+        // Explicit __cxa_finalize must not hold the operation lock across
+        // user code: a destructor can join a thread that registers another
+        // callback or uses the loader. CallPins keeps both mappings and their
+        // dependency closures live even if that thread calls dlclose.
+        // A dlclose/process-exit caller may still own its outer operation
+        // guard; retiring-batch serialization is deliberately unchanged.
         // SAFETY: registration validated native executable code; the owned
         // argument remains the caller's responsibility. Both owner and code
         // provider are pinned. No queue/registry mutex crosses this callback.
-        // If it unwinds, the entry stays consumed and CallPins plus OPERATIONS
-        // are released by their guards; older entries remain queued for retry.
+        // If it unwinds, the entry stays consumed and CallPins releases the
+        // mapping pins; older entries remain queued for a later finalization.
         unsafe { (entry.destructor)(entry.argument as *mut c_void) };
         drop(pins);
         // Re-search from the newest entry. Registrations made by a callback
