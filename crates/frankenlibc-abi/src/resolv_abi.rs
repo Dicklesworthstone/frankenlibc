@@ -2669,6 +2669,39 @@ fn native_dns_resolve(
         })
 }
 
+/// IPv4 reverse lookup through the nsswitch `hosts:` sources
+/// (bd-rc0923-epic-eeuy4f.19). `write` stores the found hostname; the files
+/// source calls it inside the hosts-file borrow, so a hit stays
+/// allocation-free.
+fn reverse_hosts_lookup<T>(
+    ip: std::net::Ipv4Addr,
+    ip_str: &[u8],
+    write: impl Fn(&[u8]) -> T,
+) -> Result<T, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    nsswitch_hosts_policy()
+        .lookup(|backend| match backend {
+            Backend::Files => match with_hosts_backend_snapshot(|content, _generation| {
+                frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str).map(&write)
+            }) {
+                Ok(Some(written)) => BackendResult::Success(written),
+                Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+                Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+            },
+            // The backend snapshot borrow ends before network I/O.
+            Backend::Dns => {
+                match dns_backend_result(native_dns_reverse_host(std::net::IpAddr::V4(ip))) {
+                    BackendResult::Success(hostname) => BackendResult::Success(write(&hostname)),
+                    BackendResult::NotFound(code) => BackendResult::NotFound(code),
+                    BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
+                    BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
+                }
+            }
+            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+        })
+        .map_err(hosts_lookup_error_code)
+}
+
 /// Resolve a files-only reverse miss through the validated native PTR engine.
 fn native_dns_reverse_host(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
     use frankenlibc_core::dns_transport::ResolveError;
@@ -4400,31 +4433,17 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     // hostnames) on every line, then built an owned result vector — of which only `[0]` was used.
     // First-matching-line-wins and address validation are unchanged.
     // Files misses and read errors now fall through to native PTR lookup.
-    let written = with_hosts_backend_snapshot(|content, _generation| {
-        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)?;
-        // SAFETY: caller-provided output buffers, as in the previous call.
-        Some(unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) })
-    });
+    let written = match reverse_hosts_lookup(ip, ip_str, |hostname| {
+        // SAFETY: caller-provided output buffers; the writer checks their bounds.
+        unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) }
+    }) {
+        Ok(written) => written,
+        Err(error) => {
+            let (_, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(h_errnop, host_error) };
 
-    let written = match written {
-        Ok(Some(written)) => written,
-        Ok(None) | Err(_) => {
-            // The backend snapshot borrow ends before network I/O.
-            match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
-                Ok(hostname) => {
-                    // SAFETY: the writer checks output bounds and copies the owned name.
-                    unsafe {
-                        write_reentrant_hostent(&hostname, ip, result_buf, buf, buflen, result)
-                    }
-                }
-                Err(error) => {
-                    let (_, host_error) = legacy_host_lookup_error(error);
-                    unsafe { set_h_errnop(h_errnop, host_error) };
-
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                    return 0;
-                }
-            }
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return 0;
         }
     };
 
@@ -4495,27 +4514,19 @@ pub unsafe extern "C" fn gethostbyaddr(
     // Borrowed + allocation-free reverse walk; see `gethostbyaddr_r` above. Populate thread-local
     // hostent storage with the first matching hostname, inside the backend borrow (a different
     // thread-local, so the two borrows do not conflict).
-    let filled = with_hosts_backend_snapshot(|content, _generation| {
-        let hostname = frankenlibc_core::resolv::first_reverse_hosts_hostname(content, ip_str)?;
-        // SAFETY: as the previous `populate_tls_hostent` call.
-        Some(unsafe { populate_tls_hostent(hostname, ip) })
-    });
+    let hostent_ptr = match reverse_hosts_lookup(ip, ip_str, |hostname| {
+        // SAFETY: copies the name into TLS hostent storage (a different
+        // thread-local from the hosts backend) and retains the address.
+        unsafe { populate_tls_hostent(hostname, ip) }
+    }) {
+        Ok(hostent_ptr) => hostent_ptr,
+        Err(error) => {
+            let (_, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
 
-    let hostent_ptr = match filled {
-        Ok(Some(hostent_ptr)) => hostent_ptr,
-        Ok(None) | Err(_) => match native_dns_reverse_host(std::net::IpAddr::V4(ip)) {
-            Ok(hostname) => {
-                // SAFETY: copies the name into TLS and retains the original address.
-                unsafe { populate_tls_hostent(&hostname, ip) }
-            }
-            Err(error) => {
-                let (_, host_error) = legacy_host_lookup_error(error);
-                unsafe { set_h_errnop(ptr::null_mut(), host_error) };
-
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
-                return ptr::null_mut();
-            }
-        },
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
     };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
