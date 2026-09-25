@@ -510,10 +510,17 @@ impl<'a> DynamicSymbols<'a> {
     /// the loaded images already carry the same tables
     /// (bd-rc0923-epic-eeuy4f.25). Requires DT_GNU_HASH (glibc always has it).
     ///
+    /// `known_count` is the object's symbol count if a previous call already
+    /// derived it (zero if not); the second value returned is that count.
+    ///
     /// # Safety
     /// `dynamic` must be the `l_ld` of an object loaded at `base` that stays
     /// loaded for the process lifetime.
-    unsafe fn from_loaded(base: usize, dynamic: usize) -> Option<DynamicSymbols<'static>> {
+    unsafe fn from_loaded(
+        base: usize,
+        dynamic: usize,
+        known_count: usize,
+    ) -> Option<(DynamicSymbols<'static>, usize)> {
         const DT_NULL: i64 = 0;
         const DT_STRTAB: i64 = 5;
         const DT_SYMTAB: i64 = 6;
@@ -559,27 +566,38 @@ impl<'a> DynamicSymbols<'a> {
             (word(0) as usize, word(1) as usize, word(2) as usize);
         let buckets_at = 4 + bloom_words * 2;
         let chains_at = buckets_at + nbuckets;
-        let max_bucket = (0..nbuckets).map(|i| word(buckets_at + i) as usize).max()?;
-        let mut count = symoffset;
-        if max_bucket >= symoffset {
-            count = max_bucket;
-            while word(chains_at + count - symoffset) & 1 == 0 {
+        // Deriving the count reads every bucket and a chain (libc: ~1000
+        // words), which is why callers cache it: it was paid again on each
+        // of the ~30 host symbols resolved at startup.
+        let count = if known_count != 0 {
+            known_count
+        } else {
+            let max_bucket = (0..nbuckets).map(|i| word(buckets_at + i) as usize).max()?;
+            let mut count = symoffset;
+            if max_bucket >= symoffset {
+                count = max_bucket;
+                while word(chains_at + count - symoffset) & 1 == 0 {
+                    count += 1;
+                }
                 count += 1;
             }
-            count += 1;
-        }
+            count
+        };
         // SAFETY: each extent was derived from the object's own dynamic
         // section and hash table, and the object is never unloaded.
         unsafe {
-            Some(DynamicSymbols {
-                strtab: std::slice::from_raw_parts(strtab as *const u8, strsz),
-                sym_bytes: std::slice::from_raw_parts(symtab as *const u8, count * syment),
-                sym_entsize: syment,
-                gnu_hash: Some(std::slice::from_raw_parts(
-                    gnu_hash as *const u8,
-                    (chains_at + count - symoffset) * 4,
-                )),
-            })
+            Some((
+                DynamicSymbols {
+                    strtab: std::slice::from_raw_parts(strtab as *const u8, strsz),
+                    sym_bytes: std::slice::from_raw_parts(symtab as *const u8, count * syment),
+                    sym_entsize: syment,
+                    gnu_hash: Some(std::slice::from_raw_parts(
+                        gnu_hash as *const u8,
+                        (chains_at + count - symoffset) * 4,
+                    )),
+                },
+                count,
+            ))
         }
     }
 
@@ -857,7 +875,10 @@ fn loaded_tables(
             cache.base.store(base, Ordering::Release);
         }
         // SAFETY: link-map objects found at startup stay loaded.
-        let tables = unsafe { DynamicSymbols::from_loaded(base, dynamic) }?;
+        let (tables, count) = unsafe {
+            DynamicSymbols::from_loaded(base, dynamic, cache.count.load(Ordering::Acquire))
+        }?;
+        cache.count.store(count, Ordering::Release);
         Some((base, tables))
     }
 }
@@ -865,15 +886,19 @@ fn loaded_tables(
 struct LoadedTablesCache {
     base: AtomicUsize,
     dynamic: AtomicUsize,
+    /// Symbol count derived from the GNU hash table; zero until derived.
+    count: AtomicUsize,
 }
 
 static LOADED_LIBC_TABLES: LoadedTablesCache = LoadedTablesCache {
     base: AtomicUsize::new(0),
     dynamic: AtomicUsize::new(0),
+    count: AtomicUsize::new(0),
 };
 static LOADED_LOADER_TABLES: LoadedTablesCache = LoadedTablesCache {
     base: AtomicUsize::new(0),
     dynamic: AtomicUsize::new(0),
+    count: AtomicUsize::new(0),
 };
 
 pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
@@ -1229,7 +1254,13 @@ mod tests {
         let data = std::fs::read(path).expect("read libc");
         let file = DynamicSymbols::parse(&data).expect("parse file");
         // SAFETY: libc stays loaded for the life of the test process.
-        let loaded = unsafe { DynamicSymbols::from_loaded(base, dynamic) }.expect("loaded tables");
+        let (loaded, count) =
+            unsafe { DynamicSymbols::from_loaded(base, dynamic, 0) }.expect("loaded tables");
+        // A cached count yields the same tables.
+        let (cached, cached_count) =
+            unsafe { DynamicSymbols::from_loaded(base, dynamic, count) }.expect("cached tables");
+        assert_eq!(cached_count, count);
+        assert_eq!(cached.count(), loaded.count());
         let mut checked = 0usize;
         for index in 0..file.count() {
             let sym = file.symbol(index).unwrap();
