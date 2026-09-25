@@ -1227,6 +1227,176 @@ unsafe fn child_spawn_fail(err_fd: c_int, err: c_int) -> ! {
     spawn_protocol::child_fail(err_fd, err)
 }
 
+/// Everything the spawn child reads. It lives in the parent's frame, which a
+/// `CLONE_VM | CLONE_VFORK` child shares (read-only, by convention) until it
+/// execs or exits; the parent is suspended until then.
+struct SpawnChildContext<'a> {
+    spawn_attrs: Option<&'static SpawnAttrs>,
+    spawn_actions: Option<&'static SpawnFileActions>,
+    candidate_ptrs: &'a [*const c_char],
+    argv: *const *mut c_char,
+    envp: *const *mut c_char,
+    is_path_search: bool,
+    original_mask: u64,
+    err_fd: c_int,
+}
+
+/// The spawn child: apply attributes and file actions, then exec. Raw
+/// syscalls only (see `spawn_protocol`); never returns.
+unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
+    // SAFETY: the parent keeps the context alive and unmodified until this
+    // child execs or exits.
+    let ctx = unsafe { &*ctx };
+    let err_fd = ctx.err_fd;
+
+    let defaults = ctx
+        .spawn_attrs
+        .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGDEF != 0)
+        .map_or(0, |attr| attr.sigdefault);
+    if let Err(error) = spawn_protocol::reset_child_signals(defaults) {
+        unsafe { child_spawn_fail(err_fd, error) };
+    }
+
+    // Apply spawn attributes if provided
+    if let Some(attr) = ctx.spawn_attrs {
+        let err = unsafe { apply_spawn_attrs(attr) };
+        if err != 0 {
+            unsafe { child_spawn_fail(err_fd, err) };
+        }
+    }
+
+    // Apply file actions if provided
+    if let Some(fa) = ctx.spawn_actions {
+        let err = unsafe { apply_file_actions(fa, err_fd) };
+        if err != 0 {
+            unsafe { child_spawn_fail(err_fd, err) };
+        }
+    }
+
+    // Execute the program
+    let env = if ctx.envp.is_null() {
+        unsafe { environ as *const *mut c_char }
+    } else {
+        ctx.envp
+    };
+
+    let final_mask = ctx
+        .spawn_attrs
+        .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
+        .map_or(ctx.original_mask, |attr| attr.sigmask);
+    if let Err(error) = spawn_protocol::install_signal_mask(final_mask) {
+        unsafe { child_spawn_fail(err_fd, error) };
+    }
+
+    // Try execve for each candidate path; reading the slice does not allocate.
+    let mut saw_eacces = false;
+    let mut final_err = libc::ENOENT;
+    for &cand_path in ctx.candidate_ptrs.iter() {
+        // execve only returns on error
+        let err = unsafe {
+            raw_syscall::sys_execve(
+                cand_path as *const u8,
+                ctx.argv as *const *const u8,
+                env as *const *const u8,
+            )
+        }
+        .err()
+        .unwrap_or(libc::ENOENT);
+        // Without a PATH search, preserve the syscall's exact errno
+        // (in particular ENOTDIR), rather than folding it into ENOENT.
+        if !ctx.is_path_search {
+            unsafe { child_spawn_fail(err_fd, err) };
+        }
+        match err {
+            libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
+            libc::EACCES => {
+                saw_eacces = true;
+            }
+            // A terminal error (notably ENOEXEC) wins over an earlier
+            // EACCES. posix_spawnp must not run an implicit shell here.
+            _ => unsafe { child_spawn_fail(err_fd, err) },
+        }
+    }
+
+    if saw_eacces {
+        final_err = libc::EACCES;
+    }
+    unsafe { child_spawn_fail(err_fd, final_err) };
+}
+
+/// Stack for a `CLONE_VM` spawn child.
+const SPAWN_CHILD_STACK_SIZE: usize = 64 * 1024;
+
+/// Create the spawn child with `clone3(CLONE_VM | CLONE_VFORK | extra_flags)`
+/// on its own stack, running `spawn_child_main(ctx)`; returns the child pid in
+/// the parent once the child has exec'd or exited.
+///
+/// A full fork copied the parent's page tables for every spawn, although
+/// the child only execs: posix_spawn of /bin/true ran ~4.6 ms vs glibc's
+/// ~1.3 ms, which uses this same vfork-style clone
+/// (bd-rc0923-epic-eeuy4f.25). The child must run on a separate stack: in
+/// the parent's frame it would overwrite stack slots the compiler assumes
+/// only the parent path uses.
+#[cfg(target_arch = "x86_64")]
+unsafe fn clone_spawn_child(
+    ctx: &SpawnChildContext<'_>,
+    extra_flags: u64,
+    pidfd: *mut c_int,
+) -> Result<c_int, c_int> {
+    const CLONE_VM: u64 = 0x0000_0100;
+    const CLONE_VFORK: u64 = 0x0000_4000;
+    // SAFETY: fresh anonymous mapping, unmapped below once the child is gone.
+    let stack = unsafe {
+        raw_syscall::sys_mmap(
+            std::ptr::null_mut(),
+            SPAWN_CHILD_STACK_SIZE,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_STACK,
+            -1,
+            0,
+        )
+    }?;
+    let args = raw_syscall::CloneArgs {
+        flags: CLONE_VM | CLONE_VFORK | extra_flags,
+        pidfd: pidfd as u64,
+        exit_signal: libc::SIGCHLD as u64,
+        stack: stack as u64,
+        stack_size: SPAWN_CHILD_STACK_SIZE as u64,
+        ..raw_syscall::CloneArgs::default()
+    };
+    let ret: isize;
+    // SAFETY: clone3 with a new stack: the child resumes after `syscall` with
+    // rsp at the (16-byte aligned) top of `stack`, and calls
+    // `spawn_child_main(ctx)`, which never returns. The parent sees the pid
+    // (or -errno) in rax once the child has exec'd or exited (CLONE_VFORK).
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            "test rax, rax",
+            "jnz 2f",
+            "xor ebp, ebp",
+            "mov rdi, r12",
+            "call r13",
+            "ud2",
+            "2:",
+            inlateout("rax") libc::SYS_clone3 as isize => ret,
+            in("rdi") &args as *const raw_syscall::CloneArgs,
+            in("rsi") std::mem::size_of::<raw_syscall::CloneArgs>(),
+            in("r12") ctx as *const SpawnChildContext<'_>,
+            in("r13") spawn_child_main as usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    // SAFETY: the child no longer runs on this stack (exec'd or exited).
+    let _ = unsafe { raw_syscall::sys_munmap(stack, SPAWN_CHILD_STACK_SIZE) };
+    if (-4095..0).contains(&ret) {
+        Err((-ret) as c_int)
+    } else {
+        Ok(ret as c_int)
+    }
+}
+
 /// Core posix_spawn implementation shared between posix_spawn and posix_spawnp.
 /// `search_path` controls whether PATH search is done (posix_spawnp).
 struct SpawnRequest {
@@ -1370,117 +1540,55 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     let mut child_pidfd = -1_i32;
     let want_pidfd = !pidfd_out.is_null();
 
-    let child_pid = if want_pidfd {
-        let args = raw_syscall::CloneArgs {
-            flags: raw_syscall::CLONE_PIDFD,
-            pidfd: (&mut child_pidfd as *mut i32).cast::<()>() as u64,
-            exit_signal: libc::SIGCHLD as u64,
-            ..raw_syscall::CloneArgs::default()
-        };
-
-        // Use clone3(CLONE_PIDFD) so the parent receives a pidfd in the same
-        // kernel operation that creates the child. Calling pidfd_open(child_pid)
-        // after a separate spawn has a PID-reuse race for very short-lived
-        // children.
-        match unsafe {
-            raw_syscall::sys_clone3(&args, std::mem::size_of::<raw_syscall::CloneArgs>())
-        } {
-            Ok(pid) => pid,
-            Err(e) => {
-                let _ = raw_syscall::sys_close(err_pipe[0]);
-                let _ = raw_syscall::sys_close(err_pipe[1]);
-                return e;
-            }
-        }
+    let child_context = SpawnChildContext {
+        spawn_attrs,
+        spawn_actions,
+        candidate_ptrs: &candidate_ptrs,
+        argv,
+        envp,
+        is_path_search,
+        original_mask: signal_guard.original,
+        err_fd: err_pipe[1],
+    };
+    // Use clone3(CLONE_PIDFD) when a pidfd is wanted, so the parent receives
+    // it in the same kernel operation that creates the child: pidfd_open
+    // after the fact has a PID-reuse race for very short-lived children.
+    let extra_flags = if want_pidfd {
+        raw_syscall::CLONE_PIDFD
     } else {
-        // Fork using clone syscall (minimal flags = just SIGCHLD for basic fork)
-        match raw_syscall::sys_clone_fork(libc::SIGCHLD as usize) {
-            Ok(pid) => pid,
-            Err(e) => {
-                let _ = raw_syscall::sys_close(err_pipe[0]);
-                let _ = raw_syscall::sys_close(err_pipe[1]);
-                return e;
-            }
-        }
+        0
     };
 
-    if child_pid == 0 {
-        // --- Child process ---
-        let _ = raw_syscall::sys_close(err_pipe[0]);
-
-        let defaults = spawn_attrs
-            .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGDEF != 0)
-            .map_or(0, |attr| attr.sigdefault);
-        if let Err(error) = spawn_protocol::reset_child_signals(defaults) {
-            unsafe { child_spawn_fail(err_pipe[1], error) };
-        }
-
-        // Apply spawn attributes if provided
-        if let Some(attr) = spawn_attrs {
-            let err = unsafe { apply_spawn_attrs(attr) };
-            if err != 0 {
-                unsafe { child_spawn_fail(err_pipe[1], err) };
-            }
-        }
-
-        // Apply file actions if provided
-        if let Some(fa) = spawn_actions {
-            let err = unsafe { apply_file_actions(fa, err_pipe[1]) };
-            if err != 0 {
-                unsafe { child_spawn_fail(err_pipe[1], err) };
-            }
-        }
-
-        // Execute the program
-        let env = if envp.is_null() {
-            unsafe { environ as *const *mut c_char }
+    #[cfg(target_arch = "x86_64")]
+    let spawned = unsafe { clone_spawn_child(&child_context, extra_flags, &mut child_pidfd) };
+    #[cfg(not(target_arch = "x86_64"))]
+    let spawned = {
+        let result = if want_pidfd {
+            let args = raw_syscall::CloneArgs {
+                flags: extra_flags,
+                pidfd: (&mut child_pidfd as *mut i32).cast::<()>() as u64,
+                exit_signal: libc::SIGCHLD as u64,
+                ..raw_syscall::CloneArgs::default()
+            };
+            unsafe { raw_syscall::sys_clone3(&args, std::mem::size_of::<raw_syscall::CloneArgs>()) }
         } else {
-            envp
+            raw_syscall::sys_clone_fork(libc::SIGCHLD as usize)
         };
-
-        let final_mask = spawn_attrs
-            .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
-            .map_or(signal_guard.original, |attr| attr.sigmask);
-        if let Err(error) = spawn_protocol::install_signal_mask(final_mask) {
-            unsafe { child_spawn_fail(err_pipe[1], error) };
+        if result == Ok(0) {
+            // --- Child process (full fork) ---
+            let _ = raw_syscall::sys_close(err_pipe[0]);
+            unsafe { spawn_child_main(&child_context) };
         }
-
-        // Try execve for each candidate path. Iterating a Vec is just reading
-        // memory (slice) and does not allocate, so it is async-signal safe.
-        let mut saw_eacces = false;
-        let mut final_err = libc::ENOENT;
-        for &cand_path in candidate_ptrs.iter() {
-            // execve only returns on error
-            let err = unsafe {
-                raw_syscall::sys_execve(
-                    cand_path as *const u8,
-                    argv as *const *const u8,
-                    env as *const *const u8,
-                )
-            }
-            .err()
-            .unwrap_or(libc::ENOENT);
-            // Without a PATH search, preserve the syscall's exact errno
-            // (in particular ENOTDIR), rather than folding it into ENOENT.
-            if !is_path_search {
-                unsafe { child_spawn_fail(err_pipe[1], err) };
-            }
-            match err {
-                libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
-                libc::EACCES => {
-                    saw_eacces = true;
-                }
-                // A terminal error (notably ENOEXEC) wins over an earlier
-                // EACCES. posix_spawnp must not run an implicit shell here.
-                _ => unsafe { child_spawn_fail(err_pipe[1], err) },
-            }
+        result
+    };
+    let child_pid = match spawned {
+        Ok(pid) => pid,
+        Err(e) => {
+            let _ = raw_syscall::sys_close(err_pipe[0]);
+            let _ = raw_syscall::sys_close(err_pipe[1]);
+            return e;
         }
-
-        if saw_eacces {
-            final_err = libc::EACCES;
-        }
-        unsafe { child_spawn_fail(err_pipe[1], final_err) };
-    }
+    };
 
     // --- Parent process ---
     // The child does not share this address space. Restore the calling thread's
