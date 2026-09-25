@@ -110,6 +110,8 @@ struct NativeDso {
     load_pins: usize,
     nodelete: bool,
     global: bool,
+    // Global visibility is ordered by promotion, not original mapping time.
+    global_rank: usize,
     symbolic: bool,
     // DT_NEEDED order is the lookup scope; relocation-only providers are
     // lifetime edges, not additional members of a handle's lookup scope.
@@ -401,10 +403,28 @@ fn lookup_order(resident: &[NativeDso], pending: &[NativeDso], root: usize) -> V
     order
 }
 
+// Must be called with the registry locked. No additional lock or callback
+// is involved, so relocation, TLS and IFUNC see one consistent global order.
+fn global_scope_order(dsos: &[NativeDso]) -> Vec<usize> {
+    let mut globals = dsos.iter().filter(|dso| dso.global && !dso.retiring)
+        .map(|dso| (dso.global_rank, dso.id)).collect::<Vec<_>>();
+    globals.sort_unstable();
+    globals.into_iter().map(|(_, id)| id).collect()
+}
+
 fn promote_global(dsos: &mut [NativeDso], root: usize) {
+    // A LOCAL object can predate every GLOBAL object. Promoting it appends
+    // its BFS dependency closure; it must not jump ahead of existing globals.
+    let mut order = global_scope_order(dsos);
     for id in lookup_order(dsos, &[], root) {
-        if let Some(dso) = dsos.iter_mut().find(|dso| dso.id == id) {
+        if !order.contains(&id) { order.push(id); }
+    }
+    // Compact ranks after unload. Ranks are bounded by resident count, so
+    // repeated opens cannot overflow a process-lifetime sequence counter.
+    for (rank, id) in order.into_iter().enumerate() {
+        if let Some(dso) = dsos.iter_mut().find(|dso| dso.id == id && !dso.retiring) {
             dso.global = true;
+            dso.global_rank = rank;
         }
     }
 }
@@ -456,6 +476,7 @@ fn map_object(
         load_pins: 0,
         nodelete: prepared.flags & DF_1_NODELETE != 0,
         global: false,
+        global_rank: 0,
         symbolic,
         dependencies: needed.clone(),
         needed,
@@ -569,7 +590,11 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
                 if dso.retiring { return None; }
                 ids[index] = Some(dso.id);
             } else {
-                ids[index] = Some(next_id()?);
+                if let Some(id) = next_id() {
+                    ids[index] = Some(id);
+                } else {
+                    return None;
+                }
                 new_indexes.push(index);
                 visit.extend(prepared.needed.iter().filter_map(|dependency| {
                     match dependency {

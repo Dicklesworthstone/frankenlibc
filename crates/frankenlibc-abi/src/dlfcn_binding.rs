@@ -45,7 +45,7 @@ pub(super) fn scope<'a>(
     requester: &'a NativeDso, flags: c_int,
 ) -> Option<Vec<&'a NativeDso>> {
     let local = lookup_order(resident, pending, root);
-    let global = resident.iter().filter(|dso| dso.global && !dso.retiring).map(|dso| dso.id);
+    let global = super::global_scope_order(resident);
     let mut ids = Vec::new();
     if requester.symbolic { ids.push(requester.id); }
     if flags & RTLD_DEEPBIND != 0 {

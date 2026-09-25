@@ -1,0 +1,74 @@
+name: Native global scope
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_global*'
+      - 'crates/frankenlibc-abi/tests/standalone_native_loader_regressions.rs'
+      - '.github/workflows/native-global-scope.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  execute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: interpose
+            features: ''
+          - name: standalone
+            features: standalone
+          - name: owned-tls
+            features: standalone,owned-tls-cache
+    env:
+      FEATURES: ${{ matrix.features }}
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install repository toolchain
+        run: |
+          set -euo pipefail
+          toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
+          rustup toolchain install "$toolchain" --profile minimal
+          rustc --version
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-loader-inspection
+      - name: Execute host and native promotion contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/global-scope
+          features=()
+          if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --keep-going -p frankenlibc-abi "${features[@]}" --test dlfcn_native_global_order_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/global-scope/promotion-${mode}.log"
+            grep -F 'test result: ok. 1 passed; 0 failed;' "artifacts/global-scope/promotion-${mode}.log"
+          done
+      - name: Execute standalone public loading contracts
+        if: matrix.name != 'interpose'
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/global-scope
+          timeout 1200 cargo test --keep-going -p frankenlibc-abi --features "$FEATURES" --test standalone_native_loader_regressions -- --nocapture --test-threads=1 2>&1 | tee artifacts/global-scope/standalone-loader.log
+          grep -F 'test result: ok. 1 passed; 0 failed;' artifacts/global-scope/standalone-loader.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: global-scope-${{ matrix.name }}-${{ github.run_attempt }}
+          path: artifacts/global-scope/
+          if-no-files-found: warn
