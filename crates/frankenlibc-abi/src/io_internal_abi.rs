@@ -117,7 +117,7 @@ struct _IO_FILE_Layout {
 }
 
 impl _IO_FILE_Layout {
-    fn new(fd: c_int) -> Self {
+    const fn new(fd: c_int) -> Self {
         Self {
             _flags: GLIBC_IO_MAGIC,
             _padding0: 0,
@@ -549,7 +549,7 @@ impl NativeFileState {
     }
 
     /// An empty registry slot: no lock until one is needed.
-    fn empty_slot() -> Self {
+    const fn empty_slot() -> Self {
         Self {
             locked: frankenlibc_membrane::util::LazyBox::new(),
             orientation: AtomicI8::new(0),
@@ -771,14 +771,17 @@ impl NativeFile {
         file
     }
 
-    /// An empty registry slot, without a lock until one is needed.
-    fn new_empty_slot() -> Self {
+    /// An empty registry slot: what `invalidate` leaves (no flags, no
+    /// vtable), without a lock until one is needed.
+    const EMPTY_SLOT: Self = {
+        let mut io_file = _IO_FILE_Layout::new(-1);
+        io_file._flags = 0;
         Self {
-            _io_file: _IO_FILE_Layout::new(-1),
-            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
+            _io_file: io_file,
+            vtable: ptr::null_mut(),
             _frankenlibc_state: NativeFileState::empty_slot(),
         }
-    }
+    };
 
     /// Create a new `NativeFile` with custom backing storage.
     ///
@@ -1351,13 +1354,13 @@ struct StreamSlot {
 }
 
 impl StreamSlot {
+    const EMPTY: Self = Self {
+        state: SLOT_FREE,
+        file: NativeFile::EMPTY_SLOT,
+    };
+
     fn empty() -> Self {
-        let mut file = NativeFile::new_empty_slot();
-        file.invalidate_unshared();
-        Self {
-            state: SLOT_FREE,
-            file,
-        }
+        Self::EMPTY
     }
 }
 
@@ -1376,11 +1379,24 @@ pub struct NativeStreamRegistry {
 
 impl NativeStreamRegistry {
     /// Create a new registry with stdin/stdout/stderr pre-registered.
+    /// All slots empty: a compile-time constant, so the static registry is
+    /// initialized in place. Building the 63 KB registry at startup (on the
+    /// stack, then moved into a LazyLock) faulted in its pages twice in
+    /// every process (bd-rc0923-epic-eeuy4f.25).
+    const EMPTY: Self = Self {
+        slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
+    };
+
+    #[allow(dead_code)]
     fn new() -> Self {
-        let mut registry = Self {
-            slots: std::array::from_fn(|_| StreamSlot::empty()),
-        };
-        // Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
+        let mut registry = Self::EMPTY;
+        registry.install_std_streams();
+        registry
+    }
+
+    /// Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
+    fn install_std_streams(&mut self) {
+        let registry = self;
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
@@ -1405,9 +1421,7 @@ impl NativeStreamRegistry {
                 file
             },
         };
-        // Note: Chain linking is deferred to ensure_stdio_chain_linked() because
-        // the registry is moved after new() returns, invalidating any pointers.
-        registry
+        // Note: Chain linking is deferred to ensure_stdio_chain_linked().
     }
 
     /// Initialize the stdio chain links after the registry is in its final location.
@@ -1561,8 +1575,12 @@ unsafe impl Send for NativeStreamRegistry {}
 unsafe impl Sync for NativeStreamRegistry {}
 
 /// Global stream registry instance, protected by a mutex.
-static NATIVE_STREAM_REGISTRY: std::sync::LazyLock<Mutex<NativeStreamRegistry>> =
-    std::sync::LazyLock::new(|| Mutex::new(NativeStreamRegistry::new()));
+static NATIVE_STREAM_REGISTRY: Mutex<NativeStreamRegistry> =
+    Mutex::new(NativeStreamRegistry::EMPTY);
+
+/// Set once stdin/stdout/stderr are installed in the registry.
+static STD_STREAMS_INSTALLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Non-blocking lock of the stream registry, for `fork` preparation.
 pub(crate) fn try_lock_native_stream_registry()
@@ -1616,6 +1634,11 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
     let mut guard = NATIVE_STREAM_REGISTRY
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+
+    if !STD_STREAMS_INSTALLED.load(std::sync::atomic::Ordering::Acquire) {
+        guard.install_std_streams();
+        STD_STREAMS_INSTALLED.store(true, std::sync::atomic::Ordering::Release);
+    }
 
     // Initialize stdio chain links on first access (after registry is in final location).
     if !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire) {
