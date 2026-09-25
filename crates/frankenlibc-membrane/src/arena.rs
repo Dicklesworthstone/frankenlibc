@@ -136,8 +136,11 @@ pub struct AllocationResult {
 
 /// Guard representing all locked arena shards during a fork.
 pub struct ArenaAtforkGuard<'a> {
-    _guards: Vec<MutexGuard<'a, ArenaShard>>,
+    // Declared (so dropped) first: dropping `_guards` frees its Vec buffer,
+    // and that free can drain quarantine, which takes `large`. Dropped after,
+    // it self-deadlocked the forking thread (hardened fixture_fork_mt hung).
     _large: MutexGuard<'a, std::collections::BTreeSet<usize>>,
+    _guards: Vec<MutexGuard<'a, ArenaShard>>,
 }
 
 /// Raw extent (header through canary) up to which an allocation is found by
