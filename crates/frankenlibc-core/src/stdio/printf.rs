@@ -1504,6 +1504,14 @@ pub fn numeric_radix_is_dot() -> bool {
     DECIMAL_POINT.load(Ordering::Relaxed) == 0
 }
 
+/// The LC_NUMERIC radix when it is ONE byte other than "." (de_DE's ','),
+/// for the float parsers; see `stdlib::conversion::c_radix_copy`.
+#[inline]
+pub fn numeric_radix_byte() -> Option<u8> {
+    let packed = DECIMAL_POINT.load(Ordering::Relaxed);
+    ((packed >> 56) == 1).then_some(packed as u8)
+}
+
 /// A radix character other than ".".
 #[derive(Clone, Copy)]
 struct DecimalPoint {

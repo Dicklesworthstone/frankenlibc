@@ -867,6 +867,15 @@ pub struct X87Scan {
 /// the whole subnormal range. The guard against a plain `"0"` is that the input
 /// had a nonzero significand.
 pub fn strtold_scan(s: &[u8]) -> X87Scan {
+    // A non-"." LC_NUMERIC radix: parse the C form (offsets unchanged).
+    match crate::stdlib::conversion::c_radix_copy(s) {
+        Some(c_form) => strtold_scan_c(&c_form),
+        None => strtold_scan_c(s),
+    }
+}
+
+/// [`strtold_scan`] for input whose radix is ".".
+pub(crate) fn strtold_scan_c(s: &[u8]) -> X87Scan {
     let at = |i: usize| -> u8 { s.get(i).copied().unwrap_or(0) };
     let is_digit = |b: u8| b.is_ascii_digit();
     let is_hex = |b: u8| b.is_ascii_hexdigit();

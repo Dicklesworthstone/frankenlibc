@@ -5087,7 +5087,11 @@ pub unsafe extern "C" fn wcstod(
 
     // Fast path: a plain integer exactly representable in f64 (see parse_wcstod_integer_fast)
     // skips the scan+project+strtod machinery. Exact ⇒ no ERANGE; just write endptr + return.
-    if let Some((value, consumed)) = unsafe { parse_wcstod_integer_fast(nptr as *const u32) } {
+    // It ends the integer at any non-digit, so only under a "." radix: under de_DE's ','
+    // "1,5" is 1.5, not 1.
+    if frankenlibc_core::stdio::printf::numeric_radix_is_dot()
+        && let Some((value, consumed)) = unsafe { parse_wcstod_integer_fast(nptr as *const u32) }
+    {
         if !endptr.is_null() {
             unsafe { *endptr = (nptr as *mut libc::wchar_t).add(consumed) };
         }

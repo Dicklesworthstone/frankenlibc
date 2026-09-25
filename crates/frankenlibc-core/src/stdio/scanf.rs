@@ -1567,7 +1567,8 @@ fn digit_value(b: u8, base: u32) -> Option<u32> {
 #[inline]
 fn float_scan_value(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
     if spec.length == LengthMod::BigL {
-        ScanValue::LongDouble(crate::float128::strtold_scan(token).bytes)
+        // The token is already in C form (see `scan_float`).
+        ScanValue::LongDouble(crate::float128::strtold_scan_c(token).bytes)
     } else {
         ScanValue::Float(val)
     }
@@ -1575,6 +1576,26 @@ fn float_scan_value(spec: &ScanSpec, val: f64, token: &[u8]) -> ScanValue {
 
 /// Scan a floating-point number.
 fn scan_float(input: &[u8], pos: usize, spec: &ScanSpec) -> Option<(Option<ScanValue>, usize)> {
+    // A non-"." LC_NUMERIC radix: scan the C form of the token from `pos`
+    // (offsets unchanged, so the resulting position maps straight back).
+    if crate::stdio::printf::numeric_radix_byte().is_some() && pos <= input.len() {
+        let mut tail = input[pos..].to_vec();
+        tail.push(0);
+        if let Some(mut c_form) = crate::stdlib::conversion::c_radix_copy(&tail) {
+            c_form.pop(); // the parsers' NUL; scanf input is length-delimited
+            let (value, end) = scan_float_c_radix(&c_form, 0, spec)?;
+            return Some((value, pos + end));
+        }
+    }
+    scan_float_c_radix(input, pos, spec)
+}
+
+/// [`scan_float`] for input whose radix is ".".
+fn scan_float_c_radix(
+    input: &[u8],
+    pos: usize,
+    spec: &ScanSpec,
+) -> Option<(Option<ScanValue>, usize)> {
     let pos = apply_leading_whitespace_policy(input, pos, spec);
     if pos >= input.len() {
         return None;

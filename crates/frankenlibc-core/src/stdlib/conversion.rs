@@ -890,6 +890,14 @@ fn hex_digit_val(c: u8) -> u8 {
 /// decimal path conservatively returns `false` (decimal subnormals are inexact
 /// in practice, and strtof's decimal branch parses f32 directly). (bd-2g7oyh.187)
 pub fn strtod_impl(s: &[u8]) -> (f64, usize, bool) {
+    match c_radix_copy(s) {
+        Some(c_form) => strtod_impl_c(&c_form),
+        None => strtod_impl_c(s),
+    }
+}
+
+/// [`strtod_impl`] for input whose radix is ".".
+pub(crate) fn strtod_impl_c(s: &[u8]) -> (f64, usize, bool) {
     let len = crate::string::strlen(s);
     let slice = &s[..len];
 
@@ -1244,7 +1252,53 @@ fn max_float_token_len(s: &[u8]) -> usize {
     i
 }
 
+/// A float token under a non-"." LC_NUMERIC radix, rewritten to the C form the
+/// parsers read: the radix byte becomes '.', and a literal '.' becomes a byte
+/// no float contains, so parsing stops there as glibc's does (under de_DE,
+/// `strtod("1.5")` is 1 with ".5" left over). Byte offsets are unchanged, so a
+/// consumed count applies to the original. `None` under a "." radix (the C
+/// locale), or a multi-byte one, which is parsed as C.
+///
+/// Only the leading run of bytes a float token can contain is copied, so a
+/// caller walking a long buffer with `strtod`'s end pointer pays for the token,
+/// not for the rest of the buffer.
+pub(crate) fn c_radix_copy(s: &[u8]) -> Option<Vec<u8>> {
+    let radix = crate::stdio::printf::numeric_radix_byte()?;
+    let len = crate::string::strlen(s);
+    let mut i = 0;
+    while i < len && is_c_space(s[i]) {
+        i += 1;
+    }
+    while i < len
+        && (s[i].is_ascii_alphanumeric()
+            || matches!(s[i], b'+' | b'-' | b'.' | b'(' | b')' | b'_')
+            || s[i] == radix)
+    {
+        i += 1;
+    }
+    let mut out = Vec::with_capacity(i + 1);
+    out.extend(s[..i].iter().map(|&b| {
+        if b == radix {
+            b'.'
+        } else if b == b'.' {
+            0x01
+        } else {
+            b
+        }
+    }));
+    out.push(0);
+    Some(out)
+}
+
 pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
+    match c_radix_copy(s) {
+        Some(c_form) => strtof_impl_c(&c_form),
+        None => strtof_impl_c(s),
+    }
+}
+
+/// [`strtof_impl`] for input whose radix is ".".
+fn strtof_impl_c(s: &[u8]) -> (f32, usize, bool) {
     // Fast decimal path: bound the token with a cheap maximal float-char scan and parse the
     // f32 natively, SKIPPING the full strtod_impl f64 parse below (whose f64 value the
     // decimal case discarded — it was called only for `consumed`). This is a double parse
@@ -1275,7 +1329,7 @@ pub fn strtof_impl(s: &[u8]) -> (f32, usize, bool) {
         }
     }
 
-    let (wide, consumed, wide_exact) = strtod_impl(s);
+    let (wide, consumed, wide_exact) = strtod_impl_c(s);
     if consumed == 0 {
         return (wide as f32, consumed, false);
     }

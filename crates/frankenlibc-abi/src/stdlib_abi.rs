@@ -397,6 +397,11 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
     const MAX_EXACT_INTEGER: u64 = 1u64 << f64::MANTISSA_DIGITS;
     const MAX_FIXED_SIGNIFICANT_DIGITS: u32 = 15;
 
+    // This scanner reads "." as the radix; under another LC_NUMERIC radix the
+    // core parser handles the token (glibc: de_DE parses "1,5", stops at ".").
+    if !frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+        return None;
+    }
     let start = ptr.cast::<u8>();
     let mut cursor = start;
 
