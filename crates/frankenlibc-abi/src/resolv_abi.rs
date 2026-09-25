@@ -2845,139 +2845,196 @@ pub unsafe extern "C" fn getaddrinfo(
                     return libc::EAI_NONAME;
                 }
 
-                // Borrow the cached hosts snapshot. Select from the complete
-                // result before IPv4 mapping: a native IPv6 row may occur AFTER
-                // an IPv4 row. Only matching address/name data is copied; never
-                // clone the whole file or hold its borrow across DNS I/O.
-                let _ = with_hosts_backend_snapshot(|content, _generation| {
-                    let mut addresses = Vec::new();
-                    let mut first_name = None;
-                    let mut ipv6_name = None;
-                    frankenlibc_core::resolv::for_each_hosts_match_entry(
-                        content,
-                        text.as_bytes(),
-                        |entry| {
-                            let address = if address_family == Family::Inet {
-                                gethostbyname_ipv4_address(entry.address())
-                                    .map(std::net::IpAddr::V4)
-                            } else {
-                                core::str::from_utf8(entry.address())
-                                    .ok()
-                                    .and_then(|text| text.parse::<std::net::IpAddr>().ok())
-                            };
-                            if let Some(address) = address {
-                                if canonname.is_some() {
-                                    if first_name.is_none() {
-                                        first_name =
-                                            std::ffi::CString::new(entry.canonical_name()).ok();
+                // `hosts:` in nsswitch.conf orders the sources and decides,
+                // per status, whether to return or try the next one
+                // (bd-rc0923-epic-eeuy4f.19). Only files and dns are native;
+                // any other module (myhostname, mdns*, resolve, ...) is an
+                // unavailable source, as if its libnss_* failed to load.
+                use frankenlibc_core::addrinfo::hosts_policy::{
+                    Backend, BackendResult, HostsPolicy, LookupError,
+                };
+                enum HostAnswer {
+                    Files {
+                        addresses: Vec<std::net::IpAddr>,
+                        name: Option<std::ffi::CString>,
+                    },
+                    Dns {
+                        resolution: frankenlibc_core::resolv::dns::DnsResolution,
+                        name: Option<std::ffi::CString>,
+                    },
+                }
+                let hosts_policy = std::fs::read(configured_backend_path(
+                    "/etc/nsswitch.conf",
+                    "FRANKENLIBC_NSSWITCH_CONF",
+                ))
+                .ok()
+                .and_then(|content| HostsPolicy::parse(&content).ok())
+                .unwrap_or_default();
+
+                let files_lookup = || -> BackendResult<HostAnswer, c_int> {
+                    // Borrow the cached hosts snapshot. Select from the complete
+                    // result before IPv4 mapping: a native IPv6 row may occur AFTER
+                    // an IPv4 row. Only matching address/name data is copied; never
+                    // clone the whole file or hold its borrow across DNS I/O.
+                    let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+                        let mut addresses = Vec::new();
+                        let mut first_name = None;
+                        let mut ipv6_name = None;
+                        frankenlibc_core::resolv::for_each_hosts_match_entry(
+                            content,
+                            text.as_bytes(),
+                            |entry| {
+                                let address = if address_family == Family::Inet {
+                                    gethostbyname_ipv4_address(entry.address())
+                                        .map(std::net::IpAddr::V4)
+                                } else {
+                                    core::str::from_utf8(entry.address())
+                                        .ok()
+                                        .and_then(|text| text.parse::<std::net::IpAddr>().ok())
+                                };
+                                if let Some(address) = address {
+                                    if canonname.is_some() {
+                                        if first_name.is_none() {
+                                            first_name =
+                                                std::ffi::CString::new(entry.canonical_name()).ok();
+                                        }
+                                        if address.is_ipv6() && ipv6_name.is_none() {
+                                            ipv6_name =
+                                                std::ffi::CString::new(entry.canonical_name()).ok();
+                                        }
                                     }
-                                    if address.is_ipv6() && ipv6_name.is_none() {
-                                        ipv6_name =
-                                            std::ffi::CString::new(entry.canonical_name()).ok();
+                                    addresses.push(address);
+                                    // The AF_INET files view folds IPv6 loopback
+                                    // and mapped rows. AI_ALL also requests that
+                                    // view, in addition to the native IPv6 view.
+                                    if address_family == Family::Inet6
+                                        && flags & (libc::AI_V4MAPPED | libc::AI_ALL)
+                                            == (libc::AI_V4MAPPED | libc::AI_ALL)
+                                        && address.is_ipv6()
+                                        && let Some(v4) =
+                                            gethostbyname_ipv4_address(entry.address())
+                                    {
+                                        addresses.push(std::net::IpAddr::V4(v4));
                                     }
                                 }
-                                addresses.push(address);
-                                // The AF_INET files view folds IPv6 loopback
-                                // and mapped rows. AI_ALL also requests that
-                                // view, in addition to the native IPv6 view.
-                                if address_family == Family::Inet6
-                                    && flags & (libc::AI_V4MAPPED | libc::AI_ALL)
-                                        == (libc::AI_V4MAPPED | libc::AI_ALL)
-                                    && address.is_ipv6()
-                                    && let Some(v4) = gethostbyname_ipv4_address(entry.address())
-                                {
-                                    addresses.push(std::net::IpAddr::V4(v4));
-                                }
-                            }
-                            false
-                        },
-                    );
-                    let selected = address_policy.select(&addresses);
-                    // IPv6 is searched first for mapped AF_INET6 requests,
-                    // including AI_ALL. The first node alone exposes its name.
-                    let files_name = if address_family == Family::Inet6 {
-                        ipv6_name.as_deref().or(first_name.as_deref())
-                    } else {
-                        first_name.as_deref()
-                    };
-                    for address in selected {
-                        push_addrinfo_address_nodes(
-                            &mut nodes,
-                            address,
-                            0,
-                            &profiles,
-                            hints_ref,
-                            files_name.or(canonname),
+                                false
+                            },
                         );
+                        let selected = address_policy.select(&addresses);
+                        // IPv6 is searched first for mapped AF_INET6 requests,
+                        // including AI_ALL. The first node alone exposes its name.
+                        let name = if address_family == Family::Inet6 {
+                            ipv6_name.or(first_name)
+                        } else {
+                            first_name
+                        };
+                        (selected.into_iter().collect::<Vec<_>>(), name)
+                    });
+                    match snapshot {
+                        Ok((addresses, _)) if addresses.is_empty() => {
+                            BackendResult::NotFound(libc::EAI_NONAME)
+                        }
+                        Ok((addresses, name)) => {
+                            BackendResult::Success(HostAnswer::Files { addresses, name })
+                        }
+                        Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
                     }
+                };
+                let dns_lookup = || -> BackendResult<HostAnswer, c_int> {
+                    match native_dns_resolve(text.as_bytes(), address_policy) {
+                        Ok((resolution, _))
+                            if resolution.ipv4.is_empty() && resolution.ipv6.is_empty() =>
+                        {
+                            BackendResult::NotFound(libc::EAI_NONAME)
+                        }
+                        Ok((resolution, name)) => BackendResult::Success(HostAnswer::Dns {
+                            resolution,
+                            name: if canonname.is_some() {
+                                name.and_then(|name| std::ffi::CString::new(name).ok())
+                            } else {
+                                None
+                            },
+                        }),
+                        Err(code) if code == libc::EAI_AGAIN => BackendResult::TryAgain(code),
+                        Err(code) if code == libc::EAI_NONAME || code == libc::EAI_NODATA => {
+                            BackendResult::NotFound(code)
+                        }
+                        // A missing name or an unavailable DNS server is a
+                        // defined lookup failure, not memory corruption. Even
+                        // hardened mode must not redirect it to localhost.
+                        Err(code) => BackendResult::Unavailable(code),
+                    }
+                };
+
+                let answer = hosts_policy.lookup_forward(|backend| match backend {
+                    Backend::Files => files_lookup(),
+                    Backend::Dns => dns_lookup(),
+                    Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
                 });
+                match answer {
+                    Ok(HostAnswer::Files { addresses, name }) => {
+                        for address in addresses {
+                            push_addrinfo_address_nodes(
+                                &mut nodes,
+                                address,
+                                0,
+                                &profiles,
+                                hints_ref,
+                                name.as_deref().or(canonname),
+                            );
+                        }
+                    }
+                    Ok(HostAnswer::Dns { resolution, name }) => {
+                        let resolved_name = name.as_deref().or(canonname);
+                        for v4 in &resolution.ipv4 {
+                            if family == libc::AF_UNSPEC || family == libc::AF_INET {
+                                push_addrinfo_v4_nodes(
+                                    &mut nodes,
+                                    *v4,
+                                    &profiles,
+                                    hints_ref,
+                                    resolved_name,
+                                );
+                            }
+                        }
+                        for v6 in &resolution.ipv6 {
+                            if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
+                                push_addrinfo_v6_nodes(
+                                    &mut nodes,
+                                    *v6,
+                                    &profiles,
+                                    hints_ref,
+                                    resolved_name,
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        record_resolver_stage_outcome(
+                            &ordering,
+                            aligned,
+                            recent_page,
+                            Some(stage_index(&ordering, CheckStage::Bounds)),
+                        );
+                        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                        return match error {
+                            LookupError::Backend(code) => code,
+                            LookupError::NoServices => libc::EAI_NONAME,
+                            LookupError::UnsupportedMerge => libc::EAI_FAIL,
+                        };
+                    }
+                }
             }
 
             if nodes.is_empty() {
-                // Hostname not found in /etc/hosts and not a numeric address.
-                // Use native DNS stub resolver.
-                let (dns_result, dns_name) =
-                    match native_dns_resolve(text.as_bytes(), address_policy) {
-                        Ok(result) => result,
-                        Err(error) => {
-                            // A missing name or an unavailable DNS server is a
-                            // defined lookup failure, not memory corruption. Even
-                            // hardened mode must not redirect it to localhost.
-                            record_resolver_stage_outcome(
-                                &ordering,
-                                aligned,
-                                recent_page,
-                                Some(stage_index(&ordering, CheckStage::Bounds)),
-                            );
-                            runtime_policy::observe(
-                                ApiFamily::Resolver,
-                                decision.profile,
-                                25,
-                                true,
-                            );
-                            return error;
-                        }
-                    };
-                let dns_name = if canonname.is_some() {
-                    dns_name.and_then(|name| std::ffi::CString::new(name).ok())
-                } else {
-                    None
-                };
-                let resolved_name = dns_name.as_deref().or(canonname);
-
-                for v4 in &dns_result.ipv4 {
-                    if family == libc::AF_UNSPEC || family == libc::AF_INET {
-                        push_addrinfo_v4_nodes(
-                            &mut nodes,
-                            *v4,
-                            &profiles,
-                            hints_ref,
-                            resolved_name,
-                        );
-                    }
-                }
-                for v6 in &dns_result.ipv6 {
-                    if family == libc::AF_UNSPEC || family == libc::AF_INET6 {
-                        push_addrinfo_v6_nodes(
-                            &mut nodes,
-                            *v6,
-                            &profiles,
-                            hints_ref,
-                            resolved_name,
-                        );
-                    }
-                }
-
-                if nodes.is_empty() {
-                    record_resolver_stage_outcome(
-                        &ordering,
-                        aligned,
-                        recent_page,
-                        Some(stage_index(&ordering, CheckStage::Bounds)),
-                    );
-                    runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                    return libc::EAI_NONAME;
-                }
+                record_resolver_stage_outcome(
+                    &ordering,
+                    aligned,
+                    recent_page,
+                    Some(stage_index(&ordering, CheckStage::Bounds)),
+                );
+                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+                return libc::EAI_NONAME;
             }
 
             addrconfig_filter_eligible = numeric.is_none();
