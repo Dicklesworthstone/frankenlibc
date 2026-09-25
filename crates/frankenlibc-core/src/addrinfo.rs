@@ -11,6 +11,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use crate::dns_transport::ResolveError;
 use crate::resolv::dns::DnsResolution;
 
+pub mod gai_policy;
+
+use gai_policy::DestinationPolicy;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Unspecified,
@@ -357,6 +361,7 @@ fn compare_destinations(
     ia: usize,
     b: &DestinationCandidate,
     ib: usize,
+    policy: &DestinationPolicy,
 ) -> std::cmp::Ordering {
     use std::cmp::Ordering as O;
     // Rule 1: avoid unusable destinations.
@@ -367,25 +372,25 @@ fn compare_destinations(
     }
     if let (Some(sa), Some(sb)) = (a.source, b.source) {
         // Rule 2: prefer matching scope.
-        let ma = scope(a.dest) == scope(sa);
-        let mb = scope(b.dest) == scope(sb);
+        let ma = policy.scope(a.dest) == policy.scope(sa);
+        let mb = policy.scope(b.dest) == policy.scope(sb);
         if ma != mb {
             return if ma { O::Less } else { O::Greater };
         }
         // Rule 5: prefer matching label.
-        let la = label(a.dest) == label(sa);
-        let lb = label(b.dest) == label(sb);
+        let la = policy.label(a.dest) == policy.label(sa);
+        let lb = policy.label(b.dest) == policy.label(sb);
         if la != lb {
             return if la { O::Less } else { O::Greater };
         }
     }
     // Rule 6: prefer higher precedence.
-    let (pa, pb) = (precedence(a.dest), precedence(b.dest));
+    let (pa, pb) = (policy.precedence(a.dest), policy.precedence(b.dest));
     if pa != pb {
         return pb.cmp(&pa);
     }
     // Rule 8: prefer smaller scope.
-    let (ca, cb) = (scope(a.dest), scope(b.dest));
+    let (ca, cb) = (policy.scope(a.dest), policy.scope(b.dest));
     if ca != cb {
         return ca.cmp(&cb);
     }
@@ -404,15 +409,33 @@ fn compare_destinations(
 /// into the slice, sorted by the destination address selection rules
 /// (unusable last, matching scope and label, precedence, smaller scope,
 /// longest matching prefix, then original order).
+/// Uses one immutable `/etc/gai.conf` snapshot per call.
 pub fn destination_order(candidates: &[DestinationCandidate]) -> Vec<usize> {
+    if candidates.len() < 2 {
+        return (0..candidates.len()).collect();
+    }
+    let policy = gai_policy::system_policy();
+    destination_order_with_policy(candidates, &policy)
+}
+
+/// Deterministic address selection with an explicit policy, without file I/O.
+pub fn destination_order_with_policy(
+    candidates: &[DestinationCandidate],
+    policy: &DestinationPolicy,
+) -> Vec<usize> {
     let mut order: Vec<usize> = (0..candidates.len()).collect();
-    order.sort_by(|&i, &j| compare_destinations(&candidates[i], i, &candidates[j], j));
+    order.sort_by(|&i, &j| compare_destinations(&candidates[i], i, &candidates[j], j, policy));
     order
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DestinationCandidate, destination_order};
+    use super::{DestinationCandidate, destination_order_with_policy};
+
+    // Existing algorithm tests must not depend on the build host's gai.conf.
+    fn destination_order(candidates: &[DestinationCandidate]) -> Vec<usize> {
+        destination_order_with_policy(candidates, &DestinationPolicy::default())
+    }
 
     fn cand(dest: &str, source: Option<&str>) -> DestinationCandidate {
         DestinationCandidate {
