@@ -1794,7 +1794,7 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
     }
 }
 
-/// Resolve legacy IPv4 hosts through numeric, files, then native DNS.
+/// Resolve legacy IPv4 hosts: numeric, else the nsswitch `hosts:` sources.
 /// Release the backend borrow before performing network I/O.
 fn resolve_gethostbyname_target(name: Option<&CStr>) -> Result<GethostbynameTarget, c_int> {
     use frankenlibc_core::addrinfo::{AddressPolicy, Family};
@@ -1806,56 +1806,75 @@ fn resolve_gethostbyname_target(name: Option<&CStr>) -> Result<GethostbynameTarg
     {
         return Ok(GethostbynameTarget::numeric(name_cstr.to_bytes(), v4));
     }
-    let target = with_hosts_backend_snapshot(|content, _generation| {
-        let mut target: Option<GethostbynameTarget> = None;
-        frankenlibc_core::resolv::for_each_hosts_match_entry(
-            content,
-            name_cstr.to_bytes(),
-            |entry| {
-                let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
-                    return false;
-                };
-                if let Some(target) = &mut target {
-                    target.append_row(entry.canonical_name(), entry.aliases(), address);
-                } else {
-                    target = Some(GethostbynameTarget::seeded(
-                        entry.canonical_name(),
-                        entry.aliases(),
-                        address,
-                    ));
-                }
-                false
-            },
-        );
-        target
-    })
-    .ok()
-    .flatten();
-    if let Some(target) = target {
-        return Ok(target);
-    }
-    // Ordinary lookup failure is not memory corruption. Neither mode
-    // may silently redirect a missing DNS name to localhost.
-    let (addresses, canonical_name) = native_dns_resolve(
-        name_cstr.to_bytes(),
-        AddressPolicy::new(Family::Inet, false, false),
-    )?;
-    if addresses.ipv4.is_empty() {
-        return Err(libc::EAI_NONAME);
-    }
-    let query_name = name_cstr.to_bytes();
-    let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
-    let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
-    let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
-        Vec::new()
-    } else {
-        vec![query_name.to_vec()]
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
+    let files_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
+        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+            let mut target: Option<GethostbynameTarget> = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(
+                content,
+                name_cstr.to_bytes(),
+                |entry| {
+                    let Some(address) = gethostbyname_ipv4_address(entry.address()) else {
+                        return false;
+                    };
+                    if let Some(target) = &mut target {
+                        target.append_row(entry.canonical_name(), entry.aliases(), address);
+                    } else {
+                        target = Some(GethostbynameTarget::seeded(
+                            entry.canonical_name(),
+                            entry.aliases(),
+                            address,
+                        ));
+                    }
+                    false
+                },
+            );
+            target
+        });
+        match snapshot {
+            Ok(Some(target)) => BackendResult::Success(target),
+            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+        }
     };
-    Ok(GethostbynameTarget {
-        name: canonical_name,
-        aliases,
-        addresses: addresses.ipv4,
-    })
+    let dns_lookup = || -> BackendResult<GethostbynameTarget, c_int> {
+        // Ordinary lookup failure is not memory corruption. Neither mode
+        // may silently redirect a missing DNS name to localhost.
+        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
+            name_cstr.to_bytes(),
+            AddressPolicy::new(Family::Inet, false, false),
+        )) {
+            BackendResult::Success(found) => found,
+            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
+            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
+            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
+        };
+        if addresses.ipv4.is_empty() {
+            return BackendResult::NotFound(libc::EAI_NONAME);
+        }
+        let query_name = name_cstr.to_bytes();
+        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+            Vec::new()
+        } else {
+            vec![query_name.to_vec()]
+        };
+        BackendResult::Success(GethostbynameTarget {
+            name: canonical_name,
+            aliases,
+            addresses: addresses.ipv4,
+        })
+    };
+    // The same nsswitch `hosts:` policy as getaddrinfo, so both APIs agree
+    // within one process (bd-rc0923-epic-eeuy4f.19).
+    nsswitch_hosts_policy()
+        .lookup(|backend| match backend {
+            Backend::Files => files_lookup(),
+            Backend::Dns => dns_lookup(),
+            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+        })
+        .map_err(hosts_lookup_error_code)
 }
 
 /// Definitive negatives complete a lookup (zero return, null result);
@@ -2559,6 +2578,48 @@ fn native_dns_query(
     result
 }
 
+/// The `hosts:` policy from nsswitch.conf (`FRANKENLIBC_NSSWITCH_CONF`
+/// overrides the path, like `FRANKENLIBC_RESOLV_CONF`). A missing or
+/// unparseable file means glibc's default, files then dns
+/// (bd-rc0923-epic-eeuy4f.19).
+fn nsswitch_hosts_policy() -> frankenlibc_core::addrinfo::hosts_policy::HostsPolicy {
+    std::fs::read(configured_backend_path(
+        "/etc/nsswitch.conf",
+        "FRANKENLIBC_NSSWITCH_CONF",
+    ))
+    .ok()
+    .and_then(|content| frankenlibc_core::addrinfo::hosts_policy::HostsPolicy::parse(&content).ok())
+    .unwrap_or_default()
+}
+
+/// The NSS status of a native DNS lookup: EAI_AGAIN is TRYAGAIN, a missing
+/// name NOTFOUND, anything else (no server, malformed reply) UNAVAIL.
+fn dns_backend_result<T>(
+    result: Result<T, c_int>,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    match result {
+        Ok(value) => BackendResult::Success(value),
+        Err(code) if code == libc::EAI_AGAIN => BackendResult::TryAgain(code),
+        Err(code) if code == libc::EAI_NONAME || code == libc::EAI_NODATA => {
+            BackendResult::NotFound(code)
+        }
+        Err(code) => BackendResult::Unavailable(code),
+    }
+}
+
+/// The EAI_* code for a failed policy lookup.
+fn hosts_lookup_error_code(
+    error: frankenlibc_core::addrinfo::hosts_policy::LookupError<c_int>,
+) -> c_int {
+    use frankenlibc_core::addrinfo::hosts_policy::LookupError;
+    match error {
+        LookupError::Backend(code) => code,
+        LookupError::NoServices => libc::EAI_NONAME,
+        LookupError::UnsupportedMerge => libc::EAI_FAIL,
+    }
+}
+
 /// Use the normal resolver configuration unless an explicit backend override
 /// is selected, following the hosts/services backend convention.
 fn native_dns_config() -> frankenlibc_core::resolv::ResolverConfig {
@@ -2850,9 +2911,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 // (bd-rc0923-epic-eeuy4f.19). Only files and dns are native;
                 // any other module (myhostname, mdns*, resolve, ...) is an
                 // unavailable source, as if its libnss_* failed to load.
-                use frankenlibc_core::addrinfo::hosts_policy::{
-                    Backend, BackendResult, HostsPolicy, LookupError,
-                };
+                use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
                 enum HostAnswer {
                     Files {
                         addresses: Vec<std::net::IpAddr>,
@@ -2863,13 +2922,7 @@ pub unsafe extern "C" fn getaddrinfo(
                         name: Option<std::ffi::CString>,
                     },
                 }
-                let hosts_policy = std::fs::read(configured_backend_path(
-                    "/etc/nsswitch.conf",
-                    "FRANKENLIBC_NSSWITCH_CONF",
-                ))
-                .ok()
-                .and_then(|content| HostsPolicy::parse(&content).ok())
-                .unwrap_or_default();
+                let hosts_policy = nsswitch_hosts_policy();
 
                 let files_lookup = || -> BackendResult<HostAnswer, c_int> {
                     // Borrow the cached hosts snapshot. Select from the complete
@@ -2941,28 +2994,28 @@ pub unsafe extern "C" fn getaddrinfo(
                     }
                 };
                 let dns_lookup = || -> BackendResult<HostAnswer, c_int> {
-                    match native_dns_resolve(text.as_bytes(), address_policy) {
-                        Ok((resolution, _))
+                    // A missing name or an unavailable DNS server is a defined
+                    // lookup failure, not memory corruption. Even hardened mode
+                    // must not redirect it to localhost.
+                    match dns_backend_result(native_dns_resolve(text.as_bytes(), address_policy)) {
+                        BackendResult::Success((resolution, _))
                             if resolution.ipv4.is_empty() && resolution.ipv6.is_empty() =>
                         {
                             BackendResult::NotFound(libc::EAI_NONAME)
                         }
-                        Ok((resolution, name)) => BackendResult::Success(HostAnswer::Dns {
-                            resolution,
-                            name: if canonname.is_some() {
-                                name.and_then(|name| std::ffi::CString::new(name).ok())
-                            } else {
-                                None
-                            },
-                        }),
-                        Err(code) if code == libc::EAI_AGAIN => BackendResult::TryAgain(code),
-                        Err(code) if code == libc::EAI_NONAME || code == libc::EAI_NODATA => {
-                            BackendResult::NotFound(code)
+                        BackendResult::Success((resolution, name)) => {
+                            BackendResult::Success(HostAnswer::Dns {
+                                resolution,
+                                name: if canonname.is_some() {
+                                    name.and_then(|name| std::ffi::CString::new(name).ok())
+                                } else {
+                                    None
+                                },
+                            })
                         }
-                        // A missing name or an unavailable DNS server is a
-                        // defined lookup failure, not memory corruption. Even
-                        // hardened mode must not redirect it to localhost.
-                        Err(code) => BackendResult::Unavailable(code),
+                        BackendResult::NotFound(code) => BackendResult::NotFound(code),
+                        BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
+                        BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
                     }
                 };
 
@@ -3017,11 +3070,7 @@ pub unsafe extern "C" fn getaddrinfo(
                             Some(stage_index(&ordering, CheckStage::Bounds)),
                         );
                         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                        return match error {
-                            LookupError::Backend(code) => code,
-                            LookupError::NoServices => libc::EAI_NONAME,
-                            LookupError::UnsupportedMerge => libc::EAI_FAIL,
-                        };
+                        return hosts_lookup_error_code(error);
                     }
                 }
             }
