@@ -746,6 +746,51 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     Some(handle(root))
 }
 
+/// Absence permits the interpose caller to search the host namespace. A
+/// rejected native reopen does not: that would create a second owner/image.
+pub(super) enum NativeReopen {
+    Missing,
+    Rejected,
+    Opened(*mut c_void),
+}
+
+/// Reopen an already-owned SONAME without filesystem I/O. The same operation
+/// lock, reference accounting and promotion rules apply as for pathname opens.
+/// Keep rejection distinct from absence, including during IFUNC/process exit.
+pub(super) fn reopen_native_soname(name: &[u8], flags: c_int) -> NativeReopen {
+    if ifunc::active() || process_exit::unloading() {
+        return NativeReopen::Rejected;
+    }
+    if name.is_empty() || name.contains(&0) || name.contains(&b'/') {
+        return NativeReopen::Missing;
+    }
+    let _operation = OPERATIONS.lock();
+    if process_exit::unloading() {
+        return NativeReopen::Rejected;
+    }
+    let Ok(mut dsos) = registry().lock() else {
+        return NativeReopen::Rejected;
+    };
+    let Some(index) = dsos.iter().position(|dso| {
+        dso.object
+            .soname
+            .as_deref()
+            .is_some_and(|soname| soname.as_bytes() == name)
+    }) else {
+        return NativeReopen::Missing;
+    };
+    let Some(handle) = reopen(&mut dsos, index, flags) else {
+        return NativeReopen::Rejected;
+    };
+    let id = dsos[index].id;
+    drop(dsos);
+    // Constructors may reenter the loader; never hold the registry over them.
+    if initialize(id).is_none() {
+        return NativeReopen::Rejected;
+    }
+    NativeReopen::Opened(handle)
+}
+
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
     if ifunc::active() || process_exit::unloading() { return None; }
     if name.is_empty() || name.contains(&0) {
@@ -755,19 +800,10 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     // since been renamed, unlinked, or replaced. Do not reopen the filesystem
     // before this lookup, and do not let RTLD_NOLOAD create a new object.
     if !name.contains(&b'/') {
-        let _operation = OPERATIONS.lock();
-        if process_exit::unloading() {
-            return None;
-        }
-        let mut dsos = registry().lock().ok()?;
-        if let Some(index) = dsos.iter().position(|dso| {
-            dso.object.soname.as_deref().is_some_and(|soname| soname.as_bytes() == name)
-        }) {
-            let handle = reopen(&mut dsos, index, flags)?;
-            let id = dsos[index].id;
-            drop(dsos);
-            initialize(id)?;
-            return Some(handle);
+        match reopen_native_soname(name, flags) {
+            NativeReopen::Opened(handle) => return Some(handle),
+            NativeReopen::Rejected => return None,
+            NativeReopen::Missing => {}
         }
     }
     let context = SearchContext::process();

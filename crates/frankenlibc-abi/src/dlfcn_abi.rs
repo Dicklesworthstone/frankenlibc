@@ -388,6 +388,25 @@ fn is_pathname(name: &[u8]) -> bool {
     name.contains(&b'/')
 }
 
+/// A pathname-loaded native object must retain its identity when reopened by
+/// SONAME. Only an absent native name may use the existing host search path;
+/// a rejected reopen must not be rescued by loading a second host-owned copy.
+#[cfg(not(feature = "standalone"))]
+unsafe fn dlopen_soname(name: &[u8], filename: *const c_char, flags: c_int) -> *mut c_void {
+    match native::reopen_native_soname(name, flags) {
+        native::NativeReopen::Opened(handle) => {
+            clear_dlerror();
+            handle
+        }
+        native::NativeReopen::Rejected => {
+            set_dlerror(dlfcn_core::ERR_NOT_FOUND);
+            std::ptr::null_mut()
+        }
+        // SAFETY: the caller validated the original bounded C string and flags.
+        native::NativeReopen::Missing => unsafe { host_dlopen_with_error(filename, flags) },
+    }
+}
+
 // ---------------------------------------------------------------------------
 // dlopen
 // ---------------------------------------------------------------------------
@@ -467,8 +486,7 @@ unsafe fn dlopen_interpose(filename: *const c_char, flags: c_int) -> *mut c_void
         if is_pathname(name) {
             return unsafe { dlopen_pathname(name, filename, flags) };
         }
-        // During bootstrap, delegate to host dlopen for actual .so loading.
-        return unsafe { host_dlopen_with_error(filename, flags) };
+        return unsafe { dlopen_soname(name, filename, flags) };
     }
 
     let (mode, decision) =
@@ -525,9 +543,7 @@ unsafe fn dlopen_interpose(filename: *const c_char, flags: c_int) -> *mut c_void
         } else if is_pathname(name) {
             unsafe { dlopen_pathname(name, filename, flags) }
         } else {
-            // Bare SONAME search/dependency loading remains delegated while
-            // pathname DSOs try the native loader first (see dlopen_pathname).
-            unsafe { host_dlopen_with_error(filename, flags) }
+            unsafe { dlopen_soname(name, filename, flags) }
         }
     };
     let adverse = handle.is_null();

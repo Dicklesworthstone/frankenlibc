@@ -126,6 +126,80 @@ fn child_case(name: &str) -> bool {
 }
 
 #[test]
+fn native_lifecycle_soname_reopen_preserves_identity_and_global_promotion() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for loader in [Loader::Host, Loader::Native] {
+        let fixture = Fixture::new();
+        let sink = fixture.sink(loader);
+        let soname = format!("lib{}_resident.so", fixture.prefix);
+        let soname_flag = format!("-Wl,-soname,{soname}");
+        let library = fixture.compile(
+            "resident",
+            r#"
+                extern void event_push(int);
+                static int starts;
+                __attribute__((constructor)) static void init(void) {
+                    ++starts; event_push(17);
+                }
+                __attribute__((destructor)) static void fini(void) {
+                    event_push(-17);
+                }
+                int resident_started(void) { return starts; }
+            "#,
+            &[],
+            &[&soname_flag],
+        );
+        let consumer = fixture.compile(
+            "consumer",
+            "extern int resident_started(void); int result(void) { return resident_started(); }",
+            &[],
+            &[],
+        );
+        let first = loader.open(&library, libc::RTLD_NOW | libc::RTLD_LOCAL);
+        assert!(!first.is_null(), "initial pathname open failed");
+        assert_eq!(loader.value(first, "resident_started"), 1);
+        assert_eq!(fixture.events(loader, sink), [17]);
+        assert!(
+            loader.open(&consumer, libc::RTLD_NOW).is_null(),
+            "LOCAL provider must not satisfy an unrelated consumer"
+        );
+
+        // The SONAME denotes the retained image, not the current filesystem.
+        std::fs::rename(&library, fixture.dir.join("resident-renamed.so")).unwrap();
+        let second = loader.open(Path::new(&soname), libc::RTLD_NOW);
+        assert_eq!(second, first, "SONAME reopen must retain native identity");
+        let third = loader.open(
+            Path::new(&soname),
+            libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_GLOBAL,
+        );
+        assert_eq!(third, first, "NOLOAD promotion must reuse the resident image");
+        assert_eq!(loader.value(third, "resident_started"), 1);
+        assert_eq!(fixture.events(loader, sink), [17], "constructor ran twice");
+
+        let dependent = loader.open(&consumer, libc::RTLD_NOW);
+        assert!(!dependent.is_null(), "GLOBAL promotion was not observed");
+        assert_eq!(loader.value(dependent, "result"), 1);
+        loader.close(first);
+        loader.close(second);
+        loader.close(third);
+        assert_eq!(
+            fixture.events(loader, sink),
+            [17],
+            "relocation consumer must retain the provider after explicit closes"
+        );
+        loader.close(dependent);
+        assert_eq!(fixture.events(loader, sink), [17, -17]);
+        assert!(
+            loader
+                .open(Path::new(&soname), libc::RTLD_NOW | libc::RTLD_NOLOAD)
+                .is_null(),
+            "NOLOAD must not reopen an unloaded SONAME"
+        );
+        loader.close(sink);
+    }
+}
+
+#[test]
 fn native_lifecycle_priority_reopen_reload_matches_host() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
