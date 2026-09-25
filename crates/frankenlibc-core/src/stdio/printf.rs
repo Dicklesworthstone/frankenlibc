@@ -605,12 +605,35 @@ impl FormatSpec {
     /// double` float conversion, so a caller that has misclassified an argument
     /// falls back rather than printing from the wrong bytes.
     ///
-    /// The `'` grouping flag needs no special case here: the active locale is
-    /// the C locale, whose empty `grouping` makes the flag a no-op, which is
-    /// what the `f64` path already relies on.
+    /// With the `'` flag under a grouping locale, %Lf/%LF/%Lg/%LG render
+    /// without width, group the integer part, then pad (see `format_float`).
     pub fn render_long_double_arg(&self, bytes: &[u8; 10], buf: &mut Vec<u8>) -> bool {
         if !self.value_arg_is_x87() {
             return false;
+        }
+        if let Some(g) = NumericGrouping::for_spec(self)
+            && matches!(self.conversion, b'f' | b'F' | b'g' | b'G')
+        {
+            let bare = crate::float128::FmtSpec {
+                conv: self.conversion,
+                precision: match self.precision {
+                    Precision::Fixed(p) => Some(p),
+                    _ => None,
+                },
+                width: 0,
+                left: false,
+                plus: self.flags.force_sign,
+                space: self.flags.space_sign,
+                alt: self.flags.alt_form,
+                zero: false,
+            };
+            let rendered = crate::float128::format_x87(bytes, &bare);
+            let (sign, body) = match rendered.first() {
+                Some(&s @ (b'-' | b'+' | b' ')) => (Some(s), &rendered[1..]),
+                _ => (None, &rendered[..]),
+            };
+            pad_float_body(buf, sign, &g.group_leading_digits(body), self);
+            return true;
         }
         let spec = crate::float128::FmtSpec {
             conv: self.conversion,
@@ -1162,10 +1185,9 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
             b' ' => flags.space_sign = true,
             b'#' => flags.alt_form = true,
             b'0' => flags.zero_pad = true,
-            // POSIX thousands-grouping flag. The active locale is the C
-            // locale (empty `grouping`/`thousands_sep`), so glibc emits no
-            // separators and the flag is a no-op — but it must be accepted
-            // and consumed, not treated as the conversion specifier.
+            // POSIX thousands-grouping flag: applied with LC_NUMERIC's
+            // separator and grouping (`set_numeric_grouping`); under the C
+            // locale both are empty and it is a no-op, as in glibc.
             b'\'' => flags.group = true,
             _ => break,
         }
@@ -1410,6 +1432,159 @@ pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
 }
 
 // ---------------------------------------------------------------------------
+// LC_NUMERIC grouping for the `'` flag
+// ---------------------------------------------------------------------------
+
+/// The active LC_NUMERIC `thousands_sep`: its bytes in the low seven bytes,
+/// its length in the top byte. Zero (empty): the `'` flag groups nothing.
+static GROUPING_SEPARATOR: AtomicU64 = AtomicU64::new(0);
+
+/// The active LC_NUMERIC `grouping` in glibc's form: group sizes counted from
+/// the right, the last one repeating; a size of `CHAR_MAX` ends grouping. Up
+/// to eight sizes, zero-terminated. Zero (empty): no grouping.
+static GROUPING_RULE: AtomicU64 = AtomicU64::new(0);
+
+/// Install LC_NUMERIC's `thousands_sep` and `grouping` for the `'` flag.
+///
+/// Called by the locale layer whenever LC_NUMERIC changes. The C locale's
+/// empty separator and grouping disable grouping, as in glibc; so does a
+/// separator longer than seven bytes, which no locale uses.
+pub fn set_numeric_grouping(separator: &[u8], grouping: &[u8]) {
+    let mut rule = 0u64;
+    for (i, &size) in grouping.iter().take(8).enumerate() {
+        if size == 0 {
+            break;
+        }
+        rule |= u64::from(size) << (8 * i);
+    }
+    let mut sep = 0u64;
+    if !separator.is_empty() && separator.len() <= 7 {
+        for (i, &b) in separator.iter().enumerate() {
+            sep |= u64::from(b) << (8 * i);
+        }
+        sep |= (separator.len() as u64) << 56;
+    }
+    GROUPING_RULE.store(rule, Ordering::Relaxed);
+    GROUPING_SEPARATOR.store(sep, Ordering::Relaxed);
+}
+
+/// The separator and grouping sizes the `'` flag applies, if any.
+#[derive(Clone, Copy)]
+struct NumericGrouping {
+    separator: [u8; 7],
+    separator_len: usize,
+    rule: [u8; 8],
+}
+
+impl NumericGrouping {
+    /// The active grouping, when `spec` asks for it and the locale has one.
+    fn for_spec(spec: &FormatSpec) -> Option<Self> {
+        if !spec.flags.group {
+            return None;
+        }
+        let sep = GROUPING_SEPARATOR.load(Ordering::Relaxed);
+        let rule = GROUPING_RULE.load(Ordering::Relaxed);
+        let separator_len = (sep >> 56) as usize;
+        // A first size of CHAR_MAX (either signedness) means no grouping.
+        if separator_len == 0 || rule == 0 || matches!(rule as u8, 0x7f | 0xff) {
+            return None;
+        }
+        let mut separator = [0u8; 7];
+        for (i, b) in separator.iter_mut().enumerate() {
+            *b = (sep >> (8 * i)) as u8;
+        }
+        Some(Self {
+            separator,
+            separator_len,
+            rule: rule.to_le_bytes(),
+        })
+    }
+
+    fn separator(&self) -> &[u8] {
+        &self.separator[..self.separator_len]
+    }
+
+    /// Sizes of the groups of an `n`-digit run, rightmost first.
+    fn group_sizes(&self, n: usize) -> Vec<usize> {
+        let mut sizes = Vec::new();
+        let mut remaining = n;
+        let mut size = 0usize;
+        let mut index = 0;
+        while remaining > 0 {
+            match self.rule.get(index) {
+                Some(&next) if next != 0 => {
+                    if matches!(next, 0x7f | 0xff) {
+                        // CHAR_MAX: no further grouping.
+                        break;
+                    }
+                    size = usize::from(next);
+                    index += 1;
+                }
+                // End of the rule: the last size repeats.
+                _ => {}
+            }
+            if remaining <= size {
+                break;
+            }
+            sizes.push(size);
+            remaining -= size;
+        }
+        sizes.push(remaining);
+        sizes
+    }
+
+    /// Length of `digits` once grouped.
+    fn grouped_len(&self, digits: usize) -> usize {
+        digits + (self.group_sizes(digits).len() - 1) * self.separator_len
+    }
+
+    /// Append `digits` with the separator between groups.
+    fn push_grouped(&self, buf: &mut Vec<u8>, digits: &[u8]) {
+        let sizes = self.group_sizes(digits.len());
+        let mut at = 0;
+        for (i, &size) in sizes.iter().rev().enumerate() {
+            if i > 0 {
+                buf.push_bytes(self.separator());
+            }
+            buf.push_bytes(&digits[at..at + size]);
+            at += size;
+        }
+    }
+
+    /// `body` with its leading run of digits (the integer part of a rendered
+    /// float) grouped; the rest -- point, fraction, exponent -- as it was.
+    fn group_leading_digits(&self, body: &[u8]) -> Vec<u8> {
+        let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
+        let mut out = Vec::with_capacity(body.len() + digits);
+        self.push_grouped(&mut out, &body[..digits]);
+        out.extend_from_slice(&body[digits..]);
+        out
+    }
+}
+
+/// Emit a float's `sign` and already-grouped `body` under `spec`'s width,
+/// justification and zero padding (the padding itself is never grouped).
+fn pad_float_body(buf: &mut Vec<u8>, sign: Option<u8>, body: &[u8], spec: &FormatSpec) {
+    let content_len = sign.is_some() as usize + body.len();
+    let pad_total = resolve_width(spec).saturating_sub(content_len);
+    // Zero padding does not apply to inf/nan, which reach here only via %Lf.
+    let zero_pad = spec.flags.zero_pad && body.first().is_some_and(u8::is_ascii_digit);
+    if !spec.flags.left_justify && !zero_pad {
+        pad(buf, b' ', pad_total);
+    }
+    if let Some(s) = sign {
+        buf.push(s);
+    }
+    if !spec.flags.left_justify && zero_pad {
+        pad(buf, b'0', pad_total);
+    }
+    buf.push_bytes(body);
+    if spec.flags.left_justify {
+        pad(buf, b' ', pad_total);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Renderers
 // ---------------------------------------------------------------------------
 
@@ -1460,8 +1635,13 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // Alternate form prefix.
     let prefix = spec.alt_prefix();
 
+    // The `'` flag groups the significant digits (in any base, as glibc does);
+    // precision and padding zeros stay ungrouped.
+    let grouping = NumericGrouping::for_spec(spec);
+    let digits_len = grouping.map_or(digit_count, |g| g.grouped_len(digit_count));
+
     // Total content width.
-    let content_len = sign.is_some() as usize + prefix.len() + zero_prefix_count + digit_count;
+    let content_len = sign.is_some() as usize + prefix.len() + zero_prefix_count + digits_len;
 
     // Handle explicit precision 0 with value 0: no digits emitted.
     let suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
@@ -1491,7 +1671,10 @@ pub fn format_signed(value: i64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     }
     if !suppress_zero {
         pad(buf, b'0', zero_prefix_count);
-        buf.push_bytes(digit_slice);
+        match grouping {
+            Some(g) => g.push_grouped(buf, digit_slice),
+            None => buf.push_bytes(digit_slice),
+        }
     }
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
@@ -1531,7 +1714,10 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         .map(|kind| kind.formatted_prefix(value, spec.flags.alt_form, first_digit_is_zero))
         .unwrap_or(b"");
 
-    let content_len = prefix.len() + zero_prefix_count + digit_count;
+    // Grouping as in `format_signed`.
+    let grouping = NumericGrouping::for_spec(spec);
+    let digits_len = grouping.map_or(digit_count, |g| g.grouped_len(digit_count));
+    let content_len = prefix.len() + zero_prefix_count + digits_len;
 
     let mut suppress_zero = value == 0 && matches!(spec.precision, Precision::Fixed(0));
     // POSIX: For 'o' conversion with '#', if the value and precision are both 0, a single 0 is printed.
@@ -1563,7 +1749,10 @@ pub fn format_unsigned(value: u64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     }
     if !suppress_zero {
         pad(buf, b'0', zero_prefix_count);
-        buf.push_bytes(digit_slice);
+        match grouping {
+            Some(g) => g.push_grouped(buf, digit_slice),
+            None => buf.push_bytes(digit_slice),
+        }
     }
     if spec.flags.left_justify {
         pad(buf, b' ', pad_total);
@@ -1640,6 +1829,17 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let negative = value.is_sign_negative();
     let abs = value.abs();
 
+    // The `'` flag groups the integer part of %f/%F/%g/%G (never %e/%a, whose
+    // integer part is one digit or hex). Rendered by the general path below.
+    let grouping = NumericGrouping::for_spec(spec).filter(|_| {
+        matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(
+                FloatFormatKind::Fixed | FloatFormatKind::General
+            ))
+        )
+    });
+
     // Fast path: bare fixed-point %f with precision>=1 and no field width.
     // For precision>=1, format_f is exactly `format!("{:.prec$}", abs)` (alt_form
     // is a no-op once a fractional point is present); with no width there is no
@@ -1648,6 +1848,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // the general path (sign + body, no pad); precision==0 keeps the general path
     // because format_f pre-rounds there.
     if precision >= 1
+        && grouping.is_none()
         && resolve_width(spec) == 0
         && matches!(
             spec.raw_render_kind(),
@@ -1730,6 +1931,7 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // `render_pct_g_into` gives the same bytes without the heap allocation). At width 0
     // there is no padding, so this is byte-identical to the general path below.
     if resolve_width(spec) == 0
+        && grouping.is_none()
         && !spec.flags.alt_form
         && matches!(
             spec.raw_render_kind(),
@@ -1843,6 +2045,11 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     } else {
         None
     };
+
+    if let Some(g) = grouping {
+        pad_float_body(buf, sign, &g.group_leading_digits(body.as_bytes()), spec);
+        return;
+    }
 
     let content_len = sign.is_some() as usize + body.len();
     let width = resolve_width(spec);
@@ -3610,6 +3817,49 @@ mod tests {
             assert_eq!(spec.length, LengthMod::None);
             assert_eq!(spec.value_position, None);
         }
+    }
+
+    #[test]
+    fn grouping(separator: &[u8], rule: &[u8]) -> NumericGrouping {
+        let mut g = NumericGrouping {
+            separator: [0; 7],
+            separator_len: separator.len(),
+            rule: [0; 8],
+        };
+        g.separator[..separator.len()].copy_from_slice(separator);
+        g.rule[..rule.len()].copy_from_slice(rule);
+        g
+    }
+
+    fn grouped(g: &NumericGrouping, digits: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        g.push_grouped(&mut out, digits);
+        assert_eq!(out.len(), g.grouped_len(digits.len()));
+        out
+    }
+
+    #[test]
+    fn numeric_grouping_follows_glibc_grouping_rules() {
+        // en_US: "\3\3" -- threes, the last size repeating.
+        let en = grouping(b",", &[3, 3]);
+        assert_eq!(grouped(&en, b"1"), b"1");
+        assert_eq!(grouped(&en, b"999"), b"999");
+        assert_eq!(grouped(&en, b"1000"), b"1,000");
+        assert_eq!(grouped(&en, b"1234567"), b"1,234,567");
+        assert_eq!(grouped(&en, b"9223372036854775807"), b"9,223,372,036,854,775,807");
+        // A single size repeats too: "\3".
+        assert_eq!(grouped(&grouping(b".", &[3]), b"1234567"), b"1.234.567");
+        // en_IN: "\3\2" -- the first group three, then twos.
+        let india = grouping(b",", &[3, 2]);
+        assert_eq!(grouped(&india, b"123456789"), b"12,34,56,789");
+        // CHAR_MAX ends grouping: only the first three split off.
+        assert_eq!(grouped(&grouping(b",", &[3, 0x7f]), b"1234567"), b"1234,567");
+        // Multi-byte separator (fr_FR's U+202F NARROW NO-BREAK SPACE).
+        let fr = grouping("\u{202f}".as_bytes(), &[3]);
+        assert_eq!(grouped(&fr, b"1234567"), "1\u{202f}234\u{202f}567".as_bytes());
+        // The float helper groups only the leading integer digits.
+        assert_eq!(en.group_leading_digits(b"1234567.891"), b"1,234,567.891");
+        assert_eq!(en.group_leading_digits(b"1.23457e+06"), b"1.23457e+06");
     }
 
     #[test]

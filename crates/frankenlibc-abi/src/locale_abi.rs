@@ -505,6 +505,22 @@ fn apply_category(category: c_int, resolved: Resolved) {
     let Some(slot) = locale_core::category_slot(category) else {
         return;
     };
+    if category == locale_core::LC_NUMERIC {
+        // The printf `'` flag groups with LC_NUMERIC's separator and sizes.
+        let (separator, grouping) = match &resolved {
+            Resolved::Named(n) => {
+                let field = |index: usize| -> &'static [u8] {
+                    n.blob.offset(index).map_or(&[], |off| {
+                        let bytes = &n.blob.bytes()[off..];
+                        &bytes[..bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len())]
+                    })
+                };
+                (field(1), field(2))
+            }
+            Resolved::Builtin(_) => (&[][..], &[][..]),
+        };
+        frankenlibc_core::stdio::printf::set_numeric_grouping(separator, grouping);
+    }
     match resolved {
         Resolved::Builtin(charset) => {
             NAMED[slot].store(std::ptr::null_mut(), Ordering::Release);
