@@ -250,6 +250,8 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
             (dlclose as unsafe extern "C" fn(*mut c_void) -> c_int as usize) as *mut c_void
         }
         b"dlerror" => (dlerror as unsafe extern "C" fn() -> *const c_char as usize) as *mut c_void,
+        b"dl_iterate_phdr" => dl_iterate_phdr as *const () as *mut c_void,
+        b"dladdr" => dladdr as *const () as *mut c_void,
         b"malloc" => {
             (crate::malloc_abi::malloc as unsafe extern "C" fn(usize) -> *mut c_void as usize)
                 as *mut c_void
@@ -1176,10 +1178,10 @@ pub unsafe extern "C" fn dlerror() -> *const c_char {
 
 /// `dl_iterate_phdr` — enumerate loaded shared objects.
 ///
-/// Delegates to the host dynamic linker so that libgcc exception-unwinding,
-/// backtrace libraries, and any caller that enumerates DSOs works correctly.
-/// Uses the cached host address (resolved during bootstrap) to avoid recursion
-/// into resolve_host_symbol_raw.
+/// Preserve the existing host/startup prefix and append the native load map.
+/// Native membership is pinned before invoking either prefix or user code;
+/// iteration itself holds neither native loader lock across those callbacks.
+/// The cached host address avoids recursively resolving this same symbol.
 #[allow(clippy::needless_return)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn dl_iterate_phdr(
@@ -1190,7 +1192,7 @@ pub unsafe extern "C-unwind" fn dl_iterate_phdr(
 ) -> c_int {
     #[cfg(feature = "standalone")]
     {
-        return unsafe { standalone_dl_iterate_phdr(callback, data) };
+        return unsafe { native::iterate_phdr(callback, data, Some(standalone_dl_iterate_phdr)) };
     }
     #[cfg(not(feature = "standalone"))]
     {
@@ -1209,10 +1211,10 @@ pub unsafe extern "C-unwind" fn dl_iterate_phdr(
         });
         if let Some(addr) = host_addr {
             let host_fn: DlIteratePhdrFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
-            return unsafe { host_fn(callback, data) };
+            return unsafe { native::iterate_phdr(callback, data, Some(host_fn)) };
         }
-        // During early bootstrap before symbols are resolved, return 0 (no entries).
-        0
+        // Native mappings remain visible even without a host prefix.
+        unsafe { native::iterate_phdr(callback, data, None) }
     }
 }
 
@@ -1242,7 +1244,7 @@ struct StandalonePhdrObject {
 }
 
 #[cfg(feature = "standalone")]
-unsafe fn standalone_dl_iterate_phdr(
+unsafe extern "C-unwind" fn standalone_dl_iterate_phdr(
     callback: Option<
         unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int,
     >,
@@ -1425,9 +1427,13 @@ pub unsafe extern "C" fn dladdr(addr: *const c_void, info: *mut c_void) -> c_int
         set_dlerror(dlfcn_core::ERR_INVALID_HANDLE);
         return 0;
     }
-    // Standalone mode: no DSO metadata available
+    // Standalone objects use the same retained native metadata as interpose.
     #[cfg(feature = "standalone")]
     {
+        if unsafe { native::native_address_info(addr, info.cast::<libc::Dl_info>()) } {
+            clear_dlerror();
+            return 1;
+        }
         set_dlerror(dlfcn_core::ERR_OPERATION_UNAVAILABLE);
         return 0;
     }

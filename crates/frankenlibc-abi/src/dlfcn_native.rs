@@ -55,6 +55,10 @@ mod process_exit;
 mod inspection;
 pub(super) use inspection::address_info as native_address_info;
 
+#[path = "dlfcn_phdr.rs"]
+mod phdr;
+pub(super) use phdr::iterate as iterate_phdr;
+
 // Lock order: operation lock -> registry. The operation lock is recursive for
 // same-thread constructor/finalizer reentry; other threads cannot observe a
 // partially initialized object. No registry guard crosses a user callback.
@@ -119,6 +123,7 @@ struct NativeDso {
     needed_by_name: Vec<(String, usize)>,
     dependencies: Vec<usize>,
     mapping: Mapping,
+    phdrs: phdr::Headers,
     object: LoadedObject,
     versions: versions::Table,
     callbacks: lifecycle::Callbacks,
@@ -466,6 +471,7 @@ fn map_object(
     let symbolic = binding::symbolic(&prepared.bytes, &object)?;
     let versions = versions::Table::parse(&prepared.bytes, &object)?;
     let tls_relocations = tls::take_relocations(&mut object);
+    let phdrs = phdr::Headers::new(&object)?;
     Some(NativeDso {
         id,
         device: prepared.device,
@@ -482,6 +488,7 @@ fn map_object(
         needed,
         needed_by_name,
         mapping,
+        phdrs,
         object,
         versions,
         callbacks: lifecycle::Callbacks::default(),
@@ -731,6 +738,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     let root_dso = pending.iter_mut().find(|dso| dso.id == root)?;
     root_dso.references = 1;
     root_dso.nodelete |= flags & dlfcn_core::RTLD_NODELETE != 0;
+    phdr::published(pending.len());
     dsos.extend(pending);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
         promote_global(&mut dsos, root);
@@ -983,6 +991,7 @@ fn collect_unreachable() -> Option<()> {
         cxa::finalize_owners(&ids)?;
         let mut dsos = registry().lock().ok()?;
         dsos.retain(|dso| !ids.contains(&dso.id));
+        phdr::retired(ids.len());
         // Nested closes can make an external provider unreachable. Recompute
         // after dropping this batch's edges instead of leaking that provider.
     }

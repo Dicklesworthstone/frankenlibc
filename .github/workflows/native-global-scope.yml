@@ -6,7 +6,9 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_global*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_phdr_test.rs'
       - 'crates/frankenlibc-abi/tests/standalone_native_loader_regressions.rs'
+      - 'tests/integration/fixture_native_phdr.c'
       - '.github/workflows/native-global-scope.yml'
   workflow_dispatch:
 
@@ -49,22 +51,47 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: native-loader-inspection
-      - name: Execute host and native promotion contracts
+      - name: Compile all focused contracts without hiding later targets
         run: |
           set -euo pipefail
           mkdir -p artifacts/global-scope
           features=()
           if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
-          for mode in strict hardened; do
-            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --keep-going -p frankenlibc-abi "${features[@]}" --test dlfcn_native_global_order_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/global-scope/promotion-${mode}.log"
-            grep -F 'test result: ok. 1 passed; 0 failed;' "artifacts/global-scope/promotion-${mode}.log"
-          done
-      - name: Execute standalone public loading contracts
-        if: matrix.name != 'interpose'
+          targets=(--test dlfcn_native_global_order_test --test dlfcn_native_phdr_test)
+          if [[ "$FEATURES" == *standalone* ]]; then targets+=(--test standalone_native_loader_regressions); fi
+          timeout 1200 cargo build --keep-going -p frankenlibc-abi "${features[@]}" "${targets[@]}" 2>&1 | tee artifacts/global-scope/build.log
+      - name: Execute host and native promotion contracts
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/global-scope
-          timeout 1200 cargo test --keep-going -p frankenlibc-abi --features "$FEATURES" --test standalone_native_loader_regressions -- --nocapture --test-threads=1 2>&1 | tee artifacts/global-scope/standalone-loader.log
+          features=()
+          if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          status=0
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --no-fail-fast -p frankenlibc-abi "${features[@]}" --test dlfcn_native_global_order_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/global-scope/promotion-${mode}.log" || status=1
+            grep -F 'test result: ok. 1 passed; 0 failed;' "artifacts/global-scope/promotion-${mode}.log" || status=1
+          done
+          exit "$status"
+      - name: Execute native program-header and callback lifetime contracts
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/global-scope
+          features=()
+          if [[ -n "$FEATURES" ]]; then features=(--features "$FEATURES"); fi
+          status=0
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 1200 cargo test --no-fail-fast -p frankenlibc-abi "${features[@]}" --test dlfcn_native_phdr_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/global-scope/phdr-${mode}.log" || status=1
+            grep -F 'test result: ok. 4 passed; 0 failed;' "artifacts/global-scope/phdr-${mode}.log" || status=1
+          done
+          exit "$status"
+      - name: Execute standalone public loading contracts
+        if: ${{ !cancelled() && matrix.name != 'interpose' }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/global-scope
+          timeout 1200 cargo test --no-fail-fast -p frankenlibc-abi --features "$FEATURES" --test standalone_native_loader_regressions -- --nocapture --test-threads=1 2>&1 | tee artifacts/global-scope/standalone-loader.log
           grep -F 'test result: ok. 1 passed; 0 failed;' artifacts/global-scope/standalone-loader.log
       - uses: actions/upload-artifact@v4
         if: always()

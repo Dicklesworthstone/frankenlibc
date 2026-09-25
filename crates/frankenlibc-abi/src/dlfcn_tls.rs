@@ -295,6 +295,16 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
     })
 }
 
+/// Return only an already allocated block for the calling thread. Unlike
+/// dlsym/__tls_get_addr, dl_iterate_phdr must not allocate a module's TLS.
+pub(super) fn allocated_address(module: &Arc<Module>) -> *mut c_void {
+    super::thread_exit::with_existing_state(|state| {
+        let blocks = state.blocks.try_borrow().ok()?;
+        blocks.iter().find(|block| block.id == module.id)
+            .map(|block| block.data.as_ptr().cast())
+    }).unwrap_or(std::ptr::null_mut())
+}
+
 #[repr(C)]
 #[derive(Debug)]
 struct TlsIndex { module: usize, offset: usize }

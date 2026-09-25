@@ -60,6 +60,18 @@ pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) ->
     }).ok().flatten()
 }
 
+/// Observe TLS without allocating state or registering a reclamation hook.
+/// Inspection must not turn an untouched module into allocated thread storage.
+pub(super) fn with_existing_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
+    STATE.try_with(|slot| {
+        let state = slot.get();
+        if state.is_null() { return None; }
+        // SAFETY: this thread exclusively owns the state, and the synchronous
+        // observer neither reclaims it nor invokes foreign callbacks.
+        callback(unsafe { &*state })
+    }).ok().flatten()
+}
+
 fn drain_current() {
     let _ = STATE.try_with(|slot| {
         let state = slot.get();
@@ -93,7 +105,7 @@ fn attach_reclaimer(state: *mut ThreadState) -> bool {
         let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
         // SAFETY: the private key belongs to host threads. This schedules only
         // reclamation of our heap state; native module IDs never enter its DTV.
-        let create: Create = unsafe { std::mem::transmute(create) };
+        let create: Create = unsafe { core::mem::transmute(create) };
         let set: SetSpecific = unsafe { std::mem::transmute(set) };
         let mut key = 0;
         if unsafe { create(&mut key, Some(reclaim)) } != 0 { return None; }
