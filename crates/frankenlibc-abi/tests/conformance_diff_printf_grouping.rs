@@ -15,6 +15,9 @@
 //! not, and the separators count toward the width; `%f`/`%F`/`%g`/`%G` group
 //! the integer part, `%e`/`%a` do not.
 //!
+//! Under the compiled de_DE/fr_FR locales it also compares `strtod`/`strtof`
+//! (value bits and end offset): glibc parses the ',' radix and stops at '.'.
+//!
 //! Skipped, with the reason printed, when the host has no `en_US.UTF-8`.
 
 use std::ffi::{CStr, c_char, c_int};
@@ -25,6 +28,35 @@ use dlsym_oracle::host_fn;
 
 type SetlocaleFn = unsafe extern "C" fn(c_int, *const c_char) -> *mut c_char;
 type SnprintfFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
+type StrtodFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f64;
+type StrtofFn = unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> f32;
+
+/// Parsing under a ',' radix: glibc reads "1,5" as 1.5 and stops at a '.'.
+const PARSE_INPUTS: &[&CStr] = &[
+    c"1,5",
+    c"1.5",
+    c"-2,25e3",
+    c"0x1,8p1",
+    c"0x1.8p1",
+    c",5",
+    c"5,",
+    c"1,2,3",
+    c"  +7,125xyz",
+    c"12,5.5",
+    c"inf",
+];
+
+/// `(value bits, bytes consumed)` of one strtod/strtof call.
+fn parse_with<T: Copy>(
+    f: unsafe extern "C" fn(*const c_char, *mut *mut c_char) -> T,
+    input: &CStr,
+) -> (T, isize) {
+    let mut end: *mut c_char = std::ptr::null_mut();
+    // SAFETY: NUL-terminated input; `end` is written by the callee.
+    let v = unsafe { f(input.as_ptr(), &mut end) };
+    // SAFETY: `end` points into `input`.
+    (v, unsafe { end.cast_const().offset_from(input.as_ptr()) })
+}
 
 fn host_setlocale() -> SetlocaleFn {
     // SAFETY: `char *setlocale(int, const char *)`; fl's export is passed so a
@@ -204,6 +236,30 @@ fn printf_grouping_flag_matches_glibc_under_en_us_and_c() {
                     !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, name.as_ptr()) }
                         .is_null();
                 assert!(h && m, "{name:?} did not load: glibc {h}, fl {m}");
+                // SAFETY: host strtod/strtof, with fl's exports as the guard.
+                let (host_strtod, host_strtof): (StrtodFn, StrtofFn) = unsafe {
+                    (
+                        host_fn(c"strtod", frankenlibc_abi::stdlib_abi::strtod as *const ()),
+                        host_fn(c"strtof", frankenlibc_abi::stdlib_abi::strtof as *const ()),
+                    )
+                };
+                for &input in PARSE_INPUTS {
+                    let (hd, hn) = parse_with(host_strtod, input);
+                    let (md, mn) = parse_with(frankenlibc_abi::stdlib_abi::strtod, input);
+                    if hd.to_bits() != md.to_bits() || hn != mn {
+                        bad.push(format!(
+                            "{name:?} strtod({input:?}): glibc {hd}+{hn}, fl {md}+{mn}"
+                        ));
+                    }
+                    let (hf, hfn) = parse_with(host_strtof, input);
+                    let (mf, mfn) = parse_with(frankenlibc_abi::stdlib_abi::strtof, input);
+                    if hf.to_bits() != mf.to_bits() || hfn != mfn {
+                        bad.push(format!(
+                            "{name:?} strtof({input:?}): glibc {hf}+{hfn}, fl {mf}+{mfn}"
+                        ));
+                    }
+                    radix_rows += usize::from(input.to_bytes().contains(&b','));
+                }
                 for &(fmt, arg) in CASES.iter().chain(RADIX_CASES) {
                     let (h, m) = (render(host_snp, fmt, arg), render(fl_snp, fmt, arg));
                     if h.contains(',') && !h.contains('.') {
