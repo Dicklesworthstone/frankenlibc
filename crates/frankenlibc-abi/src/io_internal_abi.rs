@@ -1724,8 +1724,14 @@ pub unsafe fn configure_native_stdio_stream(
 /// All native FILE* pointers are inserted on creation. A `might_contain` returning
 /// false means the pointer is definitely foreign; true means it *might* be ours
 /// and requires a secondary lookup to confirm.
+///
+/// Sized for FILE pointers (the 256 registry slots plus adopted foreign
+/// streams), not the membrane's heap-pointer default of 4M items: that is a
+/// 7.2 MB bit array, and registering the slots at startup set bits on ~60
+/// distinct pages of it, faulting each in, in every process
+/// (bd-rc0923-epic-eeuy4f.25). A false positive only costs the secondary lookup.
 static NATIVE_FILE_BLOOM: std::sync::LazyLock<PointerBloomFilter> =
-    std::sync::LazyLock::new(PointerBloomFilter::new);
+    std::sync::LazyLock::new(|| PointerBloomFilter::with_capacity(16_384, 0.001));
 
 /// Maps foreign FILE* addresses to NativeFile slot indices after adoption.
 ///
