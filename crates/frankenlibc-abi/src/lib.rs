@@ -95,6 +95,93 @@ pub mod startup_helpers;
 pub mod stdbit_abi;
 mod trig_tables;
 
+/// A build compiled for x86-64-v3 (`+avx2,+fma` in `.cargo/config.toml`)
+/// executes AVX2 instructions throughout, so on an older CPU the process
+/// died of SIGILL inside memcpy, before main and even before this library's
+/// constructors: another library's constructor (libselinux's) calls our
+/// `sysconf` first. Refuse with a message instead (bd-rc0923-epic-eeuy4f.13).
+///
+/// The check runs as the resolver of a hidden IFUNC that a `#[used]` static
+/// points at: the loader resolves that IRELATIVE relocation while relocating
+/// this object, before any constructor anywhere. The resolver is
+/// integer-only (`cpuid`, `xgetbv`, raw syscalls).
+#[cfg(all(
+    not(test),
+    target_os = "linux",
+    target_arch = "x86_64",
+    any(target_feature = "avx2", target_feature = "fma")
+))]
+mod cpu_guard {
+    core::arch::global_asm!(
+        ".globl __frankenlibc_cpu_guard",
+        ".hidden __frankenlibc_cpu_guard",
+        ".type __frankenlibc_cpu_guard, @gnu_indirect_function",
+        ".set __frankenlibc_cpu_guard, {resolver}",
+        resolver = sym resolve,
+    );
+
+    unsafe extern "C" {
+        fn __frankenlibc_cpu_guard();
+    }
+
+    #[used]
+    static FORCE_IRELATIVE: unsafe extern "C" fn() = __frankenlibc_cpu_guard;
+
+    extern "C" fn noop() {}
+
+    #[inline(never)]
+    extern "C" fn resolve() -> usize {
+        const MESSAGE: &[u8] = b"frankenlibc: this libfrankenlibc_abi.so was built for x86-64-v3 \
+(AVX2 + FMA), which this CPU does not support; use a build without \
+-Ctarget-feature=+avx2,+fma\n";
+        // SAFETY: cpuid is available on every x86_64 CPU.
+        let leaf1 = unsafe { core::arch::x86_64::__cpuid_count(1, 0) };
+        // SAFETY: as above.
+        let leaf7 = unsafe { core::arch::x86_64::__cpuid_count(7, 0) };
+        let fma = leaf1.ecx & (1 << 12) != 0;
+        let osxsave = leaf1.ecx & (1 << 27) != 0;
+        let avx = leaf1.ecx & (1 << 28) != 0;
+        let avx2 = leaf7.ebx & (1 << 5) != 0;
+        // The OS must also save the YMM state (XCR0 bits 1 and 2).
+        let ymm_state = osxsave && {
+            let low: u32;
+            // SAFETY: xgetbv(0) is valid when OSXSAVE is set, checked above.
+            unsafe {
+                core::arch::asm!(
+                    "xgetbv",
+                    in("ecx") 0u32,
+                    out("eax") low,
+                    out("edx") _,
+                    options(nomem, nostack, preserves_flags),
+                );
+            }
+            low & 0b110 == 0b110
+        };
+        if !(fma && avx && avx2 && ymm_state) {
+            // SAFETY: write(2) of a static buffer, then exit_group.
+            unsafe {
+                core::arch::asm!(
+                    "syscall",
+                    inlateout("rax") 1usize => _,
+                    in("rdi") 2usize,
+                    in("rsi") MESSAGE.as_ptr(),
+                    in("rdx") MESSAGE.len(),
+                    lateout("rcx") _,
+                    lateout("r11") _,
+                    options(nostack),
+                );
+                core::arch::asm!(
+                    "syscall",
+                    in("rax") 231usize,
+                    in("rdi") 127usize,
+                    options(noreturn, nostack),
+                );
+            }
+        }
+        noop as usize
+    }
+}
+
 #[cfg(all(not(test), target_os = "linux"))]
 #[used]
 #[unsafe(link_section = ".init_array")]
