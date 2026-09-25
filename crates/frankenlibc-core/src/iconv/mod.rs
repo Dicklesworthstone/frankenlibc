@@ -46629,9 +46629,8 @@ fn tscii_encode_map() -> &'static std::collections::HashMap<u128, &'static [u8]>
     static M: std::sync::OnceLock<std::collections::HashMap<u128, &'static [u8]>> =
         std::sync::OnceLock::new();
     M.get_or_init(|| {
-        tscii_tables::TSCII_ENCODE
-            .iter()
-            .map(|(cps, bytes)| (tscii_pack(cps), *bytes))
+        tscii_tables::tscii_encode_entries()
+            .map(|(cps, bytes)| (tscii_pack(cps), bytes))
             .collect()
     })
 }
@@ -46703,7 +46702,7 @@ fn tscii_decode(
                         continue;
                     }
                     if (0xb8..=0xc9).contains(&ch) && !bit3 {
-                        o += emit_unicode_cp(outbuf, o, tscii_tables::TSCII_DECODE[ch as usize][0], to);
+                        o += emit_unicode_cp(outbuf, o, tscii_tables::tscii_decode(ch)[0], to);
                         bit3 = true;
                         i += 1;
                         consumed_end = i;
@@ -46747,7 +46746,7 @@ fn tscii_decode(
                     }
                 }
                 _ => {
-                    let cps = tscii_tables::TSCII_DECODE[ch as usize];
+                    let cps = tscii_tables::tscii_decode(ch);
                     if cps.is_empty() {
                         err = Some(ICONV_EILSEQ);
                         break;
@@ -46820,7 +46819,7 @@ fn tscii_decode(
                 // Consonant after a preposed vowel: emit the consonant now and
                 // keep the vowel buffered so it reorders after it (set bit3).
                 if (0xb8..=0xc9).contains(&ch) && !bit3 {
-                    push(&mut chars, tscii_tables::TSCII_DECODE[ch as usize][0]);
+                    push(&mut chars, tscii_tables::tscii_decode(ch)[0]);
                     bit3 = true;
                     i += 1;
                     consumed_end = i;
@@ -46855,7 +46854,7 @@ fn tscii_decode(
             0x87 => push_all(&mut chars, &[0x0B95, 0x0BCD, 0x0BB7]),
             0x8c => push_all(&mut chars, &[0x0B95, 0x0BCD, 0x0BB7, 0x0BCD]),
             _ => {
-                let cps = tscii_tables::TSCII_DECODE[ch as usize];
+                let cps = tscii_tables::tscii_decode(ch);
                 if cps.is_empty() {
                     err = Some(ICONV_EILSEQ);
                     break;
@@ -46916,7 +46915,7 @@ fn tscii_enc1_direct() -> &'static [&'static [u8]] {
     static D: std::sync::OnceLock<Vec<&'static [u8]>> = std::sync::OnceLock::new();
     D.get_or_init(|| {
         let mut t: Vec<&'static [u8]> = vec![&[]; 0x10000];
-        for &(cps, bytes) in tscii_tables::TSCII_ENCODE.iter() {
+        for (cps, bytes) in tscii_tables::tscii_encode_entries() {
             if cps.len() == 1 && cps[0] < 0x10000 {
                 t[cps[0] as usize] = bytes;
             }
@@ -46929,10 +46928,9 @@ fn tscii_enc1_direct() -> &'static [&'static [u8]] {
 fn tscii_multi_first_cps() -> &'static [u32] {
     static S: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     S.get_or_init(|| {
-        let mut v: Vec<u32> = tscii_tables::TSCII_ENCODE
-            .iter()
-            .filter(|&&(cps, _)| cps.len() >= 2)
-            .map(|&(cps, _)| cps[0])
+        let mut v: Vec<u32> = tscii_tables::tscii_encode_entries()
+            .filter(|(cps, _)| cps.len() >= 2)
+            .map(|(cps, _)| cps[0])
             .collect();
         v.sort_unstable();
         v.dedup();
@@ -48509,9 +48507,9 @@ enum TranslitOutcome {
 /// shift state) carries over, the source side is restored.
 fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> TranslitOutcome {
     let cp = ch as u32;
-    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT.binary_search_by_key(&cp, |&(c, _)| c) {
-        Ok(i) => [translit_c::C_TRANSLIT[i].1, b"?"],
-        Err(_) => [b"?", b"?"],
+    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT_PACKED.lookup(cp) {
+        Some(replacement) => [replacement, b"?"],
+        None => [b"?", b"?"],
     };
     for replacement in candidates {
         if replacement.is_empty() {

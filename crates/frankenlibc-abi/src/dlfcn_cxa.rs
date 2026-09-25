@@ -10,7 +10,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::{NativeDso, OPERATIONS, ifunc, lifecycle, registry};
 
-type Destructor = unsafe extern "C" fn(*mut c_void);
+// A C++ destructor may propagate an exception through __cxa_finalize.
+// Both the indirect call and the resolver entry must permit unwinding; changing
+// only one boundary still makes Rust abort before the caller can catch it.
+type Destructor = unsafe extern "C-unwind" fn(*mut c_void);
 
 struct Entry {
     destructor: Destructor,
@@ -114,6 +117,8 @@ fn drain(mut matches: impl FnMut(&Entry) -> bool) -> Option<()> {
         // SAFETY: registration validated native executable code; the owned
         // argument remains the caller's responsibility. Both owner and code
         // provider are pinned. No queue/registry mutex crosses this callback.
+        // If it unwinds, the entry stays consumed and CallPins plus OPERATIONS
+        // are released by their guards; older entries remain queued for retry.
         unsafe { (entry.destructor)(entry.argument as *mut c_void) };
         drop(pins);
         // Re-search from the newest entry. Registrations made by a callback
@@ -136,7 +141,7 @@ unsafe extern "C" fn register_impl(
     if register(destructor, argument, token).is_some() { 0 } else { -1 }
 }
 
-unsafe extern "C" fn finalize_impl(token: *mut c_void) {
+unsafe extern "C-unwind" fn finalize_impl(token: *mut c_void) {
     let _ = drain(|entry| token.is_null() || entry.token == token as usize);
 }
 
