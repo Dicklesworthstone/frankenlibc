@@ -844,32 +844,37 @@ impl ElfLoader {
         let program_headers =
             parse_program_headers(data, header.e_phoff, header.e_phentsize, header.e_phnum)?;
 
-        // Parse section headers (optional)
-        let section_headers = if header.e_shoff != 0 && header.e_shnum != 0 {
-            parse_section_headers(data, header.e_shoff, header.e_shentsize, header.e_shnum)?
-        } else {
-            Vec::new()
-        };
-
-        // Find dynamic segment
+        // PT_DYNAMIC is authoritative for every runtime image, not just an
+        // image stripped of section headers. SHT_RELA may also describe debug
+        // or --emit-relocs data which must never be applied at runtime, and
+        // stale section metadata must not rescue malformed dynamic tables.
         let dynamic_phdr = program_headers
             .iter()
             .find(|ph| matches!(ph.p_type, ProgramType::Dynamic));
-
-        // An ELF runtime image need not carry a section-header table.
-        // Resolve its dynamic metadata through PT_LOAD instead of accepting
-        // an object with silently empty symbol and relocation tables.
-        if section_headers.is_empty()
-            && let Some(dynamic_phdr) = dynamic_phdr
-        {
-            return dynamic_segment::parse(
+        if let Some(dynamic_phdr) = dynamic_phdr {
+            let mut object = dynamic_segment::parse(
                 data,
                 &header,
                 &program_headers,
                 dynamic_phdr,
                 self.ctx.base,
-            );
+            )?;
+            // Retain optional introspection data when readable. It is not a
+            // prerequisite for execution and cannot override runtime tables.
+            if header.e_shoff != 0 && header.e_shnum != 0 {
+                object.section_headers =
+                    parse_section_headers(data, header.e_shoff, header.e_shentsize, header.e_shnum)
+                        .unwrap_or_default();
+            }
+            return Ok(object);
         }
+
+        // Non-dynamic objects retain the existing section-based inspection.
+        let section_headers = if header.e_shoff != 0 && header.e_shnum != 0 {
+            parse_section_headers(data, header.e_shoff, header.e_shentsize, header.e_shnum)?
+        } else {
+            Vec::new()
+        };
 
         // Extract dynamic info from PT_DYNAMIC segment
         let dynamic_metadata = parse_dynamic_metadata(data, &section_headers, self.ctx.base)?;

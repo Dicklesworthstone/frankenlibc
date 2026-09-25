@@ -200,6 +200,132 @@ fn native_lifecycle_soname_reopen_preserves_identity_and_global_promotion() {
 }
 
 #[test]
+fn native_lifecycle_runtime_metadata_ignores_section_headers() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    for loader in [Loader::Host, Loader::Native] {
+        let fixture = Fixture::new();
+        let sink = fixture.sink(loader);
+        for variant in ["ordinary", "emit-relocs", "null-section", "no-sections", "bad-section-offset"] {
+            let flags: &[&str] = if variant == "emit-relocs" {
+                &["-Wl,--emit-relocs"]
+            } else {
+                &[]
+            };
+            let library = fixture.compile(
+                variant,
+                r#"
+                    extern void event_push(int);
+                    static int value = 40;
+                    static int *pointer = &value;
+                    __attribute__((constructor)) static void init(void) {
+                        *pointer += 2; event_push(23);
+                    }
+                    __attribute__((destructor)) static void fini(void) {
+                        event_push(-23);
+                    }
+                    int result(void) { return *pointer; }
+                "#,
+                &[],
+                flags,
+            );
+            let mut bytes = std::fs::read(&library).unwrap();
+            assert_eq!(&bytes[..6], b"\x7fELF\x02\x01");
+            let section_count = u16::from_le_bytes(bytes[60..62].try_into().unwrap());
+            assert!(section_count > 1, "fixture must originally carry sections");
+            match variant {
+                // Leave a present but uninformative table. An implementation
+                // branching on sections.is_empty() cannot recover the symbols.
+                "null-section" => {
+                    bytes[60..62].copy_from_slice(&1u16.to_le_bytes());
+                    bytes[62..64].copy_from_slice(&0u16.to_le_bytes());
+                }
+                "no-sections" => {
+                    bytes[40..48].fill(0);
+                    bytes[58..64].fill(0);
+                }
+                "bad-section-offset" => {
+                    bytes[40..48].copy_from_slice(&u64::MAX.to_le_bytes());
+                }
+                _ => {}
+            }
+            std::fs::write(&library, &bytes).unwrap();
+            let before = fixture.events(loader, sink).len();
+            let handle = loader.open(&library, libc::RTLD_NOW);
+            assert!(!handle.is_null(), "runtime image rejected: {variant}");
+            assert_eq!(loader.value(handle, "result"), 42, "variant={variant}");
+            assert_eq!(&fixture.events(loader, sink)[before..], &[23]);
+            loader.close(handle);
+            assert_eq!(&fixture.events(loader, sink)[before..], &[23, -23]);
+        }
+        loader.close(sink);
+    }
+}
+
+#[test]
+fn native_lifecycle_malformed_dynamic_metadata_cannot_use_sections() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let fixture = Fixture::new();
+    let sink = fixture.sink(Loader::Native);
+    let source = fixture.compile(
+        "runtime-source",
+        r#"
+            extern void event_push(int);
+            static int value = 40;
+            static int *pointer = &value;
+            __attribute__((constructor)) static void init(void) {
+                *pointer += 2; event_push(29);
+            }
+            int result(void) { return *pointer; }
+        "#,
+        &[],
+        &[],
+    );
+    let original = std::fs::read(&source).unwrap();
+    let parser = frankenlibc_core::elf::ElfLoader::new(0);
+    let object = parser.parse(&original).unwrap();
+    assert!(!object.section_headers.is_empty());
+    assert!(!object.rela_dyn.is_empty());
+    let dynamic = object
+        .program_headers
+        .iter()
+        .find(|header| header.p_type == frankenlibc_core::elf::ProgramType::Dynamic)
+        .unwrap();
+    let start = usize::try_from(dynamic.p_offset).unwrap();
+    let end = start.checked_add(usize::try_from(dynamic.p_filesz).unwrap()).unwrap();
+    for (case, tag, value) in [
+        ("bad-rela-entry-size", 9i64, 8u64),
+        ("unmapped-symbol-table", 6, u64::MAX),
+        ("unmapped-rela-table", 7, u64::MAX),
+    ] {
+        let mut bytes = original.clone();
+        let mut changed = false;
+        for entry in bytes[start..end].chunks_exact_mut(16) {
+            let current = i64::from_le_bytes(entry[..8].try_into().unwrap());
+            if current == 0 {
+                break;
+            }
+            if current == tag {
+                entry[8..16].copy_from_slice(&value.to_le_bytes());
+                changed = true;
+            }
+        }
+        assert!(changed, "fixture did not contain required dynamic tag: {case}");
+        assert!(
+            parser.parse(&bytes).is_err(),
+            "valid sections must not rescue invalid PT_DYNAMIC: {case}"
+        );
+        let library = fixture.dir.join(format!("{case}.so"));
+        std::fs::write(&library, bytes).unwrap();
+        assert!(
+            Loader::Native.open(&library, libc::RTLD_NOW).is_null(),
+            "invalid runtime metadata was published: {case}"
+        );
+        assert!(fixture.events(Loader::Native, sink).is_empty());
+    }
+    Loader::Native.close(sink);
+}
+
+#[test]
 fn native_lifecycle_priority_reopen_reload_matches_host() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
