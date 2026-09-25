@@ -8,7 +8,6 @@
 mod spawn_protocol;
 
 use std::ffi::{c_char, c_int, c_void};
-use std::os::unix::ffi::OsStrExt;
 
 use frankenlibc_core::process;
 use frankenlibc_core::syscall as raw_syscall;
@@ -76,83 +75,143 @@ unsafe fn walk_env_for_path(mut envp: *const *mut c_char) -> Vec<u8> {
     b"/bin:/usr/bin".to_vec()
 }
 
-unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> c_int {
-    if file.is_null() || argv.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-
-    // Bounded read so a non-NUL-terminated `file` argument doesn't walk
-    // arbitrary process memory. Same defense class as bd-z4k96 / iconv /
-    // dlopen / inet_pton. (REVIEW round 5.)
-    let Some(file_bytes_owned) = (unsafe { read_bounded_cstr(file) }) else {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return -1;
-    };
-    let file_bytes: &[u8] = &file_bytes_owned;
-    if file_bytes.is_empty() {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return -1;
-    }
-
-    if file_bytes.contains(&b'/') {
-        // execve only returns on failure
-        let err = unsafe {
-            raw_syscall::sys_execve(
-                file as *const u8,
-                argv as *const *const u8,
-                environ as *const *const u8,
-            )
+/// ENOEXEC fallback for the searching exec family, NOT execve or posix_spawnp.
+/// Pass the script filename and argv[1..] as individual arguments. A command
+/// string would reinterpret spaces, substitutions and shell metacharacters.
+/// Returns errno only: successful exec never returns to this address space.
+unsafe fn exec_through_shell(
+    path: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    let slots = known_remaining(argv as usize)
+        .map(|bytes| bytes / std::mem::size_of::<*const c_char>());
+    let mut argc = 0usize;
+    loop {
+        if slots.is_some_and(|slots| argc >= slots) {
+            return libc::EFAULT;
         }
-        .err()
-        .unwrap_or(libc::ENOENT);
-        unsafe { set_abi_errno(err) };
-        return -1;
+        if argc >= c_int::MAX as usize - 1 {
+            return libc::E2BIG;
+        }
+        // SAFETY: caller supplies a NULL-terminated vector; tracked extents
+        // are checked before each read, including the terminating slot.
+        if unsafe { *argv.add(argc) }.is_null() {
+            break;
+        }
+        argc += 1;
     }
 
-    let path =
-        std::env::var_os("PATH").unwrap_or_else(|| std::ffi::OsString::from("/bin:/usr/bin"));
-    let path_bytes = path.as_os_str().as_bytes();
-
-    let mut saw_eacces = false;
-
-    for dir in path_bytes.split(|b| *b == b':') {
-        let dir = if dir.is_empty() { b"." as &[u8] } else { dir };
-        let mut candidate = Vec::with_capacity(dir.len() + 1 + file_bytes.len() + 1);
-        candidate.extend_from_slice(dir);
-        candidate.push(b'/');
-        candidate.extend_from_slice(file_bytes);
-        candidate.push(0);
-
-        // execve only returns on failure; on success the process is replaced.
-        let err = unsafe {
-            raw_syscall::sys_execve(
-                candidate.as_ptr(),
-                argv as *const *const u8,
-                environ as *const *const u8,
-            )
-        }
-        .err()
-        .unwrap_or(libc::ENOENT);
-        match err {
-            libc::ENOENT | libc::ENOTDIR => {}
-            libc::EACCES => {
-                saw_eacces = true;
-            }
-            _ => {
-                unsafe { set_abi_errno(err) };
-                return -1;
-            }
-        }
+    let mut shell_argv: Vec<*const c_char> = Vec::new();
+    // Even argv == {NULL} needs shell, script, NULL. Do not read argv[1]
+    // in that case (the terminator may be the last word of a readable page).
+    if shell_argv.try_reserve_exact(argc.max(1) + 2).is_err() {
+        return libc::ENOMEM;
     }
-
+    shell_argv.push(c"/bin/sh".as_ptr());
+    shell_argv.push(path);
+    for index in 1..argc {
+        // SAFETY: the first pass checked all of these vector slots.
+        shell_argv.push(unsafe { *argv.add(index) });
+    }
+    shell_argv.push(std::ptr::null());
+    // SAFETY: the pointer vector is terminated and lives until exec returns;
+    // path, argument strings and envp retain their caller-owned lifetimes.
     unsafe {
-        set_abi_errno(if saw_eacces {
-            libc::EACCES
-        } else {
-            libc::ENOENT
-        });
+        raw_syscall::sys_execve(
+            c"/bin/sh".as_ptr().cast(),
+            shell_argv.as_ptr().cast(),
+            envp.cast(),
+        )
     }
+    .err()
+    .unwrap_or(libc::EIO)
+}
+
+/// Shared native execvp/execvpe search. Return the final errno without host
+/// delegation. PATH always belongs to the caller; envp belongs to the new
+/// image, including the implicit shell. Shell-launch failures are terminal.
+unsafe fn execvpe_error(
+    file: *const c_char,
+    argv: *const *const c_char,
+    envp: *const *const c_char,
+) -> c_int {
+    if file.is_null() || argv.is_null() {
+        return libc::EFAULT;
+    }
+    let (file_len, terminated) = unsafe { scan_c_string(file, known_remaining(file as usize)) };
+    if !terminated {
+        return libc::EFAULT;
+    }
+    if file_len == 0 {
+        return libc::ENOENT;
+    }
+    // SAFETY: the bounded scan established this readable byte range.
+    let file_bytes = unsafe { std::slice::from_raw_parts(file.cast::<u8>(), file_len) };
+    let attempt = |path: *const c_char| {
+        // SAFETY: all candidates are terminated and the caller's argument
+        // and environment vectors remain valid throughout the operation.
+        unsafe { raw_syscall::sys_execve(path.cast(), argv.cast(), envp.cast()) }
+            .err()
+            .unwrap_or(libc::EIO)
+    };
+    if file_bytes.contains(&b'/') {
+        let error = attempt(file);
+        return if error == libc::ENOEXEC {
+            unsafe { exec_through_shell(file, argv, envp) }
+        } else {
+            error
+        };
+    }
+
+    // Bound per-candidate storage without allocating for every PATH entry.
+    // glibc's searching exec bounds bare names at Linux NAME_MAX (255).
+    // A pathname containing '/' is deliberately left to the kernel above.
+    const EXEC_NAME_MAX: usize = 255;
+    if file_len > EXEC_NAME_MAX {
+        return libc::ENAMETOOLONG;
+    }
+    let path = unsafe { path_bytes_from_env_vector(std::ptr::null()) };
+    let mut candidate = [0u8; libc::PATH_MAX as usize + EXEC_NAME_MAX + 1];
+    let mut saw_eacces = false;
+    let mut last_error = libc::ENOENT;
+    for directory in path.split(|byte| *byte == b':') {
+        // Like glibc, skip an unrepresentably long search component rather
+        // than letting it hide a usable executable in a later component.
+        if directory.len() >= libc::PATH_MAX as usize {
+            continue;
+        }
+        let mut length = directory.len();
+        candidate[..length].copy_from_slice(directory);
+        if length != 0 {
+            candidate[length] = b'/';
+            length += 1;
+        }
+        // Empty PATH entries use the bare filename, not './file': the script
+        // sees the same $0 as glibc's fallback, including leading/trailing ':'.
+        candidate[length..length + file_len].copy_from_slice(file_bytes);
+        candidate[length + file_len] = 0;
+        let candidate_ptr = candidate.as_ptr().cast::<c_char>();
+        let error = attempt(candidate_ptr);
+        if error == libc::ENOEXEC {
+            // Do not continue PATH search if /bin/sh itself fails to exec.
+            return unsafe { exec_through_shell(candidate_ptr, argv, envp) };
+        }
+        last_error = error;
+        match error {
+            libc::EACCES => saw_eacces = true,
+            libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
+            // E2BIG, ENOMEM, ELOOP, ETXTBSY, etc. must not be hidden by an
+            // earlier EACCES or retried as if the executable were missing.
+            _ => return error,
+        }
+    }
+    if saw_eacces { libc::EACCES } else { last_error }
+}
+
+unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> c_int {
+    let error = unsafe { execvpe_error(file, argv, environ as *const *const c_char) };
+    unsafe { set_abi_errno(error) };
     -1
 }
 
@@ -575,90 +634,15 @@ pub unsafe extern "C" fn vfork() -> libc::pid_t {
 /// GNU `execvpe` — execute a file with PATH search and custom environment.
 ///
 /// Like `execvp` but uses `envp` instead of the inherited environment.
+/// PATH search still uses the caller's environment, not `envp`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn execvpe(
     file: *const c_char,
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    if file.is_null() || argv.is_null() {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-
-    let (file_len, terminated) = unsafe {
-        crate::util::scan_c_string(file, crate::malloc_abi::known_remaining(file as usize))
-    };
-    if !terminated {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    let file_bytes = unsafe { std::slice::from_raw_parts(file as *const u8, file_len) };
-    if file_bytes.is_empty() {
-        unsafe { set_abi_errno(libc::ENOENT) };
-        return -1;
-    }
-
-    // If file contains '/', execute directly without PATH search.
-    if file_bytes.contains(&b'/') {
-        // execve only returns on failure
-        let err = unsafe {
-            raw_syscall::sys_execve(
-                file as *const u8,
-                argv as *const *const u8,
-                envp as *const *const u8,
-            )
-        }
-        .err()
-        .unwrap_or(libc::ENOENT);
-        unsafe { set_abi_errno(err) };
-        return -1;
-    }
-
-    // Search PATH for the executable.
-    let path =
-        std::env::var_os("PATH").unwrap_or_else(|| std::ffi::OsString::from("/bin:/usr/bin"));
-    let path_bytes = path.as_os_str().as_bytes();
-
-    let mut saw_eacces = false;
-
-    for dir in path_bytes.split(|b| *b == b':') {
-        let dir = if dir.is_empty() { b"." as &[u8] } else { dir };
-        let mut candidate = Vec::with_capacity(dir.len() + 1 + file_bytes.len() + 1);
-        candidate.extend_from_slice(dir);
-        candidate.push(b'/');
-        candidate.extend_from_slice(file_bytes);
-        candidate.push(0);
-
-        // execve only returns on failure; on success the process is replaced.
-        let err = unsafe {
-            raw_syscall::sys_execve(
-                candidate.as_ptr(),
-                argv as *const *const u8,
-                envp as *const *const u8,
-            )
-        }
-        .err()
-        .unwrap_or(libc::ENOENT);
-        match err {
-            libc::ENOENT | libc::ENOTDIR => {}
-            libc::EACCES => {
-                saw_eacces = true;
-            }
-            _ => {
-                unsafe { set_abi_errno(err) };
-                return -1;
-            }
-        }
-    }
-
-    unsafe {
-        set_abi_errno(if saw_eacces {
-            libc::EACCES
-        } else {
-            libc::ENOENT
-        });
-    }
+    let error = unsafe { execvpe_error(file, argv, envp) };
+    unsafe { set_abi_errno(error) };
     -1
 }
 
