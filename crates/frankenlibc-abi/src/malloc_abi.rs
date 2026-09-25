@@ -4148,9 +4148,17 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
     // This is O(1) amortized instead of O(262144), at the cost of potentially
     // missing interior pointers that hash to a different slot. For exact-start
     // pointers (the common case), this finds the allocation immediately.
+    //
+    // Bounded at 64 probes. The index is locality-preserving, so around any
+    // heap address the table is densely occupied and a miss (interior pointer:
+    // its allocation's base sits BEHIND `start`, never reached by a forward
+    // probe) rarely meets an empty slot; with 1024 probes under the table
+    // lock this was 39% of hardened `sort` at 60k lines
+    // (bd-rc0923-epic-eeuy4f.9). An exact start sits at or right after its home
+    // slot; a lookup that misses reports no bound, as before.
     let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(addr);
-    for i in 0..1024 {
+    for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
         let base = FALLBACK_ALLOC_PTRS[idx].load(Ordering::Relaxed);
         if base == FALLBACK_SLOT_EMPTY {
