@@ -208,7 +208,7 @@ impl ConformalRiskController {
             return f64::INFINITY;
         }
 
-        // Copy active entries into a scratch array and sort.
+        // Copy active entries into a scratch array and select.
         let mut scratch = [0.0_f64; WINDOW_SIZE];
         scratch[..self.fill].copy_from_slice(&self.scores[..self.fill]);
 
@@ -216,7 +216,6 @@ impl ConformalRiskController {
         // but with the logical ordering rotated. However, we are computing
         // a quantile (order statistic) so we only need a sorted copy.
         let active = &mut scratch[..self.fill];
-        active.sort_unstable_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
 
         // Quantile index: ceil((1 - alpha) * (fill + 1)) - 1.
         let raw_rank = ((1.0 - TARGET_ALPHA) * (self.fill as f64 + 1.0)).ceil() as usize;
@@ -225,7 +224,14 @@ impl ConformalRiskController {
         }
         let idx = raw_rank.saturating_sub(1);
 
-        active[idx]
+        // Selection, not a full sort: only the order statistic at `idx` is
+        // needed, and sorting all WINDOW_SIZE scores on every observation was
+        // a measurable share of a hardened call (bd-rc0923-epic-eeuy4f.9).
+        *active
+            .select_nth_unstable_by(idx, |a, b| {
+                a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal)
+            })
+            .1
     }
 }
 
