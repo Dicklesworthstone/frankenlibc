@@ -23,7 +23,12 @@ pub enum Status {
 }
 
 impl Status {
-    const ALL: [Self; 4] = [Self::Success, Self::NotFound, Self::Unavailable, Self::TryAgain];
+    const ALL: [Self; 4] = [
+        Self::Success,
+        Self::NotFound,
+        Self::Unavailable,
+        Self::TryAgain,
+    ];
 
     fn parse(token: &[u8]) -> Option<Self> {
         [b"success".as_slice(), b"notfound", b"unavail", b"tryagain"]
@@ -50,7 +55,12 @@ impl Service {
     fn new(backend: Backend) -> Self {
         Self {
             backend,
-            actions: [Action::Return, Action::Continue, Action::Continue, Action::Continue],
+            actions: [
+                Action::Return,
+                Action::Continue,
+                Action::Continue,
+                Action::Continue,
+            ],
         }
     }
 }
@@ -105,7 +115,9 @@ pub enum LookupError<E> {
 
 impl Default for HostsPolicy {
     fn default() -> Self {
-        Self { services: vec![Service::new(Backend::Files), Service::new(Backend::Dns)] }
+        Self {
+            services: vec![Service::new(Backend::Files), Service::new(Backend::Dns)],
+        }
     }
 }
 
@@ -123,14 +135,25 @@ impl HostsPolicy {
                 selected = Some(&line[colon + 1..]);
             }
         }
-        let Some(line) = selected else { return Ok(Self::default()) };
-        let mut input = Scanner { bytes: line, position: 0 };
+        let Some(line) = selected else {
+            return Ok(Self::default());
+        };
+        let mut input = Scanner {
+            bytes: line,
+            position: 0,
+        };
         let mut services = Vec::new();
         loop {
             input.whitespace();
-            if input.end() { break; }
+            if input.end() {
+                break;
+            }
             let name = input.word();
-            if name.is_empty() || !name.iter().all(|b| b.is_ascii_alphanumeric() || matches!(*b, b'_' | b'-')) {
+            if name.is_empty()
+                || !name
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(*b, b'_' | b'-'))
+            {
                 return Err(ParseError);
             }
             let backend = match name {
@@ -145,14 +168,18 @@ impl HostsPolicy {
                 loop {
                     input.whitespace();
                     if input.take(b']') {
-                        if count == 0 { return Err(ParseError); }
+                        if count == 0 {
+                            return Err(ParseError);
+                        }
                         break;
                     }
                     let negate = input.take(b'!');
                     input.whitespace();
                     let status = Status::parse(input.word()).ok_or(ParseError)?;
                     input.whitespace();
-                    if !input.take(b'=') { return Err(ParseError); }
+                    if !input.take(b'=') {
+                        return Err(ParseError);
+                    }
                     input.whitespace();
                     let token = input.word();
                     let action = if token.eq_ignore_ascii_case(b"return") {
@@ -203,7 +230,9 @@ impl HostsPolicy {
         for (index, service) in self.services.iter().enumerate() {
             let result = lookup(service.backend);
             let action = service.actions[result.status() as usize];
-            if index + 1 == self.services.len() && (action != Action::Merge || terminal_merge_returns) {
+            if index + 1 == self.services.len()
+                && (action != Action::Merge || terminal_merge_returns)
+            {
                 return result.into_result().map_err(LookupError::Backend);
             }
             match action {
@@ -217,8 +246,14 @@ impl HostsPolicy {
 }
 
 fn trim(bytes: &[u8]) -> &[u8] {
-    let start = bytes.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(bytes.len());
-    let end = bytes.iter().rposition(|b| !b.is_ascii_whitespace()).map_or(start, |i| i + 1);
+    let start = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(start, |i| i + 1);
     &bytes[start..end]
 }
 
@@ -228,9 +263,15 @@ struct Scanner<'a> {
 }
 
 impl<'a> Scanner<'a> {
-    fn end(&self) -> bool { self.position == self.bytes.len() }
+    fn end(&self) -> bool {
+        self.position == self.bytes.len()
+    }
     fn whitespace(&mut self) {
-        while self.bytes.get(self.position).is_some_and(u8::is_ascii_whitespace) {
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
             self.position += 1;
         }
     }
@@ -238,13 +279,17 @@ impl<'a> Scanner<'a> {
         if self.bytes.get(self.position) == Some(&byte) {
             self.position += 1;
             true
-        } else { false }
+        } else {
+            false
+        }
     }
     fn word(&mut self) -> &'a [u8] {
         let start = self.position;
-        while self.bytes.get(self.position).is_some_and(|b| {
-            !b.is_ascii_whitespace() && !matches!(*b, b'[' | b']' | b'=' | b'!')
-        }) {
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(|b| !b.is_ascii_whitespace() && !matches!(*b, b'[' | b']' | b'=' | b'!'))
+        {
             self.position += 1;
         }
         &self.bytes[start..self.position]
@@ -261,7 +306,10 @@ mod tests {
 
     #[test]
     fn absent_entry_defaults_but_explicit_empty_does_not() {
-        assert_eq!(HostsPolicy::parse(b"services: files\n# hosts: dns\n").unwrap(), HostsPolicy::default());
+        assert_eq!(
+            HostsPolicy::parse(b"services: files\n# hosts: dns\n").unwrap(),
+            HostsPolicy::default()
+        );
         let result: Result<(), LookupError<()>> = policy("").lookup(|_| panic!("no source"));
         assert_eq!(result, Err(LookupError::NoServices));
     }
@@ -270,20 +318,33 @@ mod tests {
     fn last_entry_overrides_even_a_malformed_prior_entry() {
         let p = HostsPolicy::parse(b"hosts: files [broken\n hosts \t: dns # files\n").unwrap();
         assert_eq!(p, policy("dns"));
-        assert_eq!(HostsPolicy::parse(b"hosts: dns\nhosts:\n").unwrap(), policy(""));
+        assert_eq!(
+            HostsPolicy::parse(b"hosts: dns\nhosts:\n").unwrap(),
+            policy("")
+        );
     }
 
     #[test]
     fn database_and_backend_names_are_case_sensitive() {
-        assert_eq!(HostsPolicy::parse(b"HOSTS: dns\n").unwrap(), HostsPolicy::default());
+        assert_eq!(
+            HostsPolicy::parse(b"HOSTS: dns\n").unwrap(),
+            HostsPolicy::default()
+        );
         assert_eq!(policy("FILES").services[0].backend, Backend::Unavailable);
     }
 
     #[test]
     fn source_order_and_unknown_services_are_preserved() {
         let p = policy("dns missing [UNAVAIL=continue] files dns");
-        assert_eq!(p.services.iter().map(|s| s.backend).collect::<Vec<_>>(),
-                   vec![Backend::Dns, Backend::Unavailable, Backend::Files, Backend::Dns]);
+        assert_eq!(
+            p.services.iter().map(|s| s.backend).collect::<Vec<_>>(),
+            vec![
+                Backend::Dns,
+                Backend::Unavailable,
+                Backend::Files,
+                Backend::Dns
+            ]
+        );
     }
 
     #[test]
@@ -292,7 +353,9 @@ mod tests {
             let mut calls = 0;
             let got = policy("files dns").lookup(|_| {
                 calls += 1;
-                if calls == 2 { return BackendResult::Success(2); }
+                if calls == 2 {
+                    return BackendResult::Success(2);
+                }
                 match status {
                     Status::Success => BackendResult::Success(1),
                     Status::NotFound => BackendResult::NotFound(-1),
@@ -326,26 +389,45 @@ mod tests {
     #[test]
     fn negation_and_case_insensitive_spaced_actions() {
         let p = policy("dns [ !UNavail = REturn TRYAGAIN = continue ] files");
-        assert_eq!(p.services[0].actions,
-                   [Action::Return, Action::Return, Action::Continue, Action::Continue]);
+        assert_eq!(
+            p.services[0].actions,
+            [
+                Action::Return,
+                Action::Return,
+                Action::Continue,
+                Action::Continue
+            ]
+        );
     }
 
     #[test]
     fn later_actions_override_negated_actions() {
         let p = policy("files [!SUCCESS=return NOTFOUND=continue] dns");
-        assert_eq!(p.services[0].actions,
-                   [Action::Return, Action::Continue, Action::Return, Action::Return]);
+        assert_eq!(
+            p.services[0].actions,
+            [
+                Action::Return,
+                Action::Continue,
+                Action::Return,
+                Action::Return
+            ]
+        );
     }
 
     #[test]
     fn success_continue_discards_payload_before_next_callback() {
         use std::cell::Cell;
         struct Value<'a>(&'a Cell<bool>);
-        impl Drop for Value<'_> { fn drop(&mut self) { self.0.set(true); } }
+        impl Drop for Value<'_> {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
         let dropped = Cell::new(false);
         let result = policy("files [SUCCESS=continue] dns").lookup(|source| {
-            if source == Backend::Files { BackendResult::Success(Value(&dropped)) }
-            else {
+            if source == Backend::Files {
+                BackendResult::Success(Value(&dropped))
+            } else {
                 assert!(dropped.get());
                 BackendResult::NotFound("terminal miss")
             }
@@ -357,7 +439,10 @@ mod tests {
     fn terminal_continue_returns_last_success_or_error() {
         let p = policy("files [!UNAVAIL=continue]");
         assert_eq!(p.lookup(|_| BackendResult::<_, ()>::Success(9)), Ok(9));
-        assert_eq!(p.lookup(|_| BackendResult::<(), _>::TryAgain(8)), Err(LookupError::Backend(8)));
+        assert_eq!(
+            p.lookup(|_| BackendResult::<(), _>::TryAgain(8)),
+            Err(LookupError::Backend(8))
+        );
     }
 
     #[test]
@@ -369,29 +454,58 @@ mod tests {
         });
         assert_eq!(result, Err(LookupError::UnsupportedMerge));
         assert_eq!(calls, 1);
-        assert_eq!(policy("files [SUCCESS=merge]").lookup(|_| BackendResult::<_, ()>::Success(7)), Err(LookupError::UnsupportedMerge));
-        assert_eq!(policy("files [SUCCESS=merge]").lookup_forward(|_| BackendResult::<_, ()>::Success(7)), Ok(7));
+        assert_eq!(
+            policy("files [SUCCESS=merge]").lookup(|_| BackendResult::<_, ()>::Success(7)),
+            Err(LookupError::UnsupportedMerge)
+        );
+        assert_eq!(
+            policy("files [SUCCESS=merge]").lookup_forward(|_| BackendResult::<_, ()>::Success(7)),
+            Ok(7)
+        );
     }
 
     #[test]
     fn malformed_actions_fail_closed() {
-        for line in ["[NOTFOUND=return] dns", "files [] dns", "files [NOTFOUND=return",
-                     "files [UNKNOWN=return] dns", "files [SUCCESS=other] dns",
-                     "files [SUCCESS return] dns", "files ] dns", "files [!=return] dns"] {
-            assert!(HostsPolicy::parse(format!("hosts: {line}\n").as_bytes()).is_err(), "{line}");
+        for line in [
+            "[NOTFOUND=return] dns",
+            "files [] dns",
+            "files [NOTFOUND=return",
+            "files [UNKNOWN=return] dns",
+            "files [SUCCESS=other] dns",
+            "files [SUCCESS return] dns",
+            "files ] dns",
+            "files [!=return] dns",
+        ] {
+            assert!(
+                HostsPolicy::parse(format!("hosts: {line}\n").as_bytes()).is_err(),
+                "{line}"
+            );
         }
     }
 
     #[test]
     fn every_action_status_and_negation_pair_has_the_expected_truth_table() {
-        for (name, status) in [("SUCCESS", Status::Success), ("NOTFOUND", Status::NotFound),
-                               ("UNAVAIL", Status::Unavailable), ("TRYAGAIN", Status::TryAgain)] {
+        for (name, status) in [
+            ("SUCCESS", Status::Success),
+            ("NOTFOUND", Status::NotFound),
+            ("UNAVAIL", Status::Unavailable),
+            ("TRYAGAIN", Status::TryAgain),
+        ] {
             for negate in [false, true] {
-                for (action_name, action) in [("return", Action::Return), ("continue", Action::Continue)] {
-                    let p = policy(&format!("files [{}{name}={action_name}] dns", if negate { "!" } else { "" }));
+                for (action_name, action) in
+                    [("return", Action::Return), ("continue", Action::Continue)]
+                {
+                    let p = policy(&format!(
+                        "files [{}{name}={action_name}] dns",
+                        if negate { "!" } else { "" }
+                    ));
                     let defaults = Service::new(Backend::Files).actions;
                     for candidate in Status::ALL {
-                        let expected = if (candidate == status) != negate { action } else { defaults[candidate as usize] };
+                        let expected = if (candidate == status) != negate {
+                            action
+                        } else {
+                            defaults[candidate as usize]
+                        };
                         assert_eq!(p.services[0].actions[candidate as usize], expected);
                     }
                 }
@@ -405,7 +519,9 @@ mod tests {
         for length in 0..512 {
             let mut bytes = b"hosts: ".to_vec();
             for _ in 0..length {
-                state ^= state << 13; state ^= state >> 7; state ^= state << 17;
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
                 bytes.push(state as u8);
             }
             if let Ok(p) = HostsPolicy::parse(&bytes) {

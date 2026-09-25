@@ -12,6 +12,7 @@ use crate::dns_transport::ResolveError;
 use crate::resolv::dns::DnsResolution;
 
 pub mod gai_policy;
+pub mod hosts_policy;
 
 use gai_policy::DestinationPolicy;
 
