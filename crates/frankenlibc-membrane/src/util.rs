@@ -363,7 +363,7 @@ impl<T> NoPoisonRwLock<T> {
 /// others drop theirs. `OnceLock` instead parks losers on a futex, and a fork
 /// taken while its initializer runs leaves the child's cell stuck "running"
 /// forever (the hazard `NoPoisonMutex` is fork-aware against).
-pub(crate) struct LazyBox<T> {
+pub struct LazyBox<T> {
     ptr: AtomicPtr<T>,
 }
 
@@ -376,14 +376,30 @@ unsafe impl<T: Send + Sync> Sync for LazyBox<T> {}
 unsafe impl<T: Send> Send for LazyBox<T> {}
 
 impl<T> LazyBox<T> {
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             ptr: AtomicPtr::new(std::ptr::null_mut()),
         }
     }
 
+    /// Already initialized with `value`.
+    pub fn new_with(value: T) -> Self {
+        Self {
+            ptr: AtomicPtr::new(Box::into_raw(Box::new(value))),
+        }
+    }
+
+    /// Exclusive access to the value, if initialized.
     #[allow(unsafe_code)]
-    pub(crate) fn get(&self) -> Option<&T> {
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        let ptr = *self.ptr.get_mut();
+        // SAFETY: `&mut self` excludes every other reference to the pointee;
+        // the pointer came from `Box::into_raw`.
+        (!ptr.is_null()).then(|| unsafe { &mut *ptr })
+    }
+
+    #[allow(unsafe_code)]
+    pub fn get(&self) -> Option<&T> {
         let ptr = self.ptr.load(Ordering::Acquire);
         // SAFETY: a non-null pointer came from `Box::into_raw` in
         // `get_or_init`, is never replaced, and is freed only by `drop`.
@@ -391,7 +407,7 @@ impl<T> LazyBox<T> {
     }
 
     #[allow(unsafe_code)]
-    pub(crate) fn get_or_init(&self, init: impl FnOnce() -> T) -> &T {
+    pub fn get_or_init(&self, init: impl FnOnce() -> T) -> &T {
         if let Some(value) = self.get() {
             return value;
         }

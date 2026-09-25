@@ -524,19 +524,46 @@ impl NativeFileLocked {
     }
 }
 
+type NativeFileLock = crate::util::AbiReentrantMutex<RefCell<NativeFileLocked>>;
+
 struct NativeFileState {
-    locked: Box<crate::util::AbiReentrantMutex<RefCell<NativeFileLocked>>>,
+    /// Built at construction for a real stream; for an empty registry slot,
+    /// on first touch. Every process's registry has 256 slots, and boxing a
+    /// lock for each at startup was 256 host mallocs plus 256 fallback-table
+    /// inserts (allocations before runtime-ready go to the host allocator)
+    /// per process start (bd-rc0923-epic-eeuy4f.25).
+    locked: frankenlibc_membrane::util::LazyBox<NativeFileLock>,
     orientation: AtomicI8,
 }
 
 impl NativeFileState {
     fn new(fd: c_int, open_flags: u32, buf_mode: NativeFileBufMode) -> Self {
         Self {
-            locked: Box::new(crate::util::AbiReentrantMutex::new(RefCell::new(
-                NativeFileLocked::new(fd, open_flags, buf_mode),
-            ))),
+            locked: frankenlibc_membrane::util::LazyBox::new_with(
+                crate::util::AbiReentrantMutex::new(RefCell::new(NativeFileLocked::new(
+                    fd, open_flags, buf_mode,
+                ))),
+            ),
             orientation: AtomicI8::new(0),
         }
+    }
+
+    /// An empty registry slot: no lock until one is needed.
+    fn empty_slot() -> Self {
+        Self {
+            locked: frankenlibc_membrane::util::LazyBox::new(),
+            orientation: AtomicI8::new(0),
+        }
+    }
+
+    /// The lock, creating an empty slot's (in the invalidated state an empty
+    /// slot had always been built with) on first use.
+    fn lock(&self) -> &NativeFileLock {
+        self.locked.get_or_init(|| {
+            let mut state = NativeFileLocked::new(-1, 0, NativeFileBufMode::None);
+            NativeFile::reset_locked_state(&mut state);
+            crate::util::AbiReentrantMutex::new(RefCell::new(state))
+        })
     }
 
     fn new_with_backing(
@@ -545,15 +572,20 @@ impl NativeFileState {
         buf_mode: NativeFileBufMode,
     ) -> Self {
         Self {
-            locked: Box::new(crate::util::AbiReentrantMutex::new(RefCell::new(
-                NativeFileLocked::new_with_backing(backing, open_flags, buf_mode),
-            ))),
+            locked: frankenlibc_membrane::util::LazyBox::new_with(
+                crate::util::AbiReentrantMutex::new(RefCell::new(
+                    NativeFileLocked::new_with_backing(backing, open_flags, buf_mode),
+                )),
+            ),
             orientation: AtomicI8::new(0),
         }
     }
 
+    /// `_IO_FILE::_lock`: null for an empty slot that never needed a lock.
     fn lock_ptr(&self) -> *mut c_void {
-        self.locked.opaque_ptr()
+        self.locked
+            .get()
+            .map_or(ptr::null_mut(), |lock| lock.opaque_ptr())
     }
 }
 
@@ -739,6 +771,15 @@ impl NativeFile {
         file
     }
 
+    /// An empty registry slot, without a lock until one is needed.
+    fn new_empty_slot() -> Self {
+        Self {
+            _io_file: _IO_FILE_Layout::new(-1),
+            vtable: ptr::addr_of!(NATIVE_IO_JUMP_T) as *mut _IO_jump_t,
+            _frankenlibc_state: NativeFileState::empty_slot(),
+        }
+    }
+
     /// Create a new `NativeFile` with custom backing storage.
     ///
     /// Used for memory-backed streams (fmemopen, open_memstream).
@@ -758,13 +799,13 @@ impl NativeFile {
     }
 
     fn with_locked<R>(&self, f: impl FnOnce(&NativeFileLocked) -> R) -> R {
-        let guard = self._frankenlibc_state.locked.lock();
+        let guard = self._frankenlibc_state.lock().lock();
         let state = guard.borrow();
         f(&state)
     }
 
     fn with_locked_mut<R>(&self, f: impl FnOnce(&mut NativeFileLocked) -> R) -> R {
-        let guard = self._frankenlibc_state.locked.lock();
+        let guard = self._frankenlibc_state.lock().lock();
         let mut state = guard.borrow_mut();
         f(&mut state)
     }
@@ -797,7 +838,9 @@ impl NativeFile {
     /// were 512 of the ~700 syscalls of every process's startup
     /// (bd-rc0923-epic-eeuy4f.25).
     fn invalidate_unshared(&mut self) {
-        Self::reset_locked_state(self._frankenlibc_state.locked.get_mut().get_mut());
+        if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
+            Self::reset_locked_state(lock.get_mut().get_mut());
+        }
         self.reset_unlocked_fields();
     }
 
@@ -991,7 +1034,7 @@ impl NativeFile {
     /// the same number of times to release the lock.
     #[inline]
     pub fn explicit_lock(&self) {
-        let guard = self._frankenlibc_state.locked.lock();
+        let guard = self._frankenlibc_state.lock().lock();
         // Forget the guard to keep the lock held.
         std::mem::forget(guard);
     }
@@ -1002,7 +1045,7 @@ impl NativeFile {
     /// If successful, the caller must call `explicit_unlock()` to release.
     #[inline]
     pub fn try_explicit_lock(&self) -> bool {
-        if let Some(guard) = self._frankenlibc_state.locked.try_lock() {
+        if let Some(guard) = self._frankenlibc_state.lock().try_lock() {
             std::mem::forget(guard);
             true
         } else {
@@ -1018,7 +1061,7 @@ impl NativeFile {
     #[inline]
     pub unsafe fn explicit_unlock(&self) {
         // SAFETY: the caller promises a matching explicit lock acquisition.
-        unsafe { self._frankenlibc_state.locked.unlock_forgotten_guard() };
+        unsafe { self._frankenlibc_state.lock().unlock_forgotten_guard() };
     }
 
     /// Returns `true` if the stream is readable.
@@ -1309,7 +1352,7 @@ struct StreamSlot {
 
 impl StreamSlot {
     fn empty() -> Self {
-        let mut file = NativeFile::new(-1, 0, NativeFileBufMode::None);
+        let mut file = NativeFile::new_empty_slot();
         file.invalidate_unshared();
         Self {
             state: SLOT_FREE,
