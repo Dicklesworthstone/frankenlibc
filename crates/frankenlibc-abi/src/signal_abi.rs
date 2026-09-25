@@ -533,6 +533,15 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
         let mut out = Vec::new();
         for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
             let slot = &pending[signum as usize];
+            // A plain load first: every critical-section exit (every malloc
+            // and free) scans all slots, and 64 unconditional atomic swaps were
+            // the largest cost of hardened malloc+free once the HJI loop was
+            // gone (bd-rc0923-epic-eeuy4f.9). Only this thread and its own
+            // signal handlers touch these slots, and a handler that runs
+            // between the load and the swap is caught by the swap.
+            if slot.count.load(Ordering::Relaxed) == 0 {
+                continue;
+            }
             let count = slot.count.swap(0, Ordering::Relaxed);
             if count != 0 {
                 let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
