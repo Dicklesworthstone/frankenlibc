@@ -34,6 +34,7 @@ __asm__(".text\n"
 "#;
 
 const DRIVER: &str = r#"
+#include <thread>
 using Action = void (*)(void *);
 using Register = int (*)(Action, void *, void *);
 using Finalize = void (*)(void *);
@@ -48,13 +49,22 @@ struct Payload {
     Action bridge;
     void *token;
     Payload *append;
-    bool recurse;
+    bool recurse, other_thread;
 };
 static void dispatch(void *raw) {
     auto &p = *static_cast<Payload *>(raw);
     ++p.calls;
     *p.order = *p.order * 10 + p.id;
-    if (p.append && p.add(p.bridge, p.append, p.token) != 0) throw Marker{-99};
+    if (p.append) {
+        int error = 0;
+        if (p.other_thread) {
+            std::thread worker([&] { error = p.add(p.bridge, p.append, p.token); });
+            worker.join();
+        } else {
+            error = p.add(p.bridge, p.append, p.token);
+        }
+        if (error != 0) throw Marker{-99};
+    }
     if (p.recurse) p.finish(p.token);
     if (p.exception) throw Marker{p.exception};
 }
@@ -77,11 +87,12 @@ extern "C" int exercise(void *add_address, void *finish_address,
     int order = 0;
     auto make = [&](int id) {
         return Payload{dispatch, id, 0, &order, 0, finish, add, bridge,
-                       token, nullptr, false};
+                       token, nullptr, false, false};
     };
     Payload older = make(1), throwing = make(2), newer = make(3), recursive = make(3);
     throwing.exception = 73;
-    throwing.append = scenario == 1 ? &newer : nullptr;
+    throwing.append = (scenario == 1 || scenario == 3) ? &newer : nullptr;
+    throwing.other_thread = scenario == 3;
     recursive.recurse = true;
     Drain cleanup{finish, token};
     try {
@@ -112,7 +123,7 @@ fn compile(directory: &Path, source: &str, cpp: bool, stem: &str) -> PathBuf {
     let mut command = Command::new(if cpp { "c++" } else { "cc" });
     command.args(["-shared", "-fPIC", "-O2", "-Wl,--build-id=none"]);
     if cpp {
-        command.args(["-std=c++17", "-fexceptions"]);
+        command.args(["-std=c++17", "-fexceptions", "-pthread"]);
     } else {
         command.args(["-nostdlib", "-fno-stack-protector"]);
     }
@@ -225,7 +236,7 @@ fn native_finalize_unwind_worker() {
         assert!(!address.is_null());
         let exercise: Exercise = std::mem::transmute(address);
         for null_token in [false, true] {
-            for scenario in 0..3 {
+            for scenario in 0..4 {
                 let provider = open_native(&provider_path);
                 let owner = open_native(&owner_path);
                 assert_ne!(
@@ -284,5 +295,5 @@ fn native_finalize_unwind_worker() {
         }
         assert_eq!(host_close(driver), 0);
     }
-    println!("validated native C++ finalizer unwinding: 3 host and 6 native cases");
+    println!("validated native C++ finalizer unwinding: 4 host and 8 native cases");
 }
