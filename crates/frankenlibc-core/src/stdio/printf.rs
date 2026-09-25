@@ -627,12 +627,19 @@ impl FormatSpec {
                 alt: self.flags.alt_form,
                 zero: false,
             };
-            let rendered = crate::float128::format_x87(bytes, &bare);
+            let mut rendered = crate::float128::format_x87(bytes, &bare);
+            // The radix first: it may be the very byte the separator is.
+            let mut uncounted = 0;
+            if let Some(dp) = DecimalPoint::active() {
+                dp.replace_in(&mut rendered);
+                uncounted += dp.len - 1;
+            }
             let (sign, body) = match rendered.first() {
                 Some(&s @ (b'-' | b'+' | b' ')) => (Some(s), &rendered[1..]),
                 _ => (None, &rendered[..]),
             };
-            pad_float_body(buf, sign, &g.group_leading_digits(body), self);
+            uncounted += g.uncounted_in_float(body);
+            pad_float_body(buf, sign, &g.group_leading_digits(body), uncounted, self);
             return true;
         }
         let spec = crate::float128::FmtSpec {
@@ -654,7 +661,11 @@ impl FormatSpec {
             alt: self.flags.alt_form,
             zero: self.flags.zero_pad,
         };
+        let start = buf.len();
         buf.extend_from_slice(&crate::float128::format_x87(bytes, &spec));
+        if let Some(dp) = DecimalPoint::active() {
+            dp.localize(buf, start);
+        }
         true
     }
 
@@ -1468,6 +1479,86 @@ pub fn set_numeric_grouping(separator: &[u8], grouping: &[u8]) {
     GROUPING_SEPARATOR.store(sep, Ordering::Relaxed);
 }
 
+/// The active LC_NUMERIC `decimal_point` when it is not ".": bytes in the low
+/// seven bytes, length in the top byte. Zero: "." (the C locale's).
+static DECIMAL_POINT: AtomicU64 = AtomicU64::new(0);
+
+/// Install LC_NUMERIC's `decimal_point`, the radix character every float
+/// conversion prints (glibc: `%f`, `%e`, `%g` and `%a` alike). "." or an
+/// unrepresentable (over seven bytes) value restores the C radix.
+pub fn set_numeric_decimal_point(decimal_point: &[u8]) {
+    let mut packed = 0u64;
+    if decimal_point != b"." && !decimal_point.is_empty() && decimal_point.len() <= 7 {
+        for (i, &b) in decimal_point.iter().enumerate() {
+            packed |= u64::from(b) << (8 * i);
+        }
+        packed |= (decimal_point.len() as u64) << 56;
+    }
+    DECIMAL_POINT.store(packed, Ordering::Relaxed);
+}
+
+/// Whether floats print the C locale's "." radix, so a renderer that writes
+/// "." itself (the ABI's direct `%f` path) may run.
+#[inline]
+pub fn numeric_radix_is_dot() -> bool {
+    DECIMAL_POINT.load(Ordering::Relaxed) == 0
+}
+
+/// A radix character other than ".".
+#[derive(Clone, Copy)]
+struct DecimalPoint {
+    bytes: [u8; 7],
+    len: usize,
+}
+
+impl DecimalPoint {
+    #[inline]
+    fn active() -> Option<Self> {
+        let packed = DECIMAL_POINT.load(Ordering::Relaxed);
+        if packed == 0 {
+            return None;
+        }
+        let mut bytes = [0u8; 7];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = (packed >> (8 * i)) as u8;
+        }
+        Some(Self {
+            bytes,
+            len: (packed >> 56) as usize,
+        })
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.len]
+    }
+
+    /// Replace the rendered radix "." (a float has at most one) in `body`.
+    fn replace_in(&self, body: &mut Vec<u8>) {
+        if let Some(at) = body.iter().position(|&b| b == b'.') {
+            body.splice(at..=at, self.as_bytes().iter().copied());
+        }
+    }
+
+    /// `replace_in` for a float already emitted, padded, at `buf[start..]`. A
+    /// multi-byte radix gives back as many padding spaces as it adds, so the
+    /// field keeps its width.
+    fn localize(&self, buf: &mut Vec<u8>, start: usize) {
+        let Some(at) = buf[start..].iter().position(|&b| b == b'.') else {
+            return;
+        };
+        buf.splice(start + at..=start + at, self.as_bytes().iter().copied());
+        let mut extra = self.len - 1;
+        while extra > 0 && buf.len() > start && buf[start] == b' ' {
+            buf.remove(start);
+            extra -= 1;
+        }
+        while extra > 0 && buf.last() == Some(&b' ') {
+            buf.pop();
+            extra -= 1;
+        }
+    }
+}
+
 /// The separator and grouping sizes the `'` flag applies, if any.
 #[derive(Clone, Copy)]
 struct NumericGrouping {
@@ -1560,12 +1651,28 @@ impl NumericGrouping {
         out.extend_from_slice(&body[digits..]);
         out
     }
+
+    /// Bytes a grouped float's field width does not count: glibc lays floats
+    /// out in wide characters, so each multi-byte separator counts as one.
+    /// (Integers count bytes; glibc differs between the two, and so must we.)
+    fn uncounted_in_float(&self, body: &[u8]) -> usize {
+        let digits = body.iter().take_while(|b| b.is_ascii_digit()).count();
+        (self.group_sizes(digits).len() - 1) * (self.separator_len - 1)
+    }
 }
 
 /// Emit a float's `sign` and already-grouped `body` under `spec`'s width,
 /// justification and zero padding (the padding itself is never grouped).
-fn pad_float_body(buf: &mut Vec<u8>, sign: Option<u8>, body: &[u8], spec: &FormatSpec) {
-    let content_len = sign.is_some() as usize + body.len();
+/// `uncounted` bytes of `body` do not count toward the width: the extra bytes
+/// of multi-byte separators and radix, each of which glibc counts as one.
+fn pad_float_body(
+    buf: &mut Vec<u8>,
+    sign: Option<u8>,
+    body: &[u8],
+    uncounted: usize,
+    spec: &FormatSpec,
+) {
+    let content_len = sign.is_some() as usize + body.len() - uncounted;
     let pad_total = resolve_width(spec).saturating_sub(content_len);
     // Zero padding does not apply to inf/nan, which reach here only via %Lf.
     let zero_pad = spec.flags.zero_pad && body.first().is_some_and(u8::is_ascii_digit);
@@ -1777,6 +1884,32 @@ impl core::fmt::Write for VecWriter<'_> {
 /// Uses Rust's `format!` machinery internally for digit generation,
 /// then applies POSIX width/flag rules.
 pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
+    let start = buf.len();
+    format_float_with_dot(value, spec, buf);
+    // The grouped path substitutes the radix itself, before grouping: the
+    // separator can be "." (de_DE), which a later search would find first.
+    if let Some(dp) = DecimalPoint::active()
+        && float_grouping(spec).is_none()
+    {
+        dp.localize(buf, start);
+    }
+}
+
+/// The grouping the `'` flag applies to a float `spec`: the integer part of
+/// %f/%F/%g/%G (never %e/%a, whose integer part is one digit or hex).
+fn float_grouping(spec: &FormatSpec) -> Option<NumericGrouping> {
+    NumericGrouping::for_spec(spec).filter(|_| {
+        matches!(
+            spec.raw_render_kind(),
+            Some(RawValueRenderKind::Float(
+                FloatFormatKind::Fixed | FloatFormatKind::General
+            ))
+        )
+    })
+}
+
+/// [`format_float`] with the C locale's "." radix.
+fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
         Precision::Fixed(p) => p,
         Precision::None => 6, // POSIX default
@@ -1829,16 +1962,8 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let negative = value.is_sign_negative();
     let abs = value.abs();
 
-    // The `'` flag groups the integer part of %f/%F/%g/%G (never %e/%a, whose
-    // integer part is one digit or hex). Rendered by the general path below.
-    let grouping = NumericGrouping::for_spec(spec).filter(|_| {
-        matches!(
-            spec.raw_render_kind(),
-            Some(RawValueRenderKind::Float(
-                FloatFormatKind::Fixed | FloatFormatKind::General
-            ))
-        )
-    });
+    // Grouped floats are rendered by the general path below.
+    let grouping = float_grouping(spec);
 
     // Fast path: bare fixed-point %f with precision>=1 and no field width.
     // For precision>=1, format_f is exactly `format!("{:.prec$}", abs)` (alt_form
@@ -2047,7 +2172,14 @@ pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     };
 
     if let Some(g) = grouping {
-        pad_float_body(buf, sign, &g.group_leading_digits(body.as_bytes()), spec);
+        let mut body = body.into_bytes();
+        let mut uncounted = 0;
+        if let Some(dp) = DecimalPoint::active() {
+            dp.replace_in(&mut body);
+            uncounted += dp.len - 1;
+        }
+        uncounted += g.uncounted_in_float(&body);
+        pad_float_body(buf, sign, &g.group_leading_digits(&body), uncounted, spec);
         return;
     }
 

@@ -6919,6 +6919,11 @@ const _: () = assert!(
 /// 87.5 ns fixed term. That is what this probe removes.
 #[inline]
 unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
+    // The direct renderer writes ".": under an LC_NUMERIC whose radix differs
+    // (de_DE's ','), the general path localizes it.
+    if !frankenlibc_core::stdio::printf::numeric_radix_is_dot() {
+        return None;
+    }
     let f = format.cast::<u8>();
     // SAFETY: `format` is non-null and C's printf contract requires a
     // NUL-terminated format string, so scanning to the first NUL is in bounds.

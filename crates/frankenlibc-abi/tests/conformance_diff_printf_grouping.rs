@@ -108,6 +108,39 @@ const CASES: &[(&CStr, Arg)] = &[
     (c"%'.3f", Arg::Double(0.5)),
 ];
 
+/// The radix without grouping: every float conversion prints LC_NUMERIC's
+/// `decimal_point` (glibc: `%a` included).
+const RADIX_CASES: &[(&CStr, Arg)] = &[
+    (c"%f", Arg::Double(1.5)),
+    (c"%.3e", Arg::Double(12345.678)),
+    (c"%g", Arg::Double(0.25)),
+    (c"%a", Arg::Double(1.5)),
+    (c"%.0f", Arg::Double(2.0)),
+    (c"%#.0f", Arg::Double(2.0)),
+    (c"%10.2f|", Arg::Double(-3.25)),
+    (c"%-10.2f|", Arg::Double(3.25)),
+    (c"%010.2f", Arg::Double(-3.25)),
+    (c"%f", Arg::Double(f64::NAN)),
+];
+
+/// Compile `locales` from the host's sources into a fresh LOCPATH, or say why
+/// not.
+fn compiled_locpath(locales: &[&str]) -> Result<std::path::PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!("fl_printf_locpath_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create {dir:?}: {e}"))?;
+    for name in locales {
+        let status = std::process::Command::new("localedef")
+            .args(["-i", name, "-f", "UTF-8"])
+            .arg(dir.join(format!("{name}.UTF-8")))
+            .status()
+            .map_err(|e| format!("localedef not runnable: {e}"))?;
+        if !status.success() {
+            return Err(format!("localedef -i {name} failed: {status}"));
+        }
+    }
+    Ok(dir)
+}
+
 #[test]
 fn printf_grouping_flag_matches_glibc_under_en_us_and_c() {
     let (host_set, host_snp) = (host_setlocale(), host_snprintf());
@@ -152,8 +185,45 @@ fn printf_grouping_flag_matches_glibc_under_en_us_and_c() {
         }
     }
 
+    // Locales whose radix is ',' and whose separator is '.' (de_DE) or the
+    // three-byte U+202F (fr_FR): the radix must be substituted before grouping,
+    // and a float's width counts a multi-byte separator as one (glibc lays
+    // floats out in wide characters).
+    let mut radix_rows = 0usize;
+    match compiled_locpath(&["de_DE", "fr_FR"]) {
+        Err(why) => println!("SKIP de_DE/fr_FR: {why}"),
+        Ok(locpath) => {
+            // SAFETY: single test in this binary; no other thread reads the
+            // environment concurrently.
+            unsafe { std::env::set_var("LOCPATH", &locpath) };
+            for name in [c"de_DE.UTF-8", c"fr_FR.UTF-8"] {
+                // SAFETY: as above.
+                let h = !unsafe { host_set(libc::LC_ALL, name.as_ptr()) }.is_null();
+                // SAFETY: as above.
+                let m =
+                    !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, name.as_ptr()) }
+                        .is_null();
+                assert!(h && m, "{name:?} did not load: glibc {h}, fl {m}");
+                for &(fmt, arg) in CASES.iter().chain(RADIX_CASES) {
+                    let (h, m) = (render(host_snp, fmt, arg), render(fl_snp, fmt, arg));
+                    if h.contains(',') && !h.contains('.') {
+                        radix_rows += 1;
+                    }
+                    if h != m {
+                        bad.push(format!("{name:?} {fmt:?}: glibc {h:?}, fl {m:?}"));
+                    }
+                }
+            }
+            // SAFETY: as above.
+            unsafe {
+                host_set(libc::LC_ALL, c"C".as_ptr());
+                frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr());
+            }
+        }
+    }
+
     println!(
-        "{} cases x 2 locales; {grouped} grouped under en_US",
+        "{} cases x 2 locales; {grouped} grouped under en_US; {radix_rows} ',' radix rows",
         CASES.len()
     );
     // Non-vacuity: without grouped rows this would pass with the flag ignored.

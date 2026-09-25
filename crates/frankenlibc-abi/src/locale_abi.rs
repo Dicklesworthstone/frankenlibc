@@ -506,8 +506,8 @@ fn apply_category(category: c_int, resolved: Resolved) {
         return;
     };
     if category == locale_core::LC_NUMERIC {
-        // The printf `'` flag groups with LC_NUMERIC's separator and sizes.
-        let (separator, grouping) = match &resolved {
+        // printf's radix, and the `'` flag's separator and group sizes.
+        let (decimal_point, separator, grouping) = match &resolved {
             Resolved::Named(n) => {
                 let field = |index: usize| -> &'static [u8] {
                     n.blob.offset(index).map_or(&[], |off| {
@@ -515,10 +515,11 @@ fn apply_category(category: c_int, resolved: Resolved) {
                         &bytes[..bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len())]
                     })
                 };
-                (field(1), field(2))
+                (field(0), field(1), field(2))
             }
-            Resolved::Builtin(_) => (&[][..], &[][..]),
+            Resolved::Builtin(_) => (&b"."[..], &[][..], &[][..]),
         };
+        frankenlibc_core::stdio::printf::set_numeric_decimal_point(decimal_point);
         frankenlibc_core::stdio::printf::set_numeric_grouping(separator, grouping);
     }
     match resolved {
