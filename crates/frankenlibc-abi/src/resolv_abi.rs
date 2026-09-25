@@ -2669,12 +2669,12 @@ fn native_dns_resolve(
         })
 }
 
-/// IPv4 reverse lookup through the nsswitch `hosts:` sources
+/// Reverse lookup through the nsswitch `hosts:` sources
 /// (bd-rc0923-epic-eeuy4f.19). `write` stores the found hostname; the files
 /// source calls it inside the hosts-file borrow, so a hit stays
 /// allocation-free.
 fn reverse_hosts_lookup<T>(
-    ip: std::net::Ipv4Addr,
+    address: std::net::IpAddr,
     ip_str: &[u8],
     write: impl Fn(&[u8]) -> T,
 ) -> Result<T, c_int> {
@@ -2689,14 +2689,12 @@ fn reverse_hosts_lookup<T>(
                 Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
             },
             // The backend snapshot borrow ends before network I/O.
-            Backend::Dns => {
-                match dns_backend_result(native_dns_reverse_host(std::net::IpAddr::V4(ip))) {
-                    BackendResult::Success(hostname) => BackendResult::Success(write(&hostname)),
-                    BackendResult::NotFound(code) => BackendResult::NotFound(code),
-                    BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
-                    BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
-                }
-            }
+            Backend::Dns => match dns_backend_result(native_dns_reverse_host(address)) {
+                BackendResult::Success(hostname) => BackendResult::Success(write(&hostname)),
+                BackendResult::NotFound(code) => BackendResult::NotFound(code),
+                BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
+                BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
+            },
             Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
         })
         .map_err(hosts_lookup_error_code)
@@ -3547,7 +3545,6 @@ unsafe fn getnameinfo_strict_fast(
 /// Files-first reverse resolution shared by the protocol-independent ABI.
 /// A failed DNS lookup never manufactures a hostname, even in hardened mode.
 fn native_reverse_name(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
-    use frankenlibc_core::dns_transport::ResolveError;
     let address = match address {
         std::net::IpAddr::V6(ip) => ip
             .to_ipv4_mapped()
@@ -3556,22 +3553,10 @@ fn native_reverse_name(address: std::net::IpAddr) -> Result<Vec<u8>, c_int> {
         _ => address,
     };
     let numeric = address.to_string();
-    if let Ok(Some(name)) = with_hosts_backend_snapshot(|content, _| {
-        frankenlibc_core::resolv::first_reverse_hosts_hostname(content, numeric.as_bytes())
-            .map(ToOwned::to_owned)
-    }) {
-        return Ok(name);
-    }
-    let config = std::fs::read("/etc/resolv.conf")
-        .map(|bytes| frankenlibc_core::resolv::ResolverConfig::parse(&bytes))
-        .unwrap_or_default();
-    frankenlibc_core::dns_transport::reverse_with(address, &config, native_dns_query).map_err(
-        |error| match error {
-            ResolveError::NotFound => libc::EAI_NONAME,
-            ResolveError::Temporary => libc::EAI_AGAIN,
-            ResolveError::Failure => libc::EAI_FAIL,
-        },
-    )
+    // The same nsswitch `hosts:` policy and resolver config as the other
+    // host lookups (bd-rc0923-epic-eeuy4f.19); this path had read
+    // /etc/resolv.conf directly, ignoring FRANKENLIBC_RESOLV_CONF.
+    reverse_hosts_lookup(address, numeric.as_bytes(), ToOwned::to_owned)
 }
 
 /// NI_NOFQDN shortens a name only in this machine's domain, not every FQDN.
@@ -4433,7 +4418,7 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     // hostnames) on every line, then built an owned result vector — of which only `[0]` was used.
     // First-matching-line-wins and address validation are unchanged.
     // Files misses and read errors now fall through to native PTR lookup.
-    let written = match reverse_hosts_lookup(ip, ip_str, |hostname| {
+    let written = match reverse_hosts_lookup(std::net::IpAddr::V4(ip), ip_str, |hostname| {
         // SAFETY: caller-provided output buffers; the writer checks their bounds.
         unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) }
     }) {
@@ -4514,7 +4499,7 @@ pub unsafe extern "C" fn gethostbyaddr(
     // Borrowed + allocation-free reverse walk; see `gethostbyaddr_r` above. Populate thread-local
     // hostent storage with the first matching hostname, inside the backend borrow (a different
     // thread-local, so the two borrows do not conflict).
-    let hostent_ptr = match reverse_hosts_lookup(ip, ip_str, |hostname| {
+    let hostent_ptr = match reverse_hosts_lookup(std::net::IpAddr::V4(ip), ip_str, |hostname| {
         // SAFETY: copies the name into TLS hostent storage (a different
         // thread-local from the hosts backend) and retains the address.
         unsafe { populate_tls_hostent(hostname, ip) }
