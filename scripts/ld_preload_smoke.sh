@@ -695,7 +695,7 @@ run_optional_case() {
 # case that PASSES fails the run, so the entry must be removed with the fix.
 # Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
 # is XPASS (a failure) so the entry is removed once fixed.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-strict:fork_multithreaded_parent=bd-rc0923-epic-eeuy4f.25}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
 xfails=0
 
 known_failure_bead() {
