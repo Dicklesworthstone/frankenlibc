@@ -1308,8 +1308,12 @@ fn posix_spawnp_with_echo() {
     assert_eq!(libc::WEXITSTATUS(status), 0);
 }
 
+/// glibc's posix_spawnp searches the CALLER's PATH, not a PATH in the envp
+/// handed to the new program (live differential, 2026-09-25: envp-only PATH
+/// -> EACCES under both glibc and fl; caller PATH -> 0). This test had
+/// asserted the opposite since before 81d8fa739 aligned the search with glibc.
 #[test]
-fn posix_spawnp_searches_path_from_envp() {
+fn posix_spawnp_ignores_path_in_supplied_envp() {
     let _lock = FORK_WAIT_ANY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let uniq = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1339,17 +1343,10 @@ fn posix_spawnp_searches_path_from_envp() {
         )
     };
 
-    assert_eq!(
+    assert_ne!(
         rc, 0,
-        "posix_spawnp should search PATH from the supplied envp"
+        "posix_spawnp must not search a PATH that only the supplied envp names"
     );
-    assert!(pid > 0, "spawned child pid must be populated on success");
-
-    let mut status: c_int = 0;
-    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid);
-    assert!(libc::WIFEXITED(status));
-    assert_eq!(libc::WEXITSTATUS(status), 0);
 
     let _ = std::fs::remove_file(&cmd_path);
     let _ = std::fs::remove_dir(&base);
