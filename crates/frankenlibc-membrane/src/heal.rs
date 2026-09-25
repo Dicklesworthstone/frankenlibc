@@ -248,6 +248,7 @@ impl HealingPolicy {
     }
 
     fn push_healing_log_line(&self, line: String) {
+        append_to_runtime_log(&line);
         let mut logs = self.healing_logs.lock();
         while logs.len() >= HEALING_LOG_CAPACITY {
             let _ = logs.pop_front();
@@ -293,6 +294,49 @@ fn heal_logging_enabled_by_default() -> bool {
         ),
         Err(_) => true,
     }
+}
+
+/// The `FRANKENLIBC_LOG` JSONL file, opened on the first heal after the
+/// variable is found set. `None` inside means unset or unopenable.
+static RUNTIME_LOG: crate::util::LazyBox<Option<std::fs::File>> = crate::util::LazyBox::new();
+
+thread_local! {
+    /// Set while this thread writes a log line: the write goes through this
+    /// libc's own `write`, and a heal recorded there must not recurse.
+    static WRITING_RUNTIME_LOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Append one evidence line to the `FRANKENLIBC_LOG` file, if set.
+///
+/// README documents `FRANKENLIBC_LOG=/tmp/franken.jsonl` as the structured
+/// runtime log, but healing evidence only ever reached an in-memory ring that
+/// nothing outside tests drained (bd-rc0923-epic-eeuy4f.16). Lines are
+/// appended whole (`O_APPEND`, one write per line) so concurrent writers and
+/// processes interleave only at line boundaries.
+fn append_to_runtime_log(line: &str) {
+    if WRITING_RUNTIME_LOG.with(|writing| writing.replace(true)) {
+        return;
+    }
+    let file = RUNTIME_LOG.get_or_init(|| {
+        let path = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty())?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()
+    });
+    if let Some(file) = file {
+        append_line(file, line);
+    }
+    WRITING_RUNTIME_LOG.with(|writing| writing.set(false));
+}
+
+fn append_line(mut file: &std::fs::File, line: &str) {
+    use std::io::Write as _;
+    let mut record = String::with_capacity(line.len() + 1);
+    record.push_str(line);
+    record.push('\n');
+    let _ = file.write_all(record.as_bytes());
 }
 
 fn healing_log_level(action: &HealingAction) -> &'static str {
@@ -406,6 +450,27 @@ pub fn initialized_healing_policy() -> Option<&'static HealingPolicy> {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    /// The FRANKENLIBC_LOG sink appends whole newline-terminated lines and
+    /// keeps what the file already held (bd-rc0923-epic-eeuy4f.16).
+    #[test]
+    fn runtime_log_appends_whole_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "frankenlibc-heal-log-{}-{:?}.jsonl",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, "{\"existing\":1}\n").unwrap();
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        append_line(&file, "{\"a\":1}");
+        append_line(&file, "{\"b\":2}");
+        let written = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(written, "{\"existing\":1}\n{\"a\":1}\n{\"b\":2}\n");
+    }
 
     #[test]
     fn clamp_size_when_exceeding_bounds() {
