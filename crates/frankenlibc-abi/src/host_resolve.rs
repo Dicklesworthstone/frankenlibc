@@ -201,6 +201,68 @@ fn find_glibc_image_via_maps() -> Option<(usize, [u8; 512])> {
     find_image_via_maps("libc.so")
 }
 
+/// The prefix of glibc's `struct link_map` that the loader documents in
+/// `<link.h>`.
+#[repr(C)]
+struct LinkMapHead {
+    l_addr: usize,
+    l_name: *const c_char,
+    l_ld: *const c_void,
+    l_next: *const LinkMapHead,
+    l_prev: *const LinkMapHead,
+}
+
+/// The prefix of `struct r_debug` (`<link.h>`).
+#[repr(C)]
+struct RDebugHead {
+    r_version: libc::c_int,
+    r_map: *const LinkMapHead,
+}
+
+#[cfg(not(feature = "standalone"))]
+unsafe extern "C" {
+    /// The dynamic loader's debugger interface, exported by ld.so.
+    static _r_debug: RDebugHead;
+}
+
+/// Find a loaded object whose path contains `needle` by walking the loader's
+/// link map. Plain memory reads: the `/proc/self/maps` scan it replaces made
+/// the kernel format every mapping of the process, ~4% of a preloaded
+/// process's startup cycles (bd-rc0923-epic-eeuy4f.25). The link map is
+/// complete before any constructor or first call reaches this code.
+#[cfg(not(feature = "standalone"))]
+fn find_image_via_link_map(needle: &[u8]) -> Option<(usize, [u8; 512])> {
+    // SAFETY: `_r_debug` is ld.so's statically allocated debugger interface;
+    // r_map and every l_next/l_name it reaches stay valid while their objects
+    // are loaded (all of the initial objects, for the process lifetime).
+    let mut node = unsafe { (*core::ptr::addr_of!(_r_debug)).r_map };
+    for _ in 0..4096 {
+        if node.is_null() {
+            return None;
+        }
+        // SAFETY: as above.
+        let entry = unsafe { &*node };
+        if !entry.l_name.is_null()
+            && let Some(len) = unsafe { bounded_c_string_len(entry.l_name, 512) }
+        {
+            // SAFETY: bounded_c_string_len found a terminator within `len + 1`.
+            let name = unsafe { std::slice::from_raw_parts(entry.l_name.cast::<u8>(), len) };
+            if entry.l_addr != 0 && contains_bytes(name, needle) {
+                let mut path = [0u8; 512];
+                path[..len.min(511)].copy_from_slice(&name[..len.min(511)]);
+                return Some((entry.l_addr, path));
+            }
+        }
+        node = entry.l_next;
+    }
+    None
+}
+
+#[cfg(feature = "standalone")]
+fn find_image_via_link_map(_needle: &[u8]) -> Option<(usize, [u8; 512])> {
+    None
+}
+
 fn find_loader_image_via_maps() -> Option<(usize, [u8; 512])> {
     find_image_via_maps("ld-linux")
 }
@@ -230,7 +292,9 @@ fn loaded_glibc_image() -> Option<(usize, [u8; 512])> {
     // Prefer the raw `/proc/self/maps` scan during bootstrap. Calling
     // `dl_iterate_phdr` before we have already cached the host implementation
     // can recurse back through our own interposed loader ABI.
-    find_glibc_image_via_maps().or_else(find_glibc_image_via_phdr)
+    find_image_via_link_map(b"libc.so")
+        .or_else(find_glibc_image_via_maps)
+        .or_else(find_glibc_image_via_phdr)
 }
 
 struct LoadedGlibcImage {
@@ -539,7 +603,7 @@ fn load_loader_image() -> Option<&'static LoadedGlibcImage> {
     if let Some(image) = HOST_LOADER_IMAGE.get() {
         return Some(image);
     }
-    let (base, path) = find_loader_image_via_maps()?;
+    let (base, path) = find_image_via_link_map(b"ld-linux").or_else(find_loader_image_via_maps)?;
     let fd = unsafe { raw_open(path.as_ptr()) };
     if fd < 0 {
         return None;
