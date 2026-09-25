@@ -3,7 +3,7 @@
 //! Validates via `frankenlibc_core::signal` helpers, then calls `libc` for
 //! actual signal delivery.
 
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::UnsafeCell;
 use std::ffi::{c_int, c_void};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -196,6 +196,8 @@ pub enum SignalCriticalSectionKind {
 }
 
 impl SignalCriticalSectionKind {
+    const COUNT: usize = Self::StdioRegistryFlush as usize + 1;
+
     const fn risk_ppm(self) -> u32 {
         match self {
             Self::MallocArenaLockAcquire => 820_000,
@@ -361,7 +363,6 @@ struct SignalTls {
     critical_depth: AtomicU32,
     classification: AtomicU8,
     deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
-    hji_controller: RefCell<HjiReachabilityController>,
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -376,7 +377,6 @@ fn new_signal_tls() -> SignalTls {
         critical_depth: AtomicU32::new(0),
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
         deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
-        hji_controller: RefCell::new(HjiReachabilityController::new()),
     }
 }
 
@@ -391,8 +391,6 @@ thread_local! {
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
     static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
         const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
-    static SIGNAL_HJI_CONTROLLER: RefCell<HjiReachabilityController> =
-        RefCell::new(HjiReachabilityController::new());
 }
 
 fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
@@ -430,17 +428,6 @@ fn with_deferred_signals<R>(
     }
 }
 
-fn with_signal_hji_controller<R>(f: impl FnOnce(&RefCell<HjiReachabilityController>) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        SIGNAL_OWNED_TLS.with(|tls| f(&tls.hji_controller))
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        SIGNAL_HJI_CONTROLLER.with(f)
-    }
-}
-
 static SIGNAL_DEFERRED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_FLUSHED_DELIVERIES: AtomicU64 = AtomicU64::new(0);
 static SIGNAL_IMMEDIATE_DELIVERIES: AtomicU64 = AtomicU64::new(0);
@@ -472,23 +459,41 @@ fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
 
+/// Classification per (kind, nested), computed once. `u8::MAX` = not yet.
+static HJI_CLASSIFICATIONS: [[AtomicU8; 2]; SignalCriticalSectionKind::COUNT] =
+    [const { [const { AtomicU8::new(u8::MAX) }; 2] }; SignalCriticalSectionKind::COUNT];
+
+/// The HJI reachability verdict for entering a `kind` critical section,
+/// nested (`depth > 1`) or not.
+///
+/// Every entry ran HJI_WARMUP_OBSERVATIONS (64) controller updates of the same
+/// constant (risk, latency, adverse) input into a per-thread controller, so
+/// the verdict was that input's fixed point up to a ~4% (0.95^64) trace of the
+/// previous entry's kind. Every malloc and every free enter a critical section:
+/// 128 updates per malloc+free, ~64% of hardened malloc+free's 4.3us
+/// (bd-rc0923-epic-eeuy4f.9). The verdict of a freshly warmed controller is
+/// now computed once per input and reused; racing first computations agree.
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
     let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
     let adverse = depth > 1;
-    let hji_state = with_signal_hji_controller(|controller| {
-        let mut controller = controller.borrow_mut();
-        for _ in 0..HJI_WARMUP_OBSERVATIONS {
-            controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
-        }
-        controller.state()
-    });
-    match hji_state {
+    let slot = &HJI_CLASSIFICATIONS[kind as usize][usize::from(adverse)];
+    let cached = slot.load(Ordering::Relaxed);
+    if cached != u8::MAX {
+        return SignalSafetyClassification::from_u8(cached);
+    }
+    let mut controller = HjiReachabilityController::new();
+    for _ in 0..HJI_WARMUP_OBSERVATIONS {
+        controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
+    }
+    let classification = match controller.state() {
         ReachState::Safe => SignalSafetyClassification::Safe,
         ReachState::Approaching | ReachState::Calibrating => {
             SignalSafetyClassification::DeferSignal
         }
         ReachState::Breached => SignalSafetyClassification::MaskRequired,
-    }
+    };
+    slot.store(classification.as_u8(), Ordering::Relaxed);
+    classification
 }
 
 fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
