@@ -481,7 +481,15 @@ const SEGMENT_SIZE: usize = 1 << SEGMENT_SHIFT;
 const SEGMENT_MASK: usize = SEGMENT_SIZE - 1;
 const SEGMENT_COUNT: usize = 64;
 const SEGMENT_ARENA_SIZE: usize = SEGMENT_COUNT * SEGMENT_SIZE;
-const SEGMENT_RESERVE_SIZE: usize = SEGMENT_ARENA_SIZE + SEGMENT_SIZE;
+// One reservation holds the arena (plus alignment slack) AND every segment's
+// slot sidecar, at `SEGMENT_SIDECAR_STRIDE` apart just past the arena. A
+// separate mmap per sidecar cost a syscall and a VMA per size class in every
+// process (bd-rc0923-epic-eeuy4f.25); untouched sidecar pages stay demand-zero.
+const SEGMENT_SIDECAR_BYTES: usize =
+    SEGMENT_MAX_SLOT_COUNT * std::mem::size_of::<SegmentSlotMeta>();
+const SEGMENT_SIDECAR_STRIDE: usize = SEGMENT_SIDECAR_BYTES.next_multiple_of(SEGMENT_HEADER_BYTES);
+const SEGMENT_RESERVE_SIZE: usize =
+    SEGMENT_ARENA_SIZE + SEGMENT_SIZE + SEGMENT_COUNT * SEGMENT_SIDECAR_STRIDE;
 
 // The magic reciprocals behind `slot_index_in_class` are derived for offsets
 // below `MAX_SLOT_OFFSET`. A segment that outgrew that range would still
@@ -491,11 +499,12 @@ const _: () = assert!(
     SEGMENT_SIZE <= MAX_SLOT_OFFSET,
     "SEGMENT_SIZE outgrew the range slot_index_in_class reciprocals are exact for"
 );
-// Linux targets supported by this workspace use 4K, 16K, or 64K pages.  A
-// 64K immutable header span therefore never shares a protected kernel page
-// with writable payload slots.
+// Payload slots start this far into a segment. The span once held the
+// segment's header, mprotected read-only (64K so that no page size in use --
+// 4K, 16K or 64K -- shared a protected page with payload); the header now
+// lives in `SEGMENT_HEADERS`. The offset is kept so slot geometry, and the
+// reciprocals derived from it, are unchanged; untouched, it costs no memory.
 const SEGMENT_HEADER_BYTES: usize = 64 * 1024;
-const SEGMENT_HEADER_MAGIC: u64 = 0x4652_414E_4B53_4547;
 const SEGMENT_ARENA_UNINITIALIZED: u8 = 0;
 const SEGMENT_ARENA_INITIALIZING: u8 = 1;
 const SEGMENT_ARENA_READY: u8 = 2;
@@ -562,9 +571,9 @@ const SEGMENT_SLOT_INDEX_MASK: u32 = (1 << SEGMENT_SLOT_INDEX_BITS) - 1;
 const SEGMENT_MAX_SLOT_COUNT: usize = (SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / BUMP_ALIGN;
 const SEGMENT_SPILL_WORDS: usize = SEGMENT_MAX_SLOT_COUNT.div_ceil(64);
 
-#[repr(C)]
+/// A segment's size-class header, as read by the allocator paths.
+#[derive(Clone, Copy)]
 struct SegmentMemoryHeader {
-    magic: u64,
     class_size: u32,
     slot_count: u32,
     class_index: u32,
@@ -580,6 +589,39 @@ struct SegmentMemoryHeader {
     /// former `_reserved` word keeps the header at its existing size.
     slot_reciprocal: u32,
 }
+
+/// Where a segment's header is stored: written once by `initialize_segment`
+/// before the segment's ownership bit is published, and never again.
+///
+/// The header used to sit on the segment's first page, mprotected read-only
+/// so that a heap overflow could not rewrite it. That cost one mprotect (a VMA
+/// split) and one page fault per size class a process touched, ~190 us for
+/// /bin/true's nine (bd-rc0923-epic-eeuy4f.25). In this static table it is out
+/// of reach of heap overflows at no cost. Lookup is still one line at an
+/// address derived from the segment index the caller holds, not the dependent
+/// per-class load measured slower (see `slot_reciprocal`).
+#[repr(align(16))]
+struct SegmentHeaderCell {
+    class_size: AtomicU32,
+    /// Zero until the header is complete: stored last, with Release.
+    slot_count: AtomicU32,
+    class_index: AtomicU32,
+    slot_reciprocal: AtomicU32,
+}
+
+impl SegmentHeaderCell {
+    const fn new() -> Self {
+        Self {
+            class_size: AtomicU32::new(0),
+            slot_count: AtomicU32::new(0),
+            class_index: AtomicU32::new(0),
+            slot_reciprocal: AtomicU32::new(0),
+        }
+    }
+}
+
+static SEGMENT_HEADERS: [SegmentHeaderCell; SEGMENT_COUNT] =
+    [const { SegmentHeaderCell::new() }; SEGMENT_COUNT];
 
 #[repr(transparent)]
 struct SegmentSlotMeta {
@@ -814,7 +856,10 @@ fn initialize_segment_arena() -> Option<usize> {
                     return None;
                 };
                 let aligned_base = aligned_input & !SEGMENT_MASK;
-                let Some(arena_end) = aligned_base.checked_add(SEGMENT_ARENA_SIZE) else {
+                // The arena, then every segment's sidecar.
+                let Some(arena_end) = aligned_base
+                    .checked_add(SEGMENT_ARENA_SIZE + SEGMENT_COUNT * SEGMENT_SIDECAR_STRIDE)
+                else {
                     SEGMENT_ARENA_STATE.store(SEGMENT_ARENA_FAILED, Ordering::Release);
                     return None;
                 };
@@ -880,28 +925,23 @@ fn segment_base(index: usize) -> Option<usize> {
     (index < SEGMENT_COUNT).then(|| arena_base + (index << SEGMENT_SHIFT))
 }
 
+/// The header of published segment `index`; `None` for an unpublished or
+/// inconsistent one.
 #[inline]
-fn segment_header(index: usize) -> Option<&'static SegmentMemoryHeader> {
-    segment_header_at(segment_base(index)?)
-}
-
-/// [`segment_header`] for a caller that already knows the segment's base.
-///
-/// Same header, same four validity checks; the only thing it does not do is
-/// re-derive the base from the arena atomic. Split out because the two hot
-/// callers -- the free path's view builder and the magazine pop's view builder
-/// -- each had the base in hand and were paying for that derivation twice.
-#[inline]
-fn segment_header_at(base: usize) -> Option<&'static SegmentMemoryHeader> {
-    // SAFETY: callers reach this helper only after an Acquire ownership-bit
-    // observation.  Segment initialization wrote this immutable header and
-    // mprotected its page read-only before publishing that bit.  Published
-    // segment mappings are never reclaimed.
-    let header = unsafe { &*(base as *const SegmentMemoryHeader) };
-    if header.magic != SEGMENT_HEADER_MAGIC
+fn segment_header(index: usize) -> Option<SegmentMemoryHeader> {
+    let cell = SEGMENT_HEADERS.get(index)?;
+    // Acquire pairs with the Release store of `slot_count`, which completes
+    // the header; zero means not (yet) initialized.
+    let slot_count = cell.slot_count.load(Ordering::Acquire);
+    let header = SegmentMemoryHeader {
+        class_size: cell.class_size.load(Ordering::Relaxed),
+        slot_count,
+        class_index: cell.class_index.load(Ordering::Relaxed),
+        slot_reciprocal: cell.slot_reciprocal.load(Ordering::Relaxed),
+    };
+    if slot_count == 0
         || header.class_index as usize >= NUM_SIZE_CLASSES
         || header.class_size as usize != bin_size(header.class_index as usize)
-        || header.slot_count == 0
     {
         return None;
     }
@@ -951,7 +991,7 @@ fn segment_slot_view_in_owned_segment(
     segment_index: usize,
     base: usize,
 ) -> Option<SegmentSlotView> {
-    let header = segment_header_at(base)?;
+    let header = segment_header(segment_index)?;
     let relative = addr.wrapping_sub(base);
     if relative < SEGMENT_HEADER_BYTES {
         return None;
@@ -1040,58 +1080,39 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
         return None;
     }
     let meta_bytes = (slot_count as usize).checked_mul(std::mem::size_of::<SegmentSlotMeta>())?;
-    let meta_mapping_bytes = meta_bytes.checked_add(4095)? & !4095usize;
-
-    // SAFETY: direct raw mmap avoids allocator recursion.  The mapping is a
-    // private sidecar and is deliberately immortal while its segment is owned.
-    let meta_mapping = unsafe {
-        raw_syscall::sys_mmap(
-            std::ptr::null_mut(),
-            meta_mapping_bytes,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
-            -1,
-            0,
-        )
-    };
-    let Ok(meta_base) = meta_mapping else {
+    if meta_bytes > SEGMENT_SIDECAR_STRIDE {
         return None;
-    };
-    let meta_base = meta_base as *mut SegmentSlotMeta;
-    // A fresh anonymous mapping is demand-zero, and an all-zero word IS
+    }
+    // This segment's sidecar, in the arena reservation past the segments
+    // themselves: private to the allocator and, like the reservation,
+    // immortal.
+    let meta_base = arena_base + SEGMENT_ARENA_SIZE + raw_index * SEGMENT_SIDECAR_STRIDE;
+    // The reservation is demand-zero, and an all-zero word IS
     // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
     // is already initialized. Writing them anyway committed the whole sidecar
     // (~1.1 MiB across a trivial process's startup segments), which every fork
     // then copies (bd-rc0923-epic-eeuy4f.25).
     const _: () = assert!(std::mem::size_of::<SegmentSlotMeta>() == 2);
 
-    let base = arena_base + (raw_index << SEGMENT_SHIFT);
     // Derived once per segment, at initialization, off the same class index the
     // header records; `segment_header` re-validates that index on every read.
     let slot_reciprocal = slot_index_reciprocal(class_index)?;
-    // SAFETY: this segment is uniquely claimed and not yet published.  Its
-    // first page is writable within the arena reservation.
-    unsafe {
-        (base as *mut SegmentMemoryHeader).write(SegmentMemoryHeader {
-            magic: SEGMENT_HEADER_MAGIC,
-            class_size: class_size as u32,
-            slot_count,
-            class_index: class_index as u32,
-            slot_reciprocal,
-        });
-    }
-    // Make the address-derived size-class header immutable before publication.
-    // SAFETY: base is page-aligned and the header occupies this mapped page.
-    if unsafe { raw_syscall::sys_mprotect(base as *mut u8, SEGMENT_HEADER_BYTES, libc::PROT_READ) }
-        .is_err()
-    {
-        return None;
-    }
+    // This segment is uniquely claimed and not yet published, so its header
+    // cell is written by this thread alone, and only this once.
+    let header = &SEGMENT_HEADERS[raw_index];
+    header
+        .class_size
+        .store(class_size as u32, Ordering::Relaxed);
+    header
+        .class_index
+        .store(class_index as u32, Ordering::Relaxed);
+    header
+        .slot_reciprocal
+        .store(slot_reciprocal, Ordering::Relaxed);
+    header.slot_count.store(slot_count, Ordering::Release);
 
     let descriptor = &SEGMENT_DESCRIPTORS[raw_index];
-    descriptor
-        .meta_base
-        .store(meta_base as usize, Ordering::Release);
+    descriptor.meta_base.store(meta_base, Ordering::Release);
     descriptor.next_unused_slot.store(0, Ordering::Relaxed);
     SEGMENT_OWNED_BITMAP.fetch_or(1u64 << raw_index, Ordering::Release);
     Some(raw_index)
@@ -1198,7 +1219,7 @@ fn segment_slot_view_at(segment_index: usize, slot_index: u32) -> Option<Segment
     // `segment_header` and `segment_base` each re-reading the arena atomic for
     // the same immutable value. Same checks, same result.
     let base = segment_base(segment_index)?;
-    let header = segment_header_at(base)?;
+    let header = segment_header(segment_index)?;
     if slot_index >= header.slot_count {
         return None;
     }

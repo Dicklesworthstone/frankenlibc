@@ -7,9 +7,9 @@
 //! FrankenLibC ALREADY HAS an address-derived segment allocator, which is
 //! substantially the design bd-e0y02p proposes:
 //!
-//! * `SegmentMemoryHeader` sits at a segment base with `magic`, `class_index`,
-//!   `class_size` and `slot_count`, and its page is mprotected read-only before
-//!   the ownership bit is published;
+//! * each segment has a `SegmentMemoryHeader` with `class_index`, `class_size`
+//!   and `slot_count`, written before the ownership bit is published and
+//!   immutable afterwards;
 //! * `SegmentLocalState` gives each thread `[SegmentLocalClass; NUM_SIZE_CLASSES]`
 //!   with an active segment, a bump pointer and a magazine — a per-thread free
 //!   list;
