@@ -5749,3 +5749,86 @@ fn res_init_reports_success_bd_xh08pf() {
     let rc = unsafe { unistd_abi::res_init() };
     assert_eq!(rc, 0, "res_init should report success");
 }
+
+/// nsswitch `hosts:` decides which sources every host lookup consults
+/// (bd-rc0923-epic-eeuy4f.19). None of these policies can reach DNS, and each
+/// gives a different answer than the old hard-coded "files, then DNS" order.
+#[test]
+fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
+    struct NsswitchEnv;
+    impl Drop for NsswitchEnv {
+        fn drop(&mut self) {
+            // SAFETY: serialized by RESOLVER_ENV_LOCK, held by the fixture.
+            unsafe { std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF") };
+        }
+    }
+    let hosts = b"10.9.8.7 nss-policy.example\n";
+    with_resolver_backends_full(Some(hosts), None, None, None, None, |_| {
+        let nsswitch = temp_resolver_path("nsswitch");
+        let _env = NsswitchEnv;
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+        let name = CString::new("nss-policy.example").unwrap();
+        let addr = std::net::Ipv4Addr::new(10, 9, 8, 7).octets();
+
+        let forward = || -> c_int {
+            let mut hints: libc::addrinfo = unsafe { mem::zeroed() };
+            hints.ai_family = libc::AF_INET;
+            let mut res: *mut libc::addrinfo = ptr::null_mut();
+            let rc =
+                unsafe { resolv_abi::getaddrinfo(name.as_ptr(), ptr::null(), &hints, &mut res) };
+            if !res.is_null() {
+                unsafe { resolv_abi::freeaddrinfo(res) };
+            }
+            rc
+        };
+        let legacy_forward = || !unsafe { resolv_abi::gethostbyname(name.as_ptr()) }.is_null();
+        let reverse = || {
+            !unsafe { resolv_abi::gethostbyaddr(addr.as_ptr().cast(), 4, libc::AF_INET) }.is_null()
+        };
+        let nameinfo = || -> c_int {
+            let sin = libc::sockaddr_in {
+                sin_family: libc::AF_INET as libc::sa_family_t,
+                sin_port: 0,
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(addr),
+                },
+                sin_zero: [0; 8],
+            };
+            let mut host = [0 as c_char; 256];
+            unsafe {
+                resolv_abi::getnameinfo(
+                    (&sin as *const libc::sockaddr_in).cast(),
+                    mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+                    host.as_mut_ptr(),
+                    host.len() as libc::socklen_t,
+                    ptr::null_mut(),
+                    0,
+                    libc::NI_NAMEREQD,
+                )
+            }
+        };
+
+        for (policy, found) in [
+            ("hosts: files\n", true),
+            // An unimplemented module is an unavailable source: continue.
+            ("hosts: myhostname files\n", true),
+            // Only a module fl does not implement: files is never consulted.
+            ("hosts: myhostname\n", false),
+            // Explicitly empty: no sources at all.
+            ("hosts:\n", false),
+            // UNAVAIL=return stops before files.
+            ("hosts: myhostname [UNAVAIL=return] files\n", false),
+        ] {
+            std::fs::write(&nsswitch, policy).expect("write nsswitch fixture");
+            assert_eq!(forward() == 0, found, "getaddrinfo under {policy:?}");
+            if !found {
+                assert_eq!(forward(), libc::EAI_NONAME, "getaddrinfo under {policy:?}");
+            }
+            assert_eq!(legacy_forward(), found, "gethostbyname under {policy:?}");
+            assert_eq!(reverse(), found, "gethostbyaddr under {policy:?}");
+            assert_eq!(nameinfo() == 0, found, "getnameinfo under {policy:?}");
+        }
+        let _ = std::fs::remove_file(&nsswitch);
+    });
+}
