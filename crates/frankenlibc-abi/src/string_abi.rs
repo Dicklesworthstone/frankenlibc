@@ -994,7 +994,10 @@ unsafe fn raw_copy_256_to_384(dst: *mut u8, src: *const u8, n: usize) {
         }
         copy_unaligned_32(dst.add(n - 64), src.add(n - 64));
         copy_unaligned_32(dst.add(n - 32), src.add(n - 32));
-        #[cfg(target_arch = "x86_64")]
+        // Only an AVX build emits `ymm` moves above; on baseline x86-64 they are
+        // SSE pairs and `vzeroupper` itself would be an illegal instruction
+        // (bd-rc0923-epic-eeuy4f.13).
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx"))]
         core::arch::asm!("vzeroupper", options(nostack));
     }
 }
