@@ -114,6 +114,9 @@ impl Drop for ArenaShard {
 /// Thread-safe generational allocation arena.
 pub struct AllocationArena {
     shards: Box<[Mutex<ArenaShard>]>,
+    /// `user_base` of every registered allocation whose raw extent exceeds
+    /// `SMALL_EXTENT`; see `lookup`.
+    large: Mutex<std::collections::BTreeSet<usize>>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
 }
@@ -134,7 +137,14 @@ pub struct AllocationResult {
 /// Guard representing all locked arena shards during a fork.
 pub struct ArenaAtforkGuard<'a> {
     _guards: Vec<MutexGuard<'a, ArenaShard>>,
+    _large: MutexGuard<'a, std::collections::BTreeSet<usize>>,
 }
+
+/// Raw extent (header through canary) up to which an allocation is found by
+/// probing the shards of the query's page and its two neighbours: its
+/// `user_base`, whose page picks the shard, is then within one page of any
+/// address inside it.
+const SMALL_EXTENT: usize = 4096;
 
 impl AllocationArena {
     /// Create a new empty arena.
@@ -145,6 +155,7 @@ impl AllocationArena {
             .collect();
         Self {
             shards: shards.into_boxed_slice(),
+            large: Mutex::new(std::collections::BTreeSet::new()),
             next_generation: std::sync::atomic::AtomicU64::new(1),
         }
     }
@@ -157,7 +168,10 @@ impl AllocationArena {
         for shard in self.shards.iter() {
             guards.push(shard.lock());
         }
-        ArenaAtforkGuard { _guards: guards }
+        ArenaAtforkGuard {
+            _guards: guards,
+            _large: self.large.lock(),
+        }
     }
 
     /// Allocate memory with fingerprint header and canary.
@@ -235,6 +249,11 @@ impl AllocationArena {
             idx
         };
         shard.addr_to_slot.insert(user_base, slot_idx);
+        drop(shard);
+        // The pointer is not returned yet, so no lookup can race this.
+        if total_size > SMALL_EXTENT {
+            self.large.lock().insert(user_base);
+        }
 
         Some(AllocationResult {
             ptr: user_base as *mut u8,
@@ -335,24 +354,38 @@ impl AllocationArena {
     /// @separation-alias: `generation_check`.
     #[must_use]
     pub fn lookup(&self, user_ptr: usize) -> Option<ArenaSlot> {
+        // An allocation lives in the shard of its `user_base` page. A small one
+        // (raw extent <= SMALL_EXTENT) containing `user_ptr` has its
+        // `user_base` on `user_ptr`'s page or an adjacent one; a large one is
+        // in `large`. A miss (a pointer the arena does not own: stack,
+        // static, foreign heap) used to lock and range-search all 16 shards
+        // (bd-rc0923-epic-eeuy4f.9).
+        let page = 1usize << 12; // shard_for's page granule
         let exact_shard_idx = self.shard_for(user_ptr);
-
         if let Some(slot) = self.lookup_in_shard(exact_shard_idx, user_ptr) {
             return Some(slot);
         }
-
-        // Try containing lookup in all other shards since an inner pointer
-        // might cross a page boundary and thus hash to a different shard.
-        for idx in 0..NUM_SHARDS {
-            if idx == exact_shard_idx {
-                continue;
-            }
-            if let Some(slot) = self.lookup_in_shard(idx, user_ptr) {
+        for neighbour in [user_ptr.wrapping_sub(page), user_ptr.wrapping_add(page)] {
+            let idx = self.shard_for(neighbour);
+            if idx != exact_shard_idx
+                && let Some(slot) = self.lookup_in_shard(idx, user_ptr)
+            {
                 return Some(slot);
             }
         }
-
-        None
+        // Large allocations: the nearest `user_base` at or below the query
+        // (body/canary) and the nearest above it (fingerprint header).
+        let candidates = {
+            let large = self.large.lock();
+            [
+                large.range(..=user_ptr).next_back().copied(),
+                large.range(user_ptr..).next().copied(),
+            ]
+        };
+        candidates
+            .into_iter()
+            .flatten()
+            .find_map(|base| self.lookup_in_shard(self.shard_for(base), user_ptr))
     }
 
     fn lookup_in_shard(&self, shard_idx: usize, user_ptr: usize) -> Option<ArenaSlot> {
@@ -459,6 +492,10 @@ impl AllocationArena {
                 shard.slots[slot_idx].state = SafetyState::Freed;
 
                 shard.addr_to_slot.remove(&entry.user_base);
+                if entry.total_size > SMALL_EXTENT {
+                    // Lock order: shard, then `large` (as in `atfork_prepare`).
+                    self.large.lock().remove(&entry.user_base);
+                }
 
                 shard.free_list.push(slot_idx);
             }
