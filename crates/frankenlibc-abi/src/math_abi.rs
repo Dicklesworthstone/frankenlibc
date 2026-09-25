@@ -1080,11 +1080,54 @@ pub unsafe extern "C" fn fdim(x: f64, y: f64) -> f64 {
     out
 }
 
+/// Hardware fused multiply-add. IEEE fma is exactly rounded, so the
+/// instruction and the software `frankenlibc_core::math::fma` agree bit for
+/// bit; only the cost differs.
+///
+/// A build for baseline x86-64 lowers every `mul_add` in core math to a call
+/// of this exported `fma`, which then ran the software algorithm: sin 3x and
+/// pow 1.8x slower than the x86-64-v3 build (bd-rc0923-epic-eeuy4f.13).
+/// Returns `None` when the CPU lacks FMA.
+#[inline(always)]
+fn hardware_fma(x: f64, y: f64, z: f64) -> Option<f64> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[target_feature(enable = "fma")]
+        fn fused(x: f64, y: f64, z: f64) -> f64 {
+            x.mul_add(y, z)
+        }
+        if std::is_x86_feature_detected!("fma") {
+            // SAFETY: the CPU supports FMA, checked just above.
+            return Some(unsafe { fused(x, y, z) });
+        }
+    }
+    let _ = (x, y, z);
+    None
+}
+
+/// `hardware_fma` for `f32`.
+#[inline(always)]
+fn hardware_fmaf(x: f32, y: f32, z: f32) -> Option<f32> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        #[target_feature(enable = "fma")]
+        fn fused(x: f32, y: f32, z: f32) -> f32 {
+            x.mul_add(y, z)
+        }
+        if std::is_x86_feature_detected!("fma") {
+            // SAFETY: the CPU supports FMA, checked just above.
+            return Some(unsafe { fused(x, y, z) });
+        }
+    }
+    let _ = (x, y, z);
+    None
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
     // Strict mode fast path: skip runtime policy overhead entirely.
     if runtime_policy::strict_passthrough_active() {
-        return frankenlibc_core::math::fma(x, y, z);
+        return hardware_fma(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fma(x, y, z));
     }
 
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
@@ -1832,6 +1875,10 @@ pub unsafe extern "C" fn fminf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
+    // Strict mode fast path, as `fma`: fmaf sets no errno.
+    if runtime_policy::strict_passthrough_active() {
+        return hardware_fmaf(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fmaf(x, y, z));
+    }
     // fma is ternary — use the binary path with manual third arg folding.
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
         ^ y.to_bits() as usize
