@@ -232,6 +232,12 @@ unsafe extern "C" {
 /// complete before any constructor or first call reaches this code.
 #[cfg(not(feature = "standalone"))]
 fn find_image_via_link_map(needle: &[u8]) -> Option<(usize, [u8; 512])> {
+    find_object_via_link_map(needle).map(|(base, path, _dynamic)| (base, path))
+}
+
+/// `find_image_via_link_map` plus the object's dynamic section (`l_ld`).
+#[cfg(not(feature = "standalone"))]
+fn find_object_via_link_map(needle: &[u8]) -> Option<(usize, [u8; 512], usize)> {
     // SAFETY: `_r_debug` is ld.so's statically allocated debugger interface;
     // r_map and every l_next/l_name it reaches stay valid while their objects
     // are loaded (all of the initial objects, for the process lifetime).
@@ -250,7 +256,7 @@ fn find_image_via_link_map(needle: &[u8]) -> Option<(usize, [u8; 512])> {
             if entry.l_addr != 0 && contains_bytes(name, needle) {
                 let mut path = [0u8; 512];
                 path[..len.min(511)].copy_from_slice(&name[..len.min(511)]);
-                return Some((entry.l_addr, path));
+                return Some((entry.l_addr, path, entry.l_ld as usize));
             }
         }
         node = entry.l_next;
@@ -260,6 +266,11 @@ fn find_image_via_link_map(needle: &[u8]) -> Option<(usize, [u8; 512])> {
 
 #[cfg(feature = "standalone")]
 fn find_image_via_link_map(_needle: &[u8]) -> Option<(usize, [u8; 512])> {
+    None
+}
+
+#[cfg(feature = "standalone")]
+fn find_object_via_link_map(_needle: &[u8]) -> Option<(usize, [u8; 512], usize)> {
     None
 }
 
@@ -492,6 +503,86 @@ impl<'a> DynamicSymbols<'a> {
         })
     }
 
+    /// The symbol tables of an object as the loader mapped them, from its
+    /// dynamic section. Finding host symbols in the on-disk file meant
+    /// opening libc and ld.so, mapping them whole and faulting in their
+    /// .dynsym/.dynstr/.gnu.hash pages in every preloaded process, although
+    /// the loaded images already carry the same tables
+    /// (bd-rc0923-epic-eeuy4f.25). Requires DT_GNU_HASH (glibc always has it).
+    ///
+    /// # Safety
+    /// `dynamic` must be the `l_ld` of an object loaded at `base` that stays
+    /// loaded for the process lifetime.
+    unsafe fn from_loaded(base: usize, dynamic: usize) -> Option<DynamicSymbols<'static>> {
+        const DT_NULL: i64 = 0;
+        const DT_STRTAB: i64 = 5;
+        const DT_SYMTAB: i64 = 6;
+        const DT_STRSZ: i64 = 10;
+        const DT_SYMENT: i64 = 11;
+        const DT_GNU_HASH: i64 = 0x6fff_fef5;
+        if dynamic == 0 {
+            return None;
+        }
+        // glibc relocates these d_ptr entries in place; accept an offset
+        // that was not (below the load base) as well.
+        let address = |value: usize| if value < base { base + value } else { value };
+        let (mut strtab, mut symtab, mut strsz, mut syment, mut gnu_hash) = (0, 0, 0, 0, 0);
+        let mut entry = dynamic as *const [i64; 2];
+        for _ in 0..4096 {
+            // SAFETY: the dynamic section is a DT_NULL-terminated array of
+            // (tag, value) pairs inside the loaded object.
+            let [tag, value] = unsafe { entry.read() };
+            match tag {
+                DT_NULL => break,
+                DT_STRTAB => strtab = address(value as usize),
+                DT_SYMTAB => symtab = address(value as usize),
+                DT_STRSZ => strsz = value as usize,
+                DT_SYMENT => syment = value as usize,
+                DT_GNU_HASH => gnu_hash = address(value as usize),
+                _ => {}
+            }
+            // SAFETY: not past DT_NULL yet.
+            entry = unsafe { entry.add(1) };
+        }
+        if strtab == 0 || symtab == 0 || gnu_hash == 0 || strsz == 0 {
+            return None;
+        }
+        let syment = syment.max(std::mem::size_of::<Elf64Sym>());
+        // The symbol count is one past the end of the chain of the highest
+        // non-empty bucket.
+        let word = |index: usize| -> u32 {
+            // SAFETY: indices below stay within the GNU hash table, whose
+            // extent the header words describe.
+            unsafe { (gnu_hash as *const u32).add(index).read_unaligned() }
+        };
+        let (nbuckets, symoffset, bloom_words) =
+            (word(0) as usize, word(1) as usize, word(2) as usize);
+        let buckets_at = 4 + bloom_words * 2;
+        let chains_at = buckets_at + nbuckets;
+        let max_bucket = (0..nbuckets).map(|i| word(buckets_at + i) as usize).max()?;
+        let mut count = symoffset;
+        if max_bucket >= symoffset {
+            count = max_bucket;
+            while word(chains_at + count - symoffset) & 1 == 0 {
+                count += 1;
+            }
+            count += 1;
+        }
+        // SAFETY: each extent was derived from the object's own dynamic
+        // section and hash table, and the object is never unloaded.
+        unsafe {
+            Some(DynamicSymbols {
+                strtab: std::slice::from_raw_parts(strtab as *const u8, strsz),
+                sym_bytes: std::slice::from_raw_parts(symtab as *const u8, count * syment),
+                sym_entsize: syment,
+                gnu_hash: Some(std::slice::from_raw_parts(
+                    gnu_hash as *const u8,
+                    (chains_at + count - symoffset) * 4,
+                )),
+            })
+        }
+    }
+
     fn count(&self) -> usize {
         self.sym_bytes.len() / self.sym_entsize
     }
@@ -529,7 +620,11 @@ impl<'a> DynamicSymbols<'a> {
 }
 
 fn resolve_symbol_from_data(base: usize, data: &[u8], symbol: &str) -> Option<usize> {
-    let sym = DynamicSymbols::parse(data)?.find_defined(symbol.as_bytes(), true)?;
+    resolve_in(base, &DynamicSymbols::parse(data)?, symbol)
+}
+
+fn resolve_in(base: usize, table: &DynamicSymbols<'_>, symbol: &str) -> Option<usize> {
+    let sym = table.find_defined(symbol.as_bytes(), true)?;
     let addr = base.saturating_add(sym.st_value as usize);
     // STT_GNU_IFUNC (type 10): st_value points to a resolver function
     // that returns the actual implementation address. Call it.
@@ -740,7 +835,51 @@ pub(crate) fn bootstrap_host_symbols() {
     RESOLVED.store((unresolved == 0) as usize, Ordering::Release);
 }
 
+/// The loaded libc (`needle` "libc.so") or ld.so ("ld-linux") symbol
+/// tables, found once via the link map; `None` falls back to the file.
+fn loaded_tables(
+    needle: &[u8],
+    cache: &'static LoadedTablesCache,
+) -> Option<(usize, DynamicSymbols<'static>)> {
+    #[cfg(feature = "standalone")]
+    {
+        let _ = (needle, cache);
+        return None;
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        let mut base = cache.base.load(Ordering::Acquire);
+        let mut dynamic = cache.dynamic.load(Ordering::Acquire);
+        if base == 0 {
+            let (found_base, _path, found_dynamic) = find_object_via_link_map(needle)?;
+            (base, dynamic) = (found_base, found_dynamic);
+            cache.dynamic.store(dynamic, Ordering::Release);
+            cache.base.store(base, Ordering::Release);
+        }
+        // SAFETY: link-map objects found at startup stay loaded.
+        let tables = unsafe { DynamicSymbols::from_loaded(base, dynamic) }?;
+        Some((base, tables))
+    }
+}
+
+struct LoadedTablesCache {
+    base: AtomicUsize,
+    dynamic: AtomicUsize,
+}
+
+static LOADED_LIBC_TABLES: LoadedTablesCache = LoadedTablesCache {
+    base: AtomicUsize::new(0),
+    dynamic: AtomicUsize::new(0),
+};
+static LOADED_LOADER_TABLES: LoadedTablesCache = LoadedTablesCache {
+    base: AtomicUsize::new(0),
+    dynamic: AtomicUsize::new(0),
+};
+
 pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
+    if let Some((base, tables)) = loaded_tables(b"libc.so", &LOADED_LIBC_TABLES) {
+        return resolve_in(base, &tables, symbol);
+    }
     let image = load_glibc_image()?;
     // SAFETY: cached mapping is process-lifetime read-only storage for libc ELF bytes.
     let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
@@ -748,6 +887,9 @@ pub(crate) fn resolve_host_symbol_raw(symbol: &str) -> Option<usize> {
 }
 
 pub(crate) fn resolve_loader_symbol_raw(symbol: &str) -> Option<usize> {
+    if let Some((base, tables)) = loaded_tables(b"ld-linux", &LOADED_LOADER_TABLES) {
+        return resolve_in(base, &tables, symbol);
+    }
     let image = load_loader_image()?;
     // SAFETY: cached mapping is process-lifetime read-only storage for ld-linux ELF bytes.
     let data = unsafe { core::slice::from_raw_parts(image.mapped as *const u8, image.len) };
@@ -1006,7 +1148,7 @@ pub(crate) fn host_errno(default_errno: c_int) -> c_int {
 mod tests {
     use std::ffi::c_char;
 
-    use super::{DynamicSymbols, bounded_c_string_len, contains_bytes};
+    use super::{DynamicSymbols, bounded_c_string_len, contains_bytes, find_object_via_link_map};
 
     #[test]
     fn bounded_c_string_len_accepts_terminated_input() {
@@ -1074,6 +1216,40 @@ mod tests {
             images += 1;
         }
         assert!(images > 0, "no host libc/loader image found to check");
+    }
+
+    /// The loaded libc's in-memory tables (found via the link map) resolve
+    /// every defined symbol to the same st_value as the on-disk file's.
+    #[test]
+    fn loaded_tables_match_the_file_for_every_libc_symbol() {
+        let (base, path, dynamic) =
+            find_object_via_link_map(b"libc.so").expect("libc in this process's link map");
+        let path_len = path.iter().position(|&b| b == 0).unwrap();
+        let path = std::str::from_utf8(&path[..path_len]).unwrap();
+        let data = std::fs::read(path).expect("read libc");
+        let file = DynamicSymbols::parse(&data).expect("parse file");
+        // SAFETY: libc stays loaded for the life of the test process.
+        let loaded = unsafe { DynamicSymbols::from_loaded(base, dynamic) }.expect("loaded tables");
+        let mut checked = 0usize;
+        for index in 0..file.count() {
+            let sym = file.symbol(index).unwrap();
+            if sym.st_shndx == 0 || sym.st_value == 0 {
+                continue;
+            }
+            let start = sym.st_name as usize;
+            let len = file.strtab[start..].iter().position(|&b| b == 0).unwrap();
+            let name = &file.strtab[start..start + len];
+            let from_file = file.find_defined(name, true).map(|s| s.st_value);
+            let from_memory = loaded.find_defined(name, true).map(|s| s.st_value);
+            assert_eq!(
+                from_memory,
+                from_file,
+                "{:?}",
+                String::from_utf8_lossy(name)
+            );
+            checked += 1;
+        }
+        assert!(checked > 1000, "only {checked} libc symbols checked");
     }
 
     #[test]
