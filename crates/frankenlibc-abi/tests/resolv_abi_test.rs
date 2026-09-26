@@ -1009,7 +1009,7 @@ fn gethostbyname_r_small_buffer_returns_erange_preserves_h_errno() {
 }
 
 #[test]
-fn gethostbyname_r_unknown_host_returns_enoent() {
+fn gethostbyname_r_unknown_host_matches_host_glibc() {
     with_resolver_lock(|| {
         let query =
             CString::new("missing.example.invalid").expect("query should be valid C string");
@@ -1031,10 +1031,9 @@ fn gethostbyname_r_unknown_host_returns_enoent() {
         assert!(result_ptr.is_null());
         let host = host_gethostbyname_r(&query);
         assert!(host.1, "the .invalid name resolved on the host");
+        // glibc returns 0 with a NULL result for NOTFOUND (not ENOENT), and
+        // EAGAIN for TRY_AGAIN: the whole outcome must match.
         assert_eq!((rc, h_errno), (host.0, host.2), "fl and glibc disagree");
-        if host.2 == HOST_NOT_FOUND_ERRNO {
-            assert_eq!(rc, libc::ENOENT);
-        }
     });
 }
 
@@ -5838,6 +5837,93 @@ fn res_init_reports_success_bd_xh08pf() {
     // SAFETY: res_init takes no arguments and only initialises resolver state.
     let rc = unsafe { unistd_abi::res_init() };
     assert_eq!(rc, 0, "res_init should report success");
+}
+
+/// The `_nss_files_*` host entry points ARE the files module: they read the
+/// hosts file whatever nsswitch.conf says. They used to run the whole
+/// nsswitch policy, so under `hosts: dns` a hosts-file name was invisible to
+/// them (and a DNS-only name visible).
+#[test]
+fn nss_files_host_entry_points_ignore_nsswitch_policy() {
+    use frankenlibc_abi::unistd_abi::{_nss_files_gethostbyaddr_r, _nss_files_gethostbyname_r};
+    struct NsswitchEnv;
+    impl Drop for NsswitchEnv {
+        fn drop(&mut self) {
+            // SAFETY: serialized by RESOLVER_ENV_LOCK, held by the fixture.
+            unsafe { std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF") };
+        }
+    }
+    let hosts = b"10.9.8.6 nss-files-only.example\n";
+    with_resolver_backends_full(Some(hosts), None, None, None, None, |_| {
+        let nsswitch = temp_resolver_path("nsswitch");
+        std::fs::write(&nsswitch, b"hosts: dns\n").expect("write nsswitch fixture");
+        let _env = NsswitchEnv;
+        // SAFETY: serialized by RESOLVER_ENV_LOCK.
+        unsafe { std::env::set_var("FRANKENLIBC_NSSWITCH_CONF", &nsswitch) };
+        let name = CString::new("nss-files-only.example").unwrap();
+
+        // The public API follows the policy: DNS only, so no answer.
+        let mut hostent: libc::hostent = unsafe { mem::zeroed() };
+        let mut buf = [0 as c_char; 512];
+        let mut result: *mut c_void = ptr::null_mut();
+        let mut h_errno = 0;
+        unsafe {
+            inet_abi::gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result,
+                &mut h_errno,
+            )
+        };
+        assert!(
+            result.is_null(),
+            "hosts: dns must not consult the hosts file"
+        );
+
+        // The files module finds it.
+        let (mut err, mut h_err) = (0, 0);
+        let status = unsafe {
+            _nss_files_gethostbyname_r(
+                name.as_ptr(),
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(status, 1, "NSS_STATUS_SUCCESS from the files module");
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-files-only.example"
+        );
+        let addr = unsafe { std::slice::from_raw_parts((*hostent.h_addr_list).cast::<u8>(), 4) };
+        assert_eq!(addr, [10, 9, 8, 6]);
+
+        let octets = [10u8, 9, 8, 6];
+        let status = unsafe {
+            _nss_files_gethostbyaddr_r(
+                octets.as_ptr().cast(),
+                4,
+                libc::AF_INET,
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(
+            status, 1,
+            "reverse NSS_STATUS_SUCCESS from the files module"
+        );
+        assert_eq!(
+            unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
+            b"nss-files-only.example"
+        );
+    });
 }
 
 /// nsswitch `hosts:` decides which sources every host lookup consults

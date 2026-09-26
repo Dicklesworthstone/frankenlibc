@@ -3304,7 +3304,11 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
 /// the operand `-`, declined, and the short parser -- permuting past `-` --
 /// then parsed `--xyz` as short options, reporting `-` as an unknown option
 /// character. Idempotent once `optind` points at an option.
-unsafe fn getopt_prepare(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> Result<(), c_int> {
+unsafe fn getopt_prepare(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optspec: &[u8],
+) -> Result<(), c_int> {
     if argc <= 0 || argv.is_null() {
         return Err(-1);
     }
@@ -12445,6 +12449,7 @@ pub unsafe extern "C" fn _nss_files_gethostbyname_r(
             buflen,
             &mut resolved,
             h_errnop,
+            true,
         )
     };
     unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }
@@ -12544,6 +12549,7 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
             scratch.len(),
             &mut resolved,
             h_errnop,
+            true,
         )
     };
     if rc != 0 || resolved.is_null() {
@@ -12590,6 +12596,7 @@ pub unsafe extern "C" fn _nss_files_gethostbyaddr_r(
             buflen,
             &mut resolved,
             h_errnop,
+            true,
         )
     };
     unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) }

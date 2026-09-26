@@ -122,6 +122,15 @@ impl Default for HostsPolicy {
 }
 
 impl HostsPolicy {
+    /// The files source alone: what glibc's `nss_files` module entry points
+    /// (`_nss_files_gethostbyname_r` and friends) consult, whatever
+    /// nsswitch.conf says.
+    pub fn files_only() -> Self {
+        Self {
+            services: vec![Service::new(Backend::Files)],
+        }
+    }
+
     pub fn parse(config: &[u8]) -> Result<Self, ParseError> {
         // The last hosts line wins. A malformed earlier line cannot invalidate
         // a later complete override. Inline comments are NSS syntax, unlike

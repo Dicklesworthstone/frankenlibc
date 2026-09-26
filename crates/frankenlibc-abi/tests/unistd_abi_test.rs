@@ -842,7 +842,12 @@ unsafe extern "C-unwind" {
     fn nftw(
         dirpath: *const c_char,
         func: Option<
-            unsafe extern "C-unwind" fn(*const c_char, *const libc::stat, c_int, *mut c_void) -> c_int,
+            unsafe extern "C-unwind" fn(
+                *const c_char,
+                *const libc::stat,
+                c_int,
+                *mut c_void,
+            ) -> c_int,
         >,
         nopenfd: c_int,
         flags: c_int,
@@ -13830,152 +13835,195 @@ fn nss_files_get_services_use_native_backend() {
     assert!(!iter.s_name.is_null());
 }
 
+/// `(status, errno, h_errno, h_name)` of one hostent-shaped nss_files call.
+type NssHostOutcome = (c_int, c_int, c_int, Option<Vec<u8>>);
+
+fn nss_hostent_outcome(
+    call: impl FnOnce(*mut c_void, *mut c_char, usize, *mut c_int, *mut c_int) -> c_int,
+) -> NssHostOutcome {
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 1024];
+    let (mut err, mut h_err) = (-7, -7);
+    let status = call(
+        (&mut hostent as *mut libc::hostent).cast(),
+        buf.as_mut_ptr(),
+        buf.len(),
+        &mut err,
+        &mut h_err,
+    );
+    // SAFETY: NSS_STATUS_SUCCESS (1) leaves a filled hostent.
+    let name = (status == 1 && !hostent.h_name.is_null()).then(|| {
+        unsafe { CStr::from_ptr(hostent.h_name) }
+            .to_bytes()
+            .to_vec()
+    });
+    (status, err, h_err, name)
+}
+
+/// The nss_files host entry points consult /etc/hosts only (never DNS, never
+/// numeric parsing), with glibc's NSS status/errno/h_errno contract. They were
+/// once stubs; now each is compared with glibc's GLIBC_PRIVATE export on the
+/// same machine, with valid buffers, for a listed and an unlisted name.
 #[test]
-fn nss_files_get_host_stubs_return_notfound_and_set_errno_slots() {
+fn nss_files_host_lookups_match_host_glibc() {
     use frankenlibc_abi::unistd_abi::{
-        _nss_files_getcanonname_r, _nss_files_gethostbyaddr_r, _nss_files_gethostbyaddr2_r,
-        _nss_files_gethostbyname_r, _nss_files_gethostbyname2_r, _nss_files_gethostbyname3_r,
-        _nss_files_gethostbyname4_r,
+        _nss_files_gethostbyaddr_r, _nss_files_gethostbyname_r, _nss_files_gethostbyname2_r,
+        _nss_files_gethostbyname3_r, _nss_files_gethostbyname4_r,
     };
+    type ByName = unsafe extern "C" fn(
+        *const c_char,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    type ByName2 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    type ByName3 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+        *mut *mut c_char,
+    ) -> c_int;
+    type ByName4 = unsafe extern "C" fn(
+        *const c_char,
+        *mut *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+    ) -> c_int;
+    type ByAddr = unsafe extern "C" fn(
+        *const c_void,
+        libc::socklen_t,
+        c_int,
+        *mut c_void,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    // SAFETY: each type is the GLIBC_PRIVATE export's C prototype; fl's
+    // definition is passed so a collapsed oracle aborts.
+    let (h1, h2, h3, h4, ha): (ByName, ByName2, ByName3, ByName4, ByAddr) = unsafe {
+        (
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname_r",
+                _nss_files_gethostbyname_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname2_r",
+                _nss_files_gethostbyname2_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname3_r",
+                _nss_files_gethostbyname3_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyname4_r",
+                _nss_files_gethostbyname4_r as *const (),
+            ),
+            dlsym_oracle::host_fn(
+                c"_nss_files_gethostbyaddr_r",
+                _nss_files_gethostbyaddr_r as *const (),
+            ),
+        )
+    };
+    let fl1: ByName = _nss_files_gethostbyname_r;
+    let fl2: ByName2 = _nss_files_gethostbyname2_r;
+    let fl3: ByName3 = _nss_files_gethostbyname3_r;
+    let fl4: ByName4 = _nss_files_gethostbyname4_r;
+    let fla: ByAddr = _nss_files_gethostbyaddr_r;
 
-    let name = CString::new("missing.example").unwrap();
-    let mut err = 0;
-    let mut h_err = 0;
-    let mut canon = std::ptr::dangling_mut();
-    assert_eq!(
-        unsafe {
-            _nss_files_getcanonname_r(
-                name.as_ptr(),
-                std::ptr::null_mut(),
-                0,
-                &mut canon,
-                &mut err,
-                &mut h_err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-    assert!(canon.is_null());
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyname_r(
-                name.as_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyname2_r(
-                name.as_ptr(),
-                libc::AF_INET,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyname3_r(
-                name.as_ptr(),
-                libc::AF_INET,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyname4_r(
-                name.as_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-                std::ptr::null_mut(),
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyaddr_r(
-                std::ptr::null(),
-                0,
-                libc::AF_INET,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
-
-    err = 0;
-    h_err = 0;
-    assert_eq!(
-        unsafe {
-            _nss_files_gethostbyaddr2_r(
-                std::ptr::null(),
-                0,
-                libc::AF_INET,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                0,
-                &mut err,
-                &mut h_err,
-                std::ptr::null_mut(),
-            )
-        },
-        0
-    );
-    assert_eq!(err, libc::ENOENT);
-    assert_eq!(h_err, 1);
+    let mut compared = 0;
+    // "127.0.0.1" is numeric: the files module does not parse it.
+    for name in [
+        c"localhost",
+        c"frankenlibc-no-such-host.invalid",
+        c"127.0.0.1",
+    ] {
+        let n = name.as_ptr();
+        // SAFETY (all calls below): valid name, hostent, buffer and slots.
+        let by = |f: ByName| nss_hostent_outcome(|r, b, l, e, h| unsafe { f(n, r, b, l, e, h) });
+        assert_eq!(by(fl1), by(h1), "_nss_files_gethostbyname_r({name:?})");
+        let by2 = |f: ByName2| {
+            nss_hostent_outcome(|r, b, l, e, h| unsafe { f(n, libc::AF_INET, r, b, l, e, h) })
+        };
+        assert_eq!(
+            by2(fl2),
+            by2(h2),
+            "_nss_files_gethostbyname2_r({name:?}, AF_INET)"
+        );
+        let by3 = |f: ByName3| {
+            let mut ttl = -1;
+            let mut canon: *mut c_char = std::ptr::null_mut();
+            let out = nss_hostent_outcome(|r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET, r, b, l, e, h, &mut ttl, &mut canon)
+            });
+            let canon =
+                (!canon.is_null()).then(|| unsafe { CStr::from_ptr(canon) }.to_bytes().to_vec());
+            (out, canon)
+        };
+        assert_eq!(
+            by3(fl3),
+            by3(h3),
+            "_nss_files_gethostbyname3_r({name:?}, AF_INET)"
+        );
+        let by4 = |f: ByName4| {
+            let mut pat: *mut c_void = std::ptr::null_mut();
+            let mut buf = [0 as c_char; 1024];
+            let (mut err, mut h_err, mut ttl) = (-7, -7, -1);
+            let status = unsafe {
+                f(
+                    n,
+                    &mut pat,
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    &mut err,
+                    &mut h_err,
+                    &mut ttl,
+                )
+            };
+            (status, err, h_err, pat.is_null())
+        };
+        let (fl, host) = (by4(fl4), by4(h4));
+        // glibc's errno on SUCCESS is whatever its scan left behind.
+        if host.0 == 1 {
+            assert_eq!(
+                (fl.0, fl.2, fl.3),
+                (host.0, host.2, host.3),
+                "_nss_files_gethostbyname4_r({name:?})"
+            );
+        } else {
+            assert_eq!(fl, host, "_nss_files_gethostbyname4_r({name:?})");
+        }
+        compared += 4;
+    }
+    for addr in [[127u8, 0, 0, 1], [192, 0, 2, 77]] {
+        // SAFETY: a 4-byte AF_INET address and valid output storage.
+        let by = |f: ByAddr| {
+            nss_hostent_outcome(|r, b, l, e, h| unsafe {
+                f(addr.as_ptr().cast(), 4, libc::AF_INET, r, b, l, e, h)
+            })
+        };
+        assert_eq!(by(fla), by(ha), "_nss_files_gethostbyaddr_r({addr:?})");
+        compared += 1;
+    }
+    assert_eq!(compared, 14);
 }
 
 #[test]

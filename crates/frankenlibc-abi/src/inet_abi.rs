@@ -1459,7 +1459,9 @@ pub unsafe extern "C" fn gethostbyname_r(
 ) -> c_int {
     // SAFETY: forwards validated caller arguments to resolver ABI implementation.
     unsafe {
-        crate::resolv_abi::gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop)
+        crate::resolv_abi::gethostbyname_r_impl(
+            name, result_buf, buf, buflen, result, h_errnop, false,
+        )
     }
 }
 
@@ -1477,7 +1479,7 @@ pub unsafe extern "C" fn gethostbyaddr_r(
     // SAFETY: forwards validated caller arguments to resolver ABI implementation.
     unsafe {
         crate::resolv_abi::gethostbyaddr_r_impl(
-            addr, len, type_, result_buf, buf, buflen, result, h_errnop,
+            addr, len, type_, result_buf, buf, buflen, result, h_errnop, false,
         )
     }
 }
