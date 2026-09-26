@@ -11982,8 +11982,10 @@ const NSS_STATUS_NOTFOUND: c_int = 0;
 const NSS_STATUS_UNAVAIL: c_int = -1;
 const NSS_STATUS_TRYAGAIN: c_int = -2;
 const NSS_HOST_NOT_FOUND: c_int = 1;
-const NSS_TRY_AGAIN: c_int = 2;
 const NSS_NO_RECOVERY: c_int = 3;
+/// `h_errno` NETDB_INTERNAL: see errno. glibc's files module reports a short
+/// buffer as TRYAGAIN + ERANGE + NETDB_INTERNAL.
+const NSS_NETDB_INTERNAL: c_int = -1;
 
 #[repr(C)]
 struct GaihAddrtuple {
@@ -12046,6 +12048,7 @@ unsafe fn nss_finish_hostent_lookup(
         }
         libc::ERANGE => {
             unsafe { nss_set_errnop(errnop, libc::ERANGE) };
+            unsafe { nss_set_herr(h_errnop, NSS_NETDB_INTERNAL) };
             NSS_STATUS_TRYAGAIN
         }
         code => {
@@ -12561,7 +12564,8 @@ pub unsafe extern "C" fn _nss_files_gethostbyname4_r(
     if status == NSS_STATUS_SUCCESS {
         unsafe { nss_set_herr(h_errnop, 0) };
     } else if status == NSS_STATUS_TRYAGAIN {
-        unsafe { nss_set_herr(h_errnop, NSS_TRY_AGAIN) };
+        // The only TRYAGAIN here is a short caller buffer (ERANGE).
+        unsafe { nss_set_herr(h_errnop, NSS_NETDB_INTERNAL) };
     } else {
         unsafe { nss_set_herr_host_not_found(h_errnop) };
     }
