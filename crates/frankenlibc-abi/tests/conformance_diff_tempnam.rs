@@ -96,6 +96,10 @@ fn fl_tempnam() -> TempnamFn {
     frankenlibc_abi::unistd_abi::tempnam
 }
 
+/// Set TMPDIR for BOTH arms. In this test binary there is no interposition:
+/// `libc::setenv` updates the host's environment only, and fl reads its own,
+/// so fl's arm must be told through fl's `setenv` (under LD_PRELOAD the two
+/// are one and the same environment).
 fn set_tmpdir(v: Option<&str>) {
     unsafe {
         let k = CString::new("TMPDIR").unwrap();
@@ -103,9 +107,11 @@ fn set_tmpdir(v: Option<&str>) {
             Some(v) => {
                 let v = CString::new(v).unwrap();
                 libc::setenv(k.as_ptr(), v.as_ptr(), 1);
+                frankenlibc_abi::stdlib_abi::setenv(k.as_ptr(), v.as_ptr(), 1);
             }
             None => {
                 libc::unsetenv(k.as_ptr());
+                frankenlibc_abi::stdlib_abi::unsetenv(k.as_ptr());
             }
         }
     }
