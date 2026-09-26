@@ -98,26 +98,39 @@ fn fgetws_chk_bound_is_pinned_and_glibc_cannot_arbitrate() {
 
     println!("FGETWS_CHK_BOUND args=(NULL,4,2,NULL) host_glibc={host_outcome} fl={fl_outcome}");
 
-    // A request that clearly exceeds the destination on EITHER reading: 8 wide
-    // characters into a destination of 2. Both arms must abort, and if they
-    // disagree here the disagreement is about the check itself rather than about
-    // the units.
-    let host_clear = classify(|| {
-        // SAFETY: over-large request, in a child.
-        unsafe { host(std::ptr::null_mut(), 2, 8, std::ptr::null_mut()) };
-    });
-    let fl_clear = classify(|| {
-        // SAFETY: as above.
-        unsafe {
-            frankenlibc_abi::fortify_abi::__fgetws_chk(
-                std::ptr::null_mut(),
-                2,
-                8,
-                std::ptr::null_mut(),
-            )
-        };
-    });
-    println!("FGETWS_CHK_BOUND args=(NULL,2,8,NULL) host_glibc={host_clear} fl={fl_clear}");
+    // A request that exceeds the destination AND a line that does not fit: 8
+    // wide characters into a destination of 2, from a real stream holding
+    // "hello world\n". glibc aborts when the read fills the destination, so it
+    // CAN arbitrate this case, and both arms must abort. (With a null stream,
+    // as this case first used, glibc faults before its check, and fl -- whose
+    // rule is glibc's: abort when the content overflows -- returns NULL having
+    // read nothing, so the null-stream form asserted fl's former quarter-size
+    // clamp rather than the bound; see 370813add.)
+    let path = std::env::temp_dir().join(format!("fl_fgetws_bound_{}.txt", std::process::id()));
+    std::fs::write(&path, "hello world\n").expect("write fixture");
+    let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+    let read_with = |f: FgetwsChk| {
+        let cpath = cpath.clone();
+        move || {
+            let mut real = [0 as c_int; 64];
+            // SAFETY: readable file; `real` holds 64 wide characters, the
+            // claimed destination is 2.
+            unsafe {
+                let fp = libc::fopen(cpath.as_ptr(), c"r".as_ptr());
+                f(real.as_mut_ptr(), 2, 8, fp.cast());
+            }
+        }
+    };
+    let host_clear = classify(read_with(host));
+    let fl_clear = classify(read_with(frankenlibc_abi::fortify_abi::__fgetws_chk));
+    let _ = std::fs::remove_file(&path);
+    println!(
+        "FGETWS_CHK_BOUND args=(buf,2,8,\"hello world\") host_glibc={host_clear} fl={fl_clear}"
+    );
+    assert_eq!(
+        host_clear, "ABORT_SIGABRT",
+        "glibc must abort an 8-wide read into 2 when the line does not fit"
+    );
 
     // WHAT THIS GATE CAN AND CANNOT ASSERT.
     //
