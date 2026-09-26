@@ -164,10 +164,10 @@ fn tzset_always_leaves_tzname_zero_a_readable_string() {
             !name0.is_empty(),
             "TZ={tz:?}: tzname[0] must be a non-empty string, got {name0:?}"
         );
-        assert!(
-            !name1.is_empty(),
-            "TZ={tz:?}: tzname[1] must be a non-empty string, got {name1:?}"
-        );
+        // tzname[1] must be a readable string too (cstr() asserted non-NULL),
+        // but it may be EMPTY: glibc itself gives tzname = {"Universal", ""}
+        // for TZ="" (measured, glibc 2.42/2.43; fl matches).
+        let _ = name1;
         assert!(
             daylight == 0 || daylight == 1,
             "TZ={tz:?}: daylight must be a 0/1 flag, got {daylight}"
