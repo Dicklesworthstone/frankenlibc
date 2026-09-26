@@ -72,10 +72,19 @@ fn fstatfs64_matches_fstatfs() {
     let fd = unsafe { libc::open(c"/".as_ptr(), libc::O_RDONLY | libc::O_DIRECTORY) };
     assert!(fd >= 0, "opening / for fstatfs failed");
 
+    // f_bfree is LIVE: other processes write to / between the two calls
+    // (seen: 30034006 vs 30034004 on a busy build worker). Retry the pair; a
+    // mis-wired alias disagrees on every attempt, a race does not.
     let mut a: libc::statfs = unsafe { std::mem::zeroed() };
     let mut b: libc::statfs64 = unsafe { std::mem::zeroed() };
-    let ra = unsafe { u::fstatfs(fd, &mut a as *mut _ as *mut c_void) };
-    let rb = unsafe { u::fstatfs64(fd, &mut b as *mut _ as *mut c_void) };
+    let (mut ra, mut rb) = (0, 0);
+    for _ in 0..5 {
+        ra = unsafe { u::fstatfs(fd, &mut a as *mut _ as *mut c_void) };
+        rb = unsafe { u::fstatfs64(fd, &mut b as *mut _ as *mut c_void) };
+        if ra != 0 || a.f_bfree == b.f_bfree {
+            break;
+        }
+    }
     // SAFETY: fd was opened above and is not used after this point.
     unsafe { libc::close(fd) };
 
