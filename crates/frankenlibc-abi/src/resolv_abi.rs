@@ -2085,7 +2085,10 @@ unsafe fn write_reentrant_hostent(
     let name_ptr = buf;
     let mut offset = name_len;
 
-    offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
+    // Addresses at pointer alignment, as glibc's hostent_data: callers read
+    // h_addr_list[0] as `struct in_addr *` / `struct in6_addr *`, and at
+    // byte alignment the address followed the name at an odd offset.
+    offset = aligned_buffer_offset(buf, offset, HOSTENT_ADDR_ALIGN).ok_or(libc::ERANGE)?;
     let addr_end = offset.checked_add(4).ok_or(libc::ERANGE)?;
     if addr_end > buf_limit {
         return Err(libc::ERANGE);
@@ -2163,6 +2166,9 @@ unsafe fn write_reentrant_gethostbyname(
 /// caller's buffer, glibc layout order: strings, addresses, alias table,
 /// address table. `ERANGE` when `buflen` is too small.
 #[allow(clippy::too_many_arguments)]
+/// Alignment of the address block in a reentrant `hostent` buffer.
+const HOSTENT_ADDR_ALIGN: usize = align_of::<*mut c_char>();
+
 unsafe fn write_reentrant_hostent_family(
     name: &[u8],
     aliases: &[Vec<u8>],
@@ -2205,7 +2211,10 @@ unsafe fn write_reentrant_hostent_family(
         alias_values.push(copy_string(alias, &mut offset)?);
     }
 
-    offset = aligned_buffer_offset(buf, offset, align_of::<u8>()).ok_or(libc::ERANGE)?;
+    // Addresses at pointer alignment, as glibc's hostent_data: callers read
+    // h_addr_list[0] as `struct in_addr *` / `struct in6_addr *`, and at
+    // byte alignment the address followed the name at an odd offset.
+    offset = aligned_buffer_offset(buf, offset, HOSTENT_ADDR_ALIGN).ok_or(libc::ERANGE)?;
     let addresses_bytes = addresses.len().checked_mul(addr_len).ok_or(libc::ERANGE)?;
     let addresses_end = offset.checked_add(addresses_bytes).ok_or(libc::ERANGE)?;
     if addresses_end > buf_limit {
