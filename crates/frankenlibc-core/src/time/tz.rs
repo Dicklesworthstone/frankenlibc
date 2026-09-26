@@ -680,12 +680,28 @@ impl Zone {
     pub fn local_to_utc_with_hint(&self, local: i64, isdst: i32, hint: i32) -> (i64, i32) {
         let mut off = hint;
         let mut converged = None;
+        let mut prior_guess = None;
+        let mut prior_type: Option<&LocalType> = None;
         for _ in 0..8 {
             let ty = self.lookup(local - i64::from(off));
             if ty.utoff == off {
                 converged = Some(ty.isdst);
                 break;
             }
+            if prior_guess == Some(ty.utoff)
+                && let Some(prior) = prior_type
+                && ty.isdst != prior.isdst
+            {
+                // A two-cycle straddles a missing local-time interval. Use
+                // the caller's requested kind, not an offset sampled a day
+                // earlier: DST need not be a positive, one-hour adjustment.
+                // For an unknown hint glibc uses the standard interpretation,
+                // which normalizes backward for negative-DST zones.
+                let selected = if ty.isdst == (isdst > 0) { ty } else { prior };
+                return (local - i64::from(selected.utoff), selected.utoff);
+            }
+            prior_guess = Some(off);
+            prior_type = Some(ty);
             off = ty.utoff;
         }
         match converged {
@@ -702,6 +718,15 @@ impl Zone {
                 {
                     // The requested kind does not apply at this wall time:
                     // reinterpret the fields with that kind's offset.
+                    return (local - i64::from(alt), alt);
+                }
+                if isdst >= 0
+                    && found_dst != (isdst > 0)
+                    && let Some(alt) = off.checked_add(if isdst > 0 { 3600 } else { -3600 })
+                {
+                    // No nearby type has the requested kind (for example,
+                    // UTC with tm_isdst=1). glibc still interprets the hint,
+                    // using a one-hour adjustment, then normalizes the result.
                     return (local - i64::from(alt), alt);
                 }
                 (local - i64::from(off), off)
@@ -848,6 +873,79 @@ mod tests {
             z.local_to_utc(at(2023, 11, 5, 1, 30), 0),
             at(2023, 11, 5, 6, 30)
         );
+    }
+
+    #[test]
+    fn mktime_missing_times_honor_dst_kind_and_offset_hint() {
+        // glibc oracle: ordinary northern/southern gaps, a half-hour gap,
+        // and a gap caused by ENDING negative DST. No installed tzdata needed.
+        let cases: &[(&[u8], i64, i32, i32)] = &[
+            (
+                b"EST5EDT,M3.2.0,M11.1.0",
+                at(2023, 3, 12, 2, 30),
+                -18_000,
+                -14_400,
+            ),
+            (
+                b"AEST-10AEDT,M10.1.0,M4.1.0/3",
+                at(2023, 10, 1, 2, 30),
+                36_000,
+                39_600,
+            ),
+            (
+                b"<+1030>-10:30<+11>-11,M10.1.0,M4.1.0",
+                at(2023, 10, 1, 2, 15),
+                37_800,
+                39_600,
+            ),
+            (
+                b"IST-1GMT0,M10.5.0,M3.5.0/1",
+                at(2023, 3, 26, 1, 30),
+                3600,
+                0,
+            ),
+        ];
+        for &(spec, local, standard, daylight) in cases {
+            let zone = Zone::from_posix(parse_posix_tz(spec).unwrap());
+            for isdst in [-2, -1, 0, 1, 2, i32::MAX] {
+                let expected_offset = if isdst > 0 { daylight } else { standard };
+                for hint in [0, standard, daylight] {
+                    let (instant, used) = zone.local_to_utc_with_hint(local, isdst, hint);
+                    assert_eq!(
+                        (instant, used),
+                        (local - i64::from(expected_offset), expected_offset),
+                        "spec={spec:?}, isdst={isdst}, hint={hint}"
+                    );
+                    // Normalizing a missing time lands on the OTHER side.
+                    assert_ne!(zone.lookup(instant).isdst, isdst > 0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mktime_forced_dst_in_fixed_zones_uses_one_hour_fallback() {
+        let local = at(2023, 7, 1, 12, 0);
+        for (spec, standard) in [
+            (&b"UTC0"[..], 0),
+            (&b"GMT0"[..], 0),
+            (&b"JST-9"[..], 32_400),
+            (&b"<+0530>-5:30"[..], 19_800),
+        ] {
+            let zone = Zone::from_posix(parse_posix_tz(spec).unwrap());
+            for isdst in [-2, -1, 0, 1, 2, i32::MAX] {
+                let expected_offset = standard + if isdst > 0 { 3600 } else { 0 };
+                for hint in [0, standard, standard + 3600] {
+                    let (instant, used) = zone.local_to_utc_with_hint(local, isdst, hint);
+                    assert_eq!(
+                        (instant, used),
+                        (local - i64::from(expected_offset), expected_offset),
+                        "spec={spec:?}, isdst={isdst}, hint={hint}"
+                    );
+                    assert!(!zone.lookup(instant).isdst);
+                }
+            }
+        }
     }
 
     #[test]
