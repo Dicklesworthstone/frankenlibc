@@ -235,7 +235,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
 
     // Run atfork prepare handlers (acquire locks in parent before fork).
-    crate::pthread_abi::run_atfork_prepare();
+    let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -292,10 +292,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
 
     if pid == 0 {
         // Child: run child handlers to reinitialize state.
-        crate::pthread_abi::run_atfork_child();
+        crate::pthread_abi::run_atfork_child(&atfork);
     } else {
         // Parent: run parent handlers to release locks.
-        crate::pthread_abi::run_atfork_parent();
+        crate::pthread_abi::run_atfork_parent(&atfork);
     }
 
     runtime_policy::observe(ApiFamily::Process, decision.profile, 50, false);

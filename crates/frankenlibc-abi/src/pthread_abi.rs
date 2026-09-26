@@ -5850,10 +5850,10 @@ static ATFORK_HANDLERS: LazyLock<Mutex<Vec<AtforkHandlers>>> =
 // A handler that transitively calls pthread_atfork would self-deadlock on the
 // non-recursive Mutex otherwise (bd-sq7ae).
 #[allow(dead_code)]
-pub(crate) fn run_atfork_prepare() {
+pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
     let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
         Ok(g) => g.clone(),
-        Err(_) => return,
+        Err(_) => return AtforkSnapshot(Vec::new()),
     };
     for h in snapshot.iter().rev() {
         if let Some(f) = h.prepare {
@@ -5861,16 +5861,21 @@ pub(crate) fn run_atfork_prepare() {
             unsafe { f() };
         }
     }
+    AtforkSnapshot(snapshot)
 }
+
+/// The handlers registered when a fork began, taken by [`run_atfork_prepare`]
+/// and run by [`run_atfork_parent`]/[`run_atfork_child`] without touching
+/// `ATFORK_HANDLERS` again. The child cannot lock it: another parent thread
+/// may have been inside `pthread_atfork` at the clone, and in the child that
+/// holder never exists to release it (a child hung on 1 of 300 forks with a
+/// registering thread; bd-rc0923-epic-eeuy4f.5).
+pub(crate) struct AtforkSnapshot(Vec<AtforkHandlers>);
 
 /// Called after fork in parent — runs parent handlers in registration order.
 #[allow(dead_code)]
-pub(crate) fn run_atfork_parent() {
-    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
-        Ok(g) => g.clone(),
-        Err(_) => return,
-    };
-    for h in snapshot.iter() {
+pub(crate) fn run_atfork_parent(snapshot: &AtforkSnapshot) {
+    for h in snapshot.0.iter() {
         if let Some(f) = h.parent {
             // SAFETY: caller registered a valid function pointer.
             unsafe { f() };
@@ -5880,12 +5885,8 @@ pub(crate) fn run_atfork_parent() {
 
 /// Called after fork in child — runs child handlers in registration order.
 #[allow(dead_code)]
-pub(crate) fn run_atfork_child() {
-    let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
-        Ok(g) => g.clone(),
-        Err(_) => return,
-    };
-    for h in snapshot.iter() {
+pub(crate) fn run_atfork_child(snapshot: &AtforkSnapshot) {
+    for h in snapshot.0.iter() {
         if let Some(f) = h.child {
             // SAFETY: caller registered a valid function pointer.
             unsafe { f() };
@@ -7878,7 +7879,7 @@ mod tests {
 // the crate compiled without `cfg(test)`, so this item is visible there.
 #[doc(hidden)]
 pub fn __test_run_atfork_prepare() {
-    run_atfork_prepare();
+    let _ = run_atfork_prepare();
 }
 
 #[doc(hidden)]

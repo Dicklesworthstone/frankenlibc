@@ -5089,7 +5089,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // acquire the membrane pipeline guard, and serialize against in-flight
     // setenv via ENVIRON_LOCK before the syscall. (Same hazard class as
     // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
-    crate::pthread_abi::run_atfork_prepare();
+    let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -5131,12 +5131,12 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
 
     if pid > 0 {
         // Parent: run atfork_parent for symmetry with fork(), then exit.
-        crate::pthread_abi::run_atfork_parent();
+        crate::pthread_abi::run_atfork_parent(&atfork);
         syscall::sys_exit_group(0);
     }
 
     // Child: re-initialize via atfork_child before any further work.
-    crate::pthread_abi::run_atfork_child();
+    crate::pthread_abi::run_atfork_child(&atfork);
 
     // Child: create new session
     if syscall::sys_setsid().is_err() {
@@ -9493,7 +9493,7 @@ pub unsafe extern "C" fn forkpty(
         return -1;
     }
 
-    crate::pthread_abi::run_atfork_prepare();
+    let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
@@ -9539,9 +9539,9 @@ pub unsafe extern "C" fn forkpty(
     }
 
     if pid == 0 {
-        crate::pthread_abi::run_atfork_child();
+        crate::pthread_abi::run_atfork_child(&atfork);
     } else {
-        crate::pthread_abi::run_atfork_parent();
+        crate::pthread_abi::run_atfork_parent(&atfork);
     }
 
     if pid == 0 {
