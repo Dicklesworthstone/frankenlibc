@@ -3292,15 +3292,21 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
     let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
-unsafe fn parse_getopt_short(
-    argc: c_int,
-    argv: *const *mut c_char,
-    optspec: &[u8],
-    longopts: *const libc::option,
-    longindex: *mut c_int,
-) -> c_int {
+/// The part of a getopt step that happens BEFORE an option is parsed, shared
+/// by the short and long parsers: optstring mode flags (`+`, `-`,
+/// POSIXLY_CORRECT), RETURN_IN_ORDER operands, and glibc's argument
+/// permutation, which skips operands (a lone `-` among them) and rotates them
+/// behind the options at the end. `Err(code)` means the step is over and
+/// returns `code`; `Ok(())` leaves `optind` at the next option-like element.
+///
+/// It must run before the LONG-option dispatch as well: that dispatch used to
+/// inspect `argv[optind]` before any permutation, so for `prog - --xyz` it saw
+/// the operand `-`, declined, and the short parser -- permuting past `-` --
+/// then parsed `--xyz` as short options, reporting `-` as an unknown option
+/// character. Idempotent once `optind` points at an option.
+unsafe fn getopt_prepare(argc: c_int, argv: *const *mut c_char, optspec: &[u8]) -> Result<(), c_int> {
     if argc <= 0 || argv.is_null() {
-        return -1;
+        return Err(-1);
     }
     // Leading optstring mode flags: `+` forces POSIX strict ordering (stop at
     // the first operand) and `-` selects RETURN_IN_ORDER; either is followed
@@ -3308,17 +3314,15 @@ unsafe fn parse_getopt_short(
     // strict ordering. The flag byte is stripped so it is never treated as a
     // selectable option; a leading `:` stays for the colon/arg-mode helpers.
     let mode = optspec.first().copied();
-    let mode_prefix = matches!(mode, Some(b'+' | b'-')) as usize;
     let return_in_order = mode == Some(b'-');
     let strict =
         mode == Some(b'+') || (mode != Some(b'-') && std::env::var_os("POSIXLY_CORRECT").is_some());
-    let effective = &optspec[mode_prefix..];
 
     let mut argv_bytes = match unsafe { argv_byte_slices(argc, argv) } {
         Some(v) => v,
         None => {
             unsafe { set_abi_errno(errno::EINVAL) };
-            return -1;
+            return Err(-1);
         }
     };
     let argc_us = argc as usize;
@@ -3339,7 +3343,7 @@ unsafe fn parse_getopt_short(
                 libc_optarg = std::ptr::null_mut();
                 GETOPT_NEXTCHAR = None;
             }
-            return -1;
+            return Err(-1);
         }
         if !getopt_is_option_like(current) {
             unsafe {
@@ -3348,7 +3352,7 @@ unsafe fn parse_getopt_short(
                 libc_optarg = *argv.add(optind);
                 GETOPT_NEXTCHAR = None;
             }
-            return 1;
+            return Err(1);
         }
     }
 
@@ -3420,10 +3424,9 @@ unsafe fn parse_getopt_short(
                 GETOPT_FIRST_NONOPT = first_nonopt;
                 GETOPT_LAST_NONOPT = last_nonopt;
                 libc_optind = optind as c_int;
-                libc_optopt = 0;
                 GETOPT_NEXTCHAR = None;
             }
-            return -1;
+            return Err(-1);
         }
 
         unsafe {
@@ -3432,6 +3435,26 @@ unsafe fn parse_getopt_short(
             libc_optind = optind as c_int;
         }
     }
+    Ok(())
+}
+
+unsafe fn parse_getopt_short(
+    argc: c_int,
+    argv: *const *mut c_char,
+    optspec: &[u8],
+    longopts: *const libc::option,
+    longindex: *mut c_int,
+) -> c_int {
+    if let Err(code) = unsafe { getopt_prepare(argc, argv, optspec) } {
+        return code;
+    }
+    let mode_prefix = matches!(optspec.first().copied(), Some(b'+' | b'-')) as usize;
+    let effective = &optspec[mode_prefix..];
+    // Re-read: preparation may have permuted argv.
+    let Some(argv_bytes) = (unsafe { argv_byte_slices(argc, argv) }) else {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    };
 
     let argv_slices: Vec<&[u8]> = argv_bytes.iter().map(Vec::as_slice).collect();
 
@@ -3941,9 +3964,13 @@ pub unsafe extern "C" fn getopt_long(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
-        Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+    let rc = if let Err(code) = unsafe { getopt_prepare(argc, argv, &optspec) } {
+        code
+    } else {
+        match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, false) } {
+            Some(value) => value,
+            None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
@@ -3989,9 +4016,13 @@ pub unsafe extern "C" fn getopt_long_only(
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 12, true);
         return -1;
     };
-    let rc = match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
-        Some(value) => value,
-        None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+    let rc = if let Err(code) = unsafe { getopt_prepare(argc, argv, &optspec) } {
+        code
+    } else {
+        match unsafe { parse_getopt_long(argc, argv, &optspec, longopts, longindex, true) } {
+            Some(value) => value,
+            None => unsafe { parse_getopt_short(argc, argv, &optspec, longopts, longindex) },
+        }
     };
     runtime_policy::observe(
         ApiFamily::Stdio,
