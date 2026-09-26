@@ -1069,20 +1069,26 @@ fn gate_reaches_a_host_arm(src: &str) -> bool {
     if src.contains("Command::new") {
         return true;
     }
-    for block in src.split("extern \"C\" {").skip(1) {
-        let Some(end) = block.find("\n}") else {
-            continue;
-        };
-        for line in block[..end].lines() {
-            let t = line.trim();
-            let Some(rest) = t.strip_prefix("fn ").or_else(|| t.strip_prefix("pub fn ")) else {
+    // Link-time host declarations. `extern "C-unwind"` blocks count too: the
+    // callback-taking families (qsort, bsearch, tsearch) declare their host
+    // functions that way since 21c482886, and the linker resolves them to
+    // host glibc exactly as it does an `extern "C"` block.
+    for opener in ["extern \"C\" {", "extern \"C-unwind\" {"] {
+        for block in src.split(opener).skip(1) {
+            let Some(end) = block.find("\n}") else {
                 continue;
             };
-            let Some(symbol) = rest.split(['(', '<', ' ']).next() else {
-                continue;
-            };
-            if !symbol.is_empty() && !INFRASTRUCTURE_SYMBOLS.contains(&symbol) {
-                return true;
+            for line in block[..end].lines() {
+                let t = line.trim();
+                let Some(rest) = t.strip_prefix("fn ").or_else(|| t.strip_prefix("pub fn ")) else {
+                    continue;
+                };
+                let Some(symbol) = rest.split(['(', '<', ' ']).next() else {
+                    continue;
+                };
+                if !symbol.is_empty() && !INFRASTRUCTURE_SYMBOLS.contains(&symbol) {
+                    return true;
+                }
             }
         }
     }
