@@ -9,6 +9,9 @@
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::FileTypeExt;
@@ -7158,7 +7161,73 @@ fn gethostbyname2_supports_ipv6_localhost() {
     assert_eq!(unsafe { *__h_errno_location() }, 0);
 }
 
+type Gethostbyname2R = unsafe extern "C" fn(
+    *const c_char,
+    c_int,
+    *mut libc::hostent,
+    *mut c_char,
+    usize,
+    *mut *mut libc::hostent,
+    *mut c_int,
+) -> c_int;
+
+/// Host glibc's `gethostbyname2_r`, for expectations that depend on this
+/// machine's /etc/hosts and resolver rather than on fl.
+fn host_gethostbyname2_r() -> Gethostbyname2R {
+    // SAFETY: the type is gethostbyname2_r's C prototype; fl's definition is
+    // passed so a collapsed oracle aborts instead of comparing fl with itself.
+    unsafe { dlsym_oracle::host_fn(c"gethostbyname2_r", gethostbyname2_r as *const ()) }
+}
+
+/// `(rc, result is non-null, h_errno, aliases)` of one gethostbyname2_r call.
+fn gethostbyname2_r_outcome(
+    f: Gethostbyname2R,
+    name: &CStr,
+    af: c_int,
+) -> (c_int, bool, c_int, Vec<Vec<u8>>) {
+    let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut buf = [0 as c_char; 1024];
+    let mut result: *mut libc::hostent = std::ptr::null_mut();
+    let mut h_errno = -1;
+    // SAFETY: valid name, hostent, buffer and output slots.
+    let rc = unsafe {
+        f(
+            name.as_ptr(),
+            af,
+            &mut hostent,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    let mut aliases = Vec::new();
+    if !result.is_null() && !hostent.h_aliases.is_null() {
+        let mut p = hostent.h_aliases;
+        // SAFETY: a successful call leaves a NULL-terminated alias array.
+        unsafe {
+            while !(*p).is_null() {
+                aliases.push(CStr::from_ptr(*p).to_bytes().to_vec());
+                p = p.add(1);
+            }
+        }
+    }
+    (rc, !result.is_null(), h_errno, aliases)
+}
+
 #[test]
+fn gethostbyname2_r_missing_host_matches_host_glibc() {
+    // Whether a missing name is HOST_NOT_FOUND or TRY_AGAIN (no reachable
+    // DNS) depends on this machine, so glibc on the same machine decides.
+    let name = CString::new("frankenlibc-no-such-host.invalid").unwrap();
+    let fl = gethostbyname2_r_outcome(gethostbyname2_r, &name, libc::AF_INET6);
+    let host = gethostbyname2_r_outcome(host_gethostbyname2_r(), &name, libc::AF_INET6);
+    assert!(!host.1, "the .invalid name resolved on the host");
+    assert_eq!((fl.0, fl.1, fl.2), (host.0, host.1, host.2));
+}
+
+#[test]
+#[ignore = "pins HOST_NOT_FOUND, which needs a reachable resolver; gethostbyname2_r_missing_host_matches_host_glibc compares with glibc instead (bd-f7qzp8)"]
 fn gethostbyname2_r_missing_host_returns_zero_with_null_result() {
     let name = CString::new("frankenlibc-no-such-host.invalid").unwrap();
     let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
@@ -7246,14 +7315,21 @@ fn gethostbyname2_r_ipv6_localhost_packs_result_into_caller_buffer() {
         [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
     );
     assert!(!hostent.h_aliases.is_null());
-    assert!(unsafe { (*hostent.h_aliases).is_null() });
+    // The aliases are this machine's /etc/hosts entries for ::1 (commonly
+    // "ip6-localhost ip6-loopback"): glibc on the same machine decides.
+    let fl = gethostbyname2_r_outcome(gethostbyname2_r, &name, libc::AF_INET6);
+    let host = gethostbyname2_r_outcome(host_gethostbyname2_r(), &name, libc::AF_INET6);
+    assert_eq!(fl.3, host.3, "aliases differ from glibc's");
 }
 
 #[test]
 fn gethostbyname2_r_ipv6_small_buffer_preserves_h_errno() {
     let name = CString::new("localhost").unwrap();
     let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
-    let mut buf = [0i8; 64];
+    // Too small for the name and one aligned 16-byte address, whatever
+    // aliases this machine's /etc/hosts gives ::1 (64 bytes fitted on a host
+    // without them).
+    let mut buf = [0i8; 16];
     let mut result: *mut libc::hostent = std::ptr::dangling_mut::<libc::hostent>();
     let mut h_errno = -1;
 
