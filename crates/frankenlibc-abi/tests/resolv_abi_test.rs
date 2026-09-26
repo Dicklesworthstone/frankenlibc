@@ -13,6 +13,86 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use frankenlibc_abi::inet_abi;
+
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+// Unknown-name outcomes are a property of the MACHINE: HOST_NOT_FOUND /
+// EAI_NONAME with a reachable resolver, TRY_AGAIN / EAI_AGAIN without one (a
+// build worker with no DNS). Host glibc on the same machine decides them.
+type GetaddrinfoFn = unsafe extern "C" fn(
+    *const c_char,
+    *const c_char,
+    *const libc::addrinfo,
+    *mut *mut libc::addrinfo,
+) -> c_int;
+type FreeaddrinfoFn = unsafe extern "C" fn(*mut libc::addrinfo);
+type GethostbynameRFn = unsafe extern "C" fn(
+    *const c_char,
+    *mut libc::hostent,
+    *mut c_char,
+    usize,
+    *mut *mut libc::hostent,
+    *mut c_int,
+) -> c_int;
+type GethostbynameFn = unsafe extern "C" fn(*const c_char) -> *mut libc::hostent;
+type HErrnoLocationFn = unsafe extern "C" fn() -> *mut c_int;
+
+/// Host glibc's `getaddrinfo(node, NULL, NULL, ..)` return code.
+fn host_getaddrinfo_rc(node: &CStr) -> c_int {
+    // SAFETY: prototypes of getaddrinfo/freeaddrinfo; fl's definitions guard
+    // against a collapsed oracle.
+    unsafe {
+        let gai: GetaddrinfoFn =
+            dlsym_oracle::host_fn(c"getaddrinfo", resolv_abi::getaddrinfo as *const ());
+        let free: FreeaddrinfoFn =
+            dlsym_oracle::host_fn(c"freeaddrinfo", resolv_abi::freeaddrinfo as *const ());
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+        let rc = gai(node.as_ptr(), ptr::null(), ptr::null(), &mut res);
+        if !res.is_null() {
+            free(res);
+        }
+        rc
+    }
+}
+
+/// Host glibc's `gethostbyname_r`: `(rc, result is null, h_errno)`.
+fn host_gethostbyname_r(name: &CStr) -> (c_int, bool, c_int) {
+    // SAFETY: prototype of gethostbyname_r; valid buffers and output slots.
+    unsafe {
+        let f: GethostbynameRFn =
+            dlsym_oracle::host_fn(c"gethostbyname_r", inet_abi::gethostbyname_r as *const ());
+        let mut hostent: libc::hostent = mem::zeroed();
+        let mut scratch = [0 as c_char; 256];
+        let mut result: *mut libc::hostent = ptr::null_mut();
+        let mut h_errno = -1;
+        let rc = f(
+            name.as_ptr(),
+            &mut hostent,
+            scratch.as_mut_ptr(),
+            scratch.len(),
+            &mut result,
+            &mut h_errno,
+        );
+        (rc, result.is_null(), h_errno)
+    }
+}
+
+/// Host glibc's `gethostbyname`: `(result is null, h_errno)`.
+fn host_gethostbyname(name: &CStr) -> (bool, c_int) {
+    // SAFETY: prototypes of gethostbyname and __h_errno_location.
+    unsafe {
+        let f: GethostbynameFn =
+            dlsym_oracle::host_fn(c"gethostbyname", resolv_abi::gethostbyname as *const ());
+        let loc: HErrnoLocationFn = dlsym_oracle::host_fn(
+            c"__h_errno_location",
+            resolv_abi::__h_errno_location as *const (),
+        );
+        *loc() = 0;
+        let r = f(name.as_ptr());
+        (r.is_null(), *loc())
+    }
+}
 use frankenlibc_abi::malloc_abi;
 use frankenlibc_abi::resolv_abi;
 use frankenlibc_abi::unistd_abi;
@@ -644,10 +724,11 @@ fn gethostbyname_unknown_host_sets_thread_local_h_errno() {
 
         let ptr = unsafe { resolv_abi::gethostbyname(query.as_ptr()) };
         assert!(ptr.is_null());
-        assert_eq!(
-            unsafe { *resolv_abi::__h_errno_location() },
-            HOST_NOT_FOUND_ERRNO
-        );
+        let fl_h_errno = unsafe { *resolv_abi::__h_errno_location() };
+        let host = host_gethostbyname(&query);
+        assert!(host.0, "the .invalid name resolved on the host");
+        assert_eq!(fl_h_errno, host.1, "fl and glibc set different h_errno");
+        assert_ne!(fl_h_errno, 0, "an unknown name must set h_errno");
     });
 }
 
@@ -947,9 +1028,13 @@ fn gethostbyname_r_unknown_host_returns_enoent() {
                 &mut h_errno,
             )
         };
-        assert_eq!(rc, libc::ENOENT);
         assert!(result_ptr.is_null());
-        assert_eq!(h_errno, HOST_NOT_FOUND_ERRNO);
+        let host = host_gethostbyname_r(&query);
+        assert!(host.1, "the .invalid name resolved on the host");
+        assert_eq!((rc, h_errno), (host.0, host.2), "fl and glibc disagree");
+        if host.2 == HOST_NOT_FOUND_ERRNO {
+            assert_eq!(rc, libc::ENOENT);
+        }
     });
 }
 
@@ -1557,7 +1642,12 @@ fn getaddrinfo_nonexistent_host_returns_eai_noname() {
 
         let rc =
             unsafe { resolv_abi::getaddrinfo(node.as_ptr(), ptr::null(), ptr::null(), &mut res) };
-        assert_eq!(rc, libc::EAI_NONAME);
+        let host = host_getaddrinfo_rc(&node);
+        assert!(
+            host == libc::EAI_NONAME || host == libc::EAI_AGAIN,
+            "the .invalid name resolved on the host (rc {host})"
+        );
+        assert_eq!(rc, host, "fl and glibc disagree on an unknown name");
         assert!(res.is_null());
     });
 }
