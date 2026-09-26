@@ -13835,6 +13835,21 @@ fn nss_files_get_services_use_native_backend() {
     assert!(!iter.s_name.is_null());
 }
 
+/// The NSS framework reads `*errnop` only for TRYAGAIN (-2) and UNAVAIL (-1)
+/// (ERANGE means "grow the buffer"). glibc's value otherwise depends on the
+/// machine: for the same missing name one worker left ENOENT and another left
+/// it untouched. Compare it only where it carries meaning.
+fn nss_meaningful_errno(status: c_int, errno: c_int) -> c_int {
+    if status < 0 { errno } else { 0 }
+}
+
+/// `*h_errnop` after a SUCCESS depends on this machine's hosts file (glibc's
+/// multi-line merge scan runs to EOF): two workers gave 1 and untouched for
+/// the same localhost lookup. Compare it only for failures.
+fn nss_meaningful_herrno(status: c_int, h_errno: c_int) -> c_int {
+    if status == 1 { 0 } else { h_errno }
+}
+
 /// `(status, errno, h_errno, h_name)` of one hostent-shaped nss_files call.
 type NssHostOutcome = (c_int, c_int, c_int, Option<Vec<u8>>);
 
@@ -13858,7 +13873,12 @@ fn nss_hostent_outcome(
             .to_bytes()
             .to_vec()
     });
-    (status, err, h_err, name)
+    (
+        status,
+        nss_meaningful_errno(status, err),
+        nss_meaningful_herrno(status, h_err),
+        name,
+    )
 }
 
 /// The nss_files host entry points consult /etc/hosts only (never DNS, never
@@ -14015,7 +14035,12 @@ fn nss_files_host_lookups_match_host_glibc() {
                     &mut ttl,
                 )
             };
-            (status, err, h_err, pat.is_null())
+            (
+                status,
+                nss_meaningful_errno(status, err),
+                nss_meaningful_herrno(status, h_err),
+                pat.is_null(),
+            )
         };
         check(
             what("gethostbyname4_r"),

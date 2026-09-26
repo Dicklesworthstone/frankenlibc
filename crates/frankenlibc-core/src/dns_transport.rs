@@ -496,6 +496,16 @@ where
     resolve_with_canonical(hostname, want_v4, want_v6, config, query).map(|result| result.addresses)
 }
 
+/// How one search name failed: SERVFAIL is kept apart from other temporary
+/// failures because glibc keeps searching after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NameOutcome {
+    NotFound,
+    ServFail,
+    Temporary,
+    Failure,
+}
+
 /// Resolve addresses while retaining the actual canonical owner for
 /// AI_CANONNAME. Uses exactly the same transport, search and retry rules as
 /// address-only resolution; obtaining the name requires no extra DNS query.
@@ -521,13 +531,36 @@ where
         0
     };
     let timeout = Duration::from_secs(u64::from(config.timeout.max(1)));
-    let mut saw_temporary = false;
-    let mut saw_failure = false;
-    for name in build_search_names(hostname, &config.search, config.ndots) {
+    // glibc's search semantics decide which failure is reported:
+    // - an as-is name tried FIRST (enough dots) has the final say, whatever
+    //   the search domains after it return;
+    // - a search-domain SERVFAIL keeps searching but leaves TRY_AGAIN as the
+    //   fallback answer; any other search-domain error (a timeout, a
+    //   malformed reply) stops the search, though an as-is name still
+    //   pending is tried;
+    // - a refused connection means no server: TRY_AGAIN at once;
+    // - otherwise the last name tried decides.
+    // Before this, a timeout on ANY name made the whole lookup TRY_AGAIN, so
+    // a missing name whose search-suffixed form timed out was "try again"
+    // where glibc says "not found" (bd-f7qzp8).
+    let names = build_search_names(hostname, &config.search, config.ndots);
+    let as_is_first = names
+        .first()
+        .is_some_and(|name| name.as_slice() == hostname);
+    let mut first_outcome = None;
+    let mut last_outcome = NameOutcome::NotFound;
+    let mut saw_servfail = false;
+    let mut search_stopped = false;
+    for (name_index, name) in names.into_iter().enumerate() {
+        let is_as_is = name.as_slice() == hostname;
+        if search_stopped && !is_as_is {
+            continue;
+        }
         let mut result = DnsResolution::default();
         let mut canonical_name = None;
         let mut done = [!want_v4, !want_v6];
         let mut failures = [None, None];
+        let mut servfail = [false, false];
         for _ in 0..config.attempts.max(1) {
             for offset in 0..config.nameservers.len() {
                 let server = SocketAddr::new(
@@ -549,6 +582,7 @@ where
                         Ok(reply) => {
                             done[index] = true;
                             failures[index] = None;
+                            servfail[index] = false;
                             if reply.rcode == rcode::NOERROR {
                                 for record in reply.records {
                                     if index == 0 {
@@ -568,8 +602,18 @@ where
                                 }
                             }
                         }
-                        Err(QueryError::Io(_) | QueryError::RetryableResponse(_)) => {
+                        Err(QueryError::Io(error))
+                            if error.kind() == std::io::ErrorKind::ConnectionRefused =>
+                        {
+                            return Err(ResolveError::Temporary);
+                        }
+                        Err(QueryError::Io(_)) => {
                             failures[index] = Some(ResolveError::Temporary);
+                            servfail[index] = false;
+                        }
+                        Err(QueryError::RetryableResponse(code)) => {
+                            failures[index] = Some(ResolveError::Temporary);
+                            servfail[index] = code == rcode::SERVFAIL;
                         }
                         Err(QueryError::ResponseCode(_)) => {
                             // The transport already separated retryable UDP
@@ -577,6 +621,7 @@ where
                             // lookup, not an invalid/malformed-response error.
                             done[index] = true;
                             failures[index] = None;
+                            servfail[index] = false;
                         }
                         Err(_) => {
                             failures[index].get_or_insert(ResolveError::Failure);
@@ -599,16 +644,40 @@ where
         }
         // A successful definitive reply supersedes errors from earlier
         // attempts of that family. Only unresolved failures affect the result.
-        saw_temporary |= failures.contains(&Some(ResolveError::Temporary));
-        saw_failure |= failures.contains(&Some(ResolveError::Failure));
+        let outcome = if failures.contains(&Some(ResolveError::Temporary)) {
+            let only_servfail =
+                (0..2).all(|i| failures[i] != Some(ResolveError::Temporary) || servfail[i]);
+            if only_servfail {
+                NameOutcome::ServFail
+            } else {
+                NameOutcome::Temporary
+            }
+        } else if failures.contains(&Some(ResolveError::Failure)) {
+            NameOutcome::Failure
+        } else {
+            NameOutcome::NotFound
+        };
+        last_outcome = outcome;
+        if name_index == 0 && as_is_first {
+            first_outcome = Some(outcome);
+        } else if !is_as_is {
+            match outcome {
+                NameOutcome::NotFound => {}
+                NameOutcome::ServFail => saw_servfail = true,
+                NameOutcome::Temporary | NameOutcome::Failure => search_stopped = true,
+            }
+        }
     }
-    if saw_temporary {
-        Err(ResolveError::Temporary)
-    } else if saw_failure {
-        Err(ResolveError::Failure)
-    } else {
-        Err(ResolveError::NotFound)
-    }
+    let outcome = match first_outcome {
+        Some(outcome) => outcome,
+        None if saw_servfail => NameOutcome::ServFail,
+        None => last_outcome,
+    };
+    Err(match outcome {
+        NameOutcome::NotFound => ResolveError::NotFound,
+        NameOutcome::ServFail | NameOutcome::Temporary => ResolveError::Temporary,
+        NameOutcome::Failure => ResolveError::Failure,
+    })
 }
 
 /// Absolute reverse-lookup owner. IPv4-mapped IPv6 addresses use IN-ADDR.ARPA,
@@ -1380,6 +1449,83 @@ mod tests {
             },
         );
         assert_eq!(result.unwrap_err(), ResolveError::NotFound);
+    }
+
+    /// glibc's res_search failure rules (bd-f7qzp8): which search name's
+    /// failure is reported, and when searching stops.
+    #[test]
+    fn search_failures_follow_glibc_res_search_rules() {
+        fn nx() -> Result<QueryReply, QueryError> {
+            Ok(QueryReply {
+                records: vec![],
+                rcode: rcode::NXDOMAIN,
+            })
+        }
+        fn timed_out() -> Result<QueryReply, QueryError> {
+            Err(QueryError::Io(std::io::ErrorKind::TimedOut.into()))
+        }
+        let mut config = ResolverConfig::default();
+        config.search = vec!["a.test".to_owned(), "b.test".to_owned()];
+        config.attempts = 1;
+
+        // As-is first (enough dots): its NXDOMAIN is the answer even though a
+        // search domain timed out -- and the timeout stops the search.
+        let mut calls = Vec::new();
+        let result = resolve_with(b"x.invalid", true, false, &config, |name, _, _, _, _, _| {
+            calls.push(name.to_vec());
+            if name == b"x.invalid" {
+                nx()
+            } else {
+                timed_out()
+            }
+        });
+        assert_eq!(result.unwrap_err(), ResolveError::NotFound);
+        assert_eq!(
+            calls,
+            vec![b"x.invalid".to_vec(), b"x.invalid.a.test".to_vec()]
+        );
+
+        // As-is last (no dots): a search timeout stops the search, the as-is
+        // name is still tried, and its answer decides.
+        let mut calls = Vec::new();
+        let result = resolve_with(b"host", true, false, &config, |name, _, _, _, _, _| {
+            calls.push(name.to_vec());
+            if name == b"host" { nx() } else { timed_out() }
+        });
+        assert_eq!(result.unwrap_err(), ResolveError::NotFound);
+        assert_eq!(calls, vec![b"host.a.test".to_vec(), b"host".to_vec()]);
+
+        // A search-domain SERVFAIL keeps searching but leaves TRY_AGAIN.
+        let mut calls = Vec::new();
+        let result = resolve_with(b"host", true, false, &config, |name, _, _, _, _, _| {
+            calls.push(name.to_vec());
+            if name == b"host.a.test" {
+                Err(QueryError::RetryableResponse(rcode::SERVFAIL))
+            } else {
+                nx()
+            }
+        });
+        assert_eq!(result.unwrap_err(), ResolveError::Temporary);
+        assert_eq!(calls.len(), 3);
+
+        // The as-is name's own timeout is still reported as temporary.
+        let result = resolve_with(b"x.invalid", true, false, &config, |name, _, _, _, _, _| {
+            if name == b"x.invalid" {
+                timed_out()
+            } else {
+                nx()
+            }
+        });
+        assert_eq!(result.unwrap_err(), ResolveError::Temporary);
+
+        // No server listening: TRY_AGAIN at once, nothing else queried.
+        let mut calls = 0;
+        let result = resolve_with(b"x.invalid", true, true, &config, |_, _, _, _, _, _| {
+            calls += 1;
+            Err(QueryError::Io(std::io::ErrorKind::ConnectionRefused.into()))
+        });
+        assert_eq!(result.unwrap_err(), ResolveError::Temporary);
+        assert_eq!(calls, 1);
     }
 
     #[test]
