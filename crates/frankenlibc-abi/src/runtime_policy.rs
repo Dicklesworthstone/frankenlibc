@@ -2417,7 +2417,63 @@ pub(crate) fn decide(
         }
     };
     record_last_explainability(mode, ctx, decision, DECISION_GATE_RUNTIME_POLICY);
+    if matches!(decision.action, MembraneAction::Deny) {
+        record_deny(mode, ctx, &decision);
+    }
     (mode, decision)
+}
+
+/// Membrane denials since process start.
+static DENIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Count a denial and append its evidence record to `FRANKENLIBC_LOG` (if
+/// set). Denials are rare, so formatting the record unconditionally is fine.
+#[cold]
+fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecision) {
+    let seq = DENIALS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    let line = format!(
+        "{{\"event\":\"deny\",\"seq\":{seq},\"runtime_mode\":\"{}\",\"api_family\":\"{:?}\",\
+\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"evidence_seqno\":{},\"addr_hint\":\"{:#x}\",\
+\"requested_bytes\":{},\"is_write\":{}}}",
+        runtime_mode_name(mode),
+        ctx.family,
+        decision.policy_id,
+        decision.risk_upper_bound_ppm,
+        decision.evidence_seqno,
+        ctx.addr_hint,
+        ctx.requested_bytes,
+        ctx.is_write,
+    );
+    frankenlibc_membrane::heal::append_runtime_log_record(&line);
+}
+
+fn runtime_mode_name(mode: SafetyLevel) -> &'static str {
+    match mode {
+        SafetyLevel::Strict => "strict",
+        SafetyLevel::Hardened => "hardened",
+        SafetyLevel::Off => "off",
+    }
+}
+
+/// At process exit, one `FRANKENLIBC_LOG` record with the heal and denial
+/// counters (bd-rc0923-epic-eeuy4f.16). A `.fini_array` entry rather than
+/// fl's `exit`: a program returning from `main` exits through the host's.
+#[used]
+#[unsafe(link_section = ".fini_array")]
+static RUNTIME_LOG_SUMMARY_AT_EXIT: extern "C" fn() = runtime_log_summary_at_exit;
+
+extern "C" fn runtime_log_summary_at_exit() {
+    if std::env::var_os("FRANKENLIBC_LOG").is_none_or(|path| path.is_empty()) {
+        return;
+    }
+    let line = format!(
+        "{{\"event\":\"exit_summary\",\"pid\":{},\"runtime_mode\":\"{}\",\"denials\":{},{}}}",
+        std::process::id(),
+        runtime_mode_name(mode()),
+        DENIALS.load(AtomicOrdering::Relaxed),
+        frankenlibc_membrane::heal::global_healing_policy().counters_json_fields(),
+    );
+    frankenlibc_membrane::heal::append_runtime_log_record(&line);
 }
 
 /// Strict mode observation path: consult kernel for evidence but return passthrough.

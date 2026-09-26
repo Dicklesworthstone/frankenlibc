@@ -109,6 +109,25 @@ impl HealingPolicy {
         }
     }
 
+    /// This policy's counters as the fields of one JSON object (no braces).
+    #[must_use]
+    pub fn counters_json_fields(&self) -> String {
+        let n = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        format!(
+            "\"total_heals\":{},\"size_clamps\":{},\"null_truncations\":{},\
+\"double_frees\":{},\"foreign_frees\":{},\"realloc_as_mallocs\":{},\
+\"safe_defaults\":{},\"variant_upgrades\":{}",
+            n(&self.total_heals),
+            n(&self.size_clamps),
+            n(&self.null_truncations),
+            n(&self.double_frees),
+            n(&self.foreign_frees),
+            n(&self.realloc_as_mallocs),
+            n(&self.safe_defaults),
+            n(&self.variant_upgrades),
+        )
+    }
+
     /// Clear buffered healing evidence rows.
     pub fn clear_healing_logs(&self) {
         self.healing_logs.lock().clear();
@@ -329,6 +348,13 @@ fn append_to_runtime_log(line: &str) {
         append_line(file, line);
     }
     WRITING_RUNTIME_LOG.with(|writing| writing.set(false));
+}
+
+/// Append one JSONL record to the `FRANKENLIBC_LOG` file, if one is set:
+/// the sink for evidence produced outside the healing policy (membrane
+/// denials, the process-exit counter summary).
+pub fn append_runtime_log_record(line: &str) {
+    append_to_runtime_log(line);
 }
 
 fn append_line(mut file: &std::fs::File, line: &str) {
