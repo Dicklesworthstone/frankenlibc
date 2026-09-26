@@ -98,6 +98,35 @@ fn setfsuid_and_setfsgid_match_the_host() {
         );
         compared += 1;
 
+        if unsafe { libc::geteuid() } == 0 {
+            // PRIVILEGED (a root build worker): the change is real, so each arm
+            // must start from the same id -- restore it after the host arm, or
+            // the fl arm reports the host's new id as its "previous" one. Both
+            // must return the previous id and actually move to the new one.
+            let original = want_query.0;
+            let want_set = call(host, i32::MAX);
+            let want_moved = call(host, -1);
+            let _ = call(host, original);
+            let got_set = call(mine, i32::MAX);
+            let got_moved = call(mine, -1);
+            let _ = call(mine, original);
+            println!(
+                "{label}(i32::MAX) as root: host {want_set:?}->{want_moved:?}  fl {got_set:?}->{got_moved:?}"
+            );
+            assert_eq!(
+                (got_set, got_moved),
+                (want_set, want_moved),
+                "{label}(i32::MAX) as root: fl {got_set:?}->{got_moved:?}, host {want_set:?}->{want_moved:?}"
+            );
+            assert_eq!(
+                call(host, -1),
+                want_query,
+                "{label}: the id was not restored"
+            );
+            compared += 2;
+            continue;
+        }
+
         // A REFUSED change. Unprivileged, so the id must not move — and the call
         // still returns the previous id with no errno rather than failing.
         let want_set = call(host, i32::MAX);
