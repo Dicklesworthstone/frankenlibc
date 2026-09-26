@@ -1615,7 +1615,9 @@ pub fn wcscasecmp(s1: &[u32], s2: &[u32]) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            // glibc returns the difference of the folded characters, not its
+            // sign (wcsncasecmp(L"", L"b", 5) == -98).
+            return la.wrapping_sub(lb) as i32;
         }
         if a == 0 {
             return 0;
@@ -1671,7 +1673,9 @@ pub fn wcsncasecmp(s1: &[u32], s2: &[u32], n: usize) -> i32 {
         let lb = simple_towlower(b);
 
         if la != lb {
-            return if (la as i32) < (lb as i32) { -1 } else { 1 };
+            // glibc returns the difference of the folded characters, not its
+            // sign (wcsncasecmp(L"", L"b", 5) == -98).
+            return la.wrapping_sub(lb) as i32;
         }
         if a == 0 {
             return 0;
