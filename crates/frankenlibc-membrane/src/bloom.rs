@@ -34,6 +34,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// arena's live set.
 const DEFAULT_EXPECTED_ITEMS: usize = 4_000_000;
 
+/// Bits per block of the blocked layout: one 64-byte cache line.
+const BLOOM_BLOCK_BITS: usize = 512;
+
 /// Default false positive rate target.
 const DEFAULT_FP_RATE: f64 = 0.001; // 0.1%
 
@@ -94,8 +97,9 @@ impl PointerBloomFilter {
 
     /// Insert a pointer into the bloom filter.
     pub fn insert(&self, ptr: usize) {
+        let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
         for i in 0..self.num_hashes {
-            let bit_idx = self.hash(ptr, i);
+            let bit_idx = self.bit_index(h1, h2, i);
             let word_idx = bit_idx / 64;
             let bit_pos = bit_idx % 64;
             self.bits[word_idx].fetch_or(1u64 << bit_pos, Ordering::Relaxed);
@@ -109,8 +113,9 @@ impl PointerBloomFilter {
     /// Returns `false` if the pointer is definitely not ours (no false negatives).
     #[must_use]
     pub fn might_contain(&self, ptr: usize) -> bool {
+        let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
         for i in 0..self.num_hashes {
-            let bit_idx = self.hash(ptr, i);
+            let bit_idx = self.bit_index(h1, h2, i);
             let word_idx = bit_idx / 64;
             let bit_pos = bit_idx % 64;
             if self.bits[word_idx].load(Ordering::Relaxed) & (1u64 << bit_pos) == 0 {
@@ -210,8 +215,9 @@ impl PointerBloomFilter {
         }
         let mut count: u64 = 0;
         for ptr in items {
+            let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
             for i in 0..self.num_hashes {
-                let bit_idx = self.hash(ptr, i);
+                let bit_idx = self.bit_index(h1, h2, i);
                 let word_idx = bit_idx / 64;
                 let bit_pos = bit_idx % 64;
                 self.bits[word_idx].fetch_or(1u64 << bit_pos, Ordering::Relaxed);
@@ -221,16 +227,23 @@ impl PointerBloomFilter {
         self.insert_count.store(count, Ordering::Relaxed);
     }
 
-    /// Compute the i-th hash for a pointer value.
+    /// Bit `i` of a key with base hashes `h1`, `h2`.
     ///
-    /// Uses double hashing: h(i) = (h1 + i*h2) & (m-1)
-    /// `num_bits` is guaranteed to be a power of 2, so bitwise AND
-    /// replaces modulo for the hot-path optimization.
-    fn hash(&self, ptr: usize, i: u32) -> usize {
-        let h1 = self.hash1(ptr);
-        let h2 = self.hash2(ptr);
-        let combined = h1.wrapping_add((i as usize).wrapping_mul(h2));
-        combined & (self.num_bits - 1)
+    /// BLOCKED: every bit of one key lies in the same 512-bit (64-byte) block,
+    /// chosen by `h1`, so an insert or query touches ONE cache line instead of
+    /// `num_hashes` random lines of a multi-megabyte array -- the hardened
+    /// allocator inserts every fresh (quarantine-rotated) address, and those
+    /// misses were its largest self cost (bd-rc0923-epic-eeuy4f.9). Filters
+    /// smaller than a block use plain double hashing over the whole array.
+    #[inline]
+    fn bit_index(&self, h1: usize, h2: usize, i: u32) -> usize {
+        if self.num_bits < BLOOM_BLOCK_BITS {
+            // Double hashing; `num_bits` is a power of two.
+            return h1.wrapping_add((i as usize).wrapping_mul(h2)) & (self.num_bits - 1);
+        }
+        let block = h1 & (self.num_bits - 1) & !(BLOOM_BLOCK_BITS - 1);
+        let step = (h2 >> 32) | 1;
+        block + ((h2 >> 1).wrapping_add((i as usize).wrapping_mul(step)) & (BLOOM_BLOCK_BITS - 1))
     }
 
     /// Primary hash function (based on multiplicative hashing).
