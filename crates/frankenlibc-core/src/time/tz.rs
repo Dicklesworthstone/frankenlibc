@@ -164,20 +164,27 @@ impl PosixTz {
         // glibc computes rule instants for years <= 1970 as if in 1970
         // (tzset.c compute_change), so earlier instants compare against the
         // 1970 transitions; mirror that so pre-1970 times agree.
-        let year = year_of_days((t + std_off).div_euclid(SECS_PER_DAY)).max(1970);
-        let in_dst = |y: i64| {
-            let start =
-                rule.start.day_in_year(y) * SECS_PER_DAY + i64::from(rule.start_time) - std_off;
-            let end = rule.end.day_in_year(y) * SECS_PER_DAY + i64::from(rule.end_time) - dst_off;
-            if start < end {
-                start <= t && t < end
-            } else {
-                !(end <= t && t < start)
-            }
+        // The rule year is the UTC year, not the year after applying a
+        // standard offset. Near New Year those can differ, and selecting
+        // the local year changes glibc's result for valid extended rules.
+        let year = year_of_days(t.div_euclid(SECS_PER_DAY)).max(1970);
+        // The rule boundaries can lie outside time_t even when t itself is
+        // representable (a late-December rule can extend into the next year).
+        // Widen before multiplying or adding, rather than wrapping or
+        // saturating a boundary and changing the interval's membership.
+        let start = i128::from(rule.start.day_in_year(year)) * i128::from(SECS_PER_DAY)
+            + i128::from(rule.start_time)
+            - i128::from(std_off);
+        let end = i128::from(rule.end.day_in_year(year)) * i128::from(SECS_PER_DAY)
+            + i128::from(rule.end_time)
+            - i128::from(dst_off);
+        let instant = i128::from(t);
+        let in_dst = if start < end {
+            start <= instant && instant < end
+        } else {
+            !(end <= instant && instant < start)
         };
-        // Decide within the local year; the neighbouring year covers instants
-        // whose rule boundary crosses New Year.
-        if in_dst(year) { &rule.dst } else { &self.std }
+        if in_dst { &rule.dst } else { &self.std }
     }
 
     fn globals(&self) -> TzGlobals {
@@ -805,6 +812,64 @@ mod tests {
         let q = parse_posix_tz(b"<+0530>-5:30").unwrap();
         assert_eq!((q.std.utoff, q.std.abbr.as_str()), (19_800, "+0530"));
         assert!(q.dst.is_none());
+    }
+
+    #[test]
+    fn posix_rule_year_is_utc_at_new_year() {
+        // Host glibc observations. These are intentionally not inferred from
+        // local calendar intuition: a UTC/local year disagreement must use
+        // the UTC year's rules, including negative and >24-hour rule times.
+        let cases: &[(&[u8], i64, i32, bool)] = &[
+            (
+                b"STD14DST15,J1/-24,J100/-24",
+                at(2023, 1, 1, 0, 0),
+                -54_000,
+                true,
+            ),
+            (
+                b"STD-14DST-15,J1/0,J365/0",
+                at(2022, 12, 31, 12, 0),
+                50_400,
+                false,
+            ),
+            (
+                b"STD5DST4,J1/0,J365/24",
+                at(2023, 1, 1, 2, 0),
+                -18_000,
+                false,
+            ),
+        ];
+        for &(spec, instant, offset, isdst) in cases {
+            let zone = Zone::from_posix(parse_posix_tz(spec).unwrap());
+            let ty = zone.lookup(instant);
+            assert_eq!((ty.utoff, ty.isdst), (offset, isdst), "{spec:?}");
+        }
+    }
+
+    #[test]
+    fn posix_lookup_extreme_time_t_does_not_overflow_rule_boundaries() {
+        let base = at(2000, 1, 1, 0, 0);
+        let gregorian_cycle = 146_097 * SECS_PER_DAY;
+        for spec in [
+            &b"EST5EDT,M3.2.0,M11.1.0"[..],
+            &b"AEST-10AEDT,M10.1.0,M4.1.0/3"[..],
+            &b"STD-14DST-15,J1/-167,J365/167"[..],
+            &b"STD14DST15,J365/167,J1/-167"[..],
+        ] {
+            let zone = Zone::from_posix(parse_posix_tz(spec).unwrap());
+            for t in [
+                i64::MAX,
+                i64::MAX - SECS_PER_DAY,
+                i64::MAX - 366 * SECS_PER_DAY,
+            ] {
+                // Gregorian recurrence gives an independent, representable
+                // reference instant with the same rule dates and clock time.
+                let reduced = base + (t - base).rem_euclid(gregorian_cycle);
+                assert_eq!(zone.lookup(t), zone.lookup(reduced), "spec={spec:?}, t={t}");
+            }
+            // Before 1970, retain the existing glibc rule-epoch convention.
+            assert_eq!(zone.lookup(i64::MIN), zone.lookup(at(1900, 1, 1, 0, 0)));
+        }
     }
 
     #[test]
