@@ -7,7 +7,6 @@
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
-use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
 /// Actions the membrane can take to heal an unsafe operation.
@@ -43,6 +42,48 @@ impl HealingAction {
 const HEALING_LOG_CAPACITY: usize = 1024;
 const HEALING_BEAD_ID: &str = "bd-32e.4";
 
+thread_local! {
+    // Guard the WHOLE evidence operation, not just its final file write.
+    // Formatting, ledger initialization, ring growth, and dropping old rows
+    // can all enter the interposed allocator/string functions and heal again.
+    static EMITTING_HEALING_LOG: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+    static WRITING_RUNTIME_LOG: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+/// A thread-bound reentry guard. A rejected nested entry must not clear the
+/// outer operation's flag. Drop also restores the flag on an unwind.
+struct LogReentryGuard {
+    flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>,
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl LogReentryGuard {
+    fn enter(flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>) -> Option<Self> {
+        flag.try_with(|active| {
+            if active.replace(true) {
+                None
+            } else {
+                Some(Self {
+                    flag,
+                    _not_send: std::marker::PhantomData,
+                })
+            }
+        })
+        .ok()
+        .flatten()
+    }
+}
+
+impl Drop for LogReentryGuard {
+    fn drop(&mut self) {
+        let _ = self.flag.try_with(|active| active.set(false));
+    }
+}
+
 /// Policy engine that decides which healing action to apply.
 pub struct HealingPolicy {
     /// Total heals applied.
@@ -61,6 +102,9 @@ pub struct HealingPolicy {
     pub safe_defaults: AtomicU64,
     /// Safe variant upgrades.
     pub variant_upgrades: AtomicU64,
+    /// Repairs counted but not logged because this thread was already
+    /// generating evidence (or its TLS was unavailable during teardown).
+    pub healing_log_reentry_drops: AtomicU64,
     /// Structured healing logging: 0 = follow `FRANKENLIBC_HEAL_LOG`
     /// (resolved lazily), 1 = forced off, 2 = forced on.
     healing_logging: AtomicU8,
@@ -71,14 +115,14 @@ pub struct HealingPolicy {
 }
 
 impl HealingPolicy {
-    /// Create a new policy with zeroed counters.
+    /// Create a policy without allocating, reading the environment, or
+    /// entering libc. It must be usable from the very first allocation heal.
     #[must_use]
-    pub fn new() -> Self {
-        // No environment access here: this runs inside the GLOBAL_POLICY
-        // LazyLock, and `std::env::var` calls fl's own exported memcpy/strlen,
-        // whose hardened paths record heals through `global_healing_policy()`
-        // — re-entering the LazyLock that is still initializing and blocking
-        // the process forever on the first heal (bd-rc0923-epic-eeuy4f.9).
+    pub const fn new() -> Self {
+        // VecDeque::with_capacity here allocated while GLOBAL_POLICY's old
+        // LazyLock was initializing. A repair during that allocation tried
+        // to initialize the same LazyLock and deadlocked. Allocate the ring
+        // only when emitting, after the reentry guard is established.
         Self {
             total_heals: AtomicU64::new(0),
             size_clamps: AtomicU64::new(0),
@@ -88,9 +132,10 @@ impl HealingPolicy {
             realloc_as_mallocs: AtomicU64::new(0),
             safe_defaults: AtomicU64::new(0),
             variant_upgrades: AtomicU64::new(0),
+            healing_log_reentry_drops: AtomicU64::new(0),
             healing_logging: AtomicU8::new(0),
             healing_log_decision_seq: AtomicU64::new(0),
-            healing_logs: Mutex::new(VecDeque::with_capacity(HEALING_LOG_CAPACITY)),
+            healing_logs: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -112,11 +157,12 @@ impl HealingPolicy {
     /// This policy's counters as the fields of one JSON object (no braces).
     #[must_use]
     pub fn counters_json_fields(&self) -> String {
+        let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG);
         let n = |c: &AtomicU64| c.load(Ordering::Relaxed);
         format!(
             "\"total_heals\":{},\"size_clamps\":{},\"null_truncations\":{},\
 \"double_frees\":{},\"foreign_frees\":{},\"realloc_as_mallocs\":{},\
-\"safe_defaults\":{},\"variant_upgrades\":{}",
+\"safe_defaults\":{},\"variant_upgrades\":{},\"healing_log_reentry_drops\":{}",
             n(&self.total_heals),
             n(&self.size_clamps),
             n(&self.null_truncations),
@@ -125,17 +171,26 @@ impl HealingPolicy {
             n(&self.realloc_as_mallocs),
             n(&self.safe_defaults),
             n(&self.variant_upgrades),
+            n(&self.healing_log_reentry_drops),
         )
     }
 
-    /// Clear buffered healing evidence rows.
+    /// Clear buffered healing evidence rows. A recursive diagnostic request
+    /// is ignored rather than attempting to acquire a lock already held here.
     pub fn clear_healing_logs(&self) {
+        let Some(_guard) = LogReentryGuard::enter(&EMITTING_HEALING_LOG) else {
+            return;
+        };
         self.healing_logs.lock().clear();
     }
 
-    /// Export buffered healing evidence as deterministic JSONL.
+    /// Export buffered healing evidence as deterministic JSONL. Recursive
+    /// export returns an empty snapshot instead of locking the active writer.
     #[must_use]
     pub fn export_healing_log_jsonl(&self) -> String {
+        let Some(_guard) = LogReentryGuard::enter(&EMITTING_HEALING_LOG) else {
+            return String::new();
+        };
         self.healing_logs
             .lock()
             .iter()
@@ -230,7 +285,17 @@ impl HealingPolicy {
     }
 
     fn emit_healing_log(&self, action: &HealingAction) {
-        if !action.is_heal() || !self.healing_logging_active() {
+        if !action.is_heal() || self.healing_logging.load(Ordering::Relaxed) == 1 {
+            return;
+        }
+        // Must precede environment access, ledger initialization, formatting,
+        // and ring locking. Counting a nested repair is safe; logging it can
+        // recursively acquire whichever allocator/ledger/ring lock led here.
+        let Some(_guard) = LogReentryGuard::enter(&EMITTING_HEALING_LOG) else {
+            self.healing_log_reentry_drops.fetch_add(1, Ordering::Relaxed);
+            return;
+        };
+        if !self.healing_logging_active() {
             return;
         }
 
@@ -319,12 +384,6 @@ fn heal_logging_enabled_by_default() -> bool {
 /// variable is found set. `None` inside means unset or unopenable.
 static RUNTIME_LOG: crate::util::LazyBox<Option<std::fs::File>> = crate::util::LazyBox::new();
 
-thread_local! {
-    /// Set while this thread writes a log line: the write goes through this
-    /// libc's own `write`, and a heal recorded there must not recurse.
-    static WRITING_RUNTIME_LOG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// Append one evidence line to the `FRANKENLIBC_LOG` file, if set.
 ///
 /// README documents `FRANKENLIBC_LOG=/tmp/franken.jsonl` as the structured
@@ -333,9 +392,9 @@ thread_local! {
 /// appended whole (`O_APPEND`, one write per line) so concurrent writers and
 /// processes interleave only at line boundaries.
 fn append_to_runtime_log(line: &str) {
-    if WRITING_RUNTIME_LOG.with(|writing| writing.replace(true)) {
+    let Some(_guard) = LogReentryGuard::enter(&WRITING_RUNTIME_LOG) else {
         return;
-    }
+    };
     let file = RUNTIME_LOG.get_or_init(|| {
         let path = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty())?;
         std::fs::OpenOptions::new()
@@ -347,7 +406,6 @@ fn append_to_runtime_log(line: &str) {
     if let Some(file) = file {
         append_line(file, line);
     }
-    WRITING_RUNTIME_LOG.with(|writing| writing.set(false));
 }
 
 /// Append one JSONL record to the `FRANKENLIBC_LOG` file, if one is set:
@@ -455,8 +513,9 @@ pub fn recommended_healing_for_canonical_class(class_id: u8) -> HealingAction {
     }
 }
 
-/// Global healing policy instance.
-static GLOBAL_POLICY: LazyLock<HealingPolicy> = LazyLock::new(HealingPolicy::new);
+/// Global healing policy instance. Static construction must never enter the
+/// allocator; even first-use repairs can safely access these zeroed counters.
+static GLOBAL_POLICY: HealingPolicy = HealingPolicy::new();
 
 /// Access the global healing policy.
 #[must_use]
@@ -464,12 +523,12 @@ pub fn global_healing_policy() -> &'static HealingPolicy {
     &GLOBAL_POLICY
 }
 
-/// Inspect the policy without starting or waiting for its initialization.
-/// Diagnostic readers must not initialize it: configuration reads can reenter
-/// libc string operations that themselves need the healing policy.
+/// Inspect the policy without starting or waiting for initialization.
+/// It is now const-initialized, so diagnostic readers always see a ready
+/// policy, possibly with zero counters and an empty, unallocated ring.
 #[must_use]
 pub fn initialized_healing_policy() -> Option<&'static HealingPolicy> {
-    LazyLock::get(&GLOBAL_POLICY)
+    Some(&GLOBAL_POLICY)
 }
 
 #[cfg(test)]
@@ -686,7 +745,7 @@ mod tests {
         // For any requested > available, ClampSize.clamped <= available
         let test_pairs = [
             (100usize, Some(50usize), Some(80usize)), // min(50,80) = 50
-            (100, Some(200), Some(30)),               // min(200,30) = 30
+            (100, Some(200), Some(30)),               // 30
             (100, Some(50), None),                    // 50
             (100, None, Some(30)),                    // 30
             (usize::MAX, Some(0), Some(0)),           // 0
@@ -910,5 +969,85 @@ mod tests {
             );
             assert!(matches!(row["level"].as_str(), Some("info" | "warn")));
         }
+    }
+
+    #[test]
+    fn healing_policy_const_initialization_has_no_ring_allocation() {
+        static POLICY: HealingPolicy = HealingPolicy::new();
+        assert_eq!(POLICY.healing_logs.lock().capacity(), 0);
+        assert_eq!(POLICY.total_heals.load(Ordering::Relaxed), 0);
+        assert!(std::ptr::eq(
+            initialized_healing_policy().unwrap(),
+            global_healing_policy()
+        ));
+    }
+
+    #[test]
+    fn nested_heal_counts_without_relocking_the_evidence_ring() {
+        let policy = HealingPolicy::new();
+        policy.set_healing_logging_enabled(true);
+        {
+            let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
+            let logs = policy.healing_logs.lock();
+            policy.record(&HealingAction::IgnoreDoubleFree);
+            policy.record(&HealingAction::None);
+            assert_eq!(policy.total_heals.load(Ordering::Relaxed), 1);
+            assert_eq!(policy.double_frees.load(Ordering::Relaxed), 1);
+            assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
+            assert_eq!(policy.healing_log_decision_seq.load(Ordering::Relaxed), 0);
+            assert!(logs.is_empty());
+            assert!(policy.export_healing_log_jsonl().is_empty());
+            policy.clear_healing_logs();
+        }
+        policy.record(&HealingAction::ReturnSafeDefault);
+        let rows = policy.export_healing_log_jsonl();
+        let row: Value = serde_json::from_str(&rows).unwrap();
+        assert_eq!(row["healing_action"], "ReturnSafeDefault");
+        assert_eq!(row["decision_id"], 1);
+    }
+
+    #[test]
+    fn reentry_guard_covers_distinct_policies_on_the_same_thread() {
+        let first = HealingPolicy::new();
+        let second = HealingPolicy::new();
+        first.set_healing_logging_enabled(true);
+        second.set_healing_logging_enabled(true);
+        let guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
+        first.record(&HealingAction::IgnoreDoubleFree);
+        second.record(&HealingAction::IgnoreForeignFree);
+        assert!(LogReentryGuard::enter(&EMITTING_HEALING_LOG).is_none());
+        assert_eq!(first.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
+        assert_eq!(second.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
+        drop(guard);
+        assert!(LogReentryGuard::enter(&EMITTING_HEALING_LOG).is_some());
+    }
+
+    #[test]
+    fn log_reentry_guards_restore_flags_after_unwind() {
+        for flag in [&EMITTING_HEALING_LOG, &WRITING_RUNTIME_LOG] {
+            let result = std::panic::catch_unwind(|| {
+                let _guard = LogReentryGuard::enter(flag).unwrap();
+                assert!(LogReentryGuard::enter(flag).is_none());
+                panic!("injected diagnostic failure");
+            });
+            assert!(result.is_err());
+            assert!(LogReentryGuard::enter(flag).is_some());
+        }
+    }
+
+    #[test]
+    fn healing_log_guard_does_not_suppress_other_threads() {
+        let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
+        let rows = std::thread::spawn(|| {
+            let policy = HealingPolicy::new();
+            policy.set_healing_logging_enabled(true);
+            policy.record(&HealingAction::IgnoreForeignFree);
+            assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 0);
+            policy.export_healing_log_jsonl()
+        })
+        .join()
+        .unwrap();
+        let row: Value = serde_json::from_str(&rows).unwrap();
+        assert_eq!(row["healing_action"], "IgnoreForeignFree");
     }
 }
