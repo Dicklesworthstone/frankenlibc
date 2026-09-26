@@ -3649,9 +3649,10 @@ unsafe fn parse_getopt_long(
         if !longindex.is_null() {
             unsafe { *longindex = idx as c_int };
         }
+        // A recognized long option leaves `optopt` alone, as glibc does; only
+        // its error paths below set it.
         unsafe {
             libc_optarg = std::ptr::null_mut();
-            libc_optopt = 0;
             GETOPT_NEXTCHAR = None;
         }
         let mut next_index = unsafe { libc_optind + 1 };
@@ -3816,7 +3817,6 @@ unsafe fn getopt_route_w_long(
     let option = unsafe { longopts.add(matched) };
     unsafe {
         libc_optarg = std::ptr::null_mut();
-        libc_optopt = 0;
         GETOPT_NEXTCHAR = None;
     }
     let mut final_index = space_arg_idx;
