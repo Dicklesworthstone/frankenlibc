@@ -526,6 +526,11 @@ mod tests {
                     value as *const Counted as usize
                 })
             })
+            // Spawn ALL eight before joining any: chained lazily, the first
+            // thread was joined before the second existed and waited at the
+            // 8-party barrier forever.
+            .collect::<Vec<_>>()
+            .into_iter()
             .map(|handle| handle.join().unwrap())
             .collect();
 
