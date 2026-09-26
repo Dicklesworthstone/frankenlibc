@@ -4,6 +4,10 @@
 //! invoking undefined behavior, it applies a deterministic healing action.
 //! Every libc function has defined healing for every class of invalid input.
 
+#[path = "runtime_log.rs"]
+mod runtime_log;
+pub use runtime_log::{RuntimeLogSnapshot, runtime_log_snapshot};
+
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use crate::util::NoPoisonMutex as Mutex;
 use std::collections::VecDeque;
@@ -154,15 +158,19 @@ impl HealingPolicy {
         }
     }
 
-    /// This policy's counters as the fields of one JSON object (no braces).
+    /// This policy's counters and process-wide runtime-file sink counters as
+    /// the fields of one JSON object (no braces), also used by exit summaries.
     #[must_use]
     pub fn counters_json_fields(&self) -> String {
         let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG);
         let n = |c: &AtomicU64| c.load(Ordering::Relaxed);
+        let sink = runtime_log_snapshot();
         format!(
             "\"total_heals\":{},\"size_clamps\":{},\"null_truncations\":{},\
 \"double_frees\":{},\"foreign_frees\":{},\"realloc_as_mallocs\":{},\
-\"safe_defaults\":{},\"variant_upgrades\":{},\"healing_log_reentry_drops\":{}",
+\"safe_defaults\":{},\"variant_upgrades\":{},\"healing_log_reentry_drops\":{},\
+\"runtime_log_written_records\":{},\"runtime_log_dropped_records\":{},\
+\"runtime_log_short_writes\":{},\"runtime_log_open_failures\":{}",
             n(&self.total_heals),
             n(&self.size_clamps),
             n(&self.null_truncations),
@@ -172,6 +180,10 @@ impl HealingPolicy {
             n(&self.safe_defaults),
             n(&self.variant_upgrades),
             n(&self.healing_log_reentry_drops),
+            sink.written_records,
+            sink.dropped_records,
+            sink.short_writes,
+            sink.open_failures,
         )
     }
 
@@ -384,27 +396,22 @@ fn heal_logging_enabled_by_default() -> bool {
 /// variable is found set. `None` inside means unset or unopenable.
 static RUNTIME_LOG: crate::util::LazyBox<Option<std::fs::File>> = crate::util::LazyBox::new();
 
-/// Append one evidence line to the `FRANKENLIBC_LOG` file, if set.
-///
-/// README documents `FRANKENLIBC_LOG=/tmp/franken.jsonl` as the structured
-/// runtime log, but healing evidence only ever reached an in-memory ring that
-/// nothing outside tests drained (bd-rc0923-epic-eeuy4f.16). Lines are
-/// appended whole (`O_APPEND`, one write per line) so concurrent writers and
-/// processes interleave only at line boundaries.
+/// Append to a configured regular file. Linux writes borrow the record and
+/// newline in one raw writev, rather than allocating another String or calling
+/// back into the interposed write/cancellation path. Oversized and failed
+/// writes are counted; positive short writes are never retried piecemeal.
 fn append_to_runtime_log(line: &str) {
     let Some(_guard) = LogReentryGuard::enter(&WRITING_RUNTIME_LOG) else {
         return;
     };
     let file = RUNTIME_LOG.get_or_init(|| {
         let path = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty())?;
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()
+        runtime_log::open_file(&path)
     });
     if let Some(file) = file {
         append_line(file, line);
+    } else {
+        runtime_log::note_unavailable();
     }
 }
 
@@ -415,12 +422,8 @@ pub fn append_runtime_log_record(line: &str) {
     append_to_runtime_log(line);
 }
 
-fn append_line(mut file: &std::fs::File, line: &str) {
-    use std::io::Write as _;
-    let mut record = String::with_capacity(line.len() + 1);
-    record.push_str(line);
-    record.push('\n');
-    let _ = file.write_all(record.as_bytes());
+fn append_line(file: &std::fs::File, line: &str) {
+    runtime_log::append_line(file, line);
 }
 
 fn healing_log_level(action: &HealingAction) -> &'static str {
@@ -1049,5 +1052,21 @@ mod tests {
         .unwrap();
         let row: Value = serde_json::from_str(&rows).unwrap();
         assert_eq!(row["healing_action"], "IgnoreForeignFree");
+    }
+
+    #[test]
+    fn counter_summary_reports_reentry_and_sink_losses() {
+        let policy = HealingPolicy::new();
+        let fields = policy.counters_json_fields();
+        let value: Value = serde_json::from_str(&format!("{{{fields}}}")).unwrap();
+        for field in [
+            "healing_log_reentry_drops",
+            "runtime_log_written_records",
+            "runtime_log_dropped_records",
+            "runtime_log_short_writes",
+            "runtime_log_open_failures",
+        ] {
+            assert!(value[field].as_u64().is_some(), "missing counter {field}");
+        }
     }
 }
