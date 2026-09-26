@@ -85,7 +85,7 @@ fn estrdup_success_passthrough() {
     let p = unsafe { estrdup(s.as_ptr()) };
     assert!(!p.is_null());
     assert_eq!(unsafe { CStr::from_ptr(p) }, s);
-    unsafe { libc::free(p as *mut c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }
@@ -112,7 +112,7 @@ fn estrndup_success_passthrough() {
     let p = unsafe { estrndup(s.as_ptr(), 3) };
     assert!(!p.is_null());
     assert_eq!(unsafe { CStr::from_ptr(p) }, c"ban");
-    unsafe { libc::free(p as *mut c_void) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p as *mut c_void) };
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }
@@ -123,7 +123,7 @@ fn emalloc_success_passthrough() {
     let saved = install_test_callback();
     let p = unsafe { emalloc(64) };
     assert!(!p.is_null());
-    unsafe { libc::free(p) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p) };
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }
@@ -136,7 +136,7 @@ fn emalloc_zero_size_does_not_invoke_callback() {
     let saved = install_test_callback();
     let p = unsafe { emalloc(0) };
     if !p.is_null() {
-        unsafe { libc::free(p) };
+        unsafe { frankenlibc_abi::malloc_abi::free(p) };
     }
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
@@ -150,7 +150,7 @@ fn ecalloc_success_passthrough_and_zero_initialized() {
     assert!(!p.is_null());
     let bytes = unsafe { std::slice::from_raw_parts(p as *const u8, 32) };
     assert!(bytes.iter().all(|&b| b == 0));
-    unsafe { libc::free(p) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p) };
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }
@@ -161,7 +161,7 @@ fn ecalloc_zero_count_does_not_invoke_callback() {
     let saved = install_test_callback();
     let p = unsafe { ecalloc(0, 16) };
     if !p.is_null() {
-        unsafe { libc::free(p) };
+        unsafe { frankenlibc_abi::malloc_abi::free(p) };
     }
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
@@ -180,7 +180,7 @@ fn erealloc_success_extends_and_preserves() {
     assert!(!p2.is_null());
     let preserved = unsafe { std::slice::from_raw_parts(p2 as *const u8, 8) };
     assert_eq!(preserved, b"abcdefgh");
-    unsafe { libc::free(p2) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p2) };
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);
 }
@@ -193,7 +193,7 @@ fn erealloc_to_zero_size_does_not_invoke_callback() {
     assert!(!p.is_null());
     let p2 = unsafe { erealloc(p, 0) };
     if !p2.is_null() {
-        unsafe { libc::free(p2) };
+        unsafe { frankenlibc_abi::malloc_abi::free(p2) };
     }
     assert_eq!(CB_INVOCATIONS.load(Ordering::SeqCst), 0);
     restore_callback(saved);

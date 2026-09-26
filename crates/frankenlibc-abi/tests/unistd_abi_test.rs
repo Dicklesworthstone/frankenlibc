@@ -5956,7 +5956,7 @@ fn getcwd_null_buffer_allocates() {
     if !ptr.is_null() {
         let cwd = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy();
         assert!(cwd.starts_with('/'));
-        unsafe { libc::free(ptr.cast()) };
+        unsafe { frankenlibc_abi::malloc_abi::free(ptr.cast()) };
     }
 }
 
@@ -6077,7 +6077,7 @@ fn tempnam_falls_back_for_tracked_unterminated_dir_and_prefix() {
 
         assert!(!p.is_null());
         let bytes = CStr::from_ptr(p).to_bytes().to_vec();
-        libc::free(p.cast());
+        frankenlibc_abi::malloc_abi::free(p.cast());
         assert!(bytes.starts_with(b"/tmp/abc"), "got {bytes:?}");
         assert_eq!(err, libc::EINVAL);
     }
@@ -6091,7 +6091,7 @@ fn tempnam_falls_back_for_tracked_unterminated_dir_and_prefix() {
 
         assert!(!p.is_null());
         let bytes = CStr::from_ptr(p).to_bytes().to_vec();
-        libc::free(p.cast());
+        frankenlibc_abi::malloc_abi::free(p.cast());
         assert!(bytes.starts_with(b"/tmp/tmp"), "got {bytes:?}");
         assert_eq!(err, libc::EINVAL);
     }

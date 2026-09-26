@@ -590,7 +590,7 @@ fn reallocarray_allocates_and_can_reallocate() {
         for i in 0..64 {
             assert_eq!(*grown.add(i), i as u8);
         }
-        libc::free(grown.cast());
+        frankenlibc_abi::malloc_abi::free(grown.cast());
     }
 }
 
@@ -6809,7 +6809,7 @@ fn recallocarray_null_zero_oldnmemb_acts_like_calloc() {
         for i in 0..64 {
             assert_eq!(*p.add(i), 0, "fresh recallocarray slot must be zero");
         }
-        libc::free(p.cast());
+        frankenlibc_abi::malloc_abi::free(p.cast());
     }
 }
 
@@ -6852,7 +6852,7 @@ fn recallocarray_grow_zeros_new_tail() {
         for i in 16..64 {
             assert_eq!(*grown.add(i), 0, "grow must zero new tail at offset {i}");
         }
-        libc::free(grown.cast());
+        frankenlibc_abi::malloc_abi::free(grown.cast());
     }
 }
 
@@ -6888,7 +6888,7 @@ fn recallocarray_oversized_old_size_uses_tracked_allocation_bound() {
                 "oversized old size must zero new tail at offset {i}"
             );
         }
-        libc::free(grown.cast());
+        frankenlibc_abi::malloc_abi::free(grown.cast());
     }
 }
 
@@ -6922,7 +6922,7 @@ fn recallocarray_shrink_succeeds() {
         for i in 0..16 {
             assert_eq!(*shrunk.add(i), 0xaa, "shrink must preserve prefix");
         }
-        libc::free(shrunk.cast());
+        frankenlibc_abi::malloc_abi::free(shrunk.cast());
     }
 }
 
@@ -6938,7 +6938,7 @@ fn recallocarray_old_overflow_returns_einval() {
     assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
     // Caller is responsible for freeing — the failed call is required to
     // leave the original allocation intact (matches reallocarray).
-    unsafe { libc::free(p.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p.cast()) };
 }
 
 // ---------------------------------------------------------------------------
@@ -7391,7 +7391,7 @@ fn reallocf_null_acts_like_malloc() {
     // reallocf(NULL, n) == malloc(n).
     let p = unsafe { reallocf(ptr::null_mut(), 32) };
     assert!(!p.is_null());
-    unsafe { libc::free(p) };
+    unsafe { frankenlibc_abi::malloc_abi::free(p) };
 }
 
 #[test]
@@ -7409,7 +7409,7 @@ fn reallocf_grow_preserves_prefix() {
         for i in 0..16u8 {
             assert_eq!(*grown.add(i as usize), i, "grow must preserve prefix");
         }
-        libc::free(grown.cast());
+        frankenlibc_abi::malloc_abi::free(grown.cast());
     }
 }
 
@@ -7432,7 +7432,7 @@ fn reallocf_returns_realloc_pointer_on_success() {
     assert!(!p.is_null());
     let q = unsafe { reallocf(p, 64) };
     assert!(!q.is_null());
-    unsafe { libc::free(q) };
+    unsafe { frankenlibc_abi::malloc_abi::free(q) };
 }
 
 // ---------------------------------------------------------------------------
@@ -8396,7 +8396,7 @@ fn setmode_user_add_execute_then_getmode() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o644) };
     assert_eq!(new_mode, 0o744);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8406,7 +8406,7 @@ fn setmode_all_set_rwx() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o000) };
     assert_eq!(new_mode, 0o777);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8416,7 +8416,7 @@ fn setmode_comma_chained_clauses() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o000) };
     assert_eq!(new_mode, 0o754);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8474,7 +8474,7 @@ fn setmode_setuid_with_user_clause() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o755) };
     assert_eq!(new_mode, 0o4755);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8484,7 +8484,7 @@ fn setmode_sticky_with_default_who() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o755) };
     assert_eq!(new_mode, 0o1755);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8493,7 +8493,7 @@ fn setmode_preserves_high_file_type_bits() {
     let bbox = unsafe { setmode(s.as_ptr()) };
     let new_mode = unsafe { getmode(bbox, 0o100644) };
     assert_eq!(new_mode, 0o100777);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8503,7 +8503,7 @@ fn setmode_round_trip_with_multiple_clauses_and_apply() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o777) };
     assert_eq!(new_mode, 0o4744);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8513,7 +8513,7 @@ fn setmode_conditional_execute_skips_plain_file_but_applies_to_directory() {
     assert!(!bbox.is_null());
     assert_eq!(unsafe { getmode(bbox, 0o100644) }, 0o100644);
     assert_eq!(unsafe { getmode(bbox, 0o040644) }, 0o040755);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 #[test]
@@ -8523,7 +8523,7 @@ fn setmode_copy_permissions_resolve_sequentially() {
     assert!(!bbox.is_null());
     let new_mode = unsafe { getmode(bbox, 0o740) };
     assert_eq!(new_mode, 0o777);
-    unsafe { libc::free(bbox) };
+    unsafe { frankenlibc_abi::malloc_abi::free(bbox) };
 }
 
 // ---------------------------------------------------------------------------

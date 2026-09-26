@@ -88,7 +88,7 @@ fn call(f: TempnamFn, dir: Option<&str>, pfx: Option<&str>) -> Option<(String, S
     let s = unsafe { CStr::from_ptr(r) }.to_string_lossy().into_owned();
     // tempnam's contract is that the caller frees with free(); both arms
     // allocate through the same interposed allocator in this test binary.
-    unsafe { libc::free(r.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(r.cast()) };
     Some(split(&s))
 }
 

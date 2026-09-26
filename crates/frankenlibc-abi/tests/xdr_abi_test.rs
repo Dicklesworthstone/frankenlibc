@@ -807,7 +807,7 @@ fn xdr_bytes_roundtrip() {
     assert_eq!(decoded, b"Test data");
 
     // Free the allocated buffer
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 #[test]
@@ -856,7 +856,7 @@ fn xdr_string_roundtrip() {
         .unwrap();
     assert_eq!(decoded, "hello world");
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 #[test]
@@ -880,7 +880,7 @@ fn xdr_wrapstring_roundtrip() {
         .unwrap();
     assert_eq!(decoded, "wraptest");
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 #[test]
@@ -990,7 +990,7 @@ fn xdr_array_int_roundtrip() {
     let decoded = unsafe { std::slice::from_raw_parts(out_ptr as *const c_int, 3) };
     assert_eq!(decoded, &[100, 200, 300]);
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 // ===========================================================================
@@ -1037,7 +1037,7 @@ fn xdr_pointer_present_roundtrip() {
     let decoded = unsafe { *(out_ptr as *const c_int) };
     assert_eq!(decoded, 42);
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 #[test]
@@ -1116,7 +1116,7 @@ fn xdr_reference_roundtrip() {
     let decoded = unsafe { *(out_ptr as *const c_int) };
     assert_eq!(decoded, 77);
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 // ===========================================================================
@@ -1167,7 +1167,7 @@ fn xdr_netobj_roundtrip() {
     let decoded = unsafe { std::slice::from_raw_parts(out.n_bytes as *const u8, 11) };
     assert_eq!(decoded, b"netobj_data");
 
-    unsafe { libc::free(out.n_bytes.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.n_bytes.cast()) };
 }
 
 // ===========================================================================
@@ -1366,7 +1366,7 @@ fn xdr_opaque_auth_roundtrip() {
     let decoded = unsafe { std::slice::from_raw_parts(out_auth.oa_base as *const u8, 4) };
     assert_eq!(decoded, b"auth");
 
-    unsafe { libc::free(out_auth.oa_base.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_auth.oa_base.cast()) };
 }
 
 // ===========================================================================
@@ -1608,8 +1608,8 @@ fn xdr_authunix_parms_roundtrip() {
     assert_eq!(decoded_gids, &[10, 20]);
 
     unsafe {
-        libc::free(out.aup_machname.cast());
-        libc::free(out.aup_gids.cast());
+        frankenlibc_abi::malloc_abi::free(out.aup_machname.cast());
+        frankenlibc_abi::malloc_abi::free(out.aup_gids.cast());
     }
 }
 
@@ -2007,7 +2007,7 @@ fn xdr_netnamestr_roundtrip() {
         .unwrap();
     assert_eq!(decoded, "unix.1000@localhost");
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 // ===========================================================================
@@ -2105,7 +2105,7 @@ fn xdr_authdes_cred_fullname_roundtrip() {
     assert_eq!(out.key, [1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(out.window, [9, 10, 11, 12]);
 
-    unsafe { libc::free(out.name.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.name.cast()) };
 }
 
 #[test]
@@ -2147,7 +2147,7 @@ fn xdr_cryptkeyarg_roundtrip() {
     assert_eq!(decoded, "unix.2000@remote");
     assert_eq!(out.deskey, [0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]);
 
-    unsafe { libc::free(out.remotename.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.remotename.cast()) };
 }
 
 #[test]
@@ -2198,8 +2198,8 @@ fn xdr_cryptkeyarg2_roundtrip() {
     assert_eq!(out.deskey, [0xAA, 0xBB, 0xCC, 0xDD, 0x11, 0x22, 0x33, 0x44]);
 
     unsafe {
-        libc::free(out.remotename.cast());
-        libc::free(out.netname.cast());
+        frankenlibc_abi::malloc_abi::free(out.remotename.cast());
+        frankenlibc_abi::malloc_abi::free(out.netname.cast());
     }
 }
 
@@ -2245,7 +2245,7 @@ fn xdr_getcredres_roundtrip() {
         .unwrap();
     assert_eq!(decoded, "unix.1000@client");
 
-    unsafe { libc::free(out.client_name.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.client_name.cast()) };
 }
 
 #[test]
@@ -2291,7 +2291,7 @@ fn xdr_key_netstarg_roundtrip() {
         .unwrap();
     assert_eq!(decoded, "unix.1000@net");
 
-    unsafe { libc::free(out.netname.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.netname.cast()) };
 }
 
 #[test]
@@ -2340,7 +2340,7 @@ fn xdr_rmtcallres_roundtrip() {
     assert_eq!(out.resultslen as u32, 4);
     assert_eq!(out_result, 42);
 
-    unsafe { libc::free(out.port_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out.port_ptr.cast()) };
 }
 
 // ===========================================================================
@@ -2494,7 +2494,7 @@ fn xdr_string_empty() {
         .unwrap();
     assert_eq!(decoded, "");
 
-    unsafe { libc::free(out_ptr.cast()) };
+    unsafe { frankenlibc_abi::malloc_abi::free(out_ptr.cast()) };
 }
 
 // ===========================================================================
