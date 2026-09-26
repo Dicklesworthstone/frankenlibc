@@ -13839,6 +13839,7 @@ fn nss_files_get_services_use_native_backend() {
 type NssHostOutcome = (c_int, c_int, c_int, Option<Vec<u8>>);
 
 fn nss_hostent_outcome(
+    buflen: usize,
     call: impl FnOnce(*mut c_void, *mut c_char, usize, *mut c_int, *mut c_int) -> c_int,
 ) -> NssHostOutcome {
     let mut hostent: libc::hostent = unsafe { std::mem::zeroed() };
@@ -13847,7 +13848,7 @@ fn nss_hostent_outcome(
     let status = call(
         (&mut hostent as *mut libc::hostent).cast(),
         buf.as_mut_ptr(),
-        buf.len(),
+        buflen.min(buf.len()),
         &mut err,
         &mut h_err,
     );
@@ -13950,38 +13951,54 @@ fn nss_files_host_lookups_match_host_glibc() {
     let fla: ByAddr = _nss_files_gethostbyaddr_r;
 
     let mut compared = 0;
-    // "127.0.0.1" is numeric: the files module does not parse it.
-    for name in [
-        c"localhost",
-        c"frankenlibc-no-such-host.invalid",
-        c"127.0.0.1",
+    let mut mismatches = Vec::new();
+    let mut check = |what: String, fl: String, host: String| {
+        if fl != host {
+            mismatches.push(format!("{what}: fl {fl} glibc {host}"));
+        }
+    };
+    // "127.0.0.1" is numeric: the files module does not parse it. 8 bytes
+    // cannot hold a result: glibc's ERANGE / TRYAGAIN contract.
+    for (name, buflen) in [
+        (c"localhost", 1024),
+        (c"frankenlibc-no-such-host.invalid", 1024),
+        (c"127.0.0.1", 1024),
+        (c"localhost", 8),
     ] {
         let n = name.as_ptr();
+        let what = |f: &str| format!("{f}({name:?}, buflen {buflen})");
         // SAFETY (all calls below): valid name, hostent, buffer and slots.
-        let by = |f: ByName| nss_hostent_outcome(|r, b, l, e, h| unsafe { f(n, r, b, l, e, h) });
-        assert_eq!(by(fl1), by(h1), "_nss_files_gethostbyname_r({name:?})");
+        let by =
+            |f: ByName| nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe { f(n, r, b, l, e, h) });
+        check(
+            what("gethostbyname_r"),
+            format!("{:?}", by(fl1)),
+            format!("{:?}", by(h1)),
+        );
         let by2 = |f: ByName2| {
-            nss_hostent_outcome(|r, b, l, e, h| unsafe { f(n, libc::AF_INET, r, b, l, e, h) })
+            nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET, r, b, l, e, h)
+            })
         };
-        assert_eq!(
-            by2(fl2),
-            by2(h2),
-            "_nss_files_gethostbyname2_r({name:?}, AF_INET)"
+        check(
+            what("gethostbyname2_r"),
+            format!("{:?}", by2(fl2)),
+            format!("{:?}", by2(h2)),
         );
         let by3 = |f: ByName3| {
             let mut ttl = -1;
             let mut canon: *mut c_char = std::ptr::null_mut();
-            let out = nss_hostent_outcome(|r, b, l, e, h| unsafe {
+            let out = nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
                 f(n, libc::AF_INET, r, b, l, e, h, &mut ttl, &mut canon)
             });
             let canon =
                 (!canon.is_null()).then(|| unsafe { CStr::from_ptr(canon) }.to_bytes().to_vec());
             (out, canon)
         };
-        assert_eq!(
-            by3(fl3),
-            by3(h3),
-            "_nss_files_gethostbyname3_r({name:?}, AF_INET)"
+        check(
+            what("gethostbyname3_r"),
+            format!("{:?}", by3(fl3)),
+            format!("{:?}", by3(h3)),
         );
         let by4 = |f: ByName4| {
             let mut pat: *mut c_void = std::ptr::null_mut();
@@ -13992,7 +14009,7 @@ fn nss_files_host_lookups_match_host_glibc() {
                     n,
                     &mut pat,
                     buf.as_mut_ptr(),
-                    buf.len(),
+                    buflen,
                     &mut err,
                     &mut h_err,
                     &mut ttl,
@@ -14000,30 +14017,37 @@ fn nss_files_host_lookups_match_host_glibc() {
             };
             (status, err, h_err, pat.is_null())
         };
-        let (fl, host) = (by4(fl4), by4(h4));
-        // glibc's errno on SUCCESS is whatever its scan left behind.
-        if host.0 == 1 {
-            assert_eq!(
-                (fl.0, fl.2, fl.3),
-                (host.0, host.2, host.3),
-                "_nss_files_gethostbyname4_r({name:?})"
-            );
-        } else {
-            assert_eq!(fl, host, "_nss_files_gethostbyname4_r({name:?})");
-        }
+        check(
+            what("gethostbyname4_r"),
+            format!("{:?}", by4(fl4)),
+            format!("{:?}", by4(h4)),
+        );
         compared += 4;
     }
-    for addr in [[127u8, 0, 0, 1], [192, 0, 2, 77]] {
+    for (addr, buflen) in [
+        ([127u8, 0, 0, 1], 1024),
+        ([192, 0, 2, 77], 1024),
+        ([127, 0, 0, 1], 8),
+    ] {
         // SAFETY: a 4-byte AF_INET address and valid output storage.
         let by = |f: ByAddr| {
-            nss_hostent_outcome(|r, b, l, e, h| unsafe {
+            nss_hostent_outcome(buflen, |r, b, l, e, h| unsafe {
                 f(addr.as_ptr().cast(), 4, libc::AF_INET, r, b, l, e, h)
             })
         };
-        assert_eq!(by(fla), by(ha), "_nss_files_gethostbyaddr_r({addr:?})");
+        check(
+            format!("gethostbyaddr_r({addr:?}, buflen {buflen})"),
+            format!("{:?}", by(fla)),
+            format!("{:?}", by(ha)),
+        );
         compared += 1;
     }
-    assert_eq!(compared, 14);
+    assert_eq!(compared, 19);
+    assert!(
+        mismatches.is_empty(),
+        "nss_files differs from glibc:\n{}",
+        mismatches.join("\n")
+    );
 }
 
 #[test]
