@@ -1857,7 +1857,8 @@ fn asprintf_chk_basic() {
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert_eq!(s.to_str().unwrap(), "answer=42");
 
-    unsafe { libc::free(result.cast()) };
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
 }
 
 #[test]
@@ -1873,7 +1874,8 @@ fn asprintf_chk_string_format() {
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert_eq!(s.to_str().unwrap(), "foo+bar");
 
-    unsafe { libc::free(result.cast()) };
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
 }
 
 #[test]
@@ -1888,7 +1890,8 @@ fn vasprintf_chk_direct_va_list() {
     let s = unsafe { std::ffi::CStr::from_ptr(result) };
     assert_eq!(s.to_str().unwrap(), "answer=42");
 
-    unsafe { libc::free(result.cast()) };
+    // fl allocated it; the host free would reject it (bd-u439cu).
+    unsafe { frankenlibc_abi::malloc_abi::free(result.cast()) };
 }
 
 // ===========================================================================
