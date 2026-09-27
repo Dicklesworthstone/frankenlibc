@@ -19,6 +19,10 @@
 //! `(stored_set, msg_id)` pair. The string offset indexes the strings
 //! blob.
 
+/// NLSPATH expansion without environment access or filesystem I/O.
+#[path = "catalog_path.rs"]
+pub mod path;
+
 /// GNU catalog magic number (little-endian on disk).
 pub const CATGETS_MAGIC: u32 = 0x9604_08de;
 
