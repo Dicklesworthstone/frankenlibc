@@ -1935,6 +1935,14 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     //    registrations (bd-3jpoz).
     run_exit_handlers(status);
 
+    // 2. Then the process finalizers saved at startup: the executable's fini
+    //    and the loader's _dl_fini, which runs every object's .fini_array and
+    //    destructors. glibc's __libc_start_main registers _dl_fini as the first
+    //    exit function, so it runs after every atexit/on_exit/__cxa_atexit
+    //    handler. fl used to run these only when main returned (and BEFORE the
+    //    handlers), and never on an explicit exit().
+    run_exit_finalizers();
+
     // 3. Flush all open stdio streams.
     unsafe {
         crate::stdio_abi::fflush(ptr::null_mut());
@@ -4871,17 +4879,93 @@ struct OnExitEntry {
 unsafe impl Send for OnExitEntry {}
 unsafe impl Sync for OnExitEntry {}
 
+/// A `__cxa_atexit` registration: `func(arg)`, owned by the object `dso`
+/// (finalized early by `__cxa_finalize(dso)` when that object is unloaded).
+struct CxaEntry {
+    func: unsafe extern "C" fn(*mut c_void),
+    arg: *mut c_void,
+    dso: *mut c_void,
+}
+
+// SAFETY: opaque callback data, only handed back to the callback.
+unsafe impl Send for CxaEntry {}
+unsafe impl Sync for CxaEntry {}
+
+/// One exit-function list for atexit, on_exit and __cxa_atexit, as glibc
+/// keeps: exit runs them all in reverse registration order, interleaved.
 enum ExitHandler {
     Atexit(extern "C" fn()),
     OnExit(OnExitEntry),
+    Cxa(CxaEntry),
 }
 
 static EXIT_HANDLERS: std::sync::Mutex<Vec<ExitHandler>> = std::sync::Mutex::new(Vec::new());
 
 fn register_exit_handler(handler: ExitHandler) -> c_int {
-    let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-    handlers.push(handler);
+    {
+        let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+        handlers.push(handler);
+    }
     0
+}
+
+/// `__cxa_atexit`: an entry in the shared exit-function list.
+pub(crate) fn register_cxa_exit_handler(
+    func: unsafe extern "C" fn(*mut c_void),
+    arg: *mut c_void,
+    dso: *mut c_void,
+) -> c_int {
+    register_exit_handler(ExitHandler::Cxa(CxaEntry { func, arg, dso }))
+}
+
+/// `__cxa_finalize`: run and remove the `__cxa_atexit` entries of `dso` (all
+/// of them for NULL), newest first. Entries already run by exit are gone.
+pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
+    let run: Vec<CxaEntry> = {
+        let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+        let mut run = Vec::new();
+        let mut kept = Vec::with_capacity(handlers.len());
+        for handler in handlers.drain(..) {
+            match handler {
+                ExitHandler::Cxa(entry) if dso.is_null() || entry.dso == dso => run.push(entry),
+                other => kept.push(other),
+            }
+        }
+        *handlers = kept;
+        run
+    };
+    for entry in run.into_iter().rev() {
+        // SAFETY: a callback and argument registered through __cxa_atexit.
+        unsafe { (entry.func)(entry.arg) };
+    }
+}
+
+/// The executable's `fini` and the loader's `rtld_fini` (`_dl_fini`), handed
+/// over by the owned startup path so [`exit`] can run them after the
+/// exit-function list. Taken (swapped to 0) when run, so they run once.
+static EXIT_FINI: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static EXIT_RTLD_FINI: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Startup hands the process finalizers to `exit`.
+pub(crate) fn set_exit_finalizers(
+    fini: Option<unsafe extern "C" fn()>,
+    rtld_fini: Option<unsafe extern "C" fn()>,
+) {
+    use std::sync::atomic::Ordering;
+    EXIT_FINI.store(fini.map_or(0, |f| f as usize), Ordering::Release);
+    EXIT_RTLD_FINI.store(rtld_fini.map_or(0, |f| f as usize), Ordering::Release);
+}
+
+fn run_exit_finalizers() {
+    use std::sync::atomic::Ordering;
+    for slot in [&EXIT_FINI, &EXIT_RTLD_FINI] {
+        let addr = slot.swap(0, Ordering::AcqRel);
+        if addr != 0 {
+            // SAFETY: stored from a valid `unsafe extern "C" fn()` above.
+            let f: unsafe extern "C" fn() = unsafe { std::mem::transmute(addr) };
+            unsafe { f() };
+        }
+    }
 }
 
 fn run_exit_handlers(status: c_int) {
@@ -4897,6 +4981,7 @@ fn run_exit_handlers(status: c_int) {
             match handler {
                 ExitHandler::Atexit(func) => func(),
                 ExitHandler::OnExit(entry) => unsafe { (entry.func)(status, entry.arg) },
+                ExitHandler::Cxa(entry) => unsafe { (entry.func)(entry.arg) },
             }
         }
     }

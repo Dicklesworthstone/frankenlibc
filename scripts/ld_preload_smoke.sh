@@ -161,6 +161,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
+cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
@@ -789,6 +791,10 @@ EOF
     run_corpus_case "${mode}" "stdio_file_layout_${layout_case}" "${FILE_LAYOUT_BIN}" "${layout_case}" || mode_failed=1
   done
   run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
+  # exit sequence: handler order, on_exit status, destructors after handlers,
+  # on return from main and on exit() (the non-zero exit statuses are expected).
+  run_corpus_case "${mode}" "exit_sequence_return" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "exit_sequence_exit" "${EXIT_SEQUENCE_BIN}" exit || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then

@@ -541,8 +541,10 @@ fn finish_libc_start_main_success(rc: c_int) -> c_int {
     }
 
     // __libc_start_main must NEVER return to _start — the crt0 stub assumes
-    // this call diverges and places a trap instruction after it.
-    frankenlibc_core::syscall::sys_exit_group(rc)
+    // this call diverges and places a trap instruction after it. Returning
+    // from main is exit(main(...)): handlers, finalizers, stdio flush.
+    // SAFETY: plain libc exit with main's status.
+    unsafe { crate::stdlib_abi::exit(rc) }
 }
 
 fn use_owned_startup() -> bool {
@@ -1031,19 +1033,31 @@ unsafe fn startup_phase0_impl(
         }
     }
 
+    // A real process start hands the finalizers to exit(), which runs them
+    // after the atexit/on_exit/__cxa_atexit handlers, whether main returns
+    // (finish_libc_start_main_success calls exit) or calls exit itself -- the
+    // glibc `exit(main(...))` sequence. The fixture hook and test builds that
+    // return to their caller still run them here.
+    let finalizers_run_by_exit = publish_environment && !startup_return_to_caller_for_tests();
+    if finalizers_run_by_exit {
+        crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
+    }
+
     path.push(StartupCheckpoint::CallMain);
     // SAFETY: callback pointer + argv/envp pointers are validated for phase-0 fixture usage.
     let rc = unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) };
 
-    if let Some(fini_fn) = fini {
-        path.push(StartupCheckpoint::CallFiniHook);
-        // SAFETY: callback pointer provided by caller.
-        unsafe { fini_fn() };
-    }
-    if let Some(rtld_fini_fn) = rtld_fini {
-        path.push(StartupCheckpoint::CallRtldFiniHook);
-        // SAFETY: callback pointer provided by caller.
-        unsafe { rtld_fini_fn() };
+    if !finalizers_run_by_exit {
+        if let Some(fini_fn) = fini {
+            path.push(StartupCheckpoint::CallFiniHook);
+            // SAFETY: callback pointer provided by caller.
+            unsafe { fini_fn() };
+        }
+        if let Some(rtld_fini_fn) = rtld_fini {
+            path.push(StartupCheckpoint::CallRtldFiniHook);
+            // SAFETY: callback pointer provided by caller.
+            unsafe { rtld_fini_fn() };
+        }
     }
 
     path.push(StartupCheckpoint::Complete);

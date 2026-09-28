@@ -19644,54 +19644,22 @@ unsafe extern "C" {
     pub static __dso_handle: u8;
 }
 
-/// Wrapper to make raw pointers Send-safe for __cxa_atexit handler list.
-struct CxaHandler(unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void);
-// SAFETY: __cxa_atexit handlers are always called from the same process;
-// the raw pointers are opaque DSO handles, not shared mutable state.
-unsafe impl Send for CxaHandler {}
-
-/// Thread-local __cxa_atexit handler list.
-static CXA_ATEXIT_HANDLERS: std::sync::Mutex<Vec<CxaHandler>> = std::sync::Mutex::new(Vec::new());
-
-/// `__cxa_atexit` — register C++ destructor for atexit.
+/// `__cxa_atexit` — register a function for exit (C++ static destructors, and
+/// every `atexit` since glibc 2.34 links it from libc_nonshared as a
+/// `__cxa_atexit` call). One list with atexit/on_exit: see stdlib_abi.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __cxa_atexit(
     func: unsafe extern "C" fn(*mut c_void),
     arg: *mut c_void,
     dso_handle: *mut c_void,
 ) -> c_int {
-    if let Ok(mut handlers) = CXA_ATEXIT_HANDLERS.lock() {
-        handlers.push(CxaHandler(func, arg, dso_handle));
-        0
-    } else {
-        -1
-    }
+    crate::stdlib_abi::register_cxa_exit_handler(func, arg, dso_handle)
 }
 
 /// `__cxa_finalize` — run C++ atexit handlers for a given DSO (or all if NULL).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __cxa_finalize(dso_handle: *mut c_void) {
-    if let Ok(mut handlers) = CXA_ATEXIT_HANDLERS.lock() {
-        let to_run: Vec<_> = if dso_handle.is_null() {
-            handlers.drain(..).collect()
-        } else {
-            let mut kept = Vec::new();
-            let mut run = Vec::new();
-            for h in handlers.drain(..) {
-                if h.2 == dso_handle {
-                    run.push(h);
-                } else {
-                    kept.push(h);
-                }
-            }
-            *handlers = kept;
-            run
-        };
-        // Run in reverse order (LIFO)
-        for CxaHandler(func, arg, _) in to_run.into_iter().rev() {
-            unsafe { func(arg) };
-        }
-    }
+    crate::stdlib_abi::finalize_cxa_handlers(dso_handle);
 }
 
 /// Itanium C++ ABI `__cxa_pure_virtual` — stub installed in vtable
