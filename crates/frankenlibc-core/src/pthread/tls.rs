@@ -706,6 +706,14 @@ pub(crate) fn register_thread_tls(tid: i32, values_ptr: *mut TlsEntry) {
     let _ = rcu::rcu_register_thread(tid as u32);
 }
 
+/// Run the POSIX key destructors of the exiting thread `tid`: the hook for
+/// threads whose lifecycle belongs to the host libc, which never sees fl's key
+/// table (the native clone trampoline calls [`teardown_thread_tls`] itself).
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub fn run_exiting_thread_key_destructors(tid: i32) {
+    teardown_thread_tls(tid);
+}
+
 /// Run TLS destructors for an exiting thread and remove its table entry.
 ///
 /// **Allocation-free** — safe to call from clone-based threads.

@@ -161,6 +161,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+KEY_DTOR_BIN="${BIN_DIR}/fixture_pthread_key_destructors"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -o "${KEY_DTOR_BIN}"
 EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
 cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
@@ -794,6 +796,8 @@ EOF
   # exit sequence: handler order, on_exit status, destructors after handlers,
   # via exit(main()) and via an explicit exit() (bd-fr97mh).
   run_corpus_case "${mode}" "exit_sequence" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
+  # pthread key destructors on host-created threads (bd-v6cz9v).
+  run_corpus_case "${mode}" "pthread_key_destructors" "${KEY_DTOR_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then

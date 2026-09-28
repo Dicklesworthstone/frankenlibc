@@ -4161,7 +4161,7 @@ pub unsafe extern "C" fn pthread_setspecific(
     let sensitive_context = runtime_policy::bootstrap_passthrough_active()
         || crate::malloc_abi::in_allocator_reentry_context()
         || frankenlibc_membrane::ptr_validator::in_validation_context();
-    with_threading_policy_guard(
+    let rc = with_threading_policy_guard(
         || {
             if sensitive_context {
                 libc::EINVAL
@@ -4170,7 +4170,53 @@ pub unsafe extern "C" fn pthread_setspecific(
             }
         },
         || core_pthread_setspecific(PthreadKey { id: key }, value as u64),
-    )
+    );
+    if rc == 0 && !value.is_null() && !sensitive_context {
+        ensure_host_thread_key_teardown();
+    }
+    rc
+}
+
+/// Key destructors of host-created threads (bd-v6cz9v).
+///
+/// Threads made by the host's pthread_create exit through the host's
+/// start_thread, which runs the HOST's key table -- empty, since keys and
+/// values live in fl's table. So no key destructor ever ran on the default
+/// backend: every per-thread buffer freed from a key destructor leaked at each
+/// thread exit. The first non-null value a non-main host thread stores
+/// registers one thread-exit callback (the host runs __cxa_thread_atexit_impl
+/// callbacks from start_thread) that runs fl's destructors. The main thread is
+/// skipped: glibc does not run key destructors at process exit.
+fn ensure_host_thread_key_teardown() {
+    thread_local! {
+        static REGISTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if current_threading_backend() != THREAD_BACKEND_HOST {
+        return;
+    }
+    let tid = frankenlibc_core::syscall::sys_gettid();
+    if tid == frankenlibc_core::syscall::sys_getpid() {
+        return;
+    }
+    if REGISTERED.try_with(|r| r.replace(true)).unwrap_or(true) {
+        return;
+    }
+    // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.
+    unsafe {
+        crate::startup_abi::__cxa_thread_atexit_impl(
+            run_host_thread_key_destructors,
+            std::ptr::null_mut(),
+            (&raw const crate::unistd_abi::__dso_handle)
+                .cast_mut()
+                .cast(),
+        );
+    }
+}
+
+unsafe extern "C" fn run_host_thread_key_destructors(_: *mut c_void) {
+    frankenlibc_core::pthread::run_exiting_thread_key_destructors(
+        frankenlibc_core::syscall::sys_gettid(),
+    );
 }
 
 // ===========================================================================
