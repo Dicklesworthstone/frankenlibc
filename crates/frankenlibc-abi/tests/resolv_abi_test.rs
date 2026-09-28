@@ -2748,33 +2748,42 @@ fn reentrant_protoent_lookups_track_overridden_protocols_backend() {
 
 #[test]
 fn getprotobyname_tcp_resolves() {
-    let name = CString::new("tcp").unwrap();
-    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
-    if !ptr.is_null() {
-        let protoent = unsafe { &*(ptr as *const libc::protoent) };
-        assert_eq!(protoent.p_proto, 6); // TCP = protocol 6
-        assert!(!protoent.p_name.is_null());
-    }
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("tcp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 6); // TCP = protocol 6
+            assert!(!protoent.p_name.is_null());
+        }
+    });
 }
 
 #[test]
 fn getprotobyname_udp_resolves() {
-    let name = CString::new("udp").unwrap();
-    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
-    if !ptr.is_null() {
-        let protoent = unsafe { &*(ptr as *const libc::protoent) };
-        assert_eq!(protoent.p_proto, 17); // UDP = protocol 17
-    }
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("udp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 17); // UDP = protocol 17
+        }
+    });
 }
 
 #[test]
 fn getprotobyname_icmp_resolves() {
-    let name = CString::new("icmp").unwrap();
-    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
-    if !ptr.is_null() {
-        let protoent = unsafe { &*(ptr as *const libc::protoent) };
-        assert_eq!(protoent.p_proto, 1); // ICMP = protocol 1
-    }
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("icmp").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            assert_eq!(protoent.p_proto, 1); // ICMP = protocol 1
+        }
+    });
 }
 
 #[test]
@@ -2792,9 +2801,12 @@ fn getprotobyname_rejects_known_unterminated_name() {
 
 #[test]
 fn getprotobyname_nonexistent_returns_null() {
-    let name = CString::new("nonexistent_protocol_zzz").unwrap();
-    let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
-    assert!(ptr.is_null());
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let name = CString::new("nonexistent_protocol_zzz").unwrap();
+        let ptr = unsafe { resolv_abi::getprotobyname(name.as_ptr()) };
+        assert!(ptr.is_null());
+    });
 }
 
 #[test]
@@ -2858,29 +2870,38 @@ fn getproto_lookup_respects_protocols_backend_fixture_numbers() {
 
 #[test]
 fn getprotobynumber_6_resolves_tcp() {
-    let ptr = unsafe { resolv_abi::getprotobynumber(6) };
-    if !ptr.is_null() {
-        let protoent = unsafe { &*(ptr as *const libc::protoent) };
-        let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
-        assert_eq!(name, "tcp");
-        assert_eq!(protoent.p_proto, 6);
-    }
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(6) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
+            assert_eq!(name, "tcp");
+            assert_eq!(protoent.p_proto, 6);
+        }
+    });
 }
 
 #[test]
 fn getprotobynumber_17_resolves_udp() {
-    let ptr = unsafe { resolv_abi::getprotobynumber(17) };
-    if !ptr.is_null() {
-        let protoent = unsafe { &*(ptr as *const libc::protoent) };
-        let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
-        assert_eq!(name, "udp");
-    }
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(17) };
+        if !ptr.is_null() {
+            let protoent = unsafe { &*(ptr as *const libc::protoent) };
+            let name = unsafe { CStr::from_ptr(protoent.p_name) }.to_string_lossy();
+            assert_eq!(name, "udp");
+        }
+    });
 }
 
 #[test]
 fn getprotobynumber_nonexistent_returns_null() {
-    let ptr = unsafe { resolv_abi::getprotobynumber(99999) };
-    assert!(ptr.is_null());
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        let ptr = unsafe { resolv_abi::getprotobynumber(99999) };
+        assert!(ptr.is_null());
+    });
 }
 
 // ===========================================================================
@@ -2926,32 +2947,35 @@ fn dns_metrics_snapshot_returns_valid_counters() {
 
 #[test]
 fn dns_metrics_counters_increment_on_hosts_miss() {
-    // When /etc/hosts lookup fails and DNS is attempted,
-    // the metrics should increment.
-    // Note: This test may increment counters even if DNS fails
-    // (timeout, no nameserver, etc.), which is expected.
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        // When /etc/hosts lookup fails and DNS is attempted,
+        // the metrics should increment.
+        // Note: This test may increment counters even if DNS fails
+        // (timeout, no nameserver, etc.), which is expected.
 
-    let before = resolv_abi::dns_metrics_snapshot();
+        let before = resolv_abi::dns_metrics_snapshot();
 
-    // Try to resolve a hostname that won't be in /etc/hosts
-    // and will trigger DNS lookup attempt
-    let nonexistent = CString::new("nonexistent.example.test").unwrap();
-    let mut result: *mut libc::addrinfo = ptr::null_mut();
+        // Try to resolve a hostname that won't be in /etc/hosts
+        // and will trigger DNS lookup attempt
+        let nonexistent = CString::new("nonexistent.example.test").unwrap();
+        let mut result: *mut libc::addrinfo = ptr::null_mut();
 
-    // This will try DNS after /etc/hosts miss
-    let _ = unsafe {
-        resolv_abi::getaddrinfo(nonexistent.as_ptr(), ptr::null(), ptr::null(), &mut result)
-    };
-    if !result.is_null() {
-        unsafe { resolv_abi::freeaddrinfo(result) };
-    }
+        // This will try DNS after /etc/hosts miss
+        let _ = unsafe {
+            resolv_abi::getaddrinfo(nonexistent.as_ptr(), ptr::null(), ptr::null(), &mut result)
+        };
+        if !result.is_null() {
+            unsafe { resolv_abi::freeaddrinfo(result) };
+        }
 
-    let after = resolv_abi::dns_metrics_snapshot();
+        let after = resolv_abi::dns_metrics_snapshot();
 
-    // The total queries attempted should have increased
-    // (unless DNS is completely disabled or no nameservers configured)
-    // We just verify the counter is accessible and consistent
-    assert!(after.queries_attempted >= before.queries_attempted);
+        // The total queries attempted should have increased
+        // (unless DNS is completely disabled or no nameservers configured)
+        // We just verify the counter is accessible and consistent
+        assert!(after.queries_attempted >= before.queries_attempted);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -3481,13 +3505,16 @@ fn res_gethostbyname2_matches_gethostbyname2_for_numeric_ipv4() {
 
 #[test]
 fn res_gethostbyaddr_matches_gethostbyaddr_for_loopback() {
-    use frankenlibc_abi::resolv_abi::res_gethostbyaddr;
-    let octets: [u8; 4] = [127, 0, 0, 1];
-    let p = unsafe { res_gethostbyaddr(octets.as_ptr() as *const c_void, 4, libc::AF_INET) };
-    // Loopback always resolves; non-loopback addresses without a
-    // hosts entry can return NULL, which is also legal — only assert
-    // we don't crash and the API accepts the call.
-    let _ = p;
+    // Reads the system backend files that fixture tests override.
+    with_resolver_lock(|| {
+        use frankenlibc_abi::resolv_abi::res_gethostbyaddr;
+        let octets: [u8; 4] = [127, 0, 0, 1];
+        let p = unsafe { res_gethostbyaddr(octets.as_ptr() as *const c_void, 4, libc::AF_INET) };
+        // Loopback always resolves; non-loopback addresses without a
+        // hosts entry can return NULL, which is also legal — only assert
+        // we don't crash and the API accepts the call.
+        let _ = p;
+    });
 }
 
 #[test]
