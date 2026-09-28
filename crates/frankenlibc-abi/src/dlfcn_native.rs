@@ -897,10 +897,11 @@ pub(super) fn resolve_native_dso_symbol(
     symbol_name: &[u8],
     version_name: Option<&[u8]>,
 ) -> Option<Option<*mut c_void>> {
-    // Only the standalone main-program handle owns this native global scope.
+    // An explicit main-program handle can search native globals in either
+    // build. The interpose ABI searches its host prefix before reaching here.
     // RTLD_DEFAULT/RTLD_NEXT need caller-relative scope and lifetime handling;
     // never silently interpret either pseudo-handle as this explicit handle.
-    let id = if cfg!(feature = "standalone") && super::is_main_program_handle(handle) {
+    let id = if super::is_main_program_handle(handle) {
         None
     } else {
         Some(native_dso_id_from_handle(handle)?)

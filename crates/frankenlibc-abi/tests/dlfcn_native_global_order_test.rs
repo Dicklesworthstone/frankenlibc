@@ -13,12 +13,20 @@ use frankenlibc_abi::dlfcn_abi;
 
 const PROVIDER: &str = r#"
 int gp_function(void) { return VALUE; }
+int gp_shadow(void) { return VALUE * 1000; }
 __thread int gp_tls = VALUE * 10;
 static int implementation(void) { return VALUE * 100; }
 static int (*resolver(void))(void) { return implementation; }
 int gp_ifunc(void) __attribute__((ifunc("resolver")));
 static int (*zero_resolver(void))(void) { return 0; }
 int gp_zero(void) __attribute__((ifunc("zero_resolver")));
+"#;
+// A host-owned prefix must beat a native provider, even when the selected
+// host symbol is an IFUNC that successfully resolves to NULL.
+const HOST_PREFIX: &str = r#"
+int gp_function(void) { return 9; }
+static int (*resolver(void))(void) { return 0; }
+int gp_shadow(void) __attribute__((ifunc("resolver")));
 "#;
 const CONSUMER: &str = r#"
 extern int gp_function(void);
@@ -51,6 +59,7 @@ fn fixtures(root: &Path) {
     fs::write(root.join("versions.map"), "GP_1 { global: gp_*; local: *; };\n").unwrap();
     compile(root, "gp_a", PROVIDER, &["-DVALUE=1"]);
     compile(root, "gp_b", PROVIDER, &["-DVALUE=2"]);
+    compile(root, "gp_prefix", HOST_PREFIX, &[]);
     compile(root, "gp_consumer", CONSUMER, &[]);
     compile(root, "gp_linked", CONSUMER, &["-Wl,--no-as-needed", "-L.", "-lgp_a"]);
     compile(root, "gp_group", "int gp_anchor(void) { return 7; }",
@@ -145,6 +154,7 @@ impl Loader {
 
 fn scenario(loader: &Loader, root: &Path, case: &str) {
     if case == "main_lookup" { main_lookup(loader, root); return; }
+    if case == "main_host_prefix" { main_host_prefix(loader, root); return; }
     if case == "null_ifunc" {
         let handle = loader.open(root, "gp_a", libc::RTLD_NOW);
         assert_eq!(loader.lookup(handle, c"gp_zero", None), (std::ptr::null_mut(), false));
@@ -187,6 +197,35 @@ fn scenario(loader: &Loader, root: &Path, case: &str) {
     loader.close(replacement);
     for handle in extra.into_iter().rev() { loader.close(handle); }
     loader.close(a);
+}
+
+fn main_host_prefix(loader: &Loader, root: &Path) {
+    let host = Loader { native: false };
+    let main = loader.main_handle();
+    let prefix = host.open(root, "gp_prefix", libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    let b = loader.open(root, "gp_b", libc::RTLD_NOW | libc::RTLD_GLOBAL);
+    assert_eq!(loader.function(b, c"gp_function", None), 2);
+    assert_eq!(loader.function(main, c"gp_function", None), 9);
+    assert_eq!(loader.function(main, c"gp_function", Some(c"GP_1")), 9);
+    assert_eq!(loader.function(b, c"gp_shadow", None), 2000);
+    // A null-success host result must neither become dlerror nor fall through
+    // to the native non-null definition of the same name and version.
+    assert_eq!(loader.lookup(main, c"gp_shadow", None), (std::ptr::null_mut(), false));
+    assert_eq!(loader.lookup(main, c"gp_shadow", Some(c"GP_1")), (std::ptr::null_mut(), false));
+    assert_eq!(loader.lookup(main, c"gp_shadow", Some(c"GP_MISSING")), (std::ptr::null_mut(), true));
+    let (tls, failed) = loader.lookup(main, c"gp_tls", Some(c"GP_1"));
+    assert!(!failed && !tls.is_null());
+    assert_eq!(tls, loader.lookup(b, c"gp_tls", None).0);
+    // SAFETY: gp_tls is this thread's initialized int in the live b module.
+    assert_eq!(unsafe { *tls.cast::<c_int>() }, 20);
+    host.close(prefix);
+    // Using host RTLD_DEFAULT for the prefix would pin it to the executable:
+    // this must instead find the surviving provider after the explicit close.
+    assert_eq!(loader.function(main, c"gp_function", None), 2);
+    assert_eq!(loader.function(main, c"gp_shadow", Some(c"GP_1")), 2000);
+    loader.close(b);
+    assert_eq!(loader.lookup(main, c"gp_function", None), (std::ptr::null_mut(), true));
+    loader.close(main);
 }
 
 fn main_lookup(loader: &Loader, root: &Path) {
@@ -246,8 +285,10 @@ fn native_global_promotion_matches_host() {
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
     let root = std::env::temp_dir().join(format!("franken-global-{}-{stamp}", std::process::id()));
     fixtures(&root);
-    let mut cases = vec!["promotion", "repeat", "group", "deepbind", "rollback", "null_ifunc"];
-    if cfg!(feature = "standalone") { cases.push("main_lookup"); }
+    let mut cases = vec![
+        "promotion", "repeat", "group", "deepbind", "rollback", "null_ifunc", "main_lookup",
+    ];
+    if !cfg!(feature = "standalone") { cases.push("main_host_prefix"); }
     for case in cases {
         for backend in ["host", "native"] {
             let output = Command::new(std::env::current_exe().unwrap())

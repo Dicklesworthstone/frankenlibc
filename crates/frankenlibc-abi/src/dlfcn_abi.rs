@@ -337,12 +337,77 @@ unsafe fn host_dlvsym(
     Some(unsafe { host_dlvsym(handle, symbol, version) })
 }
 
-unsafe fn resolve_main_program_symbol(symbol: *const c_char, symbol_name: &[u8]) -> *mut c_void {
+/// Search the host prefix through a real main-program handle. RTLD_DEFAULT
+/// is not interchangeable: a lookup through it may retain the provider as a
+/// dependency of the caller, defeating a later dlclose of a GLOBAL plugin.
+/// Some(NULL) is a successful IFUNC result; None is an actual lookup miss.
+#[cfg(not(feature = "standalone"))]
+unsafe fn host_main_program_symbol(
+    symbol: *const c_char,
+    version: Option<*const c_char>,
+) -> Option<*mut c_void> {
+    type Open = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void;
+    type Close = unsafe extern "C" fn(*mut c_void) -> c_int;
+    type Error = unsafe extern "C" fn() -> *const c_char;
+    type Lookup = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+    type VersionedLookup =
+        unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
+
+    // Resolve every entry point before clearing the host's thread-local error;
+    // resolving a helper must not contaminate the result of the actual lookup.
+    let open = crate::host_resolve::resolve_host_symbol_raw("dlopen")?;
+    let close = crate::host_resolve::resolve_host_symbol_raw("dlclose")?;
+    let error = crate::host_resolve::resolve_host_symbol_raw("dlerror")?;
+    let lookup = crate::host_resolve::resolve_host_symbol_raw(if version.is_some() {
+        "dlvsym"
+    } else {
+        "dlsym"
+    })?;
+    // SAFETY: these are host-owned symbols with the declared C ABI signatures.
+    let open: Open = unsafe { core::mem::transmute(open) };
+    let close: Close = unsafe { core::mem::transmute(close) };
+    let error: Error = unsafe { core::mem::transmute(error) };
+    let main = unsafe { open(std::ptr::null(), dlfcn_core::RTLD_NOW) };
+    if main.is_null() {
+        let _ = unsafe { error() };
+        return None;
+    }
+    let _ = unsafe { error() };
+    // SAFETY: the public ABI has bounded both strings, and main is a live host
+    // handle. No native registry lock is held across the host/IFUNC callbacks.
+    let address = unsafe {
+        if let Some(version) = version {
+            let lookup: VersionedLookup = core::mem::transmute(lookup);
+            lookup(main, symbol, version)
+        } else {
+            let lookup: Lookup = core::mem::transmute(lookup);
+            lookup(main, symbol)
+        }
+    };
+    let failed = !unsafe { error() }.is_null();
+    // Balance the temporary reference. Capture lookup status before dlclose
+    // can change the host error state; never infer failure from address == 0.
+    let _ = unsafe { close(main) };
+    (!failed).then_some(address)
+}
+
+unsafe fn resolve_main_program_symbol(
+    symbol: *const c_char,
+    symbol_name: &[u8],
+) -> Option<*mut c_void> {
+    #[cfg(feature = "standalone")]
+    let _ = symbol;
     let sym = resolve_exported_symbol(symbol_name);
     if !sym.is_null() {
-        return sym;
+        return Some(sym);
     }
-    unsafe { host_dlsym(libc::RTLD_DEFAULT, symbol) }.unwrap_or(std::ptr::null_mut())
+    #[cfg(not(feature = "standalone"))]
+    if let Some(sym) = unsafe { host_main_program_symbol(symbol, None) } {
+        return Some(sym);
+    }
+    // Host-owned globals retain their prefix precedence. Native GLOBAL
+    // objects then participate in promotion order, with LOCAL objects excluded.
+    resolve_native_dso_symbol(main_program_handle(), symbol_name, None).flatten()
 }
 
 unsafe fn resolve_main_program_versioned_symbol(
@@ -350,14 +415,20 @@ unsafe fn resolve_main_program_versioned_symbol(
     version: *const c_char,
     symbol_name: &[u8],
     version_name: &[u8],
-) -> *mut c_void {
+) -> Option<*mut c_void> {
+    #[cfg(feature = "standalone")]
+    let _ = (symbol, version);
     if version_supported(version_name) {
         let native = resolve_exported_symbol(symbol_name);
         if !native.is_null() {
-            return native;
+            return Some(native);
         }
     }
-    unsafe { host_dlvsym(libc::RTLD_DEFAULT, symbol, version) }.unwrap_or(std::ptr::null_mut())
+    #[cfg(not(feature = "standalone"))]
+    if let Some(sym) = unsafe { host_main_program_symbol(symbol, Some(version)) } {
+        return Some(sym);
+    }
+    resolve_native_dso_symbol(main_program_handle(), symbol_name, Some(version_name)).flatten()
 }
 
 fn open_main_program_handle() -> *mut c_void {
@@ -657,13 +728,13 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
             }
             return sym;
         }
-        let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
-        if sym.is_null() {
+        let resolved = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
+        if resolved.is_none() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
         } else {
             clear_dlerror();
         }
-        return sym;
+        return resolved.unwrap_or(std::ptr::null_mut());
     }
 
     let (_mode, decision) =
@@ -717,7 +788,11 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return sym;
     }
 
-    if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, None) {
+    // The explicit main handle must search builtins/host globals before
+    // native globals. Ordinary owned handles keep their dependency scope.
+    if !is_main_program_handle(handle)
+        && let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, None)
+    {
         // NULL can be a successful IFUNC result; absence is represented by None.
         let adverse = native_sym.is_none();
         let sym = native_sym.unwrap_or(std::ptr::null_mut());
@@ -757,15 +832,15 @@ pub unsafe extern "C" fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *m
         return std::ptr::null_mut();
     }
 
-    clear_dlerror();
-    let sym = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
-
-    let adverse = sym.is_null();
+    let resolved = unsafe { resolve_main_program_symbol(symbol, symbol_name) };
+    let adverse = resolved.is_none();
     if adverse {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+    } else {
+        clear_dlerror();
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
-    sym
+    resolved.unwrap_or(std::ptr::null_mut())
 }
 
 /// Find a symbol with a specific version in a shared object.
@@ -888,16 +963,15 @@ pub unsafe extern "C" fn dlvsym(
             }
             return sym;
         }
-        let sym = unsafe {
+        let resolved = unsafe {
             resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
         };
-        return if sym.is_null() {
+        if resolved.is_none() {
             set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
-            std::ptr::null_mut()
         } else {
             clear_dlerror();
-            sym
-        };
+        }
+        return resolved.unwrap_or(std::ptr::null_mut());
     }
 
     let (_, decision) =
@@ -958,7 +1032,10 @@ pub unsafe extern "C" fn dlvsym(
         return sym;
     }
 
-    if let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, Some(version_name)) {
+    if !is_main_program_handle(handle)
+        && let Some(native_sym) =
+            resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
+    {
         // NULL can be a successful IFUNC result; absence is represented by None.
         let adverse = native_sym.is_none();
         let sym = native_sym.unwrap_or(std::ptr::null_mut());
@@ -990,16 +1067,17 @@ pub unsafe extern "C" fn dlvsym(
         return sym;
     }
 
-    clear_dlerror();
-    let sym = unsafe {
+    let resolved = unsafe {
         resolve_main_program_versioned_symbol(symbol, version, symbol_name, version_name)
     };
-    let adverse = sym.is_null();
+    let adverse = resolved.is_none();
     if adverse {
         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+    } else {
+        clear_dlerror();
     }
     runtime_policy::observe(ApiFamily::Loader, decision.profile, 8, adverse);
-    sym
+    resolved.unwrap_or(std::ptr::null_mut())
 }
 
 // ---------------------------------------------------------------------------
