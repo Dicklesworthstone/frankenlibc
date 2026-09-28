@@ -154,6 +154,11 @@ if command -v c++ >/dev/null 2>&1; then
   CALLBACK_UNWIND_BIN="${BIN_DIR}/fixture_callback_unwind"
   c++ -O2 -pthread "${ROOT}/tests/integration/fixture_callback_unwind.cpp" -o "${CALLBACK_UNWIND_BIN}" || CALLBACK_UNWIND_BIN=""
 fi
+CANCEL_UNWIND_BIN=""
+if command -v c++ >/dev/null 2>&1; then
+  CANCEL_UNWIND_BIN="${BIN_DIR}/fixture_cancel_forced_unwind"
+  c++ -O2 -pthread "${ROOT}/tests/integration/fixture_cancel_forced_unwind.cpp" -o "${CANCEL_UNWIND_BIN}" || CANCEL_UNWIND_BIN=""
+fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
@@ -817,6 +822,10 @@ EOF
   # Thread cancellation at blocking points + cleanup handlers, static condvars
   # (bd-rc0923-epic-eeuy4f.24).
   run_corpus_case "${mode}" "pthread_cancel" "${PTHREAD_CANCEL_BIN}" || mode_failed=1
+  # Cancellation as a C++ forced unwind: destructors, abi::__forced_unwind.
+  if [[ -n "${CANCEL_UNWIND_BIN}" ]]; then
+    run_corpus_case "${mode}" "cxx_cancel_forced_unwind" "${CANCEL_UNWIND_BIN}" || mode_failed=1
+  fi
   # Process-shared, robust and PI mutexes; process-shared condvars
   # (bd-rc0923-epic-eeuy4f.15).
   run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
