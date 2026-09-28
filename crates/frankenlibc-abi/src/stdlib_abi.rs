@@ -828,8 +828,12 @@ unsafe fn scan_env_name_fast(name: *const c_char, bound: usize) -> GetenvNamePro
 // On first mutation that requires growing the array, we copy it to our
 // own malloc'd buffer (the original is on the process stack from crt0).
 
-/// Whether we've already copied environ to our own allocation.
-static ENVIRON_OWNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The environ array fl allocated (0 = none yet). The array is fl's to grow
+/// only while `environ` still points at it: a program may assign its own array
+/// to `environ`, and glibc then copies into a fresh allocation instead of
+/// reallocating the program's memory. A sticky "owned" flag made fl realloc a
+/// program's static array (host abort "realloc(): invalid pointer").
+static OWNED_ENVIRON: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Incremented after every successful environment mutation. The deployed
 /// single-threaded `getenv` cache uses this as its coherence fence.
@@ -995,7 +999,8 @@ pub fn take_environ_ownership() {
 /// Must be called with ENVIRON_LOCK held.
 unsafe fn ensure_environ_owned() -> bool {
     use std::sync::atomic::Ordering;
-    if ENVIRON_OWNED.load(Ordering::Acquire) {
+    let owned = OWNED_ENVIRON.load(Ordering::Acquire);
+    if owned != 0 && owned == unsafe { HOST_ENVIRON } as usize {
         return true;
     }
     let count = unsafe { environ_len() };
@@ -1019,7 +1024,9 @@ unsafe fn ensure_environ_owned() -> bool {
     unsafe { *new_array.add(count) = std::ptr::null_mut() };
     unsafe { HOST_ENVIRON = new_array };
     publish_environ_aliases();
-    ENVIRON_OWNED.store(true, Ordering::Release);
+    // An array fl allocated before the program replaced `environ` is left
+    // alone, not freed: the program may still hold it (and restore it).
+    OWNED_ENVIRON.store(new_array as usize, Ordering::Release);
     true
 }
 
@@ -1158,6 +1165,7 @@ unsafe fn native_setenv(
     }
     unsafe {
         HOST_ENVIRON = new_array;
+        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
         *HOST_ENVIRON.add(count) = new_entry;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
@@ -1241,6 +1249,7 @@ unsafe fn native_putenv_impl(string: *mut c_char) -> c_int {
     }
     unsafe {
         HOST_ENVIRON = new_array;
+        OWNED_ENVIRON.store(new_array as usize, std::sync::atomic::Ordering::Release);
         *HOST_ENVIRON.add(count) = string;
         *HOST_ENVIRON.add(count + 1) = std::ptr::null_mut();
     }
