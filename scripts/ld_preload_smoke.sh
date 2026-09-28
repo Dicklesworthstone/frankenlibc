@@ -161,6 +161,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+ENVIRON_BIN="${BIN_DIR}/fixture_environ"
+cc -O2 "${ROOT}/tests/integration/fixture_environ.c" -o "${ENVIRON_BIN}"
 RANDOM_MB_BIN="${BIN_DIR}/fixture_random_multibyte"
 cc -O2 "${ROOT}/tests/integration/fixture_random_multibyte.c" -o "${RANDOM_MB_BIN}"
 TZ_GLOBALS_BIN="${BIN_DIR}/fixture_time_zone_globals"
@@ -811,6 +813,8 @@ EOF
   run_corpus_case "${mode}" "time_zone_globals" "${TZ_GLOBALS_BIN}" || mode_failed=1
   # PRNG sequences/state buffers and multibyte conversions.
   run_corpus_case "${mode}" "random_multibyte" "${RANDOM_MB_BIN}" || mode_failed=1
+  # environ ownership, putenv aliasing, clearenv (environ = NULL).
+  run_corpus_case "${mode}" "environ_semantics" "${ENVIRON_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then

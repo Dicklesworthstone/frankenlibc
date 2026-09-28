@@ -4024,15 +4024,17 @@ pub unsafe extern "C" fn clearenv() -> c_int {
     let mut cleared = false;
     {
         let _lock = environ_lock_guard();
-        // SAFETY: HOST_ENVIRON is the process environment array. Holding
-        // ENVIRON_LOCK makes the array stable while we replace its first slot
-        // with the terminating NULL entry.
+        // glibc: environ becomes NULL and the array is left untouched -- it
+        // may be the program's own (environ = my_env), which fl used to write
+        // into (slot 0 set to NULL) while leaving environ non-NULL.
+        // SAFETY: ENVIRON_LOCK is held; the aliases are republished together.
         unsafe {
             if !HOST_ENVIRON.is_null() {
-                *HOST_ENVIRON = ptr::null_mut();
+                HOST_ENVIRON = ptr::null_mut();
                 cleared = true;
             }
         }
+        publish_environ_aliases();
     }
 
     if cleared {
