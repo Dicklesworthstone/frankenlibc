@@ -269,9 +269,7 @@ impl MemBacking {
     pub fn seek(&mut self, offset: i64, whence: i32) -> Option<i64> {
         let (size, pos) = match self {
             MemBacking::Fixed {
-                content_end,
-                pos,
-                ..
+                content_end, pos, ..
             } => {
                 // bd-rv2gv6: use content_end for all whence modes. The logical
                 // extent is independent of the backing allocation size — for
@@ -558,6 +556,12 @@ impl StdioStream {
     /// Get the underlying file descriptor.
     pub fn fd(&self) -> i32 {
         self.fd
+    }
+
+    /// Whether writes append (`"a"`/`"a+"`, O_APPEND): the kernel, not the
+    /// stream's position, decides where written bytes land.
+    pub fn is_appending(&self) -> bool {
+        self.open_flags.append
     }
 
     /// Check if the stream is readable.

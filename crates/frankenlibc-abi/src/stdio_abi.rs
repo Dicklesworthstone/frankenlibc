@@ -2978,6 +2978,14 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
         written += rc as usize;
     }
     stream.mark_flushed();
+    // O_APPEND put the bytes at end of file wherever the stream's position
+    // was; take the kernel's position so ftell and later reads agree ("a+").
+    if stream.is_appending()
+        && fd >= 0
+        && let Ok(pos) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR)
+    {
+        stream.set_offset(pos);
+    }
     true
 }
 
@@ -3344,7 +3352,10 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
 
     // Create StdioStream and set initial offset for append mode.
     let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    // Like glibc, only a write-only append stream ("a") starts at the end:
+    // "a+" reads from the beginning while its writes still land at the end.
     if open_flags.append
+        && !open_flags.readable
         && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
     {
         stream.set_offset(end_off);
@@ -3444,7 +3455,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     if s.is_mem_backed() {
         sync_and_unregister_fast_fixed_mem_read(id, s);
         unsafe {
-            sync_memstream_to_caller(id, s);
+            sync_memstream_to_caller(id, s, true);
             sync_fmemopen_full(id, s);
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
@@ -3597,7 +3608,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
             } else if s.is_mem_backed() {
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                 unsafe {
-                    sync_memstream_to_caller(id, s);
+                    sync_memstream_to_caller(id, s, false);
                     sync_fmemopen_full(id, s);
                     crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
                 }
@@ -3634,7 +3645,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
         if s.is_mem_backed() {
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             unsafe {
-                sync_memstream_to_caller(id, s);
+                sync_memstream_to_caller(id, s, false);
                 sync_fmemopen_full(id, s);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
             }
@@ -5134,7 +5145,7 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             return 0;
         }
         unsafe {
-            sync_memstream_to_caller(id, s);
+            sync_memstream_to_caller(id, s, false);
             sync_fmemopen_full(id, s);
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
         }
@@ -5181,8 +5192,11 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // sync_fast_fixed_mem_read_to_stream is a no-op and decide()==Allow in strict, so
     // returning `offset()` directly is byte-identical (matches the existing cache-hit
     // fast paths that skip decide). Skips the 3 per-call locks.
-    if let Some(p) = write_cache_lookup_by_stream(stream) {
+    if let Some(p) = write_cache_lookup_by_stream(stream)
         // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
+        && !unsafe { (*p).is_appending() }
+    {
+        // SAFETY: as above.
         return unsafe { (*p).offset() } as c_long;
     }
     // MT-safe cell-cache fast path (see feof): the ST cache above is `__libc_single_threaded`-
@@ -5191,7 +5205,10 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // `offset()` under this stream's lock is byte-identical to the slow path (same reasoning the
     // ST fast path uses to skip decide/observe).
     if let Some(cell) = stream_cell_cache_lookup(stream) {
-        return cell.lock().offset() as c_long;
+        let s = cell.lock();
+        if !s.is_appending() {
+            return s.offset() as c_long;
+        }
     }
     let id = canonical_stream_id(stream);
     // Host delegation path - not available in standalone mode
@@ -5221,6 +5238,11 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     let s = &mut *s_guard;
 
     let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+    // glibc's ftell on an appending stream flushes pending output first: its
+    // position is where the kernel put it, the end of the file.
+    if s.is_appending() && s.fd() >= 0 && !s.pending_flush().is_empty() {
+        let _ = unsafe { flush_stream(s) };
+    }
     let off = s.offset();
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
     off as c_long
@@ -11770,7 +11792,7 @@ pub unsafe extern "C-unwind" fn freopen(
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
-                sync_memstream_to_caller(id, old);
+                sync_memstream_to_caller(id, old, true);
                 sync_fmemopen_full(id, old);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, old);
             }
@@ -13014,7 +13036,7 @@ unsafe fn sync_fmemopen_full(id: usize, stream: &StdioStream) {
 
 /// Synchronize open_memstream data to the C caller's pointers.
 /// Called after fflush and fclose for open_memstream streams.
-unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
+unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream, closing: bool) {
     // Lock-free fast path: no open_memstream has ever been created, so this id
     // cannot have sync metadata. A new open_memstream id is only published after
     // the Release store in `open_memstream`, so this Acquire load is correct.
@@ -13043,6 +13065,13 @@ unsafe fn sync_memstream_to_caller(id: usize, stream: &StdioStream) {
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), buf.cast::<u8>(), len);
                 *buf.cast::<u8>().add(len) = 0; // NUL-terminate at the max extent
+                // At close glibc truncates the buffer at the current position
+                // (realloc to size+1, NUL there): "abc123", seek 1, 'Q',
+                // fclose -> "aQ". A flush while open keeps the tail
+                // (open_memstream_differential_test), so only on close.
+                if closing {
+                    *buf.cast::<u8>().add(reported) = 0;
+                }
                 *info.ptr_loc = buf.cast::<c_char>();
                 *info.size_loc = reported;
                 if !previous.is_null() {

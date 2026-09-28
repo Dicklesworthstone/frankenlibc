@@ -108,7 +108,14 @@ fn run(engine_glibc: bool) -> Vec<(&'static str, usize, Vec<u8>)> {
     } else {
         unsafe { fl::fclose(stream as *mut libc::c_void) };
     }
-    log.push(("closed", sz, Vec::new()));
+    // After fclose glibc truncates the buffer at the position (realloc to
+    // size + 1, NUL there), so only size + 1 bytes are readable.
+    let closed = if ptr.is_null() {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(ptr as *const u8, sz + 1) }.to_vec()
+    };
+    log.push(("closed", sz, closed));
     log
 }
 
