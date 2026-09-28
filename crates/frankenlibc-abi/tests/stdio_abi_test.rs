@@ -1434,6 +1434,9 @@ fn printf_writes_to_redirected_stdout() {
         // SAFETY: variadic args match the format string.
         let written = unsafe { printf(c"printf-%d\n".as_ptr(), 9_i32) };
         assert_eq!(written, 9);
+        // stdout on a file is fully buffered, as in glibc: flush while fd 1
+        // still points at the file.
+        assert_eq!(unsafe { fflush(std::ptr::null_mut()) }, 0);
         written
     };
 
@@ -3470,6 +3473,8 @@ fn io_internal_printf_and_sscanf_use_native_stdio_paths() {
 
         let written = unsafe { _IO_printf(c"io-%d\n".as_ptr(), 9_i32) };
         assert_eq!(written, 5);
+        // Fully buffered on a file, as in glibc: flush before restoring fd 1.
+        assert_eq!(unsafe { fflush(std::ptr::null_mut()) }, 0);
         written
     };
 
