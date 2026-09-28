@@ -4139,15 +4139,32 @@ fn random_returns_non_negative() {
 
 #[test]
 fn initstate_setstate_roundtrip() {
+    // glibc: the generator lives in the current state buffer; switching away
+    // saves its position there, and setstate() resumes it exactly where it
+    // stopped. initstate/setstate return the PREVIOUS buffer, which the test
+    // restores before its own buffers are dropped.
     let _lock = random_lock();
     unsafe {
-        srandom(99);
-        let mut buf = vec![0u8; 256];
-        let _ = initstate(99, buf.as_mut_ptr() as *mut libc::c_char, buf.len());
-        let seq1: Vec<libc::c_long> = (0..5).map(|_| random()).collect();
-        let _ = setstate(buf.as_mut_ptr() as *mut libc::c_char);
-        let seq2: Vec<libc::c_long> = (0..5).map(|_| random()).collect();
-        assert_eq!(seq1, seq2);
+        let mut reference = vec![0u8; 256];
+        let previous = initstate(99, reference.as_mut_ptr().cast(), reference.len());
+        assert!(!previous.is_null());
+        let expected: Vec<libc::c_long> = (0..6).map(|_| random()).collect();
+
+        let mut a = vec![0u8; 256];
+        let mut b = vec![0u8; 128];
+        let from_reference = initstate(99, a.as_mut_ptr().cast(), a.len());
+        assert_eq!(from_reference, reference.as_mut_ptr().cast());
+        let first: Vec<libc::c_long> = (0..3).map(|_| random()).collect();
+        let from_a = initstate(5, b.as_mut_ptr().cast(), b.len());
+        assert_eq!(from_a, a.as_mut_ptr().cast());
+        let _ = random();
+        let from_b = setstate(a.as_mut_ptr().cast());
+        assert_eq!(from_b, b.as_mut_ptr().cast());
+        let resumed: Vec<libc::c_long> = (0..3).map(|_| random()).collect();
+        assert_eq!(first, expected[..3]);
+        assert_eq!(resumed, expected[3..], "setstate must resume, not replay");
+
+        let _ = setstate(previous);
     }
 }
 
@@ -4197,9 +4214,12 @@ fn setstate_accepts_untracked_minimum_state_without_overread() {
     let mut tiny = [0u8; 8];
     unsafe {
         *__errno_location() = 0;
-        let result = setstate(tiny.as_mut_ptr().cast());
-        assert_eq!(result, tiny.as_mut_ptr().cast());
+        // glibc returns the previous state buffer, not the new one.
+        let previous = setstate(tiny.as_mut_ptr().cast());
+        assert!(!previous.is_null());
+        assert_ne!(previous, tiny.as_mut_ptr().cast());
         assert_eq!(*__errno_location(), 0);
+        let _ = setstate(previous);
     }
 }
 
@@ -8681,7 +8701,10 @@ fn pidfile_write_overwrites_previous_content() {
 // mergesort / heapsort (BSD libc sort variants)
 // ---------------------------------------------------------------------------
 
-unsafe extern "C-unwind" fn cmp_i32(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+unsafe extern "C-unwind" fn cmp_i32(
+    a: *const std::ffi::c_void,
+    b: *const std::ffi::c_void,
+) -> c_int {
     let av = unsafe { *(a as *const i32) };
     let bv = unsafe { *(b as *const i32) };
     av.cmp(&bv) as c_int
@@ -8836,7 +8859,10 @@ fn mergesort_is_stable_via_abi() {
         key: i32,
         idx: i32,
     }
-    unsafe extern "C-unwind" fn cmp_pair(a: *const std::ffi::c_void, b: *const std::ffi::c_void) -> c_int {
+    unsafe extern "C-unwind" fn cmp_pair(
+        a: *const std::ffi::c_void,
+        b: *const std::ffi::c_void,
+    ) -> c_int {
         let av = unsafe { *(a as *const Pair) };
         let bv = unsafe { *(b as *const Pair) };
         av.key.cmp(&bv.key) as c_int
