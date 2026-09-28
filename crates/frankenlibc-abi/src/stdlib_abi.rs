@@ -4806,11 +4806,9 @@ pub unsafe extern "C" fn abort() -> ! {
         frankenlibc_core::syscall::sys_exit_group(134)
     }
 
-    // In a multi-threaded process, calling host_fflush(NULL) after fork()
-    // (which assert_child_sigabrt does) will deadlock if the host's stdout
-    // was locked during the fork. Instead of a full fflush(NULL), we only
-    // attempt to flush our managed streams, and even then, we use try_lock.
-    let _ = unsafe { crate::stdio_abi::fflush_managed_only_for_abort() };
+    // No stdio flush: glibc's abort has not flushed streams since 2.27, so
+    // output still buffered at abort is lost there. fl flushed its managed
+    // streams, emitting output a glibc process would not.
 
     // Build a sigset containing only SIGABRT without entering signal_abi:
     // abort may run in a forked child while another vanished thread held

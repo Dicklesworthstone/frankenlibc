@@ -1646,7 +1646,11 @@ impl StreamRegistry {
         };
         streams.insert(
             STDIN_SENTINEL,
-            new_stream_cell(StdioStream::new(libc::STDIN_FILENO, stdin_flags)),
+            new_stream_cell(StdioStream::with_mode(
+                libc::STDIN_FILENO,
+                stdin_flags,
+                std_stream_buf_mode(libc::STDIN_FILENO),
+            )),
         );
 
         // Pre-register stdout (fd 1).
@@ -1656,7 +1660,11 @@ impl StreamRegistry {
         };
         streams.insert(
             STDOUT_SENTINEL,
-            new_stream_cell(StdioStream::new(libc::STDOUT_FILENO, stdout_flags)),
+            new_stream_cell(StdioStream::with_mode(
+                libc::STDOUT_FILENO,
+                stdout_flags,
+                std_stream_buf_mode(libc::STDOUT_FILENO),
+            )),
         );
 
         // Pre-register stderr (fd 2).
@@ -3358,6 +3366,21 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     id as *mut c_void
 }
 
+/// glibc's buffering for a stream on `fd`: stderr unbuffered, a terminal
+/// line-buffered, anything else fully buffered. The standard streams used to
+/// be line-buffered unconditionally, so `printf` into a pipe or file issued a
+/// write(2) per line and interleaved with raw writes and stderr differently
+/// from glibc (which also duplicates unflushed output across fork).
+fn std_stream_buf_mode(fd: c_int) -> BufMode {
+    if fd == libc::STDERR_FILENO {
+        BufMode::None
+    } else if raw_isatty(fd) {
+        BufMode::Line
+    } else {
+        BufMode::Full
+    }
+}
+
 /// Raw isatty check using TIOCGWINSZ ioctl syscall.
 ///
 /// Returns true if fd is a terminal, false otherwise.
@@ -3491,42 +3514,6 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
 // ---------------------------------------------------------------------------
 // fflush
 // ---------------------------------------------------------------------------
-
-#[doc(hidden)]
-pub unsafe fn fflush_managed_only_for_abort() -> c_int {
-    // Abort context: never block on any lock a dying thread may hold — neither
-    // the map's nor a stream's — and, just as importantly, NEVER ALLOCATE.
-    //
-    // This used to snapshot the cells into a Vec so the registry lock could be
-    // released before flushing. Every lock on that path was already a try_lock,
-    // so it could not deadlock on a lock — but the snapshot itself called into
-    // fl's own allocator, and a forked child inherits the allocator's lock
-    // frozen-held if any other thread was inside malloc at fork time. That is a
-    // hard hang with no try_lock to fall back on, and it is what wedged
-    // libc_fatal_null_message_still_aborts_with_fallback and its two siblings
-    // (bd-3aktsp): measured "still alive: true" after 60s, i.e. stuck, not slow.
-    //
-    // Iterating the map in place removes the allocation entirely. Holding the
-    // registry lock across the per-stream try_locks introduces no deadlock,
-    // because every acquisition here is still a try_lock and simply skips a
-    // stream it cannot take. Iteration order is unspecified rather than sorted;
-    // for a best-effort pre-abort flush that is immaterial, and it is strictly
-    // better than not flushing at all because we could not allocate.
-    let Ok(reg) = registry().try_lock() else {
-        return libc::EOF;
-    };
-    let mut overall_rc = 0;
-    for cell in reg.streams.values() {
-        if let Some(mut s) = cell.try_lock() {
-            let success = unsafe { flush_stream(&mut s) };
-            if !success {
-                overall_rc = libc::EOF;
-            }
-            drop(s);
-        }
-    }
-    overall_rc
-}
 
 /// POSIX `fflush`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11896,7 +11883,7 @@ pub unsafe extern "C-unwind" fn freopen(
         fd = target_fd;
     }
 
-    let new_stream = StdioStream::new(fd, open_flags);
+    let new_stream = StdioStream::with_mode(fd, open_flags, std_stream_buf_mode(fd));
     // Keep the caller's FILE * valid and truthful: same handle, new fd and
     // mode bits, EOF/ERR/orientation reset (bd-rc0923-epic-eeuy4f.1).
     let handle = if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
