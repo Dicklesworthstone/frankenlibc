@@ -304,9 +304,24 @@ fn parse_sysfs_cache_size(raw: &str) -> Option<libc::c_long> {
 /// HERE: sysfs reports 8 ways, glibc reports -1. glibc's CPUID path does not
 /// produce an instruction-cache associativity on this vendor, so following
 /// sysfs there would diverge from the incumbent. See the selector's own arm.
+/// Puts errno back to a saved value when dropped.
+struct ErrnoRestore(c_int);
+
+impl Drop for ErrnoRestore {
+    fn drop(&mut self) {
+        // SAFETY: restores fl's (and the host's) errno for this thread.
+        unsafe { set_abi_errno(self.0) };
+    }
+}
+
 fn cache_topology() -> &'static CacheTopology {
     static CACHED: std::sync::OnceLock<CacheTopology> = std::sync::OnceLock::new();
     CACHED.get_or_init(|| {
+        // Probing index0..index15 fails on the missing ones; a successful
+        // sysconf must not leave that ENOENT in errno (glibc does not).
+        // SAFETY: fl's own thread-local errno slot.
+        let saved_errno = unsafe { *crate::errno_abi::__errno_location() };
+        let _restore = ErrnoRestore(saved_errno);
         let mut topology = CacheTopology {
             l1i: CacheLevelInfo::ABSENT,
             l1d: CacheLevelInfo::ABSENT,
