@@ -156,6 +156,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
+cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_small_stack_threads.c" -o "${SMALL_STACK_BIN}"
 LOCALTIME_TZ_BIN="${BIN_DIR}/fixture_localtime_tz"
@@ -782,6 +784,11 @@ EOF
     run_corpus_case "${mode}" "stdio_file_layout_${layout_case}" "${FILE_LAYOUT_BIN}" "${layout_case}" || mode_failed=1
   done
   run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
+  # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
+  # heals it by design (bd-rc0923-epic-eeuy4f.8).
+  if [[ "${mode}" == "strict" ]]; then
+    run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
+  fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
   # Local time (bd-rc0923-epic-eeuy4f.11): zone files, POSIX rules, edge values.

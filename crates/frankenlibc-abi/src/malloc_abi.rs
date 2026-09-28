@@ -763,9 +763,20 @@ enum SegmentSlotOrigin {
     Recycled,
 }
 
+/// Why a segment-owned pointer could not be freed.
+#[derive(Clone, Copy)]
+enum InvalidFree {
+    /// The slot is already free. Carries its class size for glibc's wording.
+    DoubleFree { class_size: usize },
+    /// Not the start of a live block: interior, never-allocated slot.
+    InvalidPointer,
+    /// The slot's recorded size exceeds its class: corrupted metadata.
+    InvalidSize,
+}
+
 enum SegmentFreeResult {
     NotOwned,
-    OwnedInvalid,
+    OwnedInvalid(InvalidFree),
     /// The slot was retired. `size` is the requested size recorded on it; `bin` is
     /// the size class it lived in, carried out so the stats accumulator does not
     /// have to recompute from `size` what the segment already knows (see
@@ -1446,10 +1457,10 @@ fn segment_free(
         return SegmentFreeResult::NotOwned;
     };
     let Some(view) = segment_slot_view_in_owned_segment(addr, segment_index, base) else {
-        return SegmentFreeResult::OwnedInvalid;
+        return SegmentFreeResult::OwnedInvalid(InvalidFree::InvalidPointer);
     };
     if addr != view.user_base {
-        return SegmentFreeResult::OwnedInvalid;
+        return SegmentFreeResult::OwnedInvalid(InvalidFree::InvalidPointer);
     }
     // Retire the slot. The atomic SWAP is what makes concurrent frees of the same
     // pointer safe: exactly one freer observes a live `previous` and every other
@@ -1473,7 +1484,15 @@ fn segment_free(
         if previous == 0 || (previous != SEGMENT_SLOT_FREE && requested > view.class_size) {
             view.meta.requested_size.store(previous, Ordering::Release);
         }
-        return SegmentFreeResult::OwnedInvalid;
+        return SegmentFreeResult::OwnedInvalid(if previous == SEGMENT_SLOT_FREE {
+            InvalidFree::DoubleFree {
+                class_size: view.class_size,
+            }
+        } else if previous == 0 {
+            InvalidFree::InvalidPointer
+        } else {
+            InvalidFree::InvalidSize
+        });
     }
 
     // The stats bin carried out below is `view.class_index` rather than a bin
@@ -4424,6 +4443,41 @@ unsafe fn strict_small_or_host_allocate(
     (ptr, None)
 }
 
+/// glibc's `malloc_printerr`: the diagnostic on stderr, then abort. STRICT
+/// mode only -- the default mode must be at least as fail-safe as glibc for
+/// allocator misuse it detects, where it used to return silently (a double
+/// free just returned; bd-rc0923-epic-eeuy4f.8). Hardened mode heals the same
+/// misuse instead (IgnoreDoubleFree / IgnoreForeignFree), so it returns.
+#[cold]
+#[inline(never)]
+fn strict_malloc_printerr(message: &'static [u8]) {
+    if runtime_policy::mode().heals_enabled() {
+        return;
+    }
+    // SAFETY: a static buffer to fd 2, then the process aborts; neither
+    // allocates, so this is safe under the allocator guard.
+    unsafe {
+        let _ = raw_syscall::sys_write(2, message.as_ptr(), message.len());
+        crate::stdlib_abi::abort();
+    }
+}
+
+/// [`strict_malloc_printerr`] with glibc's wording for each misuse. glibc
+/// catches a double free of a tcache-sized chunk (user size <= 1032) in the
+/// tcache; a larger freed chunk is caught by its neighbour's PREV_INUSE bit.
+#[cold]
+#[inline(never)]
+fn strict_invalid_free(reason: InvalidFree) {
+    strict_malloc_printerr(match reason {
+        InvalidFree::DoubleFree { class_size } if class_size <= 1032 => {
+            b"free(): double free detected in tcache 2\n"
+        }
+        InvalidFree::DoubleFree { .. } => b"double free or corruption (!prev)\n",
+        InvalidFree::InvalidPointer => b"free(): invalid pointer\n",
+        InvalidFree::InvalidSize => b"free(): invalid size\n",
+    });
+}
+
 #[inline]
 unsafe fn realloc_segment_owned(
     slot: Option<&'static AllocatorReentrySlot>,
@@ -4431,6 +4485,7 @@ unsafe fn realloc_segment_owned(
     requested: usize,
 ) -> *mut c_void {
     let Some((view, old_requested)) = segment_exact_live_view(ptr) else {
+        strict_malloc_printerr(b"realloc(): invalid pointer\n");
         return std::ptr::null_mut();
     };
     if requested <= view.class_size {
@@ -4557,7 +4612,7 @@ unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
             record_free_stats_binned(None, size, bin);
             return;
         }
-        SegmentFreeResult::OwnedInvalid => return,
+        SegmentFreeResult::OwnedInvalid(_) => return,
         SegmentFreeResult::NotOwned => {}
     }
     let tracked_size = fallback_remove_sized(ptr);
@@ -4897,7 +4952,10 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
             record_free_stats_binned(Some(reentry_guard.slot), size, bin);
             return;
         }
-        SegmentFreeResult::OwnedInvalid => return,
+        SegmentFreeResult::OwnedInvalid(reason) => {
+            strict_invalid_free(reason);
+            return;
+        }
         SegmentFreeResult::NotOwned => {}
     }
     // SAFETY: exact registry membership owns and retires overflow mappings.
