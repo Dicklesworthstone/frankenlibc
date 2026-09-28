@@ -150,8 +150,8 @@ Fast exits short-circuit each stage. Performance budget: strict-mode overhead ta
 
 | Mode | Purpose | Behavior |
 |---|---|---|
-| `strict` (default) | Compatibility-first | Validate without rewriting; prefer ABI-compatible failures over hidden corrections |
-| `hardened` | Safety-first | Repair or deny unsafe patterns and emit structured evidence |
+| `strict` (default) | Compatibility-first | Behaves like glibc and repairs nothing. Allocator misuse that fl detects on its own blocks (double free, `free`/`realloc` of a pointer that is not a live block start) aborts with glibc's `malloc_printerr` diagnostic, as glibc does. String and memory copies (`memcpy`, `strcpy`, `memset`, …) are raw copies with no bounds validation in this mode |
+| `hardened` | Safety-first | Validates pointers and bounds, repairs (clamp, truncate, ignore double/foreign free) or denies unsafe patterns, and counts every repair; `FRANKENLIBC_LOG` receives heal and deny records |
 
 The mode is resolved exactly once per process from `FRANKENLIBC_MODE` via a compare-and-swap state machine (`UNRESOLVED` → `RESOLVING` → `STRICT`/`HARDENED`/`OFF`). After init, the mode is immutable. Reentrant calls during resolution return a passthrough decision so the process can finish bootstrapping.
 
@@ -520,7 +520,7 @@ Default buffer size is **8,192 bytes** (`BUFSIZ`). POSIX's requirement that `set
 
 ## pthread — Futex-Backed Synchronization
 
-`crates/frankenlibc-core/src/pthread/` is a clean-room futex-backed design, not a wrapper around NPTL.
+`crates/frankenlibc-core/src/pthread/` is a clean-room futex-backed design. fl's own mutexes (including process-shared, robust and priority-inheritance ones), condition variables and rwlocks run on it. Thread creation, join and cancellation, however, go through the host's NPTL by default when fl is preloaded into a glibc process; the native thread backend is opt-in (`FRANKENLIBC_THREAD_NATIVE=1`) and is what standalone builds use.
 
 ### Mutex
 
@@ -556,21 +556,24 @@ Full POSIX TLS key lifecycle (`pthread_key_create`, `pthread_setspecific`, `pthr
 
 ---
 
-## DNS Resolver — Numeric-First, File-Based
+## DNS Resolver — Native, nsswitch-Ordered
 
-`crates/frankenlibc-core/src/resolv/` (2,130 LOC `mod.rs`, plus `dns.rs` 785, `dns_name.rs` 869, `config.rs` 705, `b64.rs` 378, `messages.rs` 179) takes a conservative bootstrap approach: no network I/O during early process initialization.
+`crates/frankenlibc-core/src/resolv/` and `crates/frankenlibc-core/src/dns_transport.rs` implement host lookup natively: no host libc resolver and no `libnss_*` modules are called.
 
 ### Resolution Order
 
-1. Parse the address as an IPv4 or IPv6 literal — return immediately if it is one
-2. Search `/etc/hosts` for a matching hostname or alias
-3. Search `/etc/services` for port/protocol mapping
-4. Return `EAI_NONAME` (-2) if nothing matches
+1. Numeric IPv4/IPv6 literals are answered directly.
+2. The `hosts:` line of `/etc/nsswitch.conf` decides which sources run and in what order, including `[STATUS=action]` items (`crates/frankenlibc-core/src/addrinfo/hosts_policy.rs`). `files` is `/etc/hosts`; `dns` is the native resolver below. Other modules (`myhostname`, `mdns4_minimal`, `resolve`, …) are treated as unavailable sources, so names only they can resolve are not found. A missing or unparseable file means glibc's default, `files dns`.
+3. The native DNS resolver reads `/etc/resolv.conf` (`nameserver`, `search`/`domain`, `ndots`, `timeout`, `attempts`, `rotate`, `use-vc`, `trust-ad`) and queries over UDP with TCP fallback, following CNAME chains. The search-list failure rules follow glibc's `res_search`: an as-is name tried first decides the final error, a search-domain timeout stops the search, and a search-domain SERVFAIL keeps searching but leaves `TRY_AGAIN` as the fallback.
+
+`getaddrinfo`, `getnameinfo`, `gethostbyname{,2}{,_r}` and `gethostbyaddr{,_r}` all use this one engine, so they agree within a process. `FRANKENLIBC_RESOLV_CONF`, `FRANKENLIBC_NSSWITCH_CONF` and `FRANKENLIBC_HOSTS_PATH` redirect the configuration files, for tests.
 
 ### What's Live
 
-- Multi-address `addrinfo` chains
+- Multi-address `addrinfo` chains, `AI_CANONNAME` from the answering record
 - `getaddrinfo` / `freeaddrinfo` / `getnameinfo` / `gai_strerror` (with glibc-aligned error text)
+- Reverse (PTR) lookups through the same `hosts:` policy
+- `_nss_files_gethostbyname{,2,3,4}_r` / `_nss_files_gethostbyaddr_r`: files-only, compared against glibc's own exports
 - `inet_pton` / `inet_ntop` with metamorphic round-trip harness coverage
 - `inet_aton` / `inet_ntoa` / `htons` / `ntohs` family
 - DNS compression name parsing with EFAULT-correct bounds
@@ -579,22 +582,13 @@ Full POSIX TLS key lifecycle (`pthread_key_create`, `pthread_setspecific`, `pthr
 - TLS-cached pwd / grp / shadow reentrant slots (`_r` family) hardened against concurrent reseeding
 - Base-64 helpers (`b64_ntop` / `b64_pton`) with golden conformance fixtures
 
-Full NSS plugins, recursive resolution, and DNS network I/O are out of scope for the bootstrap resolver; they belong in a future replacement-artifact milestone, not in libc itself during early process init.
-
 ---
 
-## iconv — Phase 1
+## iconv
 
-`crates/frankenlibc-core/src/iconv/` (853 LOC `mod.rs`) ships phase-1 codec coverage. Scope is locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`.
+`crates/frankenlibc-core/src/iconv/` is a native codec engine: `mod.rs` alone is ~54,500 lines, with about 300 encodings in its `enum Encoding` — the Unicode family (UTF-8/16/32 with and without BOMs, UCS-2, UTF-7), ASCII and the ISO-8859 series, Windows and DOS code pages, KOI8 variants, and East Asian multibyte sets (EUC-*, Shift_JIS/CP932, BIG5, GBK/GB18030, ISO-2022-*), plus `//TRANSLIT` and `//IGNORE`. Scope and per-codec status are tracked in `tests/conformance/iconv_codec_scope_ledger.v1.json`.
 
-| Encoding | Direction | Notes |
-|---|---|---|
-| UTF-8 | ↔ all | Round-trip fixture-verified |
-| ISO-8859-1 | ↔ UTF-8 | Direct byte-to-codepoint mapping |
-| UTF-16LE | ↔ UTF-8 | Surrogate-pair handling |
-| UTF-32 | ↔ UTF-8 | Native-endian |
-
-`iconv_open` / `iconv` / `iconv_close` are currently classified as native `Implemented` bootstrap rows in the ABI support matrix, backed by phase-1 Rust codec coverage in `crates/frankenlibc-core/src/iconv/`. Codec dispatch uses a phase-1 lookup table with deterministic strict-mode fallback policy. Hardened mode adds bounds-clamp repair on overflow. Full `iconvdata` breadth (CP932, EUC, BIG5, ISO-2022-*, KOI8-*, etc.) is a tracked deferred subsystem.
+`iconv_open` / `iconv` / `iconv_close` are native (`Implemented`) in the ABI support matrix. Hardened mode adds bounds-clamp repair on output-buffer overflow.
 
 ---
 
@@ -723,7 +717,7 @@ Representative families already live in the runtime, not just in design docs:
 Standalone (non-`runtime_math/`) controllers in the membrane:
 
 - `risk_engine.rs` — Conformal nonconformity scoring per API family with 256-entry circular calibration buffer
-- `check_oracle.rs` — Thompson-sampling contextual bandit that learns optimal validation-stage ordering
+- `check_oracle.rs` — Beta-posterior contextual bandit that learns the validation-stage ordering (greedy Weitzman index on posterior means)
 - `quarantine_controller.rs` — Primal-dual quarantine-depth optimizer
 - `tropical_latency.rs` — Min-plus algebra worst-case latency bounds
 - `spectral_monitor.rs` — Marchenko-Pastur / Tracy-Widom phase-transition detector
@@ -752,9 +746,9 @@ Final score is capped at 1,000. Below `fast_threshold` skip expensive validation
 
 Thresholds are calibrated as quantiles of a 256-entry circular buffer of recent scores. An e-process monitor accumulates evidence on the log scale; when it exceeds 10.0, the engine enters alarm mode and forces full validation until the evidence subsides.
 
-### Thompson-Sampling Check Oracle
+### Check Oracle (Beta-Posterior Stage Ordering)
 
-`check_oracle.rs` learns the optimal ordering of validation stages at runtime via Thompson sampling:
+`check_oracle.rs` learns the ordering of validation stages at runtime from Beta posteriors over each stage's early-exit rate:
 
 | Stage | Cost | Can reject early? | Can accept early? |
 |---|---:|---|---|
@@ -766,7 +760,7 @@ Thresholds are calibrated as quantiles of a 256-entry circular buffer of recent 
 | Canary | 10 ns | yes | no |
 | Bounds | 5 ns | no | no |
 
-Each stage maintains a `Beta(α, β)` distribution initialized to `Beta(1, 1)`. After each validation, the stage that caused early termination gets `α` incremented; stages that ran but did not terminate get `β` incremented. Every 128 calls the oracle recomputes the optimal ordering by sampling from each stage's posterior and ranking by expected information gain per nanosecond. The ordering is packed into a single `u64` (4 bits per stage) for cache-friendly storage.
+Each stage maintains a `Beta(α, β)` distribution initialized to `Beta(1, 1)`. After each validation, the stage that caused early termination gets `α` incremented; stages that ran but did not terminate get `β` incremented. Every 128 calls the oracle recomputes the ordering by ranking stages by posterior-mean exit probability per nanosecond (the Weitzman / "Pandora's box" index), keeping the null check first. It does not sample from the posteriors, so it is a greedy policy, not Thompson sampling. The ordering is packed into a single `u64` (4 bits per stage) for cache-friendly storage.
 
 ---
 
@@ -990,7 +984,7 @@ The primary runtime knob is `FRANKENLIBC_MODE`. The broader environment inventor
 ```bash
 # Runtime behavior
 export FRANKENLIBC_MODE=hardened          # strict | hardened
-export FRANKENLIBC_LOG=/tmp/franken.jsonl # optional structured runtime log
+export FRANKENLIBC_LOG=/tmp/franken.jsonl # optional JSONL: heal/deny records + exit summary
 
 # Build / verification convenience
 export FRANKENLIBC_LIB="$PWD/target/release/libfrankenlibc_abi.so"
@@ -1004,7 +998,7 @@ LD_PRELOAD="$FRANKENLIBC_LIB" /bin/echo configured
 | Variable | Default | Notes |
 |---|---|---|
 | `FRANKENLIBC_MODE` | `strict` | Process-wide immutable mode selection |
-| `FRANKENLIBC_LOG` | unset | Structured runtime log path |
+| `FRANKENLIBC_LOG` | unset | JSONL file (append-only) receiving one record per heal (`healing_action`, details) and per membrane deny, plus one `exit_summary` record per process with the heal/deny counters. Allowed calls are not logged |
 | `FRANKENLIBC_LIB` | unset | Tooling override for the built interpose library |
 | `FRANKENLIBC_EXTENDED_GATES` | `0` | Enables heavier CI / perf / snapshot gates |
 | `FRANKENLIBC_E2E_SEED` | `42` | Deterministic seed for E2E workflows |
@@ -1505,7 +1499,7 @@ Trust the machine artifact. The most useful canonical files are:
 
 ### Hardened mode does not appear to log anything
 
-Set a log path explicitly:
+Only heals and denials are logged, plus one `exit_summary` line per process, so a clean run writes just the summary. Set a log path explicitly:
 
 ```bash
 FRANKENLIBC_LOG=/tmp/franken.jsonl \
@@ -2026,14 +2020,13 @@ The math here is conformal prediction (Vovk et al. 2005) wrapped around a per-fa
 
 ---
 
-## Thompson Sampling Math
+## Check-Oracle Ordering Math
 
-The check oracle learns the optimal validation-stage ordering at runtime via Thompson sampling.
+The check oracle orders the validation stages by a greedy index over Beta posteriors.
 
 State per stage `s` (declared as `f64` for differential updates):
 
 - `α_s, β_s` ∈ ℝ⁺, initialized to `(1.0, 1.0)` (uniform Beta(1,1) prior)
-- `θ_s ~ Beta(α_s, β_s)` — sampled success probability
 - `cost_s` — fixed ns budget per stage
 
 Update after each call:
@@ -2045,19 +2038,13 @@ Reordering every `K = 128` calls:
 
 ```
 For each stage s:
-  draw θ_s ~ Beta(α_s, β_s)
-  utility_s = θ_s / cost_s     (expected info gain per ns)
-sort stages descending by utility_s
+  p_s = α_s / (α_s + β_s)      (posterior-mean exit probability)
+  index_s = p_s / cost_s       (Weitzman index)
+sort stages descending by index_s, null check pinned first
 pack into u64 (4 bits per stage)
 ```
 
-The packed ordering is read on every membrane call with a single atomic load and unpacked branchlessly. The reordering is correct under the standard regret bound for Thompson sampling on Bernoulli arms.
-
-Why Thompson, not UCB or ε-greedy:
-
-- The exploration-exploitation trade-off in this setting is bounded; Thompson auto-balances without tuning.
-- Bernoulli posteriors update in `O(1)` per call; no list of samples to keep.
-- The `Beta(α, β)` parameters are integer counts; arithmetic is exact.
+The packed ordering is read on every membrane call with a single atomic load and unpacked branchlessly. Ranking by `p/cost` is the optimal order for independent stages with known exit probabilities (Weitzman's index); using posterior means instead of posterior samples makes it greedy — it never deliberately explores a stage its current estimate ranks low. Thompson sampling (draw `θ_s ~ Beta(α_s, β_s)`, rank by `θ_s / cost_s`) is the natural upgrade if exploration turns out to matter.
 
 ---
 
@@ -2169,9 +2156,9 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). `AGENTS.md` documents an aggressive target profile (`lto = true`, `codegen-units = 1`, `strip = true`) intended for the shipping artifact; that tuning is a tracked item, not the current default.
+The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. Every crate is compiled with `-Ctarget-feature=+avx2,+fma` (`.cargo/config.toml`), so the default artifact requires an x86-64-v3 CPU; on older CPUs an IFUNC-time check exits with a clear message instead of SIGILL (bd-rc0923-epic-eeuy4f.13).
 
-`Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-04-28`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
+`Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 
 The ABI crate declares its `[lib]` block as `crate-type = ["cdylib", "staticlib", "rlib"]`. The `cdylib` output is `libfrankenlibc_abi.so` (the `LD_PRELOAD` artifact); the `staticlib` is `libfrankenlibc_abi.a` (used by native packaging checks like `scripts/check_setjmp_native.sh` that link against the version script directly via `cc`); the `rlib` is the Rust library form used by other workspace crates.
 
@@ -2189,7 +2176,7 @@ The workspace deliberately keeps the external dependency graph small. Every depe
 | `md-5` | Legacy hash compatibility for specific MD5-keyed fixture lookups |
 | `serde` + `serde_json` + `serde_yaml` | Conformance fixture and report serialization |
 | `regex` | POSIX regex back-end where the native regex engine doesn't apply |
-| `tracing` | Structured runtime logging (gated by `FRANKENLIBC_LOG`) |
+| `tracing` | Optional diagnostics behind the `runtime-tracing` cargo feature (off by default; unrelated to `FRANKENLIBC_LOG`) |
 | `thiserror` | Ergonomic error types in the harness crate |
 | `clap` | CLI argument parsing in the harness binary |
 | `criterion` | Benchmark framework in `frankenlibc-bench` |
@@ -3394,7 +3381,7 @@ Cache-line layout is verified empirically through benchmark variance: a 64-byte 
 
 ## Why Rust 2024
 
-The workspace edition is Rust 2024 (`edition = "2024"` in `Cargo.toml`, nightly pinned via `rust-toolchain.toml` to `nightly-2026-04-28`). The specific `#![feature(...)]` gates declared in `crates/frankenlibc-abi/src/lib.rs` are:
+The workspace edition is Rust 2024 (`edition = "2024"` in `Cargo.toml`, nightly pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The specific `#![feature(...)]` gates declared in `crates/frankenlibc-abi/src/lib.rs` are:
 
 - **`c_variadic`** — Lets ABI entry points accept C-style `...` varargs (printf, scanf, syscall variants, etc.) directly in Rust signatures.
 - **`rtm_target_feature`** — Enables the x86 Restricted Transactional Memory target-feature gate so the HTM fast path can declare `#[target_feature(enable = "rtm")]`.
@@ -3621,8 +3608,8 @@ In FrankenLibC's hardened mode, the double-free is caught *at the offending call
    - Linker flag: --version-script=version_scripts/libc.map applied
      so symbols are exported under the right GLIBC_x.y tags.
    - opt-level=3 enables aggressive inlining (Cargo's release default).
-   - Cargo defaults are otherwise used today; AGENTS.md tracks LTO,
-     codegen-units=1, and strip=true as future tightening.
+   - Cargo defaults are otherwise used today; LTO, codegen-units=1
+     and strip are untried tuning.
 8. The output .so is ABI-compatible with binaries expecting
    GLIBC_2.2.5 symbol versions (with GLIBC_2.11 inheriting for the
    `__longjmp_chk` fortify wrapper).
@@ -3815,11 +3802,11 @@ The proof note in `docs/proofs/galois_monotonic_probability_bounds.md` works thr
 
 ## Performance Counters and Observability
 
-Every membrane decision can emit:
+Membrane decisions feed three sinks, at different granularities:
 
 1. **Atomic metrics counters** (`metrics.rs`): `(family, decision, profile)` counters incremented with `Relaxed` ordering. Aggregated by the harness for end-of-run summaries.
 2. **Evidence ledger record** (`runtime_math/evidence.rs`): a JSONL record per decision with `(ts_ns, family, decision, latency_ns, healing_action, ptr, size, generation, controller_snapshot_hash, seqno)`. Lock-free MPSC ring buffer.
-3. **`FRANKENLIBC_LOG` JSONL stream**: when set, each decision is written to the configured path with the same record shape, suitable for `tail -f` or `jq` post-processing.
+3. **`FRANKENLIBC_LOG` JSONL stream**: when set, every heal and every deny is appended to the configured file as one JSON record, plus an `exit_summary` record with the counters when the process exits. Allowed calls are not written. Suitable for `tail -f` or `jq`.
 
 What's instrumented at the membrane level:
 

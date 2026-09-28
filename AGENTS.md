@@ -227,15 +227,7 @@ This project leverages companion crates for build/test tooling roles only. These
 
 ### Release Profile
 
-The release build optimizes for performance (this is a library producing `libc.so`):
-
-```toml
-[profile.release]
-opt-level = 3       # Maximum performance optimization
-lto = true          # Link-time optimization
-codegen-units = 1   # Single codegen unit for better optimization
-strip = true        # Remove debug symbols
-```
+`Cargo.toml` defines NO `[profile.release]`, so release builds use Cargo's defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). All crates are built with `-Ctarget-feature=+avx2,+fma` from `.cargo/config.toml` (x86-64-v3; see bd-rc0923-epic-eeuy4f.13). LTO / single codegen unit / strip for the shipped `libc.so` are untried tuning, not current settings.
 
 ---
 
@@ -701,7 +693,7 @@ Developer transparency remains mandatory:
 
 **Standalone membrane modules:**
 - `risk_engine.rs` — Conformal risk scoring per API family
-- `check_oracle.rs` — Thompson sampling contextual bandit for validation stage ordering
+- `check_oracle.rs` — Beta-posterior contextual bandit for validation stage ordering (greedy Weitzman index on posterior means; no sampling)
 - `quarantine_controller.rs` — Primal-dual quarantine depth optimizer
 - `tropical_latency.rs` — Min-plus algebra worst-case latency bounds
 - `spectral_monitor.rs` — Marchenko-Pastur/Tracy-Widom phase transition detection
