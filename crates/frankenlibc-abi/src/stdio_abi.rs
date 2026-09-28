@@ -2989,6 +2989,26 @@ unsafe fn flush_stream(stream: &mut StdioStream) -> bool {
     true
 }
 
+/// `fflush(stream)` / `fclose` on a stream holding read-ahead: move the fd to
+/// the stream's position and drop the buffered input, as glibc's
+/// `_IO_file_sync` does (POSIX 2008 fflush on a seekable input stream). A
+/// program that reads a line with stdio and then execs a child, or reads the
+/// fd directly, must see the fd right after that line -- fl left it after the
+/// whole read-ahead. Non-seekable fds are left alone (lseek fails); EOF stays.
+fn sync_input_position(stream: &mut StdioStream) {
+    let fd = stream.fd();
+    if fd < 0 || stream.is_mem_backed() || stream.readable_buffered() == 0 {
+        return;
+    }
+    if raw_syscall::sys_lseek(fd, stream.offset(), libc::SEEK_SET).is_ok() {
+        let eof = stream.is_eof();
+        let _ = stream.prepare_seek();
+        if eof {
+            stream.set_eof();
+        }
+    }
+}
+
 /// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
 thread_local! {
     /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
@@ -3479,6 +3499,8 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     }
 
     let fd = s.fd();
+    // Input: leave the fd at the stream's position (glibc _IO_file_close_it).
+    sync_input_position(s);
     // Flush pending writes.
     let pending = s.prepare_close();
     let mut adverse = false;
@@ -3539,11 +3561,9 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
     {
         let mut s = cell.lock();
         if !s.is_mem_backed() {
-            return if unsafe { flush_stream(&mut s) } {
-                0
-            } else {
-                libc::EOF
-            };
+            let ok = unsafe { flush_stream(&mut s) };
+            sync_input_position(&mut s);
+            return if ok { 0 } else { libc::EOF };
         }
     }
     if !stream.is_null() {
@@ -3656,6 +3676,7 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
         // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
         stream_cell_cache_store(stream, &cell);
         let ok = unsafe { flush_stream(s) };
+        sync_input_position(s);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
         if ok { 0 } else { libc::EOF }
     } else {
@@ -5195,6 +5216,7 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     if let Some(p) = write_cache_lookup_by_stream(stream)
         // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
         && !unsafe { (*p).is_appending() }
+        && unsafe { (*p).seekability() } == 1
     {
         // SAFETY: as above.
         return unsafe { (*p).offset() } as c_long;
@@ -5206,7 +5228,7 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // ST fast path uses to skip decide/observe).
     if let Some(cell) = stream_cell_cache_lookup(stream) {
         let s = cell.lock();
-        if !s.is_appending() {
+        if !s.is_appending() && s.seekability() == 1 {
             return s.offset() as c_long;
         }
     }
@@ -5238,6 +5260,22 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     let s = &mut *s_guard;
 
     let _ = sync_fast_fixed_mem_read_to_stream(id, s);
+    // A pipe, socket or terminal has no position: glibc's ftell fails with
+    // ESPIPE there (its lseek does); fl returned its byte counter. Probed once.
+    if s.fd() >= 0 && !s.is_mem_backed() {
+        if s.seekability() == 0 {
+            let seekable = !matches!(
+                raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_CUR),
+                Err(e) if e == libc::ESPIPE
+            );
+            s.set_seekability(if seekable { 1 } else { 2 });
+        }
+        if s.seekability() == 2 {
+            unsafe { set_abi_errno(errno::ESPIPE) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return -1;
+        }
+    }
     // glibc's ftell on an appending stream flushes pending output first: its
     // position is where the kernel put it, the end of the file.
     if s.is_appending() && s.fd() >= 0 && !s.pending_flush().is_empty() {

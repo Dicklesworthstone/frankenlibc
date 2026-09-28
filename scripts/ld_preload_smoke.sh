@@ -161,6 +161,8 @@ if command -v c++ >/dev/null 2>&1; then
 fi
 FIRST_HEAL_BIN="${BIN_DIR}/fixture_hardened_first_heal"
 cc -O2 "${ROOT}/tests/integration/fixture_hardened_first_heal.c" -o "${FIRST_HEAL_BIN}"
+STDIO_POSITIONS_BIN="${BIN_DIR}/fixture_stdio_positions"
+cc -O2 "${ROOT}/tests/integration/fixture_stdio_positions.c" -o "${STDIO_POSITIONS_BIN}"
 KEY_DTOR_BIN="${BIN_DIR}/fixture_pthread_key_destructors"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_key_destructors.c" -o "${KEY_DTOR_BIN}"
 EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
@@ -798,6 +800,9 @@ EOF
   run_corpus_case "${mode}" "exit_sequence" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
   # pthread key destructors on host-created threads (bd-v6cz9v).
   run_corpus_case "${mode}" "pthread_key_destructors" "${KEY_DTOR_BIN}" || mode_failed=1
+  # FILE positions: "a+", ftell on a pipe, fflush syncing a read stream's fd,
+  # open_memstream close, stdout buffering into a pipe.
+  run_corpus_case "${mode}" "stdio_positions" "${STDIO_POSITIONS_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then

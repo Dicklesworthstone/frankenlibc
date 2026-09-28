@@ -47,6 +47,9 @@ pub struct StreamFlags {
     /// `__fsetlocking` mode: false = FSETLOCKING_INTERNAL (the default), true =
     /// FSETLOCKING_BYCALLER.
     pub locking_bycaller: bool,
+    /// Whether the fd can seek, probed once by the ABI: 0 = not yet known,
+    /// 1 = seekable, 2 = not (pipe, socket, terminal).
+    pub seekability: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -556,6 +559,16 @@ impl StdioStream {
     /// Get the underlying file descriptor.
     pub fn fd(&self) -> i32 {
         self.fd
+    }
+
+    /// Seekability of the fd as last recorded (see [`StreamFlags::seekability`]).
+    pub fn seekability(&self) -> u8 {
+        self.flags.seekability
+    }
+
+    /// Record the fd's seekability (1 seekable, 2 not).
+    pub fn set_seekability(&mut self, value: u8) {
+        self.flags.seekability = value;
     }
 
     /// Whether writes append (`"a"`/`"a+"`, O_APPEND): the kernel, not the
