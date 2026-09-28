@@ -457,12 +457,12 @@ pub fn certify_simd_string_operation(
     // match means the certificate is bit-identical to the one that would be recomputed.
     let cache_key = cert_cache_key(operation, candidate_isa, reference_obs, candidate_obs);
     if let Some(hit) = CERT_CACHE.with(|c| {
-        c.try_borrow().ok().and_then(|slots| {
-            match slots[(cache_key as usize) % CERT_CACHE_SLOTS] {
+        c.try_borrow().ok().and_then(
+            |slots| match slots[(cache_key as usize) % CERT_CACHE_SLOTS] {
                 Some((k, cert)) if k == cache_key => Some(cert),
                 _ => None,
-            }
-        })
+            },
+        )
     }) {
         return hit;
     }
@@ -596,6 +596,12 @@ pub struct CliffordController {
     drift_count: u64,
     /// Overlap violation count.
     overlap_violation_count: u64,
+    /// [`Self::state`] as of the last observation. The state is a pure
+    /// function of the EWMA multivector and the observation count, which only
+    /// `observe` changes; classifying it takes several energy passes over the
+    /// multivector, and the hardened hot path asked for it three times per
+    /// call (~10% of a hardened memcpy-heavy run; bd-rc0923-epic-eeuy4f.9).
+    state: CliffordState,
 }
 
 impl CliffordController {
@@ -608,6 +614,7 @@ impl CliffordController {
             total_observations: 0,
             drift_count: 0,
             overlap_violation_count: 0,
+            state: CliffordState::Calibrating,
         }
     }
 
@@ -669,11 +676,17 @@ impl CliffordController {
         }
 
         self.prev_obs = Some(current);
+        self.state = self.classify();
     }
 
     /// Current state.
     #[must_use]
     pub fn state(&self) -> CliffordState {
+        self.state
+    }
+
+    /// Classify the current EWMA multivector.
+    fn classify(&self) -> CliffordState {
         if self.total_observations < CALIBRATION_THRESHOLD {
             return CliffordState::Calibrating;
         }

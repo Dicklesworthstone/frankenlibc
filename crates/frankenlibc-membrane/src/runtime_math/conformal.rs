@@ -94,8 +94,6 @@ pub struct ConformalRiskController {
     fill: usize,
     /// EWMA-smoothed coverage rate.
     coverage_ewma: f64,
-    /// Cached (1-alpha) quantile of the calibration window.
-    conformal_threshold: f64,
     /// Number of observations that exceeded the conformal threshold.
     violation_count: u64,
     /// Total observations recorded.
@@ -113,7 +111,6 @@ impl ConformalRiskController {
             write_pos: 0,
             fill: 0,
             coverage_ewma: 1.0,
-            conformal_threshold: f64::INFINITY,
             violation_count: 0,
             total_observations: 0,
             state: ConformalState::Calibrating,
@@ -128,8 +125,12 @@ impl ConformalRiskController {
     /// 3. Determines if observation is "covered": p > TARGET_ALPHA
     /// 4. Updates coverage EWMA
     /// 5. Adds score to circular buffer
-    /// 6. Recomputes conformal threshold from the updated window
-    /// 7. Updates state based on coverage_ewma vs thresholds
+    /// 6. Updates state based on coverage_ewma vs thresholds
+    ///
+    /// The (1-alpha) quantile threshold is NOT recomputed here: nothing on the
+    /// observe path reads it (the state depends only on the coverage EWMA), and
+    /// the selection over the window was ~8% of a hardened memcpy-heavy run
+    /// (sort, bd-rc0923-epic-eeuy4f.9). [`Self::summary`] computes it on demand.
     pub fn observe(&mut self, score: f64) {
         let score = sanitize_score(score);
         self.total_observations += 1;
@@ -166,10 +167,7 @@ impl ConformalRiskController {
             self.fill += 1;
         }
 
-        // Step 6: recompute conformal threshold from updated window.
-        self.conformal_threshold = self.compute_threshold();
-
-        // Step 7: update state based on coverage_ewma vs thresholds.
+        // Step 6: update state based on coverage_ewma vs thresholds.
         self.state = if self.total_observations < WARMUP_COUNT {
             ConformalState::Calibrating
         } else if self.coverage_ewma < FAILURE_THRESHOLD {
@@ -193,7 +191,7 @@ impl ConformalRiskController {
         ConformalSummary {
             state: self.state,
             empirical_coverage: self.coverage_ewma,
-            conformal_threshold: self.conformal_threshold,
+            conformal_threshold: self.compute_threshold(),
             violation_count: self.violation_count,
             total_observations: self.total_observations,
         }
