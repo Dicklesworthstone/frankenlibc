@@ -21,6 +21,7 @@ fn bdt(fields: [i32; 8]) -> BrokenDownTime {
         tm_isdst: 0,
         tm_gmtoff: 0,
         zone: [0; 16],
+        epoch_s: None,
     }
 }
 
@@ -298,6 +299,7 @@ fn strftime_live_differential_sweep() {
                     tm_isdst: 0,
                     tm_gmtoff: 0,
                     zone: [0; 16],
+                    epoch_s: None,
                 };
                 for &fmt in specs {
                     let mut gbuf = [0u8; 256];

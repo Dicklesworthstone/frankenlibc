@@ -82,6 +82,7 @@ unsafe fn orig_strftime_literal_path(
         tm_isdst: tm.tm_isdst,
         tm_gmtoff: tm.tm_gmtoff,
         zone: [0; 16],
+        epoch_s: None,
     };
     // SAFETY: benchmark output buffer is valid for `maxsize` bytes.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };

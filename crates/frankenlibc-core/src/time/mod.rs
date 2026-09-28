@@ -64,6 +64,11 @@ pub struct BrokenDownTime {
     /// (from the caller's `tm_zone`); fl's own gmtime/localtime set it on the
     /// `struct tm` instead. A name longer than 15 bytes is truncated.
     pub zone: [u8; 16],
+    /// The seconds since the epoch `%s` prints, when the caller knows them.
+    /// glibc's `%s` is `mktime` of the fields in the LOCAL zone, which this
+    /// pure formatter cannot compute; the ABI fills it. `None` falls back to
+    /// reading the fields as UTC.
+    pub epoch_s: Option<i64>,
 }
 
 /// Returns `true` if `year` is a leap year (Gregorian).
@@ -201,6 +206,7 @@ fn build_broken_down(
         tm_isdst: 0,
         tm_gmtoff: 0, // gmtime/localtime are UTC in fl
         zone: [0; 16],
+        epoch_s: None,
     }
 }
 
@@ -982,7 +988,9 @@ fn format_strftime_general(
             // the index, so tm_wday=8 wrongly printed "Mon").
             b'a' => {
                 let name: &[u8] = if (0..=6).contains(&bd.tm_wday) {
-                    loc.map_or(WDAY_NAMES[bd.tm_wday as usize], |l| l.abday[bd.tm_wday as usize])
+                    loc.map_or(WDAY_NAMES[bd.tm_wday as usize], |l| {
+                        l.abday[bd.tm_wday as usize]
+                    })
                 } else {
                     b"?"
                 };
@@ -1000,7 +1008,9 @@ fn format_strftime_general(
             }
             b'b' | b'h' => {
                 let name: &[u8] = if (0..=11).contains(&bd.tm_mon) {
-                    loc.map_or(MON_NAMES[bd.tm_mon as usize], |l| l.abmon[bd.tm_mon as usize])
+                    loc.map_or(MON_NAMES[bd.tm_mon as usize], |l| {
+                        l.abmon[bd.tm_mon as usize]
+                    })
                 } else {
                     b"?"
                 };
@@ -1107,8 +1117,8 @@ fn format_strftime_general(
                 push_composite!(b"%H:%M");
             }
             b's' => {
-                // Seconds since epoch
-                let epoch = broken_down_to_epoch(bd);
+                // Seconds since epoch: the caller's local-time value when given.
+                let epoch = bd.epoch_s.unwrap_or_else(|| broken_down_to_epoch(bd));
                 push_dec_mod!(epoch, 1, Pad::Space);
             }
             b'S' => {
@@ -1168,8 +1178,12 @@ fn format_strftime_general(
             b'z' => {
                 // UTC offset from tm_gmtoff, formatted ±HHMM like glibc (which
                 // reads the field regardless of how it was set — localtime,
-                // strptime %z, or by hand). fl's own gmtime/localtime produce 0,
-                // so the common case still renders "+0000".
+                // strptime %z, or by hand). tm_isdst < 0 prints nothing, as in
+                // glibc (the offset is unknown).
+                if bd.tm_isdst < 0 {
+                    i += 1;
+                    continue;
+                }
                 let off = bd.tm_gmtoff;
                 let (sign, abs) = if off < 0 {
                     (b'-', (-off) as u64)
@@ -1195,7 +1209,15 @@ fn format_strftime_general(
                     .iter()
                     .position(|&b| b == 0)
                     .unwrap_or(bd.zone.len());
-                let zone: &[u8] = if end == 0 { b"UTC" } else { &bd.zone[..end] };
+                // glibc: without tm_zone, tm_isdst < 0 prints nothing; the ABI
+                // supplies tzname[tm_isdst > 0] for the other cases.
+                let zone: &[u8] = if end > 0 {
+                    &bd.zone[..end]
+                } else if bd.tm_isdst < 0 {
+                    b""
+                } else {
+                    b"UTC"
+                };
                 push_str_field!(zone, true, false);
             }
             b'%' => {
@@ -2284,6 +2306,7 @@ mod tests {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -2306,6 +2329,7 @@ mod tests {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         let epoch = broken_down_to_epoch(&bd);
         let normalized = epoch_to_broken_down(epoch);
@@ -3329,6 +3353,7 @@ mod tests {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         let mut buf = [0u8; 256];
         // Each of the previously-overflowing specifiers must complete
@@ -3356,6 +3381,7 @@ mod tests {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         let _ = format_strftime(b"%m", &bd_max, &mut buf);
         let _ = format_strftime(b"%j", &bd_max, &mut buf);
@@ -3393,6 +3419,7 @@ mod tests {
             tm_isdst: -1,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         // broken_down_to_epoch normalizes and epoch_to_broken_down gives us back
         let epoch = broken_down_to_epoch(&bd);
@@ -3417,6 +3444,7 @@ mod tests {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         // "%Y-%m-%d" = "2026-05-23" = 10 chars + NUL = 11 bytes
         let mut buf = [0u8; 11];

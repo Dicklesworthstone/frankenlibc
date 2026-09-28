@@ -1108,6 +1108,7 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
             // those. Only `strftime` (whose contract reads tm_zone for %Z)
             // populates this, via read_tm_zone.
             zone: [0; 16],
+            epoch_s: None,
         }
     }
 }
@@ -1123,6 +1124,13 @@ unsafe fn read_tm(tm: *const libc::tm) -> time_core::BrokenDownTime {
 /// be mistaken for formats that cannot observe `tm_zone`.
 #[inline]
 fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
+    // `%+` is glibc's date(1) format, which contains `%Z`.
+    fmt_has_directive(fmt, b'Z') || fmt_has_directive(fmt, b'+')
+}
+
+/// Does `fmt` contain the conversion `spec` (after flags/width/E/O)?
+#[inline]
+fn fmt_has_directive(fmt: &[u8], spec: u8) -> bool {
     let mut i = 0;
     while i < fmt.len() {
         if fmt[i] != b'%' {
@@ -1142,12 +1150,45 @@ fn fmt_has_zone_directive(fmt: &[u8]) -> bool {
         if i < fmt.len() && (fmt[i] == b'E' || fmt[i] == b'O') {
             i += 1;
         }
-        if i < fmt.len() && fmt[i] == b'Z' {
+        if i < fmt.len() && fmt[i] == spec {
             return true;
         }
         i += 1;
     }
     false
+}
+
+/// glibc's zone-dependent strftime inputs that the pure core formatter cannot
+/// compute (measured, glibc 2.43, 81 tm_zone x tm_isdst x tm_gmtoff cases):
+/// - `%Z` without a `tm_zone` prints `tzname[tm_isdst > 0]` (after the
+///   implicit tzset), or nothing when `tm_isdst < 0` (the latter in core);
+/// - `%s` is `mktime` of a copy of the fields in the local zone, honouring
+///   `tm_isdst` -- fl read the fields as UTC, off by the local offset.
+/// `always_zone` covers named-locale formats, whose `%c`/`%x` may hold `%Z`.
+unsafe fn prepare_strftime_zone_context(
+    tm: *const libc::tm,
+    fmt: &[u8],
+    bd: &mut time_core::BrokenDownTime,
+    always_zone: bool,
+) {
+    if always_zone || fmt_has_zone_directive(fmt) {
+        unsafe { read_tm_zone(tm, bd) };
+        if bd.zone[0] == 0 && bd.tm_isdst >= 0 {
+            let _ = current_tz(true);
+            // SAFETY: tzname entries are NUL-terminated strings fl owns.
+            let name = unsafe { crate::glibc_internal_abi::tzname[usize::from(bd.tm_isdst > 0)] };
+            if !name.is_null() {
+                let bytes = unsafe { std::ffi::CStr::from_ptr(name) }.to_bytes();
+                let n = bytes.len().min(bd.zone.len() - 1);
+                bd.zone[..n].copy_from_slice(&bytes[..n]);
+            }
+        }
+    }
+    if fmt_has_directive(fmt, b's') {
+        // SAFETY: a private copy; mktime normalizes it in place.
+        let mut copy = unsafe { *tm };
+        bd.epoch_s = Some(unsafe { local_normalize_to_epoch(&mut copy) });
+    }
 }
 
 unsafe fn read_tm_zone(tm: *const libc::tm, bd: &mut time_core::BrokenDownTime) {
@@ -1381,6 +1422,7 @@ unsafe fn utc_normalize_to_epoch(tm: *mut libc::tm) -> i64 {
             tm_isdst: 0,
             tm_gmtoff: 0,
             zone: [0; 16],
+            epoch_s: None,
         };
         unsafe { write_tm(tm, &out) };
         return epoch;
@@ -1855,9 +1897,7 @@ pub unsafe extern "C" fn strftime(
         // by construction: if the format cannot emit the zone, the bytes cannot be
         // read. `%z` is unaffected — it formats `tm_gmtoff`, which `read_tm` already
         // carries.
-        if fmt_has_zone_directive(fmt) {
-            unsafe { read_tm_zone(tm, &mut bd) };
-        }
+        unsafe { prepare_strftime_zone_context(tm, fmt, &mut bd, false) };
         // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
         let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
         return time_core::format_strftime(fmt, &bd, buf);
@@ -1920,7 +1960,7 @@ pub unsafe extern "C" fn strftime(
     // Read the broken-down time. strftime additionally reads tm_zone for %Z
     // (its contract permits dereferencing it, unlike mktime/timegm).
     let mut bd = unsafe { read_tm(tm) };
-    unsafe { read_tm_zone(tm, &mut bd) };
+    unsafe { prepare_strftime_zone_context(tm, fmt, &mut bd, true) };
 
     // Format into the output buffer.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
@@ -1954,7 +1994,7 @@ unsafe fn strftime_named(
     }
     let fmt = unsafe { std::slice::from_raw_parts(format as *const u8, fmt_len) };
     let mut bd = unsafe { read_tm(tm) };
-    unsafe { read_tm_zone(tm, &mut bd) };
+    unsafe { prepare_strftime_zone_context(tm, fmt, &mut bd, true) };
     // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
     let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
     time_core::format_strftime_locale(fmt, &bd, buf, loc)

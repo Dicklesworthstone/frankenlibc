@@ -22,6 +22,7 @@ fn t0() -> BrokenDownTime {
         tm_isdst: 0,
         tm_gmtoff: 0,
         zone: [0; 16],
+        epoch_s: None,
     }
 }
 
