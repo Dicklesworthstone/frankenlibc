@@ -4046,54 +4046,37 @@ pub unsafe extern "C" fn clearenv() -> c_int {
 const RAND48_STATE_BYTES: usize = core::mem::size_of::<[u16; 3]>();
 const RAND48_PARAM_BYTES: usize = core::mem::size_of::<[u16; 7]>();
 const RANDOM_STATE_MIN_BYTES: usize = 8;
-// glibc's largest generator (TYPE_4, degree 63) uses a 256-byte state buffer.
-// This bound must cover it so `setstate` recovers the same size — and thus the
-// same generator type — that `initstate` selected; capping lower would make a
-// 256-byte buffer initialize as TYPE_4 but restore as TYPE_3 (size 128).
+// glibc's largest generator (TYPE_4, degree 63) uses a 256-byte state
+// buffer; nothing beyond it is ever read or written.
 const RANDOM_STATE_MAX_BYTES: usize = 256;
-const RANDOM_STATE_REGISTRY_LIMIT: usize = 64;
 
-static RANDOM_STATE_BUFFERS: std::sync::Mutex<Vec<(usize, usize)>> =
-    std::sync::Mutex::new(Vec::new());
+/// The state buffer the global `random()` currently runs in, as
+/// `(address, length)`; `(0, 0)` means fl's default buffer (glibc starts "as if
+/// from initstate(1, randtbl, 128)"). initstate/setstate save the live
+/// generator into the outgoing buffer and return it, so a later setstate of
+/// that pointer resumes where it stopped -- fl returned the NEW buffer and
+/// restarted saved generators from their seed position.
+static RANDOM_CURRENT_STATE: std::sync::Mutex<(usize, usize)> = std::sync::Mutex::new((0, 0));
 
-fn remember_random_state_buffer(ptr: *const c_char, len: usize) {
-    let ptr = ptr as usize;
-    let len = len.min(RANDOM_STATE_MAX_BYTES);
-    let mut buffers = RANDOM_STATE_BUFFERS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some((_, stored_len)) = buffers
-        .iter_mut()
-        .find(|(stored_ptr, _)| *stored_ptr == ptr)
-    {
-        *stored_len = len;
-        return;
-    }
-    if buffers.len() == RANDOM_STATE_REGISTRY_LIMIT {
-        buffers.remove(0);
-    }
-    buffers.push((ptr, len));
-}
+struct DefaultRandomState(std::cell::UnsafeCell<[u8; 128]>);
+// SAFETY: only accessed under RANDOM_CURRENT_STATE's lock.
+unsafe impl Sync for DefaultRandomState {}
+static RANDOM_DEFAULT_STATE: DefaultRandomState =
+    DefaultRandomState(std::cell::UnsafeCell::new([0; 128]));
 
-fn remembered_random_state_len(ptr: *const c_char) -> Option<usize> {
-    let ptr = ptr as usize;
-    let buffers = RANDOM_STATE_BUFFERS
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    buffers
-        .iter()
-        .rev()
-        .find_map(|(stored_ptr, len)| (*stored_ptr == ptr).then_some(*len))
-}
-
-fn random_state_len_for_setstate(ptr: *const c_char) -> Option<usize> {
-    match known_remaining(ptr as usize) {
-        Some(remaining) if remaining >= RANDOM_STATE_MIN_BYTES => {
-            Some(remaining.min(RANDOM_STATE_MAX_BYTES))
-        }
-        Some(_) => None,
-        None => remembered_random_state_len(ptr).or(Some(RANDOM_STATE_MIN_BYTES)),
-    }
+/// Save the live generator into the current buffer; return that buffer.
+/// Called with RANDOM_CURRENT_STATE held.
+fn save_current_random_state(current: (usize, usize)) -> *mut c_char {
+    let (ptr, len) = if current.0 == 0 {
+        (RANDOM_DEFAULT_STATE.0.get() as usize, 128)
+    } else {
+        current
+    };
+    // SAFETY: the program handed this buffer to initstate/setstate with this
+    // length (or it is fl's default buffer); the caller holds the lock.
+    let buf = unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, len) };
+    let _ = frankenlibc_core::stdlib::save_state(buf);
+    ptr as *mut c_char
 }
 
 /// `drand48` — return a double in [0.0, 1.0) using global 48-bit state.
@@ -4373,10 +4356,15 @@ pub unsafe extern "C" fn initstate(seed: c_uint, state: *mut c_char, size: usize
         return ptr::null_mut();
     }
     let buf = unsafe { std::slice::from_raw_parts_mut(state as *mut u8, size) };
+    let mut current = RANDOM_CURRENT_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let previous = save_current_random_state(*current);
     let _ = frankenlibc_core::stdlib::initstate(seed, buf);
-    remember_random_state_buffer(state.cast_const(), size);
+    *current = (state as usize, size.min(RANDOM_STATE_MAX_BYTES));
+    drop(current);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
-    state
+    previous
 }
 
 /// `setstate` — restore random state from a previously saved buffer.
@@ -4395,15 +4383,29 @@ pub unsafe extern "C" fn setstate(state: *mut c_char) -> *mut c_char {
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
     }
-    let Some(state_len) = random_state_len_for_setstate(state.cast_const()) else {
+    // The buffer's word 0 names its generator type, hence its length.
+    // SAFETY: a state buffer is at least one 4-byte word (initstate needs 8).
+    let word0 = unsafe { std::ptr::read_unaligned(state as *const i32) };
+    let Some(state_len) = frankenlibc_core::stdlib::state_len_for_encoded_word(word0) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
         return ptr::null_mut();
     };
     let buf = unsafe { std::slice::from_raw_parts(state as *const u8, state_len) };
-    let _ = frankenlibc_core::stdlib::setstate(buf);
+    let mut current = RANDOM_CURRENT_STATE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let previous = save_current_random_state(*current);
+    if frankenlibc_core::stdlib::setstate(buf) == 0 {
+        drop(current);
+        unsafe { set_abi_errno(libc::EINVAL) };
+        runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, true);
+        return ptr::null_mut();
+    }
+    *current = (state as usize, state_len);
+    drop(current);
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 6, false);
-    state
+    previous
 }
 
 // ===========================================================================

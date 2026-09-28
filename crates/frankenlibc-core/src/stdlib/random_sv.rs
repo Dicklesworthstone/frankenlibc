@@ -242,76 +242,102 @@ pub fn srandom(seed: u32) {
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
 }
 
-/// `initstate()` — initialize state buffer and seed.
-///
-/// Returns the previous state buffer as a raw pointer-sized token.
-/// In this implementation, the state buffer is managed internally;
-/// the returned value and provided buffer are used for API compatibility
-/// but the internal Mutex-protected state is the canonical source.
-///
-/// `seed`: initial seed value
-/// `state_buf`: caller-provided buffer (must be >= 8 bytes)
-/// `size`: size of the buffer in bytes
-///
-/// Returns a token representing the old state (opaque pointer-like value).
+/// Write the live generator into `buf` in glibc's layout: word 0 is
+/// `MAX_TYPES * rear + type` (the rear cursor's index), words `1..=deg` the
+/// state table (TYPE_0: word 1 is the LCG accumulator). This is what glibc
+/// leaves in a state buffer when the generator switches away from it, and
+/// what `setstate` resumes from. Returns false when `buf` is too small.
+fn encode_state(state: &RandomState, buf: &mut [u8]) -> bool {
+    let words = state.deg.max(1);
+    if buf.len() < (words + 1) * 4 {
+        return false;
+    }
+    let rear = if state.rand_type == 0 { 0 } else { state.rptr };
+    let encoded = MAX_TYPES * rear as i32 + i32::from(state.rand_type);
+    buf[..4].copy_from_slice(&encoded.to_ne_bytes());
+    for i in 0..words {
+        let off = (i + 1) * 4;
+        buf[off..off + 4].copy_from_slice(&state.table[i].to_ne_bytes());
+    }
+    true
+}
+
+/// Bytes a state buffer needs for the generator type encoded in its word 0,
+/// or `None` when the word does not encode a valid type and position.
+#[must_use]
+pub fn state_len_for_encoded_word(word0: i32) -> Option<usize> {
+    if word0 < 0 {
+        return None;
+    }
+    let rand_type = (word0 % MAX_TYPES) as usize;
+    let rear = (word0 / MAX_TYPES) as usize;
+    let deg = DEG[rand_type];
+    if rand_type > 0 && rear >= deg {
+        return None;
+    }
+    Some((deg.max(1) + 1) * 4)
+}
+
+/// Save the live global generator into `buf` (see [`encode_state`]): the
+/// state buffer the program is switching away from.
+pub fn save_state(buf: &mut [u8]) -> bool {
+    ensure_init();
+    let state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+    encode_state(&state, buf)
+}
+
+/// `initstate()`: select the generator type from the buffer size (glibc),
+/// seed it, and write it into `state_buf` in glibc's layout. Returns 0 when
+/// the buffer is too small (< 8 bytes), 1 otherwise.
 pub fn initstate(seed: u32, state_buf: &mut [u8]) -> usize {
-    // glibc selects the generator type from the buffer size; < 8 bytes is
-    // invalid (EINVAL at the ABI boundary).
     let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
         return 0;
     };
     let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    // Token for the old state (a simple fingerprint of the live accumulator).
-    let old_token = state.table[0] as usize;
     state.set_type(rand_type);
     state.seed(seed);
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-    // Snapshot the live state words into the caller buffer so a later
-    // setstate() on the same buffer (which re-derives the type from its size)
-    // can restore them.
-    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
-    for i in 0..words_to_copy {
-        let bytes = state.table[i].to_ne_bytes();
-        let off = i * 4;
-        state_buf[off..off + 4].copy_from_slice(&bytes);
-    }
-    old_token
+    let _ = encode_state(&state, state_buf);
+    1
 }
 
-/// `setstate()` — restore state from a previously saved buffer.
-///
-/// `state_buf`: buffer previously filled by `initstate()`
-///
-/// Returns a token representing the old state.
+/// `setstate()`: resume the generator saved in `state_buf` -- its type and
+/// rear-cursor position from word 0, the table from words `1..=deg` -- exactly
+/// where it stopped. Returns 0 (and leaves the live generator alone) when the
+/// buffer does not hold a valid glibc-layout state, 1 otherwise.
 pub fn setstate(state_buf: &[u8]) -> usize {
-    // Re-derive the generator type from the buffer size, exactly as the
-    // initstate() that produced it did (the ABI layer hands us a slice whose
-    // length is the remembered statelen).
-    let Some(rand_type) = rand_type_for_size(state_buf.len()) else {
+    if state_buf.len() < 8 {
+        return 0;
+    }
+    let word0 = i32::from_ne_bytes([state_buf[0], state_buf[1], state_buf[2], state_buf[3]]);
+    let Some(needed) = state_len_for_encoded_word(word0) else {
         return 0;
     };
+    if state_buf.len() < needed {
+        return 0;
+    }
+    let rand_type = (word0 % MAX_TYPES) as u8;
+    let rear = (word0 / MAX_TYPES) as usize;
     let mut state = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
-    let old_token = state.table[0] as usize;
     state.set_type(rand_type);
-    // Restore the live state words from the buffer.
-    let words_to_copy = (state_buf.len() / 4).min(state.deg.max(1));
-    for i in 0..words_to_copy {
-        let off = i * 4;
-        let bytes = [
+    for i in 0..state.deg.max(1) {
+        let off = (i + 1) * 4;
+        state.table[i] = i32::from_ne_bytes([
             state_buf[off],
             state_buf[off + 1],
             state_buf[off + 2],
             state_buf[off + 3],
-        ];
-        state.table[i] = i32::from_ne_bytes(bytes);
+        ]);
     }
-    // Restore the cursors to their post-seed position. The warmup advances the
-    // cursors a whole number of periods, so (sep, 0) is exactly where they sat
-    // when initstate() snapshotted the table.
-    state.fptr = state.sep;
-    state.rptr = 0;
+    if rand_type == 0 {
+        state.fptr = 0;
+        state.rptr = 0;
+    } else {
+        state.rptr = rear;
+        state.fptr = (rear + state.sep) % state.deg;
+    }
     INITIALIZED.store(true, std::sync::atomic::Ordering::Release);
-    old_token
+    1
 }
 
 // ===========================================================================
