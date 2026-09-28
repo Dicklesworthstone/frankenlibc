@@ -12471,6 +12471,23 @@ pub unsafe extern "C" fn _nss_files_gethostbyname2_r(
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> c_int {
+    if af == libc::AF_INET6 {
+        // The IPv6 rows of the hosts file, as glibc's files module.
+        let mut resolved = std::ptr::null_mut();
+        let rc = unsafe {
+            crate::resolv_abi::gethostbyname2_r_impl(
+                name,
+                af,
+                result,
+                buffer,
+                buflen,
+                &mut resolved,
+                h_errnop,
+                true,
+            )
+        };
+        return unsafe { nss_finish_hostent_lookup(rc, resolved, errnop, h_errnop) };
+    }
     if af != libc::AF_UNSPEC && af != libc::AF_INET {
         return unsafe { nss_hostent_notfound(errnop, h_errnop) };
     }
@@ -22731,6 +22748,7 @@ pub unsafe extern "C" fn gethostbyname2_r(
                 buflen,
                 result.cast(),
                 h_errnop,
+                false,
             )
         };
     }

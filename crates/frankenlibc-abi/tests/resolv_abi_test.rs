@@ -5853,7 +5853,7 @@ fn nss_files_host_entry_points_ignore_nsswitch_policy() {
             unsafe { std::env::remove_var("FRANKENLIBC_NSSWITCH_CONF") };
         }
     }
-    let hosts = b"10.9.8.6 nss-files-only.example\n";
+    let hosts = b"10.9.8.6 nss-files-only.example\nfd00::6 nss-files-only.example\n";
     with_resolver_backends_full(Some(hosts), None, None, None, None, |_| {
         let nsswitch = temp_resolver_path("nsswitch");
         std::fs::write(&nsswitch, b"hosts: dns\n").expect("write nsswitch fixture");
@@ -5922,6 +5922,45 @@ fn nss_files_host_entry_points_ignore_nsswitch_policy() {
         assert_eq!(
             unsafe { CStr::from_ptr(hostent.h_name) }.to_bytes(),
             b"nss-files-only.example"
+        );
+
+        // IPv6: the public API follows the policy, the files module does not.
+        let mut result6: *mut libc::hostent = ptr::null_mut();
+        unsafe {
+            unistd_abi::gethostbyname2_r(
+                name.as_ptr(),
+                libc::AF_INET6,
+                &mut hostent,
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut result6,
+                &mut h_errno,
+            )
+        };
+        assert!(
+            result6.is_null(),
+            "hosts: dns must not consult the hosts file (AF_INET6)"
+        );
+        let status = unsafe {
+            unistd_abi::_nss_files_gethostbyname2_r(
+                name.as_ptr(),
+                libc::AF_INET6,
+                (&mut hostent as *mut libc::hostent).cast(),
+                buf.as_mut_ptr(),
+                buf.len(),
+                &mut err,
+                &mut h_err,
+            )
+        };
+        assert_eq!(
+            status, 1,
+            "AF_INET6 NSS_STATUS_SUCCESS from the files module"
+        );
+        assert_eq!(hostent.h_addrtype, libc::AF_INET6);
+        let addr = unsafe { std::slice::from_raw_parts((*hostent.h_addr_list).cast::<u8>(), 16) };
+        assert_eq!(
+            addr,
+            "fd00::6".parse::<std::net::Ipv6Addr>().unwrap().octets()
         );
     });
 }

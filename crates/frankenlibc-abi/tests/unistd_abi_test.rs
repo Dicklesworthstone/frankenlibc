@@ -14067,7 +14067,28 @@ fn nss_files_host_lookups_match_host_glibc() {
         );
         compared += 1;
     }
-    assert_eq!(compared, 19);
+    // AF_INET6: the hosts file's IPv6 rows ("::1" is numeric, not a row).
+    for name in [
+        c"localhost",
+        c"ip6-localhost",
+        c"frankenlibc-no-such-host.invalid",
+        c"::1",
+    ] {
+        let n = name.as_ptr();
+        // SAFETY: valid name, hostent, buffer and slots.
+        let by2 = |f: ByName2| {
+            nss_hostent_outcome(1024, |r, b, l, e, h| unsafe {
+                f(n, libc::AF_INET6, r, b, l, e, h)
+            })
+        };
+        check(
+            format!("gethostbyname2_r({name:?}, AF_INET6)"),
+            format!("{:?}", by2(fl2)),
+            format!("{:?}", by2(h2)),
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 23);
     assert!(
         mismatches.is_empty(),
         "nss_files differs from glibc:\n{}",

@@ -1665,70 +1665,96 @@ type Host6Target = (Vec<u8>, Vec<Vec<u8>>, Vec<Ipv6Addr>);
 /// `gethostbyname2(name, AF_INET6)`: an IPv6 literal, else the IPv6
 /// `/etc/hosts` lines naming `name` (aliases merged across lines, as for
 /// IPv4), else native DNS AAAA.
-fn resolve_gethostbyname6_target(name: Option<&CStr>) -> Result<Host6Target, c_int> {
+fn resolve_gethostbyname6_target(
+    name: Option<&CStr>,
+    files_only: bool,
+) -> Result<Host6Target, c_int> {
+    use frankenlibc_core::addrinfo::hosts_policy::{Backend, BackendResult};
     use frankenlibc_core::addrinfo::{AddressPolicy, Family};
     let name_cstr = name
         .filter(|name| !name.to_bytes().is_empty())
         .ok_or(libc::EAI_NONAME)?;
-    if let Ok(node) = name_cstr.to_str()
+    // Numeric names are the front end's job; the files module only matches
+    // /etc/hosts rows.
+    if !files_only
+        && let Ok(node) = name_cstr.to_str()
         && let Ok(v6) = node.parse::<Ipv6Addr>()
     {
         return Ok((name_cstr.to_bytes().to_vec(), Vec::new(), vec![v6]));
     }
-    let found = with_hosts_backend_snapshot(|content, _generation| {
-        let mut target: Option<Host6Target> = None;
-        frankenlibc_core::resolv::for_each_hosts_match_entry(
-            content,
-            name_cstr.to_bytes(),
-            |entry| {
-                let Some(address) = core::str::from_utf8(entry.address())
-                    .ok()
-                    .and_then(|a| a.parse::<Ipv6Addr>().ok())
-                else {
-                    return false;
-                };
-                match &mut target {
-                    Some((canonical, aliases, addresses)) => {
-                        aliases.extend(entry.aliases().map(ToOwned::to_owned));
-                        if entry.canonical_name() != canonical.as_slice() {
-                            aliases.push(entry.canonical_name().to_vec());
+    let files_lookup = || -> BackendResult<Host6Target, c_int> {
+        let snapshot = with_hosts_backend_snapshot(|content, _generation| {
+            let mut target: Option<Host6Target> = None;
+            frankenlibc_core::resolv::for_each_hosts_match_entry(
+                content,
+                name_cstr.to_bytes(),
+                |entry| {
+                    let Some(address) = core::str::from_utf8(entry.address())
+                        .ok()
+                        .and_then(|a| a.parse::<Ipv6Addr>().ok())
+                    else {
+                        return false;
+                    };
+                    match &mut target {
+                        Some((canonical, aliases, addresses)) => {
+                            aliases.extend(entry.aliases().map(ToOwned::to_owned));
+                            if entry.canonical_name() != canonical.as_slice() {
+                                aliases.push(entry.canonical_name().to_vec());
+                            }
+                            addresses.push(address);
                         }
-                        addresses.push(address);
+                        None => {
+                            target = Some((
+                                entry.canonical_name().to_vec(),
+                                entry.aliases().map(ToOwned::to_owned).collect(),
+                                vec![address],
+                            ));
+                        }
                     }
-                    None => {
-                        target = Some((
-                            entry.canonical_name().to_vec(),
-                            entry.aliases().map(ToOwned::to_owned).collect(),
-                            vec![address],
-                        ));
-                    }
-                }
-                false
-            },
-        );
-        target
-    })
-    .ok()
-    .flatten();
-    if let Some(found) = found {
-        return Ok(found);
-    }
-    let (addresses, canonical_name) = native_dns_resolve(
-        name_cstr.to_bytes(),
-        AddressPolicy::new(Family::Inet6, false, false),
-    )?;
-    if addresses.ipv6.is_empty() {
-        return Err(libc::EAI_NONAME);
-    }
-    let query_name = name_cstr.to_bytes();
-    let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
-    let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
-    let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
-        Vec::new()
-    } else {
-        vec![query_name.to_vec()]
+                    false
+                },
+            );
+            target
+        });
+        match snapshot {
+            Ok(Some(target)) => BackendResult::Success(target),
+            Ok(None) => BackendResult::NotFound(libc::EAI_NONAME),
+            Err(_) => BackendResult::Unavailable(libc::EAI_NONAME),
+        }
     };
-    Ok((canonical_name, aliases, addresses.ipv6))
+    // The backend snapshot borrow ends before network I/O.
+    let dns_lookup = || -> BackendResult<Host6Target, c_int> {
+        let (addresses, canonical_name) = match dns_backend_result(native_dns_resolve(
+            name_cstr.to_bytes(),
+            AddressPolicy::new(Family::Inet6, false, false),
+        )) {
+            BackendResult::Success(found) => found,
+            BackendResult::NotFound(code) => return BackendResult::NotFound(code),
+            BackendResult::Unavailable(code) => return BackendResult::Unavailable(code),
+            BackendResult::TryAgain(code) => return BackendResult::TryAgain(code),
+        };
+        if addresses.ipv6.is_empty() {
+            return BackendResult::NotFound(libc::EAI_NONAME);
+        }
+        let query_name = name_cstr.to_bytes();
+        let query_name = query_name.strip_suffix(b".").unwrap_or(query_name);
+        let canonical_name = canonical_name.unwrap_or_else(|| query_name.to_vec());
+        let aliases = if canonical_name.eq_ignore_ascii_case(query_name) {
+            Vec::new()
+        } else {
+            vec![query_name.to_vec()]
+        };
+        BackendResult::Success((canonical_name, aliases, addresses.ipv6))
+    };
+    // The same nsswitch `hosts:` policy as the IPv4 and getaddrinfo paths;
+    // this path used to hard-code files-then-DNS (bd-smc8xs).
+    hosts_policy_for(files_only)
+        .lookup(|backend| match backend {
+            Backend::Files => files_lookup(),
+            Backend::Dns => dns_lookup(),
+            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+        })
+        .map_err(hosts_lookup_error_code)
 }
 
 /// Reentrant `gethostbyname2_r`: AF_INET is `gethostbyname_r`; AF_INET6
@@ -1742,10 +1768,11 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
     buflen: usize,
     result: *mut *mut c_void,
     h_errnop: *mut c_int,
+    files_only: bool,
 ) -> c_int {
     if af == libc::AF_INET {
         return unsafe {
-            gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop, false)
+            gethostbyname_r_impl(name, result_buf, buf, buflen, result, h_errnop, files_only)
         };
     }
     if !result.is_null() {
@@ -1758,7 +1785,8 @@ pub(crate) unsafe fn gethostbyname2_r_impl(
             return libc::EINVAL;
         }
     };
-    let (canonical, aliases, addresses) = match resolve_gethostbyname6_target(name_cstr) {
+    let (canonical, aliases, addresses) = match resolve_gethostbyname6_target(name_cstr, files_only)
+    {
         Ok(found) => found,
         Err(error) => {
             let (code, host_error) = legacy_host_lookup_error(error);
