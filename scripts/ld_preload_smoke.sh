@@ -792,9 +792,8 @@ EOF
   done
   run_corpus_case "${mode}" "hardened_first_heal_no_deadlock" "${FIRST_HEAL_BIN}" || mode_failed=1
   # exit sequence: handler order, on_exit status, destructors after handlers,
-  # on return from main and on exit() (the non-zero exit statuses are expected).
-  run_corpus_case "${mode}" "exit_sequence_return" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
-  run_corpus_case "${mode}" "exit_sequence_exit" "${EXIT_SEQUENCE_BIN}" exit || mode_failed=1
+  # via exit(main()) and via an explicit exit() (bd-fr97mh).
+  run_corpus_case "${mode}" "exit_sequence" "${EXIT_SEQUENCE_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then
