@@ -3712,13 +3712,21 @@ pub unsafe extern "C" fn mbstowcs(dst: *mut u32, src: *const u8, n: usize) -> us
         // invalid sequence.
         return match codec::mbs_decoded_len(src_slice) {
             Some(count) => count,
-            None => usize::MAX,
+            None => {
+                // An invalid or unrepresentable character: EILSEQ, as glibc.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                usize::MAX
+            }
         };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
     match codec::mbstowcs(dst_slice, src_slice) {
         Some(count) => count,
-        None => usize::MAX,
+        None => {
+            // An invalid or unrepresentable character: EILSEQ, as glibc.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            usize::MAX
+        }
     }
 }
 
@@ -3746,13 +3754,21 @@ pub unsafe extern "C" fn wcstombs(dst: *mut u8, src: *const u32, n: usize) -> us
         // returns the same total and the same `None`-at-first-unrepresentable-char.
         return match codec::wcs_encoded_len(&src_slice[..wlen]) {
             Some(count) => count,
-            None => usize::MAX,
+            None => {
+                // An invalid or unrepresentable character: EILSEQ, as glibc.
+                unsafe { set_abi_errno(libc::EILSEQ) };
+                usize::MAX
+            }
         };
     }
     let dst_slice = unsafe { std::slice::from_raw_parts_mut(dst, n) };
     match codec::wcstombs(dst_slice, src_slice) {
         Some(count) => count,
-        None => usize::MAX,
+        None => {
+            // An invalid or unrepresentable character: EILSEQ, as glibc.
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            usize::MAX
+        }
     }
 }
 
