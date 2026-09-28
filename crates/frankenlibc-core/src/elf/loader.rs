@@ -277,12 +277,14 @@ pub struct DependencyNode {
     pub unresolved_needed: Vec<String>,
 }
 
-/// Deterministic DT_NEEDED graph with dependency-before-dependent topo order.
+/// Deterministic DT_NEEDED graph with dependency-component lifecycle order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyGraph {
     /// Per-object dependency records.
     pub nodes: Vec<DependencyNode>,
-    /// Topological order with dependencies before users.
+    /// Dependency SCCs before users, with each component emitted once.
+    /// Cycles use deterministic reverse discovery order within the component.
+    /// For acyclic graphs this is the usual dependency-first topological order.
     pub topological_order: Vec<usize>,
 }
 
@@ -553,14 +555,15 @@ impl DependencyGraph {
         })
     }
 
-    /// Return object indexes in explicit-handle lookup order.
+    /// Return object indexes in breadth-first explicit-handle lookup order.
+    /// Within a level, preserve DT_NEEDED declaration order; visit each object once.
     pub fn local_lookup_order(&self, object_index: usize) -> ElfResult<Vec<usize>> {
         if object_index >= self.nodes.len() {
             return Err(ElfError::InvalidObjectIndex(object_index));
         }
         let mut order = Vec::new();
         let mut seen = BTreeSet::new();
-        collect_local_lookup_order(object_index, &self.nodes, &mut seen, &mut order);
+        collect_local_lookup_order(object_index, &self.nodes, &mut seen, &mut order)?;
         Ok(order)
     }
 
@@ -573,10 +576,12 @@ impl DependencyGraph {
 
     /// Build the init/fini callback plan for a link map.
     ///
-    /// Constructors run dependencies before users. For each object, legacy
+    /// Constructors run dependency components before their users. Cycles are
+    /// kept contiguous with deterministic internal order; their members cannot
+    /// all run after their own dependencies. For each object, legacy
     /// DT_INIT runs before .init_array, and .init_array preserves linker order
     /// so section-suffix priorities remain intact. Destructors run the reverse:
-    /// objects are visited in reverse topological order, each .fini_array is
+    /// objects are visited in reverse planned order, each .fini_array is
     /// consumed backward, then legacy DT_FINI runs last for that object.
     pub fn lifecycle_plan(&self, objects: &[LinkMapObject<'_>]) -> ElfResult<LifecyclePlan> {
         let mut init_order = Vec::new();
@@ -639,7 +644,7 @@ impl DependencyGraph {
 }
 
 impl<'a> ScopedSymbolResolver<'a> {
-    /// Build a scoped resolver and validate the dependency graph is acyclic.
+    /// Build a scoped resolver, including legal cyclic DT_NEEDED dependencies.
     pub fn new(objects: Vec<LinkMapObject<'a>>) -> ElfResult<Self> {
         let graph = DependencyGraph::build(&objects)?;
         Ok(Self { objects, graph })
@@ -1547,61 +1552,69 @@ fn link_map_object_name(object: &LinkMapObject<'_>, object_index: usize) -> Stri
         })
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VisitState {
-    New,
-    Visiting,
-    Done,
-}
-
+/// Emit dependency SCCs before their users. Within a cycle, emit reverse
+/// discovery order; there is no dependency-respecting order inside an SCC.
+/// This preserves the existing DFS postorder for acyclic inputs while keeping
+/// every cycle contiguous, after all of its external dependencies.
 fn dependency_topological_order(nodes: &[DependencyNode]) -> ElfResult<Vec<usize>> {
-    let mut states = vec![VisitState::New; nodes.len()];
+    const UNVISITED: usize = usize::MAX;
+    let mut discovered = vec![UNVISITED; nodes.len()];
+    let mut lowlink = vec![0; nodes.len()];
+    let mut on_stack = vec![false; nodes.len()];
+    let mut active = Vec::with_capacity(nodes.len());
+    let mut frames: Vec<(usize, usize)> = Vec::new();
     let mut order = Vec::with_capacity(nodes.len());
-    for index in 0..nodes.len() {
-        visit_dependency_node(index, nodes, &mut states, &mut order)?;
+    let mut serial = 0;
+
+    for root in 0..nodes.len() {
+        if discovered[root] != UNVISITED {
+            continue;
+        }
+        discovered[root] = serial;
+        lowlink[root] = serial;
+        serial += 1;
+        active.push(root);
+        on_stack[root] = true;
+        frames.push((root, 0));
+
+        // Iterative Tarjan traversal: a long DT_NEEDED chain must not exhaust
+        // the Rust call stack before the loader can return an error or a plan.
+        while let Some(&(index, next_dependency)) = frames.last() {
+            if let Some(&dependency) = nodes[index].dependencies.get(next_dependency) {
+                if dependency >= nodes.len() {
+                    return Err(ElfError::InvalidObjectIndex(dependency));
+                }
+                let frame_index = frames.len() - 1;
+                frames[frame_index].1 += 1;
+                if discovered[dependency] == UNVISITED {
+                    discovered[dependency] = serial;
+                    lowlink[dependency] = serial;
+                    serial += 1;
+                    active.push(dependency);
+                    on_stack[dependency] = true;
+                    frames.push((dependency, 0));
+                } else if on_stack[dependency] {
+                    lowlink[index] = lowlink[index].min(discovered[dependency]);
+                }
+                continue;
+            }
+
+            frames.pop();
+            if lowlink[index] == discovered[index] {
+                while let Some(member) = active.pop() {
+                    on_stack[member] = false;
+                    order.push(member);
+                    if member == index {
+                        break;
+                    }
+                }
+            }
+            if let Some(&(parent, _)) = frames.last() {
+                lowlink[parent] = lowlink[parent].min(lowlink[index]);
+            }
+        }
     }
     Ok(order)
-}
-
-fn visit_dependency_node(
-    index: usize,
-    nodes: &[DependencyNode],
-    states: &mut [VisitState],
-    order: &mut Vec<usize>,
-) -> ElfResult<()> {
-    match states
-        .get(index)
-        .copied()
-        .ok_or(ElfError::InvalidObjectIndex(index))?
-    {
-        VisitState::Done => return Ok(()),
-        VisitState::Visiting => {
-            return Err(ElfError::DependencyCycle {
-                object: nodes
-                    .get(index)
-                    .map(|node| node.name.clone())
-                    .unwrap_or_else(|| format!("<object:{index}>")),
-            });
-        }
-        VisitState::New => {}
-    }
-
-    let Some(state) = states.get_mut(index) else {
-        return Err(ElfError::InvalidObjectIndex(index));
-    };
-    *state = VisitState::Visiting;
-    let Some(node) = nodes.get(index) else {
-        return Err(ElfError::InvalidObjectIndex(index));
-    };
-    for dependency in &node.dependencies {
-        visit_dependency_node(*dependency, nodes, states, order)?;
-    }
-    let Some(state) = states.get_mut(index) else {
-        return Err(ElfError::InvalidObjectIndex(index));
-    };
-    *state = VisitState::Done;
-    order.push(index);
-    Ok(())
 }
 
 fn collect_local_lookup_order(
@@ -1609,16 +1622,35 @@ fn collect_local_lookup_order(
     nodes: &[DependencyNode],
     seen: &mut BTreeSet<usize>,
     order: &mut Vec<usize>,
-) {
-    if !seen.insert(object_index) {
-        return;
+) -> ElfResult<()> {
+    if object_index >= nodes.len() {
+        return Err(ElfError::InvalidObjectIndex(object_index));
     }
+    if !seen.insert(object_index) {
+        return Ok(());
+    }
+
+    // dlsym(handle, ...) searches DT_NEEDED breadth first, not depth first.
+    // The output doubles as the queue. Mark on enqueue so diamonds, duplicate
+    // DT_NEEDED entries and cycles each contribute an object only once.
+    let mut next = order.len();
     order.push(object_index);
-    if let Some(node) = nodes.get(object_index) {
-        for dependency in &node.dependencies {
-            collect_local_lookup_order(*dependency, nodes, seen, order);
+    while next < order.len() {
+        let index = order[next];
+        next += 1;
+        let node = nodes
+            .get(index)
+            .ok_or(ElfError::InvalidObjectIndex(index))?;
+        for &dependency in &node.dependencies {
+            if dependency >= nodes.len() {
+                return Err(ElfError::InvalidObjectIndex(dependency));
+            }
+            if seen.insert(dependency) {
+                order.push(dependency);
+            }
         }
     }
+    Ok(())
 }
 
 fn section_data<'a>(data: &'a [u8], section: &Elf64SectionHeader) -> Option<&'a [u8]> {
@@ -2496,7 +2528,128 @@ mod tests {
         assert_eq!(graph.nodes[1].dependencies, vec![3]);
         assert_eq!(graph.nodes[2].dependencies, vec![3]);
         assert_eq!(graph.topological_order, vec![3, 1, 2, 0]);
-        assert_eq!(graph.local_lookup_order(0)?, vec![0, 1, 3, 2]);
+        assert_eq!(graph.local_lookup_order(0)?, vec![0, 1, 2, 3]);
+        Ok(())
+    }
+
+    fn dependency_scope_regression_graph(edges: &[&[usize]]) -> DependencyGraph {
+        DependencyGraph {
+            nodes: edges
+                .iter()
+                .enumerate()
+                .map(|(object_index, dependencies)| DependencyNode {
+                    object_index,
+                    name: format!("object-{object_index}"),
+                    needed_libraries: Vec::new(),
+                    dependencies: dependencies.to_vec(),
+                    unresolved_needed: Vec::new(),
+                })
+                .collect(),
+            topological_order: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn local_scope_prefers_direct_provider_over_transitive_provider() -> ElfResult<()> {
+        let root = object_with_symbols(0x1000, Some("root"), &["left", "right"], &[])?;
+        let left = object_with_symbols(0x2000, Some("left"), &["leaf"], &[])?;
+        let leaf = object_with_symbols(
+            0x3000,
+            Some("leaf"),
+            &[],
+            &[("provider", 0x11, Some("VER_1"))],
+        )?;
+        let right = object_with_symbols(
+            0x4000,
+            Some("right"),
+            &[],
+            &[("provider", 0x22, Some("VER_1"))],
+        )?;
+        // Deliberately put the transitive provider earlier in link-map order.
+        let resolver = ScopedSymbolResolver::new(vec![
+            LinkMapObject {
+                name: "root",
+                object: &root,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "left",
+                object: &left,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "leaf",
+                object: &leaf,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "right",
+                object: &right,
+                visibility: RtldVisibility::Local,
+            },
+        ])?;
+        assert_eq!(resolver.dependency_graph().local_lookup_order(0)?, vec![0, 1, 3, 2]);
+        for version in [None, Some("VER_1")] {
+            let report = resolver.resolve_with_trace(
+                "provider",
+                version,
+                RtldLookupScope::Local { object_index: 0 },
+            )?;
+            let symbol = report.symbol.expect("direct dependency exports provider");
+            assert_eq!(symbol.object_index, 3);
+            assert_eq!(symbol.address, 0x4022);
+            assert_eq!(
+                report.trace.iter().map(|event| event.object_index).collect::<Vec<_>>(),
+                vec![0, 1, 3],
+            );
+        }
+        let missing = resolver.resolve_with_trace(
+            "absent",
+            None,
+            RtldLookupScope::Local { object_index: 0 },
+        )?;
+        assert!(missing.symbol.is_none());
+        assert_eq!(
+            missing.trace.iter().map(|event| event.object_index).collect::<Vec<_>>(),
+            vec![0, 1, 3, 2],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_scope_preserves_needed_order_and_deduplicates_on_enqueue() -> ElfResult<()> {
+        let graph = dependency_scope_regression_graph(&[&[2, 1, 2], &[3], &[3], &[], &[]]);
+        assert_eq!(graph.local_lookup_order(0)?, vec![0, 2, 1, 3]);
+        assert_eq!(graph.local_lookup_order(2)?, vec![2, 3]);
+        assert_eq!(graph.local_lookup_order(4)?, vec![4]);
+        Ok(())
+    }
+
+    #[test]
+    fn local_scope_rejects_invalid_root_and_dependency_indexes() {
+        let graph = dependency_scope_regression_graph(&[&[1], &[99]]);
+        assert!(matches!(graph.local_lookup_order(2), Err(ElfError::InvalidObjectIndex(2))));
+        assert!(matches!(graph.local_lookup_order(0), Err(ElfError::InvalidObjectIndex(99))));
+        let empty = dependency_scope_regression_graph(&[]);
+        assert!(matches!(empty.local_lookup_order(0), Err(ElfError::InvalidObjectIndex(0))));
+    }
+
+    #[test]
+    fn local_scope_is_cycle_safe_without_recursive_stack_growth() -> ElfResult<()> {
+        let count = 32_768;
+        let graph = DependencyGraph {
+            nodes: (0..count)
+                .map(|object_index| DependencyNode {
+                    object_index,
+                    name: String::new(),
+                    needed_libraries: Vec::new(),
+                    dependencies: vec![(object_index + 1) % count],
+                    unresolved_needed: Vec::new(),
+                })
+                .collect(),
+            topological_order: Vec::new(),
+        };
+        assert_eq!(graph.local_lookup_order(0)?, (0..count).collect::<Vec<_>>());
         Ok(())
     }
 
@@ -2651,7 +2804,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dependency_graph_rejects_cycles() -> ElfResult<()> {
+    fn test_dependency_graph_accepts_cycles() -> ElfResult<()> {
         let liba = object_with_symbols(0x1000, Some("liba.so"), &["libb.so"], &[])?;
         let libb = object_with_symbols(0x2000, Some("libb.so"), &["liba.so"], &[])?;
         let objects = vec![
@@ -2667,10 +2820,163 @@ mod tests {
             },
         ];
 
+        let graph = DependencyGraph::build(&objects)?;
+        assert_eq!(graph.topological_order, vec![1, 0]);
+        assert_eq!(graph.local_lookup_order(0)?, vec![0, 1]);
+        assert_eq!(graph.local_lookup_order(1)?, vec![1, 0]);
+        let resolver = ScopedSymbolResolver::new(objects)?;
+        assert!(resolver.resolve("absent", None, RtldLookupScope::Local { object_index: 0 })?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_order_keeps_cycles_after_all_external_dependencies() -> ElfResult<()> {
+        // A -> B -> A, A -> C. Ignoring a DFS back edge emits B,C,A and
+        // incorrectly initializes one cycle member before its external input.
+        let graph = dependency_scope_regression_graph(&[&[1, 2], &[0], &[]]);
+        assert_eq!(dependency_topological_order(&graph.nodes)?, vec![2, 1, 0]);
+        let two_cycles = dependency_scope_regression_graph(&[&[1], &[0, 2], &[3], &[2]]);
+        assert_eq!(dependency_topological_order(&two_cycles.nodes)?, vec![3, 2, 1, 0]);
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_order_handles_self_edges_duplicates_and_disconnected_components() -> ElfResult<()> {
+        let graph = dependency_scope_regression_graph(&[&[0, 1, 1], &[], &[3], &[2], &[]]);
+        assert_eq!(dependency_topological_order(&graph.nodes)?, vec![1, 0, 3, 2, 4]);
+        assert!(dependency_topological_order(&[])?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_order_rejects_invalid_edges() {
+        let graph = dependency_scope_regression_graph(&[&[1], &[0, 99]]);
         assert!(matches!(
-            DependencyGraph::build(&objects),
-            Err(ElfError::DependencyCycle { .. })
+            dependency_topological_order(&graph.nodes),
+            Err(ElfError::InvalidObjectIndex(99)),
         ));
+    }
+
+    #[test]
+    fn dependency_order_handles_deep_chains_and_cycles_iteratively() -> ElfResult<()> {
+        let count = 32_768;
+        let mut nodes = (0..count)
+            .map(|object_index| DependencyNode {
+                object_index,
+                name: String::new(),
+                needed_libraries: Vec::new(),
+                dependencies: vec![(object_index + 1) % count],
+                unresolved_needed: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+        let expected = (0..count).rev().collect::<Vec<_>>();
+        assert_eq!(dependency_topological_order(&nodes)?, expected);
+        nodes[count - 1].dependencies.clear();
+        assert_eq!(dependency_topological_order(&nodes)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn lifecycle_cycle_schedules_each_callback_once_and_reverses_fini_order() -> ElfResult<()> {
+        let mut a = object_with_symbols(0x1000, Some("a"), &["b", "support"], &[])?;
+        a.legacy_init = Some(0x1000);
+        a.init_array = vec![0x1010, 0x1020];
+        a.legacy_fini = Some(0x10f0);
+        a.fini_array = vec![0x1030, 0x1040];
+        let mut b = object_with_symbols(0x2000, Some("b"), &["a"], &[])?;
+        b.init_array = vec![0x2010];
+        b.fini_array = vec![0x2020];
+        let mut support = object_with_symbols(0x3000, Some("support"), &[], &[])?;
+        support.init_array = vec![0x3010];
+        support.fini_array = vec![0x3020];
+        let objects = vec![
+            LinkMapObject {
+                name: "a",
+                object: &a,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "b",
+                object: &b,
+                visibility: RtldVisibility::Local,
+            },
+            LinkMapObject {
+                name: "support",
+                object: &support,
+                visibility: RtldVisibility::Local,
+            },
+        ];
+        let graph = DependencyGraph::build(&objects)?;
+        assert_eq!(graph.topological_order, vec![2, 1, 0]);
+        let plan = graph.lifecycle_plan(&objects)?;
+        assert_eq!(
+            plan.init_order.iter().map(|entry| entry.address).collect::<Vec<_>>(),
+            vec![0x3010, 0x2010, 0x1000, 0x1010, 0x1020],
+        );
+        assert_eq!(
+            plan.fini_order.iter().map(|entry| entry.address).collect::<Vec<_>>(),
+            vec![0x1040, 0x1030, 0x10f0, 0x2020, 0x3020],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_order_exhaustively_respects_scc_boundaries() -> ElfResult<()> {
+        // Independent reachability closure is the oracle, not another Tarjan
+        // implementation. Include every directed graph with up to four nodes.
+        for count in 0usize..=4 {
+            for edge_mask in 0u32..(1u32 << (count * count)) {
+                let nodes = (0..count)
+                    .map(|from| DependencyNode {
+                        object_index: from,
+                        name: String::new(),
+                        needed_libraries: Vec::new(),
+                        dependencies: (0..count)
+                            .filter(|&to| edge_mask & (1 << (from * count + to)) != 0)
+                            .collect(),
+                        unresolved_needed: Vec::new(),
+                    })
+                    .collect::<Vec<_>>();
+                let order = dependency_topological_order(&nodes)?;
+                let mut sorted = order.clone();
+                sorted.sort_unstable();
+                assert_eq!(sorted, (0..count).collect::<Vec<_>>());
+                assert_eq!(dependency_topological_order(&nodes)?, order);
+                let mut reachable = vec![vec![false; count]; count];
+                for (from, node) in nodes.iter().enumerate() {
+                    reachable[from][from] = true;
+                    for &to in &node.dependencies {
+                        reachable[from][to] = true;
+                    }
+                }
+                for via in 0..count {
+                    for from in 0..count {
+                        for to in 0..count {
+                            let connected = reachable[from][via] && reachable[via][to];
+                            reachable[from][to] |= connected;
+                        }
+                    }
+                }
+                let mut position = vec![0; count];
+                for (rank, &node) in order.iter().enumerate() {
+                    position[node] = rank;
+                }
+                for (from, node) in nodes.iter().enumerate() {
+                    for &to in &node.dependencies {
+                        if !reachable[to][from] {
+                            assert!(position[to] < position[from], "mask={edge_mask:#x}: {from}->{to}");
+                        }
+                    }
+                    let component = (0..count)
+                        .filter(|&other| reachable[from][other] && reachable[other][from])
+                        .map(|other| position[other])
+                        .collect::<Vec<_>>();
+                    let first = component.iter().copied().min().unwrap();
+                    let last = component.iter().copied().max().unwrap();
+                    assert_eq!(last - first + 1, component.len(), "mask={edge_mask:#x}: split SCC");
+                }
+            }
+        }
         Ok(())
     }
 
