@@ -285,7 +285,13 @@ fn test_segment_free_reuse_and_calloc_lifecycle() {
     unsafe { std::ptr::write_bytes(p.cast::<u8>(), 0xa7, 17) };
     unsafe { free(p) };
     assert_eq!(unsafe { mprobe(p) }, MCHECK_FREE);
-    unsafe { free(p) };
+    // A second retire of the slot must fail. (Through the public `free` this
+    // double free now aborts in strict mode, as glibc does -- see
+    // tests/integration/fixture_malloc_misuse.c; bd-rc0923-epic-eeuy4f.8.)
+    assert!(
+        !malloc_segment_retire_for_tests(p),
+        "a freed slot must not be retired twice"
+    );
 
     let q = unsafe { calloc(1, 17) };
     assert_eq!(q, p, "same-class free-list head should be reused");
@@ -297,7 +303,7 @@ fn test_segment_free_reuse_and_calloc_lifecycle() {
     assert_eq!(malloc_known_remaining_for_tests(q.cast_const()), Some(17));
 
     let interior = unsafe { q.cast::<u8>().add(1).cast::<c_void>() };
-    unsafe { free(interior) };
+    assert!(!malloc_segment_retire_for_tests(interior));
     assert_eq!(
         malloc_known_remaining_for_tests(q.cast_const()),
         Some(17),
@@ -378,10 +384,10 @@ fn test_segment_free_rejects_header_and_class_slack_without_retiring_slot() {
 
     let header_address = unsafe { ptr.cast::<u8>().sub(16).cast::<c_void>() };
     let class_slack = unsafe { ptr.cast::<u8>().add(17).cast::<c_void>() };
-    unsafe {
-        free(header_address);
-        free(class_slack);
-    }
+    // Retired directly: through the public `free` these now abort in strict
+    // mode, as glibc's "free(): invalid pointer" (bd-rc0923-epic-eeuy4f.8).
+    assert!(!malloc_segment_retire_for_tests(header_address));
+    assert!(!malloc_segment_retire_for_tests(class_slack));
     assert_eq!(
         malloc_known_remaining_for_tests(ptr.cast_const()),
         Some(17),
