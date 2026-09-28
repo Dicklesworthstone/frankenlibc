@@ -874,6 +874,10 @@ struct TzState {
     zone: tz_core::Zone,
     /// NUL-terminated abbreviation per local type, matched by address.
     names: Vec<(*const tz_core::LocalType, std::ffi::CString)>,
+    /// `daylight`/`timezone` as tzset computes them, restored by localtime
+    /// for instants before the last transition.
+    base_daylight: bool,
+    base_timezone: i64,
 }
 
 // SAFETY: a published TzState is immutable and never freed (a TZ change
@@ -983,6 +987,39 @@ fn publish_tz_globals(state: &'static TzState) {
     }
 }
 
+/// glibc's localtime updates `tzname` (and past the last transition
+/// `daylight`/`timezone`) for the instant it converts; see
+/// [`tz_core::Zone::globals_at`]. fl set them once at `tzset`, so after
+/// localtime a program saw e.g. `IST`/`+0630`, `daylight=1` for Asia/Kolkata
+/// where glibc shows `IST`/`IST`, `daylight=0`.
+fn publish_tz_names_at(state: &'static TzState, epoch: i64) {
+    let Some((std_abbr, dst_abbr, footer)) = state.zone.globals_at(epoch) else {
+        return;
+    };
+    let intern = |name: &str| -> *mut std::ffi::c_char {
+        state
+            .names
+            .iter()
+            .find(|(_, s)| s.as_bytes() == name.as_bytes())
+            .map_or(c"UTC".as_ptr(), |(_, s)| s.as_ptr())
+            .cast_mut()
+    };
+    let (std_name, dst_name) = (intern(std_abbr), intern(dst_abbr));
+    let (daylight, timezone) = footer.unwrap_or((state.base_daylight, state.base_timezone));
+    // SAFETY: the same process globals tzset writes; glibc updates them from
+    // localtime likewise (unsynchronized reads by the program are its own).
+    unsafe {
+        crate::glibc_internal_abi::tzname[0] = std_name;
+        crate::glibc_internal_abi::tzname[1] = dst_name;
+        crate::glibc_internal_abi::__tzname[0] = std_name;
+        crate::glibc_internal_abi::__tzname[1] = dst_name;
+        crate::glibc_internal_abi::timezone = timezone as std::ffi::c_long;
+        crate::glibc_internal_abi::__timezone = timezone as std::ffi::c_long;
+        crate::glibc_internal_abi::daylight = i32::from(daylight);
+        crate::glibc_internal_abi::__daylight = i32::from(daylight);
+    }
+}
+
 /// The current zone. `recheck` re-reads `TZ` and reloads when it changed.
 fn current_tz(recheck: bool) -> &'static TzState {
     let cur = TZ_CURRENT.load(Ordering::Acquire);
@@ -1000,7 +1037,12 @@ fn current_tz(recheck: bool) -> &'static TzState {
         key: env.map(<[u8]>::to_vec),
         zone: resolve_zone(env),
         names: Vec::new(),
+        base_daylight: false,
+        base_timezone: 0,
     }));
+    let base = state.zone.globals();
+    state.base_daylight = base.daylight;
+    state.base_timezone = base.timezone;
     let names: Vec<_> = state
         .zone
         .all_types()
@@ -1025,6 +1067,7 @@ fn local_broken_down(
     recheck: bool,
 ) -> Option<(time_core::BrokenDownTime, i64, *const std::ffi::c_char)> {
     let state = current_tz(recheck);
+    publish_tz_names_at(state, epoch);
     let ty = state.zone.lookup(epoch);
     let mut bd = time_core::epoch_to_broken_down_checked(epoch.checked_add(i64::from(ty.utoff))?)?;
     bd.tm_isdst = i32::from(ty.isdst);

@@ -610,6 +610,89 @@ impl Zone {
         out
     }
 
+    /// What glibc's `localtime` leaves in `tzname` (and, past the last
+    /// transition, `daylight`/`timezone`) after converting instant `t`:
+    ///
+    /// - at or after the last transition, the footer rule decides all of them
+    ///   (`IST-5:30` gives `IST`/`IST`, daylight 0);
+    /// - before the first transition, the TYPE table decides: the first
+    ///   non-daylight type, and the first daylight type listed before it,
+    ///   else after it (Puerto Rico 1874: `LMT`/`APT`);
+    /// - otherwise the first standard and first daylight types AFTER `t` name
+    ///   the two slots (a missing standard copies the daylight), then the type
+    ///   in effect at `t` overwrites its own flavour, and a missing daylight
+    ///   name copies the standard: Lord_Howe 1970 `AEST`/`+1130`, Dublin 1970
+    ///   `IST`/`GMT` (its winter "negative DST"), Singapore 1970
+    ///   `+0730`/`+0730` (no daylight type ahead).
+    ///
+    /// Outside the footer case `daylight`/`timezone` keep their `tzset`
+    /// values (`None`). Derived from glibc 2.43 on 20 zones x 6 instants and
+    /// checked on all 436 zones x 12 instants (2026-09-28). `None` for zones
+    /// without a transition table (POSIX `TZ` strings), whose globals never
+    /// change after `tzset`.
+    #[must_use]
+    pub fn globals_at(&self, t: i64) -> Option<(&str, &str, Option<(bool, i64)>)> {
+        if self.transitions.is_empty() {
+            return None;
+        }
+        let last = *self.transitions.last().unwrap_or(&i64::MIN);
+        if t >= last
+            && let Some(footer) = &self.footer
+        {
+            let std = footer.std.abbr.as_str();
+            let dst = footer
+                .dst
+                .as_ref()
+                .map_or(std, |rule| rule.dst.abbr.as_str());
+            return Some((
+                std,
+                dst,
+                Some((footer.dst.is_some(), -i64::from(footer.std.utoff))),
+            ));
+        }
+        let i = self.transitions.partition_point(|&x| x <= t);
+        if i == 0 {
+            let mut dst = None;
+            let mut k = 0;
+            while k < self.types.len() && self.types[k].isdst {
+                dst.get_or_insert(self.types[k].abbr.as_str());
+                k += 1;
+            }
+            if k == self.types.len() {
+                k = 0;
+            }
+            let std = self.types.get(k)?.abbr.as_str();
+            let dst = dst
+                .or_else(|| {
+                    self.types[k..]
+                        .iter()
+                        .find(|ty| ty.isdst)
+                        .map(|ty| ty.abbr.as_str())
+                })
+                .unwrap_or(std);
+            return Some((std, dst, None));
+        }
+        let mut names: [Option<&str>; 2] = [None, None];
+        for j in i..self.transitions.len() {
+            let ty = &self.types[usize::from(self.transition_types[j])];
+            let slot = &mut names[usize::from(ty.isdst)];
+            if slot.is_none() {
+                *slot = Some(ty.abbr.as_str());
+                if names[0].is_some() && names[1].is_some() {
+                    break;
+                }
+            }
+        }
+        if names[0].is_none() {
+            names[0] = names[1];
+        }
+        let current = self.lookup(t);
+        names[usize::from(current.isdst)] = Some(current.abbr.as_str());
+        let std = names[0].or(names[1])?;
+        let dst = names[1].unwrap_or(std);
+        Some((std, dst, None))
+    }
+
     /// Values for `tzname`, `timezone` and `daylight` (glibc semantics: the
     /// footer rule wins; otherwise the last standard/daylight types used).
     #[must_use]
