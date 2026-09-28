@@ -3238,8 +3238,13 @@ unsafe fn system_default_signal(sig: c_int) {
 ///
 /// If `command` is NULL, returns non-zero to indicate a shell is available.
 /// Otherwise, forks and executes `/bin/sh -c command`, returning the exit status.
+/// `system` is a cancellation point (POSIX; bd-rc0923-epic-eeuy4f.24): the
+/// wait for the shell runs in a cancellation window, and a cancelled caller
+/// does what glibc's cancel handler does -- SIGKILL and reap the shell, then
+/// restore SIGINT/SIGQUIT and the signal mask -- as [`SystemCancelCleanup`]
+/// runs during the forced unwind.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
+pub unsafe extern "C-unwind" fn system(command: *const c_char) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         command as usize,
@@ -3343,16 +3348,28 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
         }
     }
 
-    // Parent: wait for child.
+    // Parent: wait for child. Armed only while cancellation can unwind out
+    // of the wait; disarmed before the normal restore below.
+    let mut cancel_cleanup = SystemCancelCleanup {
+        pid,
+        saved_int,
+        saved_quit,
+        saved_mask,
+        armed: true,
+    };
     let mut wstatus: c_int = 0;
+    let wstatus_ptr = &mut wstatus as *mut c_int;
     loop {
         let ret = unsafe {
-            raw_syscall::sys_wait4(pid, &mut wstatus as *mut c_int, 0, core::ptr::null_mut())
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_wait4(pid, wstatus_ptr, 0, core::ptr::null_mut())
+            })
         };
         match ret {
             Ok(waited_pid) if waited_pid == pid => break,
             Ok(_) => continue, // Spurious wakeup, keep waiting
             Err(e) if e != libc::EINTR => {
+                cancel_cleanup.armed = false;
                 restore_parent();
                 unsafe { set_abi_errno(e) };
                 runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, true);
@@ -3362,9 +3379,52 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
         }
     }
 
+    cancel_cleanup.armed = false;
     restore_parent();
     runtime_policy::observe(ApiFamily::Stdlib, decision.profile, 50, false);
     wstatus
+}
+
+/// What a cancelled `system` must undo; its `Drop` runs only on the
+/// cancellation unwind out of the wait (`armed`).
+struct SystemCancelCleanup {
+    pid: i32,
+    saved_int: Option<KernelSigaction>,
+    saved_quit: Option<KernelSigaction>,
+    saved_mask: u64,
+    armed: bool,
+}
+
+impl Drop for SystemCancelCleanup {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // SAFETY: plain syscalls on the shell we forked and on this thread's
+        // own signal state, saved before the fork.
+        unsafe {
+            let _ = raw_syscall::sys_kill(self.pid, libc::SIGKILL);
+            let mut status: c_int = 0;
+            while let Err(libc::EINTR) = raw_syscall::sys_wait4(
+                self.pid,
+                &mut status as *mut c_int,
+                0,
+                core::ptr::null_mut(),
+            ) {}
+            if let Some(a) = &self.saved_int {
+                system_restore_signal(libc::SIGINT, a);
+            }
+            if let Some(a) = &self.saved_quit {
+                system_restore_signal(libc::SIGQUIT, a);
+            }
+            let _ = raw_syscall::sys_rt_sigprocmask(
+                libc::SIG_SETMASK,
+                &self.saved_mask as *const u64 as *const u8,
+                ptr::null_mut(),
+                KSIG_SETSIZE,
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

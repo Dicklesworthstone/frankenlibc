@@ -6,13 +6,17 @@
 //   - pthread_cancel of a thread blocked in read, sleep, nanosleep, poll or
 //     pthread_cond_wait, open of a FIFO, or fcntl(F_OFD_SETLKW) completes, runs its cleanup handlers (cond_wait's with
 //     the mutex re-acquired), and pthread_join reports PTHREAD_CANCELED;
-//   - a thread with cancellation disabled is not cancelled while blocked.
+//   - a thread with cancellation disabled is not cancelled while blocked;
+//   - a thread cancelled inside system() has its shell killed and reaped and
+//     SIGINT's disposition restored (glibc's system cancel handler).
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <poll.h>
+#include <signal.h>
+#include <sys/wait.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -72,6 +76,15 @@ static void *blocked_poll(void *arg) {
   struct pollfd p = {pipefd[0], POLLIN, 0};
   pthread_cleanup_push(cleanup, "poll");
   poll(&p, 1, 100000);
+  pthread_cleanup_pop(0);
+  return NULL;
+}
+
+static void *blocked_system(void *arg) {
+  (void)arg;
+  pthread_cleanup_push(cleanup, "system");
+  int rc = system("sleep 30");
+  (void)rc;
   pthread_cleanup_pop(0);
   return NULL;
 }
@@ -201,6 +214,14 @@ int main(void) {
   cancel_case("nanosleep", blocked_nanosleep);
   cancel_case("poll", blocked_poll);
   cancel_case("cond_wait", blocked_cond_wait);
+
+  cancel_case("system", blocked_system);
+  errno = 0;
+  pid_t left = waitpid(-1, NULL, WNOHANG);
+  printf("  shell reaped: %s\n", left == -1 && errno == ECHILD ? "yes" : "no");
+  struct sigaction int_action;
+  sigaction(SIGINT, NULL, &int_action);
+  printf("  SIGINT restored: %s\n", int_action.sa_handler == SIG_DFL ? "yes" : "no");
 
   snprintf(fifo_path, sizeof fifo_path, "/tmp/fl_cancel_fifo_%d", (int)getpid());
   if (mkfifo(fifo_path, 0600) == 0) {
