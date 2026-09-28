@@ -583,7 +583,7 @@ Developer transparency remains mandatory:
 1. **Monotonic Safety:** Lattice join is commutative, associative, idempotent. States only decrease on new information.
 2. **Galois Connection:** `gamma(alpha(c)) >= c`. Safe interpretation is at least as permissive as what correct programs need.
 3. **Allocation Integrity:** P(undetected corruption) <= 2^-64 (SipHash collision probability).
-4. **UAF Detection:** Generation counters detect use-after-free with probability 1.
+4. **UAF Detection:** Deterministic for a freed block while it is in the hardened arena's quarantine queue. A raw C pointer carries no generation, so after same-address reuse a stale pointer resolves to the new allocation and is NOT detected (`arena.rs` module doc). Strict-mode (segment) allocations have no quarantine.
 5. **Buffer Overflow Detection:** Trailing canaries detect writes past allocation with P(miss) <= 2^-64.
 6. **Healing Completeness:** Every libc function has defined healing for every class of invalid input.
 

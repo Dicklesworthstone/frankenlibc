@@ -420,7 +420,7 @@ The Galois proof notes live under `docs/proofs/galois_monotonic_probability_boun
 
 The progression is geometric in spirit but not strictly so; the larger bins jump to power-of-two-friendly steps so the LargeAllocator threshold (`MAX_SMALL_SIZE = 32 KiB`) is reached without wasting slab slots on rarely-used intermediate sizes. The table is declared as `SIZE_TABLE: [usize; NUM_SIZE_CLASSES]` in `crates/frankenlibc-core/src/malloc/size_class.rs`.
 
-Each size class is backed by **64 KB slabs**. Every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`).
+Each size class is backed by **64 KB slabs**. In this core model every allocation carries 32 bytes of fingerprint+canary metadata (`FINGERPRINT_SIZE = 24` and `CANARY_SIZE = 8` declared in `crates/frankenlibc-membrane/src/fingerprint.rs`); the allocator rounds this up to `PER_OBJECT_OVERHEAD = 64` per allocation including alignment padding (declared in `crates/frankenlibc-core/src/malloc/size_class.rs`). On the deployed paths today: hardened-mode allocations come from the membrane's generational arena and DO carry the SipHash fingerprint header and trailing canary (`arena.rs`); strict-mode allocations come from the segment allocator (or the host allocator) and carry NEITHER, so overflow/underflow detection is a hardened-mode property.
 
 ### Thread-Local Magazine Cache
 
@@ -1258,8 +1258,8 @@ These catch failures that escape direct fixture comparison because the metamorph
 | Monotonic safety degradation | Lattice join is commutative, associative, idempotent | Proven by construction |
 | Galois soundness | `γ(α(c)) ≥ c` for all C operations | Proven by construction |
 | Allocation integrity | `P(undetected corruption) ≤ 2⁻⁶⁴` | Bounded by SipHash collision probability |
-| Use-after-free detection | Generation counter mismatch on same-slot reuse | Probability 1.0 |
-| Buffer overflow detection | Trailing canary corruption | `P(miss) ≤ 2⁻⁶⁴` |
+| Use-after-free detection (hardened) | Freed blocks sit in a quarantine queue; access to a quarantined block is recognised | Deterministic while the block is quarantined. A raw C pointer carries no generation, so once the address is reused a stale pointer resolves to the NEW allocation and is not detected (`arena.rs` module doc) |
+| Buffer overflow detection (hardened arena allocations) | Trailing canary checked at `free` | `P(miss) ≤ 2⁻⁶⁴` per corrupted canary; detected when the block is freed, not at the overflowing write |
 | Bloom filter soundness | Zero false negatives | By construction (all insertions are remembered) |
 | Healing completeness | Every libc family has defined healing for every class of invalid input | Enforced by policy-table coverage |
 | SOS certificate validity | Fragmentation, thread safety, size-class invariants | Verified at build time via Cholesky decomposition |
@@ -3298,9 +3298,10 @@ Every category of detectable issue and what surfaces it:
 | Failure | Detected by | Action |
 |---|---|---|
 | Null pointer to libc | Membrane stage 1 (null check) | `EINVAL` / `ReturnSafeDefault` |
-| Use-after-free (any) | Generation counter mismatch | `IgnoreDoubleFree` / `ReturnSafeDefault` / `Deny` |
-| Use-after-free in quarantine window | Arena state `Quarantined` | Same — UAF visible without segfault |
-| Buffer overflow | Trailing canary mismatch | `TruncateWithNull` / `EFAULT` |
+| Use-after-free in quarantine window (hardened) | Arena state `Quarantined` | `IgnoreDoubleFree` / `ReturnSafeDefault` / `Deny` — UAF visible without segfault |
+| Use-after-free after the address is reused | Not detectable: the pointer resolves to the current allocation | — |
+| Buffer overflow through a libc call (hardened) | Bounds check vs `user_size` before the copy | `ClampSize` / `TruncateWithNull` |
+| Buffer overflow by the program's own writes (hardened) | Trailing canary mismatch at `free` | Reported (`FreedWithCanaryCorruption`); the free proceeds |
 | Buffer underflow | Fingerprint header mismatch | `EFAULT` |
 | Double-free | Generation mismatch in arena | `IgnoreDoubleFree` |
 | Foreign-free (pointer not from us) | Bloom + arena absence | `IgnoreForeignFree` |
