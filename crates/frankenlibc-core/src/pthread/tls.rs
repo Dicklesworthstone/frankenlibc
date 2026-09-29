@@ -562,6 +562,40 @@ fn write_tls_value(tid: i32, key_id: usize, expected_seq: u32, value: u64) {
 // Public API
 // ---------------------------------------------------------------------------
 
+/// Publish `registry` as the new RCU version, allocating it with `mmap`
+/// rather than on the heap.
+///
+/// pthread_key_create must not call malloc: a program that brings its own
+/// allocator creates keys while initialising it (jemalloc's malloc_tsd_boot0,
+/// in rustc among others), and a heap allocation here re-entered that half-
+/// initialised allocator, which returned NULL, and fl's allocation-failure
+/// handler aborted the process ('memory allocation of 16384 bytes failed').
+/// glibc keeps its keys in static storage. Versions are never freed (the RCU
+/// update leaks the old one by design), so a private anonymous mapping per
+/// version costs nothing extra; the heap is only the fallback if mmap fails.
+fn publish_registry(registry: KeyRegistry) -> *mut KeyRegistry {
+    use crate::mmap::{MAP_ANONYMOUS, MAP_PRIVATE, PROT_READ, PROT_WRITE};
+    // SAFETY: a fresh private anonymous mapping, owned by nobody else.
+    let mapped = unsafe {
+        syscall::sys_mmap(
+            core::ptr::null_mut(),
+            core::mem::size_of::<KeyRegistry>(),
+            PROT_READ | PROT_WRITE,
+            MAP_PRIVATE | MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    let new_ptr = match mapped {
+        // Page-aligned, so aligned for KeyRegistry.
+        Ok(address) => address.cast::<KeyRegistry>(),
+        Err(_) => return Box::into_raw(Box::new(registry)),
+    };
+    // SAFETY: `new_ptr` is a writable, suitably aligned KeyRegistry-sized block.
+    unsafe { new_ptr.write(registry) };
+    new_ptr
+}
+
 /// Creates a thread-local storage key.
 ///
 /// Equivalent to C `pthread_key_create`. The optional `destructor` is called
@@ -593,7 +627,7 @@ pub fn pthread_key_create(
             key.id = (seq << 10) | (i as u32);
 
             // Publish new version via RCU.
-            let new_ptr = Box::into_raw(Box::new(new_reg));
+            let new_ptr = publish_registry(new_reg);
             let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
             // Old version is intentionally leaked. key_create is called O(1)
             // times; each version is ~16KB. Avoids QSBR synchronize deadlocks.
@@ -633,7 +667,7 @@ pub fn pthread_key_delete(key: PthreadKey) -> i32 {
     new_reg.slots[id].seq = new_reg.slots[id].seq.wrapping_add(1);
 
     // Publish new version via RCU.
-    let new_ptr = Box::into_raw(Box::new(new_reg));
+    let new_ptr = publish_registry(new_reg);
     let _old_ptr = unsafe { KEY_REGISTRY_RCU.update(new_ptr) };
     // Old version intentionally leaked (same rationale as key_create).
     0
@@ -871,17 +905,13 @@ pub(crate) fn reset_tls_state() {
     // Reset RCU global state (epoch, reader slots, callbacks).
     crate::rcu::reset_rcu_state();
 
-    // Publish a fresh empty registry, freeing the old one.
-    // Safe: called only when no threads are using RCU (tests are serialized).
-    let fresh = Box::into_raw(Box::new(KeyRegistry {
+    // Publish a fresh empty registry. The old version is leaked like every
+    // other: versions come from `publish_registry` (mmap, heap only as a
+    // fallback), so there is no single right way to free one.
+    let fresh = publish_registry(KeyRegistry {
         slots: [EMPTY_SLOT; PTHREAD_KEYS_MAX],
-    }));
-    let old = unsafe { KEY_REGISTRY_RCU.update(fresh) };
-    if !old.is_null() {
-        unsafe {
-            let _ = Box::from_raw(old);
-        }
-    }
+    });
+    let _old = unsafe { KEY_REGISTRY_RCU.update(fresh) };
 
     // Clear the table.
     for i in 0..TLS_TABLE_SLOTS {
