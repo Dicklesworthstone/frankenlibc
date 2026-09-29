@@ -3051,9 +3051,21 @@ static GLOBAL_ALLOC_STATS: OnceLock<FlatCombiningStats> = OnceLock::new();
 /// in the child, whose next malloc/free spun at 100% CPU. Acquire it
 /// immediately before the clone and drop the guard immediately after, in the
 /// parent and in the child, before anything else allocates or frees.
-pub(crate) struct MallocForkGuard(Option<&'static FlatCombiningStats>);
+///
+/// The native-fallback table's spin lock is held across the clone for the same
+/// reason: a thread inside `fallback_insert_sized` at that instant left it held
+/// in the child, whose next host-delegated allocation (posix_memalign in
+/// fixture_fork_mt) spun forever -- found under load, 1 run in ~240, after the
+/// host-fork change removed the more frequent arena-lock hang. The two locks
+/// are never nested elsewhere (a malloc inserts into the table, then records
+/// stats), so taking both here cannot deadlock.
+pub(crate) struct MallocForkGuard {
+    stats: Option<&'static FlatCombiningStats>,
+    _fallback_table: FallbackAllocTableGuard,
+}
 
 pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
+    let fallback_table = lock_fallback_alloc_table();
     let stats = GLOBAL_ALLOC_STATS.get();
     if let Some(stats) = stats {
         while stats
@@ -3064,14 +3076,27 @@ pub(crate) fn malloc_fork_prepare() -> MallocForkGuard {
             std::hint::spin_loop();
         }
     }
-    MallocForkGuard(stats)
+    MallocForkGuard {
+        stats,
+        _fallback_table: fallback_table,
+    }
 }
 
 impl Drop for MallocForkGuard {
     fn drop(&mut self) {
-        if let Some(stats) = self.0 {
+        if let Some(stats) = self.stats {
             stats.combiner_lock.store(false, Ordering::Release);
         }
+        // `_fallback_table` releases the table lock when it drops, after this.
+    }
+}
+
+/// In a freshly forked child: release every thread slot's stats lock. Only the
+/// forking thread survives the clone, so a slot lock another thread held then
+/// has no owner left, and a stats sweep over all slots would spin on it.
+pub(crate) fn malloc_fork_child_release_slot_locks() {
+    for slot in &ALLOCATOR_REENTRY_SLOTS {
+        slot.mt_stats_lock.store(false, Ordering::Release);
     }
 }
 
