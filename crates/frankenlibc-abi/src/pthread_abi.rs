@@ -121,6 +121,9 @@ const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
 const PTHREAD_MUTEX_NORMAL_TYPE: i32 = 0;
 const PTHREAD_MUTEX_RECURSIVE_TYPE: i32 = 1;
 const PTHREAD_MUTEX_ERRORCHECK_TYPE: i32 = 2;
+/// glibc's `PTHREAD_MUTEX_KIND_MASK_NP`: the type bits of `__kind`, as the
+/// static initializers leave them.
+const GLIBC_MUTEX_KIND_MASK: u32 = 3;
 const PTHREAD_CANCEL_ENABLE_STATE: c_int = 0;
 const PTHREAD_CANCEL_DISABLE_STATE: c_int = 1;
 const PTHREAD_CANCEL_DEFERRED_TYPE: c_int = 0;
@@ -937,7 +940,20 @@ fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
         return false;
     }
 
-    mtype.store(PTHREAD_MUTEX_NORMAL_TYPE, Ordering::Release);
+    // A never-initialized mutex is a glibc static initializer, and those are not
+    // all zero: PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP and
+    // PTHREAD_ERRORCHECK_MUTEX_INITIALIZER_NP set glibc's `__kind` (byte 16,
+    // which is our lock-count slot) to 1 and 2; the adaptive one sets 3, which
+    // behaves as normal. Adopting them all as NORMAL turned every statically
+    // allocated C++ `std::recursive_mutex` into a plain one, so a nested lock
+    // deadlocked -- libLLVM's constructor does exactly that, which hung `perf`,
+    // mesa and anything else linking LLVM at startup.
+    let static_kind = match count.load(Ordering::Acquire) & GLIBC_MUTEX_KIND_MASK {
+        1 => PTHREAD_MUTEX_RECURSIVE_TYPE,
+        2 => PTHREAD_MUTEX_ERRORCHECK_TYPE,
+        _ => PTHREAD_MUTEX_NORMAL_TYPE,
+    };
+    mtype.store(static_kind, Ordering::Release);
     owner.store(MUTEX_NO_OWNER, Ordering::Release);
     count.store(0, Ordering::Release);
     magic.store(MANAGED_MUTEX_MAGIC, Ordering::Release);
@@ -6651,7 +6667,9 @@ pub unsafe extern "C" fn pthread_mutex_timedlock(
     if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;
     }
-    if !is_managed_mutex(mutex) {
+    // Adopt static initializers as lock/trylock do: glibc takes a timed lock on
+    // a PTHREAD_MUTEX_INITIALIZER mutex (a static C++ std::timed_mutex).
+    if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
     let raw_type = read_mutex_type_word(mutex);
