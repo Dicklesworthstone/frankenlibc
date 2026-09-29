@@ -54,6 +54,16 @@ pub enum NativeFileBufMode {
 }
 
 const GLIBC_IO_MAGIC: i32 = 0xFBAD_0000u32 as i32;
+/// `_IO_UNBUFFERED`, set on every handle whose read/write windows are empty --
+/// all of the registry's. Nothing ever lives in a buffer glibc-aware code can
+/// see, so as far as that code is concerned the stream IS unbuffered. {fmt} 11
+/// (btop, spdlog users) checks exactly this bit before its glibc fast path,
+/// which forces buffer setup with `putc_unlocked(0, f); --f->_IO_write_ptr;`
+/// and then formats into `_IO_write_ptr`: with the windows empty that left the
+/// pointer at -1 and the program crashed writing through it. With the bit set,
+/// fmt prints through fwrite. (fl's own `__flbf`/`__fbufsize` report the real
+/// mode from the stream, not from `_flags`.)
+const NO_VISIBLE_BUFFER: i32 = 0x0002;
 const GLIBC_IO_EOF_SEEN: i32 = 0x0010;
 const GLIBC_IO_ERR_SEEN: i32 = 0x0020;
 const GLIBC_234_IO_FILE_SIZE: usize = 216;
@@ -119,7 +129,7 @@ struct _IO_FILE_Layout {
 impl _IO_FILE_Layout {
     const fn new(fd: c_int) -> Self {
         Self {
-            _flags: GLIBC_IO_MAGIC,
+            _flags: GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER,
             _padding0: 0,
             _IO_read_ptr: ptr::null_mut(),
             _IO_read_end: ptr::null_mut(),
@@ -825,6 +835,10 @@ impl NativeFile {
         self._io_file._IO_write_base = base;
         self._io_file._IO_write_ptr = pos;
         self._io_file._IO_write_end = end;
+        // A published window is a real buffer again.
+        if !base.is_null() {
+            self._io_file._flags &= !NO_VISIBLE_BUFFER;
+        }
     }
 
     fn sync_lock_ptr(&mut self) {
@@ -1850,7 +1864,7 @@ pub(crate) fn register_stdio_handle(
     glibc_flags: i32,
 ) -> Option<*mut c_void> {
     let mut file = NativeFile::new(fd, native_open_flags, NativeFileBufMode::None);
-    file._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
+    file._io_file._flags = GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
     // glibc marks fd-less streams (fmemopen, fopencookie) with _fileno == -2.
     file._io_file._fileno = if fd < 0 { -2 } else { fd };
     let mut reg = native_stream_registry();
@@ -1877,7 +1891,8 @@ pub(crate) unsafe fn reset_stdio_handle_header(ptr: *mut c_void, fd: c_int, glib
     let file = ptr.cast::<NativeFile>();
     // SAFETY: caller guarantees `ptr` is a live NativeFile.
     unsafe {
-        (*file)._io_file._flags = GLIBC_IO_MAGIC | (glibc_flags & !GLIBC_IO_MAGIC);
+        (*file)._io_file._flags =
+            GLIBC_IO_MAGIC | NO_VISIBLE_BUFFER | (glibc_flags & !GLIBC_IO_MAGIC);
         (*file)._io_file._fileno = fd;
         (*file)._io_file._mode = 0;
     }

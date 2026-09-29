@@ -173,6 +173,8 @@ SCANF_MALLOC_BIN="${BIN_DIR}/fixture_scanf_malloc"
 cc -O2 "${ROOT}/tests/integration/fixture_scanf_malloc.c" -o "${SCANF_MALLOC_BIN}"
 MAIN_NEG_BIN="${BIN_DIR}/fixture_main_negative_return"
 cc -O2 "${ROOT}/tests/integration/fixture_main_negative_return.c" -o "${MAIN_NEG_BIN}"
+FILE_WINDOW_BIN="${BIN_DIR}/fixture_file_buffer_window"
+cc -O2 "${ROOT}/tests/integration/fixture_file_buffer_window.c" -o "${FILE_WINDOW_BIN}"
 RANDOM_MB_BIN="${BIN_DIR}/fixture_random_multibyte"
 cc -O2 "${ROOT}/tests/integration/fixture_random_multibyte.c" -o "${RANDOM_MB_BIN}"
 TZ_GLOBALS_BIN="${BIN_DIR}/fixture_time_zone_globals"
@@ -830,6 +832,7 @@ EOF
   run_corpus_case "${mode}" "getopt_long_diagnostics" "${GETOPT_DIAG_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "scanf_m_allocation" "${SCANF_MALLOC_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "main_negative_return" "${MAIN_NEG_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "file_buffer_window" "${FILE_WINDOW_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then
