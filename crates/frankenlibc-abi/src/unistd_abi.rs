@@ -3178,6 +3178,34 @@ unsafe extern "C" {
 use frankenlibc_core::getopt as getopt_core;
 use frankenlibc_core::getopt::{ArgRef, GetoptDiagnostic, GetoptState, ShortOutcome, StepOutcome};
 
+/// glibc keeps `optopt` in its private getopt state and copies it OUT to the
+/// global at the end of every call; the global is never read back. A program's
+/// own write to `optopt` therefore does not survive the next call, and
+/// resetting with `optind = 0` does not clear it: after an error left 's',
+/// glibc reports 115 on every later call until the next error. fl used the
+/// global as the state and kept the program's value. Starts at 0, as glibc's
+/// zero-initialised getopt_data does (the global itself starts at '?').
+static GETOPT_OPTOPT: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// Loads the private `optopt` into the global for the call, and saves the
+/// global back when the call returns, whichever way it returns.
+struct GetoptOptoptScope;
+
+impl GetoptOptoptScope {
+    fn enter() -> Self {
+        // SAFETY: getopt is not thread-safe by contract; plain global access.
+        unsafe { libc_optopt = GETOPT_OPTOPT.load(std::sync::atomic::Ordering::Relaxed) };
+        GetoptOptoptScope
+    }
+}
+
+impl Drop for GetoptOptoptScope {
+    fn drop(&mut self) {
+        // SAFETY: as in `enter`.
+        GETOPT_OPTOPT.store(unsafe { libc_optopt }, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 /// Persistent scanner state across `parse_getopt_short` calls.
 ///
 /// Only `nextchar` carries cross-call meaning here; `optind`, `optopt`,
@@ -3973,6 +4001,7 @@ pub unsafe extern "C" fn getopt(
     argv: *const *mut c_char,
     optstring: *const c_char,
 ) -> c_int {
+    let _optopt = GetoptOptoptScope::enter();
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         argv as usize,
@@ -4039,6 +4068,7 @@ pub unsafe extern "C" fn getopt_long(
     longopts: *const libc::option,
     longindex: *mut c_int,
 ) -> c_int {
+    let _optopt = GetoptOptoptScope::enter();
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         argv as usize,
@@ -4091,6 +4121,7 @@ pub unsafe extern "C" fn getopt_long_only(
     longopts: *const libc::option,
     longindex: *mut c_int,
 ) -> c_int {
+    let _optopt = GetoptOptoptScope::enter();
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Stdio,
         argv as usize,

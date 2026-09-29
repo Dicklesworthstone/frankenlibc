@@ -5200,8 +5200,10 @@ pub static mut opterr: c_int = 1;
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut optind: c_int = 1;
 
+/// '?' before the first getopt call, as glibc initialises it (programs get this
+/// value through their copy relocation).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static mut optopt: c_int = 0;
+pub static mut optopt: c_int = b'?' as c_int;
 
 // ==========================================================================
 // sys_* error/signal tables (7 symbols)
