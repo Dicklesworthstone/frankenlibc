@@ -7637,8 +7637,21 @@ pub unsafe extern "C" fn realpath(
     // /proc is unavailable (chroot / minimal container / sandbox) — fall back to
     // pure-userspace resolution, which is what glibc does unconditionally.
     // (bd-2g7oyh.188)
+    //
+    // Also fall back when the link text is not a path. For a pipe, socket or
+    // anon inode the kernel reports "pipe:[N]" and the like, and for an unlinked
+    // file "/x (deleted)"; glibc walks the components, reads that same text as a
+    // relative link under /proc/<pid>/fd, and fails with ENOENT. fl returned
+    // "pipe:[N]" as the canonical name of /dev/stdin, and coreutils tail then
+    // could not open it: every `... | tail -1` failed.
     let resolved: Vec<u8> = match n {
-        Ok(len) if len > 0 => buf[..len as usize].to_vec(),
+        Ok(len)
+            if len > 0
+                && buf[0] == b'/'
+                && !buf[..len as usize].ends_with(b" (deleted)") =>
+        {
+            buf[..len as usize].to_vec()
+        }
         _ => {
             let path_bytes = unsafe { std::slice::from_raw_parts(path.cast::<u8>(), _path_len) };
             match realpath_resolve_userspace(path_bytes) {
