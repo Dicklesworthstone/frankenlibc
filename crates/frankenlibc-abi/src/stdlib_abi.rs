@@ -7645,11 +7645,7 @@ pub unsafe extern "C" fn realpath(
     // "pipe:[N]" as the canonical name of /dev/stdin, and coreutils tail then
     // could not open it: every `... | tail -1` failed.
     let resolved: Vec<u8> = match n {
-        Ok(len)
-            if len > 0
-                && buf[0] == b'/'
-                && !buf[..len as usize].ends_with(b" (deleted)") =>
-        {
+        Ok(len) if len > 0 && buf[0] == b'/' && !buf[..len as usize].ends_with(b" (deleted)") => {
             buf[..len as usize].to_vec()
         }
         _ => {
