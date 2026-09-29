@@ -817,7 +817,7 @@ unsafe fn startup_phase0_impl(
     rtld_fini: Option<HookFn>,
     stack_end: *mut c_void,
     publish_environment: bool,
-) -> c_int {
+) -> Result<c_int, ()> {
     let started = Instant::now();
     let mut path = Vec::with_capacity(16);
     path.push(StartupCheckpoint::Entry);
@@ -846,7 +846,7 @@ unsafe fn startup_phase0_impl(
             SecureModeState::Unknown,
             started,
         );
-        return -1;
+        return Err(());
     }
 
     path.push(StartupCheckpoint::ValidateMainPointer);
@@ -863,7 +863,7 @@ unsafe fn startup_phase0_impl(
             SecureModeState::Unknown,
             started,
         );
-        return -1;
+        return Err(());
     };
 
     path.push(StartupCheckpoint::ValidateArgvPointer);
@@ -880,7 +880,7 @@ unsafe fn startup_phase0_impl(
             SecureModeState::Unknown,
             started,
         );
-        return -1;
+        return Err(());
     }
 
     path.push(StartupCheckpoint::ScanArgvVector);
@@ -900,7 +900,7 @@ unsafe fn startup_phase0_impl(
                 SecureModeState::Unknown,
                 started,
             );
-            return -1;
+            return Err(());
         }
     };
 
@@ -918,7 +918,7 @@ unsafe fn startup_phase0_impl(
             SecureModeState::Unknown,
             started,
         );
-        return -1;
+        return Err(());
     }
 
     // SAFETY: argv_count >= normalized_argc and argv vector has a terminating null.
@@ -940,7 +940,7 @@ unsafe fn startup_phase0_impl(
                 SecureModeState::Unknown,
                 started,
             );
-            return -1;
+            return Err(());
         }
     };
 
@@ -970,7 +970,7 @@ unsafe fn startup_phase0_impl(
             secure_evidence.state,
             started,
         );
-        return -1;
+        return Err(());
     }
     path.push(StartupCheckpoint::ClassifySecureMode);
 
@@ -1029,7 +1029,7 @@ unsafe fn startup_phase0_impl(
                 secure_evidence.state,
                 started,
             );
-            return -1;
+            return Err(());
         }
     }
 
@@ -1075,7 +1075,7 @@ unsafe fn startup_phase0_impl(
         secure_evidence.state,
         started,
     );
-    rc
+    Ok(rc)
 }
 
 /// libc-compatible startup symbol. Uses owned startup by default (bd-73h55.1).
@@ -1095,11 +1095,14 @@ pub unsafe extern "C" fn __libc_start_main(
 
     if use_owned_startup() {
         // SAFETY: owned startup path (default since bd-73h55.1).
-        let phase0_rc = unsafe {
+        // Ok carries main's status, which may be negative: main returning -105
+        // is exit status 151, not a startup failure. Reading `rc >= 0` as
+        // "started" sent such a program down the failure path and returned into
+        // _start's trap instruction (JxrEncApp died with SIGSEGV).
+        if let Ok(main_rc) = unsafe {
             startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, true)
-        };
-        if phase0_rc >= 0 {
-            return finish_libc_start_main_success(phase0_rc);
+        } {
+            return finish_libc_start_main_success(main_rc);
         }
 
         let phase0 = startup_policy_snapshot_for_tests();
@@ -1137,7 +1140,7 @@ pub unsafe extern "C" fn __libc_start_main(
             return -1;
         }
 
-        return phase0_rc;
+        return -1;
     }
 
     // SAFETY: forwards to host libc startup for normal LD_PRELOAD operation.
@@ -1199,6 +1202,7 @@ pub unsafe extern "C" fn __frankenlibc_startup_phase0(
 ) -> c_int {
     // SAFETY: dedicated fixture path invokes the same validated implementation.
     unsafe { startup_phase0_impl(main, argc, ubp_av, init, fini, rtld_fini, stack_end, false) }
+        .unwrap_or(-1)
 }
 
 // ===========================================================================
