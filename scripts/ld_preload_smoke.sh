@@ -181,6 +181,8 @@ REALPATH_FD_BIN="${BIN_DIR}/fixture_realpath_fd_links"
 cc -O2 "${ROOT}/tests/integration/fixture_realpath_fd_links.c" -o "${REALPATH_FD_BIN}"
 FCNTL64_BIN="${BIN_DIR}/fixture_fcntl64_args"
 cc -O2 "${ROOT}/tests/integration/fixture_fcntl64_args.c" -o "${FCNTL64_BIN}"
+CUSTOM_MALLOC_BIN="${BIN_DIR}/fixture_custom_malloc_init"
+cc -O2 "${ROOT}/tests/integration/fixture_custom_malloc_init.c" -o "${CUSTOM_MALLOC_BIN}" -lpthread
 RANDOM_MB_BIN="${BIN_DIR}/fixture_random_multibyte"
 cc -O2 "${ROOT}/tests/integration/fixture_random_multibyte.c" -o "${RANDOM_MB_BIN}"
 TZ_GLOBALS_BIN="${BIN_DIR}/fixture_time_zone_globals"
@@ -842,6 +844,7 @@ EOF
   run_corpus_case "${mode}" "stdio_flush_points" "${FLUSH_POINTS_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "realpath_fd_links" "${REALPATH_FD_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "fcntl64_args" "${FCNTL64_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "custom_malloc_init" "${CUSTOM_MALLOC_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then

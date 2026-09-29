@@ -5877,18 +5877,43 @@ pub unsafe extern "C" fn pthread_atfork(
     parent: Option<unsafe extern "C" fn()>,
     child: Option<unsafe extern "C" fn()>,
 ) -> c_int {
-    // Register with native handler list AND with glibc (for interop with
-    // non-FrankenLibC code that calls fork() directly via glibc).
-    let mut reg = match ATFORK_HANDLERS.lock() {
-        Ok(r) => r,
-        Err(_) => return libc::ENOMEM,
-    };
-    reg.push(AtforkHandlers {
+    let handlers = AtforkHandlers {
         prepare,
         parent,
         child,
-    });
-    0
+    };
+    // Never allocate while holding the registry lock, and not at all for the
+    // first ATFORK_INLINE registrations. An allocator that registers fork
+    // handlers while initialising (jemalloc, mimalloc, a program's own malloc)
+    // is re-entered by any allocation here; with the lock held, its nested
+    // pthread_atfork blocked on the same non-recursive mutex forever. glibc
+    // keeps its first handlers in static storage for the same reason.
+    loop {
+        let spare = {
+            let Ok(mut reg) = ATFORK_HANDLERS.lock() else {
+                return libc::ENOMEM;
+            };
+            if reg.try_push(handlers) {
+                return 0;
+            }
+            reg.spill.capacity()
+        };
+        // Grow the spill outside the lock; a nested registration may run here.
+        let mut bigger: Vec<AtforkHandlers> = Vec::with_capacity((spare * 2).max(16));
+        let old = {
+            let Ok(mut reg) = ATFORK_HANDLERS.lock() else {
+                return libc::ENOMEM;
+            };
+            if reg.spill.capacity() > spare {
+                None // someone else grew it meanwhile: retry the push
+            } else {
+                bigger.extend_from_slice(&reg.spill);
+                Some(core::mem::replace(&mut reg.spill, bigger))
+            }
+        };
+        // The replaced buffer is freed here, after unlocking.
+        drop(old);
+    }
 }
 
 /// Fork handler triple registered by `pthread_atfork`.
@@ -5903,9 +5928,60 @@ struct AtforkHandlers {
 // SAFETY: Function pointers are Send+Sync (they're just code addresses).
 unsafe impl Send for AtforkHandlers {}
 
+/// Handlers kept inline, without any allocation, before the spill `Vec`.
+const ATFORK_INLINE: usize = 32;
+
+/// Registered atfork handlers in registration order: `inline[..inline_len]`,
+/// then `spill`.
+struct AtforkRegistry {
+    inline: [Option<AtforkHandlers>; ATFORK_INLINE],
+    inline_len: usize,
+    spill: Vec<AtforkHandlers>,
+}
+
+impl AtforkRegistry {
+    const fn new() -> Self {
+        Self {
+            inline: [None; ATFORK_INLINE],
+            inline_len: 0,
+            spill: Vec::new(),
+        }
+    }
+
+    /// Append without allocating; `false` when the spill must grow first.
+    fn try_push(&mut self, handlers: AtforkHandlers) -> bool {
+        if self.inline_len < ATFORK_INLINE {
+            self.inline[self.inline_len] = Some(handlers);
+            self.inline_len += 1;
+            true
+        } else if self.spill.len() < self.spill.capacity() {
+            self.spill.push(handlers);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.inline_len + self.spill.len()
+    }
+
+    fn snapshot(&self) -> Vec<AtforkHandlers> {
+        self.inline[..self.inline_len]
+            .iter()
+            .flatten()
+            .copied()
+            .chain(self.spill.iter().copied())
+            .collect()
+    }
+
+    fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
 /// Registry of atfork handlers.
-static ATFORK_HANDLERS: LazyLock<Mutex<Vec<AtforkHandlers>>> =
-    LazyLock::new(|| Mutex::new(Vec::new()));
+static ATFORK_HANDLERS: Mutex<AtforkRegistry> = Mutex::new(AtforkRegistry::new());
 
 /// Called before fork (from our fork() wrapper) — runs prepare handlers in LIFO order.
 // Snapshot-and-release: never invoke user callbacks while holding ATFORK_HANDLERS.
@@ -5914,7 +5990,7 @@ static ATFORK_HANDLERS: LazyLock<Mutex<Vec<AtforkHandlers>>> =
 #[allow(dead_code)]
 pub(crate) fn run_atfork_prepare() -> AtforkSnapshot {
     let snapshot: Vec<AtforkHandlers> = match ATFORK_HANDLERS.lock() {
-        Ok(g) => g.clone(),
+        Ok(g) => g.snapshot(),
         Err(_) => return AtforkSnapshot(Vec::new()),
     };
     for h in snapshot.iter().rev() {
