@@ -1,6 +1,7 @@
-// Where a fully buffered stream flushes, made observable: a child's stdout and
-// stderr share one pipe, so each unbuffered stderr marker lands exactly at the
-// point stdout had flushed to.
+// Where a fully buffered stream flushes, made observable: stdout and stderr
+// share one pipe, so each unbuffered stderr marker lands exactly at the point
+// stdout had flushed to. (In-process, no fork: the smoke battery's perf gate
+// times the whole fixture, and fork cost is tracked separately.)
 //
 // glibc sizes a stream buffer as BUFSIZ or the fd's smaller st_blksize (4096
 // for a pipe, 1024 for /proc), and on overflow tops the buffer up, flushes it,
@@ -30,17 +31,18 @@ static void child(void) {
 int main(void) {
     int p[2];
     if (pipe(p) != 0) return 1;
-    fflush(stdout);
-    pid_t pid = fork();
-    if (pid == 0) {
-        dup2(p[1], 1);
-        dup2(p[1], 2);
-        close(p[0]);
-        close(p[1]);
-        child();
-        return 0;
-    }
+    // The ~40 KB written below fits the pipe (64 KB), so nothing blocks.
+    int saved_out = dup(1), saved_err = dup(2);
+    dup2(p[1], 1);
+    dup2(p[1], 2);
     close(p[1]);
+    // stdout's buffer is sized when first used, here, against the pipe.
+    child();
+    fflush(stdout);
+    dup2(saved_out, 1);
+    dup2(saved_err, 2);
+    close(saved_out);
+    close(saved_err);
     // Summarize the stream: runs of stdout bytes as <count x letter>, markers verbatim.
     char buf[4096];
     char run_ch = 0;
@@ -68,7 +70,7 @@ int main(void) {
     }
     if (run) printf("[%ld %c]", run, run_ch);
     putchar('\n');
-    waitpid(pid, NULL, 0);
+    close(p[0]);
 
     int q[2];
     if (pipe(q) != 0) return 1;
