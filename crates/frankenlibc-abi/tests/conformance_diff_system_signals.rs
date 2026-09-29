@@ -24,8 +24,6 @@ extern "C" fn on_sigint(_sig: c_int) {
     SIGINT_FIRED.fetch_add(1, Ordering::SeqCst);
 }
 
-type SystemFn = unsafe extern "C" fn(*const c_char) -> c_int;
-
 fn install_sigint_handler() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
@@ -37,12 +35,12 @@ fn install_sigint_handler() {
 }
 
 /// Run `sys` on a command that signals the parent, returning (fired, status).
-fn run(sys: SystemFn) -> (i32, c_int) {
+fn run(sys: impl Fn(*const c_char) -> c_int) -> (i32, c_int) {
     install_sigint_handler();
     SIGINT_FIRED.store(0, Ordering::SeqCst);
     // The shell ($PPID == this process) signals us, then exits 7.
     let cmd = c"kill -INT $PPID; exit 7";
-    let status = unsafe { sys(cmd.as_ptr()) };
+    let status = sys(cmd.as_ptr());
     let fired = SIGINT_FIRED.load(Ordering::SeqCst);
     (fired, status)
 }
@@ -50,7 +48,8 @@ fn run(sys: SystemFn) -> (i32, c_int) {
 #[test]
 fn system_ignores_sigint_in_caller_like_glibc() {
     // glibc reference.
-    let (g_fired, g_status) = run(libc::system);
+    // SAFETY: a NUL-terminated command string.
+    let (g_fired, g_status) = run(|cmd| unsafe { libc::system(cmd) });
     assert_eq!(
         g_fired, 0,
         "glibc system() should keep SIGINT ignored in the caller"
@@ -61,7 +60,9 @@ fn system_ignores_sigint_in_caller_like_glibc() {
     );
 
     // fl must match.
-    let (f_fired, f_status) = run(fl::system);
+    // fl's system is extern "C-unwind" (a cancellation point, 7660478f3).
+    // SAFETY: as above.
+    let (f_fired, f_status) = run(|cmd| unsafe { fl::system(cmd) });
     assert_eq!(
         f_fired, g_fired,
         "fl system() let SIGINT through to the caller (fired={f_fired}, glibc={g_fired})"
