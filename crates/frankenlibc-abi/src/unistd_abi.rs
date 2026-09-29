@@ -185,7 +185,20 @@ fn aligned_output_offset(base: *const c_char, min_offset: usize, align: usize) -
     min_offset.checked_add(padding)
 }
 
-/// Query the system page size via AT_PAGESZ from /proc/self/auxv, cached.
+/// One auxiliary-vector entry, `None` when absent or zero.
+///
+/// Through `getauxval`, which reads the vector with raw syscalls and never
+/// allocates. These queries used to `std::fs::read("/proc/self/auxv")`, which
+/// allocates: a program whose malloc is its own (jemalloc in rustc) asks for
+/// the page size while initialising that malloc, holding its init lock, and
+/// fl's allocation re-entered it -- `rustc --version` hung forever.
+fn auxv_entry(kind: libc::c_ulong) -> Option<usize> {
+    // SAFETY: getauxval only reads the process auxiliary vector.
+    let value = unsafe { libc::getauxval(kind) };
+    (value != 0).then_some(value as usize)
+}
+
+/// Query the system page size via AT_PAGESZ, cached.
 /// Falls back to 4096 (x86_64 default) if the query fails.
 fn runtime_page_size() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -194,32 +207,12 @@ fn runtime_page_size() -> usize {
     if cached != 0 {
         return cached;
     }
-    // Read AT_PAGESZ (type 6) from /proc/self/auxv
-    let page_sz = (|| -> Option<usize> {
-        let data = std::fs::read("/proc/self/auxv").ok()?;
-        // auxv entries are pairs of usize (type, value)
-        let word = std::mem::size_of::<usize>();
-        let entry_size = word * 2;
-        for chunk in data.chunks_exact(entry_size) {
-            let a_type = usize::from_ne_bytes(chunk[..word].try_into().ok()?);
-            let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().ok()?);
-            if a_type == 6 {
-                // AT_PAGESZ
-                return Some(a_val);
-            }
-            if a_type == 0 {
-                break; // AT_NULL
-            }
-        }
-        None
-    })()
-    .unwrap_or(4096);
+    let page_sz = auxv_entry(libc::AT_PAGESZ).unwrap_or(4096);
     CACHED.store(page_sz, Ordering::Relaxed);
     page_sz
 }
 
-/// Query the kernel's minimum signal-stack size via AT_MINSIGSTKSZ from
-/// /proc/self/auxv, cached.
+/// Query the kernel's minimum signal-stack size via AT_MINSIGSTKSZ, cached.
 ///
 /// glibc answers `sysconf(_SC_MINSIGSTKSZ)` out of `GLRO(dl_minsigstacksize)`,
 /// which the loader seeds from the auxiliary vector. It is therefore a
@@ -230,7 +223,7 @@ fn runtime_page_size() -> usize {
 /// fall back to the architecture's constant only when the kernel does not
 /// publish the entry at all.
 ///
-/// Same /proc/self/auxv walk as `runtime_page_size` above; the two are kept
+/// Read through `auxv_entry`, like `runtime_page_size` above; the two are kept
 /// separate because each caches a different entry.
 /// One CPU cache level's `_SC_LEVEL*_CACHE_*` answers, in bytes / ways / bytes.
 #[derive(Clone, Copy)]
@@ -373,24 +366,9 @@ fn runtime_min_sigstksz() -> libc::c_long {
     if cached != 0 {
         return cached as libc::c_long;
     }
-    let value = (|| -> Option<usize> {
-        let data = std::fs::read("/proc/self/auxv").ok()?;
-        let word = std::mem::size_of::<usize>();
-        for chunk in data.chunks_exact(word * 2) {
-            let a_type = usize::from_ne_bytes(chunk[..word].try_into().ok()?);
-            let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().ok()?);
-            if a_type == libc::AT_MINSIGSTKSZ as usize {
-                // A published-but-zero entry is not a usable answer; treat it
-                // as absent so the architecture constant is used instead.
-                return (a_val != 0).then_some(a_val);
-            }
-            if a_type == 0 {
-                break; // AT_NULL
-            }
-        }
-        None
-    })()
-    .unwrap_or(libc::MINSIGSTKSZ);
+    // A published-but-zero entry is not a usable answer; the architecture
+    // constant is used instead (auxv_entry treats 0 as absent).
+    let value = auxv_entry(libc::AT_MINSIGSTKSZ).unwrap_or(libc::MINSIGSTKSZ);
     CACHED.store(value, Ordering::Relaxed);
     value as libc::c_long
 }
@@ -20446,37 +20424,23 @@ pub unsafe extern "C" fn __cxa_get_globals_fast() -> *mut CxaEhGlobals {
 pub static __stack_chk_guard: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// Initialize __stack_chk_guard from AT_RANDOM in /proc/self/auxv.
+/// Initialize __stack_chk_guard from AT_RANDOM.
 /// Called during startup before main().
 pub(crate) fn init_stack_canary() {
     use std::sync::atomic::Ordering;
     // Read AT_RANDOM (type 25) from auxv — it points to 16 random bytes
     // provided by the kernel.
-    let canary = (|| -> Option<usize> {
-        let data = std::fs::read("/proc/self/auxv").ok()?;
-        let word = std::mem::size_of::<usize>();
-        let entry_size = word * 2;
-        for chunk in data.chunks_exact(entry_size) {
-            let a_type = usize::from_ne_bytes(chunk[..word].try_into().ok()?);
-            let a_val = usize::from_ne_bytes(chunk[word..word * 2].try_into().ok()?);
-            if a_type == 25 {
-                // AT_RANDOM: a_val is a pointer to 16 random bytes in memory.
-                // Read 8 bytes from that address as our canary.
-                let ptr = a_val as *const u8;
-                let mut bytes = [0u8; 8];
-                unsafe { std::ptr::copy_nonoverlapping(ptr, bytes.as_mut_ptr(), 8) };
-                let mut val = usize::from_ne_bytes(bytes);
-                // Force low byte to 0x00 (NUL) per glibc convention.
-                val &= !0xFF;
-                return Some(val);
-            }
-            if a_type == 0 {
-                break;
-            }
-        }
-        None
-    })()
-    .unwrap_or(0x00000aff0a0d0000); // Fallback: static canary with sentinel bytes
+    let canary = auxv_entry(libc::AT_RANDOM)
+        .map(|random| {
+            // AT_RANDOM points to 16 random bytes the kernel placed in memory.
+            let mut bytes = [0u8; 8];
+            // SAFETY: the kernel guarantees 16 readable bytes at AT_RANDOM.
+            unsafe { std::ptr::copy_nonoverlapping(random as *const u8, bytes.as_mut_ptr(), 8) };
+            // Force the low byte to 0x00 (NUL), as glibc does, so a string
+            // overflow cannot read or write the canary.
+            usize::from_ne_bytes(bytes) & !0xFF
+        })
+        .unwrap_or(0x00000aff0a0d0000); // Fallback: static canary with sentinel bytes
     __stack_chk_guard.store(canary, Ordering::Release);
 }
 // ===========================================================================
