@@ -2878,8 +2878,16 @@ impl<'a> PikeVm<'a> {
             // and stepping to `pc+1`, an epsilon path leads back to `pc` (to consume
             // again). This is structure-agnostic: `+` routes the back-edge through a
             // post-`Split`, `*` through a `Jump` to a leading `Split`, etc.
+            //
+            // And the back-edge must be Save-free: the bulk skip in `run_from` keeps
+            // the loop body's slots as they were at the run's first byte, so a group
+            // nested inside the repetition (`(([a-z])+) `) would keep its first
+            // iteration's start where POSIX wants the last one's ([1,5] reported
+            // for glibc's [4,5] on "jumps ").
             visited.iter_mut().for_each(|v| *v = false);
-            if self.epsilon_reaches(pc + 1, pc, &mut visited) {
+            if self.epsilon_reaches(pc + 1, pc, &mut visited)
+                && !self.epsilon_reaches_through_save(pc + 1, pc)
+            {
                 table[pc] = Some(*set);
             }
         }
@@ -2889,6 +2897,37 @@ impl<'a> PikeVm<'a> {
     /// True iff `from` reaches `target` over epsilon (`Split`/`Jump`/`Save`/
     /// `RepeatExitGuard`) edges without consuming input. `visited` is reusable
     /// scratch (cleared by the caller); `Match`/`Accept` indices are leaves.
+    /// True iff some epsilon path from `from` to `target` passes through a `Save`.
+    fn epsilon_reaches_through_save(&self, from: usize, target: usize) -> bool {
+        let n = self.nfa.len();
+        // State: (pc, a Save seen on the way here).
+        let mut seen = vec![[false; 2]; n];
+        let mut stack = vec![(from, false)];
+        while let Some((p, saved)) = stack.pop() {
+            if p == target {
+                if saved {
+                    return true;
+                }
+                continue;
+            }
+            if p >= n || seen[p][saved as usize] {
+                continue;
+            }
+            seen[p][saved as usize] = true;
+            match &self.nfa[p] {
+                NfaInstr::Split(a, b) => {
+                    stack.push((*a, saved));
+                    stack.push((*b, saved));
+                }
+                NfaInstr::Jump(t) => stack.push((*t, saved)),
+                NfaInstr::Save(_) => stack.push((p + 1, true)),
+                NfaInstr::RepeatExitGuard { .. } => stack.push((p + 1, saved)),
+                NfaInstr::Match(_) | NfaInstr::Accept => {}
+            }
+        }
+        false
+    }
+
     fn epsilon_reaches(&self, from: usize, target: usize, visited: &mut [bool]) -> bool {
         let mut stack = vec![from];
         while let Some(p) = stack.pop() {
@@ -3020,6 +3059,16 @@ impl<'a> PikeVm<'a> {
             // reach alone (it confirms the start; `run_from` still walks the run to
             // extract the bounds). `run_from` is single-start, so the pair helper's
             // equal-start guard is satisfied with a shared dummy start.
+            //
+            // Stop ONE BYTE SHORT of the run's end. The loop body carries no Save,
+            // but the exit thread already went through the closure that closes the
+            // group, so its copy of the group's end slot was stamped where the set
+            // was derived -- the run's first byte. Landing on `e` kept that stale
+            // stamp: `([a-z]+) ` on "jumps " reported group 1 as [0,1], and sed's
+            // `s/([a-z]+) ([a-z]+)/\2 \1/` swapped "j" instead of "jumps". At
+            // `e - 1` the stale exit thread dies on the last class byte (its first
+            // byte is disjoint from the class) and the loop body consuming that byte
+            // re-derives the exit closure at `e`, with the right stamp.
             if best.is_none()
                 && sp < input_len
                 && let Some(class) = self.bulk_loop_class_rf(bulk_table, &current)
@@ -3029,7 +3078,7 @@ impl<'a> PikeVm<'a> {
                     .iter()
                     .position(|&b| !class_set_contains(&class, b))
                     .map_or(input_len, |o| sp + o);
-                sp = e;
+                sp = e - 1;
             }
         }
 

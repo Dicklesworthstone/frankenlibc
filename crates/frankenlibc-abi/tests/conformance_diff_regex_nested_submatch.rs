@@ -231,3 +231,39 @@ fn single_level_and_once_matched_groups_match_glibc_exactly() {
         }
     }
 }
+
+/// Captures around a `class+`/`class*` run followed by more pattern: EVERY
+/// submatch must equal glibc's (no nullable nesting here, so no artifact).
+///
+/// The Pike VM's bulk class-run fast-forward kept the capture stamps from the
+/// run's first byte: `([a-z]+) ` on "jumps " gave group 1 = [0,1], so sed's
+/// `s/([a-z]+) ([a-z]+)/\2 \1/` swapped "j" instead of "jumps"; with a group
+/// inside the repetition the inner start stayed at the first iteration.
+#[test]
+fn class_run_captures_match_glibc() {
+    let s = "jumps epsilon";
+    let cases: [(&str, &str); 14] = [
+        ("([a-z]+) ([a-z]+)", s),
+        ("([a-z]+) ", s),
+        ("([a-z]*) ", s),
+        ("([a-z]+) e", s),
+        ("([a-z]+)[ ]", s),
+        ("(j[a-z]+) ", s),
+        ("([^ ]+) ", s),
+        ("(([a-z])+) ", s),
+        ("(([a-z])*)e", s),
+        ("([a-z]+)([a-z]+) ", s),
+        ("x([a-z]+)$", "xabc"),
+        ("([0-9]+)[.]([0-9]+)", "v12345.678x"),
+        ("([a-z]+)=([^;]*);", "key=some value;rest"),
+        ("([[:alpha:]]+)([[:digit:]]+)", "abc12345 z"),
+    ];
+    for (pat, inp) in cases {
+        let fl_out = fl_run(pat, inp);
+        let glibc_out = glibc_run(pat, inp);
+        assert_eq!(
+            fl_out, glibc_out,
+            "submatches diverged for {pat:?} on {inp:?}: fl={fl_out:?} glibc={glibc_out:?}"
+        );
+    }
+}
