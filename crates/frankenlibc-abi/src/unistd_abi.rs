@@ -5218,6 +5218,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // acquire the membrane pipeline guard, and serialize against in-flight
     // setenv via ENVIRON_LOCK before the syscall. (Same hazard class as
     // bd-sq7ae and the round-4 fork() ENVIRON_LOCK fix.)
+    let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
@@ -5231,7 +5232,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // SAFETY: fork via raw syscall
-    let pid = syscall::sys_clone_fork(0);
+    let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
@@ -9624,6 +9625,7 @@ pub unsafe extern "C" fn forkpty(
         return -1;
     }
 
+    let host_fork = crate::process_abi::host_fork_fn();
     let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
@@ -9638,7 +9640,7 @@ pub unsafe extern "C" fn forkpty(
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
-    let pid = syscall::sys_clone_fork(libc::SIGCHLD as usize);
+    let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.

@@ -219,6 +219,52 @@ unsafe fn execvp_via_execve(file: *const c_char, argv: *const *const c_char) -> 
 // fork
 // ---------------------------------------------------------------------------
 
+/// Host glibc's `fork`, when a host libc sits underneath (preload builds).
+pub(crate) type HostForkFn = unsafe extern "C" fn() -> libc::pid_t;
+
+/// Resolve [`HostForkFn`]. Call it BEFORE taking any fork lock: the first
+/// resolution may read and allocate.
+pub(crate) fn host_fork_fn() -> Option<HostForkFn> {
+    #[cfg(feature = "standalone")]
+    {
+        None
+    }
+    #[cfg(not(feature = "standalone"))]
+    {
+        static HOST_FORK: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+        crate::host_resolve::resolve_host_symbol_cached(&HOST_FORK, "fork")
+            // SAFETY: the address is host libc's `pid_t fork(void)`.
+            .map(|addr| unsafe { std::mem::transmute::<usize, HostForkFn>(addr) })
+    }
+}
+
+/// The clone step of `fork`/`daemon`/`forkpty`, run with every fl fork lock held.
+///
+/// With host glibc loaded this is host `fork`, not a raw clone: fl's hardened
+/// and bootstrap paths still allocate from host malloc, whose arena locks only
+/// glibc's own fork takes before cloning and resets in the child. A raw clone
+/// let the child inherit an arena lock another parent thread held at that
+/// instant, and the child's next host allocation blocked forever
+/// (fixture_fork_mt, hardened: ~1 run in 10 hung; the child sat in
+/// futex_wait on the arena mutex at a 64 MiB-aligned heap + 0x30, the same
+/// word a parent thread was waiting on). Host fork also refreshes the TCB's
+/// cached tid. Its own atfork list is not ours (fl implements
+/// pthread_atfork), so no handler runs twice.
+pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_t, c_int> {
+    match host_fork {
+        Some(host_fork) => {
+            // SAFETY: plain call of host fork; fl's locks are held by the caller.
+            let pid = unsafe { host_fork() };
+            if pid < 0 {
+                Err(crate::host_resolve::host_errno(libc::EAGAIN))
+            } else {
+                Ok(pid)
+            }
+        }
+        None => raw_syscall::sys_clone_fork(libc::SIGCHLD as usize),
+    }
+}
+
 /// POSIX `fork` — create a child process.
 ///
 /// Calls registered `pthread_atfork` handlers and prepares the membrane
@@ -234,6 +280,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         return -1;
     }
 
+    let host_fork = host_fork_fn();
     // Run atfork prepare handlers (acquire locks in parent before fork).
     let atfork = crate::pthread_abi::run_atfork_prepare();
     // Stdio before the arena shards: normal code takes stdio locks and then
@@ -260,7 +307,7 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
-    let pid = raw_syscall::sys_clone_fork(libc::SIGCHLD as usize);
+    let pid = clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
