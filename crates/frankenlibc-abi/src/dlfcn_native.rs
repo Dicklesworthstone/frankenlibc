@@ -877,11 +877,13 @@ const HOST_RUNTIME_SONAMES: &[&str] = &[
 /// latter: no DT_NEEDED, and every Perl_* import resolves from the perl
 /// executable and libperl, which only the host link map holds. The native
 /// loader declines them and they used to stay declined, so `perl -MPOSIX` and
-/// every module with XS code failed to load. Self-contained objects (nothing
-/// imported, nothing host-linked) keep the native loader's fail-closed verdict
-/// -- a bad IFUNC resolver or TLSDESC pair must not be "rescued" by the host --
-/// and nothing falls back while an IFUNC resolver is running (recursive loads
-/// must fail).
+/// every module with XS code failed to load. Such a plugin qualifies only when
+/// EVERY non-weak import resolves in the host's global scope: an object whose
+/// imports cannot be satisfied anywhere, or that imports nothing, keeps the
+/// native loader's fail-closed verdict -- a bad IFUNC resolver or TLSDESC pair
+/// must not be "rescued" by the host (dlfcn_native_tlsdesc_test's bad objects
+/// crashed the host loader when any importer qualified) -- and nothing falls
+/// back while an IFUNC resolver is running (recursive loads must fail).
 pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
     if ifunc::active() {
         return false;
@@ -896,7 +898,32 @@ pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
         .needed_libraries
         .iter()
         .any(|needed| HOST_RUNTIME_SONAMES.contains(&needed.as_str()))
-        || object.undefined_symbols().any(|(_, symbol)| !symbol.is_weak())
+        || imports_resolve_in_host_scope(&object)
+}
+
+/// True when `object` imports at least one non-weak symbol and the host's
+/// global scope (the executable and everything it loaded) defines every one.
+fn imports_resolve_in_host_scope(object: &LoadedObject) -> bool {
+    let mut imports = 0usize;
+    for (_, symbol) in object.undefined_symbols() {
+        if symbol.is_weak() {
+            continue;
+        }
+        imports += 1;
+        let Some(name) = object.symbol_name(symbol) else {
+            return false;
+        };
+        let Ok(name) = std::ffi::CString::new(name) else {
+            return false;
+        };
+        // SAFETY: `name` is NUL-terminated; RTLD_DEFAULT searches the host's
+        // global scope without loading anything.
+        match unsafe { super::host_dlsym(libc::RTLD_DEFAULT, name.as_ptr()) } {
+            Some(address) if !address.is_null() => {}
+            _ => return false,
+        }
+    }
+    imports > 0
 }
 
 pub(super) fn resolve_native_dso_symbol(
