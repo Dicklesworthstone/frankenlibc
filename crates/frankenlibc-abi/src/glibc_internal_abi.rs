@@ -4102,16 +4102,12 @@ pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
         None => libc::BUFSIZ as SizeT,
     }
 }
-// __fcntl: native syscall
+// __fcntl: glibc's internal name for fcntl, variadic like it. It used to drop
+// the third argument and pass 0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fcntl(fd: c_int, cmd: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_fcntl(fd, cmd, 0) } {
-        Ok(r) => r,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
+    let arg: c_long = unsafe { args.next_arg::<c_long>() };
+    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
 }
 // __fdelt_warn: FD_SET overflow check — return d if valid, abort otherwise
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

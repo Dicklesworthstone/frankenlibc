@@ -21687,18 +21687,18 @@ pub unsafe extern "C" fn fallocate64(fd: c_int, mode: c_int, offset: i64, len: i
 }
 
 /// `fcntl64` — LFS alias for `fcntl` (on 64-bit, identical ABI).
+///
+/// Programs built with `_FILE_OFFSET_BITS=64` call this, not `fcntl` -- most
+/// of a distribution (libsqlite3, ...). It used to read its optional argument
+/// as `(&mut args as *mut _ as *mut c_long).read()`, which reads the va_list
+/// STRUCTURE (gp_offset 16 | fp_offset 48 = 0x3000000010) rather than the
+/// argument, so every F_SETLK/F_SETFL/F_SETFD/F_DUPFD got that garbage:
+/// sqlite's first lock failed with EFAULT ("disk I/O error").
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fcntl64(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
-    let arg: c_long = unsafe { (&mut args as *mut _ as *mut c_long).read() };
-    match unsafe {
-        crate::pthread_abi::at_cancellation_point(|| syscall::sys_fcntl(fd, cmd, arg as usize))
-    } {
-        Ok(r) => r,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    // Commands that take no argument ignore it, as glibc's va_arg read does.
+    let arg: c_long = unsafe { args.next_arg::<c_long>() };
+    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
 }
 
 /// `preadv64` — LFS alias for `preadv`.
