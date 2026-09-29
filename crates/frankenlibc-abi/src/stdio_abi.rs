@@ -1646,7 +1646,7 @@ impl StreamRegistry {
         };
         streams.insert(
             STDIN_SENTINEL,
-            new_stream_cell(StdioStream::with_mode(
+            new_stream_cell(fd_stream(
                 libc::STDIN_FILENO,
                 stdin_flags,
                 std_stream_buf_mode(libc::STDIN_FILENO),
@@ -1660,7 +1660,7 @@ impl StreamRegistry {
         };
         streams.insert(
             STDOUT_SENTINEL,
-            new_stream_cell(StdioStream::with_mode(
+            new_stream_cell(fd_stream(
                 libc::STDOUT_FILENO,
                 stdout_flags,
                 std_stream_buf_mode(libc::STDOUT_FILENO),
@@ -3371,7 +3371,7 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
     };
 
     // Create StdioStream and set initial offset for append mode.
-    let mut stream = StdioStream::with_mode(fd, *open_flags, buf_mode);
+    let mut stream = fd_stream(fd, *open_flags, buf_mode);
     // Like glibc, only a write-only append stream ("a") starts at the end:
     // "a+" reads from the beginning while its writes still land at the end.
     if open_flags.append
@@ -3402,6 +3402,38 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
 /// be line-buffered unconditionally, so `printf` into a pipe or file issued a
 /// write(2) per line and interleaved with raw writes and stderr differently
 /// from glibc (which also duplicates unflushed output across fork).
+/// A buffered stream on `fd`, with the buffer size glibc would give it.
+///
+/// glibc sizes a stream's buffer when it first allocates it
+/// (`_IO_file_doallocate`): BUFSIZ (8192), or the fd's `st_blksize` when that is
+/// smaller -- 4096 for files, pipes and /dev/null, 1024 for /proc files
+/// (measured with __fbufsize on glibc 2.43). fl used 8192 for everything, so
+/// output was flushed at different points: stdout and stderr sharing a pipe
+/// interleaved differently (ImageMagick's `compare --help` put its error line
+/// in another place), and a crash lost up to twice as much buffered output.
+fn fd_stream(fd: c_int, open_flags: OpenFlags, buf_mode: BufMode) -> StdioStream {
+    let mut stream = StdioStream::with_mode(fd, open_flags, buf_mode);
+    if !matches!(buf_mode, BufMode::None) {
+        stream.set_buffering(buf_mode, glibc_stream_bufsize(fd));
+    }
+    stream
+}
+
+fn glibc_stream_bufsize(fd: c_int) -> usize {
+    const GLIBC_BUFSIZ: usize = 8192;
+    let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+    // SAFETY: `st` is a writable, correctly sized stat buffer.
+    if fd < 0 || unsafe { raw_syscall::sys_fstat(fd, st.as_mut_ptr().cast()) }.is_err() {
+        return GLIBC_BUFSIZ;
+    }
+    // SAFETY: fstat succeeded and filled the buffer (zeroed beforehand anyway).
+    let blksize = unsafe { st.assume_init() }.st_blksize;
+    match usize::try_from(blksize) {
+        Ok(b) if b > 0 && b < GLIBC_BUFSIZ => b,
+        _ => GLIBC_BUFSIZ,
+    }
+}
+
 fn std_stream_buf_mode(fd: c_int) -> BufMode {
     if fd == libc::STDERR_FILENO {
         BufMode::None
@@ -5523,11 +5555,6 @@ pub unsafe extern "C-unwind" fn fileno(stream: *mut c_void) -> c_int {
 // setvbuf / setbuf
 // ---------------------------------------------------------------------------
 
-/// The buffer size glibc gives a stream when `setvbuf` is called with a NULL
-/// `buf`, regardless of the `size` argument. Measured, not assumed: `__fbufsize`
-/// reports 4096 for `_IOFBF` across sizes 0, 64, 4096 and 65536 (bd-kzceks).
-const GLIBC_DEFAULT_STREAM_BUFSIZ: usize = 4096;
-
 /// POSIX `setvbuf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn setvbuf(
@@ -5552,15 +5579,18 @@ pub unsafe extern "C-unwind" fn setvbuf(
     // for n in {0, 64, 4096, 65536}: 4096 every time for _IOFBF, and 4096 after
     // the first write for _IOLBF. A caller-supplied buffer still honours the
     // caller's size, which is what glibc does with it.
-    let requested_size = if _buf.is_null() {
-        GLIBC_DEFAULT_STREAM_BUFSIZ
-    } else {
-        size
-    };
-
+    //
+    // That 4096 is not a constant: it is glibc's usual allocation size,
+    // BUFSIZ or the fd's smaller st_blksize (`fd_stream`), which is 4096 on
+    // the files and pipes that measurement used and 1024 on /proc files.
     let id = canonical_stream_id(stream);
     if let Some(cell) = stream_cell(id) {
         let mut s = cell.lock();
+        let requested_size = if _buf.is_null() {
+            glibc_stream_bufsize(s.fd())
+        } else {
+            size
+        };
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
         if s.set_buffering(buf_mode, requested_size) {
             sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
@@ -11864,7 +11894,7 @@ pub unsafe extern "C-unwind" fn freopen(
         fd = target_fd;
     }
 
-    let new_stream = StdioStream::with_mode(fd, open_flags, std_stream_buf_mode(fd));
+    let new_stream = fd_stream(fd, open_flags, std_stream_buf_mode(fd));
     // Keep the caller's FILE * valid and truthful: same handle, new fd and
     // mode bits, EOF/ERR/orientation reset (bd-rc0923-epic-eeuy4f.1).
     let handle = if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {

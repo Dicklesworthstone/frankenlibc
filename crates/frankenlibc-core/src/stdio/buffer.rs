@@ -371,19 +371,40 @@ impl StreamBuffer {
                 flushed_from_buffer: 0,
             }
         } else {
-            // Buffer is full — flush existing + overflow.
+            // glibc's split (`_IO_new_file_xsputn`): top the buffer up to
+            // capacity, flush that full buffer, write whole blocks of what is
+            // left directly (all of it when the block is under 128 bytes), and
+            // keep the tail buffered. The flush points are observable: fl used
+            // to write the old buffer plus ALL of `data` and buffer nothing, so
+            // a program's stdout and stderr sharing a pipe interleaved at
+            // different places than under glibc.
+            let block = self.capacity;
+            let rest = data.len() - remaining;
+            let direct = if block >= 128 {
+                rest - rest % block
+            } else {
+                rest
+            };
+            let flush_end = remaining + direct;
             let flushed_from_buffer = self.write_len;
             let flush_data = if flushed_from_buffer == 0 {
-                Cow::Borrowed(data)
+                Cow::Borrowed(&data[..flush_end])
             } else {
-                let mut flush = Vec::with_capacity(self.write_len + data.len());
+                let mut flush = Vec::with_capacity(self.write_len + flush_end);
                 flush.extend_from_slice(&self.data[..self.write_len]);
-                flush.extend_from_slice(data);
+                flush.extend_from_slice(&data[..flush_end]);
                 Cow::Owned(flush)
             };
-            self.write_len = 0;
+            // The tail is shorter than a block, so it fits. If the flush fails
+            // the caller discards it with `mark_flushed`, as for line mode.
+            let tail = &data[flush_end..];
+            if !tail.is_empty() {
+                self.ensure_storage();
+                self.data[..tail.len()].copy_from_slice(tail);
+            }
+            self.write_len = tail.len();
             WriteResult {
-                buffered: 0,
+                buffered: tail.len(),
                 flush_needed: true,
                 flush_data,
                 flushed_from_buffer,
@@ -471,6 +492,39 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
     use proptest::test_runner::Config as ProptestConfig;
+
+    /// glibc's overflow split: fill to capacity, flush the full buffer plus
+    /// whole blocks of the rest, buffer the tail (4096-byte buffer as glibc
+    /// gives a pipe or ext4 file).
+    #[test]
+    fn full_overflow_splits_like_glibc() {
+        let mut b = StreamBuffer::new(BufMode::Full, 4096);
+        let head = vec![b'a'; 4000];
+        assert!(!b.write(&head).flush_needed);
+        let next = vec![b'b'; 297];
+        let r = b.write(&next);
+        assert!(r.flush_needed);
+        assert_eq!(r.flushed_from_buffer, 4000);
+        assert_eq!(r.flush_data.len(), 4096, "flush exactly the full buffer");
+        assert_eq!(r.buffered, 201);
+        drop(r);
+        assert_eq!(b.pending_write_data(), &[b'b'; 201][..]);
+
+        // 96 pending + 10000: 4000 tops up, 4096 more go direct, 1904 wait.
+        let mut b = StreamBuffer::new(BufMode::Full, 4096);
+        b.write(&[b'x'; 96]);
+        let big = vec![b'y'; 10000];
+        let r = b.write(&big);
+        assert_eq!(r.flush_data.len(), 96 + 4000 + 4096);
+        assert_eq!(r.buffered, 1904);
+
+        // Under 128 bytes of block, glibc writes the whole rest directly.
+        let mut b = StreamBuffer::new(BufMode::Full, 16);
+        b.write(&[b'x'; 10]);
+        let r = b.write(&[b'y'; 50]);
+        assert_eq!(r.flush_data.len(), 60);
+        assert_eq!(r.buffered, 0);
+    }
 
     fn property_proptest_config(default_cases: u32) -> ProptestConfig {
         let cases = std::env::var("FRANKENLIBC_PROPTEST_CASES")
