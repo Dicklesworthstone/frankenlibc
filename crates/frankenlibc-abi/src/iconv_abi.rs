@@ -443,6 +443,11 @@ pub unsafe extern "C" fn iconv(
     };
 
     let mut descriptor = lock_descriptor(&handle);
+    // glibc takes //TRANSLIT replacements from the locale current at conversion.
+    descriptor.set_translit_utf8_locale(matches!(
+        crate::locale_abi::active_charset(),
+        crate::locale_abi::Charset::Utf8
+    ));
     match iconv::iconv(&mut descriptor, input_opt, output) {
         Ok(result) => {
             // SAFETY: progress fields are validated by core conversion logic.

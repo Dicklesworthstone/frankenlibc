@@ -7,6 +7,7 @@ use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdInt, num
 
 mod big5hkscs_tables;
 mod translit_c;
+mod translit_c_utf8;
 mod cjk_tables;
 mod cp932_tables;
 mod euc_jp_ms_tables;
@@ -3042,6 +3043,10 @@ pub struct IconvDescriptor {
     /// `tocode` carried `//TRANSLIT`: an unrepresentable character is
     /// replaced from the C-locale transliteration table (default `?`).
     translit: bool,
+    /// The conversion runs under a UTF-8 `LC_CTYPE`: `//TRANSLIT` consults the
+    /// C.UTF-8 table (`translit_c_utf8`) before the C one. Set per call by the
+    /// caller, since glibc reads the locale when it converts, not at open.
+    translit_utf8_locale: bool,
     /// `tocode` carried `//IGNORE`: unrepresentable characters and invalid
     /// input are skipped, and the call then reports `EILSEQ`.
     ignore: bool,
@@ -42195,6 +42200,7 @@ pub fn iconv_open_detailed(
             ibm930_out_shifted: false,
             ibm930_in_shifted: false,
             translit: to_flags.translit,
+            translit_utf8_locale: false,
             ignore: to_flags.ignore,
         },
         dispatch,
@@ -48501,13 +48507,26 @@ enum TranslitOutcome {
     Unrepresentable,
 }
 
-/// Write `ch`'s C-locale transliteration (or the default `?`) in `cd`'s
+impl IconvDescriptor {
+    /// Tell a `//TRANSLIT` conversion whether the current `LC_CTYPE` is UTF-8,
+    /// which selects glibc's C.UTF-8 transliterations over the C-locale ones.
+    pub fn set_translit_utf8_locale(&mut self, utf8: bool) {
+        self.translit_utf8_locale = utf8;
+    }
+}
+
+/// Write `ch`'s transliteration (or the default `?`) in `cd`'s
 /// target encoding. The replacement is ASCII, so it is converted through a
 /// copy of `cd` whose source is ASCII; the target-side state (pending BOM,
 /// shift state) carries over, the source side is restored.
 fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> TranslitOutcome {
     let cp = ch as u32;
-    let candidates: [&[u8]; 2] = match translit_c::C_TRANSLIT_PACKED.lookup(cp) {
+    let utf8_entry = if cd.translit_utf8_locale {
+        translit_c_utf8::C_UTF8_TRANSLIT_PACKED.lookup(cp)
+    } else {
+        None
+    };
+    let candidates: [&[u8]; 2] = match utf8_entry.or_else(|| translit_c::C_TRANSLIT_PACKED.lookup(cp)) {
         Some(replacement) => [replacement, b"?"],
         None => [b"?", b"?"],
     };
@@ -50901,6 +50920,30 @@ pub fn iconv_close(_cd: IconvDescriptor) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `//TRANSLIT` takes the C.UTF-8 table under a UTF-8 LC_CTYPE and the C
+    /// table otherwise (both black-box captures of glibc 2.43).
+    #[test]
+    fn translit_follows_the_locale_table() {
+        let convert = |utf8: bool, text: &str| -> Vec<u8> {
+            let mut cd = iconv_open(b"ASCII//TRANSLIT", b"UTF-8").unwrap();
+            cd.set_translit_utf8_locale(utf8);
+            let mut out = [0u8; 64];
+            let n = match iconv(&mut cd, Some(text.as_bytes()), &mut out) {
+                Ok(r) => r.out_written,
+                Err(e) => e.out_written,
+            };
+            out[..n].to_vec()
+        };
+        // Combining-character rules exist only in the UTF-8 locale.
+        assert_eq!(convert(false, "caf\u{e9} \u{a3}"), b"caf? ?");
+        assert_eq!(convert(true, "caf\u{e9} \u{a3}"), b"cafe GBP");
+        // The C table's own entries still apply in the UTF-8 locale ...
+        assert_eq!(convert(true, "\u{df}"), convert(false, "\u{df}"));
+        // ... except where C.UTF-8 has none: U+0370 is 'H' in C, '?' in C.UTF-8.
+        assert_eq!(convert(false, "\u{370}"), b"H");
+        assert_eq!(convert(true, "\u{370}"), b"?");
+    }
 
     // Pure scalar reference: the iconv conversion loop WITHOUT the SIMD ASCII
     // fast path, so the fast path can be proven byte-for-byte isomorphic.
