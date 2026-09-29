@@ -870,12 +870,18 @@ const HOST_RUNTIME_SONAMES: &[&str] = &[
 /// Whether a pathname `dlopen` the native loader declined may be served by
 /// the host loader instead (interpose builds only; bd-rc0923-epic-eeuy4f.3).
 ///
-/// Only ordinary host-coupled objects qualify: those whose DT_NEEDED list
-/// names a host runtime library (every normal glibc-linked DSO, including all
-/// Python extension modules). Self-contained objects keep the native loader's
-/// fail-closed verdict — a bad IFUNC resolver or TLSDESC pair must not be
-/// "rescued" by the host — and nothing falls back while an IFUNC resolver is
-/// running (recursive loads must fail).
+/// Only host-coupled objects qualify: those whose DT_NEEDED list names a host
+/// runtime library (every normal glibc-linked DSO, including all Python
+/// extension modules), and plugins that import symbols while naming no library
+/// at all. Perl's XS modules (auto/Fcntl/Fcntl.so, POSIX.so, ...) are the
+/// latter: no DT_NEEDED, and every Perl_* import resolves from the perl
+/// executable and libperl, which only the host link map holds. The native
+/// loader declines them and they used to stay declined, so `perl -MPOSIX` and
+/// every module with XS code failed to load. Self-contained objects (nothing
+/// imported, nothing host-linked) keep the native loader's fail-closed verdict
+/// -- a bad IFUNC resolver or TLSDESC pair must not be "rescued" by the host --
+/// and nothing falls back while an IFUNC resolver is running (recursive loads
+/// must fail).
 pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
     if ifunc::active() {
         return false;
@@ -890,6 +896,7 @@ pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
         .needed_libraries
         .iter()
         .any(|needed| HOST_RUNTIME_SONAMES.contains(&needed.as_str()))
+        || object.undefined_symbols().any(|(_, symbol)| !symbol.is_weak())
 }
 
 pub(super) fn resolve_native_dso_symbol(
