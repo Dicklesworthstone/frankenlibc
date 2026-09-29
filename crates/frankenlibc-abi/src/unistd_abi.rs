@@ -3307,6 +3307,28 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
     let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
 }
 
+/// glibc's long-option diagnostics (`argv[0]: <parts>\n` on stderr), under the
+/// same `opterr` / leading-`:` suppression as the short ones. They were never
+/// printed: `prog --bogus` failed silently where glibc explains why.
+unsafe fn emit_long_getopt_diagnostic(argv: *const *mut c_char, optspec: &[u8], parts: &[&[u8]]) {
+    if unsafe { libc_opterr == 0 } || getopt_core::getopt_prefers_colon(optspec) {
+        return;
+    }
+    let argv0 = unsafe { *argv };
+    let program = if argv0.is_null() {
+        Vec::new()
+    } else {
+        unsafe { read_c_string_bytes(argv0) }.unwrap_or_default()
+    };
+    let mut msg = program;
+    msg.extend_from_slice(b": ");
+    for part in parts {
+        msg.extend_from_slice(part);
+    }
+    msg.push(b'\n');
+    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+}
+
 /// The part of a getopt step that happens BEFORE an option is parsed, shared
 /// by the short and long parsers: optstring mode flags (`+`, `-`,
 /// POSIXLY_CORRECT), RETURN_IN_ORDER operands, and glibc's argument
@@ -3355,10 +3377,10 @@ unsafe fn getopt_prepare(
 
     if return_in_order && !mid_bundle && optind >= 1 && optind < argc_us {
         let current = &argv_bytes[optind];
+        // Neither return touches `optopt`: glibc leaves the last error's value.
         if current == b"--" {
             unsafe {
                 libc_optind = (optind + 1) as c_int;
-                libc_optopt = 0;
                 libc_optarg = std::ptr::null_mut();
                 GETOPT_NEXTCHAR = None;
             }
@@ -3367,7 +3389,6 @@ unsafe fn getopt_prepare(
         if !getopt_is_option_like(current) {
             unsafe {
                 libc_optind = (optind + 1) as c_int;
-                libc_optopt = 0;
                 libc_optarg = *argv.add(optind);
                 GETOPT_NEXTCHAR = None;
             }
@@ -3605,6 +3626,15 @@ unsafe fn parse_getopt_long(
         return None;
     };
     let body = &current_bytes[prefix_len..];
+    // getopt_long_only reads `-c` as the short option when `c` is one; only a
+    // longer element, or an unknown character, is tried as a long option.
+    if prefix_len == 1
+        && body.len() == 1
+        && getopt_core::getopt_arg_mode(optspec, body[0]).is_some()
+    {
+        return None;
+    }
+    let dash: &[u8] = &b"--"[..prefix_len];
     let split_idx = body.iter().position(|&b| b == b'=').unwrap_or(body.len());
     let name = &body[..split_idx];
     let inline_value = if split_idx < body.len() {
@@ -3643,24 +3673,37 @@ unsafe fn parse_getopt_long(
         }
         idx += 1;
     }
+    // Prefix hits that differ from the first one (glibc compares each to the
+    // first, not pairwise); any makes the abbreviation ambiguous.
+    let mut ambiguous = Vec::new();
     let matched = if let Some(idx) = exact {
         Some(idx)
     } else if prefixes.len() == 1 {
         Some(prefixes[0])
     } else if prefixes.len() > 1 {
         let first = unsafe { *longopts.add(prefixes[0]) };
-        if prefixes.iter().skip(1).all(|&idx| {
-            let candidate = unsafe { *longopts.add(idx) };
-            candidate.has_arg == first.has_arg
-                && candidate.flag == first.flag
-                && candidate.val == first.val
-        }) {
+        ambiguous = prefixes
+            .iter()
+            .copied()
+            .filter(|&idx| {
+                let candidate = unsafe { *longopts.add(idx) };
+                idx == prefixes[0]
+                    || candidate.has_arg != first.has_arg
+                    || candidate.flag != first.flag
+                    || candidate.val != first.val
+            })
+            .collect();
+        if ambiguous.len() == 1 {
             Some(prefixes[0])
         } else {
             None
         }
     } else {
         None
+    };
+    let option_name = |idx: usize| -> Vec<u8> {
+        let name = unsafe { (*longopts.add(idx)).name };
+        unsafe { read_c_string_bytes(name) }.unwrap_or_default()
     };
 
     if let Some(idx) = matched {
@@ -3678,6 +3721,16 @@ unsafe fn parse_getopt_long(
         match unsafe { (*opt_ptr).has_arg } {
             0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
                 unsafe {
+                    emit_long_getopt_diagnostic(
+                        argv,
+                        optspec,
+                        &[
+                            b"option '",
+                            dash,
+                            &option_name(idx),
+                            b"' doesn't allow an argument",
+                        ],
+                    );
                     libc_optopt = (*opt_ptr).val;
                     libc_optind = next_index;
                 }
@@ -3689,16 +3742,23 @@ unsafe fn parse_getopt_long(
                         libc_optarg = inline_value as *mut c_char;
                     }
                 } else {
-                    if next_index >= argc {
-                        unsafe {
-                            libc_optopt = (*opt_ptr).val;
-                            libc_optind = next_index;
-                        }
-                        return Some(missing_code);
-                    }
-                    let value = unsafe { *argv.add(next_index as usize) };
+                    let value = if next_index >= argc {
+                        std::ptr::null_mut()
+                    } else {
+                        unsafe { *argv.add(next_index as usize) }
+                    };
                     if value.is_null() {
                         unsafe {
+                            emit_long_getopt_diagnostic(
+                                argv,
+                                optspec,
+                                &[
+                                    b"option '",
+                                    dash,
+                                    &option_name(idx),
+                                    b"' requires an argument",
+                                ],
+                            );
                             libc_optopt = (*opt_ptr).val;
                             libc_optind = next_index;
                         }
@@ -3724,8 +3784,27 @@ unsafe fn parse_getopt_long(
         return Some(unsafe { (*opt_ptr).val });
     }
 
-    if prefix_len == 1 {
-        return None;
+    if !ambiguous.is_empty() {
+        let mut parts: Vec<&[u8]> =
+            vec![b"option '", dash, body, b"' is ambiguous; possibilities:"];
+        let names: Vec<Vec<u8>> = ambiguous.iter().map(|&idx| option_name(idx)).collect();
+        for name in &names {
+            parts.extend_from_slice(&[b" '", dash, name, b"'"]);
+        }
+        unsafe { emit_long_getopt_diagnostic(argv, optspec, &parts) };
+    } else {
+        // getopt_long_only hands `-xyz` to the short parser only when `x` is a
+        // short option; otherwise it is an unrecognized long option.
+        if prefix_len == 1 && getopt_core::getopt_arg_mode(optspec, body[0]).is_some() {
+            return None;
+        }
+        unsafe {
+            emit_long_getopt_diagnostic(
+                argv,
+                optspec,
+                &[b"unrecognized option '", dash, body, b"'"],
+            )
+        };
     }
 
     unsafe {

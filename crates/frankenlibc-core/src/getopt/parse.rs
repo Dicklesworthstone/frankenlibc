@@ -25,12 +25,20 @@ pub(crate) struct GetoptSpecMatch {
     pub w_extension: bool,
 }
 
-/// Returns `true` when `optspec` starts with `:`. POSIX: a leading
+/// Returns `true` when `optspec` starts with `:`, after an optional GNU `+`/`-`
+/// ordering flag. POSIX: a leading
 /// colon makes getopt return `':'` (instead of `'?'`) for missing
 /// required arguments and silences the default error message.
 #[inline]
 pub fn getopt_prefers_colon(optspec: &[u8]) -> bool {
-    optspec.first().copied() == Some(b':')
+    // After the optional ordering flag: glibc reads "+:ab" and "-:ab" as silent
+    // too. Checking only byte 0 printed diagnostics and returned '?' instead of
+    // ':' for a missing argument under those optstrings.
+    let rest = match optspec.first() {
+        Some(b'+' | b'-') => &optspec[1..],
+        _ => optspec,
+    };
+    rest.first().copied() == Some(b':')
 }
 
 /// Look up the argument mode for `option` within `optspec`.
@@ -131,6 +139,11 @@ mod tests {
     #[test]
     fn prefers_colon_when_optspec_starts_with_colon() {
         assert!(getopt_prefers_colon(b":abc"));
+        assert!(getopt_prefers_colon(b"+:abc"));
+        assert!(getopt_prefers_colon(b"-:abc"));
+        assert!(!getopt_prefers_colon(b"+abc"));
+        assert!(!getopt_prefers_colon(b"+"));
+        assert!(!getopt_prefers_colon(b"a:"));
         assert!(!getopt_prefers_colon(b"abc"));
         assert!(!getopt_prefers_colon(b""));
     }
