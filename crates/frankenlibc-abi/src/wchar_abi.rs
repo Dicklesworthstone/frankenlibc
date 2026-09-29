@@ -6525,7 +6525,12 @@ pub unsafe extern "C" fn vswscanf(
         return libc::EOF;
     }
     unsafe {
-        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+        super::stdio_abi::vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        )
     };
     result.count
 }
@@ -6552,7 +6557,12 @@ pub unsafe extern "C" fn vwscanf(format: *const libc::wchar_t, ap: *mut std::ffi
         return libc::EOF;
     }
     unsafe {
-        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+        super::stdio_abi::vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        )
     };
     result.count
 }
@@ -6583,7 +6593,12 @@ pub unsafe extern "C" fn vfwscanf(
         return libc::EOF;
     }
     unsafe {
-        super::stdio_abi::vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap)
+        super::stdio_abi::vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        )
     };
     result.count
 }

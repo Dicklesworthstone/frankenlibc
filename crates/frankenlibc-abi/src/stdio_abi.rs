@@ -10518,7 +10518,7 @@ pub(crate) unsafe fn write_long_double_bytes(dest: *mut c_void, bytes: &[u8; 10]
 /// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
 /// `$args` is the variadic `args` from `mut args: ...`.
 macro_rules! scanf_write_values {
-    ($values:expr, $directives:expr, $args:expr) => {{
+    ($values:expr, $directives:expr, $args:expr, $failed_alloc:expr) => {{
         let mut _val_idx = 0usize;
         for _dir in $directives {
             if let ScanDirective::Spec(_spec) = _dir {
@@ -10534,144 +10534,25 @@ macro_rules! scanf_write_values {
                 _val_idx += 1;
             }
         }
+        // The next argument belongs to the %m conversion that failed.
+        if $failed_alloc {
+            unsafe { *$args.next_arg::<*mut *mut c_char>() = std::ptr::null_mut() };
+        }
     }};
 }
 
 /// Write a single scanned value to the next pointer from va_list.
+///
+/// Every scanf destination is a pointer, so the argument is fetched as one and
+/// the store is [`vscanf_write_one`]'s -- one implementation for the variadic
+/// and the `va_list` entry points. (They were two copies, and only this one
+/// knew about `%m`: `__isoc23_sscanf`/`vsscanf`/`vfscanf` wrote a `%ms` token
+/// over the caller's `char *` itself.)
 macro_rules! scanf_write_one {
-    ($val:expr, $spec:expr, $args:expr) => {
-        match $val {
-            // `Unset` is the inline-slot placeholder from `ScanValues`; it never
-            // appears inside `as_slice()`'s populated prefix, and writing nothing
-            // is the safe answer if it ever did — a libc entry point must not
-            // panic on its own bookkeeping.
-            ScanValue::Unset => {}
-            ScanValue::SignedInt(v) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut i8>();
-                    *ptr = *v as i8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut i16>();
-                    *ptr = *v as i16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut i64>();
-                    *ptr = *v;
-                }
-                LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.next_arg::<*mut isize>();
-                    *ptr = *v as isize;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut c_int>();
-                    *ptr = *v as c_int;
-                }
-            },
-            ScanValue::UnsignedInt(v) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut u8>();
-                    *ptr = *v as u8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut u16>();
-                    *ptr = *v as u16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut u64>();
-                    *ptr = *v;
-                }
-                LengthMod::Z | LengthMod::T => {
-                    let ptr = $args.next_arg::<*mut usize>();
-                    *ptr = *v as usize;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut u32>();
-                    *ptr = *v as u32;
-                }
-            },
-            // Only a `%Lf` conversion produces this, and its destination is a
-            // `long double *`, so the length modifier needs no second look.
-            ScanValue::LongDouble(bytes) => {
-                let ptr = $args.next_arg::<*mut c_void>();
-                write_long_double_bytes(ptr, bytes);
-            }
-            ScanValue::Float(v) => match $spec.length {
-                // Reached only when the engine declined to produce an x87
-                // value for a `L`-modified float — it does not today, and if
-                // that changes this stays a correct store of what was parsed
-                // rather than a silent write of the wrong width.
-                LengthMod::BigL => {
-                    let ptr = $args.next_arg::<*mut c_void>();
-                    write_long_double_from_f64(ptr, *v);
-                }
-                LengthMod::L => {
-                    let ptr = $args.next_arg::<*mut f64>();
-                    *ptr = *v;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut f32>();
-                    // Preserve a NaN payload across the f64->f32 narrowing.
-                    *ptr = frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(*v);
-                }
-            },
-            ScanValue::Char(bytes) => {
-                if $spec.alloc {
-                    // GNU `%mc`: allocate exactly `bytes.len()` bytes (no NUL,
-                    // like glibc) and store the pointer in the caller's char**.
-                    let pp = $args.next_arg::<*mut *mut c_char>();
-                    let n = bytes.len().max(1);
-                    let buf = malloc(n).cast::<u8>();
-                    if !buf.is_null() {
-                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
-                    }
-                    *pp = buf.cast::<c_char>();
-                } else {
-                    let ptr = $args.next_arg::<*mut u8>();
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len());
-                }
-            }
-            ScanValue::String(bytes) => {
-                if $spec.alloc {
-                    // GNU `%ms` / `%m[`: allocate matched length + NUL and store
-                    // the pointer in the caller's char**.
-                    let pp = $args.next_arg::<*mut *mut c_char>();
-                    let buf = malloc(bytes.len() + 1).cast::<u8>();
-                    if !buf.is_null() {
-                        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
-                        *buf.add(bytes.len()) = 0;
-                    }
-                    *pp = buf.cast::<c_char>();
-                } else {
-                    let ptr = $args.next_arg::<*mut c_char>();
-                    std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr.cast::<u8>(), bytes.len());
-                    *ptr.add(bytes.len()) = 0; // NUL-terminate
-                }
-            }
-            ScanValue::CharsConsumed(n) => match $spec.length {
-                LengthMod::Hh => {
-                    let ptr = $args.next_arg::<*mut i8>();
-                    *ptr = *n as i8;
-                }
-                LengthMod::H => {
-                    let ptr = $args.next_arg::<*mut i16>();
-                    *ptr = *n as i16;
-                }
-                LengthMod::L | LengthMod::Ll | LengthMod::J => {
-                    let ptr = $args.next_arg::<*mut i64>();
-                    *ptr = *n as i64;
-                }
-                _ => {
-                    let ptr = $args.next_arg::<*mut c_int>();
-                    *ptr = *n as c_int;
-                }
-            },
-            ScanValue::Pointer(v) => {
-                let ptr = $args.next_arg::<*mut *mut c_void>();
-                *ptr = *v as *mut c_void;
-            }
-        }
-    };
+    ($val:expr, $spec:expr, $args:expr) => {{
+        let dest = $args.next_arg::<*mut c_void>();
+        vscanf_write_one($val, $spec, dest)
+    }};
 }
 
 /// Core scanf logic: parse format, scan input, return result and directives.
@@ -11051,14 +10932,17 @@ pub unsafe extern "C" fn sscanf(s: *const c_char, format: *const c_char, mut arg
         return libc::EOF;
     };
 
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
+    scanf_write_values!(
+        result.values.as_slice(),
+        directives.as_slice(),
+        args,
+        result.failed_alloc
+    );
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
 }
 
 /// POSIX `fscanf` — scan formatted input from stream.
@@ -11128,14 +11012,17 @@ pub unsafe extern "C-unwind" fn fscanf(
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
     scanf_finish_consume(id, scanf_seek_base, &input_buf, result.consumed);
 
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
+    scanf_write_values!(
+        result.values.as_slice(),
+        directives.as_slice(),
+        args,
+        result.failed_alloc
+    );
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
 }
 
 /// POSIX `scanf` — scan formatted input from stdin.
@@ -11177,14 +11064,17 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
     scanf_finish_consume(STDIN_SENTINEL, scanf_seek_base, &input_buf, result.consumed);
 
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
-    scanf_write_values!(result.values.as_slice(), directives.as_slice(), args);
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
+    scanf_write_values!(
+        result.values.as_slice(),
+        directives.as_slice(),
+        args,
+        result.failed_alloc
+    );
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
 }
 
 /// POSIX `vsscanf` — scan formatted input from string with va_list.
@@ -11266,20 +11156,23 @@ pub unsafe extern "C" fn vsscanf(
         return libc::EOF;
     };
 
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
     // Write scanned values via raw va_list pointer.
     // SAFETY: On x86_64 Linux, the raw va_list pointer has the same layout
     // as Rust's VaListImpl. We transmute to access arg().
     unsafe {
-        vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap);
+        vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        );
     }
 
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
 }
 
 /// POSIX `vfscanf` — scan formatted input from stream with va_list.
@@ -11336,17 +11229,20 @@ pub unsafe extern "C-unwind" fn vfscanf(
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
     scanf_finish_consume(id, scanf_seek_base, &input_buf, result.consumed);
 
-    if result.input_failure && result.count == 0 {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
-        return libc::EOF;
-    }
-
+    // Stores happen even when the call returns EOF: glibc has already written
+    // any `%n` counts by then, and NULL through a `%m` conversion that failed.
     unsafe {
-        vscanf_write_values(result.values.as_slice(), directives.as_slice(), ap);
+        vscanf_write_values(
+            result.values.as_slice(),
+            directives.as_slice(),
+            ap,
+            result.failed_alloc,
+        );
     }
 
-    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, false);
-    result.count
+    let eof = result.input_failure && result.count == 0;
+    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, eof);
+    if eof { libc::EOF } else { result.count }
 }
 
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.
@@ -11409,6 +11305,7 @@ pub(crate) unsafe fn vscanf_write_values(
     values: &[ScanValue],
     directives: &[ScanDirective],
     ap: *mut c_void,
+    failed_alloc: bool,
 ) {
     // On x86_64, the va_list structure fields:
     // gp_offset (u32) at +0: offset into reg_save_area for next GP register arg
@@ -11438,6 +11335,12 @@ pub(crate) unsafe fn vscanf_write_values(
             }
             val_idx += 1;
         }
+    }
+    // The next argument belongs to the %m conversion that failed: glibc leaves
+    // NULL there.
+    if failed_alloc {
+        // SAFETY: that conversion's destination is a `char **`.
+        unsafe { *va_next_pointer(ap).cast::<*mut c_char>() = std::ptr::null_mut() };
     }
 }
 
@@ -11474,6 +11377,24 @@ pub(crate) unsafe fn vscanf_write_one(
                 // Preserve a NaN payload across the f64->f32 narrowing.
                 *(dest as *mut f32) = frankenlibc_core::stdlib::conversion::narrow_f64_to_f32(*v)
             },
+        },
+        // GNU `%m`: `dest` is a `char **`; store a malloc'd copy there. `%mc`
+        // gets exactly the matched bytes (no NUL, as glibc), `%ms`/`%m[` a
+        // NUL-terminated string.
+        ScanValue::Char(bytes) if spec.alloc => unsafe {
+            let buf = malloc(bytes.len().max(1)).cast::<u8>();
+            if !buf.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+            }
+            *(dest as *mut *mut u8) = buf;
+        },
+        ScanValue::String(bytes) if spec.alloc => unsafe {
+            let buf = malloc(bytes.len() + 1).cast::<u8>();
+            if !buf.is_null() {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len());
+                *buf.add(bytes.len()) = 0;
+            }
+            *(dest as *mut *mut u8) = buf;
         },
         ScanValue::Char(bytes) => unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), dest as *mut u8, bytes.len());

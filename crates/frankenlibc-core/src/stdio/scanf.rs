@@ -930,6 +930,11 @@ pub struct ScanResult {
     pub consumed: usize,
     /// Whether any input was consumed before matching failure.
     pub input_failure: bool,
+    /// The conversion that stopped the scan was an assigning `%m` one. glibc
+    /// stores NULL through its `char **` then -- even when the call returns EOF
+    /// -- because it frees the buffer it had started; callers must do the same.
+    /// A `%m` conversion never reached (an earlier directive failed) is left alone.
+    pub failed_alloc: bool,
 }
 
 /// Scan input according to parsed directives.
@@ -1023,6 +1028,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                     // offset.
                     consumed: pos,
                     input_failure: false,
+                    failed_alloc: false,
                 };
             }
             ScanDirective::Whitespace => {
@@ -1047,6 +1053,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         count,
                         consumed: pos,
                         input_failure: true,
+                        failed_alloc: false,
                     };
                 }
                 if input[pos] != *expected {
@@ -1055,6 +1062,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         count,
                         consumed: pos,
                         input_failure: false,
+                        failed_alloc: false,
                     };
                 }
                 pos += 1;
@@ -1096,11 +1104,13 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
                         } else {
                             pos >= input.len()
                         };
+                        let input_failure = exhausted_before_conversion && count == 0;
                         return ScanResult {
                             values,
                             count,
                             consumed: pos,
-                            input_failure: exhausted_before_conversion && count == 0,
+                            input_failure,
+                            failed_alloc: spec.alloc && !spec.suppress,
                         };
                     }
                     Some((val, new_pos)) => {
@@ -1139,6 +1149,7 @@ fn scan_input_impl(input: &[u8], directives: &[ScanDirective], wide_input: bool)
         count,
         consumed: pos,
         input_failure: false,
+        failed_alloc: false,
     }
 }
 

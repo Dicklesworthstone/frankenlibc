@@ -169,6 +169,8 @@ CATOPEN_BIN="${BIN_DIR}/fixture_catopen"
 cc -O2 "${ROOT}/tests/integration/fixture_catopen.c" -o "${CATOPEN_BIN}"
 GETOPT_DIAG_BIN="${BIN_DIR}/fixture_getopt_long_diag"
 cc -O2 "${ROOT}/tests/integration/fixture_getopt_long_diag.c" -o "${GETOPT_DIAG_BIN}"
+SCANF_MALLOC_BIN="${BIN_DIR}/fixture_scanf_malloc"
+cc -O2 "${ROOT}/tests/integration/fixture_scanf_malloc.c" -o "${SCANF_MALLOC_BIN}"
 RANDOM_MB_BIN="${BIN_DIR}/fixture_random_multibyte"
 cc -O2 "${ROOT}/tests/integration/fixture_random_multibyte.c" -o "${RANDOM_MB_BIN}"
 TZ_GLOBALS_BIN="${BIN_DIR}/fixture_time_zone_globals"
@@ -824,6 +826,7 @@ EOF
   run_corpus_case "${mode}" "static_mutex_kinds" "${STATIC_MUTEX_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "catopen_nlspath_search" "${CATOPEN_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "getopt_long_diagnostics" "${GETOPT_DIAG_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "scanf_m_allocation" "${SCANF_MALLOC_BIN}" || mode_failed=1
   # Allocator misuse aborts with glibc's diagnostics in strict mode; hardened
   # heals it by design (bd-rc0923-epic-eeuy4f.8).
   if [[ "${mode}" == "strict" ]]; then
