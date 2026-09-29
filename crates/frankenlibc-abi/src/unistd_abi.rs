@@ -5143,10 +5143,12 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
-    let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+    // ENVIRON_LOCK before the pipeline, as in fork(): setenv holds it while
+    // its hardened memcpy takes pipeline locks.
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let _pipeline_guard =
+        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // SAFETY: fork via raw syscall

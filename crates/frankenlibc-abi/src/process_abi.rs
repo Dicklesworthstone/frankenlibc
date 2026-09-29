@@ -84,8 +84,8 @@ unsafe fn exec_through_shell(
     argv: *const *const c_char,
     envp: *const *const c_char,
 ) -> c_int {
-    let slots = known_remaining(argv as usize)
-        .map(|bytes| bytes / std::mem::size_of::<*const c_char>());
+    let slots =
+        known_remaining(argv as usize).map(|bytes| bytes / std::mem::size_of::<*const c_char>());
     let mut argc = 0usize;
     loop {
         if slots.is_some_and(|slots| argc >= slots) {
@@ -239,15 +239,23 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // Stdio before the arena shards: normal code takes stdio locks and then
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
-    let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Acquire ENVIRON_LOCK before fork so the child does not inherit a held
     // state from another parent thread mid-setenv. Without this, the child's
     // first getenv/setenv after fork would deadlock waiting for a lock that
-    // no thread can ever release in the new address space. Mirrors the
-    // pipeline atfork pattern. (REVIEW round 4: fork-after-setenv deadlock.)
+    // no thread can ever release in the new address space. (REVIEW round 4:
+    // fork-after-setenv deadlock.)
+    //
+    // It is taken BEFORE the membrane pipeline: setenv holds ENVIRON_LOCK
+    // while it copies bytes, and in hardened mode that copy is fl's own
+    // validating memcpy, which takes pipeline locks (arena shards, page
+    // oracle). Taking the pipeline first deadlocked the parent: fork held the
+    // pipeline and waited for ENVIRON_LOCK, a setenv thread held ENVIRON_LOCK
+    // and waited for the pipeline (forkstress.c, hardened: hung within 20
+    // forks; stacks captured 2026-09-28).
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    let _pipeline_guard =
+        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
@@ -1515,14 +1523,18 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     // closefrom is handled separately by excluding this private descriptor.
     if let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
         spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
-            || spawn_actions.is_some_and(|fa| fa.actions.iter().any(|action| match action {
-                SpawnFileAction::Close(value)
-                | SpawnFileAction::Fchdir(value)
-                | SpawnFileAction::TcSetPgrp(value) => *value == fd,
-                SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
-                SpawnFileAction::Open { fd: destination, .. } => *destination == fd,
-                SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
-            }))
+            || spawn_actions.is_some_and(|fa| {
+                fa.actions.iter().any(|action| match action {
+                    SpawnFileAction::Close(value)
+                    | SpawnFileAction::Fchdir(value)
+                    | SpawnFileAction::TcSetPgrp(value) => *value == fd,
+                    SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
+                    SpawnFileAction::Open {
+                        fd: destination, ..
+                    } => *destination == fd,
+                    SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+                })
+            })
     }) {
         let _ = raw_syscall::sys_close(err_pipe[0]);
         let _ = raw_syscall::sys_close(err_pipe[1]);
