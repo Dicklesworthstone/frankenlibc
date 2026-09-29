@@ -90,6 +90,7 @@ mod erf_tables;
 pub mod errno_abi;
 mod expl_table;
 pub mod locale_abi;
+mod locale_catalog;
 pub mod math_abi;
 pub mod startup_helpers;
 pub mod stdbit_abi;

@@ -1804,10 +1804,10 @@ pub unsafe extern "C" fn nl_langinfo_l(item: libc::nl_item, locale: *mut c_void)
 pub type nl_catd = isize;
 
 const INVALID_NL_CATD: nl_catd = -1;
+/// `<nl_types.h>`: take `%L` from the LC_MESSAGES locale rather than `LANG`.
+const NL_CAT_LOCALE: c_int = 1;
 
-use frankenlibc_core::locale::catgets::{
-    CatalogParseError, MessageCatalog, parse_catalog_bytes as core_parse_catalog_bytes,
-};
+use frankenlibc_core::locale::catgets::MessageCatalog;
 
 struct CatalogRegistry {
     next_id: nl_catd,
@@ -1837,14 +1837,6 @@ fn next_catalog_id(registry: &mut CatalogRegistry) -> nl_catd {
     }
 }
 
-// parse_catalog_bytes / MessageCatalog / catalog_word moved to
-// frankenlibc_core::locale::catgets. The abi shim wrapper below maps
-// the typed CatalogParseError into the libc::EINVAL errno that the
-// previous in-place impl returned.
-fn parse_catalog_bytes(bytes: Vec<u8>) -> Result<MessageCatalog, c_int> {
-    core_parse_catalog_bytes(bytes).map_err(|_: CatalogParseError| libc::EINVAL)
-}
-
 /// Test hook: clear any process-global catalog descriptors for deterministic
 /// locale ABI tests.
 #[doc(hidden)]
@@ -1856,10 +1848,21 @@ pub fn locale_reset_catalog_state_for_tests() {
 
 /// `catopen` — open a message catalog.
 ///
-/// Minimal deterministic backend: open a direct catalog path, parse the glibc
-/// `.cat` table format, and return an opaque descriptor id.
+/// A name containing `/` is opened as given. Any other name is searched for
+/// through the `NLSPATH` templates and then the default
+/// `/usr/share/locale/%L[/LC_MESSAGES]/%N` ones, with `%L` taken from the
+/// LC_MESSAGES locale for `NL_CAT_LOCALE` and from `LANG` otherwise. The first
+/// candidate that opens decides the result: a directory or malformed file there
+/// is EINVAL even if a later candidate is valid, as in glibc.
+///
+/// An empty name is searched for too, with `%N` expanding to nothing, so the
+/// candidates are locale directories. That is why glibc's errno for
+/// `catopen("")` depends on the environment -- EINVAL when
+/// `/usr/share/locale/<LANG>/` exists, ENOENT under `LANG=C` -- and why fixing
+/// it to one constant flip-flopped three times (56cbe3fc8, fb7d7cc03,
+/// 9e801d705), each time matching whichever host ran the gate.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd {
+pub unsafe extern "C" fn catopen(name: *const c_char, oflag: c_int) -> nl_catd {
     if name.is_null() {
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
@@ -1870,41 +1873,35 @@ pub unsafe extern "C" fn catopen(name: *const c_char, _oflag: c_int) -> nl_catd 
         unsafe { set_abi_errno(libc::EINVAL) };
         return INVALID_NL_CATD;
     };
-    // An empty name is rejected with EINVAL, matching live host glibc 2.43.
-    // PROVENANCE OF THIS FLIP-FLOP — read before "fixing" it again:
-    //   * 56cbe3fc8: fl rejected "" with EINVAL.
-    //   * fb7d7cc03 (bd-rp1e32): glibc-then opened "" and got the kernel's
-    //     ENOENT, so fl dropped the special case to match (measured live).
-    //   * NOW (bd-7ilguh batch, 2026-09-14): glibc 2.43 rejects "" with
-    //     EINVAL up front — the host moved back under us, the same release
-    //     that re-cut fromfp. Measured live through the gate's dlsym'd host
-    //     arm: catopen("") errno fl=2 (ENOENT via the kernel open) vs
-    //     glibc=22 (EINVAL). The lesson of both flips is the same: this
-    //     errno is a host-version behavior, and the gate must be the arbiter.
-    if name_bytes.is_empty() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return INVALID_NL_CATD;
-    }
-    let path = std::path::Path::new(std::ffi::OsStr::from_bytes(&name_bytes));
-    if path.is_dir() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return INVALID_NL_CATD;
-    }
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            unsafe { set_abi_errno(err.raw_os_error().unwrap_or(libc::EIO)) };
-            return INVALID_NL_CATD;
-        }
+    // SAFETY: getauxval reads the process auxv; in the shipped library this binds
+    // to our own export.
+    let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;
+    let mut locale = if oflag == NL_CAT_LOCALE {
+        // Stored NUL-terminated for setlocale's return value.
+        let name = category_name(libc::LC_MESSAGES);
+        name.split(|&b| b == 0).next().unwrap_or(name).to_vec()
+    } else {
+        std::env::var_os("LANG")
+            .map(|v| v.as_os_str().as_bytes().to_vec())
+            .unwrap_or_default()
     };
+    // A setuid program must not let LANG steer the search outside the locale tree.
+    if secure && locale.contains(&b'/') {
+        locale = b"C".to_vec();
+    }
+    let nlspath = std::env::var_os("NLSPATH").map(|v| v.as_os_str().as_bytes().to_vec());
 
-    let catalog = match parse_catalog_bytes(bytes) {
-        Ok(catalog) => catalog,
-        Err(err) => {
-            unsafe { set_abi_errno(err) };
-            return INVALID_NL_CATD;
-        }
-    };
+    let catalog =
+        match crate::locale_catalog::open(&name_bytes, &locale, nlspath.as_deref(), secure) {
+            Ok(catalog) => catalog,
+            Err(errno) => {
+                // 0: a malformed catalog, which glibc rejects without touching errno.
+                if errno != 0 {
+                    unsafe { set_abi_errno(errno) };
+                }
+                return INVALID_NL_CATD;
+            }
+        };
 
     let mut registry = catalog_registry().lock().unwrap_or_else(|e| e.into_inner());
     let id = next_catalog_id(&mut registry);
@@ -2159,40 +2156,19 @@ mod tests {
         // No crash, no-op verified.
     }
 
-    /// `catopen("")` reports ENOENT, not EINVAL.
-    ///
-    /// This test asserted EINVAL and was named for it, which was fl's ORIGINAL
-    /// behaviour (93749b4bb). fb7d7cc03 then fixed fl to match glibc -- an
-    /// empty name is a name that does not resolve, not a malformed argument --
-    /// and left this test pinning the value it had just corrected. It has been
-    /// red ever since, unnoticed because the whole abi suite was aborting
-    /// during the build.
-    ///
-    /// The lesson is the one bd-fix-shipped-ungated records: assert what the
-    /// ORACLE produces, and make sure the assertion actually runs.
-    #[test]
-    fn catopen_empty_name_sets_einval() {
-        // Host glibc 2.43 rejects "" with EINVAL up front (measured live
-        // through the differential gate's dlsym'd host arm, bd-7ilguh batch).
-        // History: 56cbe3fc8 EINVAL -> fb7d7cc03/bd-rp1e32 ENOENT (matching
-        // glibc-then) -> EINVAL again now that the host flipped back. The
-        // flip-flop itself is documented at the catopen branch; this test
-        // pins the CURRENT host contract and the differential gate arbitrates.
-        let empty = b"\0";
-        unsafe { set_abi_errno(0) };
-        // SAFETY: The catalog name pointer is NUL-terminated.
-        let catd = unsafe { catopen(empty.as_ptr() as *const c_char, 0) };
-        assert_eq!(catd, INVALID_NL_CATD);
-        assert_eq!(
-            unsafe { *crate::errno_abi::__errno_location() },
-            libc::EINVAL,
-            "catopen(\"\") must report EINVAL like live glibc 2.43"
-        );
-    }
+    // catopen("") has no fixed errno: glibc searches for the empty name, and
+    // the answer depends on which locale directories exist for LANG. The
+    // constant this file used to pin (EINVAL, then ENOENT, then EINVAL again)
+    // was right only on the host that last ran it. The environment-free half
+    // is `locale_catalog::tests::empty_name_is_searched_and_fails_by_what_the_
+    // directories_hold`; conformance_diff_catopen compares against the host
+    // glibc in the same process environment.
 
     #[test]
     fn catopen_directory_name_sets_einval() {
-        let current_dir = b".\0";
+        // "./", not ".": a name without a slash is searched for through
+        // NLSPATH, so "." does not name the working directory.
+        let current_dir = b"./\0";
         unsafe { set_abi_errno(0) };
         // SAFETY: The catalog name pointer is NUL-terminated.
         let catd = unsafe { catopen(current_dir.as_ptr() as *const c_char, 0) };

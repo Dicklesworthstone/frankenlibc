@@ -21,8 +21,14 @@ fn path_errno(error: CatalogPathError) -> libc::c_int {
 }
 
 /// Open the first accessible candidate, not the first *valid* catalog.
-/// GNU catopen continues after open failures, but an opened malformed file or
-/// directory is a terminal EINVAL, even when a later candidate is valid.
+/// GNU catopen continues after open failures, but an opened directory or
+/// malformed file is terminal, even when a later candidate is valid.
+///
+/// The error is the errno to report, with 0 meaning "leave errno alone": glibc
+/// rejects a malformed catalog without setting errno, so a caller sees what the
+/// search left there -- ENOENT from an earlier candidate, or its own value. An
+/// empty file is EINVAL (glibc's zero-length mapping fails), and so is a
+/// directory.
 pub(super) fn open(
     name: &[u8],
     locale: &[u8],
@@ -31,6 +37,8 @@ pub(super) fn open(
 ) -> Result<MessageCatalog, libc::c_int> {
     let candidates = CatalogPaths::new(name, locale, nlspath, secure).map_err(path_errno)?;
     let mut last_error = libc::ENOENT;
+    // errno as glibc's failed opens leave it for a malformed catalog found later.
+    let mut open_errno = 0;
     for candidate in candidates {
         let path = match candidate {
             Ok(path) => path,
@@ -44,6 +52,7 @@ pub(super) fn open(
             Ok(file) => file,
             Err(error) => {
                 last_error = error.raw_os_error().unwrap_or(libc::EIO);
+                open_errno = last_error;
                 continue;
             }
         };
@@ -58,7 +67,10 @@ pub(super) fn open(
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
             .map_err(|e| e.raw_os_error().unwrap_or(libc::EIO))?;
-        return parse_catalog_bytes(bytes).map_err(|_| libc::EINVAL);
+        if bytes.is_empty() {
+            return Err(libc::EINVAL);
+        }
+        return parse_catalog_bytes(bytes).map_err(|_| open_errno);
     }
     Err(last_error)
 }
@@ -158,7 +170,21 @@ mod tests {
         std::fs::write(OsStr::from_bytes(&f.path(b"bad")), b"invalid").unwrap();
         f.catalog(b"good", b"good");
         let paths = f.search(&[b"bad", b"good"]);
-        assert_eq!(open(b"app", b"C", Some(&paths), false), Err(libc::EINVAL));
+        // Malformed content leaves errno alone (0), as glibc does ...
+        assert_eq!(open(b"app", b"C", Some(&paths), false).err(), Some(0));
+        // ... so an earlier candidate's failed open is what the caller sees,
+        let paths = f.search(&[b"missing", b"bad", b"good"]);
+        assert_eq!(
+            open(b"app", b"C", Some(&paths), false).err(),
+            Some(libc::ENOENT)
+        );
+        // ... but an empty file is EINVAL.
+        std::fs::write(OsStr::from_bytes(&f.path(b"empty")), b"").unwrap();
+        let paths = f.search(&[b"empty", b"good"]);
+        assert_eq!(
+            open(b"app", b"C", Some(&paths), false).err(),
+            Some(libc::EINVAL)
+        );
     }
 
     #[test]
@@ -205,6 +231,26 @@ mod tests {
         );
         let cat = open(&literal, b"C", Some(&paths), true).unwrap();
         assert_eq!(cat.message_bytes(1, 1), Some(b"explicit".as_slice()));
+    }
+
+    #[test]
+    fn empty_name_is_searched_and_fails_by_what_the_directories_hold() {
+        // %N expands to nothing, so each candidate is a directory path. A
+        // locale directory that exists opens and is rejected as not a
+        // catalog (glibc: EINVAL); if none exists the search fails ENOENT.
+        // This is why glibc's catopen("") errno follows LANG.
+        let f = Fixture::new();
+        std::fs::create_dir(f.0.join("xx_YY")).unwrap();
+        let paths = f.search(&[b"%L/%N"]);
+        assert_eq!(
+            open(b"", b"xx_YY", Some(&paths), false).err(),
+            Some(libc::EINVAL)
+        );
+        let absent = format!("frankenlibc-no-such-locale-{}", std::process::id());
+        assert_eq!(
+            open(b"", absent.as_bytes(), Some(&paths), false).err(),
+            Some(libc::ENOENT)
+        );
     }
 
     #[test]

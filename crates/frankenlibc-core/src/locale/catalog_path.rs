@@ -6,9 +6,13 @@
 //! ':' in a substituted catalog name are data, not more template syntax.
 
 /// GNU installation layout with the normal `/usr` prefix. Explicit NLSPATH
-/// candidates precede these implementation-defined fallback locations.
-pub const DEFAULT_NLSPATH: &[u8] =
-    b"/usr/share/locale/%L/%N:/usr/share/locale/%L/LC_MESSAGES/%N";
+/// candidates precede these implementation-defined fallback locations: the
+/// whole locale name, then the language alone (`de_DE.UTF-8` then `de`), each
+/// with and without `LC_MESSAGES` -- the order glibc 2.43 opens them in
+/// (strace). Without the `%l` pair, a catalog installed under `de/` was not
+/// found for `LANG=de_DE.UTF-8`.
+pub const DEFAULT_NLSPATH: &[u8] = b"/usr/share/locale/%L/%N:/usr/share/locale/%L/LC_MESSAGES/%N:\
+/usr/share/locale/%l/%N:/usr/share/locale/%l/LC_MESSAGES/%N";
 
 /// Linux's pathname limit, excluding the terminating NUL. Oversized paths are
 /// rejected, never truncated to a different (potentially valid) catalog name.
@@ -86,7 +90,10 @@ impl<'a> CatalogPaths<'a> {
         nlspath: Option<&'a [u8]>,
         secure: bool,
     ) -> Result<Self, CatalogPathError> {
-        if name.is_empty() || name.contains(&0) {
+        // An empty name is searched for like any other, with `%N` expanding to
+        // nothing: glibc does, which is why its catopen("") fails with EINVAL
+        // (a locale directory opened) or ENOENT (none exists) by environment.
+        if name.contains(&0) {
             return Err(CatalogPathError::InvalidName);
         }
         let direct = name.contains(&b'/');
@@ -171,8 +178,7 @@ impl Iterator for CatalogPaths<'_> {
             let mut out = Vec::new();
             return Some(append(&mut out, self.name).map(|()| out));
         }
-        let template = component(&mut self.explicit)
-            .or_else(|| component(&mut self.defaults))?;
+        let template = component(&mut self.explicit).or_else(|| component(&mut self.defaults))?;
         Some(self.expand(template))
     }
 }
@@ -226,6 +232,8 @@ mod tests {
             b"app",
             b"/usr/share/locale/C/app",
             b"/usr/share/locale/C/LC_MESSAGES/app",
+            b"/usr/share/locale/C/app",
+            b"/usr/share/locale/C/LC_MESSAGES/app",
         ]
         .into_iter()
         .map(<[u8]>::to_vec)
@@ -240,7 +248,7 @@ mod tests {
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
-            assert_eq!(actual.len(), 2);
+            assert_eq!(actual.len(), 4);
             assert_eq!(actual[0], b"/usr/share/locale/C/app");
         }
     }
@@ -271,7 +279,7 @@ mod tests {
     fn secure_search_ignores_user_path_templates() {
         let mut paths = CatalogPaths::new(b"app", b"C", Some(b":/untrusted/%N"), true).unwrap();
         assert_eq!(paths.next().unwrap().unwrap(), b"/usr/share/locale/C/app");
-        assert_eq!(paths.count(), 1);
+        assert_eq!(paths.count(), 3);
     }
 
     #[test]
@@ -282,12 +290,32 @@ mod tests {
             expected.extend_from_slice(b"/app");
             assert_eq!(first(b"%L/%N", locale).unwrap(), expected);
         }
-        assert_eq!(first(b"%L/%N", b"en\0US"), Err(CatalogPathError::InvalidTemplate));
+        assert_eq!(
+            first(b"%L/%N", b"en\0US"),
+            Err(CatalogPathError::InvalidTemplate)
+        );
     }
 
     #[test]
-    fn rejects_empty_and_embedded_nul_catalog_names() {
-        for name in [&b""[..], b"app\0other", b"./app\0other"] {
+    fn empty_name_searches_with_an_empty_substitution() {
+        let candidates: Vec<_> = CatalogPaths::new(b"", b"fr_FR.UTF-8", None, false)
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            candidates,
+            [
+                b"/usr/share/locale/fr_FR.UTF-8/".to_vec(),
+                b"/usr/share/locale/fr_FR.UTF-8/LC_MESSAGES/".to_vec(),
+                b"/usr/share/locale/fr/".to_vec(),
+                b"/usr/share/locale/fr/LC_MESSAGES/".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_embedded_nul_catalog_names() {
+        for name in [&b"app\0other"[..], b"./app\0other"] {
             assert!(matches!(
                 CatalogPaths::new(name, b"C", None, false),
                 Err(CatalogPathError::InvalidName)
@@ -298,7 +326,10 @@ mod tests {
     #[test]
     fn unsupported_or_incomplete_tokens_do_not_alias_valid_files() {
         for template in [&b"prefix/%q"[..], b"prefix/%", b"prefix\0/%N"] {
-            assert_eq!(first(template, b"C"), Err(CatalogPathError::InvalidTemplate));
+            assert_eq!(
+                first(template, b"C"),
+                Err(CatalogPathError::InvalidTemplate)
+            );
         }
     }
 
@@ -328,8 +359,9 @@ mod tests {
     #[test]
     fn iterator_remains_exhausted() {
         let mut paths = CatalogPaths::new(b"app", b"C", None, false).unwrap();
-        assert!(paths.next().is_some());
-        assert!(paths.next().is_some());
+        for _ in 0..4 {
+            assert!(paths.next().is_some());
+        }
         assert!(paths.next().is_none());
         assert!(paths.next().is_none());
     }
