@@ -10374,7 +10374,13 @@ fn with_dtv<R>(f: impl FnOnce(&mut Vec<*mut u8>) -> R) -> R {
 ///
 /// Module ID 0 refers to the executable's TLS; modules 1..N are dynamically
 /// loaded shared objects.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+///
+/// Exported only by the standalone build. glibc defines `__tls_get_addr` in
+/// ld.so, not libc.so.6; with the host loader present this body is a pure
+/// forward to it, and exporting it made every general-dynamic TLS access in the
+/// process -- including this library's own, bound here by -Bsymbolic-functions
+/// -- pay a second call (~19% of a malloc/free pair).
+#[cfg_attr(all(not(debug_assertions), feature = "standalone"), unsafe(no_mangle))]
 pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut c_void {
     if ti.is_null() {
         return std::ptr::null_mut();

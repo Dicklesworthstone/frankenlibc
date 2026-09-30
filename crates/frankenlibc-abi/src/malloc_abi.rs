@@ -2795,6 +2795,94 @@ impl MallocStatsState {
 struct FlatCombiningStats {
     combiner_lock: AtomicBool,
     state: UnsafeCell<MallocStatsState>,
+    deferred: DeferredStats,
+}
+
+/// Unslotted stats events (`record_mutation`) that found `combiner_lock` held.
+///
+/// Those events come from allocator calls without a reentry slot: above all a
+/// signal handler that allocates while its thread is inside malloc/free. That
+/// thread may be the lock's holder (merging its slot delta, flushing, taking a
+/// snapshot), so waiting for the lock from the handler never ends -- and every
+/// other thread then queues behind it: 8 allocating threads plus a SIGPROF
+/// handler that mallocs hung at 100% CPU in both modes where glibc takes 42 ms.
+/// Instead the event is added here with plain atomic adds and folded into the
+/// state by the next reader under the lock. Net fields are two's complement.
+struct DeferredStats {
+    allocation_events: AtomicUsize,
+    free_events: AtomicUsize,
+    total_allocated: AtomicUsize,
+    total_freed: AtomicUsize,
+    active_allocations: AtomicUsize,
+    live_bytes: AtomicUsize,
+    per_size_class: [AtomicUsize; MALLOC_STATS_BIN_COUNT],
+}
+
+impl DeferredStats {
+    fn new() -> Self {
+        Self {
+            allocation_events: AtomicUsize::new(0),
+            free_events: AtomicUsize::new(0),
+            total_allocated: AtomicUsize::new(0),
+            total_freed: AtomicUsize::new(0),
+            active_allocations: AtomicUsize::new(0),
+            live_bytes: AtomicUsize::new(0),
+            per_size_class: std::array::from_fn(|_| AtomicUsize::new(0)),
+        }
+    }
+
+    fn add(&self, op: usize, size: usize, bin: usize) {
+        match op {
+            FC_OP_ALLOC => {
+                self.total_allocated.fetch_add(size, Ordering::Relaxed);
+                self.active_allocations.fetch_add(1, Ordering::Relaxed);
+                self.live_bytes.fetch_add(size, Ordering::Relaxed);
+                self.per_size_class[bin].fetch_add(1, Ordering::Relaxed);
+                // Counted last: a reader that sees no events skips the drain.
+                self.allocation_events.fetch_add(1, Ordering::Release);
+            }
+            FC_OP_FREE => {
+                self.total_freed.fetch_add(size, Ordering::Relaxed);
+                self.active_allocations.fetch_sub(1, Ordering::Relaxed);
+                self.live_bytes.fetch_sub(size, Ordering::Relaxed);
+                self.per_size_class[bin].fetch_sub(1, Ordering::Relaxed);
+                self.free_events.fetch_add(1, Ordering::Release);
+            }
+            _ => {}
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.allocation_events.load(Ordering::Acquire) == 0
+            && self.free_events.load(Ordering::Acquire) == 0
+    }
+
+    /// Move everything recorded so far into `state`. Caller holds `combiner_lock`.
+    fn drain_into(&self, state: &mut MallocStatsState) {
+        fn add_signed(total: usize, delta: usize) -> usize {
+            if (delta as isize) < 0 {
+                total.saturating_sub(delta.wrapping_neg())
+            } else {
+                total.saturating_add(delta)
+            }
+        }
+        let take = |counter: &AtomicUsize| counter.swap(0, Ordering::AcqRel);
+        state.allocation_events = state
+            .allocation_events
+            .saturating_add(take(&self.allocation_events));
+        state.free_events = state.free_events.saturating_add(take(&self.free_events));
+        state.total_allocated = state
+            .total_allocated
+            .saturating_add(take(&self.total_allocated));
+        state.total_freed = state.total_freed.saturating_add(take(&self.total_freed));
+        state.active_allocations =
+            add_signed(state.active_allocations, take(&self.active_allocations));
+        state.live_bytes = add_signed(state.live_bytes, take(&self.live_bytes));
+        state.peak_usage = state.peak_usage.max(state.live_bytes);
+        for (total, counter) in state.per_size_class.iter_mut().zip(&self.per_size_class) {
+            *total = add_signed(*total, take(counter));
+        }
+    }
 }
 
 // SAFETY: access to `state` is serialized by `combiner_lock` on the fallback
@@ -2807,7 +2895,25 @@ impl FlatCombiningStats {
         Self {
             combiner_lock: AtomicBool::new(false),
             state: UnsafeCell::new(MallocStatsState::new()),
+            deferred: DeferredStats::new(),
         }
+    }
+
+    /// Fold `deferred` into the state (reader side of `record_mutation`).
+    fn drain_deferred(&self) {
+        if self.deferred.is_empty() {
+            return;
+        }
+        while self
+            .combiner_lock
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        // SAFETY: `combiner_lock` is held exclusively for this merge.
+        unsafe { self.deferred.drain_into(&mut *self.state.get()) };
+        self.combiner_lock.store(false, Ordering::Release);
     }
 
     fn apply_op(&self, op: usize, size: usize, bin: usize) -> MallocStatsSnapshot {
@@ -2977,12 +3083,15 @@ impl FlatCombiningStats {
             return;
         }
         let bin = bin.min(MALLOC_STATS_BIN_COUNT - 1);
-        while self
+        // Never wait: this is the path of slot-less (signal-handler / bootstrap)
+        // allocations, whose own thread may hold the lock -- see `DeferredStats`.
+        if self
             .combiner_lock
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            std::hint::spin_loop();
+            self.deferred.add(op, size, bin);
+            return;
         }
         // SAFETY: `combiner_lock` is held exclusively for this mutation.
         unsafe {
@@ -3017,12 +3126,17 @@ impl FlatCombiningStats {
             std::hint::spin_loop();
         }
         // SAFETY: `combiner_lock` is held exclusively for this read.
-        let copy = unsafe { (*self.state.get()).per_size_class };
+        let copy = unsafe {
+            let state = &mut *self.state.get();
+            self.deferred.drain_into(state);
+            state.per_size_class
+        };
         self.combiner_lock.store(false, Ordering::Release);
         copy
     }
 
     fn snapshot(&self) -> MallocStatsSnapshot {
+        self.drain_deferred();
         self.apply_op(FC_OP_SNAPSHOT, 0, 0)
     }
 
@@ -3037,7 +3151,10 @@ impl FlatCombiningStats {
 
         // SAFETY: `combiner_lock` is held exclusively for this reset.
         unsafe {
-            *self.state.get() = MallocStatsState::new();
+            let state = &mut *self.state.get();
+            // Discard deferred events along with the state they belong to.
+            self.deferred.drain_into(state);
+            *state = MallocStatsState::new();
         }
 
         self.combiner_lock.store(false, Ordering::Release);

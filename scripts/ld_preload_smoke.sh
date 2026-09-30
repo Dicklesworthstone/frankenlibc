@@ -219,6 +219,8 @@ FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 REGEX_CTX_BIN="${BIN_DIR}/fixture_regex_search_context"
 cc -O2 "${ROOT}/tests/integration/fixture_regex_search_context.c" -o "${REGEX_CTX_BIN}"
+MALLOC_SIGNAL_BIN="${BIN_DIR}/fixture_malloc_signal_reentry"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_malloc_signal_reentry.c" -o "${MALLOC_SIGNAL_BIN}"
 
 NONTRIVIAL_BIN=""
 NONTRIVIAL_DESC=""
@@ -736,7 +738,7 @@ run_optional_case() {
 # case that PASSES fails the run, so the entry must be removed with the fix.
 # Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
 # is XPASS (a failure) so the entry is removed once fixed.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-hardened:malloc_signal_reentry=bd-na6ede}"
 xfails=0
 
 known_failure_bead() {
@@ -897,6 +899,8 @@ EOF
   # re_search/REG_STARTEND from an offset keep the preceding bytes as ^/\</\b
   # context (sed s///g restarts).
   run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
+  # malloc/free from a signal handler while every thread allocates.
+  run_corpus_case "${mode}" "malloc_signal_reentry" "${MALLOC_SIGNAL_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1

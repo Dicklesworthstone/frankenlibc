@@ -186,7 +186,9 @@ const fn build_small_bin_lut() -> [u8; SMALL_BIN_LUT_LEN] {
 ///
 /// O(1) granule-table lookup (see [`SMALL_BIN_LUT`]) — byte-for-byte identical
 /// to the smallest-class-`>=`-size search it replaced, since each granule maps
-/// to exactly one class.
+/// to exactly one class. `#[inline]`: called across the crate boundary on every
+/// malloc/free, where an out-of-line call cost more than the lookup.
+#[inline]
 pub fn small_bin_index(size: usize) -> Option<SizeClassIndex> {
     let size = size.max(MIN_SIZE);
     if size > MAX_SMALL_SIZE {
