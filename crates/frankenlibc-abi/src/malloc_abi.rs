@@ -4404,6 +4404,19 @@ fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
         {
             return None;
         }
+        // Hardened: an allocation made while this thread is inside membrane
+        // pointer validation -- typically a signal handler that interrupted a
+        // memcpy/strlen check -- must not enter the membrane allocator, whose
+        // arena shard / page-oracle locks the interrupted frame may hold:
+        // waiting on them never ends (bd-na6ede). Take the reentrant path.
+        // (Only per-thread depth answers this; the owned-TLS lane's depth is
+        // process-wide.)
+        #[cfg(not(feature = "owned-tls-cache"))]
+        if !strict_allocator_host_path_active()
+            && frankenlibc_membrane::ptr_validator::in_validation_context()
+        {
+            return None;
+        }
     }
     Some(guard)
 }

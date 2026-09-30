@@ -780,7 +780,15 @@ impl ValidationPipeline {
             return None;
         }
 
-        if self.page_oracle.query(addr) {
+        // The page-oracle read lock is the one lock on this fast path: hold the
+        // validation context across it, so a signal handler that allocates on
+        // this thread meanwhile sees it and does not wait for a writer lock
+        // behind its own read (bd-na6ede).
+        let owned_page = {
+            let _validation_context = enter_validation_execution_context();
+            self.page_oracle.query(addr)
+        };
+        if owned_page {
             return None;
         }
 
