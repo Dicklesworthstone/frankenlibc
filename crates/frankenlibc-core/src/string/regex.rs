@@ -1694,6 +1694,10 @@ struct PikeVm<'a> {
     anchored_literal: Option<&'a [u8]>,
     /// `prefix.*suffix`: (prefix, suffix) literals — greedy span via two SIMD searches.
     dotstar_lits: Option<(&'a [u8], &'a [u8])>,
+    /// Earliest position a match may START at. Bytes before it are still input:
+    /// `^`, `\b`, `\<` at `min_start` see the byte before it, as glibc's
+    /// re_search/REG_STARTEND do when searching from an offset of a longer string.
+    min_start: usize,
 }
 
 /// Thread state in Pike VM
@@ -1738,7 +1742,14 @@ impl<'a> PikeVm<'a> {
             literal_is_whole,
             anchored_literal,
             dotstar_lits,
+            min_start: 0,
         }
+    }
+
+    /// Search for matches starting at or after `min_start` only.
+    fn starting_at(mut self, min_start: usize) -> Self {
+        self.min_start = min_start;
+        self
     }
 
     /// True iff a match cannot begin at `start` because its byte is not in the
@@ -1798,9 +1809,14 @@ impl<'a> PikeVm<'a> {
         // captures) ⇒ [start, start+len] is the complete result. Anchors/notbol/noteol
         // can't apply (an all-literal AST has no `^`/`$`). This turns the ~6x-glibc
         // literal-regexec into a single SIMD substring search.
+        let min = self.min_start;
+        if min > self.input.len() {
+            return None;
+        }
         if self.literal_is_whole {
             if let Some(lit) = self.literal_prefix {
-                return find_literal(self.input, lit, self.literal_icase).map(|off| {
+                return find_literal(&self.input[min..], lit, self.literal_icase).map(|rel| {
+                    let off = min + rel;
                     let mut slots = vec![-1i32; self.num_slots];
                     slots[0] = off as i32;
                     slots[1] = (off + lit.len()) as i32;
@@ -1813,7 +1829,8 @@ impl<'a> PikeVm<'a> {
         // newline mode `^` matches nowhere else, so it's a single prefix compare there.
         if let Some(lit) = self.anchored_literal {
             let notbol = self.eflags & REG_NOTBOL != 0;
-            if !notbol && self.input.len() >= lit.len() {
+            // Only position 0 is a line start here; a later search start is not.
+            if !notbol && min == 0 && self.input.len() >= lit.len() {
                 let head = &self.input[..lit.len()];
                 let hit = if self.literal_icase {
                     head.eq_ignore_ascii_case(lit)
@@ -1836,10 +1853,10 @@ impl<'a> PikeVm<'a> {
         if let Some((prefix, suffix)) = self.dotstar_lits {
             // Start: first prefix occurrence (empty prefix ⇒ 0 — `.*` matches from 0).
             let start = if prefix.is_empty() {
-                0
+                min
             } else {
-                match find_literal(self.input, prefix, self.literal_icase) {
-                    Some(s) => s,
+                match find_literal(&self.input[min..], prefix, self.literal_icase) {
+                    Some(s) => min + s,
                     None => return None,
                 }
             };
@@ -1910,7 +1927,10 @@ impl<'a> PikeVm<'a> {
         const PRESCAN_SMALL_NFA: usize = 64;
         let cheaper_path = self.literal_prefix.is_some()
             || (self.prefilter.is_some() && self.nfa.len() < PRESCAN_SMALL_NFA);
+        // `any_match` sweeps from offset 0; from a later start it would rescan the
+        // prefix on every call (quadratic across a re_search restart loop).
         if !cheaper_path
+            && min == 0
             && input_len > PRESCAN_MIN_LEN
             && !self.any_match(notbol, noteol, &mut visited, &mut generation)
         {
@@ -1932,7 +1952,7 @@ impl<'a> PikeVm<'a> {
             // begin (the prefix recurs but the next byte fails) — the dominant cost
             // of literal-prefix-loop patterns like `error[0-9]` over prose.
             let peek_pc = self.post_prefix_peek_pc(lit.len());
-            let mut from = 0;
+            let mut from = min;
             while from + lit.len() <= input_len {
                 let off = find_literal(&self.input[from..], lit, self.literal_icase)?;
                 let start = from + off;
@@ -1976,7 +1996,7 @@ impl<'a> PikeVm<'a> {
         #[cfg(debug_assertions)]
         {
             let mut probe = None;
-            for start in 0..=input_len {
+            for start in min..=input_len {
                 if self.prefilter_skips(start) {
                     continue;
                 }
@@ -2647,11 +2667,14 @@ impl<'a> PikeVm<'a> {
         // never begin a match (the prefilter implies a non-nullable, determinate-
         // first-byte pattern), so skip seeding it — exactly the soundness the
         // `#[cfg(debug_assertions)]` probe in `execute` checks via `prefilter_skips`.
-        if !self.prefilter_skips(0) {
+        // The first seed sits at `min_start` (0 unless searching from an offset);
+        // every later seed is at a later position.
+        let min = self.min_start;
+        if !self.prefilter_skips(min) {
             self.lm_push_cached_closure(
                 0,
-                0,
-                0,
+                min,
+                min,
                 notbol,
                 noteol,
                 &mut current,
@@ -2668,7 +2691,7 @@ impl<'a> PikeVm<'a> {
         // Lazily-cached "is the prefilter one contiguous range?" — computed on the
         // first empty-region jump (so prefilter-less / no-jump searches pay nothing).
         let mut prefilter_range: Option<Option<(u8, u8)>> = None;
-        let mut sp = 0;
+        let mut sp = min;
         loop {
             cur_gen += 1;
             for &(pc, start) in current.iter() {
@@ -3330,6 +3353,8 @@ struct BacktrackVm<'a> {
     eflags: i32,
     prefilter: Option<FirstByteSet>,
     literal_prefix: Option<&'a [u8]>,
+    /// Earliest match start; see `PikeVm::min_start`.
+    min_start: usize,
 }
 
 struct BacktrackConfig<'a> {
@@ -3357,7 +3382,14 @@ impl<'a> BacktrackVm<'a> {
             eflags: config.eflags,
             prefilter: config.prefilter,
             literal_prefix: config.literal_prefix,
+            min_start: 0,
         }
+    }
+
+    /// Search for matches starting at or after `min_start` only.
+    fn starting_at(mut self, min_start: usize) -> Self {
+        self.min_start = min_start;
+        self
     }
 
     /// Longest match anchored at exactly `start`, or `None`.
@@ -3380,7 +3412,7 @@ impl<'a> BacktrackVm<'a> {
         // Literal-prefix fast path: jump to each occurrence via SIMD memmem.
         if let Some(lit) = self.literal_prefix {
             let input_len = self.input.len();
-            let mut from = 0;
+            let mut from = self.min_start;
             while from + lit.len() <= input_len {
                 let off = find_literal(&self.input[from..], lit, self.icase)?;
                 let start = from + off;
@@ -3392,7 +3424,7 @@ impl<'a> BacktrackVm<'a> {
             return None;
         }
 
-        for start in 0..=self.input.len() {
+        for start in self.min_start..=self.input.len() {
             // Prefilter: skip starts whose byte cannot begin a match, avoiding
             // the full backtracking attempt below (the O(n*m)-per-start cost).
             if let Some(fb) = self.prefilter
@@ -4054,7 +4086,7 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         || compiled.literal_prefix.is_some()
         || compiled.prefilter.is_some()
     {
-        return regex_exec_byte_slots(compiled, input, eflags).is_some();
+        return regex_exec_byte_slots_from(compiled, input, 0, eflags, false).is_some();
     }
 
     let vm = PikeVm::new(
@@ -4095,6 +4127,49 @@ pub fn regex_match_bounds_bytes(
     eflags: i32,
 ) -> Option<(i32, i32)> {
     let slots = regex_exec_byte_slots(compiled, input, eflags)?;
+    Some((*slots.first().unwrap_or(&-1), *slots.get(1).unwrap_or(&-1)))
+}
+
+/// Leftmost match starting at or after `start`, with offsets relative to the
+/// whole `input` (see `regex_exec_byte_slots_from` for the context rules).
+/// Fills `matches` like `regex_exec_bytes`; returns 0 or `REG_NOMATCH`.
+pub fn regex_exec_bytes_from(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    start: usize,
+    matches: &mut [RegMatch],
+    eflags: i32,
+) -> i32 {
+    let Some(slots) = regex_exec_byte_slots_from(compiled, input, start, eflags, true) else {
+        return REG_NOMATCH;
+    };
+    // Like `regex_exec_bytes`: REG_NOSUB leaves `matches` untouched.
+    if compiled.nosub {
+        return 0;
+    }
+    let cap = (compiled.num_groups + 1) * 2;
+    for (i, m) in matches.iter_mut().enumerate() {
+        let eo_idx = i * 2 + 1;
+        if eo_idx < cap && eo_idx < slots.len() {
+            m.rm_so = slots[i * 2];
+            m.rm_eo = slots[eo_idx];
+        } else {
+            m.rm_so = -1;
+            m.rm_eo = -1;
+        }
+    }
+    0
+}
+
+/// Whole-match offsets of the leftmost match starting at or after `start`,
+/// relative to the whole `input`.
+pub fn regex_match_bounds_bytes_from(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    start: usize,
+    eflags: i32,
+) -> Option<(i32, i32)> {
+    let slots = regex_exec_byte_slots_from(compiled, input, start, eflags, true)?;
     Some((*slots.first().unwrap_or(&-1), *slots.get(1).unwrap_or(&-1)))
 }
 
@@ -4186,9 +4261,30 @@ fn regex_exec_cstring_slots(
 }
 
 fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) -> Option<Vec<i32>> {
+    regex_exec_byte_slots_from(compiled, input, 0, eflags, true)
+}
+
+/// Leftmost match of `compiled` in `input` that starts at or after `start`.
+/// Returned offsets are relative to the whole `input`. The bytes before `start`
+/// remain context, exactly as in glibc's `re_search` from an offset and
+/// `regexec(REG_STARTEND)`: `^` (with REG_NEWLINE), `\<`, `\>`, `\b` and `\B`
+/// at `start` see the byte before it, and REG_NOTBOL only concerns offset 0.
+/// With `offsets == false` only `is_some()` is meaningful: a REG_NOSUB pattern
+/// may then answer `Some(vec![])` from a membership pass.
+fn regex_exec_byte_slots_from(
+    compiled: &CompiledRegex,
+    input: &[u8],
+    start: usize,
+    eflags: i32,
+    offsets: bool,
+) -> Option<Vec<i32>> {
     let num_slots = compiled.num_slots();
 
-    if regex_required_fast_rejects(compiled, input) {
+    if start > input.len() {
+        return None;
+    }
+    // Every match lies inside input[start..], so its required bytes must too.
+    if regex_required_fast_rejects(compiled, &input[start..]) {
         return None;
     }
 
@@ -4202,7 +4298,8 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
             eflags,
             prefilter: compiled.prefilter,
             literal_prefix: compiled.literal_prefix.as_deref(),
-        });
+        })
+        .starting_at(start);
         return vm.execute();
     }
 
@@ -4220,7 +4317,8 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
             .dotstar_lits
             .as_ref()
             .map(|(p, s)| (p.as_slice(), s.as_slice())),
-    );
+    )
+    .starting_at(start);
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
     // observable (pmatch is never filled), so skip the O(n*m) leftmost_start +
@@ -4231,7 +4329,8 @@ fn regex_exec_byte_slots(compiled: &CompiledRegex, input: &[u8], eflags: i32) ->
     // agrees with `execute().is_some()` on every input. Skipped when a literal
     // prefix is present: `execute` already jumps straight to occurrences via
     // SIMD memmem there, which beats seeding a thread at every position.
-    if compiled.nosub && compiled.literal_prefix.is_none() {
+    // `any_match` seeds from offset 0, so it only applies to whole-input searches.
+    if !offsets && compiled.nosub && compiled.literal_prefix.is_none() && start == 0 {
         let notbol = eflags & REG_NOTBOL != 0;
         let noteol = eflags & REG_NOTEOL != 0;
         let mut visited = vec![0u64; compiled.nfa.len()];

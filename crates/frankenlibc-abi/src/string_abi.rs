@@ -10524,12 +10524,12 @@ pub unsafe extern "C" fn regexec(
         return regex::REG_BADPAT;
     };
 
-    // REG_STARTEND (BSD/GNU): the buffer is `string[rm_so..rm_eo]` — embedded
-    // NULs allowed, no NUL terminator. The matched string logically ends at
-    // rm_eo (`$` anchors there) and `^` still anchors at the true buffer start,
-    // so a non-zero rm_so forces REG_NOTBOL; returned offsets are relative to
-    // `string`, so rm_so is added back. (rm_so/rm_eo are read regardless of
-    // nmatch, per the contract.)
+    // REG_STARTEND (BSD/GNU): search `string[..rm_eo]` (embedded NULs allowed,
+    // no NUL terminator) for a match starting at or after rm_so. As in glibc,
+    // the bytes before rm_so stay context: `^` (REG_NEWLINE), `\<`, `\b` at
+    // rm_so see the byte before it, and REG_NOTBOL only concerns offset 0.
+    // Offsets come back relative to `string`. (rm_so/rm_eo are read regardless
+    // of nmatch, per the contract.)
     if eflags & regex::REG_STARTEND != 0 && !pmatch.is_null() {
         let first = unsafe { &*(pmatch as *const regex::RegMatch) };
         let (so, eo) = (first.rm_so, first.rm_eo);
@@ -10540,44 +10540,16 @@ pub unsafe extern "C" fn regexec(
         // SAFETY: the caller guarantees `string[..eo]` is readable under the
         // REG_STARTEND contract (no NUL scan).
         let region = unsafe { core::slice::from_raw_parts(string as *const u8, eo) };
-        let sub = &region[so..eo];
+        let exec_eflags = eflags & !regex::REG_STARTEND;
 
-        let mut sub_eflags = eflags & !regex::REG_STARTEND;
-        if so > 0 {
-            // The slice's first position is `string + rm_so`. `^` matches there
-            // only if it is a line start: under REG_NEWLINE with a `\n` just
-            // before it (which then matches even if the caller set NOTBOL, since
-            // NOTBOL only suppresses the true buffer-start BOL). Otherwise it is
-            // not a BOL, so force NOTBOL.
-            if compiled.newline_mode() && region.get(so - 1) == Some(&b'\n') {
-                sub_eflags &= !regex::REG_NOTBOL;
-            } else {
-                sub_eflags |= regex::REG_NOTBOL;
-            }
-        }
-
-        let rc = if nmatch == 0 {
+        return if nmatch == 0 {
             let mut dummy = [regex::RegMatch::default(); 1];
-            regex::regex_exec_bytes(compiled, sub, &mut dummy, sub_eflags)
+            regex::regex_exec_bytes_from(compiled, region, so, &mut dummy, exec_eflags)
         } else {
             let pmatch_slice =
                 unsafe { core::slice::from_raw_parts_mut(pmatch as *mut regex::RegMatch, nmatch) };
-            let rc = regex::regex_exec_bytes(compiled, sub, pmatch_slice, sub_eflags);
-            if rc == 0 {
-                // Re-base sub-buffer-relative offsets onto `string`.
-                let off = so as i32;
-                for m in pmatch_slice.iter_mut() {
-                    if m.rm_so >= 0 {
-                        m.rm_so += off;
-                    }
-                    if m.rm_eo >= 0 {
-                        m.rm_eo += off;
-                    }
-                }
-            }
-            rc
+            regex::regex_exec_bytes_from(compiled, region, so, pmatch_slice, exec_eflags)
         };
-        return rc;
     }
 
     // Borrow the C string (INCL. its NUL, which the engine expects — same bytes as the
@@ -13121,61 +13093,59 @@ pub unsafe extern "C" fn re_search_2(
     }
     let stop_bound = (stop.max(0) as usize).min(haystack.len());
     let nosub = compiled.nosub();
-    let reg_count = compiled.num_regs().max(2);
+    let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
+
+    // Leftmost match starting at or after `from` over the WHOLE haystack, so the
+    // bytes before `from` stay context for `^`/`\<`/`\b` exactly as in glibc
+    // (slicing the haystack at `from` would make every restart a line start).
+    // Returns (start, end) with `match_slots` filled when registers are wanted.
+    let search_from = |from: usize, slots: &mut [regex::RegMatch]| -> Option<(usize, usize)> {
+        if nosub {
+            let (so, eo) = regex::regex_match_bounds_bytes_from(compiled, &haystack, from, 0)?;
+            Some((so as usize, eo as usize))
+        } else if regex::regex_exec_bytes_from(compiled, &haystack, from, slots, 0) == 0 {
+            Some((slots[0].rm_so as usize, slots[0].rm_eo as usize))
+        } else {
+            None
+        }
+    };
 
     if range >= 0 {
         let search_end = search_start
             .saturating_add(range as usize)
             .min(haystack.len());
-        for pos in search_start..=search_end {
-            let sub = &haystack[pos..];
-            if nosub {
-                if let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) {
-                    let rel = rm_so.max(0) as usize;
-                    let end = rm_eo.max(0) as usize;
-                    if pos + end > stop_bound {
-                        continue;
-                    }
-                    return (pos + rel) as c_int;
-                }
-            } else {
-                let mut match_slots = vec![regex::RegMatch::default(); reg_count];
-                if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) == 0 {
-                    let rel = match_slots[0].rm_so.max(0) as usize;
-                    let end = match_slots[0].rm_eo.max(0) as usize;
-                    if pos + end > stop_bound {
-                        continue;
-                    }
-                    unsafe { legacy_regex_write_regs(regs, &match_slots, pos as c_int) };
-                    return (pos + rel) as c_int;
-                }
+        let mut from = search_start;
+        while from <= search_end {
+            let (so, eo) = match search_from(from, &mut match_slots) {
+                Some(bounds) if bounds.0 <= search_end => bounds,
+                _ => return -1,
+            };
+            if eo > stop_bound {
+                // The leftmost-longest match here runs past `stop`; a later
+                // start may still fit.
+                from = so + 1;
+                continue;
             }
+            if !nosub {
+                unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+            }
+            return so as c_int;
         }
     } else {
+        // Backward search: the first start (scanning down from `startpos`) at
+        // which a match begins.
         let search_end = search_start.saturating_sub(range.unsigned_abs() as usize);
         for pos in (search_end..=search_start).rev() {
-            let sub = &haystack[pos..];
-            if nosub {
-                if let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) {
-                    let rel = rm_so.max(0) as usize;
-                    let end = rm_eo.max(0) as usize;
-                    if pos + end > stop_bound {
-                        continue;
-                    }
-                    return (pos + rel) as c_int;
-                }
-            } else {
-                let mut match_slots = vec![regex::RegMatch::default(); reg_count];
-                if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) == 0 {
-                    let rel = match_slots[0].rm_so.max(0) as usize;
-                    let end = match_slots[0].rm_eo.max(0) as usize;
-                    if pos + end > stop_bound {
-                        continue;
-                    }
-                    unsafe { legacy_regex_write_regs(regs, &match_slots, pos as c_int) };
-                    return (pos + rel) as c_int;
-                }
+            let Some((so, eo)) = search_from(pos, &mut match_slots) else {
+                continue;
+            };
+            if so != pos || eo > stop_bound {
+                continue;
             }
+            if !nosub {
+                unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+            }
+            return pos as c_int;
         }
     }
     -1
@@ -13237,32 +13207,31 @@ pub unsafe extern "C" fn re_match_2(
     let stop_bound = (stop.max(0) as usize).min(haystack.len());
     let nosub = compiled.nosub();
 
-    let sub = &haystack[start_pos..];
+    // Search the whole haystack from `start_pos` so the preceding bytes stay
+    // context for `^`/`\<`/`\b`; a match exists AT `start_pos` iff the leftmost
+    // one from there starts there. The return value is the match LENGTH.
     if nosub {
-        let Some((rm_so, rm_eo)) = regex::regex_match_bounds_bytes(compiled, sub, 0) else {
+        let Some((rm_so, rm_eo)) =
+            regex::regex_match_bounds_bytes_from(compiled, &haystack, start_pos, 0)
+        else {
             return -1;
         };
-        if rm_so != 0 {
+        if rm_so as usize != start_pos || rm_eo as usize > stop_bound {
             return -1;
         }
-        if start_pos + rm_eo.max(0) as usize > stop_bound {
-            return -1;
-        }
-        return rm_eo;
+        return rm_eo - rm_so;
     }
 
     let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
-    if regex::regex_exec_bytes(compiled, sub, &mut match_slots, 0) != 0 {
+    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, 0) != 0 {
         return -1;
     }
-    if match_slots[0].rm_so != 0 {
+    let (rm_so, rm_eo) = (match_slots[0].rm_so, match_slots[0].rm_eo);
+    if rm_so as usize != start_pos || rm_eo as usize > stop_bound {
         return -1;
     }
-    if start_pos + match_slots[0].rm_eo.max(0) as usize > stop_bound {
-        return -1;
-    }
-    unsafe { legacy_regex_write_regs(regs, &match_slots, start_pos as c_int) };
-    match_slots[0].rm_eo
+    unsafe { legacy_regex_write_regs(regs, &match_slots, 0) };
+    rm_eo - rm_so
 }
 
 /// `re_set_registers` — attach caller-managed register storage to a compiled pattern.
