@@ -4438,7 +4438,7 @@ fn strict_allocator_host_path_active() -> bool {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        !runtime_policy::mode().heals_enabled()
+        !runtime_policy::resolved_mode().heals_enabled()
     }
 }
 

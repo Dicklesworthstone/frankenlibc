@@ -215,9 +215,12 @@ impl FirstByteSet {
         if total == 0 {
             return None;
         }
-        // First/last set bit across the 256-bit table.
-        let lo = (0..256u16).find(|&b| self.contains(b as u8))? as u8;
-        let hi = (0..256u16).rev().find(|&b| self.contains(b as u8))? as u8;
+        // First/last set bit across the 256-bit table, a word at a time (this
+        // runs once per search: a per-byte scan was ~250 bit tests per call).
+        let (lo_word, lo_bits) = self.words.iter().enumerate().find(|(_, w)| **w != 0)?;
+        let (hi_word, hi_bits) = self.words.iter().enumerate().rev().find(|(_, w)| **w != 0)?;
+        let lo = (lo_word * 64 + lo_bits.trailing_zeros() as usize) as u8;
+        let hi = (hi_word * 64 + 63 - hi_bits.leading_zeros() as usize) as u8;
         // Contiguous iff the population exactly fills [lo, hi].
         if total == (hi - lo) as u32 + 1 {
             Some((lo, hi))
@@ -819,6 +822,28 @@ pub struct CompiledRegex {
     /// every search (it is O(nfa²) with allocations, a fixed cost per
     /// `regexec`/`re_search` call that dominated short-line workloads like sed).
     bulk_table: Vec<Option<[u64; 4]>>,
+    /// For position-independent NFAs, every PC's leftmost-start epsilon closure,
+    /// built once here instead of lazily (with a `Box` per PC) on every search.
+    closure_table: Option<ClosureTable>,
+}
+
+/// Epsilon closures of every PC, flattened: the closure of `pc` (in thread
+/// priority order) is `pcs[offsets[pc]..offsets[pc + 1]]`.
+#[derive(Debug)]
+struct ClosureTable {
+    offsets: Vec<u32>,
+    pcs: Vec<u32>,
+}
+
+impl ClosureTable {
+    /// Total closure entries allowed (4 bytes each): past this, searches keep the
+    /// lazy per-call cache, which only materializes the PCs a search reaches.
+    const MAX_ENTRIES: usize = 1 << 16;
+
+    #[inline]
+    fn closure(&self, pc: usize) -> &[u32] {
+        &self.pcs[self.offsets[pc] as usize..self.offsets[pc + 1] as usize]
+    }
 }
 
 impl CompiledRegex {
@@ -1704,13 +1729,85 @@ struct PikeVm<'a> {
     min_start: usize,
     /// The compile-time `build_bulk_loop_table` of `nfa`; `None` builds it per search.
     bulk_table: Option<&'a [Option<[u64; 4]>]>,
+    /// The compile-time `build_closure_table` of `nfa`; `None` closes lazily.
+    closure_table: Option<&'a ClosureTable>,
 }
 
 /// Thread state in Pike VM
 #[derive(Clone)]
 struct Thread {
     pc: usize,
-    slots: Vec<i32>,
+    slots: SlotBuf,
+}
+
+/// NFA sizes whose per-search closure `visited` stamps live on the stack.
+const VISITED_INLINE: usize = 64;
+
+/// Slots a `SlotBuf` holds without a heap allocation: whole match plus three
+/// groups, or fewer groups plus hidden repeat-progress slots.
+const SLOT_INLINE: usize = 8;
+
+/// A thread's capture slots. Every `Split` in the epsilon closure clones them,
+/// so as a `Vec` each clone was a malloc/free pair — the dominant cost of a
+/// search over a short input (sed calls re_search per line and per match).
+/// Inline for the common small case, heap beyond `SLOT_INLINE`.
+#[derive(Clone)]
+enum SlotBuf {
+    Inline { len: u8, buf: [i32; SLOT_INLINE] },
+    Heap(Vec<i32>),
+}
+
+impl SlotBuf {
+    /// `n` unset (-1) slots with the whole-match start at `start`.
+    fn starting(n: usize, start: usize) -> Self {
+        let mut slots = if n <= SLOT_INLINE {
+            SlotBuf::Inline {
+                len: n as u8,
+                buf: [-1; SLOT_INLINE],
+            }
+        } else {
+            SlotBuf::Heap(vec![-1; n])
+        };
+        if let Some(s0) = slots.first_mut() {
+            *s0 = start as i32;
+        }
+        slots
+    }
+
+    fn from_slice(slots: &[i32]) -> Self {
+        if slots.len() <= SLOT_INLINE {
+            let mut buf = [-1; SLOT_INLINE];
+            buf[..slots.len()].copy_from_slice(slots);
+            SlotBuf::Inline {
+                len: slots.len() as u8,
+                buf,
+            }
+        } else {
+            SlotBuf::Heap(slots.to_vec())
+        }
+    }
+}
+
+impl core::ops::Deref for SlotBuf {
+    type Target = [i32];
+
+    #[inline]
+    fn deref(&self) -> &[i32] {
+        match self {
+            SlotBuf::Inline { len, buf } => &buf[..*len as usize],
+            SlotBuf::Heap(slots) => slots,
+        }
+    }
+}
+
+impl core::ops::DerefMut for SlotBuf {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [i32] {
+        match self {
+            SlotBuf::Inline { len, buf } => &mut buf[..*len as usize],
+            SlotBuf::Heap(slots) => slots,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1750,6 +1847,7 @@ impl<'a> PikeVm<'a> {
             dotstar_lits,
             min_start: 0,
             bulk_table: None,
+            closure_table: None,
         }
     }
 
@@ -1763,6 +1861,39 @@ impl<'a> PikeVm<'a> {
     fn with_bulk_table(mut self, table: &'a [Option<[u64; 4]>]) -> Self {
         self.bulk_table = Some(table);
         self
+    }
+
+    /// Use `table`, the precomputed `build_closure_table` of this NFA.
+    fn with_closure_table(mut self, table: Option<&'a ClosureTable>) -> Self {
+        self.closure_table = table;
+        self
+    }
+
+    /// Every PC's leftmost-start epsilon closure, for a position-independent NFA
+    /// (no anchors or word assertions, so a closure depends only on its PC —
+    /// the same soundness condition as `lm_push_cached_closure`'s lazy cache).
+    /// `None` when the NFA is position-dependent or the table would exceed
+    /// `ClosureTable::MAX_ENTRIES`.
+    fn build_closure_table(&self) -> Option<ClosureTable> {
+        if !self.is_pos_independent() {
+            return None;
+        }
+        let n = self.nfa.len();
+        let mut offsets = Vec::with_capacity(n + 1);
+        let mut pcs: Vec<u32> = Vec::new();
+        let mut visited = vec![0u64; n];
+        let mut list: Vec<(usize, usize)> = Vec::new();
+        offsets.push(0u32);
+        for pc in 0..n {
+            list.clear();
+            self.lm_closure(pc, 0, 0, false, false, &mut list, &mut visited, pc as u64 + 1, 0);
+            if pcs.len() + list.len() > ClosureTable::MAX_ENTRIES {
+                return None;
+            }
+            pcs.extend(list.iter().map(|&(closed_pc, _)| closed_pc as u32));
+            offsets.push(pcs.len() as u32);
+        }
+        Some(ClosureTable { offsets, pcs })
     }
 
     /// True iff a match cannot begin at `start` because its byte is not in the
@@ -1917,8 +2048,16 @@ impl<'a> PikeVm<'a> {
         // Closure-dedup scratch shared across every run_from in this execute:
         // `visited[pc] == cur_generation` means "already added in the set being built".
         // `generation` is monotonic (never reset) so a fresh per-build value never
-        // collides with a stale stamp — letting us reuse one allocation.
-        let mut visited = vec![0u64; self.nfa.len()];
+        // collides with a stale stamp — letting us reuse one allocation (none at
+        // all for small NFAs, whose stamps live on the stack).
+        let mut visited_inline = [0u64; VISITED_INLINE];
+        let mut visited_heap = Vec::new();
+        let visited: &mut [u64] = if self.nfa.len() <= VISITED_INLINE {
+            &mut visited_inline[..self.nfa.len()]
+        } else {
+            visited_heap.resize(self.nfa.len(), 0u64);
+            &mut visited_heap
+        };
         let mut generation = 0u64;
 
         // For large inputs, a single forward membership pass rules out a match
@@ -1945,7 +2084,7 @@ impl<'a> PikeVm<'a> {
         if !cheaper_path
             && min == 0
             && input_len > PRESCAN_MIN_LEN
-            && !self.any_match(notbol, noteol, &mut visited, &mut generation)
+            && !self.any_match(notbol, noteol, visited, &mut generation)
         {
             return None;
         }
@@ -1985,16 +2124,15 @@ impl<'a> PikeVm<'a> {
                         continue;
                     }
                 }
-                let mut slots = vec![-1i32; self.num_slots];
-                slots[0] = start as i32;
+                let slots = SlotBuf::starting(self.num_slots, start);
                 if let Some(matched_slots) = self.run_from(
                     start,
                     &slots,
                     notbol,
                     noteol,
-                    &mut visited,
+                    visited,
                     &mut generation,
-                    &bulk_table,
+                    bulk_table,
                 ) {
                     return Some(matched_slots);
                 }
@@ -2010,7 +2148,7 @@ impl<'a> PikeVm<'a> {
         // the result is identical to the per-start loop below; a debug build
         // asserts that isomorphism on every input (so the differential fuzz
         // proves it across 2320 patterns vs glibc).
-        let s_star = self.leftmost_start(notbol, noteol, &bulk_table);
+        let s_star = self.leftmost_start(notbol, noteol, bulk_table);
 
         #[cfg(debug_assertions)]
         {
@@ -2027,9 +2165,9 @@ impl<'a> PikeVm<'a> {
                         &slots,
                         notbol,
                         noteol,
-                        &mut visited,
+                        visited,
                         &mut generation,
-                        &bulk_table,
+                        bulk_table,
                     )
                     .is_some()
                 {
@@ -2044,16 +2182,15 @@ impl<'a> PikeVm<'a> {
         }
 
         let start = s_star?;
-        let mut slots = vec![-1i32; self.num_slots];
-        slots[0] = start as i32; // group 0 start
+        let slots = SlotBuf::starting(self.num_slots, start); // group 0 start
         self.run_from(
             start,
             &slots,
             notbol,
             noteol,
-            &mut visited,
+            visited,
             &mut generation,
-            &bulk_table,
+            bulk_table,
         )
     }
 
@@ -2110,7 +2247,7 @@ impl<'a> PikeVm<'a> {
                 scratch,
                 Thread {
                     pc,
-                    slots: Vec::new(),
+                    slots: SlotBuf::from_slice(&[]),
                 },
                 0,
                 anchors,
@@ -2337,7 +2474,7 @@ impl<'a> PikeVm<'a> {
         // zero-allocation clone of an empty Vec, and `Save` is bounds-guarded to a
         // no-op — turning the prior O(n*m) per-thread heap-clone storm (the
         // closure-heavy `a?…a?b` worst case) into pure pointer chasing.
-        let dummy: Vec<i32> = Vec::new();
+        let dummy = SlotBuf::from_slice(&[]);
         let mut current: Vec<Thread> = Vec::new();
         let mut next: Vec<Thread> = Vec::new();
         let anchors = VmAnchors { notbol, noteol };
@@ -2601,6 +2738,19 @@ impl<'a> PikeVm<'a> {
         cache_gen: &mut u64,
         cache_scratch: &mut Vec<(usize, usize)>,
     ) {
+        if let Some(table) = self.closure_table {
+            if pc >= self.nfa.len() {
+                return;
+            }
+            for &closed_pc in table.closure(pc) {
+                let closed_pc = closed_pc as usize;
+                if visited[closed_pc] != cur_gen {
+                    visited[closed_pc] = cur_gen;
+                    list.push((closed_pc, start));
+                }
+            }
+            return;
+        }
         if !use_cache {
             self.lm_closure(pc, start, sp, notbol, noteol, list, visited, cur_gen, 0);
             return;
@@ -2662,12 +2812,23 @@ impl<'a> PikeVm<'a> {
         bulk_table: &[Option<[u64; 4]>],
     ) -> Option<usize> {
         let input_len = self.input.len();
-        let mut visited = vec![0u64; self.nfa.len()];
+        let mut visited_inline = [0u64; VISITED_INLINE];
+        let mut visited_heap = Vec::new();
+        let visited: &mut [u64] = if self.nfa.len() <= VISITED_INLINE {
+            &mut visited_inline[..self.nfa.len()]
+        } else {
+            visited_heap.resize(self.nfa.len(), 0u64);
+            &mut visited_heap
+        };
         let mut cur_gen = 0u64;
-        let mut current: Vec<(usize, usize)> = Vec::new();
-        let mut next: Vec<(usize, usize)> = Vec::new();
+        // Each PC enters a set at most once (`visited` dedup): one allocation
+        // per list instead of repeated growth.
+        let mut current: Vec<(usize, usize)> = Vec::with_capacity(self.nfa.len());
+        let mut next: Vec<(usize, usize)> = Vec::with_capacity(self.nfa.len());
         let mut best: Option<usize> = None;
-        let use_closure_cache = self.is_pos_independent();
+        // A precomputed closure table (see `lm_push_cached_closure`) supersedes
+        // the lazy per-search cache.
+        let use_closure_cache = self.closure_table.is_none() && self.is_pos_independent();
         let mut closure_cache: Vec<Option<Box<[usize]>>> = if use_closure_cache {
             vec![None; self.nfa.len()]
         } else {
@@ -2697,7 +2858,7 @@ impl<'a> PikeVm<'a> {
                 notbol,
                 noteol,
                 &mut current,
-                &mut visited,
+                visited,
                 cur_gen,
                 use_closure_cache,
                 &mut closure_cache,
@@ -2733,7 +2894,7 @@ impl<'a> PikeVm<'a> {
                             notbol,
                             noteol,
                             &mut next,
-                            &mut visited,
+                            visited,
                             cur_gen,
                             use_closure_cache,
                             &mut closure_cache,
@@ -2762,7 +2923,7 @@ impl<'a> PikeVm<'a> {
                     notbol,
                     noteol,
                     &mut next,
-                    &mut visited,
+                    visited,
                     cur_gen,
                     use_closure_cache,
                     &mut closure_cache,
@@ -3023,9 +3184,11 @@ impl<'a> PikeVm<'a> {
         generation: &mut u64,
         bulk_table: &[Option<[u64; 4]>],
     ) -> Option<Vec<i32>> {
-        let mut current: Vec<Thread> = Vec::new();
-        let mut next: Vec<Thread> = Vec::new();
-        let mut best: Option<Vec<i32>> = None;
+        // A thread set holds each PC at most once (closure dedup), so one
+        // allocation per list covers the whole run instead of repeated growth.
+        let mut current: Vec<Thread> = Vec::with_capacity(self.nfa.len());
+        let mut next: Vec<Thread> = Vec::with_capacity(self.nfa.len());
+        let mut best: Option<SlotBuf> = None;
         let anchors = VmAnchors { notbol, noteol };
         let mut closure = ClosureState {
             visited,
@@ -3035,7 +3198,7 @@ impl<'a> PikeVm<'a> {
         // Add initial thread (its own closure generation).
         let init_thread = Thread {
             pc: 0,
-            slots: initial_slots.to_vec(),
+            slots: SlotBuf::from_slice(initial_slots),
         };
         *generation += 1;
         closure.generation = *generation;
@@ -3124,7 +3287,7 @@ impl<'a> PikeVm<'a> {
             }
         }
 
-        best
+        best.map(|slots| slots.to_vec())
     }
 
     /// Recursively add a thread, following epsilon transitions (Split, Jump, Save).
@@ -3901,7 +4064,14 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
             }
         } else {
             let lit = leading_literal_prefix(&ast);
-            if lit.len() >= 2 {
+            // A single leading byte is better served by the first-byte prefilter,
+            // except when it is the WHOLE pattern (`s/a/b/g`): then it is a
+            // `literal_is_whole` memchr with no NFA run per match.
+            let whole_single_byte = lit.len() == 1
+                && num_groups == 0
+                && !has_backref
+                && is_all_literal(&ast);
+            if lit.len() >= 2 || whole_single_byte {
                 (Some(lit), None)
             } else if !analysis.first_bytes.any && analysis.first_bytes.count() > 0 {
                 (None, Some(analysis.first_bytes))
@@ -3969,6 +4139,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         required_substring,
         nosub_prefilter_dfa: None,
         bulk_table: Vec::new(),
+        closure_table: None,
     });
 
     // Backreference patterns run on the backtracker, which never reads the table.
@@ -3986,6 +4157,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
             None,
         );
         compiled.bulk_table = vm.build_bulk_loop_table();
+        compiled.closure_table = vm.build_closure_table();
     }
 
     // The documented closure-heavy REG_NOSUB residual is a prefilter-only
@@ -4356,7 +4528,8 @@ fn regex_exec_byte_slots_from(
             .map(|(p, s)| (p.as_slice(), s.as_slice())),
     )
     .starting_at(start)
-    .with_bulk_table(&compiled.bulk_table);
+    .with_bulk_table(&compiled.bulk_table)
+    .with_closure_table(compiled.closure_table.as_ref());
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
     // observable (pmatch is never filled), so skip the O(n*m) leftmost_start +

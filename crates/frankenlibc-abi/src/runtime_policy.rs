@@ -1004,6 +1004,21 @@ fn clear_thread_local_mode_cache() {
     let _ = with_mode_cache(|cache| *cache = MODE_UNRESOLVED);
 }
 
+/// The process mode for allocator hot paths: once resolved it is immutable, so
+/// read it straight from `MODE_STATE` and skip `mode()`'s thread-local cache and
+/// switch-attempt sampler (two `__tls_get_addr` round-trips in the cdylib, paid
+/// by every malloc/free). The sampler still runs on every other entrypoint.
+/// Before resolution this is exactly `mode()`.
+#[must_use]
+#[inline]
+pub(crate) fn resolved_mode() -> SafetyLevel {
+    let cached = MODE_STATE.load(AtomicOrdering::Relaxed);
+    if cached != MODE_UNRESOLVED && cached != MODE_RESOLVING {
+        return u8_to_mode(cached);
+    }
+    mode()
+}
+
 #[must_use]
 pub(crate) fn mode() -> SafetyLevel {
     if let Some(resolved) = load_thread_local_mode_cache() {

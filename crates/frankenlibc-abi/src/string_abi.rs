@@ -13110,7 +13110,16 @@ pub unsafe extern "C" fn re_search_2(
     }
     let stop_bound = (stop.max(0) as usize).min(haystack.len());
     let nosub = compiled.nosub();
-    let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
+    // Registers live on the stack for up to nine groups (no per-call allocation).
+    let reg_count = compiled.num_regs().max(2);
+    let mut stack_slots = [regex::RegMatch::default(); 10];
+    let mut heap_slots;
+    let match_slots: &mut [regex::RegMatch] = if reg_count <= stack_slots.len() {
+        &mut stack_slots[..reg_count]
+    } else {
+        heap_slots = vec![regex::RegMatch::default(); reg_count];
+        &mut heap_slots
+    };
 
     // Leftmost match starting at or after `from` over the WHOLE haystack, so the
     // bytes before `from` stay context for `^`/`\<`/`\b` exactly as in glibc
@@ -13133,7 +13142,7 @@ pub unsafe extern "C" fn re_search_2(
             .min(haystack.len());
         let mut from = search_start;
         while from <= search_end {
-            let (so, eo) = match search_from(from, &mut match_slots) {
+            let (so, eo) = match search_from(from, &mut *match_slots) {
                 Some(bounds) if bounds.0 <= search_end => bounds,
                 _ => return -1,
             };
@@ -13153,7 +13162,7 @@ pub unsafe extern "C" fn re_search_2(
         // which a match begins.
         let search_end = search_start.saturating_sub(range.unsigned_abs() as usize);
         for pos in (search_end..=search_start).rev() {
-            let Some((so, eo)) = search_from(pos, &mut match_slots) else {
+            let Some((so, eo)) = search_from(pos, &mut *match_slots) else {
                 continue;
             };
             if so != pos || eo > stop_bound {
