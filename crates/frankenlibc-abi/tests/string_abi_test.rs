@@ -2156,6 +2156,71 @@ fn re_search_scans_backwards_for_negative_range() {
     }
 }
 
+/// A search from `start > 0` keeps the bytes before `start` as context, as in
+/// glibc: sed's `s///g` restarts after each match, and `s/^a/X/g` on "aab" must
+/// not treat the restart point as a line start. frankenlibc used to re-search
+/// the tail slice as a fresh string, so `^`/`\<`/`\b` matched at every restart.
+#[test]
+fn re_search_from_offset_keeps_preceding_context() {
+    let _guard = legacy_regex_test_guard();
+    //                0123456789012 3
+    let haystack = b"aab bcb acb ca";
+    // (pattern, start, range, expected glibc result)
+    let cases: [(&[u8], c_int, c_int, c_int); 7] = [
+        (b"^a", 1, 13, -1),
+        (b"\\<b", 1, 13, 4),
+        (b"\\<b", 5, 9, -1),
+        (b"\\bc", 5, 9, 12),
+        (b"b\\>", 3, 11, 6),
+        // Backward: the first start at or below 6 where a match BEGINS.
+        (b"\\<b", 6, -6, 4),
+        (b"^a", 13, -13, 0),
+    ];
+    for (pattern, start, range, expected) in cases {
+        let mut buffer = PublicRegexBuffer::default();
+        let err = unsafe {
+            re_compile_pattern(
+                pattern.as_ptr().cast(),
+                pattern.len(),
+                (&mut buffer as *mut PublicRegexBuffer).cast(),
+            )
+        };
+        assert!(err.is_null());
+        let pos = unsafe {
+            re_search(
+                (&buffer as *const PublicRegexBuffer).cast(),
+                haystack.as_ptr().cast(),
+                haystack.len() as c_int,
+                start,
+                range,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(
+            pos,
+            expected,
+            "re_search({:?}, start={start}, range={range})",
+            String::from_utf8_lossy(pattern)
+        );
+        // re_match (anchored at `start`) sees the same context: no match there.
+        if range > 0 && expected == -1 {
+            let len = unsafe {
+                re_match(
+                    (&buffer as *const PublicRegexBuffer).cast(),
+                    haystack.as_ptr().cast(),
+                    haystack.len() as c_int,
+                    start,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert_eq!(len, -1, "re_match({:?}, {start})", String::from_utf8_lossy(pattern));
+        }
+        unsafe {
+            regfree((&mut buffer as *mut PublicRegexBuffer).cast());
+        }
+    }
+}
+
 #[test]
 fn re_search_2_matches_across_split_boundary_and_reports_regs() {
     let _guard = legacy_regex_test_guard();

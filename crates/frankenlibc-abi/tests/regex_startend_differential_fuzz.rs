@@ -243,3 +243,67 @@ fn regex_startend_differential_fuzz_vs_glibc() {
         "REG_STARTEND fuzz: {compared} compared, {validity_skips} validity skips, 0 divergences"
     );
 }
+
+/// The bytes before `rm_so` are context, not absent: glibc evaluates `\<`,
+/// `\>`, `\b`, `\B` and REG_NEWLINE `^` at `rm_so` against the byte before it.
+/// frankenlibc used to search the `[rm_so, rm_eo)` slice as if it were a whole
+/// string, so every region start was a word/line start (`\<b` matched at 1 in
+/// "ab"). Patterns here lead with a zero-width assertion to probe exactly that.
+#[test]
+fn regex_startend_region_start_context_vs_glibc() {
+    const LEAD: [&[u8]; 6] = [b"\\<", b"\\>", b"\\b", b"\\B", b"^", b""];
+    const TAIL: [&[u8]; 6] = [b"b", b"a+", b"[ab]", b" ", b"(a|b)c", b""];
+    const S: &[u8] = b"ab c\nab ";
+    let mut r = Lcg(0x3c0f_fee5_0bad_cafe);
+    let mut divs: Vec<String> = Vec::new();
+    let mut compared = 0u64;
+    let fl_engine = RegexEngine {
+        comp: fl::regcomp,
+        exec: fl::regexec,
+        free: fl::regfree,
+    };
+    let lc_engine = RegexEngine {
+        comp: regcomp,
+        exec: regexec,
+        free: regfree,
+    };
+
+    for _ in 0..50_000 {
+        let mut pat = LEAD[r.below(LEAD.len())].to_vec();
+        pat.extend_from_slice(TAIL[r.below(TAIL.len())]);
+        let buf: Vec<u8> = (0..1 + r.below(9)).map(|_| S[r.below(S.len())]).collect();
+        let eo = r.below(buf.len() + 1);
+        let so = r.below(eo + 1);
+        let cflags = REG_EXTENDED | if r.below(2) == 0 { 0 } else { REG_NEWLINE };
+        let eflags = REG_STARTEND | if r.below(2) == 0 { 0 } else { REG_NOTBOL };
+        let params = RunParams {
+            so: so as i32,
+            eo: eo as i32,
+            cflags,
+            eflags,
+        };
+        let cpat = CString::new(pat.clone()).expect("patterns hold no NUL");
+        let fl_run = run(fl_engine, &cpat, &buf, params);
+        let lc_run = run(lc_engine, &cpat, &buf, params);
+        assert_eq!(fl_run.comp, lc_run.comp, "compile status for {pat:?}");
+        compared += 1;
+        let fl_m = fl_run.exec == 0;
+        let lc_m = lc_run.exec == 0;
+        if (fl_m != lc_m || (fl_m && fl_run.pm[0] != lc_run.pm[0])) && divs.len() < 30 {
+            divs.push(format!(
+                "pat={:?} buf={:?} region=[{so},{eo}) cf={cflags} ef={eflags}\n    fl   =(m={fl_m}, {:?})\n    glibc=(m={lc_m}, {:?})",
+                String::from_utf8_lossy(&pat),
+                String::from_utf8_lossy(&buf),
+                fl_run.pm[0],
+                lc_run.pm[0]
+            ));
+        }
+    }
+
+    assert!(compared >= 50_000, "only {compared} cases compared");
+    assert!(
+        divs.is_empty(),
+        "REG_STARTEND region-start context diverged from glibc ({compared} compared):\n{}",
+        divs.join("\n")
+    );
+}

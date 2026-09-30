@@ -217,6 +217,8 @@ ARGP_BIN="${BIN_DIR}/fixture_argp"
 cc -O2 "${ROOT}/tests/integration/fixture_argp.c" -o "${ARGP_BIN}"
 FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
+REGEX_CTX_BIN="${BIN_DIR}/fixture_regex_search_context"
+cc -O2 "${ROOT}/tests/integration/fixture_regex_search_context.c" -o "${REGEX_CTX_BIN}"
 
 NONTRIVIAL_BIN=""
 NONTRIVIAL_DESC=""
@@ -892,6 +894,10 @@ EOF
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "argp_help_layout" "${ARGP_BIN}" help || mode_failed=1
+  # re_search/REG_STARTEND from an offset keep the preceding bytes as ^/\</\b
+  # context (sed s///g restarts).
+  run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
   # /etc/hosts semantics: every address of the family, aliases merged across

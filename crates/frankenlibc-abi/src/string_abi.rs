@@ -10374,12 +10374,12 @@ fn regex_set_regs_allocated(flags: &mut u8, value: u8) {
         (*flags & !REGS_ALLOCATED_MASK) | ((value << REGS_ALLOCATED_SHIFT) & REGS_ALLOCATED_MASK);
 }
 
-fn legacy_regex_concat(
+fn legacy_regex_concat<'a>(
     string1: *const c_char,
     size1: c_int,
     string2: *const c_char,
     size2: c_int,
-) -> Result<Vec<u8>, c_int> {
+) -> Result<std::borrow::Cow<'a, [u8]>, c_int> {
     if size1 < 0 || size2 < 0 {
         return Err(-2);
     }
@@ -10393,6 +10393,23 @@ fn legacy_regex_concat(
         return Err(-2);
     }
 
+    // One non-empty half (every `re_search`/`re_match` call): borrow it in place
+    // rather than copying the whole buffer on each call. SAFETY for both: the
+    // caller guarantees `size` readable bytes that outlive the call, and the
+    // callers keep the borrow inside their own frame.
+    if size1 == 0 {
+        return Ok(std::borrow::Cow::Borrowed(if size2 == 0 {
+            &[]
+        } else {
+            unsafe { core::slice::from_raw_parts(string2 as *const u8, size2) }
+        }));
+    }
+    if size2 == 0 {
+        return Ok(std::borrow::Cow::Borrowed(unsafe {
+            core::slice::from_raw_parts(string1 as *const u8, size1)
+        }));
+    }
+
     let mut haystack = Vec::with_capacity(size1 + size2);
     if size1 > 0 {
         // SAFETY: validated non-null above, length provided by caller contract.
@@ -10404,7 +10421,7 @@ fn legacy_regex_concat(
         haystack
             .extend_from_slice(unsafe { core::slice::from_raw_parts(string2 as *const u8, size2) });
     }
-    Ok(haystack)
+    Ok(std::borrow::Cow::Owned(haystack))
 }
 
 unsafe fn legacy_regex_write_regs(

@@ -815,6 +815,10 @@ pub struct CompiledRegex {
     /// patterns whose first-byte prefilter cannot answer a positive match.
     /// Construction is bounded; `None` preserves the existing NFA path.
     nosub_prefilter_dfa: Option<MembershipDfa>,
+    /// `PikeVm::build_bulk_loop_table` of `nfa`, built once here instead of on
+    /// every search (it is O(nfa²) with allocations, a fixed cost per
+    /// `regexec`/`re_search` call that dominated short-line workloads like sed).
+    bulk_table: Vec<Option<[u64; 4]>>,
 }
 
 impl CompiledRegex {
@@ -1698,6 +1702,8 @@ struct PikeVm<'a> {
     /// `^`, `\b`, `\<` at `min_start` see the byte before it, as glibc's
     /// re_search/REG_STARTEND do when searching from an offset of a longer string.
     min_start: usize,
+    /// The compile-time `build_bulk_loop_table` of `nfa`; `None` builds it per search.
+    bulk_table: Option<&'a [Option<[u64; 4]>]>,
 }
 
 /// Thread state in Pike VM
@@ -1743,12 +1749,19 @@ impl<'a> PikeVm<'a> {
             anchored_literal,
             dotstar_lits,
             min_start: 0,
+            bulk_table: None,
         }
     }
 
     /// Search for matches starting at or after `min_start` only.
     fn starting_at(mut self, min_start: usize) -> Self {
         self.min_start = min_start;
+        self
+    }
+
+    /// Use `table`, the precomputed `build_bulk_loop_table` of this NFA.
+    fn with_bulk_table(mut self, table: &'a [Option<[u64; 4]>]) -> Self {
+        self.bulk_table = Some(table);
         self
     }
 
@@ -1937,11 +1950,17 @@ impl<'a> PikeVm<'a> {
             return None;
         }
 
-        // The `class+`/`class*` bulk-consume table is a pure function of the NFA,
-        // so build it once per search here and lend it to every leftmost_start /
-        // run_from below (the literal-prefix loop can call run_from many times) —
-        // not once per call. (Cheaper still would be compile-time on CompiledRegex.)
-        let bulk_table = self.build_bulk_loop_table();
+        // The `class+`/`class*` bulk-consume table is a pure function of the NFA:
+        // compiled patterns carry it (built once at regcomp); otherwise build it
+        // once per search and lend it to every leftmost_start / run_from below.
+        let owned_bulk_table;
+        let bulk_table: &[Option<[u64; 4]>] = match self.bulk_table {
+            Some(table) => table,
+            None => {
+                owned_bulk_table = self.build_bulk_loop_table();
+                &owned_bulk_table
+            }
+        };
 
         // Literal-prefix fast path: a match can only begin where the leading
         // literal occurs, so jump straight to each occurrence with SIMD memmem
@@ -3949,7 +3968,25 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         required_bytes,
         required_substring,
         nosub_prefilter_dfa: None,
+        bulk_table: Vec::new(),
     });
+
+    // Backreference patterns run on the backtracker, which never reads the table.
+    if compiled.backtrack_ast.is_none() {
+        let vm = PikeVm::new(
+            &compiled.nfa,
+            &[],
+            compiled.num_slots(),
+            0,
+            None,
+            None,
+            false,
+            false,
+            None,
+            None,
+        );
+        compiled.bulk_table = vm.build_bulk_loop_table();
+    }
 
     // The documented closure-heavy REG_NOSUB residual is a prefilter-only
     // pattern: negative inputs fast-reject, but positive inputs otherwise rebuild
@@ -4318,7 +4355,8 @@ fn regex_exec_byte_slots_from(
             .as_ref()
             .map(|(p, s)| (p.as_slice(), s.as_slice())),
     )
-    .starting_at(start);
+    .starting_at(start)
+    .with_bulk_table(&compiled.bulk_table);
 
     // REG_NOSUB fast path: only the boolean match/no-match decision is
     // observable (pmatch is never filled), so skip the O(n*m) leftmost_start +
