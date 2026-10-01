@@ -3,6 +3,7 @@
 //! Implements `<math.h>` functions: trigonometric, exponential/logarithmic,
 //! special functions, and floating-point utilities.
 
+mod coremath;
 pub mod exp;
 pub mod float;
 pub mod float32;

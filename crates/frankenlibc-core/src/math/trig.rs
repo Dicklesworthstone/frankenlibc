@@ -294,15 +294,10 @@ pub fn acosh(x: f64) -> f64 {
 
 #[inline]
 pub fn atanh(x: f64) -> f64 {
-    // atanh(x) = sign(x)·0.5·log1p(2|x|/(1-|x|)), rides the fast `log1p`. |x| >= 1
-    // (poles ±1 -> ±inf, |x| > 1 domain -> NaN, NaN) defers to libm::atanh for exact
-    // FE flags. Small |x| stays accurate (log1p(2x) ~ 2x).
-    let ax = x.abs();
-    if !(ax < 1.0) {
-        return libm::atanh(x);
-    }
-    let r = 0.5 * crate::math::log1p(2.0 * ax / (1.0 - ax));
-    if x.is_sign_negative() { -r } else { r }
+    // CORE-MATH's correctly rounded atanh, which glibc 2.43 ships: bit-identical
+    // to glibc. The log1p(2|x|/(1-|x|))/2 shortcut differed on 21.6% of inputs
+    // (bd-otip6a).
+    crate::math::coremath::atanh(x)
 }
 
 #[cfg(test)]
