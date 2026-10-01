@@ -4,6 +4,7 @@
 //! special functions, and floating-point utilities.
 
 mod coremath;
+mod erf_data;
 pub mod exp;
 pub mod float;
 pub mod float32;

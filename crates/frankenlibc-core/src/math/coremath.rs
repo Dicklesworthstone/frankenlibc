@@ -24,6 +24,8 @@
 //! contraction, so only the explicit `__builtin_fma` calls are kept as
 //! `mul_add`; every other operation is a plain IEEE operation.
 
+use super::erf_data::{ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS};
+
 const MASK52: u64 = u64::MAX >> 12;
 
 /// Parse a C99 hex-float literal (`[-]0x<hex>[.<hex>]p<[+-]dec>`) at compile time.
@@ -1839,6 +1841,258 @@ pub fn acosh(x: f64) -> f64 {
     acosh_refine(x, hf("0x1.71547652b82fep+0") * lb)
 }
 
+// --- erf (CORE-MATH src/binary64/erf/erf.c) ---------------------------------
+
+/// TwoSum: `hi + lo = a + b` exactly, no magnitude precondition.
+#[inline(always)]
+fn two_sum(a: f64, b: f64) -> (f64, f64) {
+    let hi = a + b;
+    let aa = hi - b;
+    let bb = hi - aa;
+    (hi, (a - aa) + (b - bb))
+}
+
+/// Exact product: `hi + lo = a * b`.
+#[inline(always)]
+fn a_mul(a: f64, b: f64) -> (f64, f64) {
+    let hi = a * b;
+    (hi, a.mul_add(b, -hi))
+}
+
+/// Double-double 2/sqrt(pi).
+const ERF_CH: f64 = hf("0x1.20dd750429b6dp+0");
+const ERF_CL: f64 = hf("0x1.1ae3a914fed8p-56");
+
+/// Fast erf(z) for 0 <= z <= 0x1.7afb48dc96626p+2 as `(h, l, err)`, with
+/// |(h + l)/erf(z) - 1| < err.
+#[inline(always)]
+fn erf_fast(z: f64) -> (f64, f64, f64) {
+    if z < 0.0625 {
+        // Odd minimax polynomial on [0, 1/16], double-double degrees 1 and 3.
+        const C0: [f64; 8] = [
+            hf("0x1.20dd750429b6dp+0"),
+            hf("0x1.1ae3a7862d9c4p-56"),
+            hf("-0x1.812746b0379e7p-2"),
+            hf("0x1.f1a64d72722a2p-57"),
+            hf("0x1.ce2f21a042b7fp-4"),
+            hf("-0x1.b82ce31189904p-6"),
+            hf("0x1.565bbf8a0fe0bp-8"),
+            hf("-0x1.bf9f8d2c202e4p-11"),
+        ];
+        let (z2h, z2l) = a_mul(z, z);
+        let z4 = z2h * z2h;
+        let c9 = C0[7].mul_add(z2h, C0[6]);
+        let c5 = C0[5].mul_add(z2h, C0[4]);
+        let c5 = c9.mul_add(z4, c5);
+        let (th, tl) = a_mul(z2h, c5);
+        let (h, mut l) = fasttwosum(C0[2], th);
+        l += tl + C0[3];
+        let h_copy = h;
+        let (th, mut tl) = a_mul(z2h, h);
+        tl += z2h.mul_add(l, C0[1]);
+        let (h, mut l) = fasttwosum(C0[0], th);
+        l += z2l.mul_add(h_copy, tl);
+        let (h, tl) = a_mul(h, z);
+        let l = l.mul_add(z, tl);
+        return (h, l, hf("0x1.78p-69"));
+    }
+    // i/16 <= z < (i+1)/16; z - 1/32 - v/16 is exact.
+    let v = (16.0 * z).floor();
+    let i = (16.0 * z) as usize;
+    let z = (z - 0.03125) - 0.0625 * v;
+    let c = &ERF_C[i - 1];
+    let z2 = z * z;
+    let z4 = z2 * z2;
+    let c9 = c[12].mul_add(z, c[11]);
+    let mut c7 = c[10].mul_add(z, c[9]);
+    let c5 = c[8].mul_add(z, c[7]);
+    let (c3h, mut c3l) = fasttwosum(c[5], z * c[6]);
+    c7 = c9.mul_add(z2, c7);
+    let (c3h, tl) = fasttwosum(c3h, c5 * z2);
+    c3l += tl;
+    let (c3h, tl) = fasttwosum(c3h, c7 * z4);
+    c3l += tl;
+    let (th, tl) = a_mul(z, c3h);
+    let (c2h, mut c2l) = fasttwosum(c[4], th);
+    c2l += z.mul_add(c3l, tl);
+    let (th, tl) = a_mul(z, c2h);
+    let (h, mut l) = fasttwosum(c[2], th);
+    l += tl + z.mul_add(c2l, c[3]);
+    let (th, tl) = a_mul(z, h);
+    let tl = z.mul_add(l, tl);
+    let (h, mut l) = fasttwosum(c[0], th);
+    l += tl + c[1];
+    (h, l, hf("0x1.11p-69"))
+}
+
+/// Accurate erf(z) for 2^-61 <= z < 1/8 as a double-double.
+#[inline(never)]
+fn erf_accurate_tiny(z: f64) -> (f64, f64) {
+    let exc = &ERF_TINY_EXCEPTIONS;
+    let (mut i, mut j) = (0, exc.len());
+    while i + 1 < j {
+        let k = (i + j) / 2;
+        if exc[k][0] <= z {
+            i = k;
+        } else {
+            j = k;
+        }
+    }
+    if z == exc[i][0] {
+        return (exc[i][1], exc[i][2]);
+    }
+    // Odd polynomial: double-double degrees 1..7, double degrees 9..21.
+    const P: [f64; 15] = [
+        hf("0x1.20dd750429b6dp+0"),
+        hf("0x1.1ae3a914fed8p-56"),
+        hf("-0x1.812746b0379e7p-2"),
+        hf("0x1.ee12e49ca96bap-57"),
+        hf("0x1.ce2f21a042be2p-4"),
+        hf("-0x1.2871bc0a0a0dp-58"),
+        hf("-0x1.b82ce31288b51p-6"),
+        hf("0x1.1003accf1355cp-61"),
+        hf("0x1.565bcd0e6a53fp-8"),
+        hf("-0x1.c02db40040cc3p-11"),
+        hf("0x1.f9a326fa3cf5p-14"),
+        hf("-0x1.f4d25e3c73ce9p-17"),
+        hf("0x1.b9eb332b31646p-20"),
+        hf("-0x1.64a4bd5eca4d7p-23"),
+        hf("0x1.c0acc2502e94ep-25"),
+    ];
+    let z2 = z * z;
+    let mut h = P[21 / 2 + 4];
+    for a in [19usize, 17, 15, 13] {
+        h = h.mul_add(z2, P[a / 2 + 4]);
+    }
+    let mut l = 0.0f64;
+    for a in [11usize, 9] {
+        // (h + l) *= z^2, then += P(degree a).
+        let (th, tl) = a_mul(h, z);
+        let tl = l.mul_add(z, tl);
+        let (hh, ll) = a_mul(th, z);
+        l = tl.mul_add(z, ll);
+        let (hh, tl) = fasttwosum(P[a / 2 + 4], hh);
+        h = hh;
+        l += tl;
+    }
+    for a in [7usize, 5, 3, 1] {
+        let (th, tl) = a_mul(h, z);
+        let tl = l.mul_add(z, tl);
+        let (hh, ll) = a_mul(th, z);
+        l = tl.mul_add(z, ll);
+        let (hh, tl) = fasttwosum(P[a - 1], hh);
+        h = hh;
+        l += P[a] + tl;
+    }
+    let (h, tl) = a_mul(h, z);
+    (h, l.mul_add(z, tl))
+}
+
+/// Accurate erf(z) for 2^-61 <= z <= 0x1.7afb48dc96626p+2 as a double-double.
+#[inline(never)]
+fn erf_accurate(z: f64) -> (f64, f64) {
+    const EXCEPTIONS: [[f64; 3]; 5] = [
+        [
+            hf("0x1.bc466342a2296p-1"),
+            hf("0x1.8f7ab15eb5babp-1"),
+            hf("-0x1.fffffffffffffp-55"),
+        ],
+        [
+            hf("0x1.589bbd3ae5489p+0"),
+            hf("0x1.e2d7b84ebf6dbp-1"),
+            hf("0x1.fffffffffffffp-55"),
+        ],
+        [
+            hf("0x1.f9a4a209ca0e4p+0"),
+            hf("0x1.fd542cdc70993p-1"),
+            hf("-0x1.f86f37645446ap-108"),
+        ],
+        [
+            hf("0x1.6c196b0b4ae04p+1"),
+            hf("0x1.fff8760068eddp-1"),
+            hf("-0x1.6f6f53a83af6bp-111"),
+        ],
+        [
+            hf("0x1.fd5d9d8c9ef66p-1"),
+            hf("0x1.ae5d17eb4f408p-1"),
+            hf("0x1.03fa708a553b3p-105"),
+        ],
+    ];
+    for e in &EXCEPTIONS {
+        if z == e[0] {
+            return (e[1], e[2]);
+        }
+    }
+    if z < 0.125 {
+        return erf_accurate_tiny(z);
+    }
+    let v = (8.0 * z).floor();
+    let i = (8.0 * z) as usize;
+    let z = (z - 0.0625) - 0.125 * v;
+    let p = &ERF_C2[i - 1];
+    let mut h = p[26];
+    for j in (11..=17).rev() {
+        h = h.mul_add(z, p[8 + j]);
+    }
+    let mut l = 0.0f64;
+    for j in (8..=10).rev() {
+        let (th, tl) = a_mul(h, z);
+        let tl = l.mul_add(z, tl);
+        let (hh, ll) = two_sum(p[8 + j], th);
+        h = hh;
+        l = ll + tl;
+    }
+    for j in (0..=7).rev() {
+        let (th, tl) = a_mul(h, z);
+        let tl = l.mul_add(z, tl);
+        let (hh, ll) = two_sum(p[2 * j], th);
+        h = hh;
+        l = ll + (p[2 * j + 1] + tl);
+    }
+    (h, l)
+}
+
+/// Correctly rounded `erf`.
+pub fn erf(x: f64) -> f64 {
+    let z = x.abs();
+    let ux = z.to_bits();
+    if ux > 0x4017_afb4_8dc9_6626 {
+        // |x| > 0x1.7afb48dc96626p+2: erf(x) rounds to ±1.
+        let os = 1.0f64.copysign(x);
+        if ux > 0x7ff0_0000_0000_0000 {
+            return x + x;
+        }
+        if ux == 0x7ff0_0000_0000_0000 {
+            return os;
+        }
+        return os - hf("0x1p-54") * os;
+    }
+    if z < hf("0x1p-61") {
+        // erf(x) ~ 2/sqrt(pi) x; x = -0 must keep its sign.
+        if x == 0.0 {
+            return x;
+        }
+        let y = ERF_CH * x;
+        // Scale by 2^106 to leave the subnormal range for the residual.
+        let sx = x * hf("0x1p106");
+        let (h, l) = a_mul(ERF_CH, sx);
+        let mut l = ERF_CL.mul_add(sx, l);
+        l += h - y * hf("0x1p106");
+        return l.mul_add(hf("0x1p-106"), y);
+    }
+    let (h, l, err) = erf_fast(z);
+    let sign = x.to_bits() & (1u64 << 63);
+    let u = f64::from_bits(h.to_bits() ^ sign);
+    let v = f64::from_bits(l.to_bits() ^ sign);
+    let left = u + err.mul_add(-u, v);
+    let right = u + err.mul_add(u, v);
+    if left == right {
+        return left;
+    }
+    let (h, l) = erf_accurate(z);
+    if x >= 0.0 { h + l } else { (-h) + (-l) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2022,5 +2276,40 @@ mod tests {
             assert_eq!(got, want, "acosh({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
         }
         assert!(acosh(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn erf_matches_glibc_2_43_on_corpus() {
+        assert_eq!(corpus_hash(erf, -30, 3), 0x9e4b_6e07_7284_febd);
+    }
+
+    #[test]
+    fn erf_hard_and_special_cases() {
+        // (input, glibc 2.43 result): accurate-path exceptions, the 1/16 and
+        // 1/8 table boundaries, the tiny-x and saturation cut-offs.
+        for (x, want) in [
+            (0x3feb_c466_342a_2296u64, 0x3fe8_f7ab_15eb_5babu64),
+            (0x3fef_d5d9_d8c9_ef66, 0x3fea_e5d1_7eb4_f408),
+            (0x3fbe_f306_7c6c_f276, 0x3fc1_6067_d36b_3d43),
+            (0xbf95_2b76_545c_c8ef, 0xbf97_e256_5102_7283),
+            (0x3faf_fb7b_4d67_a854, 0x3fb2_054a_731b_0271),
+            (0x4017_afb4_8dc9_6626, 0x3fef_ffff_ffff_ffff),
+            (0x4017_afb4_8dc9_6627, 0x3ff0_0000_0000_0000),
+            (0x4017_9999_9999_999a, 0x3fef_ffff_ffff_ffff),
+            (0x3c20_0000_0000_0000, 0x3c22_0dd7_5042_9b6d),
+            (0x3c1f_ffff_ffff_ffff, 0x3c22_0dd7_5042_9b6d),
+            (0x0000_0000_0000_0001, 0x0000_0000_0000_0001),
+            (0x8010_0000_0000_0000, 0x8012_0dd7_5042_9b6d),
+            (0x3fb0_0000_0000_0000, 0x3fb2_07d4_80e9_0658),
+            (0x3fc0_0000_0000_0000, 0x3fc1_f5e1_a35c_3b89),
+            (0xbee4_f8b5_88e3_68f1, 0xbee7_a9f0_84b5_e44c),
+            (0x7ff0_0000_0000_0000, 0x3ff0_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0xbff0_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0x8000_0000_0000_0000),
+        ] {
+            let got = erf(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "erf({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
+        }
+        assert!(erf(f64::NAN).is_nan());
     }
 }
