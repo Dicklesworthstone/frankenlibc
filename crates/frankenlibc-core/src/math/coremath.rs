@@ -159,7 +159,7 @@ fn polydd(xh: f64, xl: f64, c: &[[f64; 2]], l: f64) -> (f64, f64) {
 
 // --- atanh (CORE-MATH src/binary64/atanh/atanh.c) ---------------------------
 
-const ATANH_B: [(u16, i16); 32] = [
+const LOG_B: [(u16, i16); 32] = [
     (301, 27565),
     (7189, 24786),
     (13383, 22167),
@@ -194,7 +194,7 @@ const ATANH_B: [(u16, i16); 32] = [
     (4740, -17889),
 ];
 
-const ATANH_R1: [f64; 33] = [
+const LOG_R1: [f64; 33] = [
     hf("0x1p+0"),
     hf("0x1.f5076p-1"),
     hf("0x1.ea4bp-1"),
@@ -230,7 +230,7 @@ const ATANH_R1: [f64; 33] = [
     hf("0x1p-1"),
 ];
 
-const ATANH_R2: [f64; 33] = [
+const LOG_R2: [f64; 33] = [
     hf("0x1p+0"),
     hf("0x1.ffa74p-1"),
     hf("0x1.ff4eap-1"),
@@ -411,7 +411,7 @@ fn atanh_database(x: f64, f: f64) -> f64 {
     f
 }
 
-const ATANH_T1: [f64; 17] = [
+const LOG_T1: [f64; 17] = [
     hf("0x1p+0"),
     hf("0x1.ea4afap-1"),
     hf("0x1.d5818ep-1"),
@@ -430,7 +430,7 @@ const ATANH_T1: [f64; 17] = [
     hf("0x1.0b5587p-1"),
     hf("0x1p-1"),
 ];
-const ATANH_T2: [f64; 16] = [
+const LOG_T2: [f64; 16] = [
     hf("0x1p+0"),
     hf("0x1.fe9d968p-1"),
     hf("0x1.fd3c228p-1"),
@@ -448,7 +448,7 @@ const ATANH_T2: [f64; 16] = [
     hf("0x1.ecf483p-1"),
     hf("0x1.eb9f488p-1"),
 ];
-const ATANH_T3: [f64; 16] = [
+const LOG_T3: [f64; 16] = [
     hf("0x1p+0"),
     hf("0x1.ffe9d2p-1"),
     hf("0x1.ffd3a58p-1"),
@@ -466,7 +466,7 @@ const ATANH_T3: [f64; 16] = [
     hf("0x1.fec9d68p-1"),
     hf("0x1.feb3b6p-1"),
 ];
-const ATANH_T4: [f64; 16] = [
+const LOG_T4: [f64; 16] = [
     hf("0x1p+0"),
     hf("0x1.fffe9dp-1"),
     hf("0x1.fffd3ap-1"),
@@ -486,7 +486,7 @@ const ATANH_T4: [f64; 16] = [
 ];
 
 /// Triple-double -log(t1[i]), -log(t2[i]), -log(t3[i]), -log(t4[i]).
-const ATANH_LL: [[[f64; 3]; 17]; 4] = [
+const LOG_LL: [[[f64; 3]; 17]; 4] = [
     [
         [hf("0x0p+0"), hf("0x0p+0"), hf("0x0p+0")],
         [
@@ -821,20 +821,25 @@ const ATANH_LL: [[[f64; 3]; 17]; 4] = [
     ],
 ];
 
+/// log(1+x) - x tail used by every `*_refine`: double-double degree 2..4
+/// (`REFINE_CH`) and double degree 5..7 (`REFINE_CL`) coefficients.
+const REFINE_CH: [[f64; 2]; 3] = [
+    [hf("0x1p-1"), hf("0x1.24b67ee516e3bp-111")],
+    [hf("-0x1p-2"), hf("-0x1.932ce43199a8dp-110")],
+    [hf("0x1.5555555555555p-3"), hf("0x1.55540c15cf91fp-57")],
+];
+const REFINE_CL: [f64; 3] = [
+    hf("-0x1p-3"),
+    hf("0x1.9999999a0754fp-4"),
+    hf("-0x1.55555555c3157p-4"),
+];
+
 /// Accurate path for |x| >= 1/4: log(zh + zl) in triple-double, where
 /// `a` ~ log2(zh + zl) selects the table indices.
 #[inline(never)]
 fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
-    const CH: [[f64; 2]; 3] = [
-        [hf("0x1p-1"), hf("0x1.24b67ee516e3bp-111")],
-        [hf("-0x1p-2"), hf("-0x1.932ce43199a8dp-110")],
-        [hf("0x1.5555555555555p-3"), hf("0x1.55540c15cf91fp-57")],
-    ];
-    const CL: [f64; 3] = [
-        hf("-0x1p-3"),
-        hf("0x1.9999999a0754fp-4"),
-        hf("-0x1.55555555c3157p-4"),
-    ];
+    const CH: [[f64; 2]; 3] = REFINE_CH;
+    const CL: [f64; 3] = REFINE_CL;
     const L20: f64 = hf("0x1.62e42fefa3ap-2");
     const L21: f64 = hf("-0x1.0ca86c3898dp-50");
     const L22: f64 = hf("0x1.f97b57a079ap-104");
@@ -854,12 +859,12 @@ fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     let el2 = L22 * ed;
     let el1 = L21 * ed;
     let el0 = L20 * ed;
-    let ll = &ATANH_LL;
+    let ll = &LOG_LL;
     let l0 = ll[0][i1][0] + ll[1][i2][0] + (ll[2][i3][0] + ll[3][i4][0]) + el0;
     let l1 = ll[0][i1][1] + ll[1][i2][1] + (ll[2][i3][1] + ll[3][i4][1]);
     let l2 = ll[0][i1][2] + ll[1][i2][2] + (ll[2][i3][2] + ll[3][i4][2]);
-    let t12 = ATANH_T1[i1] * ATANH_T2[i2];
-    let t34 = ATANH_T3[i3] * ATANH_T4[i4];
+    let t12 = LOG_T1[i1] * LOG_T2[i2];
+    let t34 = LOG_T3[i3] * LOG_T4[i4];
     let th = t12 * t34;
     let tl = t12.mul_add(t34, -th);
     let dh = th * tf;
@@ -971,7 +976,7 @@ pub fn atanh(x: f64) -> f64 {
     let ed = e as f64;
     let i = (t >> (52 - 5)) as usize;
     let d = (t & (u64::MAX >> 17)) as i64;
-    let (c0, c1) = ATANH_B[i];
+    let (c0, c1) = LOG_B[i];
     let j = t
         .wrapping_add((c0 as u64) << 33)
         .wrapping_add((c1 as i64).wrapping_mul(d >> 16) as u64)
@@ -980,7 +985,7 @@ pub fn atanh(x: f64) -> f64 {
     let tf = f64::from_bits(t);
     let i1 = (j >> 5) as usize;
     let i2 = (j & 0x1f) as usize;
-    let r = (0.5 * ATANH_R1[i1]) * ATANH_R2[i2];
+    let r = (0.5 * LOG_R1[i1]) * LOG_R2[i2];
     let dx = r.mul_add(tf, -0.5);
     let dx2 = dx * dx;
     let rx = r * tf;
