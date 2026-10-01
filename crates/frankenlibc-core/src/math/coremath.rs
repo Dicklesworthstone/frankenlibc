@@ -16,7 +16,7 @@
 //! or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS",
 //! WITHOUT WARRANTY OF ANY KIND.
 //!
-//! Constants keep the upstream C99 hex-float spelling through [`hf`], which is
+//! Constants keep the upstream C99 hex-float spelling through `hf!`, which is
 //! evaluated at compile time and rejects any literal that is not exactly a
 //! normal binary64 value, so the tables can be diffed against upstream.
 //!
@@ -32,7 +32,7 @@ use super::erf_data::{
 const MASK52: u64 = u64::MAX >> 12;
 
 /// Parse a C99 hex-float literal (`[-]0x<hex>[.<hex>]p<[+-]dec>`) at compile time.
-const fn hf(s: &str) -> f64 {
+const fn parse_hf(s: &str) -> f64 {
     let b = s.as_bytes();
     let mut i = 0;
     let neg = b[0] == b'-';
@@ -94,6 +94,15 @@ const fn hf(s: &str) -> f64 {
     );
     let frac = (m << (53 - len)) & MASK52;
     f64::from_bits(sign | ((biased as u64) << 52) | frac)
+}
+
+/// A hex-float constant, parsed in a `const` block so that it is evaluated at
+/// compile time in expression position too (a bare `const fn` call inside a
+/// function body may run at runtime).
+macro_rules! hf {
+    ($s:literal) => {
+        const { parse_hf($s) }
+    };
 }
 
 // --- double-double helpers shared by the CORE-MATH kernels -----------------
@@ -200,175 +209,175 @@ const LOG_B: [(u16, i16); 32] = [
 ];
 
 const LOG_R1: [f64; 33] = [
-    hf("0x1p+0"),
-    hf("0x1.f5076p-1"),
-    hf("0x1.ea4bp-1"),
-    hf("0x1.dfc98p-1"),
-    hf("0x1.d5818p-1"),
-    hf("0x1.cb72p-1"),
-    hf("0x1.c199cp-1"),
-    hf("0x1.b7f76p-1"),
-    hf("0x1.ae8ap-1"),
-    hf("0x1.a5504p-1"),
-    hf("0x1.9c492p-1"),
-    hf("0x1.93738p-1"),
-    hf("0x1.8ace6p-1"),
-    hf("0x1.8258ap-1"),
-    hf("0x1.7a114p-1"),
-    hf("0x1.71f76p-1"),
-    hf("0x1.6a09ep-1"),
-    hf("0x1.6247ep-1"),
-    hf("0x1.5ab08p-1"),
-    hf("0x1.5342cp-1"),
-    hf("0x1.4bfdap-1"),
-    hf("0x1.44e08p-1"),
-    hf("0x1.3dea6p-1"),
-    hf("0x1.371a8p-1"),
-    hf("0x1.306fep-1"),
-    hf("0x1.29e9ep-1"),
-    hf("0x1.2387ap-1"),
-    hf("0x1.1d488p-1"),
-    hf("0x1.172b8p-1"),
-    hf("0x1.11302p-1"),
-    hf("0x1.0b558p-1"),
-    hf("0x1.059bp-1"),
-    hf("0x1p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.f5076p-1"),
+    hf!("0x1.ea4bp-1"),
+    hf!("0x1.dfc98p-1"),
+    hf!("0x1.d5818p-1"),
+    hf!("0x1.cb72p-1"),
+    hf!("0x1.c199cp-1"),
+    hf!("0x1.b7f76p-1"),
+    hf!("0x1.ae8ap-1"),
+    hf!("0x1.a5504p-1"),
+    hf!("0x1.9c492p-1"),
+    hf!("0x1.93738p-1"),
+    hf!("0x1.8ace6p-1"),
+    hf!("0x1.8258ap-1"),
+    hf!("0x1.7a114p-1"),
+    hf!("0x1.71f76p-1"),
+    hf!("0x1.6a09ep-1"),
+    hf!("0x1.6247ep-1"),
+    hf!("0x1.5ab08p-1"),
+    hf!("0x1.5342cp-1"),
+    hf!("0x1.4bfdap-1"),
+    hf!("0x1.44e08p-1"),
+    hf!("0x1.3dea6p-1"),
+    hf!("0x1.371a8p-1"),
+    hf!("0x1.306fep-1"),
+    hf!("0x1.29e9ep-1"),
+    hf!("0x1.2387ap-1"),
+    hf!("0x1.1d488p-1"),
+    hf!("0x1.172b8p-1"),
+    hf!("0x1.11302p-1"),
+    hf!("0x1.0b558p-1"),
+    hf!("0x1.059bp-1"),
+    hf!("0x1p-1"),
 ];
 
 const LOG_R2: [f64; 33] = [
-    hf("0x1p+0"),
-    hf("0x1.ffa74p-1"),
-    hf("0x1.ff4eap-1"),
-    hf("0x1.fef62p-1"),
-    hf("0x1.fe9dap-1"),
-    hf("0x1.fe452p-1"),
-    hf("0x1.fdeccp-1"),
-    hf("0x1.fd946p-1"),
-    hf("0x1.fd3c2p-1"),
-    hf("0x1.fce3ep-1"),
-    hf("0x1.fc8bcp-1"),
-    hf("0x1.fc33ap-1"),
-    hf("0x1.fbdbap-1"),
-    hf("0x1.fb83ap-1"),
-    hf("0x1.fb2bcp-1"),
-    hf("0x1.fad3ep-1"),
-    hf("0x1.fa7c2p-1"),
-    hf("0x1.fa246p-1"),
-    hf("0x1.f9ccap-1"),
-    hf("0x1.f975p-1"),
-    hf("0x1.f91d8p-1"),
-    hf("0x1.f8c6p-1"),
-    hf("0x1.f86e8p-1"),
-    hf("0x1.f8172p-1"),
-    hf("0x1.f7bfep-1"),
-    hf("0x1.f768ap-1"),
-    hf("0x1.f7116p-1"),
-    hf("0x1.f6ba4p-1"),
-    hf("0x1.f6632p-1"),
-    hf("0x1.f60c2p-1"),
-    hf("0x1.f5b52p-1"),
-    hf("0x1.f55e4p-1"),
-    hf("0x1.f5076p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.ffa74p-1"),
+    hf!("0x1.ff4eap-1"),
+    hf!("0x1.fef62p-1"),
+    hf!("0x1.fe9dap-1"),
+    hf!("0x1.fe452p-1"),
+    hf!("0x1.fdeccp-1"),
+    hf!("0x1.fd946p-1"),
+    hf!("0x1.fd3c2p-1"),
+    hf!("0x1.fce3ep-1"),
+    hf!("0x1.fc8bcp-1"),
+    hf!("0x1.fc33ap-1"),
+    hf!("0x1.fbdbap-1"),
+    hf!("0x1.fb83ap-1"),
+    hf!("0x1.fb2bcp-1"),
+    hf!("0x1.fad3ep-1"),
+    hf!("0x1.fa7c2p-1"),
+    hf!("0x1.fa246p-1"),
+    hf!("0x1.f9ccap-1"),
+    hf!("0x1.f975p-1"),
+    hf!("0x1.f91d8p-1"),
+    hf!("0x1.f8c6p-1"),
+    hf!("0x1.f86e8p-1"),
+    hf!("0x1.f8172p-1"),
+    hf!("0x1.f7bfep-1"),
+    hf!("0x1.f768ap-1"),
+    hf!("0x1.f7116p-1"),
+    hf!("0x1.f6ba4p-1"),
+    hf!("0x1.f6632p-1"),
+    hf!("0x1.f60c2p-1"),
+    hf!("0x1.f5b52p-1"),
+    hf!("0x1.f55e4p-1"),
+    hf!("0x1.f5076p-1"),
 ];
 
 /// `(low, high)` parts of -log(r1[i]).
 const ATANH_L1: [[f64; 2]; 33] = [
-    [hf("0x0p+0"), hf("0x0p+0")],
-    [hf("-0x1.532c1269e2038p-27"), hf("0x1.62e5p-7")],
-    [hf("0x1.ce42d81b54e84p-27"), hf("0x1.62e3cp-6")],
-    [hf("-0x1.25826f815ec3dp-26"), hf("0x1.0a2acp-5")],
-    [hf("0x1.0db1b1e7cee11p-26"), hf("0x1.62e4ap-5")],
-    [hf("-0x1.1f3a8c6c95003p-26"), hf("0x1.bb9dcp-5")],
-    [hf("-0x1.774cd4fb8c30dp-26"), hf("0x1.0a2b2p-4")],
-    [hf("0x1.452e56c030a0ap-29"), hf("0x1.3687fp-4")],
-    [hf("0x1.6b63c4966a79ap-28"), hf("0x1.62e41p-4")],
-    [hf("-0x1.b20a21ccb525ep-28"), hf("0x1.8f40ap-4")],
-    [hf("0x1.4006cfb3d8f85p-26"), hf("0x1.bb9d1p-4")],
-    [hf("-0x1.cdb026b310c41p-26"), hf("0x1.e7f9bp-4")],
-    [hf("-0x1.69124fdc0f16dp-26"), hf("0x1.0a2b08p-3")],
-    [hf("-0x1.084656cdc2727p-26"), hf("0x1.205958p-3")],
-    [hf("-0x1.376fa8b0357fdp-26"), hf("0x1.3687cp-3")],
-    [hf("0x1.e56ae55a47b4ap-28"), hf("0x1.4cb5e8p-3")],
-    [hf("0x1.070ff8834eeb4p-26"), hf("0x1.62e44p-3")],
-    [hf("0x1.623516109f4fep-26"), hf("0x1.79129p-3")],
-    [hf("-0x1.ec656b95fbdacp-29"), hf("0x1.8f40bp-3")],
-    [hf("0x1.f0ca2e729f51p-28"), hf("0x1.a56ed8p-3")],
-    [hf("-0x1.7d260a858354ap-26"), hf("0x1.bb9d68p-3")],
-    [hf("0x1.e7279075503d3p-27"), hf("0x1.d1cb9p-3")],
-    [hf("0x1.39e1a0a503873p-27"), hf("0x1.e7f9dp-3")],
-    [hf("0x1.cd86d7b87c3d6p-26"), hf("0x1.fe27d8p-3")],
-    [hf("0x1.060ab88de341ep-26"), hf("0x1.0a2b24p-2")],
-    [hf("0x1.20a860d3f939p-28"), hf("0x1.154244p-2")],
-    [hf("-0x1.dacee95fc2f1p-27"), hf("0x1.205974p-2")],
-    [hf("0x1.45de3a86e0acap-26"), hf("0x1.2b707p-2")],
-    [hf("0x1.c164cbfb991afp-27"), hf("0x1.3687bp-2")],
-    [hf("0x1.d3f66b24225efp-26"), hf("0x1.419ec4p-2")],
-    [hf("0x1.fc023efa144bap-26"), hf("0x1.4cb5f8p-2")],
-    [hf("0x1.086a8af6f26cp-28"), hf("0x1.57cd28p-2")],
-    [hf("-0x1.05c610ca86c39p-30"), hf("0x1.62e43p-2")],
+    [hf!("0x0p+0"), hf!("0x0p+0")],
+    [hf!("-0x1.532c1269e2038p-27"), hf!("0x1.62e5p-7")],
+    [hf!("0x1.ce42d81b54e84p-27"), hf!("0x1.62e3cp-6")],
+    [hf!("-0x1.25826f815ec3dp-26"), hf!("0x1.0a2acp-5")],
+    [hf!("0x1.0db1b1e7cee11p-26"), hf!("0x1.62e4ap-5")],
+    [hf!("-0x1.1f3a8c6c95003p-26"), hf!("0x1.bb9dcp-5")],
+    [hf!("-0x1.774cd4fb8c30dp-26"), hf!("0x1.0a2b2p-4")],
+    [hf!("0x1.452e56c030a0ap-29"), hf!("0x1.3687fp-4")],
+    [hf!("0x1.6b63c4966a79ap-28"), hf!("0x1.62e41p-4")],
+    [hf!("-0x1.b20a21ccb525ep-28"), hf!("0x1.8f40ap-4")],
+    [hf!("0x1.4006cfb3d8f85p-26"), hf!("0x1.bb9d1p-4")],
+    [hf!("-0x1.cdb026b310c41p-26"), hf!("0x1.e7f9bp-4")],
+    [hf!("-0x1.69124fdc0f16dp-26"), hf!("0x1.0a2b08p-3")],
+    [hf!("-0x1.084656cdc2727p-26"), hf!("0x1.205958p-3")],
+    [hf!("-0x1.376fa8b0357fdp-26"), hf!("0x1.3687cp-3")],
+    [hf!("0x1.e56ae55a47b4ap-28"), hf!("0x1.4cb5e8p-3")],
+    [hf!("0x1.070ff8834eeb4p-26"), hf!("0x1.62e44p-3")],
+    [hf!("0x1.623516109f4fep-26"), hf!("0x1.79129p-3")],
+    [hf!("-0x1.ec656b95fbdacp-29"), hf!("0x1.8f40bp-3")],
+    [hf!("0x1.f0ca2e729f51p-28"), hf!("0x1.a56ed8p-3")],
+    [hf!("-0x1.7d260a858354ap-26"), hf!("0x1.bb9d68p-3")],
+    [hf!("0x1.e7279075503d3p-27"), hf!("0x1.d1cb9p-3")],
+    [hf!("0x1.39e1a0a503873p-27"), hf!("0x1.e7f9dp-3")],
+    [hf!("0x1.cd86d7b87c3d6p-26"), hf!("0x1.fe27d8p-3")],
+    [hf!("0x1.060ab88de341ep-26"), hf!("0x1.0a2b24p-2")],
+    [hf!("0x1.20a860d3f939p-28"), hf!("0x1.154244p-2")],
+    [hf!("-0x1.dacee95fc2f1p-27"), hf!("0x1.205974p-2")],
+    [hf!("0x1.45de3a86e0acap-26"), hf!("0x1.2b707p-2")],
+    [hf!("0x1.c164cbfb991afp-27"), hf!("0x1.3687bp-2")],
+    [hf!("0x1.d3f66b24225efp-26"), hf!("0x1.419ec4p-2")],
+    [hf!("0x1.fc023efa144bap-26"), hf!("0x1.4cb5f8p-2")],
+    [hf!("0x1.086a8af6f26cp-28"), hf!("0x1.57cd28p-2")],
+    [hf!("-0x1.05c610ca86c39p-30"), hf!("0x1.62e43p-2")],
 ];
 
 /// `(low, high)` parts of -log(r2[i]).
 const ATANH_L2: [[f64; 2]; 33] = [
-    [hf("0x0p+0"), hf("0x0p+0")],
-    [hf("-0x1.37e152a129e4ep-28"), hf("0x1.632p-12")],
-    [hf("-0x1.3f6c916b8be9cp-26"), hf("0x1.63p-11")],
-    [hf("0x1.20505936739d5p-26"), hf("0x1.0a24p-10")],
-    [hf("-0x1.23e2e8cb541bap-26"), hf("0x1.62dcp-10")],
-    [hf("-0x1.acb7983ac4f5ep-32"), hf("0x1.bbap-10")],
-    [hf("0x1.6f7c7689c63aep-28"), hf("0x1.0a2ap-9")],
-    [hf("0x1.f5ca695b4c58bp-30"), hf("0x1.368cp-9")],
-    [hf("-0x1.c6c18bd953226p-27"), hf("0x1.62e6p-9")],
-    [hf("0x1.7a516c34846bdp-26"), hf("0x1.8f46p-9")],
-    [hf("-0x1.f3b83dd8b853p-27"), hf("0x1.bbap-9")],
-    [hf("-0x1.c3459046e4e57p-31"), hf("0x1.e8p-9")],
-    [hf("0x1.b5c7e34cb79f6p-38"), hf("0x1.0a2cp-8")],
-    [hf("-0x1.2487e9af9a692p-27"), hf("0x1.205cp-8")],
-    [hf("0x1.f21bbc4ad79cep-26"), hf("0x1.3687p-8")],
-    [hf("-0x1.550ffc857b731p-29"), hf("0x1.4cb7p-8")],
-    [hf("0x1.87458ec1b7b34p-27"), hf("0x1.62e2p-8")],
-    [hf("0x1.103d4fe83ee81p-26"), hf("0x1.7911p-8")],
-    [hf("0x1.810483d3b398cp-27"), hf("0x1.8f44p-8")],
-    [hf("-0x1.2085cb340608ep-27"), hf("0x1.a573p-8")],
-    [hf("0x1.12698a119c42fp-26"), hf("0x1.bb9dp-8")],
-    [hf("-0x1.edb8c172b4c33p-26"), hf("0x1.d1ccp-8")],
-    [hf("-0x1.8b55b87a5e238p-26"), hf("0x1.e7fep-8")],
-    [hf("0x1.be5e17763f78ap-26"), hf("0x1.fe2bp-8")],
-    [hf("-0x1.c2d496790073ep-30"), hf("0x1.0a2a8p-7")],
-    [hf("0x1.6542f523abeecp-26"), hf("0x1.1541p-7")],
-    [hf("-0x1.b7fdbe5b193f8p-26"), hf("0x1.205ap-7")],
-    [hf("0x1.fa4d42fe30c7cp-26"), hf("0x1.2b7p-7")],
-    [hf("0x1.0d46ad04adc86p-26"), hf("0x1.36888p-7")],
-    [hf("-0x1.1c22d02d17c4cp-26"), hf("0x1.419fp-7")],
-    [hf("0x1.a7d1e330dcccep-30"), hf("0x1.4cb7p-7")],
-    [hf("0x1.187025e656ba3p-31"), hf("0x1.57cdp-7")],
-    [hf("-0x1.532c1269e2038p-27"), hf("0x1.62e5p-7")],
+    [hf!("0x0p+0"), hf!("0x0p+0")],
+    [hf!("-0x1.37e152a129e4ep-28"), hf!("0x1.632p-12")],
+    [hf!("-0x1.3f6c916b8be9cp-26"), hf!("0x1.63p-11")],
+    [hf!("0x1.20505936739d5p-26"), hf!("0x1.0a24p-10")],
+    [hf!("-0x1.23e2e8cb541bap-26"), hf!("0x1.62dcp-10")],
+    [hf!("-0x1.acb7983ac4f5ep-32"), hf!("0x1.bbap-10")],
+    [hf!("0x1.6f7c7689c63aep-28"), hf!("0x1.0a2ap-9")],
+    [hf!("0x1.f5ca695b4c58bp-30"), hf!("0x1.368cp-9")],
+    [hf!("-0x1.c6c18bd953226p-27"), hf!("0x1.62e6p-9")],
+    [hf!("0x1.7a516c34846bdp-26"), hf!("0x1.8f46p-9")],
+    [hf!("-0x1.f3b83dd8b853p-27"), hf!("0x1.bbap-9")],
+    [hf!("-0x1.c3459046e4e57p-31"), hf!("0x1.e8p-9")],
+    [hf!("0x1.b5c7e34cb79f6p-38"), hf!("0x1.0a2cp-8")],
+    [hf!("-0x1.2487e9af9a692p-27"), hf!("0x1.205cp-8")],
+    [hf!("0x1.f21bbc4ad79cep-26"), hf!("0x1.3687p-8")],
+    [hf!("-0x1.550ffc857b731p-29"), hf!("0x1.4cb7p-8")],
+    [hf!("0x1.87458ec1b7b34p-27"), hf!("0x1.62e2p-8")],
+    [hf!("0x1.103d4fe83ee81p-26"), hf!("0x1.7911p-8")],
+    [hf!("0x1.810483d3b398cp-27"), hf!("0x1.8f44p-8")],
+    [hf!("-0x1.2085cb340608ep-27"), hf!("0x1.a573p-8")],
+    [hf!("0x1.12698a119c42fp-26"), hf!("0x1.bb9dp-8")],
+    [hf!("-0x1.edb8c172b4c33p-26"), hf!("0x1.d1ccp-8")],
+    [hf!("-0x1.8b55b87a5e238p-26"), hf!("0x1.e7fep-8")],
+    [hf!("0x1.be5e17763f78ap-26"), hf!("0x1.fe2bp-8")],
+    [hf!("-0x1.c2d496790073ep-30"), hf!("0x1.0a2a8p-7")],
+    [hf!("0x1.6542f523abeecp-26"), hf!("0x1.1541p-7")],
+    [hf!("-0x1.b7fdbe5b193f8p-26"), hf!("0x1.205ap-7")],
+    [hf!("0x1.fa4d42fe30c7cp-26"), hf!("0x1.2b7p-7")],
+    [hf!("0x1.0d46ad04adc86p-26"), hf!("0x1.36888p-7")],
+    [hf!("-0x1.1c22d02d17c4cp-26"), hf!("0x1.419fp-7")],
+    [hf!("0x1.a7d1e330dcccep-30"), hf!("0x1.4cb7p-7")],
+    [hf!("0x1.187025e656ba3p-31"), hf!("0x1.57cdp-7")],
+    [hf!("-0x1.532c1269e2038p-27"), hf!("0x1.62e5p-7")],
 ];
 
 /// Accurate path for |x| < 1/4: odd series of atanh in double-double.
 #[inline(never)]
 fn atanh_zero(x: f64) -> f64 {
     const CH: [[f64; 2]; 13] = [
-        [hf("0x1.5555555555555p-2"), hf("0x1.5555555555555p-56")],
-        [hf("0x1.999999999999ap-3"), hf("-0x1.999999999611cp-57")],
-        [hf("0x1.2492492492492p-3"), hf("0x1.2492490f76b25p-57")],
-        [hf("0x1.c71c71c71c71cp-4"), hf("0x1.c71cd5c38a112p-58")],
-        [hf("0x1.745d1745d1746p-4"), hf("-0x1.7556c4165f4cap-59")],
-        [hf("0x1.3b13b13b13b14p-4"), hf("-0x1.b893c3b36052ep-59")],
-        [hf("0x1.1111111111105p-4"), hf("0x1.4e1afd723ed1fp-59")],
-        [hf("0x1.e1e1e1e1e2678p-5"), hf("-0x1.f86ea96fb1435p-59")],
-        [hf("0x1.af286bc9f90ccp-5"), hf("0x1.1e51a6e54fde9p-60")],
-        [hf("0x1.8618618c779b6p-5"), hf("-0x1.ab913de95c3bfp-61")],
-        [hf("0x1.642c84aa383ebp-5"), hf("0x1.632e747641b12p-59")],
-        [hf("0x1.47ae2d205013cp-5"), hf("-0x1.0c9617e7bcff2p-60")],
-        [hf("0x1.2f664d60473f9p-5"), hf("0x1.3adb3e2b7f35ep-61")],
+        [hf!("0x1.5555555555555p-2"), hf!("0x1.5555555555555p-56")],
+        [hf!("0x1.999999999999ap-3"), hf!("-0x1.999999999611cp-57")],
+        [hf!("0x1.2492492492492p-3"), hf!("0x1.2492490f76b25p-57")],
+        [hf!("0x1.c71c71c71c71cp-4"), hf!("0x1.c71cd5c38a112p-58")],
+        [hf!("0x1.745d1745d1746p-4"), hf!("-0x1.7556c4165f4cap-59")],
+        [hf!("0x1.3b13b13b13b14p-4"), hf!("-0x1.b893c3b36052ep-59")],
+        [hf!("0x1.1111111111105p-4"), hf!("0x1.4e1afd723ed1fp-59")],
+        [hf!("0x1.e1e1e1e1e2678p-5"), hf!("-0x1.f86ea96fb1435p-59")],
+        [hf!("0x1.af286bc9f90ccp-5"), hf!("0x1.1e51a6e54fde9p-60")],
+        [hf!("0x1.8618618c779b6p-5"), hf!("-0x1.ab913de95c3bfp-61")],
+        [hf!("0x1.642c84aa383ebp-5"), hf!("0x1.632e747641b12p-59")],
+        [hf!("0x1.47ae2d205013cp-5"), hf!("-0x1.0c9617e7bcff2p-60")],
+        [hf!("0x1.2f664d60473f9p-5"), hf!("0x1.3adb3e2b7f35ep-61")],
     ];
     const CL: [f64; 5] = [
-        hf("0x1.1a9a91fd692afp-5"),
-        hf("0x1.06dfbb35e7f44p-5"),
-        hf("0x1.037bed4d7588fp-5"),
-        hf("0x1.5aca6d6d720d6p-6"),
-        hf("0x1.99ea5700d53a5p-5"),
+        hf!("0x1.1a9a91fd692afp-5"),
+        hf!("0x1.06dfbb35e7f44p-5"),
+        hf!("0x1.037bed4d7588fp-5"),
+        hf!("0x1.5aca6d6d720d6p-6"),
+        hf!("0x1.99ea5700d53a5p-5"),
     ];
     let x2 = x * x;
     let x2l = x.mul_add(x, -x2);
@@ -393,14 +402,14 @@ fn atanh_zero(x: f64) -> f64 {
 /// The two hard cases left after `atanh_refine`: `(x, high, low)`.
 const ATANH_DB: [[f64; 3]; 2] = [
     [
-        hf("0x1.2dbb7b1c91363p-2"),
-        hf("0x1.36f33d51c264dp-2"),
-        hf("0x1p-56"),
+        hf!("0x1.2dbb7b1c91363p-2"),
+        hf!("0x1.36f33d51c264dp-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.c493dc899e4a5p-2"),
-        hf("0x1.e611aa58ab608p-2"),
-        hf("-0x1p-56"),
+        hf!("0x1.c493dc899e4a5p-2"),
+        hf!("0x1.e611aa58ab608p-2"),
+        hf!("-0x1p-56"),
     ],
 ];
 
@@ -417,411 +426,411 @@ fn atanh_database(x: f64, f: f64) -> f64 {
 }
 
 const LOG_T1: [f64; 17] = [
-    hf("0x1p+0"),
-    hf("0x1.ea4afap-1"),
-    hf("0x1.d5818ep-1"),
-    hf("0x1.c199bep-1"),
-    hf("0x1.ae89f98p-1"),
-    hf("0x1.9c4918p-1"),
-    hf("0x1.8ace54p-1"),
-    hf("0x1.7a1147p-1"),
-    hf("0x1.6a09e68p-1"),
-    hf("0x1.5ab07ep-1"),
-    hf("0x1.4bfdad8p-1"),
-    hf("0x1.3dea65p-1"),
-    hf("0x1.306fe08p-1"),
-    hf("0x1.2387a7p-1"),
-    hf("0x1.172b84p-1"),
-    hf("0x1.0b5587p-1"),
-    hf("0x1p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.ea4afap-1"),
+    hf!("0x1.d5818ep-1"),
+    hf!("0x1.c199bep-1"),
+    hf!("0x1.ae89f98p-1"),
+    hf!("0x1.9c4918p-1"),
+    hf!("0x1.8ace54p-1"),
+    hf!("0x1.7a1147p-1"),
+    hf!("0x1.6a09e68p-1"),
+    hf!("0x1.5ab07ep-1"),
+    hf!("0x1.4bfdad8p-1"),
+    hf!("0x1.3dea65p-1"),
+    hf!("0x1.306fe08p-1"),
+    hf!("0x1.2387a7p-1"),
+    hf!("0x1.172b84p-1"),
+    hf!("0x1.0b5587p-1"),
+    hf!("0x1p-1"),
 ];
 const LOG_T2: [f64; 16] = [
-    hf("0x1p+0"),
-    hf("0x1.fe9d968p-1"),
-    hf("0x1.fd3c228p-1"),
-    hf("0x1.fbdba38p-1"),
-    hf("0x1.fa7c18p-1"),
-    hf("0x1.f91d8p-1"),
-    hf("0x1.f7bfdbp-1"),
-    hf("0x1.f663278p-1"),
-    hf("0x1.f507658p-1"),
-    hf("0x1.f3ac948p-1"),
-    hf("0x1.f252b38p-1"),
-    hf("0x1.f0f9c2p-1"),
-    hf("0x1.efa1bfp-1"),
-    hf("0x1.ee4aaap-1"),
-    hf("0x1.ecf483p-1"),
-    hf("0x1.eb9f488p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.fe9d968p-1"),
+    hf!("0x1.fd3c228p-1"),
+    hf!("0x1.fbdba38p-1"),
+    hf!("0x1.fa7c18p-1"),
+    hf!("0x1.f91d8p-1"),
+    hf!("0x1.f7bfdbp-1"),
+    hf!("0x1.f663278p-1"),
+    hf!("0x1.f507658p-1"),
+    hf!("0x1.f3ac948p-1"),
+    hf!("0x1.f252b38p-1"),
+    hf!("0x1.f0f9c2p-1"),
+    hf!("0x1.efa1bfp-1"),
+    hf!("0x1.ee4aaap-1"),
+    hf!("0x1.ecf483p-1"),
+    hf!("0x1.eb9f488p-1"),
 ];
 const LOG_T3: [f64; 16] = [
-    hf("0x1p+0"),
-    hf("0x1.ffe9d2p-1"),
-    hf("0x1.ffd3a58p-1"),
-    hf("0x1.ffbd798p-1"),
-    hf("0x1.ffa74e8p-1"),
-    hf("0x1.ff91248p-1"),
-    hf("0x1.ff7afb8p-1"),
-    hf("0x1.ff64d38p-1"),
-    hf("0x1.ff4eac8p-1"),
-    hf("0x1.ff38868p-1"),
-    hf("0x1.ff22618p-1"),
-    hf("0x1.ff0c3dp-1"),
-    hf("0x1.fef61ap-1"),
-    hf("0x1.fedff78p-1"),
-    hf("0x1.fec9d68p-1"),
-    hf("0x1.feb3b6p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.ffe9d2p-1"),
+    hf!("0x1.ffd3a58p-1"),
+    hf!("0x1.ffbd798p-1"),
+    hf!("0x1.ffa74e8p-1"),
+    hf!("0x1.ff91248p-1"),
+    hf!("0x1.ff7afb8p-1"),
+    hf!("0x1.ff64d38p-1"),
+    hf!("0x1.ff4eac8p-1"),
+    hf!("0x1.ff38868p-1"),
+    hf!("0x1.ff22618p-1"),
+    hf!("0x1.ff0c3dp-1"),
+    hf!("0x1.fef61ap-1"),
+    hf!("0x1.fedff78p-1"),
+    hf!("0x1.fec9d68p-1"),
+    hf!("0x1.feb3b6p-1"),
 ];
 const LOG_T4: [f64; 16] = [
-    hf("0x1p+0"),
-    hf("0x1.fffe9dp-1"),
-    hf("0x1.fffd3ap-1"),
-    hf("0x1.fffbd78p-1"),
-    hf("0x1.fffa748p-1"),
-    hf("0x1.fff9118p-1"),
-    hf("0x1.fff7ae8p-1"),
-    hf("0x1.fff64cp-1"),
-    hf("0x1.fff4e9p-1"),
-    hf("0x1.fff386p-1"),
-    hf("0x1.fff2238p-1"),
-    hf("0x1.fff0c08p-1"),
-    hf("0x1.ffef5d8p-1"),
-    hf("0x1.ffedfa8p-1"),
-    hf("0x1.ffec98p-1"),
-    hf("0x1.ffeb35p-1"),
+    hf!("0x1p+0"),
+    hf!("0x1.fffe9dp-1"),
+    hf!("0x1.fffd3ap-1"),
+    hf!("0x1.fffbd78p-1"),
+    hf!("0x1.fffa748p-1"),
+    hf!("0x1.fff9118p-1"),
+    hf!("0x1.fff7ae8p-1"),
+    hf!("0x1.fff64cp-1"),
+    hf!("0x1.fff4e9p-1"),
+    hf!("0x1.fff386p-1"),
+    hf!("0x1.fff2238p-1"),
+    hf!("0x1.fff0c08p-1"),
+    hf!("0x1.ffef5d8p-1"),
+    hf!("0x1.ffedfa8p-1"),
+    hf!("0x1.ffec98p-1"),
+    hf!("0x1.ffeb35p-1"),
 ];
 
 /// Triple-double -log(t1[i]), -log(t2[i]), -log(t3[i]), -log(t4[i]).
 const LOG_LL: [[[f64; 3]; 17]; 4] = [
     [
-        [hf("0x0p+0"), hf("0x0p+0"), hf("0x0p+0")],
+        [hf!("0x0p+0"), hf!("0x0p+0"), hf!("0x0p+0")],
         [
-            hf("0x1.62e432b24p-6"),
-            hf("-0x1.745af34bb54b8p-42"),
-            hf("-0x1.17e3ec05cde7p-97"),
+            hf!("0x1.62e432b24p-6"),
+            hf!("-0x1.745af34bb54b8p-42"),
+            hf!("-0x1.17e3ec05cde7p-97"),
         ],
         [
-            hf("0x1.62e42e4a8p-5"),
-            hf("0x1.111a4eadf312p-44"),
-            hf("0x1.cff3027abb119p-93"),
+            hf!("0x1.62e42e4a8p-5"),
+            hf!("0x1.111a4eadf312p-44"),
+            hf!("0x1.cff3027abb119p-93"),
         ],
         [
-            hf("0x1.0a2b233f1p-4"),
-            hf("-0x1.88ac4ec78af8p-42"),
-            hf("0x1.4fa087ca75dfdp-93"),
+            hf!("0x1.0a2b233f1p-4"),
+            hf!("-0x1.88ac4ec78af8p-42"),
+            hf!("0x1.4fa087ca75dfdp-93"),
         ],
         [
-            hf("0x1.62e43056cp-4"),
-            hf("0x1.6bd65e8b0b7p-46"),
-            hf("-0x1.b18e160362c24p-95"),
+            hf!("0x1.62e43056cp-4"),
+            hf!("0x1.6bd65e8b0b7p-46"),
+            hf!("-0x1.b18e160362c24p-95"),
         ],
         [
-            hf("0x1.bb9d3cbd6p-4"),
-            hf("0x1.de14aa55ec2bp-42"),
-            hf("-0x1.c6ac3f1862a6bp-94"),
+            hf!("0x1.bb9d3cbd6p-4"),
+            hf!("0x1.de14aa55ec2bp-42"),
+            hf!("-0x1.c6ac3f1862a6bp-94"),
         ],
         [
-            hf("0x1.0a2b244dap-3"),
-            hf("0x1.94def487fea7p-42"),
-            hf("-0x1.dead1a4581acfp-94"),
+            hf!("0x1.0a2b244dap-3"),
+            hf!("0x1.94def487fea7p-42"),
+            hf!("-0x1.dead1a4581acfp-94"),
         ],
         [
-            hf("0x1.3687aa9b78p-3"),
-            hf("0x1.9cec9a50db22p-43"),
-            hf("0x1.34a70684f8e0ep-93"),
+            hf!("0x1.3687aa9b78p-3"),
+            hf!("0x1.9cec9a50db22p-43"),
+            hf!("0x1.34a70684f8e0ep-93"),
         ],
         [
-            hf("0x1.62e42fabap-3"),
-            hf("-0x1.d69047a3aebp-44"),
-            hf("-0x1.4e061f79144e2p-95"),
+            hf!("0x1.62e42fabap-3"),
+            hf!("-0x1.d69047a3aebp-44"),
+            hf!("-0x1.4e061f79144e2p-95"),
         ],
         [
-            hf("0x1.8f40b56d28p-3"),
-            hf("0x1.de7d755fd2e2p-42"),
-            hf("0x1.bdc7ecf001489p-94"),
+            hf!("0x1.8f40b56d28p-3"),
+            hf!("0x1.de7d755fd2e2p-42"),
+            hf!("0x1.bdc7ecf001489p-94"),
         ],
         [
-            hf("0x1.bb9d3b61fp-3"),
-            hf("0x1.c14f1445b12p-46"),
-            hf("0x1.a1d78cbdc5b58p-93"),
+            hf!("0x1.bb9d3b61fp-3"),
+            hf!("0x1.c14f1445b12p-46"),
+            hf!("0x1.a1d78cbdc5b58p-93"),
         ],
         [
-            hf("0x1.e7f9c11f08p-3"),
-            hf("-0x1.6e3e0000dae7p-43"),
-            hf("0x1.6a4559fadde98p-94"),
+            hf!("0x1.e7f9c11f08p-3"),
+            hf!("-0x1.6e3e0000dae7p-43"),
+            hf!("0x1.6a4559fadde98p-94"),
         ],
         [
-            hf("0x1.0a2b242ec4p-2"),
-            hf("0x1.bb7cf852a5fe8p-42"),
-            hf("0x1.a6aef11ee43bdp-93"),
+            hf!("0x1.0a2b242ec4p-2"),
+            hf!("0x1.bb7cf852a5fe8p-42"),
+            hf!("0x1.a6aef11ee43bdp-93"),
         ],
         [
-            hf("0x1.205966c764p-2"),
-            hf("0x1.ad3a5f214294p-45"),
-            hf("0x1.5cc344fa10652p-93"),
+            hf!("0x1.205966c764p-2"),
+            hf!("0x1.ad3a5f214294p-45"),
+            hf!("0x1.5cc344fa10652p-93"),
         ],
         [
-            hf("0x1.3687a98aacp-2"),
-            hf("0x1.1623671842fp-45"),
-            hf("-0x1.0b428fe1f9e43p-94"),
+            hf!("0x1.3687a98aacp-2"),
+            hf!("0x1.1623671842fp-45"),
+            hf!("-0x1.0b428fe1f9e43p-94"),
         ],
         [
-            hf("0x1.4cb5ec93f4p-2"),
-            hf("0x1.3d50980ea513p-42"),
-            hf("0x1.67f0ea083b1c4p-93"),
+            hf!("0x1.4cb5ec93f4p-2"),
+            hf!("0x1.3d50980ea513p-42"),
+            hf!("0x1.67f0ea083b1c4p-93"),
         ],
         [
-            hf("0x1.62e42fefa4p-2"),
-            hf("-0x1.8432a1b0e264p-44"),
-            hf("0x1.803f2f6af40f3p-93"),
-        ],
-    ],
-    [
-        [hf("0x0p+0"), hf("0x0p+0"), hf("0x0p+0")],
-        [
-            hf("0x1.62e462b4p-10"),
-            hf("0x1.061d003b97318p-42"),
-            hf("0x1.d7faee66a2e1ep-93"),
-        ],
-        [
-            hf("0x1.62e44c92p-9"),
-            hf("0x1.95a7bff5e239p-42"),
-            hf("-0x1.f7e788a87135p-95"),
-        ],
-        [
-            hf("0x1.0a2b1e33p-8"),
-            hf("0x1.2a3a1a65aa3ap-43"),
-            hf("-0x1.54599c9605442p-93"),
-        ],
-        [
-            hf("0x1.62e4367cp-8"),
-            hf("-0x1.4a995b6d9ddcp-45"),
-            hf("-0x1.56bb79b254f33p-100"),
-        ],
-        [
-            hf("0x1.bb9d449ap-8"),
-            hf("0x1.8a119c42e9bcp-42"),
-            hf("-0x1.8ecf7d8d661f1p-93"),
-        ],
-        [
-            hf("0x1.0a2b1f19p-7"),
-            hf("0x1.8863771bd10a8p-42"),
-            hf("0x1.e9731de7f0155p-94"),
-        ],
-        [
-            hf("0x1.3687ad11p-7"),
-            hf("0x1.e026a347ca1c8p-42"),
-            hf("0x1.fadc62522444dp-97"),
-        ],
-        [
-            hf("0x1.62e436f28p-7"),
-            hf("0x1.25b84f71b70b8p-42"),
-            hf("-0x1.fcb3f98612d27p-96"),
-        ],
-        [
-            hf("0x1.8f40b7b38p-7"),
-            hf("-0x1.62a0a4fd4758p-43"),
-            hf("0x1.3cb3c35d9f6a1p-93"),
-        ],
-        [
-            hf("0x1.bb9d3abbp-7"),
-            hf("-0x1.0ec48f94d786p-42"),
-            hf("-0x1.6b47d410e4cc7p-93"),
-        ],
-        [
-            hf("0x1.e7f9bb23p-7"),
-            hf("0x1.e4415cbc97ap-43"),
-            hf("-0x1.3729fdb677231p-93"),
-        ],
-        [
-            hf("0x1.0a2b22478p-6"),
-            hf("-0x1.cb73f4505b03p-42"),
-            hf("-0x1.1b3b3a3bc370ap-93"),
-        ],
-        [
-            hf("0x1.2059691e8p-6"),
-            hf("-0x1.abcc3412f264p-43"),
-            hf("-0x1.fe6e998e48673p-95"),
-        ],
-        [
-            hf("0x1.3687a768p-6"),
-            hf("-0x1.43901e5c97a9p-42"),
-            hf("0x1.b54cdd52a5d88p-96"),
-        ],
-        [
-            hf("0x1.4cb5eb5d8p-6"),
-            hf("-0x1.8f106f00f13b8p-42"),
-            hf("-0x1.8f793f5fce148p-93"),
-        ],
-        [
-            hf("0x1.62e432b24p-6"),
-            hf("-0x1.745af34bb54b8p-42"),
-            hf("-0x1.17e3ec05cde7p-97"),
+            hf!("0x1.62e42fefa4p-2"),
+            hf!("-0x1.8432a1b0e264p-44"),
+            hf!("0x1.803f2f6af40f3p-93"),
         ],
     ],
     [
-        [hf("0x0p+0"), hf("0x0p+0"), hf("0x0p+0")],
+        [hf!("0x0p+0"), hf!("0x0p+0"), hf!("0x0p+0")],
         [
-            hf("0x1.62e7bp-14"),
-            hf("-0x1.868625640a68p-44"),
-            hf("-0x1.34bf0db910f65p-93"),
+            hf!("0x1.62e462b4p-10"),
+            hf!("0x1.061d003b97318p-42"),
+            hf!("0x1.d7faee66a2e1ep-93"),
         ],
         [
-            hf("0x1.62e35f6p-13"),
-            hf("-0x1.2ee3d96b696ap-43"),
-            hf("0x1.a2948cd558655p-94"),
+            hf!("0x1.62e44c92p-9"),
+            hf!("0x1.95a7bff5e239p-42"),
+            hf!("-0x1.f7e788a87135p-95"),
         ],
         [
-            hf("0x1.0a2b4b2p-12"),
-            hf("0x1.53edbcf1165p-47"),
-            hf("-0x1.cfc26ccf6d0e4p-97"),
+            hf!("0x1.0a2b1e33p-8"),
+            hf!("0x1.2a3a1a65aa3ap-43"),
+            hf!("-0x1.54599c9605442p-93"),
         ],
         [
-            hf("0x1.62e4be1p-12"),
-            hf("0x1.783e334614p-52"),
-            hf("-0x1.04b96da30e63ap-93"),
+            hf!("0x1.62e4367cp-8"),
+            hf!("-0x1.4a995b6d9ddcp-45"),
+            hf!("-0x1.56bb79b254f33p-100"),
         ],
         [
-            hf("0x1.bb9e085p-12"),
-            hf("-0x1.60785f20acb2p-43"),
-            hf("-0x1.f33369bf7dff1p-96"),
+            hf!("0x1.bb9d449ap-8"),
+            hf!("0x1.8a119c42e9bcp-42"),
+            hf!("-0x1.8ecf7d8d661f1p-93"),
         ],
         [
-            hf("0x1.0a2b94dp-11"),
-            hf("0x1.fd4b3a273353p-42"),
-            hf("-0x1.685a35575eff1p-96"),
+            hf!("0x1.0a2b1f19p-7"),
+            hf!("0x1.8863771bd10a8p-42"),
+            hf!("0x1.e9731de7f0155p-94"),
         ],
         [
-            hf("0x1.368810f8p-11"),
-            hf("0x1.7ded26dc813p-47"),
-            hf("-0x1.4c4d1abca79bfp-96"),
+            hf!("0x1.3687ad11p-7"),
+            hf!("0x1.e026a347ca1c8p-42"),
+            hf!("0x1.fadc62522444dp-97"),
         ],
         [
-            hf("0x1.62e47878p-11"),
-            hf("0x1.7d2bee9a1f63p-42"),
-            hf("0x1.860233b7ad13p-93"),
+            hf!("0x1.62e436f28p-7"),
+            hf!("0x1.25b84f71b70b8p-42"),
+            hf!("-0x1.fcb3f98612d27p-96"),
         ],
         [
-            hf("0x1.8f40cb48p-11"),
-            hf("-0x1.af034eaf471cp-42"),
-            hf("0x1.ae748822d57b7p-94"),
+            hf!("0x1.8f40b7b38p-7"),
+            hf!("-0x1.62a0a4fd4758p-43"),
+            hf!("0x1.3cb3c35d9f6a1p-93"),
         ],
         [
-            hf("0x1.bb9d094p-11"),
-            hf("-0x1.7a223013a20fp-42"),
-            hf("-0x1.1e499087075b6p-93"),
+            hf!("0x1.bb9d3abbp-7"),
+            hf!("-0x1.0ec48f94d786p-42"),
+            hf!("-0x1.6b47d410e4cc7p-93"),
         ],
         [
-            hf("0x1.e7fa32c8p-11"),
-            hf("-0x1.b2e67b1b59bdp-43"),
-            hf("-0x1.54a41eda30fa6p-93"),
+            hf!("0x1.e7f9bb23p-7"),
+            hf!("0x1.e4415cbc97ap-43"),
+            hf!("-0x1.3729fdb677231p-93"),
         ],
         [
-            hf("0x1.0a2b237p-10"),
-            hf("-0x1.7ad97ff4ac7ap-44"),
-            hf("0x1.f932da91371ddp-93"),
+            hf!("0x1.0a2b22478p-6"),
+            hf!("-0x1.cb73f4505b03p-42"),
+            hf!("-0x1.1b3b3a3bc370ap-93"),
         ],
         [
-            hf("0x1.2059a338p-10"),
-            hf("-0x1.96422d90df4p-44"),
-            hf("-0x1.90800fbbf2ed3p-94"),
+            hf!("0x1.2059691e8p-6"),
+            hf!("-0x1.abcc3412f264p-43"),
+            hf!("-0x1.fe6e998e48673p-95"),
         ],
         [
-            hf("0x1.36879824p-10"),
-            hf("0x1.0f9054001812p-44"),
-            hf("0x1.9567e01e48f9ap-93"),
+            hf!("0x1.3687a768p-6"),
+            hf!("-0x1.43901e5c97a9p-42"),
+            hf!("0x1.b54cdd52a5d88p-96"),
         ],
         [
-            hf("0x1.4cb602cp-10"),
-            hf("-0x1.0d709a5ec0b5p-43"),
-            hf("0x1.253dfd44635d2p-94"),
+            hf!("0x1.4cb5eb5d8p-6"),
+            hf!("-0x1.8f106f00f13b8p-42"),
+            hf!("-0x1.8f793f5fce148p-93"),
         ],
         [
-            hf("0x1.62e462b4p-10"),
-            hf("0x1.061d003b97318p-42"),
-            hf("0x1.d7faee66a2e1ep-93"),
+            hf!("0x1.62e432b24p-6"),
+            hf!("-0x1.745af34bb54b8p-42"),
+            hf!("-0x1.17e3ec05cde7p-97"),
         ],
     ],
     [
-        [hf("0x0p+0"), hf("0x0p+0"), hf("0x0p+0")],
+        [hf!("0x0p+0"), hf!("0x0p+0"), hf!("0x0p+0")],
         [
-            hf("0x1.63007cp-18"),
-            hf("-0x1.db0e38e5aaaap-43"),
-            hf("0x1.259a7b94815b9p-93"),
+            hf!("0x1.62e7bp-14"),
+            hf!("-0x1.868625640a68p-44"),
+            hf!("-0x1.34bf0db910f65p-93"),
         ],
         [
-            hf("0x1.6300f6p-17"),
-            hf("0x1.2b1c75580438p-44"),
-            hf("0x1.78cabba01e3e4p-93"),
+            hf!("0x1.62e35f6p-13"),
+            hf!("-0x1.2ee3d96b696ap-43"),
+            hf!("0x1.a2948cd558655p-94"),
         ],
         [
-            hf("0x1.0a2115p-16"),
-            hf("-0x1.5ff223730759p-42"),
-            hf("0x1.8074feacfe49dp-95"),
+            hf!("0x1.0a2b4b2p-12"),
+            hf!("0x1.53edbcf1165p-47"),
+            hf!("-0x1.cfc26ccf6d0e4p-97"),
         ],
         [
-            hf("0x1.62e1ecp-16"),
-            hf("-0x1.85d6f6487ce4p-45"),
-            hf("0x1.05485074b9276p-93"),
+            hf!("0x1.62e4be1p-12"),
+            hf!("0x1.783e334614p-52"),
+            hf!("-0x1.04b96da30e63ap-93"),
         ],
         [
-            hf("0x1.bba301p-16"),
-            hf("-0x1.af5d58a7c921p-43"),
-            hf("-0x1.30a8c0fd2ff5fp-93"),
+            hf!("0x1.bb9e085p-12"),
+            hf!("-0x1.60785f20acb2p-43"),
+            hf!("-0x1.f33369bf7dff1p-96"),
         ],
         [
-            hf("0x1.0a32298p-15"),
-            hf("0x1.590faa0883bdp-43"),
-            hf("0x1.95e9bda999947p-93"),
+            hf!("0x1.0a2b94dp-11"),
+            hf!("0x1.fd4b3a273353p-42"),
+            hf!("-0x1.685a35575eff1p-96"),
         ],
         [
-            hf("0x1.3682f1p-15"),
-            hf("0x1.f0224376efaf8p-42"),
-            hf("-0x1.5843c0db50d1p-93"),
+            hf!("0x1.368810f8p-11"),
+            hf!("0x1.7ded26dc813p-47"),
+            hf!("-0x1.4c4d1abca79bfp-96"),
         ],
         [
-            hf("0x1.62e3d8p-15"),
-            hf("-0x1.142c13daed4ap-43"),
-            hf("0x1.c68a61183ce87p-93"),
+            hf!("0x1.62e47878p-11"),
+            hf!("0x1.7d2bee9a1f63p-42"),
+            hf!("0x1.860233b7ad13p-93"),
         ],
         [
-            hf("0x1.8f44dd8p-15"),
-            hf("-0x1.aa489f399931p-43"),
-            hf("0x1.11c5c376854eap-94"),
+            hf!("0x1.8f40cb48p-11"),
+            hf!("-0x1.af034eaf471cp-42"),
+            hf!("0x1.ae748822d57b7p-94"),
         ],
         [
-            hf("0x1.bb9601p-15"),
-            hf("0x1.9904d8b6a3638p-42"),
-            hf("0x1.8c89554493c8fp-93"),
+            hf!("0x1.bb9d094p-11"),
+            hf!("-0x1.7a223013a20fp-42"),
+            hf!("-0x1.1e499087075b6p-93"),
         ],
         [
-            hf("0x1.e7f744p-15"),
-            hf("0x1.5785ddbe7cba8p-42"),
-            hf("0x1.e7ff3cde7d70cp-94"),
+            hf!("0x1.e7fa32c8p-11"),
+            hf!("-0x1.b2e67b1b59bdp-43"),
+            hf!("-0x1.54a41eda30fa6p-93"),
         ],
         [
-            hf("0x1.0a2c53p-14"),
-            hf("-0x1.6d9e8780d0d5p-43"),
-            hf("0x1.ad9c178106693p-94"),
+            hf!("0x1.0a2b237p-10"),
+            hf!("-0x1.7ad97ff4ac7ap-44"),
+            hf!("0x1.f932da91371ddp-93"),
         ],
         [
-            hf("0x1.205d134p-14"),
-            hf("-0x1.214a2e893fccp-43"),
-            hf("0x1.548a9500c9822p-93"),
+            hf!("0x1.2059a338p-10"),
+            hf!("-0x1.96422d90df4p-44"),
+            hf!("-0x1.90800fbbf2ed3p-94"),
         ],
         [
-            hf("0x1.3685e28p-14"),
-            hf("0x1.e23588646103p-43"),
-            hf("0x1.2a97b26da2d88p-94"),
+            hf!("0x1.36879824p-10"),
+            hf!("0x1.0f9054001812p-44"),
+            hf!("0x1.9567e01e48f9ap-93"),
         ],
         [
-            hf("0x1.4cb6c18p-14"),
-            hf("0x1.2b7cfcea9e0d8p-42"),
-            hf("-0x1.5095048a6b824p-93"),
+            hf!("0x1.4cb602cp-10"),
+            hf!("-0x1.0d709a5ec0b5p-43"),
+            hf!("0x1.253dfd44635d2p-94"),
         ],
         [
-            hf("0x1.62e7bp-14"),
-            hf("-0x1.868625640a68p-44"),
-            hf("-0x1.34bf0db910f65p-93"),
+            hf!("0x1.62e462b4p-10"),
+            hf!("0x1.061d003b97318p-42"),
+            hf!("0x1.d7faee66a2e1ep-93"),
+        ],
+    ],
+    [
+        [hf!("0x0p+0"), hf!("0x0p+0"), hf!("0x0p+0")],
+        [
+            hf!("0x1.63007cp-18"),
+            hf!("-0x1.db0e38e5aaaap-43"),
+            hf!("0x1.259a7b94815b9p-93"),
+        ],
+        [
+            hf!("0x1.6300f6p-17"),
+            hf!("0x1.2b1c75580438p-44"),
+            hf!("0x1.78cabba01e3e4p-93"),
+        ],
+        [
+            hf!("0x1.0a2115p-16"),
+            hf!("-0x1.5ff223730759p-42"),
+            hf!("0x1.8074feacfe49dp-95"),
+        ],
+        [
+            hf!("0x1.62e1ecp-16"),
+            hf!("-0x1.85d6f6487ce4p-45"),
+            hf!("0x1.05485074b9276p-93"),
+        ],
+        [
+            hf!("0x1.bba301p-16"),
+            hf!("-0x1.af5d58a7c921p-43"),
+            hf!("-0x1.30a8c0fd2ff5fp-93"),
+        ],
+        [
+            hf!("0x1.0a32298p-15"),
+            hf!("0x1.590faa0883bdp-43"),
+            hf!("0x1.95e9bda999947p-93"),
+        ],
+        [
+            hf!("0x1.3682f1p-15"),
+            hf!("0x1.f0224376efaf8p-42"),
+            hf!("-0x1.5843c0db50d1p-93"),
+        ],
+        [
+            hf!("0x1.62e3d8p-15"),
+            hf!("-0x1.142c13daed4ap-43"),
+            hf!("0x1.c68a61183ce87p-93"),
+        ],
+        [
+            hf!("0x1.8f44dd8p-15"),
+            hf!("-0x1.aa489f399931p-43"),
+            hf!("0x1.11c5c376854eap-94"),
+        ],
+        [
+            hf!("0x1.bb9601p-15"),
+            hf!("0x1.9904d8b6a3638p-42"),
+            hf!("0x1.8c89554493c8fp-93"),
+        ],
+        [
+            hf!("0x1.e7f744p-15"),
+            hf!("0x1.5785ddbe7cba8p-42"),
+            hf!("0x1.e7ff3cde7d70cp-94"),
+        ],
+        [
+            hf!("0x1.0a2c53p-14"),
+            hf!("-0x1.6d9e8780d0d5p-43"),
+            hf!("0x1.ad9c178106693p-94"),
+        ],
+        [
+            hf!("0x1.205d134p-14"),
+            hf!("-0x1.214a2e893fccp-43"),
+            hf!("0x1.548a9500c9822p-93"),
+        ],
+        [
+            hf!("0x1.3685e28p-14"),
+            hf!("0x1.e23588646103p-43"),
+            hf!("0x1.2a97b26da2d88p-94"),
+        ],
+        [
+            hf!("0x1.4cb6c18p-14"),
+            hf!("0x1.2b7cfcea9e0d8p-42"),
+            hf!("-0x1.5095048a6b824p-93"),
+        ],
+        [
+            hf!("0x1.62e7bp-14"),
+            hf!("-0x1.868625640a68p-44"),
+            hf!("-0x1.34bf0db910f65p-93"),
         ],
     ],
 ];
@@ -829,14 +838,14 @@ const LOG_LL: [[[f64; 3]; 17]; 4] = [
 /// log(1+x) - x tail used by every `*_refine`: double-double degree 2..4
 /// (`REFINE_CH`) and double degree 5..7 (`REFINE_CL`) coefficients.
 const REFINE_CH: [[f64; 2]; 3] = [
-    [hf("0x1p-1"), hf("0x1.24b67ee516e3bp-111")],
-    [hf("-0x1p-2"), hf("-0x1.932ce43199a8dp-110")],
-    [hf("0x1.5555555555555p-3"), hf("0x1.55540c15cf91fp-57")],
+    [hf!("0x1p-1"), hf!("0x1.24b67ee516e3bp-111")],
+    [hf!("-0x1p-2"), hf!("-0x1.932ce43199a8dp-110")],
+    [hf!("0x1.5555555555555p-3"), hf!("0x1.55540c15cf91fp-57")],
 ];
 const REFINE_CL: [f64; 3] = [
-    hf("-0x1p-3"),
-    hf("0x1.9999999a0754fp-4"),
-    hf("-0x1.55555555c3157p-4"),
+    hf!("-0x1p-3"),
+    hf!("0x1.9999999a0754fp-4"),
+    hf!("-0x1.55555555c3157p-4"),
 ];
 
 /// Accurate path for |x| >= 1/4: log(zh + zl) in triple-double, where
@@ -845,9 +854,9 @@ const REFINE_CL: [f64; 3] = [
 fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     const CH: [[f64; 2]; 3] = REFINE_CH;
     const CL: [f64; 3] = REFINE_CL;
-    const L20: f64 = hf("0x1.62e42fefa3ap-2");
-    const L21: f64 = hf("-0x1.0ca86c3898dp-50");
-    const L22: f64 = hf("0x1.f97b57a079ap-104");
+    const L20: f64 = hf!("0x1.62e42fefa3ap-2");
+    const L21: f64 = hf!("-0x1.0ca86c3898dp-50");
+    const L22: f64 = hf!("0x1.f97b57a079ap-104");
 
     let mut t = zh.to_bits();
     let e = (t >> 52) as i32 - 0x3ff;
@@ -855,7 +864,7 @@ fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     t |= 0x3ffu64 << 52;
     let tf = f64::from_bits(t);
     let ed = e as f64;
-    let v = (a - ed + hf("0x1.00008p+0")).to_bits();
+    let v = (a - ed + hf!("0x1.00008p+0")).to_bits();
     let i = v.wrapping_sub(0x3ffu64 << 52) >> (52 - 16);
     let i1 = (i >> 12) as usize;
     let i2 = ((i >> 8) & 0xf) as usize;
@@ -925,18 +934,18 @@ pub fn atanh(x: f64) -> f64 {
         // |x| < 1/4
         if aix < 0x3e4d_12ed_0af1_a27f {
             // atanh(x) rounds to x for |x| < 0x1.d12ed0af1a27fp-27.
-            return x.mul_add(hf("0x1p-55"), x);
+            return x.mul_add(hf!("0x1p-55"), x);
         }
         const C: [f64; 9] = [
-            hf("0x1.999999999999ap-3"),
-            hf("0x1.2492492492244p-3"),
-            hf("0x1.c71c71c79715fp-4"),
-            hf("0x1.745d16f777723p-4"),
-            hf("0x1.3b13ca4174634p-4"),
-            hf("0x1.110c9724989bdp-4"),
-            hf("0x1.e2d17608a5b2ep-5"),
-            hf("0x1.a0b56308cba0bp-5"),
-            hf("0x1.fb6341208ad2ep-5"),
+            hf!("0x1.999999999999ap-3"),
+            hf!("0x1.2492492492244p-3"),
+            hf!("0x1.c71c71c79715fp-4"),
+            hf!("0x1.745d16f777723p-4"),
+            hf!("0x1.3b13ca4174634p-4"),
+            hf!("0x1.110c9724989bdp-4"),
+            hf!("0x1.e2d17608a5b2ep-5"),
+            hf!("0x1.a0b56308cba0bp-5"),
+            hf!("0x1.fb6341208ad2ep-5"),
         ];
         let x2 = x * x;
         let dx2 = x.mul_add(x, -x2);
@@ -947,12 +956,12 @@ pub fn atanh(x: f64) -> f64 {
         let p = (C[0] + x2 * C[1])
             + x4 * (C[2] + x2 * C[3])
             + x8 * ((C[4] + x2 * C[5]) + x4 * (C[6] + x2 * C[7]) + x8 * C[8]);
-        let t = x2.mul_add(p, hf("0x1.5555555555555p-56"));
-        let (ph, pl) = fasttwosum(hf("0x1.5555555555555p-2"), t);
+        let t = x2.mul_add(p, hf!("0x1.5555555555555p-56"));
+        let (ph, pl) = fasttwosum(hf!("0x1.5555555555555p-2"), t);
         let (ph, mut pl) = muldd(ph, pl, x3, dx3);
         let (ph, tl) = fasttwosum(x, ph);
         pl += tl;
-        let eps = x * (x4 * hf("0x1.dp-53") + hf("0x1p-103"));
+        let eps = x * (x4 * hf!("0x1.dp-53") + hf!("0x1p-103"));
         let lb = ph + (pl - eps);
         let ub = ph + (pl + eps);
         if lb == ub {
@@ -969,11 +978,11 @@ pub fn atanh(x: f64) -> f64 {
     let tl = ph.mul_add(iqh, -th) + (pl + ph * ((-qh).mul_add(iqh, 1.0) - ql * iqh)) * iqh;
 
     const C: [f64; 5] = [
-        hf("-0x1p+0"),
-        hf("0x1.555555555553p+0"),
-        hf("-0x1.fffffffffffap+0"),
-        hf("0x1.99999e33a6366p+1"),
-        hf("-0x1.555559ef9525fp+2"),
+        hf!("-0x1p+0"),
+        hf!("0x1.555555555553p+0"),
+        hf!("-0x1.fffffffffffap+0"),
+        hf!("0x1.99999e33a6366p+1"),
+        hf!("-0x1.555559ef9525fp+2"),
     ];
     let mut t = th.to_bits();
     let e = (t >> 52) as i32 - 0x3ff;
@@ -996,8 +1005,8 @@ pub fn atanh(x: f64) -> f64 {
     let rx = r * tf;
     let dxl = r.mul_add(tf, -rx);
     let f = dx2 * ((C[0] + dx * C[1]) + dx2 * (C[2] + dx * C[3] + dx2 * C[4]));
-    const L2H: f64 = hf("0x1.62e42fefa3ap-2");
-    const L2L: f64 = hf("-0x1.0ca86c3898dp-50");
+    const L2H: f64 = hf!("0x1.62e42fefa3ap-2");
+    const L2L: f64 = hf!("-0x1.0ca86c3898dp-50");
     let lh = (ATANH_L1[i1][1] + ATANH_L2[i2][1]) + L2H * ed;
     let (mut lh, mut ll) = fasttwosum(lh, rx - 0.5);
     ll += L2L * ed + (ATANH_L1[i1][0] + ATANH_L2[i2][0]) + dxl + 0.5 * tl / th;
@@ -1005,14 +1014,14 @@ pub fn atanh(x: f64) -> f64 {
     let sgn = 1.0f64.copysign(x);
     lh *= sgn;
     ll *= sgn;
-    let eps = 38e-24 + dx2 * hf("0x1p-49");
+    let eps = 38e-24 + dx2 * hf!("0x1p-49");
     let lb = lh + (ll - eps);
     let ub = lh + (ll + eps);
     if lb == ub {
         return lb;
     }
     let (th, tl) = fasttwosum(th, tl);
-    atanh_refine(x, th, tl, hf("0x1.71547652b82fep+1") * (lh + ll).abs())
+    atanh_refine(x, th, tl, hf!("0x1.71547652b82fep+1") * (lh + ll).abs())
 }
 
 // --- asinh / acosh (CORE-MATH src/binary64/{asinh,acosh}) -------------------
@@ -1088,91 +1097,91 @@ fn log_table_index(m: u64) -> (usize, usize) {
 
 /// `(low, high)` parts of -log(r1[i]) (asinh/acosh scaling).
 const LOG2_L1: [[f64; 2]; 33] = [
-    [hf("0x0p+0"), hf("0x0p+0")],
-    [hf("-0x1.269e2038315b3p-46"), hf("0x1.62e4eacd4p-6")],
-    [hf("-0x1.3f2558bddfc47p-45"), hf("0x1.62e3ce7218p-5")],
-    [hf("0x1.07ea13c34efb5p-45"), hf("0x1.0a2ab6d3ecp-4")],
-    [hf("0x1.8f3e77084d3bap-44"), hf("0x1.62e4a86d8cp-4")],
-    [hf("-0x1.8d92a005f1a7ep-46"), hf("0x1.bb9db7062cp-4")],
-    [hf("0x1.58239e799bfe5p-44"), hf("0x1.0a2b1a22ccp-3")],
-    [hf("-0x1.a93fcf5f593b7p-44"), hf("0x1.3687f0a298p-3")],
-    [hf("-0x1.db4cac32fd2b5p-46"), hf("0x1.62e4116b64p-3")],
-    [hf("-0x1.0e65a92ee0f3bp-46"), hf("0x1.8f409e4df6p-3")],
-    [hf("-0x1.8261383d475f1p-44"), hf("0x1.bb9d15001cp-3")],
-    [hf("-0x1.359886207513bp-44"), hf("0x1.e7f9a8c94p-3")],
-    [hf("0x1.811f87496ceb7p-44"), hf("0x1.0a2b052ddbp-2")],
-    [hf("0x1.4991ec6cb435cp-44"), hf("0x1.205955ef73p-2")],
-    [hf("-0x1.4581abfeb8927p-44"), hf("0x1.3687bd9121p-2")],
-    [hf("0x1.cab48f6942703p-44"), hf("0x1.4cb5e8f2b5p-2")],
-    [hf("-0x1.df2c452fde132p-47"), hf("0x1.62e4420e2p-2")],
-    [hf("0x1.6109f4fdb74bdp-45"), hf("0x1.791292c46ap-2")],
-    [hf("-0x1.6b95fbdac7696p-44"), hf("0x1.8f40af84e7p-2")],
-    [hf("0x1.7394fa880cbdap-46"), hf("0x1.a56ed8f865p-2")],
-    [hf("-0x1.50b06a94eccabp-46"), hf("0x1.bb9d6505b4p-2")],
-    [hf("-0x1.be2abf0b38989p-44"), hf("0x1.d1cb91e728p-2")],
-    [hf("-0x1.7d6bf1e34da04p-44"), hf("0x1.e7f9d139e2p-2")],
-    [hf("-0x1.423c1e14de6edp-44"), hf("0x1.fe27db9b0ep-2")],
-    [hf("0x1.c46f1a0efbbc2p-44"), hf("0x1.0a2b25060a8p-1")],
-    [hf("0x1.834fe4e3e6018p-45"), hf("0x1.154244482ap-1")],
-    [hf("0x1.6a03d0f02b65p-46"), hf("0x1.20597312988p-1")],
-    [hf("0x1.d437056526f3p-44"), hf("0x1.2b707145dep-1")],
-    [hf("-0x1.a0233728405c5p-45"), hf("0x1.3687b0e0b28p-1")],
-    [hf("-0x1.4dbdda10d2bf1p-45"), hf("0x1.419ec5d3f68p-1")],
-    [hf("0x1.f7d0a25d154f2p-44"), hf("0x1.4cb5f9fc02p-1")],
-    [hf("0x1.15ede4d803b18p-44"), hf("0x1.57cd28421a8p-1")],
-    [hf("0x1.ef35793c7673p-45"), hf("0x1.62e42fefa38p-1")],
+    [hf!("0x0p+0"), hf!("0x0p+0")],
+    [hf!("-0x1.269e2038315b3p-46"), hf!("0x1.62e4eacd4p-6")],
+    [hf!("-0x1.3f2558bddfc47p-45"), hf!("0x1.62e3ce7218p-5")],
+    [hf!("0x1.07ea13c34efb5p-45"), hf!("0x1.0a2ab6d3ecp-4")],
+    [hf!("0x1.8f3e77084d3bap-44"), hf!("0x1.62e4a86d8cp-4")],
+    [hf!("-0x1.8d92a005f1a7ep-46"), hf!("0x1.bb9db7062cp-4")],
+    [hf!("0x1.58239e799bfe5p-44"), hf!("0x1.0a2b1a22ccp-3")],
+    [hf!("-0x1.a93fcf5f593b7p-44"), hf!("0x1.3687f0a298p-3")],
+    [hf!("-0x1.db4cac32fd2b5p-46"), hf!("0x1.62e4116b64p-3")],
+    [hf!("-0x1.0e65a92ee0f3bp-46"), hf!("0x1.8f409e4df6p-3")],
+    [hf!("-0x1.8261383d475f1p-44"), hf!("0x1.bb9d15001cp-3")],
+    [hf!("-0x1.359886207513bp-44"), hf!("0x1.e7f9a8c94p-3")],
+    [hf!("0x1.811f87496ceb7p-44"), hf!("0x1.0a2b052ddbp-2")],
+    [hf!("0x1.4991ec6cb435cp-44"), hf!("0x1.205955ef73p-2")],
+    [hf!("-0x1.4581abfeb8927p-44"), hf!("0x1.3687bd9121p-2")],
+    [hf!("0x1.cab48f6942703p-44"), hf!("0x1.4cb5e8f2b5p-2")],
+    [hf!("-0x1.df2c452fde132p-47"), hf!("0x1.62e4420e2p-2")],
+    [hf!("0x1.6109f4fdb74bdp-45"), hf!("0x1.791292c46ap-2")],
+    [hf!("-0x1.6b95fbdac7696p-44"), hf!("0x1.8f40af84e7p-2")],
+    [hf!("0x1.7394fa880cbdap-46"), hf!("0x1.a56ed8f865p-2")],
+    [hf!("-0x1.50b06a94eccabp-46"), hf!("0x1.bb9d6505b4p-2")],
+    [hf!("-0x1.be2abf0b38989p-44"), hf!("0x1.d1cb91e728p-2")],
+    [hf!("-0x1.7d6bf1e34da04p-44"), hf!("0x1.e7f9d139e2p-2")],
+    [hf!("-0x1.423c1e14de6edp-44"), hf!("0x1.fe27db9b0ep-2")],
+    [hf!("0x1.c46f1a0efbbc2p-44"), hf!("0x1.0a2b25060a8p-1")],
+    [hf!("0x1.834fe4e3e6018p-45"), hf!("0x1.154244482ap-1")],
+    [hf!("0x1.6a03d0f02b65p-46"), hf!("0x1.20597312988p-1")],
+    [hf!("0x1.d437056526f3p-44"), hf!("0x1.2b707145dep-1")],
+    [hf!("-0x1.a0233728405c5p-45"), hf!("0x1.3687b0e0b28p-1")],
+    [hf!("-0x1.4dbdda10d2bf1p-45"), hf!("0x1.419ec5d3f68p-1")],
+    [hf!("0x1.f7d0a25d154f2p-44"), hf!("0x1.4cb5f9fc02p-1")],
+    [hf!("0x1.15ede4d803b18p-44"), hf!("0x1.57cd28421a8p-1")],
+    [hf!("0x1.ef35793c7673p-45"), hf!("0x1.62e42fefa38p-1")],
 ];
 
 /// `(low, high)` parts of -log(r2[i]) (asinh/acosh scaling).
 const LOG2_L2: [[f64; 2]; 33] = [
-    [hf("0x0p+0"), hf("0x0p+0")],
-    [hf("0x1.5abdac3638e99p-44"), hf("0x1.631ec81ep-11")],
-    [hf("-0x1.16b8be9bbe239p-45"), hf("0x1.62fd8127p-10")],
-    [hf("-0x1.364c6315542ebp-44"), hf("0x1.0a2520508p-9")],
-    [hf("0x1.734abe459c9p-45"), hf("0x1.62dadc1dp-9")],
-    [hf("0x1.0cf8a761431bfp-44"), hf("0x1.bb9ff94dp-9")],
-    [hf("0x1.da2718eb78708p-45"), hf("0x1.0a2a2def8p-8")],
-    [hf("0x1.34ada62c59b93p-44"), hf("0x1.368c0fae4p-8")],
-    [hf("0x1.d09ab376682d4p-44"), hf("0x1.62e58e4f8p-8")],
-    [hf("-0x1.3cb7b94329211p-45"), hf("0x1.8f46bd28cp-8")],
-    [hf("-0x1.eec5c297c41dp-45"), hf("0x1.bb9f8312p-8")],
-    [hf("-0x1.6411b9395d15p-44"), hf("0x1.e7fff8f3p-8")],
-    [hf("-0x1.1c0e59a43053cp-44"), hf("0x1.0a2c0006ep-7")],
-    [hf("0x1.6506596e077b6p-46"), hf("0x1.205bdb6fp-7")],
-    [hf("0x1.e256bce6faa27p-44"), hf("0x1.36877c86ep-7")],
-    [hf("0x1.bd42467b0c8d1p-51"), hf("0x1.4cb6f5578p-7")],
-    [hf("-0x1.c4f92132ff0fp-44"), hf("0x1.62e230e8cp-7")],
-    [hf("-0x1.80be08bfab39p-44"), hf("0x1.7911440f6p-7")],
-    [hf("-0x1.f0b1319ceb1f7p-44"), hf("0x1.8f443020ap-7")],
-    [hf("0x1.a65fcfb8de99bp-45"), hf("0x1.a572dbef4p-7")],
-    [hf("0x1.4233885d3779cp-46"), hf("0x1.bb9d449a6p-7")],
-    [hf("0x1.f46a59e646edbp-44"), hf("0x1.d1cb8491cp-7")],
-    [hf("-0x1.c3d2f11c11446p-44"), hf("0x1.e7fd9d2aap-7")],
-    [hf("0x1.7763f78a1e0ccp-45"), hf("0x1.fe2b6f978p-7")],
-    [hf("0x1.b4c37fc60c043p-44"), hf("0x1.0a2a7c7a5p-6")],
-    [hf("-0x1.5b8a822859be3p-46"), hf("0x1.15412ca86p-6")],
-    [hf("-0x1.f2d8c9fc064p-44"), hf("0x1.2059c9005p-6")],
-    [hf("-0x1.e80e79c20378dp-44"), hf("0x1.2b703f49bp-6")],
-    [hf("0x1.68256e4329bdbp-44"), hf("0x1.3688a1a8dp-6")],
-    [hf("0x1.7e9741da248c3p-44"), hf("0x1.419edc7bap-6")],
-    [hf("0x1.e330dccce602bp-45"), hf("0x1.4cb7034fap-6")],
-    [hf("0x1.2f32b5d18eefbp-49"), hf("0x1.57cd01187p-6")],
-    [hf("-0x1.269e2038315b3p-46"), hf("0x1.62e4eacd4p-6")],
+    [hf!("0x0p+0"), hf!("0x0p+0")],
+    [hf!("0x1.5abdac3638e99p-44"), hf!("0x1.631ec81ep-11")],
+    [hf!("-0x1.16b8be9bbe239p-45"), hf!("0x1.62fd8127p-10")],
+    [hf!("-0x1.364c6315542ebp-44"), hf!("0x1.0a2520508p-9")],
+    [hf!("0x1.734abe459c9p-45"), hf!("0x1.62dadc1dp-9")],
+    [hf!("0x1.0cf8a761431bfp-44"), hf!("0x1.bb9ff94dp-9")],
+    [hf!("0x1.da2718eb78708p-45"), hf!("0x1.0a2a2def8p-8")],
+    [hf!("0x1.34ada62c59b93p-44"), hf!("0x1.368c0fae4p-8")],
+    [hf!("0x1.d09ab376682d4p-44"), hf!("0x1.62e58e4f8p-8")],
+    [hf!("-0x1.3cb7b94329211p-45"), hf!("0x1.8f46bd28cp-8")],
+    [hf!("-0x1.eec5c297c41dp-45"), hf!("0x1.bb9f8312p-8")],
+    [hf!("-0x1.6411b9395d15p-44"), hf!("0x1.e7fff8f3p-8")],
+    [hf!("-0x1.1c0e59a43053cp-44"), hf!("0x1.0a2c0006ep-7")],
+    [hf!("0x1.6506596e077b6p-46"), hf!("0x1.205bdb6fp-7")],
+    [hf!("0x1.e256bce6faa27p-44"), hf!("0x1.36877c86ep-7")],
+    [hf!("0x1.bd42467b0c8d1p-51"), hf!("0x1.4cb6f5578p-7")],
+    [hf!("-0x1.c4f92132ff0fp-44"), hf!("0x1.62e230e8cp-7")],
+    [hf!("-0x1.80be08bfab39p-44"), hf!("0x1.7911440f6p-7")],
+    [hf!("-0x1.f0b1319ceb1f7p-44"), hf!("0x1.8f443020ap-7")],
+    [hf!("0x1.a65fcfb8de99bp-45"), hf!("0x1.a572dbef4p-7")],
+    [hf!("0x1.4233885d3779cp-46"), hf!("0x1.bb9d449a6p-7")],
+    [hf!("0x1.f46a59e646edbp-44"), hf!("0x1.d1cb8491cp-7")],
+    [hf!("-0x1.c3d2f11c11446p-44"), hf!("0x1.e7fd9d2aap-7")],
+    [hf!("0x1.7763f78a1e0ccp-45"), hf!("0x1.fe2b6f978p-7")],
+    [hf!("0x1.b4c37fc60c043p-44"), hf!("0x1.0a2a7c7a5p-6")],
+    [hf!("-0x1.5b8a822859be3p-46"), hf!("0x1.15412ca86p-6")],
+    [hf!("-0x1.f2d8c9fc064p-44"), hf!("0x1.2059c9005p-6")],
+    [hf!("-0x1.e80e79c20378dp-44"), hf!("0x1.2b703f49bp-6")],
+    [hf!("0x1.68256e4329bdbp-44"), hf!("0x1.3688a1a8dp-6")],
+    [hf!("0x1.7e9741da248c3p-44"), hf!("0x1.419edc7bap-6")],
+    [hf!("0x1.e330dccce602bp-45"), hf!("0x1.4cb7034fap-6")],
+    [hf!("0x1.2f32b5d18eefbp-49"), hf!("0x1.57cd01187p-6")],
+    [hf!("-0x1.269e2038315b3p-46"), hf!("0x1.62e4eacd4p-6")],
 ];
 
 /// log(1+dx) - dx on |dx| < 2^-11.3 (asinh/acosh).
 const LOG2_C: [f64; 5] = [
-    hf("-0x1p-1"),
-    hf("0x1.555555555553p-2"),
-    hf("-0x1.fffffffffffap-3"),
-    hf("0x1.99999e33a6366p-3"),
-    hf("-0x1.555559ef9525fp-3"),
+    hf!("-0x1p-1"),
+    hf!("0x1.555555555553p-2"),
+    hf!("-0x1.fffffffffffap-3"),
+    hf!("0x1.99999e33a6366p-3"),
+    hf!("-0x1.555559ef9525fp-3"),
 ];
-const LOG2_L2H: f64 = hf("0x1.62e42fefa38p-1");
-const LOG2_L2L: f64 = hf("0x1.ef35793c7673p-45");
-const LOG2_L20: f64 = hf("0x1.62e42fefa38p-2");
-const LOG2_L21: f64 = hf("0x1.ef35793c768p-46");
-const LOG2_L22: f64 = hf("-0x1.9ff0342542fc3p-91");
+const LOG2_L2H: f64 = hf!("0x1.62e42fefa38p-1");
+const LOG2_L2L: f64 = hf!("0x1.ef35793c7673p-45");
+const LOG2_L20: f64 = hf!("0x1.62e42fefa38p-2");
+const LOG2_L21: f64 = hf!("0x1.ef35793c768p-46");
+const LOG2_L22: f64 = hf!("-0x1.9ff0342542fc3p-91");
 
 /// Fast-path log reduction shared by asinh and acosh: for a mantissa `m`
 /// (exponent field cleared) returns `(i1, i2, dx, f)` with `dx = r*t - 1`
@@ -1208,7 +1217,7 @@ fn log2_refine_core(
 ) -> (f64, f64, f64) {
     let tf = f64::from_bits((zh.to_bits() & MASK52) | (0x3ffu64 << 52));
     let ed = e as f64;
-    let v = (a - ed + hf("0x1.00008p+0")).to_bits();
+    let v = (a - ed + hf!("0x1.00008p+0")).to_bits();
     let i = v.wrapping_sub(0x3ffu64 << 52) >> (52 - 16);
     let i1 = ((i >> 12) & 0x1f) as usize;
     let i2 = ((i >> 8) & 0xf) as usize;
@@ -1267,25 +1276,25 @@ fn nudge_power_of_two(v1: f64, v2: f64) -> (f64, u64) {
 #[inline(never)]
 fn asinh_zero(x: f64, x2h: f64, x2l: f64) -> f64 {
     const CH: [[f64; 2]; 12] = [
-        [hf("-0x1.5555555555555p-3"), hf("-0x1.5555555555555p-57")],
-        [hf("0x1.3333333333333p-4"), hf("0x1.99999999949dfp-59")],
-        [hf("-0x1.6db6db6db6db7p-5"), hf("0x1.2492496091b0cp-60")],
-        [hf("0x1.f1c71c71c71c7p-6"), hf("0x1.c71a35cfa0671p-62")],
-        [hf("-0x1.6e8ba2e8ba2e9p-6"), hf("0x1.17f937248cf81p-60")],
-        [hf("0x1.1c4ec4ec4ec4fp-6"), hf("-0x1.74e3c1dfd4c3dp-60")],
-        [hf("-0x1.c999999999977p-7"), hf("-0x1.38e7a467ecc55p-61")],
-        [hf("0x1.7a87878786c7ep-7"), hf("0x1.a83c7bace55ebp-61")],
-        [hf("-0x1.3fde50d764083p-7"), hf("-0x1.d024df7fa0542p-61")],
-        [hf("0x1.12ef3ceae4d12p-7"), hf("-0x1.ba9c13deb261fp-61")],
-        [hf("-0x1.df3bd104aa267p-8"), hf("-0x1.546da9bc5b32ap-62")],
-        [hf("0x1.a685fc5de7a04p-8"), hf("0x1.40d284a1d67f9p-62")],
+        [hf!("-0x1.5555555555555p-3"), hf!("-0x1.5555555555555p-57")],
+        [hf!("0x1.3333333333333p-4"), hf!("0x1.99999999949dfp-59")],
+        [hf!("-0x1.6db6db6db6db7p-5"), hf!("0x1.2492496091b0cp-60")],
+        [hf!("0x1.f1c71c71c71c7p-6"), hf!("0x1.c71a35cfa0671p-62")],
+        [hf!("-0x1.6e8ba2e8ba2e9p-6"), hf!("0x1.17f937248cf81p-60")],
+        [hf!("0x1.1c4ec4ec4ec4fp-6"), hf!("-0x1.74e3c1dfd4c3dp-60")],
+        [hf!("-0x1.c999999999977p-7"), hf!("-0x1.38e7a467ecc55p-61")],
+        [hf!("0x1.7a87878786c7ep-7"), hf!("0x1.a83c7bace55ebp-61")],
+        [hf!("-0x1.3fde50d764083p-7"), hf!("-0x1.d024df7fa0542p-61")],
+        [hf!("0x1.12ef3ceae4d12p-7"), hf!("-0x1.ba9c13deb261fp-61")],
+        [hf!("-0x1.df3bd104aa267p-8"), hf!("-0x1.546da9bc5b32ap-62")],
+        [hf!("0x1.a685fc5de7a04p-8"), hf!("0x1.40d284a1d67f9p-62")],
     ];
     const CL: [f64; 5] = [
-        hf("-0x1.7828d553ec8p-8"),
-        hf("0x1.51712f7bee368p-8"),
-        hf("-0x1.2e6d98527bcc6p-8"),
-        hf("0x1.0095da47b392cp-8"),
-        hf("-0x1.3b92d6368192cp-9"),
+        hf!("-0x1.7828d553ec8p-8"),
+        hf!("0x1.51712f7bee368p-8"),
+        hf!("-0x1.2e6d98527bcc6p-8"),
+        hf!("0x1.0095da47b392cp-8"),
+        hf!("-0x1.3b92d6368192cp-9"),
     ];
     let y2 = x2h * (CL[0] + x2h * (CL[1] + x2h * (CL[2] + x2h * (CL[3] + x2h * CL[4]))));
     let (y1, y2) = polydd_alt(x2h, x2l, &CH, y2);
@@ -1300,179 +1309,179 @@ fn asinh_zero(x: f64, x2h: f64, x2l: f64) -> f64 {
 /// Inputs where the asinh refinement cannot decide: `(|x|, high, low)`.
 const ASINH_DB: [[f64; 3]; 35] = [
     [
-        hf("0x1.00f9476450863p-2"),
-        hf("0x1.fcb35067f343cp-3"),
-        hf("0x1p-57"),
+        hf!("0x1.00f9476450863p-2"),
+        hf!("0x1.fcb35067f343cp-3"),
+        hf!("0x1p-57"),
     ],
     [
-        hf("0x1.1f0a79315b287p-2"),
-        hf("0x1.1b68aae88febap-2"),
-        hf("0x1p-56"),
+        hf!("0x1.1f0a79315b287p-2"),
+        hf!("0x1.1b68aae88febap-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.2b9618ff7acb7p-2"),
-        hf("0x1.27781d9aa4e25p-2"),
-        hf("-0x1p-56"),
+        hf!("0x1.2b9618ff7acb7p-2"),
+        hf!("0x1.27781d9aa4e25p-2"),
+        hf!("-0x1p-56"),
     ],
     [
-        hf("0x1.389ef683f3aa7p-2"),
-        hf("0x1.33f52db6df1afp-2"),
-        hf("0x1p-56"),
+        hf!("0x1.389ef683f3aa7p-2"),
+        hf!("0x1.33f52db6df1afp-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.3b07e0c779ddap-2"),
-        hf("0x1.364303e1ad8f6p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.3b07e0c779ddap-2"),
+        hf!("0x1.364303e1ad8f6p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.48441df33b6d3p-2"),
-        hf("0x1.42e385800f0a4p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.48441df33b6d3p-2"),
+        hf!("0x1.42e385800f0a4p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.687bd068c1c1ep-2"),
-        hf("0x1.616cc75d49226p-2"),
-        hf("-0x1p-56"),
+        hf!("0x1.687bd068c1c1ep-2"),
+        hf!("0x1.616cc75d49226p-2"),
+        hf!("-0x1p-56"),
     ],
     [
-        hf("0x1.8740c4453a056p-2"),
-        hf("0x1.7e4f2ad132a1dp-2"),
-        hf("0x1p-56"),
+        hf!("0x1.8740c4453a056p-2"),
+        hf!("0x1.7e4f2ad132a1dp-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.891acda11167ep-2"),
-        hf("0x1.8009d924a3ffdp-2"),
-        hf("0x1p-56"),
+        hf!("0x1.891acda11167ep-2"),
+        hf!("0x1.8009d924a3ffdp-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.bafc3479fc9ccp-2"),
-        hf("0x1.ae3773250e7d2p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.bafc3479fc9ccp-2"),
+        hf!("0x1.ae3773250e7d2p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.c59869f17b483p-2"),
-        hf("0x1.b7efa91915c95p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.c59869f17b483p-2"),
+        hf!("0x1.b7efa91915c95p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.c8be879787986p-2"),
-        hf("0x1.bad0485e0fe0ap-2"),
-        hf("-0x1p-56"),
+        hf!("0x1.c8be879787986p-2"),
+        hf!("0x1.bad0485e0fe0ap-2"),
+        hf!("-0x1p-56"),
     ],
     [
-        hf("0x1.e73b46abb01e1p-2"),
-        hf("0x1.d68039861ab53p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.e73b46abb01e1p-2"),
+        hf!("0x1.d68039861ab53p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.ed6236da268bp-2"),
-        hf("0x1.dc0cb8f638126p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.ed6236da268bp-2"),
+        hf!("0x1.dc0cb8f638126p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.f399ebafc1951p-2"),
-        hf("0x1.e1a4f519fab77p-2"),
-        hf("-0x1p-56"),
+        hf!("0x1.f399ebafc1951p-2"),
+        hf!("0x1.e1a4f519fab77p-2"),
+        hf!("-0x1p-56"),
     ],
     [
-        hf("0x1.f70975ab0d471p-2"),
-        hf("0x1.e4bae8bcd6ea6p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.f70975ab0d471p-2"),
+        hf!("0x1.e4bae8bcd6ea6p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.fbdd4a37760b7p-2"),
-        hf("0x1.e90f16eb88c09p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.fbdd4a37760b7p-2"),
+        hf!("0x1.e90f16eb88c09p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.fee72efb4bfddp-2"),
-        hf("0x1.ebc791a88bed8p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.fee72efb4bfddp-2"),
+        hf!("0x1.ebc791a88bed8p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.02339d6bdb741p-1"),
-        hf("0x1.f0b2264e34555p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.02339d6bdb741p-1"),
+        hf!("0x1.f0b2264e34555p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.09e7c831b1a23p-1"),
-        hf("0x1.fe694c3c89138p-2"),
-        hf("0x1p-56"),
+        hf!("0x1.09e7c831b1a23p-1"),
+        hf!("0x1.fe694c3c89138p-2"),
+        hf!("0x1p-56"),
     ],
     [
-        hf("0x1.16d32c862fc3bp-1"),
-        hf("0x1.0a9c9334066dbp-1"),
-        hf("-0x1p-55"),
+        hf!("0x1.16d32c862fc3bp-1"),
+        hf!("0x1.0a9c9334066dbp-1"),
+        hf!("-0x1p-55"),
     ],
     [
-        hf("0x1.857954132083dp-1"),
-        hf("0x1.67425fe575c88p-1"),
-        hf("-0x1p-55"),
+        hf!("0x1.857954132083dp-1"),
+        hf!("0x1.67425fe575c88p-1"),
+        hf!("-0x1p-55"),
     ],
     [
-        hf("0x1.8a5c3b60f7e11p-1"),
-        hf("0x1.6b23ad4415a17p-1"),
-        hf("-0x1p-55"),
+        hf!("0x1.8a5c3b60f7e11p-1"),
+        hf!("0x1.6b23ad4415a17p-1"),
+        hf!("-0x1p-55"),
     ],
     [
-        hf("0x1.9740eb419dd04p-1"),
-        hf("0x1.754ab7535d47dp-1"),
-        hf("0x1p-55"),
+        hf!("0x1.9740eb419dd04p-1"),
+        hf!("0x1.754ab7535d47dp-1"),
+        hf!("0x1p-55"),
     ],
     [
-        hf("0x1.a16d9cc06011ap-1"),
-        hf("0x1.7d3755d851062p-1"),
-        hf("-0x1p-55"),
+        hf!("0x1.a16d9cc06011ap-1"),
+        hf!("0x1.7d3755d851062p-1"),
+        hf!("-0x1p-55"),
     ],
     [
-        hf("0x1.bb635be2213d1p-1"),
-        hf("0x1.91167cae3cfa9p-1"),
-        hf("0x1p-55"),
+        hf!("0x1.bb635be2213d1p-1"),
+        hf!("0x1.91167cae3cfa9p-1"),
+        hf!("0x1p-55"),
     ],
     [
-        hf("0x1.d4b21ebf542fp-1"),
-        hf("0x1.a3fc7e4dd47d1p-1"),
-        hf("-0x1p-55"),
+        hf!("0x1.d4b21ebf542fp-1"),
+        hf!("0x1.a3fc7e4dd47d1p-1"),
+        hf!("-0x1p-55"),
     ],
     [
-        hf("0x1.7b8516ffd2406p+0"),
-        hf("0x1.2f5d3b178914ap+0"),
-        hf("0x1p-54"),
+        hf!("0x1.7b8516ffd2406p+0"),
+        hf!("0x1.2f5d3b178914ap+0"),
+        hf!("0x1p-54"),
     ],
     [
-        hf("0x1.9295b9116e2e2p+0"),
-        hf("0x1.3bffa8863976p+0"),
-        hf("0x1p-54"),
+        hf!("0x1.9295b9116e2e2p+0"),
+        hf!("0x1.3bffa8863976p+0"),
+        hf!("0x1p-54"),
     ],
     [
-        hf("0x1.fedc65e32714p+0"),
-        hf("0x1.710f91e844f9bp+0"),
-        hf("0x1p-54"),
+        hf!("0x1.fedc65e32714p+0"),
+        hf!("0x1.710f91e844f9bp+0"),
+        hf!("0x1p-54"),
     ],
     [
-        hf("0x1.57e377b3f0b4bp+1"),
-        hf("0x1.b6e2c73f41415p+0"),
-        hf("0x1p-54"),
+        hf!("0x1.57e377b3f0b4bp+1"),
+        hf!("0x1.b6e2c73f41415p+0"),
+        hf!("0x1p-54"),
     ],
     [
-        hf("0x1.6056b06a21918p+3"),
-        hf("0x1.8c0a26d055288p+1"),
-        hf("0x1p-53"),
+        hf!("0x1.6056b06a21918p+3"),
+        hf!("0x1.8c0a26d055288p+1"),
+        hf!("0x1p-53"),
     ],
     [
-        hf("0x1.843e1b5e5979cp+4"),
-        hf("0x1.f0f978201eb84p+1"),
-        hf("0x1p-53"),
+        hf!("0x1.843e1b5e5979cp+4"),
+        hf!("0x1.f0f978201eb84p+1"),
+        hf!("0x1p-53"),
     ],
     [
-        hf("0x1.fee8f69c4cd25p+10"),
-        hf("0x1.0a19aebb51e9p+3"),
-        hf("-0x1p-51"),
+        hf!("0x1.fee8f69c4cd25p+10"),
+        hf!("0x1.0a19aebb51e9p+3"),
+        hf!("-0x1p-51"),
     ],
     [
-        hf("0x1.0fbc6c02b1c9p+24"),
-        hf("0x1.16369cd53bb69p+4"),
-        hf("0x1p-50"),
+        hf!("0x1.0fbc6c02b1c9p+24"),
+        hf!("0x1.16369cd53bb69p+4"),
+        hf!("0x1p-50"),
     ],
 ];
 
@@ -1513,7 +1522,7 @@ pub fn asinh(x: f64) -> f64 {
             if u == 0 {
                 return x;
             }
-            return hf("-0x1p-60").mul_add(x, x);
+            return hf!("-0x1p-60").mul_add(x, x);
         }
         let x2h = x * x;
         let x2l = x.mul_add(x, -x2h);
@@ -1521,28 +1530,28 @@ pub fn asinh(x: f64) -> f64 {
         let sl = if u < 0x3f93_0000_0000_0000 {
             if u < 0x3f30_0000_0000_0000 {
                 if u < 0x3e5a_0000_0000_0000 {
-                    x3h * hf("-0x1.5555555555555p-3")
+                    x3h * hf!("-0x1.5555555555555p-3")
                 } else {
-                    x3h * (hf("-0x1.5555555555555p-3") + x2h * hf("0x1.3333327c57c6p-4"))
+                    x3h * (hf!("-0x1.5555555555555p-3") + x2h * hf!("0x1.3333327c57c6p-4"))
                 }
             } else {
                 const CL: [f64; 4] = [
-                    hf("-0x1.5555555555555p-3"),
-                    hf("0x1.333333332f2ffp-4"),
-                    hf("-0x1.6db6d9a665159p-5"),
-                    hf("0x1.f186866d775fp-6"),
+                    hf!("-0x1.5555555555555p-3"),
+                    hf!("0x1.333333332f2ffp-4"),
+                    hf!("-0x1.6db6d9a665159p-5"),
+                    hf!("0x1.f186866d775fp-6"),
                 ];
                 x3h * (CL[0] + x2h * (CL[1] + x2h * (CL[2] + x2h * CL[3])))
             }
         } else {
             const CL: [f64; 7] = [
-                hf("-0x1.5555555555555p-3"),
-                hf("0x1.333333333331p-4"),
-                hf("-0x1.6db6db6da466cp-5"),
-                hf("0x1.f1c71c2ea7be4p-6"),
-                hf("-0x1.6e8b651b09d72p-6"),
-                hf("0x1.1c309fc0e69c2p-6"),
-                hf("-0x1.bab7833c1ep-7"),
+                hf!("-0x1.5555555555555p-3"),
+                hf!("0x1.333333333331p-4"),
+                hf!("-0x1.6db6db6da466cp-5"),
+                hf!("0x1.f1c71c2ea7be4p-6"),
+                hf!("-0x1.6e8b651b09d72p-6"),
+                hf!("0x1.1c309fc0e69c2p-6"),
+                hf!("-0x1.bab7833c1ep-7"),
             ];
             let c1 = CL[1] + x2h * CL[2];
             let c3 = CL[3] + x2h * CL[4];
@@ -1550,7 +1559,7 @@ pub fn asinh(x: f64) -> f64 {
             let x4 = x2h * x2h;
             x3h * (CL[0] + x2h * (c1 + x4 * (c3 + x4 * c5)))
         };
-        let eps = hf("0x1.79p-53") * x3h;
+        let eps = hf!("0x1.79p-53") * x3h;
         let lb = x + (sl - eps);
         let ub = x + (sl + eps);
         if lb == ub {
@@ -1610,10 +1619,10 @@ pub fn asinh(x: f64) -> f64 {
     if lb == ub {
         return lb;
     }
-    if ax < hf("0x1p-2") {
+    if ax < hf!("0x1p-2") {
         return asinh_zero(x, x2h, x2l);
     }
-    asinh_refine(x, ah, al, hf("0x1.71547652b82fep+0") * lb.abs())
+    asinh_refine(x, ah, al, hf!("0x1.71547652b82fep+0") * lb.abs())
 }
 
 /// acosh accurate path for 1 < x < 0x1.1e83e425aee63p+0, with `z = x - 1`
@@ -1621,24 +1630,24 @@ pub fn asinh(x: f64) -> f64 {
 #[inline(never)]
 fn acosh_one(z: f64, sh: f64, sl: f64) -> f64 {
     const CH: [[f64; 2]; 10] = [
-        [hf("-0x1.5555555555555p-4"), hf("-0x1.5555555554af1p-58")],
-        [hf("0x1.3333333333333p-6"), hf("0x1.9999998933f0ep-61")],
-        [hf("-0x1.6db6db6db6db7p-8"), hf("0x1.24929b16ec6b7p-63")],
-        [hf("0x1.f1c71c71c71c7p-10"), hf("0x1.c56d45e265e2cp-66")],
-        [hf("-0x1.6e8ba2e8ba2e9p-11"), hf("0x1.6d50ce7188d3dp-65")],
-        [hf("0x1.1c4ec4ec4ec43p-12"), hf("0x1.c6791d1cf399ap-66")],
-        [hf("-0x1.c99999999914fp-14"), hf("0x1.ee0d9408a2e2ap-68")],
-        [hf("0x1.7a878787648e2p-15"), hf("-0x1.1cea281e08012p-69")],
-        [hf("-0x1.3fde50d0cb4b9p-16"), hf("0x1.0335101403d9dp-72")],
-        [hf("0x1.12ef3bf8a0a74p-17"), hf("0x1.f9c6b51787043p-80")],
+        [hf!("-0x1.5555555555555p-4"), hf!("-0x1.5555555554af1p-58")],
+        [hf!("0x1.3333333333333p-6"), hf!("0x1.9999998933f0ep-61")],
+        [hf!("-0x1.6db6db6db6db7p-8"), hf!("0x1.24929b16ec6b7p-63")],
+        [hf!("0x1.f1c71c71c71c7p-10"), hf!("0x1.c56d45e265e2cp-66")],
+        [hf!("-0x1.6e8ba2e8ba2e9p-11"), hf!("0x1.6d50ce7188d3dp-65")],
+        [hf!("0x1.1c4ec4ec4ec43p-12"), hf!("0x1.c6791d1cf399ap-66")],
+        [hf!("-0x1.c99999999914fp-14"), hf!("0x1.ee0d9408a2e2ap-68")],
+        [hf!("0x1.7a878787648e2p-15"), hf!("-0x1.1cea281e08012p-69")],
+        [hf!("-0x1.3fde50d0cb4b9p-16"), hf!("0x1.0335101403d9dp-72")],
+        [hf!("0x1.12ef3bf8a0a74p-17"), hf!("0x1.f9c6b51787043p-80")],
     ];
     const CL: [f64; 6] = [
-        hf("-0x1.df3b9d1296ea9p-19"),
-        hf("0x1.a681d7d2298ebp-20"),
-        hf("-0x1.77ead7b1ca449p-21"),
-        hf("0x1.4edd2ddb3721fp-22"),
-        hf("-0x1.1bf173531ee23p-23"),
-        hf("0x1.613229230e255p-25"),
+        hf!("-0x1.df3b9d1296ea9p-19"),
+        hf!("0x1.a681d7d2298ebp-20"),
+        hf!("-0x1.77ead7b1ca449p-21"),
+        hf!("0x1.4edd2ddb3721fp-22"),
+        hf!("-0x1.1bf173531ee23p-23"),
+        hf!("0x1.613229230e255p-25"),
     ];
     let y2 = z * (CL[0] + z * (CL[1] + z * (CL[2] + z * (CL[3] + z * (CL[4] + z * CL[5])))));
     let (y1, y2) = polydd(z, 0.0, &CH, y2);
@@ -1652,39 +1661,39 @@ fn acosh_one(z: f64, sh: f64, sl: f64) -> f64 {
 /// Inputs where the acosh refinement cannot decide: `(x, high, low)`.
 const ACOSH_DB: [[f64; 3]; 7] = [
     [
-        hf("0x1.5bff041b260fep+0"),
-        hf("0x1.a6031cd5f93bap-1"),
-        hf("0x1p-55"),
+        hf!("0x1.5bff041b260fep+0"),
+        hf!("0x1.a6031cd5f93bap-1"),
+        hf!("0x1p-55"),
     ],
     [
-        hf("0x1.9efdca62b700ap+0"),
-        hf("0x1.104b648f113a1p+0"),
-        hf("0x1p-54"),
+        hf!("0x1.9efdca62b700ap+0"),
+        hf!("0x1.104b648f113a1p+0"),
+        hf!("0x1p-54"),
     ],
     [
-        hf("0x1.a5bf3acfde4b2p+0"),
-        hf("0x1.1585720f35cd9p+0"),
-        hf("-0x1p-54"),
+        hf!("0x1.a5bf3acfde4b2p+0"),
+        hf!("0x1.1585720f35cd9p+0"),
+        hf!("-0x1p-54"),
     ],
     [
-        hf("0x1.45ea160ddc71fp+7"),
-        hf("0x1.725811dcf6782p+2"),
-        hf("0x1p-52"),
+        hf!("0x1.45ea160ddc71fp+7"),
+        hf!("0x1.725811dcf6782p+2"),
+        hf!("0x1p-52"),
     ],
     [
-        hf("0x1.2a686e4b567cep+10"),
-        hf("0x1.f1c928e7f1e65p+2"),
-        hf("0x1p-52"),
+        hf!("0x1.2a686e4b567cep+10"),
+        hf!("0x1.f1c928e7f1e65p+2"),
+        hf!("0x1p-52"),
     ],
     [
-        hf("0x1.cb62eec26bd78p+15"),
-        hf("0x1.759a2ad4c4d56p+3"),
-        hf("0x1p-51"),
+        hf!("0x1.cb62eec26bd78p+15"),
+        hf!("0x1.759a2ad4c4d56p+3"),
+        hf!("0x1p-51"),
     ],
     [
-        hf("0x1.3bf8009648dcp+16"),
-        hf("0x1.7fce95ea5c653p+3"),
-        hf("-0x1p-53"),
+        hf!("0x1.3bf8009648dcp+16"),
+        hf!("0x1.7fce95ea5c653p+3"),
+        hf!("-0x1p-53"),
     ],
 ];
 
@@ -1760,15 +1769,15 @@ pub fn acosh(x: f64) -> f64 {
         let sh = zt.sqrt();
         let sl = sh.mul_add(sh, -zt) * (sh * iz);
         const CL: [f64; 9] = [
-            hf("-0x1.5555555555555p-4"),
-            hf("0x1.3333333332f95p-6"),
-            hf("-0x1.6db6db6d5534cp-8"),
-            hf("0x1.f1c71c1e04356p-10"),
-            hf("-0x1.6e8b8e3e40d58p-11"),
-            hf("0x1.1c4ba825ac4fep-12"),
-            hf("-0x1.c9045534e6d9ep-14"),
-            hf("0x1.71fedae26a76bp-15"),
-            hf("-0x1.f1f4f8cc65342p-17"),
+            hf!("-0x1.5555555555555p-4"),
+            hf!("0x1.3333333332f95p-6"),
+            hf!("-0x1.6db6db6d5534cp-8"),
+            hf!("0x1.f1c71c1e04356p-10"),
+            hf!("-0x1.6e8b8e3e40d58p-11"),
+            hf!("0x1.1c4ba825ac4fep-12"),
+            hf!("-0x1.c9045534e6d9ep-14"),
+            hf!("0x1.71fedae26a76bp-15"),
+            hf!("-0x1.f1f4f8cc65342p-17"),
         ];
         let z2 = z * z;
         let z4 = z2 * z2;
@@ -1776,7 +1785,7 @@ pub fn acosh(x: f64) -> f64 {
             + z * (((CL[1] + z * CL[2]) + z2 * (CL[3] + z * CL[4]))
                 + z4 * ((CL[5] + z * CL[6]) + z2 * (CL[7] + z * CL[8])));
         let ds = (sh * z).mul_add(p, sl);
-        let eps = ds * hf("0x1.00p-50") - hf("0x1p-104") * sh;
+        let eps = ds * hf!("0x1.00p-50") - hf!("0x1p-104") * sh;
         let lb = sh + (ds - eps);
         let ub = sh + (ds + eps);
         if lb == ub {
@@ -1796,37 +1805,37 @@ pub fn acosh(x: f64) -> f64 {
         tl += sl;
         t = th.to_bits();
         g = tl / th;
-        eps = hf("0x1.81p-63");
+        eps = hf!("0x1.81p-63");
     } else if ix < 0x4087_1000_0000_0000 {
         // 111.75 <= x < 738: log(2x) + g(1/x^2).
         const CL: [f64; 4] = [
-            hf("0x1.5c4b6148816e2p-66"),
-            hf("-0x1.000000000005cp-2"),
-            hf("-0x1.7fffffebf3e6cp-4"),
-            hf("-0x1.aab6691f2bae7p-5"),
+            hf!("0x1.5c4b6148816e2p-66"),
+            hf!("-0x1.000000000005cp-2"),
+            hf!("-0x1.7fffffebf3e6cp-4"),
+            hf!("-0x1.aab6691f2bae7p-5"),
         ];
         let z = 1.0 / (x * x);
         g = CL[0] + z * (CL[1] + z * (CL[2] + z * CL[3]));
-        eps = hf("0x1.c3p-63");
+        eps = hf!("0x1.c3p-63");
     } else if ix < 0x40e0_1000_0000_0000 {
         // 738 <= x < 32896
         const CL: [f64; 3] = [
-            hf("-0x1.7f77c8429c6c6p-67"),
-            hf("-0x1.ffffffffff214p-3"),
-            hf("-0x1.8000268641bfep-4"),
+            hf!("-0x1.7f77c8429c6c6p-67"),
+            hf!("-0x1.ffffffffff214p-3"),
+            hf!("-0x1.8000268641bfep-4"),
         ];
         let z = 1.0 / (x * x);
         g = CL[0] + z * (CL[1] + z * CL[2]);
-        eps = hf("0x1.9ap-63");
+        eps = hf!("0x1.9ap-63");
     } else if ix < 0x41ea_0000_0000_0000 {
         // 32896 <= x < 0x1.ap+31
-        const CL: [f64; 2] = [hf("0x1.7a0ed2effdd1p-67"), hf("-0x1.000000017d048p-2")];
+        const CL: [f64; 2] = [hf!("0x1.7a0ed2effdd1p-67"), hf!("-0x1.000000017d048p-2")];
         let z = 1.0 / (x * x);
         g = CL[0] + z * CL[1];
-        eps = hf("0x1.99p-63");
+        eps = hf!("0x1.99p-63");
     } else {
         g = 0.0;
-        eps = hf("0x1.b2p-63");
+        eps = hf!("0x1.b2p-63");
     }
     let e = (t >> 52) as i32 - off;
     let ed = e as f64;
@@ -1841,7 +1850,7 @@ pub fn acosh(x: f64) -> f64 {
     if lb == ub {
         return lb;
     }
-    acosh_refine(x, hf("0x1.71547652b82fep+0") * lb)
+    acosh_refine(x, hf!("0x1.71547652b82fep+0") * lb)
 }
 
 // --- erf (CORE-MATH src/binary64/erf/erf.c) ---------------------------------
@@ -1863,8 +1872,8 @@ fn a_mul(a: f64, b: f64) -> (f64, f64) {
 }
 
 /// Double-double 2/sqrt(pi).
-const ERF_CH: f64 = hf("0x1.20dd750429b6dp+0");
-const ERF_CL: f64 = hf("0x1.1ae3a914fed8p-56");
+const ERF_CH: f64 = hf!("0x1.20dd750429b6dp+0");
+const ERF_CL: f64 = hf!("0x1.1ae3a914fed8p-56");
 
 /// Fast erf(z) for 0 <= z <= 0x1.7afb48dc96626p+2 as `(h, l, err)`, with
 /// |(h + l)/erf(z) - 1| < err.
@@ -1873,14 +1882,14 @@ fn erf_fast(z: f64) -> (f64, f64, f64) {
     if z < 0.0625 {
         // Odd minimax polynomial on [0, 1/16], double-double degrees 1 and 3.
         const C0: [f64; 8] = [
-            hf("0x1.20dd750429b6dp+0"),
-            hf("0x1.1ae3a7862d9c4p-56"),
-            hf("-0x1.812746b0379e7p-2"),
-            hf("0x1.f1a64d72722a2p-57"),
-            hf("0x1.ce2f21a042b7fp-4"),
-            hf("-0x1.b82ce31189904p-6"),
-            hf("0x1.565bbf8a0fe0bp-8"),
-            hf("-0x1.bf9f8d2c202e4p-11"),
+            hf!("0x1.20dd750429b6dp+0"),
+            hf!("0x1.1ae3a7862d9c4p-56"),
+            hf!("-0x1.812746b0379e7p-2"),
+            hf!("0x1.f1a64d72722a2p-57"),
+            hf!("0x1.ce2f21a042b7fp-4"),
+            hf!("-0x1.b82ce31189904p-6"),
+            hf!("0x1.565bbf8a0fe0bp-8"),
+            hf!("-0x1.bf9f8d2c202e4p-11"),
         ];
         let (z2h, z2l) = a_mul(z, z);
         let z4 = z2h * z2h;
@@ -1897,7 +1906,7 @@ fn erf_fast(z: f64) -> (f64, f64, f64) {
         l += z2l.mul_add(h_copy, tl);
         let (h, tl) = a_mul(h, z);
         let l = l.mul_add(z, tl);
-        return (h, l, hf("0x1.78p-69"));
+        return (h, l, hf!("0x1.78p-69"));
     }
     // i/16 <= z < (i+1)/16; z - 1/32 - v/16 is exact.
     let v = (16.0 * z).floor();
@@ -1925,7 +1934,7 @@ fn erf_fast(z: f64) -> (f64, f64, f64) {
     let tl = z.mul_add(l, tl);
     let (h, mut l) = fasttwosum(c[0], th);
     l += tl + c[1];
-    (h, l, hf("0x1.11p-69"))
+    (h, l, hf!("0x1.11p-69"))
 }
 
 /// Accurate erf(z) for 2^-61 <= z < 1/8 as a double-double.
@@ -1946,21 +1955,21 @@ fn erf_accurate_tiny(z: f64) -> (f64, f64) {
     }
     // Odd polynomial: double-double degrees 1..7, double degrees 9..21.
     const P: [f64; 15] = [
-        hf("0x1.20dd750429b6dp+0"),
-        hf("0x1.1ae3a914fed8p-56"),
-        hf("-0x1.812746b0379e7p-2"),
-        hf("0x1.ee12e49ca96bap-57"),
-        hf("0x1.ce2f21a042be2p-4"),
-        hf("-0x1.2871bc0a0a0dp-58"),
-        hf("-0x1.b82ce31288b51p-6"),
-        hf("0x1.1003accf1355cp-61"),
-        hf("0x1.565bcd0e6a53fp-8"),
-        hf("-0x1.c02db40040cc3p-11"),
-        hf("0x1.f9a326fa3cf5p-14"),
-        hf("-0x1.f4d25e3c73ce9p-17"),
-        hf("0x1.b9eb332b31646p-20"),
-        hf("-0x1.64a4bd5eca4d7p-23"),
-        hf("0x1.c0acc2502e94ep-25"),
+        hf!("0x1.20dd750429b6dp+0"),
+        hf!("0x1.1ae3a914fed8p-56"),
+        hf!("-0x1.812746b0379e7p-2"),
+        hf!("0x1.ee12e49ca96bap-57"),
+        hf!("0x1.ce2f21a042be2p-4"),
+        hf!("-0x1.2871bc0a0a0dp-58"),
+        hf!("-0x1.b82ce31288b51p-6"),
+        hf!("0x1.1003accf1355cp-61"),
+        hf!("0x1.565bcd0e6a53fp-8"),
+        hf!("-0x1.c02db40040cc3p-11"),
+        hf!("0x1.f9a326fa3cf5p-14"),
+        hf!("-0x1.f4d25e3c73ce9p-17"),
+        hf!("0x1.b9eb332b31646p-20"),
+        hf!("-0x1.64a4bd5eca4d7p-23"),
+        hf!("0x1.c0acc2502e94ep-25"),
     ];
     let z2 = z * z;
     let mut h = P[21 / 2 + 4];
@@ -1996,29 +2005,29 @@ fn erf_accurate_tiny(z: f64) -> (f64, f64) {
 fn erf_accurate(z: f64) -> (f64, f64) {
     const EXCEPTIONS: [[f64; 3]; 5] = [
         [
-            hf("0x1.bc466342a2296p-1"),
-            hf("0x1.8f7ab15eb5babp-1"),
-            hf("-0x1.fffffffffffffp-55"),
+            hf!("0x1.bc466342a2296p-1"),
+            hf!("0x1.8f7ab15eb5babp-1"),
+            hf!("-0x1.fffffffffffffp-55"),
         ],
         [
-            hf("0x1.589bbd3ae5489p+0"),
-            hf("0x1.e2d7b84ebf6dbp-1"),
-            hf("0x1.fffffffffffffp-55"),
+            hf!("0x1.589bbd3ae5489p+0"),
+            hf!("0x1.e2d7b84ebf6dbp-1"),
+            hf!("0x1.fffffffffffffp-55"),
         ],
         [
-            hf("0x1.f9a4a209ca0e4p+0"),
-            hf("0x1.fd542cdc70993p-1"),
-            hf("-0x1.f86f37645446ap-108"),
+            hf!("0x1.f9a4a209ca0e4p+0"),
+            hf!("0x1.fd542cdc70993p-1"),
+            hf!("-0x1.f86f37645446ap-108"),
         ],
         [
-            hf("0x1.6c196b0b4ae04p+1"),
-            hf("0x1.fff8760068eddp-1"),
-            hf("-0x1.6f6f53a83af6bp-111"),
+            hf!("0x1.6c196b0b4ae04p+1"),
+            hf!("0x1.fff8760068eddp-1"),
+            hf!("-0x1.6f6f53a83af6bp-111"),
         ],
         [
-            hf("0x1.fd5d9d8c9ef66p-1"),
-            hf("0x1.ae5d17eb4f408p-1"),
-            hf("0x1.03fa708a553b3p-105"),
+            hf!("0x1.fd5d9d8c9ef66p-1"),
+            hf!("0x1.ae5d17eb4f408p-1"),
+            hf!("0x1.03fa708a553b3p-105"),
         ],
     ];
     for e in &EXCEPTIONS {
@@ -2068,20 +2077,20 @@ pub fn erf(x: f64) -> f64 {
         if ux == 0x7ff0_0000_0000_0000 {
             return os;
         }
-        return os - hf("0x1p-54") * os;
+        return os - hf!("0x1p-54") * os;
     }
-    if z < hf("0x1p-61") {
+    if z < hf!("0x1p-61") {
         // erf(x) ~ 2/sqrt(pi) x; x = -0 must keep its sign.
         if x == 0.0 {
             return x;
         }
         let y = ERF_CH * x;
         // Scale by 2^106 to leave the subnormal range for the residual.
-        let sx = x * hf("0x1p106");
+        let sx = x * hf!("0x1p106");
         let (h, l) = a_mul(ERF_CH, sx);
         let mut l = ERF_CL.mul_add(sx, l);
-        l += h - y * hf("0x1p106");
-        return l.mul_add(hf("0x1p-106"), y);
+        l += h - y * hf!("0x1p106");
+        return l.mul_add(hf!("0x1p-106"), y);
     }
     let (h, l, err) = erf_fast(z);
     let sign = x.to_bits() & (1u64 << 63);
@@ -2128,11 +2137,11 @@ fn fast_sum(a: f64, bh: f64, bl: f64) -> (f64, f64) {
 #[inline(always)]
 fn exp_q1(zh: f64, zl: f64) -> (f64, f64) {
     const Q: [f64; 5] = [
-        hf("0x1p0"),
-        hf("0x1p0"),
-        hf("0x1p-1"),
-        hf("0x1.5555555995d37p-3"),
-        hf("0x1.55555558489dcp-5"),
+        hf!("0x1p0"),
+        hf!("0x1p0"),
+        hf!("0x1p-1"),
+        hf!("0x1.5555555995d37p-3"),
+        hf!("0x1.55555558489dcp-5"),
     ];
     let z = zh + zl;
     let q = Q[4].mul_add(zh, Q[3]);
@@ -2145,9 +2154,9 @@ fn exp_q1(zh: f64, zl: f64) -> (f64, f64) {
 /// exp(xh + xl) with relative error < 2^-74.139 (pow.c `exp_1`).
 #[inline(always)]
 fn exp_1(xh: f64, xl: f64) -> (f64, f64) {
-    const INVLOG2: f64 = hf("0x1.71547652b82fep+12");
-    const LOG2H: f64 = hf("0x1.62e42fefa39efp-13");
-    const LOG2L: f64 = hf("0x1.abc9e3b39803fp-68");
+    const INVLOG2: f64 = hf!("0x1.71547652b82fep+12");
+    const LOG2H: f64 = hf!("0x1.62e42fefa39efp-13");
+    const LOG2L: f64 = hf!("0x1.abc9e3b39803fp-68");
     let k = (xh * INVLOG2).round_ties_even();
     let (kh, kl) = s_mul(k, LOG2H, LOG2L);
     let (yh, mut yl) = fasttwosum(xh - kh, xl);
@@ -2166,10 +2175,10 @@ fn exp_1(xh: f64, xl: f64) -> (f64, f64) {
 /// `2^e * (h + l)` ~ exp(xh + xl) for -742 <= xh + xl <= -2.92, to about
 /// 104 bits. Returns `(h, l, e)`.
 fn exp_accurate(xh: f64, xl: f64) -> (f64, f64, i32) {
-    const INVLOG2: f64 = hf("0x1.71547652b82fep+0");
-    const LOG2H: f64 = hf("0x1.62e42fefa39efp-1");
-    const LOG2L: f64 = hf("0x1.abc9e3b398p-56");
-    const LOG2TINY: f64 = hf("0x1.f97b57a079a19p-103");
+    const INVLOG2: f64 = hf!("0x1.71547652b82fep+0");
+    const LOG2H: f64 = hf!("0x1.62e42fefa39efp-1");
+    const LOG2L: f64 = hf!("0x1.abc9e3b398p-56");
+    const LOG2TINY: f64 = hf!("0x1.f97b57a079a19p-103");
     let e2 = &ERFC_E2;
     let k = (xh * INVLOG2).round_ties_even() as i32;
     let kd = -(k as f64);
@@ -2208,7 +2217,7 @@ fn exp_accurate(xh: f64, xl: f64) -> (f64, f64, i32) {
 /// exp(-x^2) p(1/x); returns `(h, l, absolute error bound)`.
 #[inline(always)]
 fn erfc_asympt_fast(x: f64) -> (f64, f64, f64) {
-    if x >= hf("0x1.9db1bb14e15cap+4") {
+    if x >= hf!("0x1.9db1bb14e15cap+4") {
         // erfc(x) < 2^-970: leave it to the accurate path.
         return (0.0, 0.0, 1.0);
     }
@@ -2217,12 +2226,12 @@ fn erfc_asympt_fast(x: f64) -> (f64, f64, f64) {
     let yh = 1.0 / x;
     let yl = yh * (-x).mul_add(yh, 1.0);
     const THRESHOLD: [f64; 6] = [
-        hf("0x1.d5p-4"),
-        hf("0x1.59da6ca291ba6p-3"),
-        hf("0x1.bcp-3"),
-        hf("0x1.0cp-2"),
-        hf("0x1.38p-2"),
-        hf("0x1.63p-2"),
+        hf!("0x1.d5p-4"),
+        hf!("0x1.59da6ca291ba6p-3"),
+        hf!("0x1.bcp-3"),
+        hf!("0x1.0cp-2"),
+        hf!("0x1.38p-2"),
+        hf!("0x1.63p-2"),
     ];
     let mut i = 0;
     while i < THRESHOLD.len() - 1 && yh > THRESHOLD[i] {
@@ -2248,10 +2257,10 @@ fn erfc_asympt_fast(x: f64) -> (f64, f64, f64) {
     zl += l + p[1];
     let (uh, ul) = d_mul(zh, zl, yh, yl);
     let (h, l) = d_mul(uh, ul, eh, el);
-    let err = if h >= hf("0x1.151b9a3fdd5c9p-955") {
-        hf("0x1.d9p-68") * h
+    let err = if h >= hf!("0x1.151b9a3fdd5c9p-955") {
+        hf!("0x1.d9p-68") * h
     } else {
-        hf("0x1p-1022")
+        hf!("0x1p-1022")
     };
     (h, l, err)
 }
@@ -2265,17 +2274,17 @@ fn erfc_fast(x: f64) -> (f64, f64, f64) {
         let (h, l, err) = erf_fast(-x);
         let err = err * h;
         let (h, t) = fasttwosum(1.0, h);
-        return (h, t + l, err + hf("0x1.4p-102"));
+        return (h, t + l, err + hf!("0x1.4p-102"));
     }
-    if x <= hf("0x1.713786d9c7c09p+1") {
+    if x <= hf!("0x1.713786d9c7c09p+1") {
         let (h, l, err) = erf_fast(x);
         let err = err * h;
         let (h, t) = fasttwosum(1.0, -h);
         let l = t - l;
-        if x >= hf("0x1.e861fbb24c00ap-2") {
+        if x >= hf!("0x1.e861fbb24c00ap-2") {
             return (h, l, err);
         }
-        return (h, l, err + hf("0x1.4p-104"));
+        return (h, l, err + hf!("0x1.4p-104"));
     }
     erfc_asympt_fast(x)
 }
@@ -2288,7 +2297,7 @@ fn erfc_asympt_accurate(x: f64) -> f64 {
             return e[1] + e[2];
         }
     }
-    if x == hf("0x1.a8f7bfbd15495p+4") {
+    if x == hf!("0x1.a8f7bfbd15495p+4") {
         // Subnormal hard case: 0x1.99ef5883f656cp-1024 - 2^-1076.
         return f64::from_bits(1).mul_add(-0.25, f64::from_bits(0x0006_67bd_620f_d95b));
     }
@@ -2297,16 +2306,16 @@ fn erfc_asympt_accurate(x: f64) -> f64 {
     let yh = 1.0 / x;
     let yl = yh * (-x).mul_add(yh, 1.0);
     const THRESHOLD: [f64; 10] = [
-        hf("0x1.45p-4"),
-        hf("0x1.e0p-4"),
-        hf("0x1.3fp-3"),
-        hf("0x1.95p-3"),
-        hf("0x1.f5p-3"),
-        hf("0x1.31p-2"),
-        hf("0x1.71p-2"),
-        hf("0x1.bcp-2"),
-        hf("0x1.0bp-1"),
-        hf("0x1.3p-1"),
+        hf!("0x1.45p-4"),
+        hf!("0x1.e0p-4"),
+        hf!("0x1.3fp-3"),
+        hf!("0x1.95p-3"),
+        hf!("0x1.f5p-3"),
+        hf!("0x1.31p-2"),
+        hf!("0x1.71p-2"),
+        hf!("0x1.bcp-2"),
+        hf!("0x1.0bp-1"),
+        hf!("0x1.3p-1"),
     ];
     let mut i = 0;
     while i < THRESHOLD.len() - 1 && yh > THRESHOLD[i] {
@@ -2344,7 +2353,7 @@ fn erfc_asympt_accurate(x: f64) -> f64 {
     let l = uh.mul_add(el, l);
     let l = ul.mul_add(eh, l);
     let mut res = libm::scalbn(h + l, e);
-    if res < hf("0x1p-1022") {
+    if res < hf!("0x1p-1022") {
         // Subnormal result: round h + l at the scaled precision directly.
         let mut corr = h - libm::scalbn(res, -e);
         corr += l;
@@ -2365,7 +2374,7 @@ fn erfc_accurate(x: f64) -> f64 {
         let (h, t) = fasttwosum(1.0, h);
         return h + (t + l);
     }
-    if x <= hf("0x1.b59ffb450828cp+0") {
+    if x <= hf!("0x1.b59ffb450828cp+0") {
         // erfc(x) >= 2^-6
         for e in &ERFC_POS_EXCEPTIONS {
             if x == e[0] {
@@ -2393,10 +2402,10 @@ pub fn erfc(x: f64) -> f64 {
                 }
                 return x + x;
             }
-            return 2.0 - hf("0x1p-54");
+            return 2.0 - hf!("0x1p-54");
         }
-        if hf("-0x1.c5bf891b4ef6ap-54") <= x {
-            return (-x).mul_add(hf("0x1p-54"), 1.0);
+        if hf!("-0x1.c5bf891b4ef6ap-54") <= x {
+            return (-x).mul_add(hf!("0x1p-54"), 1.0);
         }
     } else {
         // x = +NaN or x >= 0 (excluding -0)
@@ -2410,8 +2419,8 @@ pub fn erfc(x: f64) -> f64 {
             }
             return f64::from_bits(1) * 0.25;
         }
-        if x <= hf("0x1.c5bf891b4ef6ap-55") {
-            return (-x).mul_add(hf("0x1p-54"), 1.0);
+        if x <= hf!("0x1.c5bf891b4ef6ap-55") {
+            return (-x).mul_add(hf!("0x1p-54"), 1.0);
         }
     }
     let (h, l, err) = erfc_fast(x);
@@ -2429,19 +2438,19 @@ mod tests {
 
     #[test]
     fn hf_parses_exact_literals() {
-        assert_eq!(hf("0x1p+0"), 1.0);
-        assert_eq!(hf("-0x1.8p+1"), -3.0);
-        assert_eq!(hf("0x0p+0").to_bits(), 0);
+        assert_eq!(hf!("0x1p+0"), 1.0);
+        assert_eq!(hf!("-0x1.8p+1"), -3.0);
+        assert_eq!(hf!("0x0p+0").to_bits(), 0);
         assert_eq!(
-            hf("0x1.5555555555555p-2"),
+            hf!("0x1.5555555555555p-2"),
             f64::from_bits(0x3fd5_5555_5555_5555)
         );
         assert_eq!(
-            hf("0x1.62e42fefa3ap-2"),
+            hf!("0x1.62e42fefa3ap-2"),
             f64::from_bits(0x3fd6_2e42_fefa_3a00)
         );
         assert_eq!(
-            hf("0x1.56bb79b254f33p-100"),
+            hf!("0x1.56bb79b254f33p-100"),
             f64::from_bits(0x39b5_6bb7_9b25_4f33)
         );
     }
@@ -2471,8 +2480,8 @@ mod tests {
                     let e = (1023 + lo + ((r >> 53) % (hi - lo) as u64) as i32) as u64;
                     f64::from_bits((r << 63) | (e << 52) | ((r >> 1) & MASK52))
                 }
-                1 => (r >> 11) as f64 * hf("0x1p-53") * 2.0 - 1.0,
-                _ => 1.0 - (r >> 11) as f64 * hf("0x1p-73"),
+                1 => (r >> 11) as f64 * hf!("0x1p-53") * 2.0 - 1.0,
+                _ => 1.0 - (r >> 11) as f64 * hf!("0x1p-73"),
             }
         }
     }
