@@ -29,6 +29,11 @@ use super::erf_data::{
     ERFC_POS_EXCEPTIONS, ERFC_T, ERFC_TACC, EXP_T1, EXP_T2,
 };
 use super::gamma_data::{
+    LG_ACC_B, LG_ACC_C0, LG_ASYM_C, LG_ASYM_Q, LG_ASYMA_14, LG_ASYMA_48, LG_ASYMA_LOW, LG_CH,
+    LG_CL, LG_DB, LG_LOGA_C, LG_LOGA_H1, LG_LOGA_H2, LG_LOGA_R1, LG_LOGA_R2, LG_OFFS, LG_ROOT_C,
+    LG_ROOT_PARAMS, LG_SINA_C, LG_SINA_S, LG_STPI, LG_TINY_C0, LG_TINY_Q, LG_UBRD,
+};
+use super::gamma_data::{
     TG_ACC_CH4, TG_ACC_CH8, TG_ACC_CH16, TG_ACC_CH26, TG_ACC_CH32, TG_ACC_CH64, TG_ACC_CH96,
     TG_ACC_CH128, TG_ACC_CH160, TG_ACC_CL4, TG_ACC_CL8, TG_ACC_CL16, TG_ACC_CL26, TG_ACC_CL32,
     TG_ACC_CL64, TG_ACC_CL96, TG_ACC_CL128, TG_ACC_CL160, TG_ACC0_C, TG_ACC0_CC, TG_ASYM_BIG,
@@ -4641,6 +4646,599 @@ pub fn tgamma(x: f64) -> f64 {
     ub
 }
 
+// --- lgamma (CORE-MATH src/binary64/lgamma/lgamma.c) ---------------------------
+
+/// lgamma.c `polydddfst`: double-double Horner at the double `x`, with the
+/// unordered FastTwoSum accumulation.
+#[inline(always)]
+fn polydddfst(x: f64, c: &[[f64; 2]], l: f64) -> (f64, f64) {
+    let mut i = c.len() - 1;
+    let (mut ch, mut cl) = fasttwosum(c[i][0], l);
+    cl += c[i][1];
+    while i > 0 {
+        i -= 1;
+        (ch, cl) = mulddd_tg(x, ch, cl);
+        (ch, cl) = fastsum_dd(c[i][0], c[i][1], ch, cl);
+    }
+    (ch, cl)
+}
+
+/// Mantissa bits (exponent field cleared) and unbiased exponent of a positive
+/// finite `x`, normalising subnormals (lgamma.c's log reductions).
+#[inline(always)]
+fn lg_split(x: f64) -> (u64, i32) {
+    let mut t = x.to_bits();
+    let mut ex = (t >> 52) as i32;
+    if ex == 0 {
+        let k = t.leading_zeros() as i32;
+        t <<= k - 11;
+        ex -= k - 12;
+    }
+    (t & MASK52, ex - 0x3ff)
+}
+
+/// log(x) as a double-double for x > 0, subnormals included (lgamma.c
+/// `as_logd`; its tables are tgamma.c's).
+#[inline(never)]
+fn lg_logd(x: f64) -> (f64, f64) {
+    let (t, e) = lg_split(x);
+    let ed = f64::from(e);
+    let (i1, i2) = log_table_index(t);
+    let tf = f64::from_bits(t | (0x3ffu64 << 52));
+    let r = TG_LOG_R1[i1] * TG_LOG_R2[i2];
+    let o = r * tf;
+    let dxl = r.mul_add(tf, -o);
+    let dxh = o - 1.0;
+    const C: [f64; 4] = [
+        hf!("-0x1.fffffffffffd3p-2"),
+        hf!("0x1.55555555543d5p-2"),
+        hf!("-0x1.000002bb2d74ep-2"),
+        hf!("0x1.999a692c56e4ep-3"),
+    ];
+    let dx = r.mul_add(tf, -1.0);
+    let dx2 = dx * dx;
+    let f = dx2 * ((C[0] + dx * C[1]) + dx2 * (C[2] + dx * C[3]));
+    let lt = (TG_LOG_L1[i1][1] + TG_LOG_L2[i2][1]) + ed * hf!("0x1.62e42fef8p-1");
+    let lh = lt + dxh;
+    let mut ll = (lt - lh) + dxh;
+    ll += ((TG_LOG_L1[i1][0] + TG_LOG_L2[i2][0]) + hf!("0x1.1cf79abc9e3b4p-36") * ed) + dxl;
+    ll += f;
+    (lh, ll)
+}
+
+/// log(x) as a triple-double for x > 0 (lgamma.c `as_logd_accurate`).
+#[inline(never)]
+fn lg_logd_accurate(x: f64) -> (f64, f64, f64) {
+    let (t, e) = lg_split(x);
+    let ed = f64::from(e);
+    let (i1, i2) = log_table_index(t);
+    let tf = f64::from_bits(t | (0x3ffu64 << 52));
+    let r = LG_LOGA_R1[i1] * LG_LOGA_R2[i2];
+    let o = r * tf;
+    let dxl = r.mul_add(tf, -o);
+    let dxh = o - 1.0;
+    let c = &LG_LOGA_C;
+    let (dxh, dxl) = fasttwosum(dxh, dxl);
+    let fl = dxh * (c[6][0] + dxh * (c[7][0] + dxh * c[8][0]));
+    let (fh, fl) = polydd_tg(dxh, dxl, &c[..6], fl);
+    let (fh, fl) = muldd_sin(dxh, dxl, fh, fl);
+    let (h1, h2) = (&LG_LOGA_H1[i1], &LG_LOGA_H2[i2]);
+    let s2 = h1[2] + h2[2];
+    let s1 = h1[1] + h2[1];
+    let s0 = h1[0] + h2[0];
+    let mut l0 = hf!("0x1.62e42fefa38p-1") * ed;
+    let l1 = hf!("0x1.ef35793c76p-45") * ed;
+    let l2 = hf!("0x1.cc01f97b57a08p-87") * ed;
+    l0 += s2;
+    let (l1, l2) = sumdd_ordered(l1, l2, s1, s0);
+    let (l1, l2) = sumdd_ordered(l1, l2, fh, fl);
+    let (l0, l1) = fasttwosum(l0, l1);
+    let (l1, l2) = fasttwosum(l1, l2);
+    (l0, l1, l2)
+}
+
+/// The sin(pi a) / cos(pi a) correction polynomials shared by both lgamma
+/// sinpi evaluations.
+const LG_SIN_C: [f64; 4] = [
+    hf!("-0x1.3bd3cc9be45dep-12"),
+    hf!("0x1.03c1f081b5ac4p-26"),
+    hf!("-0x1.55d3c7e3bd8bfp-42"),
+    hf!("0x1.e1f4826790653p-59"),
+];
+const LG_SIN_S: [f64; 4] = [
+    hf!("0x1.921fb54442d18p-6"),
+    hf!("-0x1.4abbce625be53p-19"),
+    hf!("0x1.466bc67748efcp-34"),
+    hf!("-0x1.32d26e446373ap-50"),
+];
+
+/// sin(pi x)/pi as a double-double for 0 <= x < 1 (lgamma.c `as_sinpipid`).
+#[inline(never)]
+fn lg_sinpipid(x: f64) -> (f64, f64) {
+    let x = x - 0.5;
+    let ax = x.abs();
+    let sx = ax * 128.0;
+    let ix = sx.round_ties_even();
+    let ky = ix as usize;
+    let kx = 64usize.wrapping_sub(ky);
+    if kx < 2 {
+        // Near x = 0 or 1: sin(pi z)/pi = z (1 + z^2 P(z^2)) with z = 1/2 - |x|.
+        const C: [f64; 2] = [hf!("-0x1.a51a6625307d3p+0"), hf!("-0x1.16cc8f2044a4ap-55")];
+        const CL: [f64; 3] = [
+            hf!("0x1.9f9cb402bc42ap-1"),
+            hf!("-0x1.86a8e46ddf78dp-3"),
+            hf!("0x1.ac644e7aa33e6p-6"),
+        ];
+        let z = 0.5 - ax;
+        let z2 = z * z;
+        let z2l = z.mul_add(z, -z2);
+        let fl = z2 * (CL[0] + z2 * (CL[1] + z2 * CL[2]));
+        let (fh, mut fl) = fasttwosum(C[0], fl);
+        fl += C[1];
+        let (fh, fl) = muldd_sin(z2, z2l, fh, fl);
+        let (fh, fl) = mulddd_tg(z, fh, fl);
+        let (fh, e) = fasttwosum(z, fh);
+        return (fh, fl + e);
+    }
+    let d = ix - sx;
+    let d2 = d * d;
+    let (sh, sl) = (LG_STPI[kx][1], LG_STPI[kx][0]);
+    let (ch, cl) = (LG_STPI[ky][1], LG_STPI[ky][0]);
+    const C0: f64 = hf!("-0x1.692b66e3cf6e8p-66");
+    const S0: f64 = hf!("0x1.1a624b88c9448p-60");
+    let (c, s) = (&LG_SIN_C, &LG_SIN_S);
+    let p = d2 * (c[1] + d2 * (c[2] + d2 * c[3]));
+    let q = d2 * (s[1] + d2 * (s[2] + d2 * s[3]));
+    let (qh, mut ql) = fasttwosum(s[0], q);
+    ql += S0;
+    let (ch, cl) = muldd_sin(qh, ql, ch, cl);
+    let (th, mut tl) = fasttwosum(c[0], p);
+    tl += C0;
+    let (th, tl) = mulddd_tg(d, th, tl);
+    let (ph, pl) = muldd_sin(th, tl, sh, sl);
+    let (ch, cl) = fastsum_dd(ch, cl, ph, pl);
+    let (ch, cl) = mulddd_tg(d, ch, cl);
+    fastsum_dd(sh, sl, ch, cl)
+}
+
+/// sin(pi x)/pi to about 106 bits (lgamma.c `as_sinpipid_accurate`).
+#[inline(never)]
+fn lg_sinpipid_accurate(x: f64) -> (f64, f64) {
+    let x = (x - 0.5).abs() * 128.0;
+    let ix = x.round_ties_even();
+    let d = ix - x;
+    let ky = ix as usize;
+    let kx = 64 - ky;
+    let (sh, sl) = (LG_STPI[kx][1], LG_STPI[kx][0]);
+    let (ch, cl) = (LG_STPI[ky][1], LG_STPI[ky][0]);
+    let d2h = d * d;
+    let d2l = d.mul_add(d, -d2h);
+    let (ph, pl) = polydd_tg(d2h, d2l, &LG_SINA_C, 0.0);
+    let (qh, ql) = polydd_tg(d2h, d2l, &LG_SINA_S, 0.0);
+    let (ph, pl) = mulddd_tg(d, ph, pl);
+    let (ph, pl) = muldd_sin(sh, sl, ph, pl);
+    let (qh, ql) = muldd_sin(ch, cl, qh, ql);
+    let (ch, cl) = fastsum_dd(qh, ql, ph, pl);
+    let (ch, cl) = mulddd_tg(d, ch, cl);
+    fastsum_dd(sh, sl, ch, cl)
+}
+
+/// lgamma(xh + xl) by Stirling's series for large arguments, as a
+/// triple-double (lgamma.c `as_lgamma_asym_accurate`).
+#[inline(never)]
+fn lg_asym_accurate(xh: f64, xl: f64) -> (f64, f64, f64) {
+    let (mut l0, mut l1, mut l2) = lg_logd_accurate(xh);
+    let (l0x, mut l1x, mut l2x);
+    if xh < hf!("0x1p120") {
+        let zh = 1.0 / xh;
+        let dz = xl * zh;
+        let zl = (zh.mul_add(-xh, 1.0) - dz) * zh;
+        if xl != 0.0 {
+            let (dl1, mut dl2) = mulddd_tg(xl, zh, zh.mul_add(-xh, 1.0) * zh);
+            dl2 -= dl1 * dl1 / 2.0;
+            (l1, l2) = sumdd_ordered(l1, l2, dl1, dl2);
+        }
+        let (wh, wl) = if xh.to_bits() >> 52 > 0x3ff + 51 {
+            (xh, xl - 0.5)
+        } else {
+            (xh - 0.5, xl)
+        };
+        l0 -= 1.0;
+        let l0x0 = l0 * wh;
+        let l0xl = l0.mul_add(wh, -l0x0);
+        l1x = l1 * wh;
+        let l1xl = l1.mul_add(wh, -l1x);
+        l2x = l2 * wh;
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, l0xl, l1xl);
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, l0 * wl, l1 * wl);
+        let (z2h, z2l) = muldd_sin(zh, zl, zh, zl);
+        let c: &[[f64; 2]] = if xh >= 48.0 {
+            &LG_ASYMA_48
+        } else if xh >= 14.5 {
+            &LG_ASYMA_14
+        } else {
+            &LG_ASYMA_LOW
+        };
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, c[0][0], c[0][1]);
+        let (fh, fl) = polydd_tg(z2h, z2l, &c[1..], 0.0);
+        let (fh, fl) = muldd_sin(zh, zl, fh, fl);
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, fh, fl);
+        let (h, m) = fasttwosum(l0x0, l1x);
+        l0x = h;
+        (l1x, l2x) = fasttwosum(m, l2x);
+    } else {
+        let wl = xl - 0.5;
+        l0 -= 1.0;
+        l0x = l0 * xh;
+        let l0xl = l0.mul_add(xh, -l0x);
+        l1x = l1 * xh;
+        let l1xl = l1.mul_add(xh, -l1x);
+        l2x = l2 * xh;
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, l0xl, l1xl);
+        (l1x, l2x) = sumdd_ordered(l1x, l2x, l0 * wl, l1 * wl);
+    }
+    (l0x, l1x, l2x)
+}
+
+/// Accurate lgamma for inputs whose fast-path rounding test failed.
+#[cold]
+#[inline(never)]
+fn lgamma_accurate(x_in: f64) -> f64 {
+    let sx = x_in;
+    let mut x = x_in.abs();
+    let mut fh;
+    let mut fl = 0.0f64;
+    let mut fll = 0.0f64;
+    // Round-to-nearest probe: both sides round to 1 only to nearest.
+    let to_nearest = 1.0 + hf!("0x1p-54") == 1.0 - hf!("0x1p-54");
+    if x < hf!("0x1p-100") {
+        let (lh, ll, lll) = lg_logd_accurate(x);
+        (fh, fl) = fasttwosum(-lh, -ll);
+        (fl, fll) = fasttwosum(fl, -lll);
+        let (_, e) = fasttwosum(fh, 2.0 * fl);
+        if e == 0.0 && to_nearest {
+            fl *= 1.0 + hf!("0x1p-52").copysign(fl) * 1.0f64.copysign(fll);
+        }
+    } else if x < hf!("0x1p-2") {
+        (fh, fl) = polydddfst(sx, &LG_ACC_C0, 0.0);
+        (fh, fl) = mulddd_tg(sx, fh, fl);
+        let (lh, ll, lll) = lg_logd_accurate(x);
+        (fh, fl) = sumdd_ordered(fh, fl, -ll, -lll);
+        (fh, fll) = twosum_ordered(-lh, fh);
+        (fl, fll) = twosum_ordered(fll, fl);
+        let (_, e) = fasttwosum(fh, 2.0 * fl);
+        if e == 0.0 && to_nearest {
+            fl *= 1.0 + hf!("0x1p-52").copysign(fl) * 1.0f64.copysign(fll);
+        }
+    } else {
+        // Add log(y) (a triple-double) to fh + fl + fll.
+        let add_log = |fh: &mut f64, fl: &mut f64, fll: &mut f64, y: f64| {
+            let (lh, ll, lll) = lg_logd_accurate(y);
+            (*fl, *fll) = sumdd_ordered(*fl, *fll, ll, lll);
+            let (h, lh2) = twosum_ordered(*fh, lh);
+            *fh = h;
+            (*fl, *fll) = sumdd_ordered(*fl, *fll, lh2, 0.0);
+        };
+        if (x - 0.5).abs() < hf!("0x1p-2") {
+            (fh, fl) = polydddfst(x - 0.5, &LG_ACC_B, 0.0);
+            if sx > 0.0 {
+                let (lh, ll, lll) = lg_logd_accurate(x);
+                (fl, fll) = sumdd_ordered(fl, 0.0, -ll, -lll);
+                let (h, lh2) = twosum_ordered(fh, -lh);
+                fh = h;
+                (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            }
+        } else if (x - 2.5).abs() < hf!("0x1p-2") {
+            (fh, fl) = polydddfst(x - 2.5, &LG_ACC_B, 0.0);
+            let (lh, ll, lll) = lg_logd_accurate(x - 1.0);
+            (fl, fll) = sumdd_ordered(fl, 0.0, ll, lll);
+            let (h, lh2) = twosum_ordered(fh, lh);
+            fh = h;
+            (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            if sx < 0.0 {
+                add_log(&mut fh, &mut fl, &mut fll, x);
+            }
+        } else if (x - 3.5).abs() < hf!("0x1p-2") {
+            let (l2h, l2l, l2ll) = lg_logd_accurate(x - 2.0);
+            let (l1h, l1l, l1ll) = lg_logd_accurate(x - 1.0);
+            let (l1l, l1ll) = sumdd_ordered(l1l, l1ll, l2l, l2ll);
+            let (l1h, l2h) = fasttwosum(l1h, l2h);
+            let (l1l, l1ll) = sumdd_ordered(l1l, l1ll, l2h, 0.0);
+            (fh, fl) = polydddfst(x - 3.5, &LG_ACC_B, 0.0);
+            (fl, fll) = sumdd_ordered(fl, 0.0, l1l, l1ll);
+            let (h, l1h2) = twosum_ordered(fh, l1h);
+            fh = h;
+            (fl, fll) = sumdd_ordered(fl, fll, l1h2, 0.0);
+            if sx < 0.0 {
+                add_log(&mut fh, &mut fl, &mut fll, x);
+            }
+        } else if (x - 1.0).abs() < hf!("0x1p-2") {
+            (fh, fl) = polydddfst(x - 1.0, &LG_ACC_C0, 0.0);
+            (fh, fl) = mulddd_tg(x - 1.0, fh, fl);
+            if sx < 0.0 {
+                let (lh, ll, lll) = lg_logd_accurate(x);
+                (fl, fll) = sumdd_ordered(fl, 0.0, ll, lll);
+                let (h, lh2) = twosum_ordered(fh, lh);
+                fh = h;
+                (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            }
+        } else if (x - 1.5).abs() < hf!("0x1p-2") {
+            (fh, fl) = polydddfst(x - 1.5, &LG_ACC_B, 0.0);
+            if sx < 0.0 {
+                let (lh, ll, lll) = lg_logd_accurate(x);
+                (fl, fll) = sumdd_ordered(fl, 0.0, ll, lll);
+                let (h, lh2) = twosum_ordered(fh, lh);
+                fh = h;
+                (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            }
+        } else if (x - 2.0).abs() < hf!("0x1p-2") {
+            let (lh, ll, lll) = lg_logd_accurate(x - 1.0);
+            (fh, fl) = polydddfst(x - 2.0, &LG_ACC_C0, 0.0);
+            (fh, fl) = mulddd_tg(x - 2.0, fh, fl);
+            (fl, fll) = sumdd_ordered(fl, 0.0, ll, lll);
+            let (h, lh2) = twosum_ordered(fh, lh);
+            fh = h;
+            (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            if sx < 0.0 {
+                add_log(&mut fh, &mut fl, &mut fll, x);
+            }
+        } else if (x - 3.0).abs() < hf!("0x1p-2") {
+            let (l2h, l2l, l2ll) = lg_logd_accurate(x - 2.0);
+            let (l1h, l1l, l1ll) = lg_logd_accurate(x - 1.0);
+            let (l1l, l1ll) = sumdd_ordered(l1l, l1ll, l2l, l2ll);
+            let (l1h, l2h) = fasttwosum(l1h, l2h);
+            let (l1l, l1ll) = sumdd_ordered(l1l, l1ll, l2h, 0.0);
+            (fh, fl) = polydddfst(x - 3.0, &LG_ACC_C0, 0.0);
+            (fh, fl) = mulddd_tg(x - 3.0, fh, fl);
+            (fl, fll) = sumdd_ordered(fl, 0.0, l1l, l1ll);
+            let (h, l1h2) = twosum_ordered(fh, l1h);
+            fh = h;
+            (fl, fll) = sumdd_ordered(fl, fll, l1h2, 0.0);
+            if sx < 0.0 {
+                add_log(&mut fh, &mut fl, &mut fll, x);
+            }
+        } else {
+            // x > 3.75: Stirling's series, on 1 - sx for negative sx.
+            if sx < 0.0 {
+                (x, fl) = fasttwosum(x, 1.0);
+            }
+            (fh, fl, fll) = lg_asym_accurate(x, fl);
+        }
+        if sx < 0.0 {
+            // Reflection: lgamma(x) = -lgamma(1-x) - log|sin(pi x)/pi| ... - log|x|
+            // folded as upstream.
+            let phi = if sx < -0.5 { sx - sx.floor() } else { -sx };
+            let (sh, sl) = lg_sinpipid_accurate(phi);
+            let (lh, mut ll, lll) = lg_logd_accurate(sh);
+            ll += sl / sh + lll;
+            (fl, fll) = sumdd_ordered(fl, fll, ll, 0.0);
+            let (h, lh2) = twosum_ordered(fh, lh);
+            fh = h;
+            (fl, fll) = sumdd_ordered(fl, fll, lh2, 0.0);
+            fh = -fh;
+            fl = -fl;
+            fll = -fll;
+        }
+        (fh, fl) = fasttwosum(fh, fl);
+        (fl, fll) = fasttwosum(fl, fll);
+        (fh, fl) = fasttwosum(fh, fl);
+        (fl, fll) = fasttwosum(fl, fll);
+        let (_, e) = fasttwosum(fh, 2.0 * fl);
+        if e == 0.0 {
+            fl *= 1.0 + hf!("0x1p-26").copysign(fl) * hf!("0x1p-26").copysign(fll);
+        }
+    }
+
+    // Near the negative-axis roots of lgamma, re-evaluate around the root
+    // (bounds, scale and split per root in LG_ROOT_PARAMS).
+    if fh.abs() < hf!("0x1.8p-2") {
+        for (params, c) in LG_ROOT_PARAMS.iter().zip(LG_ROOT_C.iter()) {
+            let &(fb, lo, hi, sc, k, x0) = params;
+            if fh.abs() < fb && sx > lo && sx < hi {
+                let (zh, mut zl) = fasttwosum(x0[0] + sx, x0[1]);
+                zl += x0[2];
+                let sh = zh * sc;
+                let sl = zl * sc;
+                let n = c.len();
+                let tail = sh * polyd_tg(sh, &c[n - k..]);
+                let (h, l) = polydd_tg(sh, sl, &c[..n - k], tail);
+                (fh, fl) = muldd_sin(zh, zl, h, l);
+                break;
+            }
+        }
+    }
+
+    let ft = (fl.to_bits().wrapping_add(2) & MASK52) as u32;
+    if ft <= 2 {
+        for e in &LG_DB {
+            if e[0] == sx {
+                return e[1] + e[2];
+            }
+        }
+    }
+    fh + fl
+}
+
+/// Interval index into the [0.5, 8.29541] piecewise polynomials for the
+/// top bits `au` of 2|x|.
+#[inline(always)]
+fn lg_interval(au: u32) -> usize {
+    let ou = u64::from(au - LG_UBRD[0]);
+    let mut j =
+        ((0x1_57ce_d865u64.wrapping_sub(ou * 0x150d)).wrapping_mul(ou) + 0x1280_0000_0000) >> 45;
+    if au < LG_UBRD[j as usize] {
+        j -= 1;
+    }
+    j as usize
+}
+
+/// The [0.5, 8.29541] piecewise polynomial at offset `z` in interval `j`.
+#[inline(always)]
+fn lg_piece(j: usize, z: f64) -> (f64, f64) {
+    let z2 = z * z;
+    let z4 = z2 * z2;
+    let q = &LG_CL[j];
+    let q0 = q[0] + z * q[1];
+    let q2 = q[2] + z * q[3];
+    let q4 = q[4] + z * q[5];
+    let q6 = q[6] + z * q[7];
+    let fl = z * ((q0 + z2 * q2) + z4 * (q4 + z2 * q6));
+    polydddfst(z, &LG_CH[j], fl)
+}
+
+/// Correctly rounded `lgamma_r`: `(log|Gamma(x)|, sign of Gamma(x))`.
+pub fn lgamma_r(x: f64) -> (f64, i32) {
+    let t = x.to_bits();
+    let nx = t << 1;
+    if nx >= 0xfeae_a9b2_4f16_a34c {
+        // |x| >= 0x1.006df1bfac84ep+1015 (or inf/NaN)
+        if t == 0x7f57_54d9_278b_51a6 {
+            return (
+                core::hint::black_box(hf!("0x1.ffffffffffffep+1023")) - hf!("0x1p+969"),
+                1,
+            );
+        }
+        if t == 0x7f57_54d9_278b_51a7 {
+            return (core::hint::black_box(f64::MAX) - hf!("0x1p+969"), 1);
+        }
+        if nx >= 0x7ffu64 << 53 {
+            if nx == 0x7ffu64 << 53 {
+                return (x.abs(), 1); // ±inf -> +inf
+            }
+            return (x + x, 1); // NaN
+        }
+        if t >> 63 != 0 {
+            return (1.0 / core::hint::black_box(0.0), 1); // huge negative integer
+        }
+        let big = core::hint::black_box(hf!("0x1.fp1023"));
+        return (big * big, 1); // overflow
+    }
+    let fx = x.floor();
+    if fx == x {
+        if x <= 0.0 {
+            // Pole: +inf with FE_DIVBYZERO.
+            return (1.0 / core::hint::black_box(0.0), 1 - 2 * (t >> 63) as i32);
+        }
+        if x == 1.0 || x == 2.0 {
+            return (0.0, 1);
+        }
+    }
+    let mut au = (nx >> 38) as u32;
+    let (mut fh, mut fl, mut eps);
+    let sign;
+    if au < LG_UBRD[0] {
+        // |x| < 0.5
+        sign = 1 - 2 * (t >> 63) as i32;
+        let (lh, ll) = lg_logd(x.abs());
+        if au < 0x1da_0000 {
+            // |x| < 2^-75
+            fh = -lh;
+            fl = -ll;
+            eps = 1.5e-22;
+        } else if au < 0x1fd_0000 {
+            // |x| < 1/32
+            let q = &LG_TINY_Q;
+            let z = x;
+            let z2 = z * z;
+            let z4 = z2 * z2;
+            let q0 = q[0] + z * q[1];
+            let q2 = q[2] + z * q[3];
+            let q4 = q[4] + z * q[5];
+            let q6 = q[6] + z * q[7];
+            fl = z * ((q0 + z2 * q2) + z4 * (q4 + z2 * q6));
+            (fh, fl) = polydddfst(z, &LG_TINY_C0, fl);
+            (fh, fl) = mulddd_tg(x, fh, fl);
+            (fh, fl) = sumdd_ordered(-lh, -ll, fh, fl);
+            eps = 1.5e-22;
+        } else {
+            // 1/32 <= |x| < 1/2: lgamma(x) = lgamma(1+x) - log|x|, with 1+x in
+            // the piecewise range.
+            let (tf, xl) = fasttwosum(1.0, x);
+            au = (tf.to_bits() >> 37) as u32;
+            let j = lg_interval(au);
+            let z = (tf - LG_OFFS[j]) + xl;
+            (fh, fl) = lg_piece(j, z);
+            if j == 4 {
+                // the region around the root at 1
+                (fh, fl) = mulddd_tg(-x, fh, fl);
+            }
+            eps = fh.abs() * 8.3e-20;
+            (fh, fl) = sumdd_ordered(-lh, -ll, fh, fl);
+            eps += lh.abs() * 5e-22;
+        }
+    } else {
+        let ax = x.abs();
+        if au >= LG_UBRD[19] {
+            // |x| >= 8.29541: Stirling's series.
+            let (mut lh, mut ll) = lg_logd(ax);
+            lh -= 1.0;
+            if au >= 0x219_8000 {
+                // x >= 2^52
+                if au >= 0x3fa_baa6 {
+                    (lh, ll) = fasttwosum(lh, ll);
+                }
+                let hlh = lh * 0.5;
+                (lh, ll) = mulddd_tg(ax, lh, ll);
+                ll -= hlh;
+            } else {
+                (lh, ll) = mulddd_tg(ax - 0.5, lh, ll);
+            }
+            let (c, q) = (&LG_ASYM_C, &LG_ASYM_Q);
+            (lh, ll) = fastsum_dd(lh, ll, c[0][0], c[0][1]);
+            if ax < hf!("0x1p100") {
+                let zh = 1.0 / ax;
+                let zl = zh.mul_add(-ax, 1.0) * zh;
+                let z2h = zh * zh;
+                let z4h = z2h * z2h;
+                let q0 = q[0] + z2h * q[1];
+                let q2 = q[2] + z2h * q[3];
+                let q4 = q[4];
+                fl = z2h * (q0 + z4h * (q2 + z4h * q4));
+                (fh, fl) = fasttwosum(c[1][0], fl);
+                fl += c[1][1];
+                (fh, fl) = muldd_sin(fh, fl, zh, zl);
+            } else {
+                fh = 0.0;
+                fl = 0.0;
+            }
+            (fh, fl) = fastsum_dd(lh, ll, fh, fl);
+            eps = fh.abs() * 4.5e-20;
+        } else {
+            // x in [0.5, 8.29541]
+            let j = lg_interval(au);
+            (fh, fl) = lg_piece(j, ax - LG_OFFS[j]);
+            if j == 4 {
+                (fh, fl) = mulddd_tg(1.0 - ax, fh, fl); // root at 1
+            }
+            if j == 10 {
+                (fh, fl) = mulddd_tg(ax - 2.0, fh, fl); // root at 2
+            }
+            eps = fh.abs() * 8.7e-20 + 1e-24;
+        }
+        if t >> 63 != 0 {
+            // x < 0: reflection.
+            let (sh, sl) = lg_sinpipid(x - x.floor());
+            let (sh, sl) = mulddd_tg(-x, sh, sl);
+            let (lh, mut ll) = lg_logd(sh);
+            ll += sl / sh;
+            let (h, l) = sumdd_ordered(fh, fl, lh, ll);
+            fh = -h;
+            fl = -l;
+            eps += lh.abs() * 8e-22;
+            let k = fx as i64;
+            sign = 1 - 2 * (k & 1) as i32;
+        } else {
+            sign = 1;
+        }
+    }
+    let ub = fh + (fl + eps);
+    let lb = fh + (fl - eps);
+    if ub != lb {
+        return (lgamma_accurate(x), sign);
+    }
+    (ub, sign)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5114,5 +5712,79 @@ mod tests {
             assert_eq!(got, want, "tgamma({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
         }
         assert!(tgamma(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn lgamma_r_matches_glibc_2_43_on_corpus() {
+        // Value and sign hashes of glibc 2.43's lgamma_r on the shared corpus.
+        let mut c = Corpus::new();
+        let mut hv = 0xcbf2_9ce4_8422_2325u64;
+        let mut hs = 0xcbf2_9ce4_8422_2325u64;
+        for i in 0..1_000_000 {
+            let (y, s) = lgamma_r(c.sample(i % 3, -30, 12));
+            hv = (hv ^ y.to_bits()).wrapping_mul(0x100_0000_01b3);
+            hs = (hs ^ (i64::from(s) as u64)).wrapping_mul(0x100_0000_01b3);
+        }
+        assert_eq!(c.0, 0x5b5c_7615_1d8a_4788);
+        assert_eq!(hv, 0x2682_ba69_955e_1c4f, "lgamma_r value hash");
+        assert_eq!(hs, 0xa36e_ad98_bb06_8eeb, "lgamma_r sign hash");
+    }
+
+    #[test]
+    fn lgamma_r_hard_and_special_cases() {
+        // (input, glibc 2.43 value, glibc sign): database entries, roots near
+        // -2.457, the 2^-75 / 1/32 / 1/2 / 8.29541 / 2^52 boundaries, the roots
+        // at 1 and 2, poles (+inf with the sign of the zero / -1 for negative
+        // integers), huge arguments and infinities.
+        for (x, want, sign) in [
+            (0xc004_cccc_cccc_cccdu64, 0xbfbe_3602_a772_5dbeu64, -1),
+            (0xc021_b649_eb43_16fb, 0xc025_0332_a035_af1f, -1),
+            (0xbfd2_6923_ac1f_7c10, 0x3ff7_df2c_32cf_08a3, -1),
+            (0xc003_a7fc_9600_f86c, 0x3c90_323b_6d1f_e86d, -1),
+            (0xc003_a7ef_9db2_2d0e, 0x3f03_a8ab_4332_558b, -1),
+            (0xc006_0000_0000_0000, 0x3f72_61e6_d250_cf63, -1),
+            (0xc024_8000_0000_0000, 0xc02c_6872_69b1_e743, -1),
+            (0x3af0_0000_0000_0000, 0x404b_b9d3_beb8_c86b, 1),
+            (0xbaf0_0000_0000_0000, 0x404b_b9d3_beb8_c86b, -1),
+            (0x0000_0000_0000_0001, 0x4087_4385_446d_71c3, 1),
+            (0x3f9e_b851_eb85_1eb8, 0x400b_eb75_f03c_93c6, 1),
+            (0x3fd0_0000_0000_0000, 0x3ff4_9bbd_81c1_6efb, 1),
+            (0x3fe0_0000_0000_0000, 0x3fe2_50d0_48e7_a1bd, 1),
+            (0x3fe8_0000_0000_0000, 0x3fca_051c_3726_09ee, 1),
+            (0x3ff0_0000_0000_0000, 0x0000_0000_0000_0000, 1),
+            (0x4000_0000_0000_0000, 0x0000_0000_0000_0000, 1),
+            (0x3ff0_0000_0006_df38, 0xbdcf_bb96_c643_47a7, 1),
+            (0x3fff_ffff_e528_0d65, 0xbe66_b2b4_05fa_85a3, 1),
+            (0x4008_0000_0000_0000, 0x3fe6_2e42_fefa_39ef, 1),
+            (0x400c_0000_0000_0000, 0x3ff3_3730_1897_0a36, 1),
+            (0x4020_973f_fac1_d29e, 0x4022_40af_32c9_d778, 1),
+            (0x4020_9999_9999_999a, 0x4022_4583_3c3f_2ade, 1),
+            (0x4059_0000_0000_0000, 0x4076_7225_b487_9462, 1),
+            (0x4330_0000_0000_0000, 0x4381_8596_6f2b_4f12, 1),
+            (0x43b0_0000_0000_0000, 0x4404_4b5e_cf0a_9650, 1),
+            (0x7f60_06df_1bfa_c84e, 0x7ff0_0000_0000_0000, 1),
+            (0x7fef_ffff_ffff_ffff, 0x7ff0_0000_0000_0000, 1),
+            (0xffef_ffff_ffff_ffff, 0x7ff0_0000_0000_0000, 1),
+            (0x7f57_54c0_0000_0000, 0x7fef_ffdd_7354_aa33, 1),
+            (0x7ff0_0000_0000_0000, 0x7ff0_0000_0000_0000, 1),
+            (0xfff0_0000_0000_0000, 0x7ff0_0000_0000_0000, 1),
+            (0x0000_0000_0000_0000, 0x7ff0_0000_0000_0000, 1),
+            (0x8000_0000_0000_0000, 0x7ff0_0000_0000_0000, -1),
+            (0xbff0_0000_0000_0000, 0x7ff0_0000_0000_0000, -1),
+            (0xc000_0000_0000_0000, 0x7ff0_0000_0000_0000, -1),
+            (0xfe37_e43c_8800_759c, 0x7ff0_0000_0000_0000, -1),
+            (0xbfe0_0000_0000_0000, 0x3ff4_3f89_a3f0_edd6, -1),
+            (0xc00c_0000_0000_0000, 0xbff4_f1b0_fe64_a5d8, 1),
+            (0xc065_4999_9999_999a, 0xc086_1610_f60c_1060, -1),
+        ] {
+            let (got, s) = lgamma_r(f64::from_bits(x));
+            assert_eq!(
+                (got.to_bits(), s),
+                (want, sign),
+                "lgamma_r({x:#x}) = ({:#x}, {s}), glibc 2.43 ({want:#x}, {sign})",
+                got.to_bits()
+            );
+        }
+        assert!(lgamma_r(f64::NAN).0.is_nan());
     }
 }

@@ -109,164 +109,6 @@ mod tgamma_lanczos_research {
         }
     }
 }
-// ---------------------------------------------------------------------------
-// Negative half-integer lattice (bd-8htzay)
-//
-// x = 1/2 - n (n >= 1, integral) has the closed form
-//     |Gamma(1/2 - n)| = 4^n n! sqrt(pi) / (2n)!
-//     lgamma(x)        = n*ln4 + ln(n!) + (1/2)*ln(pi) - ln((2n)!)
-//     signgam          = (-1)^n
-// (checked: n = 3 gives ln(8*sqrt(pi)/15) = -0.0562437164976740506...).
-//
-// glibc 2.43's lgamma_r is CORRECTLY ROUNDED on this lattice (mpmath at 60
-// digits, n = 1..24), and a correctly rounded value is host-proof, unlike
-// algorithm mimicry: the same release's fromfp re-cut (bd-7ilguh) showed how
-// fragile matching-a-particular-algorithm is across host upgrades. The branch
-// below evaluates the closed form in double-double (~106-bit significand):
-// every term is an exact-argument log, the DD sum accumulates <= 2^-90
-// relative error at the n cap, and the final f64 rounding is therefore the
-// correctly rounded one — CR now, and on whatever glibc ships next. O(n) DD
-// log terms, capped at n <= 4096 (larger |x| stays on the libm-crate
-// deferral in `lgamma_r`, unchanged).
-mod lgamma_half_integer {
-    /// Double-double: (hi, lo) with |lo| <= ulp(hi)/2.
-    type Dd = (f64, f64);
-
-    /// Split of ln(2) to 106-bit precision.
-    #[allow(clippy::approx_constant)] // hi is written exactly, as the split's first half.
-    const LN2: Dd = (
-        0.693_147_180_559_945_286_226_763_982_995_180_413_126_945_495_605_468_75e0,
-        2.319_046_813_846_299_615_494_855_463_875_39e-17,
-    );
-    /// Split of (1/2) ln(pi) to 106-bit precision.
-    const HALF_LN_PI: Dd = (
-        0.572_364_942_924_700_087_071_713_675_676_529_355_823_647_406_457_66e0,
-        5.132_975_581_353_913_12e-18,
-    );
-    /// Split of ln(4) to 106-bit precision.
-    const LN4: Dd = (1.386_294_361_119_890_571_8, 4.638_093_627_692_599_23e-17);
-
-    #[inline]
-    fn quick_two_sum(a: f64, b: f64) -> Dd {
-        let s = a + b;
-        (s, b - (s - a))
-    }
-
-    #[inline]
-    fn two_sum(a: f64, b: f64) -> Dd {
-        let s = a + b;
-        let av = s - b;
-        let bv = s - av;
-        (s, (a - av) + (b - bv))
-    }
-
-    #[inline]
-    fn two_prod(a: f64, b: f64) -> Dd {
-        let p = a * b;
-        (p, a.mul_add(b, -p))
-    }
-
-    #[inline]
-    fn dd_neg(a: Dd) -> Dd {
-        (-a.0, -a.1)
-    }
-
-    #[inline]
-    fn dd_add(a: Dd, b: Dd) -> Dd {
-        let (s, se) = two_sum(a.0, b.0);
-        let (t, te) = two_sum(a.1, b.1);
-        let (hi, mid) = quick_two_sum(s, se + t);
-        quick_two_sum(hi, mid + te)
-    }
-
-    #[inline]
-    fn dd_mul(a: Dd, b: Dd) -> Dd {
-        let (p, pe) = two_prod(a.0, b.0);
-        quick_two_sum(p, pe + a.0 * b.1 + a.1 * b.0)
-    }
-
-    #[inline]
-    fn dd_mul_f64(a: Dd, b: f64) -> Dd {
-        let (p, pe) = two_prod(a.0, b);
-        quick_two_sum(p, pe + a.1 * b)
-    }
-
-    #[inline]
-    fn dd_div(a: Dd, b: Dd) -> Dd {
-        let q1 = a.0 / b.0;
-        // r = a - q1 * b, in DD. (p, pe) carries q1*b.0 to DD precision; only
-        // the q1*b.1 tail is subtracted separately. Subtracting q1*b twice
-        // collapses r to -a and the quotient to ~0 (caught by the standalone
-        // DD probe, bd-8htzay).
-        let (p, pe) = two_prod(q1, b.0);
-        let r = dd_add(dd_add(a, dd_neg((p, pe))), dd_mul_f64((b.1, 0.0), -q1));
-        dd_add((q1, 0.0), dd_mul_f64(r, 1.0 / b.0))
-    }
-
-    #[inline]
-    fn dd_sqrt(x: Dd) -> Dd {
-        let s = x.0.sqrt();
-        // One DD Newton step: s' = s + (x - s^2) / (2 s).
-        let (p, pe) = two_prod(s, s);
-        let corr = dd_mul_f64(dd_add(x, dd_neg((p, pe))), 0.5 / s);
-        dd_add((s, 0.0), corr)
-    }
-
-    /// ln(x) for finite x > 0, ~2^-105 relative error.
-    ///
-    /// x = m * 2^k with m in [sqrt(1/2), sqrt(2)); five squarings bring m
-    /// into [~0.9975, ~1.0025], where the atanh series converges in a handful
-    /// of DD terms: ln m = 32 * ln(m^(1/32)) = 64 * atanh(u) with
-    /// u = (m^(1/32) - 1) / (m^(1/32) + 1).
-    fn dd_ln(x: f64) -> Dd {
-        debug_assert!(x > 0.0 && x.is_finite());
-        let bits = x.to_bits();
-        let mut k = (((bits >> 52) & 0x7ff) as i64) - 1023;
-        let mut m = f64::from_bits((bits & !(0x7ffu64 << 52)) | (1023u64 << 52));
-        if m < core::f64::consts::FRAC_1_SQRT_2 {
-            m *= 2.0;
-            k -= 1;
-        }
-        let mut s = (m, 0.0);
-        for _ in 0..5 {
-            s = dd_sqrt(s);
-        }
-        let u = dd_div(dd_add(s, (-1.0, 0.0)), dd_add(s, (1.0, 0.0)));
-        let u2 = dd_mul(u, u);
-        let mut term = u;
-        let mut acc = (0.0, 0.0);
-        let mut i = 1.0;
-        loop {
-            acc = dd_add(acc, dd_div(term, (i, 0.0)));
-            term = dd_mul(term, u2);
-            i += 2.0;
-            if term.0 == 0.0 || i > 47.0 {
-                break;
-            }
-        }
-        // 2 (atanh factor) * 32 (squarings).
-        let ln_m = dd_mul_f64(acc, 64.0);
-        dd_add(ln_m, dd_mul_f64(LN2, k as f64))
-    }
-
-    /// ln|Gamma(1/2 - n)| for integral n in [1, 4096], correctly rounded.
-    pub(crate) fn lgamma_neg_half_integer(n: u32) -> (f64, i32) {
-        // L = n*ln4 + (1/2)ln(pi) + ln(n!) - ln((2n)!). The ln(n!) terms
-        // cancel against the first n terms of ln((2n)!), leaving exactly
-        // L = n*ln4 + (1/2)ln(pi) - sum_{k=n+1}^{2n} ln k. (A first version
-        // added the k <= n terms instead of dropping them — double-counting
-        // ln(n!) — which the mpmath goldens caught immediately.)
-        let mut l = dd_add(dd_mul_f64(LN4, n as f64), HALF_LN_PI);
-        for k in (n + 1)..=(2 * n) {
-            l = dd_add(l, dd_neg(dd_ln(k as f64)));
-        }
-        let (value, _) = quick_two_sum(l.0, l.1);
-        // Gamma(1/2 - n) = (-4)^n n! sqrt(pi) / (2n)!: the sign is (-1)^n.
-        let sign = if n % 2 == 0 { 1 } else { -1 };
-        (value, sign)
-    }
-}
-
 #[inline]
 pub fn lgamma(x: f64) -> f64 {
     // Derive from lgamma_r so the value matches lgamma_r exactly (the deployed ABI
@@ -295,52 +137,12 @@ pub fn erfc(x: f64) -> f64 {
 /// Reentrant lgamma: returns `(lgamma(x), signgam)` where `signgam` is +1 or -1.
 #[inline]
 pub fn lgamma_r(x: f64) -> (f64, i32) {
-    // [3,13): lgamma(x) = log(tgamma(x)) reusing fl's fast Cephes `tgamma` + fused
-    // `log` — ~7% faster than `libm::lgamma` and at glibc parity, ≤2 ULP vs glibc
-    // (verified by lgamma_glibc_bench). In this band lgamma ≥ ln 2 ≈ 0.69 > 0 (so
-    // signgam = +1), Γ is finite and positive (no overflow/poles), and there is no
-    // 1-erf-style cancellation. Every other x defers to `libm::lgamma_r` for the
-    // poles (negative integers), the near-zero band around x=1,2, and the large-x
-    // tail where Γ overflows. `crate::math::log`/`tgamma` are direct Rust calls (not
-    // the interposed symbols), so no membrane round-trip / recursion.
-    if x >= 3.0 && x < 13.0 {
-        return (crate::math::log(tgamma(x)), 1);
-    }
-    if (13.0..1.0e15).contains(&x) {
-        // Large-x tail: Stirling asymptotic — lgamma(x) = (x-0.5)·ln(x) - x + ½ln(2π) +
-        // Σ B_{2k}/(2k(2k-1)·x^{2k-1}). Reuses fl's fused `log` + a 5-term Bernoulli series
-        // (converges fast for x ≥ 13); the (x-0.5)·ln(x) leading term is carried with its
-        // fma residual to stay ≤2 ULP vs glibc (verified to 1e15 by lgamma_tail_ab_bench).
-        // ~1.76x faster than libm::lgamma and beats glibc 0.56x. lgamma > 0 here so
-        // signgam = +1; the rare [1e15,∞) tail (near Γ overflow + its FE_OVERFLOW/ERANGE)
-        // stays on libm.
-        const HALF_LN_2PI: f64 = 0.918_938_533_204_672_74;
-        let lnx = crate::math::log(x);
-        let a = x - 0.5;
-        let hi = a * lnx;
-        let lo = a.mul_add(lnx, -hi);
-        let inv = 1.0 / x;
-        let w = inv * inv;
-        let mut s = 1.0_f64 / 1188.0;
-        s = s.mul_add(w, -1.0 / 1680.0);
-        s = s.mul_add(w, 1.0 / 1260.0);
-        s = s.mul_add(w, -1.0 / 360.0);
-        s = s.mul_add(w, 1.0 / 12.0);
-        s *= inv;
-        return (((hi - x) + (HALF_LN_2PI + s)) + lo, 1);
-    }
-    // Negative half-integer lattice: closed form via the exact reflection
-    // |Gamma(1/2-n)| = 4^n n! sqrt(pi)/(2n)! (see lgamma_half_integer above).
-    // n = 1/2 - x is exact f64 arithmetic on this range; integers fail the
-    // integrality test (1/2 - integer is never integral) and keep the pole
-    // handling in the libm-crate deferral below.
-    if x < 0.0 {
-        let nh = 0.5 - x;
-        if nh >= 1.0 && nh <= 4096.0 && nh == nh.trunc() {
-            return lgamma_half_integer::lgamma_neg_half_integer(nh as u32);
-        }
-    }
-    libm::lgamma_r(x)
+    // CORE-MATH's correctly rounded lgamma, which glibc 2.43 ships: value and
+    // sign bit-identical to glibc. The previous log(tgamma) / Stirling / libm
+    // paths differed on 43% of inputs (bd-otip6a); the negative half-integer
+    // closed form (bd-8htzay) is subsumed, since this is correctly rounded on
+    // that lattice too.
+    crate::math::coremath::lgamma_r(x)
 }
 
 // ---------------------------------------------------------------------------
@@ -549,11 +351,9 @@ mod tests {
             let want_sign = if n % 2 == 0 { 1 } else { -1 };
             assert_eq!(sign, want_sign, "signgam(1/2-{n})");
         }
-        // Non-lattice negative x keeps the deferral contract (value unchanged
-        // by the branch): -2.6 is not on the lattice.
+        // Off the lattice too: -2.6 gives glibc 2.43's correctly rounded value.
         let (v, s) = lgamma_r(-2.6);
-        let (lv, ls) = libm::lgamma_r(-2.6);
-        assert_eq!((v.to_bits(), s), (lv.to_bits(), ls));
+        assert_eq!((v.to_bits(), s), (0xbfbe_3602_a772_5dbe, -1));
     }
 
     #[test]
