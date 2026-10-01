@@ -219,6 +219,8 @@ FILE_LAYOUT_BIN="${BIN_DIR}/fixture_stdio_file_layout"
 cc -O2 "${ROOT}/tests/integration/fixture_stdio_file_layout.c" -o "${FILE_LAYOUT_BIN}"
 REGEX_CTX_BIN="${BIN_DIR}/fixture_regex_search_context"
 cc -O2 "${ROOT}/tests/integration/fixture_regex_search_context.c" -o "${REGEX_CTX_BIN}"
+SPAWN_FORK_BIN="${BIN_DIR}/fixture_spawn_concurrent_fork"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_spawn_concurrent_fork.c" -o "${SPAWN_FORK_BIN}"
 MALLOC_SIGNAL_BIN="${BIN_DIR}/fixture_malloc_signal_reentry"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_malloc_signal_reentry.c" -o "${MALLOC_SIGNAL_BIN}"
 
@@ -901,6 +903,8 @@ EOF
   run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
   # malloc/free from a signal handler while every thread allocates.
   run_corpus_case "${mode}" "malloc_signal_reentry" "${MALLOC_SIGNAL_BIN}" || mode_failed=1
+  # posix_spawn while another thread forks long-lived children.
+  run_corpus_case "${mode}" "spawn_concurrent_fork" "${SPAWN_FORK_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1

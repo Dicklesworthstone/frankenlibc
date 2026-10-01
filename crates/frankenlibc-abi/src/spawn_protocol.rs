@@ -88,20 +88,25 @@ pub(super) fn duplicate_for_spawn(oldfd: c_int, newfd: c_int) -> Result<(), c_in
 }
 
 /// Close a range without closing the private CLOEXEC error descriptor.
+/// `keep < 0`: no descriptor to keep (a spawn child that reports through
+/// shared memory has no error pipe).
 pub(super) fn close_from(from: c_int, keep: c_int) -> Result<(), c_int> {
-    if from < 0 || keep < 0 {
+    if from < 0 {
         return Err(libc::EBADF);
     }
     let first = from as u32;
-    let kept = keep as u32;
-    if first < kept {
-        match raw_syscall::sys_close_range(first, kept - 1, 0) {
-            Ok(_) => {}
-            Err(libc::ENOSYS) => return close_from_proc(from, keep),
-            Err(error) => return Err(error),
+    let mut upper = first;
+    if keep >= 0 {
+        let kept = keep as u32;
+        if first < kept {
+            match raw_syscall::sys_close_range(first, kept - 1, 0) {
+                Ok(_) => {}
+                Err(libc::ENOSYS) => return close_from_proc(from, keep),
+                Err(error) => return Err(error),
+            }
         }
+        upper = first.max(kept + 1);
     }
-    let upper = first.max(kept + 1);
     match raw_syscall::sys_close_range(upper, u32::MAX, 0) {
         Ok(_) => Ok(()),
         Err(libc::ENOSYS) => close_from_proc(from, keep),
