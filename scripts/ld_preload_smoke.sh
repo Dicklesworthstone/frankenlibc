@@ -898,6 +898,11 @@ EOF
   # glibc's own argp tools.
   run_corpus_case "${mode}" "argp_protocol" "${ARGP_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "argp_help_layout" "${ARGP_BIN}" help || mode_failed=1
+  # glibc's own argp tools: lines that fill the right margin exactly, where
+  # glibc's wrap depends on its buffer's leftover bytes (bd-l60w8w) -- one
+  # keeps the last word (gencat), one wraps it (localedef).
+  run_corpus_case "${mode}" "argp_gencat_help" /usr/bin/gencat --help || mode_failed=1
+  run_corpus_case "${mode}" "argp_localedef_help" /usr/bin/localedef --help || mode_failed=1
   # re_search/REG_STARTEND from an offset keep the preceding bytes as ^/\</\b
   # context (sed s///g restarts).
   run_corpus_case "${mode}" "regex_search_context" "${REGEX_CTX_BIN}" || mode_failed=1
