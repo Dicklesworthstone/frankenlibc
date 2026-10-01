@@ -12,6 +12,7 @@ mod log2_data;
 mod log_data;
 pub mod special;
 pub mod trig;
+mod trig_data;
 
 pub use exp::{exp, exp2, expm1, log, log1p, log2, log10, pow};
 pub use float::{

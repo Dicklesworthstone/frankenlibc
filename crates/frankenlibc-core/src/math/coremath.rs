@@ -28,6 +28,7 @@ use super::erf_data::{
     ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS, ERFC_ASYMPT_EXCEPTIONS, ERFC_E2, ERFC_NEG_EXCEPTIONS,
     ERFC_POS_EXCEPTIONS, ERFC_T, ERFC_TACC, EXP_T1, EXP_T2,
 };
+use super::trig_data::{SIN_C2U, SIN_PC, SIN_PS, SIN_S1U, SIN_S2U, SIN_T, SIN_U1, SIN_U2};
 
 const MASK52: u64 = u64::MAX >> 12;
 
@@ -2838,6 +2839,303 @@ pub fn atan(x: f64) -> f64 {
     atan_refine2(x, ub)
 }
 
+// --- sin (CORE-MATH src/binary64/sin/sin.c) -----------------------------------
+
+/// Round `(-1)^sbit * r / 2^128` to double; `r` non-zero and not subnormal.
+#[inline(always)]
+fn u128_tod(r: u128, sbit: usize) -> f64 {
+    let h = (r >> 64) as u64;
+    let l = r as u64;
+    let sh = u64::from(if h != 0 {
+        h.leading_zeros()
+    } else {
+        64 + l.leading_zeros()
+    });
+    let top = (r >> (75 - sh)) as u64; // upper 53 non-zero bits
+    let rbit = (r >> (74 - sh)) & 1; // round bit
+    const SGN: [f64; 2] = [hf!("0x1p-53"), hf!("-0x1p-53")];
+    let v = f64::from_bits(SGN[sbit].to_bits().wrapping_sub(sh << 52)); // scale by 2^-sh
+    let a = top as f64 * v;
+    let b = a * if rbit != 0 {
+        hf!("0x1p-53")
+    } else {
+        hf!("0x1p-54")
+    };
+    a + b
+}
+
+/// High 128 bits of the 256-bit product `a * b`, minus the low cross terms'
+/// carries (sin.c `mhUU`).
+#[inline(always)]
+fn mh_uu(a: u128, b: u128) -> u128 {
+    let (ah, al) = ((a >> 64) as u64, a as u64);
+    let (bh, bl) = ((b >> 64) as u64, b as u64);
+    let ahbh = u128::from(ah) * u128::from(bh);
+    let ahbl = u128::from(ah) * u128::from(bl);
+    let albh = u128::from(al) * u128::from(bh);
+    ahbh.wrapping_add(ahbl >> 64).wrapping_add(albh >> 64)
+}
+
+/// sin(2 pi r) * 2^128 for 0 <= r < 2^-14 in fixed point (sin.c `evalPS`).
+#[inline(always)]
+fn sin_eval_ps(u: u128, u2: u128, u2h: u128, u4: u128) -> u128 {
+    let ps = &SIN_PS;
+    let sh = ps[2].wrapping_sub(ps[3].wrapping_mul(u2h));
+    let sh = mh_uu(sh, u4);
+    let s = mh_uu(ps[1], u2);
+    let s = ps[0].wrapping_sub(s).wrapping_add(sh);
+    mh_uu(s, u)
+}
+
+/// cos(2 pi r) * 2^128 for 0 <= r < 2^-14 in fixed point (sin.c `evalPC`).
+#[inline(always)]
+fn sin_eval_pc(u2: u128, u2h: u128, u4: u128) -> u128 {
+    let pc = &SIN_PC;
+    let sh = pc[3].wrapping_sub(u2h.wrapping_mul(pc[4]));
+    let sh = pc[2].wrapping_sub(mh_uu(sh, u2));
+    let s = mh_uu(pc[1], u2);
+    pc[0].wrapping_sub(s).wrapping_add(mh_uu(sh, u4))
+}
+
+/// Argument reduction for |x| >= 2^31: `(k, r)` with
+/// x/(2 pi) mod 1 = k/2^15 + r + s, 0 <= r < 2^-15, 0 <= s < 2^-67.988.
+#[inline(always)]
+fn sin_reduce_large(x: f64) -> (u64, f64) {
+    let t = x.to_bits();
+    let e = ((t >> 52) & 0x7ff) as i32; // 1054 <= e <= 2046
+    let m = (1u64 << 52) | (t & MASK52);
+    let i = ((e - 1011) / 64) as usize;
+    let f = ((e - 1011) & 0x3f) as u32;
+    let tt = &SIN_T;
+    let (v0, v1) = if f == 0 {
+        (tt[i], tt[i + 1])
+    } else {
+        (
+            (tt[i] << f) | (tt[i + 1] >> (64 - f)),
+            (tt[i + 1] << f) | (tt[i + 2] >> (64 - f)),
+        )
+    };
+    let u = u128::from(v1) | (u128::from(v0) << 64);
+    let u = u128::from(m).wrapping_mul(u);
+    // Round r to nearest: 0x810000000000000 = 2^59 + 2^52.
+    const MAGIC: u128 = (1u128 << 112) + 0x0810_0000_0000_0000;
+    let u = u.wrapping_add(MAGIC);
+    let tf = ((u << 15) >> 75) as u64 as f64; // next 53 bits after the first 15
+    ((u >> 113) as u64, tf * hf!("0x1p-68") - hf!("0x1p-16"))
+}
+
+/// Accurate-path reduction: `(k, r, neg)` with x/(2 pi) mod 1 =
+/// k/2^13 + (-1)^neg r/2^128 + eps, |r/2^128| <= 2^-14.
+#[inline(always)]
+fn sin_reduce_large_acc(x: f64) -> (u64, u128, bool) {
+    let t = x.to_bits();
+    let e = ((t >> 52) & 0x7ff) as i32;
+    let m = (1u64 << 52) | (t & MASK52);
+    let i = -1 + (e - 947) / 64;
+    let f = ((e - 1011) & 0x3f) as u32;
+    let tt = &SIN_T;
+    let at = |j: i32| tt[j as usize];
+    let mut v0 = if i >= 0 { at(i) } else { 0 };
+    let mut v1 = at(i + 1);
+    let mut v2 = at(i + 2);
+    if f != 0 {
+        v0 = (v0 << f) | (v1 >> (64 - f));
+        v1 = (v1 << f) | (v2 >> (64 - f));
+        v2 = (v2 << f) | (at(i + 3) >> (64 - f));
+    }
+    let u = u128::from(v1) | (u128::from(v0) << 64);
+    let mut u = u128::from(m).wrapping_mul(u);
+    let v = u128::from(m) * u128::from(v2);
+    u = u.wrapping_add(v >> 64);
+    let mut k = (u >> (128 - 13)) as u64;
+    const MASK: u128 = (0x7_ffff_ffff_ffffu128 << 64) | 0xffff_ffff_ffff_ffff;
+    u &= MASK; // drop the leading 13 bits
+    let neg = (u >> 114) != 0;
+    if neg {
+        k = (k + 1) & ((1 << 13) - 1);
+        u = (MASK + 1).wrapping_sub(u);
+    }
+    (k, u, neg)
+}
+
+/// sin.c `muldd`: `(xh + xl) * (ch + cl)` with the low product folded.
+#[inline(always)]
+fn muldd_sin(xh: f64, xl: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let ahhh = xh * ch;
+    (ahhh, (xh * cl + xl * ch) + xh.mul_add(ch, -ahhh))
+}
+
+/// sin.c `fastsum`: `(xh + xl) + (yh + yl)` assuming |xh| >= |yh|.
+#[inline(always)]
+fn fastsum_dd(xh: f64, xl: f64, yh: f64, yl: f64) -> (f64, f64) {
+    let (sh, sl) = fasttwosum(xh, yh);
+    (sh, (xl + yl) + sl)
+}
+
+/// Accurate sin for |x| >= 2^-16 in 128-bit fixed point.
+#[cold]
+#[inline(never)]
+fn sin_large_accurate(x: f64) -> f64 {
+    let (k, r, neg) = sin_reduce_large_acc(x);
+    // TWOPI/2^128 approximates 2pi/2^3.
+    const TWOPI: u128 = (0xc90f_daa2_2168_c234u128 << 64) | 0xc4c6_628b_80dc_1cd1;
+    let r = mh_uu(TWOPI, r << 3);
+    let u2 = mh_uu(r, r);
+    let u4 = mh_uu(u2, u2);
+    let u2h = u2 >> 64;
+    let mut sbit = usize::from(x <= 0.0) ^ (k >> 12) as usize;
+    let i1 = ((k >> 6) & 0x3f) as usize;
+    let i2 = (k & 0x3f) as usize;
+    let s1 = if i1 <= 32 {
+        SIN_S1U[i1]
+    } else {
+        SIN_S1U[64 - i1]
+    };
+    let c1 = if i1 <= 32 {
+        SIN_S1U[32 - i1]
+    } else {
+        SIN_S1U[i1 - 32]
+    };
+    let mut s1u = mh_uu(s1, SIN_C2U[i2]);
+    let t = mh_uu(c1, SIN_S2U[i2]);
+    s1u = if i1 < 32 {
+        s1u.wrapping_add(t)
+    } else {
+        s1u.wrapping_sub(t)
+    };
+    let mut c1u = mh_uu(c1, SIN_C2U[i2]);
+    let t = mh_uu(s1, SIN_S2U[i2]);
+    c1u = if i1 < 32 {
+        c1u.wrapping_sub(t)
+    } else {
+        c1u.wrapping_add(t)
+    };
+    let sr = sin_eval_ps(r, u2, u2h, u4);
+    let cr = sin_eval_pc(u2, u2h, u4);
+    let mut s1u = mh_uu(s1u, cr);
+    let c1u = mh_uu(c1u, sr);
+    if (i1 < 32) ^ neg {
+        s1u = s1u.wrapping_add(c1u);
+    } else if s1u < c1u {
+        s1u = c1u - s1u;
+        sbit ^= 1;
+    } else {
+        s1u -= c1u;
+    }
+    u128_tod(s1u, sbit)
+}
+
+/// Accurate sin for |x| < 2^-16.
+#[inline(always)]
+fn sin_small_accurate(x: f64) -> f64 {
+    const C3H: f64 = hf!("-0x1.5555555555555p-3");
+    const C3L: f64 = hf!("-0x1.55554b00de7e8p-57");
+    const C5: f64 = hf!("0x1.111111110848p-7");
+    let x2h = x * x;
+    let x2l = x.mul_add(x, -x2h);
+    let mut h = C5 * x2h;
+    h += C3L;
+    let (h, l) = fasttwosum(C3H, h);
+    let (h, l) = muldd_sin(h, l, x2h, x2l);
+    let (h, mut l) = muldd_sin(h, l, x, 0.0);
+    let (h, t) = fasttwosum(x, h);
+    l += t;
+    h + l
+}
+
+/// sin(j pi / 2^14) as a double-double plus a double cos(j pi / 2^14), from
+/// the two-level `SIN_U1`/`SIN_U2` tables.
+#[inline(always)]
+fn sin_table(j: u64) -> (f64, f64, f64) {
+    let i1 = ((j >> 7) & 0x7f) as usize;
+    let i2 = (j & 0x7f) as usize;
+    let (u1, u2) = (&SIN_U1[i1], &SIN_U2[i2]);
+    let (s1h, s1l) = muldd_sin(u1[0], u1[1], u2[2], u2[3]);
+    let (s2h, s2l) = muldd_sin(u2[0], u2[1], u1[2], u1[3]);
+    let (sh, sl) = fastsum_dd(s1h, s1l, s2h, s2l);
+    let ch = u1[2] * u2[2] - u1[0] * u2[0];
+    (sh, sl, ch)
+}
+
+/// Fast sin for 0x1.7137449123ef6p-26 < |x| < 2^31.
+#[inline(always)]
+fn sin_moderate(x: f64, sbit: usize) -> f64 {
+    const PIH: f64 = hf!("-0x1.921fb54442d18p-13");
+    const PIL: f64 = hf!("-0x1.1a62633145c07p-67");
+    let ax = x.abs();
+    let k = (hf!("0x1.45f306dc9c883p+12") * ax).round_ties_even();
+    let rh = k.mul_add(PIH, ax); // exact
+    let rl = k * PIL;
+    let r = rh + rl;
+    let r2 = r * r;
+    let j = k as i64;
+    let sbit = sbit ^ ((j >> 14) & 1) as usize;
+    let (big_sh, big_sl, big_ch) = sin_table(j as u64);
+    let sh = r * (1.0 - hf!("0x1.55555553068fp-3") * r2);
+    let ch = r2 * (-0.5 + hf!("0x1.55555553bfd3p-5") * r2);
+    let fh = big_sh;
+    let fl = big_sl + big_sh * ch + big_ch * sh;
+    const SGN: [f64; 2] = [1.0, -1.0];
+    const EPS: f64 = hf!("0x1.dep-64");
+    const EPS2: f64 = hf!("0x1.dep-63");
+    let fh = SGN[sbit] * fh;
+    let fl = SGN[sbit] * fl - EPS;
+    let lb = fh + fl;
+    let ub = fh + (fl + EPS2);
+    if ub == lb {
+        return lb;
+    }
+    if x.abs() < hf!("0x1p-16") {
+        return sin_small_accurate(x);
+    }
+    sin_large_accurate(x)
+}
+
+/// Fast sin for |x| >= 2^31.
+#[inline(never)]
+fn sin_large(x: f64) -> f64 {
+    let (j, r) = sin_reduce_large(x.abs());
+    let r2 = r * r;
+    let sbit = usize::from(x <= 0.0) ^ (j >> 14) as usize;
+    let (big_sh, big_sl, big_ch) = sin_table(j);
+    let sh = r * (hf!("0x1.921fb54442d18p2") - hf!("0x1.4abbcdb6b26d1p5") * r2);
+    let ch = r2 * (hf!("-0x1.3bd3cc9be45dep4") + hf!("0x1.03c1eee483083p6") * r2);
+    let fh = big_sh;
+    let fl = big_sl + big_sh * ch + big_ch * sh;
+    const SGN: [f64; 2] = [1.0, -1.0];
+    let fh = SGN[sbit] * fh;
+    let fl = SGN[sbit] * fl;
+    const EPS: f64 = hf!("0x1.01p-63");
+    let lb = fh + (fl - EPS);
+    let ub = fh + (fl + EPS);
+    if lb == ub {
+        return lb;
+    }
+    sin_large_accurate(x)
+}
+
+/// Correctly rounded `sin`.
+pub fn sin(x: f64) -> f64 {
+    let t = x.to_bits();
+    let au = t << 1;
+    if au <= 0x7cae_26e8_9224_7dec {
+        // |x| <= 0x1.7137449123ef6p-26: sin(x) rounds to x - x^3/6 ~ x.
+        if au == 0 {
+            return x;
+        }
+        return x.mul_add(hf!("-0x1p-54"), x);
+    }
+    let e = (t >> 52) & 0x7ff;
+    if e < 1054 {
+        return sin_moderate(x, (t >> 63) as usize);
+    }
+    if e == 0x7ff {
+        // NaN propagates; ±inf gives the default NaN with FE_INVALID.
+        return x * 0.0;
+    }
+    sin_large(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3141,5 +3439,42 @@ mod tests {
             assert_eq!(got, want, "atan({x:#x}) = {got:#x}, CORE-MATH {want:#x}");
         }
         assert!(atan(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn sin_matches_core_math_on_corpus() {
+        // Pinned from the CORE-MATH C original (glibc's IBM sin is not quite
+        // correctly rounded: it differs from this on 955 of these inputs).
+        assert_eq!(corpus_hash(sin, -40, 40), 0x33b8_ebe8_cd05_887b);
+    }
+
+    #[test]
+    fn sin_hard_and_special_cases() {
+        // (input, CORE-MATH result): tiny cut-off, the accurate-path boundary
+        // at 2^-16, the large-argument boundary at 2^31, huge arguments.
+        for (x, want) in [
+            (0x3e57_1374_4912_3ef6u64, 0x3e57_1374_4912_3ef6u64),
+            (0x3e57_1374_4912_3ef7, 0x3e57_1374_4912_3ef6),
+            (0x3ef0_0000_0000_0000, 0x3eef_ffff_fffa_aaab),
+            (0x3eef_ffff_ffff_ffff, 0x3eef_ffff_fffa_aaaa),
+            (0x41e0_0000_0000_0000, 0xbfef_14f9_13e9_af98),
+            (0x41df_ffff_ffff_ffff, 0xbfef_14f9_325a_7175),
+            (0x4480_f0cf_064d_d592, 0xbfeb_453a_b76b_f397),
+            (0x4e05_4a9a_d28f_0a25, 0x3fcc_fd76_45fe_82c0),
+            (0x4009_21fb_5444_2d18, 0x3ca1_a626_3314_5c07),
+            (0xbff0_0000_0000_0000, 0xbfea_ed54_8f09_0cee),
+            (0x4059_0000_0000_0000, 0xbfe0_3425_b78c_4db8),
+            (0x7e37_e43c_8800_759c, 0xbfea_2c16_b010_e385),
+            (0x7fef_ffff_ffff_ffff, 0x3f74_52fc_98b3_4e97),
+            (0x7ff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0x8000_0000_0000_0000),
+            (0x0000_0000_0000_0001, 0x0000_0000_0000_0001),
+            (0x0010_0000_0000_0000, 0x0010_0000_0000_0000),
+        ] {
+            let got = sin(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "sin({x:#x}) = {got:#x}, CORE-MATH {want:#x}");
+        }
+        assert!(sin(f64::NAN).is_nan());
     }
 }

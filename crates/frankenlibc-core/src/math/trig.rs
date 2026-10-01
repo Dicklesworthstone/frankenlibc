@@ -34,24 +34,10 @@ fn reduce_pio2_fma(x: f64) -> (i64, f64) {
 
 #[inline]
 pub fn sin(x: f64) -> f64 {
-    let ax = x.abs();
-    // Only the band where libm's reduction is genuinely slow (Payne-Hanek above
-    // `TRIG_FAST_HI`, 7-10x glibc) takes the FMA Cody-Waite reduction. Below it
-    // libm keeps its own reduction, which carries the reduced argument's low
-    // part into the kernel; the FMA route evaluates a single-double `r` and,
-    // when it was extended down to π/4, differed from glibc on 16% of inputs in
-    // [-10, 10] vs 3% for libm, which is also within 1.1x of glibc's speed
-    // there (bd-otip6a).
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
-        return libm::sin(x);
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    match n & 3 {
-        0 => libm::sin(r),
-        1 => libm::cos(r),
-        2 => -libm::sin(r),
-        _ => -libm::cos(r),
-    }
+    // CORE-MATH's correctly rounded sin. glibc's IBM sin is correctly rounded
+    // on all but ~0.1% of inputs, so this differs from glibc ~20x less often
+    // than libm::sin (3% in [-10, 10]; bd-otip6a).
+    crate::math::coremath::sin(x)
 }
 
 #[inline]
