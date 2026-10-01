@@ -43,140 +43,112 @@ pub fn atan2(y: f64, x: f64) -> f64 {
     libm::atan2(y, x)
 }
 
+// sinh/cosh/tanh are fdlibm's e_sinh.c / e_cosh.c / s_tanh.c (Sun Microsystems,
+// freely redistributable with this notice: "Developed at SunSoft, a Sun
+// Microsystems, Inc. business. Permission to use, copy, modify, and distribute
+// this software is freely granted, provided that this notice is preserved."),
+// the formulas glibc uses. Compiled in C on top of glibc's exp and expm1 they
+// reproduce glibc 2.43 bit for bit (0 of 300k differences); fl's exp is
+// bit-identical to glibc's, so what remains is fl's expm1 (bd-otip6a).
+
+/// High and low 32-bit words of `x`.
+#[inline(always)]
+fn hi_lo(x: f64) -> (i32, u32) {
+    let u = x.to_bits();
+    ((u >> 32) as i32, u as u32)
+}
+
 #[inline]
 pub fn sinh(x: f64) -> f64 {
-    // |x| <= 3: odd Taylor polynomial (no exp — cheaper than the (t-1/t)/2 reroute on
-    //   the hot band, mirrors the `cosh` polynomial). |x| in (3, 700): the two
-    //   exponentials are well separated (t >> 1/t), so sign(x)·(t-1/t)/2 with t=exp(|x|)
-    //   rides the fast f64 `exp` with no cancellation. |x| >= 700 (overflow) -> libm.
+    let (jx, lx) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        return x + x; // inf or NaN
+    }
+    let h = if jx < 0 { -0.5 } else { 0.5 };
     let ax = x.abs();
-    if ax <= 3.0 {
-        return sinh_poly_le_3(x);
+    if ix < 0x4036_0000 {
+        // |x| < 22
+        if ix < 0x3e30_0000 {
+            return x; // |x| < 2^-28: sinh(x) rounds to x
+        }
+        let t = crate::math::expm1(ax);
+        if ix < 0x3ff0_0000 {
+            return h * (2.0 * t - t * t / (t + 1.0));
+        }
+        return h * (t + t / (t + 1.0));
     }
-    if ax < 700.0 {
-        let t = crate::math::exp(ax);
-        let r = (t - 1.0 / t) * 0.5;
-        return if x.is_sign_negative() { -r } else { r };
+    if ix < 0x4086_2e42 {
+        // |x| in [22, log(DBL_MAX)]
+        return h * crate::math::exp(ax);
     }
-    // Above ln(DBL_MAX), exp(|x|) overflows even though sinh(|x|) is still
-    // finite, so `0.5 * exp(|x|)` cannot be evaluated directly — libm's result
-    // here sat 1 ULP under glibc (sinh(710) gave 1.1169973830808555e308 against
-    // glibc's ...557e308). glibc splits the exponential so no intermediate
-    // leaves range: t = exp(|x|/2), then (0.5·t)·t = 0.5·exp(|x|).
-    //
-    // The boundary is ln(DBL_MAX) because that is where direct evaluation
-    // actually overflows — not because it is where the gate samples. Inputs
-    // between 700 and ln(DBL_MAX) keep their existing path, which is already
-    // exact there.
-    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
-    if ax.is_finite() && ax > LN_DBL_MAX {
-        let t = crate::math::exp(0.5 * ax);
-        let r = (0.5 * t) * t;
-        return if x.is_sign_negative() { -r } else { r };
+    if ix < 0x4086_33ce || (ix == 0x4086_33ce && lx <= 0x8fb9_f87d) {
+        // |x| in [log(DBL_MAX), overflow threshold]: split the exponential.
+        let w = crate::math::exp(0.5 * ax);
+        let t = h * w;
+        return t * w;
     }
-    libm::sinh(x)
+    x * 1.0e307 // overflow
 }
 
-#[inline]
-fn sinh_poly_le_3(x: f64) -> f64 {
-    // Odd Taylor/Horner polynomial through x^27: sinh(x) = x·Σ (x²)^k/(2k+1)!. On
-    // |x| <= 3 the first omitted term x^29/29! < 8e-18 is well under the 4-ULP math
-    // contract for sinh (sinh(3)=10.02, 4 ULP ~ 9e-15). x carries the sign (odd), so ±0
-    // -> ±0 falls out. Mirrors the peer's `cosh_poly_le_3`.
-    let z = x * x;
-    let mut p: f64 = 9.183_689_863_795_546e-29;
-    p = p.mul_add(z, 6.446_950_284_384_474e-26);
-    p = p.mul_add(z, 3.868_170_170_630_683_5e-23);
-    p = p.mul_add(z, 1.957_294_106_339_126_3e-20);
-    p = p.mul_add(z, 8.220_635_246_624_33e-18);
-    p = p.mul_add(z, 2.811_457_254_345_520_6e-15);
-    p = p.mul_add(z, 7.647_163_731_819_816e-13);
-    p = p.mul_add(z, 1.605_904_383_682_161_3e-10);
-    p = p.mul_add(z, 2.505_210_838_544_172e-8);
-    p = p.mul_add(z, 2.755_731_922_398_589_3e-6);
-    p = p.mul_add(z, 1.984_126_984_126_984e-4);
-    p = p.mul_add(z, 8.333_333_333_333_333e-3);
-    p = p.mul_add(z, 0.166_666_666_666_666_66);
-    p = p.mul_add(z, 1.0);
-    x * p
-}
-
-/// `cosh(x) = (eˣ + e⁻ˣ)/2`, using a small/medium even polynomial before the
-/// large-input one-`exp` form.
-///
-/// Profiling (`glibc_baseline_math/cosh`) showed `libm::cosh` (~13.5 ns) is
-/// ~1.4x slower than glibc's `cosh` (~9.6 ns), while our `exp` (exp2-based
-/// fast path) is ~0.66x glibc's — so one `exp` + reciprocal reaches parity.
-/// A degree-26 even Taylor/Horner polynomial is faster still on the survey's
-/// hot `[0.1, 3.0]` band; the first omitted term at `|x| = 3` is below 8e-17.
-/// Unlike `sinh`, `cosh` has no catastrophic cancellation: both the polynomial
-/// and the one-`exp` form sum positive terms, and the result stays within the
-/// 4-ULP-vs-glibc math contract (verified by `cosh_fast_path_within_4_ulps`).
-///
-/// `|x| >= 700` defers to `libm::cosh`: there `exp(x)` would overflow to `inf`
-/// while `cosh(x)` is still finite in the band `(709.78, 710.47]` (cosh
-/// overflows later than exp), so the naive form would wrongly return `inf`.
-/// 700 sits safely below the `exp` overflow threshold (`exp(700) ≈ 1e304`).
 #[inline]
 pub fn cosh(x: f64) -> f64 {
+    let (jx, lx) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        return x * x; // inf or NaN
+    }
     let ax = x.abs();
-    if ax <= 3.0 {
-        return cosh_poly_le_3(ax);
+    if ix < 0x3fd6_2e43 {
+        // |x| < ln(2)/2: 1 + expm1(|x|)^2 / (2 exp(|x|))
+        let t = crate::math::expm1(ax);
+        let w = 1.0 + t;
+        if ix < 0x3c80_0000 {
+            return w; // cosh(tiny) = 1
+        }
+        return 1.0 + (t * t) / (w + w);
     }
-    if ax < 700.0 {
+    if ix < 0x4036_0000 {
+        // |x| < 22
         let t = crate::math::exp(ax);
-        return (t + 1.0 / t) * 0.5;
+        return 0.5 * t + 0.5 / t;
     }
-    // Same overflow split as `sinh`: past ln(DBL_MAX) the single exp overflows
-    // while cosh itself is still finite, and libm landed 1 ULP under glibc
-    // (cosh(710) gave 1.1169973830808555e308 against ...557e308). cosh is even,
-    // so no sign fixup is needed.
-    const LN_DBL_MAX: f64 = 709.782_712_893_384_0;
-    if ax.is_finite() && ax > LN_DBL_MAX {
-        let t = crate::math::exp(0.5 * ax);
-        return (0.5 * t) * t;
+    if ix < 0x4086_2e42 {
+        return 0.5 * crate::math::exp(ax);
     }
-    libm::cosh(x)
-}
-
-#[inline]
-fn cosh_poly_le_3(x: f64) -> f64 {
-    // Even Taylor/Horner polynomial through x^26. On |x| <= 3 the first omitted
-    // term is x^28/28! < 8e-17, well under the 4-ULP math contract for cosh.
-    let z = x * x;
-    let mut p: f64 = 2.479_596_263_224_797_2e-27;
-    p = p.mul_add(z, 1.611_737_571_096_118_4e-24);
-    p = p.mul_add(z, 8.896_791_392_450_574e-22);
-    p = p.mul_add(z, 4.110_317_623_312_165e-19);
-    p = p.mul_add(z, 1.561_920_696_858_622_5e-16);
-    p = p.mul_add(z, 4.779_477_332_387_385e-14);
-    p = p.mul_add(z, 1.147_074_559_772_972_5e-11);
-    p = p.mul_add(z, 2.087_675_698_786_81e-9);
-    p = p.mul_add(z, 2.755_731_922_398_589e-7);
-    p = p.mul_add(z, 2.480_158_730_158_73e-5);
-    p = p.mul_add(z, 1.388_888_888_888_889e-3);
-    p = p.mul_add(z, 4.166_666_666_666_666_4e-2);
-    p = p.mul_add(z, 0.5);
-    p.mul_add(z, 1.0)
+    if ix < 0x4086_33ce || (ix == 0x4086_33ce && lx <= 0x8fb9_f87d) {
+        let w = crate::math::exp(0.5 * ax);
+        let t = 0.5 * w;
+        return t * w;
+    }
+    let huge = core::hint::black_box(1.0e300);
+    huge * huge // overflow
 }
 
 #[inline]
 pub fn tanh(x: f64) -> f64 {
-    // For |x| in [0.5, 20): tanh(x) = sign(x)·(u-1)/(u+1) with u = exp(2|x|). Since
-    // u >= e (no cancellation in u-1) it rides the now-fast f64 `exp` kernel. |x| >= 20
-    // saturates to ±1 in f64 (1 - tanh < half-ULP), which also avoids exp(2x) overflow.
-    // Small |x| (< 0.5, where u ~ 1 and u-1 cancels) keeps libm::tanh's exact handling.
-    let ax = x.abs();
-    if ax >= 0.5 {
-        let r = if ax >= 20.0 {
-            1.0
-        } else {
-            let u = crate::math::exp(2.0 * ax);
-            (u - 1.0) / (u + 1.0)
-        };
-        return if x.is_sign_negative() { -r } else { r };
+    let (jx, _) = hi_lo(x);
+    let ix = jx & 0x7fff_ffff;
+    if ix >= 0x7ff0_0000 {
+        // tanh(±inf) = ±1; NaN propagates.
+        return if jx >= 0 { 1.0 / x + 1.0 } else { 1.0 / x - 1.0 };
     }
-    libm::tanh(x)
+    let z = if ix < 0x4036_0000 {
+        // |x| < 22
+        if ix < 0x3c80_0000 {
+            return x * (1.0 + x); // |x| < 2^-55
+        }
+        if ix >= 0x3ff0_0000 {
+            let t = crate::math::expm1(2.0 * x.abs());
+            1.0 - 2.0 / (t + 2.0)
+        } else {
+            let t = crate::math::expm1(-2.0 * x.abs());
+            -t / (t + 2.0)
+        }
+    } else {
+        1.0 - core::hint::black_box(1.0e-300) // ±1 with FE_INEXACT
+    };
+    if jx >= 0 { z } else { -z }
 }
 
 #[inline]

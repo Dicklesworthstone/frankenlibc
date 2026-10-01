@@ -1123,52 +1123,12 @@ pub fn pow_fused(x: f64, y: f64) -> f64 {
     pow_exp_inline(ehi, elo, sign_bias)
 }
 
-// expm1 exists to avoid the catastrophic cancellation of `exp(x)-1` as x→0.
-// Away from zero there is no cancellation, so on the positive medium band the
-// direct `exp(x)-1` is both accurate (≤3 ULP vs glibc) and far cheaper than
-// libm's dedicated expm1 polynomial — and our `exp` fast path already beats
-// glibc. Mirrors the f32 `expm1f` lever. x<0.5 (incl. the near-0 cancellation
-// region) and large/non-finite x defer to libm for exact semantics.
-const EXPM1_POSITIVE_FAST_MIN: f64 = 0.5;
-const EXPM1_POSITIVE_FAST_MAX: f64 = 2.5;
-
 #[inline]
 pub fn expm1(x: f64) -> f64 {
-    // For |x| >= 0.5 the `exp(x) - 1` subtraction has no catastrophic cancellation
-    // (exp(x) is bounded away from 1), so it rides the now-fast f64 `exp` kernel over
-    // both signs and the full range: x > 709 -> exp overflows -> inf (expm1 -> inf);
-    // x << 0 -> exp underflows -> 0 -> -1 (expm1(-inf) = -1). Only small |x| (< 0.5,
-    // where exp(x) ~ 1 and the cancellation matters) keeps libm::expm1. Widens the old
-    // positive-only [0.5, 2.5] fast path; EXPM1_POSITIVE_FAST_MIN is the |x| threshold.
-    let ax = x.abs();
-    if ax >= EXPM1_POSITIVE_FAST_MIN {
-        // Negative saturation: expm1(x) = e^x - 1 rounds to exactly -1.0 for x <= -37
-        // (e^-37 ~ 8.5e-17 < half-ULP(1) = 1.11e-16), and glibc returns -1.0 there.
-        // Skip the exp(x) call for the whole x <= -37 tail (expm1(-inf) = -1 too).
-        // Bit-identical to the `exp(x) - 1.0` path, which already yields -1.0 here.
-        if x <= -37.0 {
-            return -1.0;
-        }
-        return exp(x) - 1.0;
-    }
-    // |x| < 0.5: direct Taylor expm1(x) = x·Σ x^k/(k+1)! through x^14 (first omitted
-    // x^15/15! < 2.3e-17, under the 4-ULP bound). No cancellation (unlike exp(x)-1) and
-    // cheaper than libm::expm1's reduction+polynomial. x carries the sign, so ±0 -> ±0.
-    let mut p: f64 = 1.147_074_559_772_972_5e-11; // 1/14!
-    p = p.mul_add(x, 1.605_904_383_682_161_3e-10); // 1/13!
-    p = p.mul_add(x, 2.087_675_698_786_81e-9); // 1/12!
-    p = p.mul_add(x, 2.505_210_838_544_172e-8); // 1/11!
-    p = p.mul_add(x, 2.755_731_922_398_589e-7); // 1/10!
-    p = p.mul_add(x, 2.755_731_922_398_589_3e-6); // 1/9!
-    p = p.mul_add(x, 2.480_158_730_158_73e-5); // 1/8!
-    p = p.mul_add(x, 1.984_126_984_126_984e-4); // 1/7!
-    p = p.mul_add(x, 1.388_888_888_888_889e-3); // 1/6!
-    p = p.mul_add(x, 8.333_333_333_333_333e-3); // 1/5!
-    p = p.mul_add(x, 4.166_666_666_666_666_4e-2); // 1/4!
-    p = p.mul_add(x, 0.166_666_666_666_666_66); // 1/3!
-    p = p.mul_add(x, 0.5); // 1/2!
-    p = p.mul_add(x, 1.0); // 1/1!
-    x * p
+    // fdlibm's expm1 (libm crate, the musl port), the algorithm glibc ships:
+    // differs from glibc 2.43 on 2776 of 3M inputs (0.09%), where the earlier
+    // exp(x)-1 / Taylor shortcuts differed on 6.8% (bd-otip6a).
+    libm::expm1(x)
 }
 
 /// Natural log: ARM optimized-routines' `log` (glibc's `__log`), bit-identical
@@ -1362,21 +1322,11 @@ pub fn log10(x: f64) -> f64 {
 
 #[inline]
 pub fn log1p(x: f64) -> f64 {
-    if x == 0.0 {
-        return x; // preserve the sign of zero (log1p(-0) = -0)
-    }
-    // Fast compensated path: log1p(x) = log(s) + e/s, where s = 1+x (rounded) and
-    // e = x - (s-1) recovers the rounding error of `1+x`. The e/s term corrects the
-    // small-x cancellation that a bare `log(1+x)` loses, so this rides the dedicated
-    // fast f64 `log` kernel (ARM __log) at full accuracy across finite x > -1.
-    if x > -1.0 && x.is_finite() {
-        let s = 1.0 + x;
-        let e = x - (s - 1.0);
-        return log(s) + e / s;
-    }
-    // x == -1 (pole) / x < -1 (domain) / inf / nan: defer to libm for the exact
-    // special value. log1p(-1) = -inf is a pole — glibc raises FE_DIVBYZERO, libm
-    // omits it, so re-raise it here (x < -1 already raises FE_INVALID via libm).
+    // fdlibm's log1p (libm crate, the musl port), the algorithm glibc ships:
+    // differs from glibc 2.43 on 1242 of 3M inputs (0.04%), where the earlier
+    // log(1+x) + e/(1+x) shortcut differed on 5% (bd-otip6a).
+    // log1p(-1) = -inf is a pole: glibc raises FE_DIVBYZERO, libm omits it, so
+    // re-raise it here (x < -1 already raises FE_INVALID via libm).
     if x == -1.0 {
         let _ =
             core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
@@ -2687,33 +2637,35 @@ mod tests {
     }
 
     #[test]
-    fn expm1_fast_path_within_4_ulps() {
-        // The positive-band fast path (exp(x)-1) must stay within the 4-ULP math
-        // conformance contract vs the libm expm1 reference across the gated range.
-        fn ulp(a: f64, b: f64) -> i64 {
-            if a == b {
-                0
-            } else if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
-                i64::MAX
-            } else {
-                (a.to_bits() as i64 - b.to_bits() as i64).abs()
-            }
+    fn expm1_log1p_match_glibc_where_the_old_shortcuts_did_not() {
+        // (x, glibc 2.43 result) at inputs where the replaced exp(x)-1 and
+        // log(1+x)+e/(1+x) shortcuts were off by an ulp (bd-otip6a).
+        for (x, want) in [
+            (0x3fe5_0707_18d0_0d00u64, 0x3fed_bc0b_9ea3_09e7u64),
+            (0x3fe5_0f6c_9892_7b00, 0x3fed_cc40_91c3_45e3),
+            (0x4021_4a67_1796_03f0, 0x40b6_3279_1b02_81ea),
+            (0x402c_a43f_6f70_75f0, 0x4139_4a72_5864_1e1e),
+            (0x3ff6_ac1a_3464_4680, 0x4008_ff96_5f9c_672b),
+            (0x402c_4a16_79c5_cbf0, 0x4135_3513_e9d4_7586),
+            (0x4011_e6e7_5b32_1aa0, 0x4055_b59e_82d0_c4ca),
+            (0x402f_7830_157d_7c10, 0x4159_fff9_0ac8_43f0),
+        ] {
+            let got = expm1(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "expm1({x:#x}) = {got:#x}, glibc {want:#x}");
         }
-        let mut worst = 0i64;
-        let mut worst_x = 0.0f64;
-        let mut x = EXPM1_POSITIVE_FAST_MIN;
-        while x <= EXPM1_POSITIVE_FAST_MAX {
-            let u = ulp(expm1(x), libm::expm1(x));
-            if u > worst {
-                worst = u;
-                worst_x = x;
-            }
-            x += 0.0001;
+        for (x, want) in [
+            (0x3fe6_dca5_b25f_2e33u64, 0x3fe1_402b_9246_7c19u64),
+            (0x3ff4_db3c_097a_711a, 0x3fea_b3bb_d2cb_49aa),
+            (0x4008_c0e5_d8f6_98ad, 0x3ff6_8d97_b44a_76f2),
+            (0x3fff_d4c9_31bd_ce1a, 0x3ff1_857c_60b9_c460),
+            (0x3fe8_2e48_6923_33b3, 0x3fe2_02c6_fbd1_a152),
+            (0xbfe4_21ea_e3f7_2fcd, 0xbfef_bde7_2cd5_a4ec),
+            (0x4020_7ce1_d072_9ff3, 0x4001_caae_2852_7b10),
+            (0x3ff5_accf_12f1_98da, 0x3feb_67b3_ba6a_ab2a),
+        ] {
+            let got = log1p(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "log1p({x:#x}) = {got:#x}, glibc {want:#x}");
         }
-        assert!(
-            worst <= 4,
-            "expm1 fast path worst {worst} ULP at x={worst_x}"
-        );
     }
 
     #[test]
