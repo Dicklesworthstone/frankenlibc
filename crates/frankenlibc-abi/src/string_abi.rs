@@ -92,6 +92,11 @@ fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
     if string_raw_passthrough_active() {
         return None;
     }
+    // A signal handler must not re-enter the membrane/policy state the frame
+    // it interrupted on this thread may be in the middle of (bd-na6ede).
+    if crate::malloc_abi::in_signal_handler_now() {
+        return None;
+    }
     if runtime_policy::is_runtime_ready() {
         if runtime_policy::in_policy_reentry_context() {
             return None;

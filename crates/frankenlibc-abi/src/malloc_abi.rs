@@ -161,6 +161,11 @@ fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
     handler_sp != 0 && current_stack_address() <= handler_sp
 }
 
+/// `in_signal_handler` for the calling thread (false when it has no slot).
+pub(crate) fn in_signal_handler_now() -> bool {
+    current_allocator_reentry_slot().is_some_and(in_signal_handler)
+}
+
 /// Marks a user signal handler running on this thread (bd-na6ede). While it
 /// runs, every allocator entry takes the reentrant path, which uses only the
 /// lock-free bump heap: the interrupted frame may hold any allocator lock --
@@ -4430,6 +4435,11 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
     // lock this was 39% of hardened `sort` at 60k lines
     // (bd-rc0923-epic-eeuy4f.9). An exact start sits at or right after its home
     // slot; a lookup that misses reports no bound, as before.
+    if fallback_table_entered_on_this_thread() {
+        // A signal handler (or the table holder itself): never wait on the
+        // table lock the interrupted frame may hold (bd-na6ede). No bound.
+        return None;
+    }
     let _guard = lock_fallback_alloc_table();
     let start = fallback_start_index(addr);
     for i in 0..64 {
@@ -4942,6 +4952,15 @@ fn record_allocator_stage_outcome(
 #[must_use]
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     if runtime_policy::proof_carried_pointer_validation_active() {
+        return Some(PointerAbstraction::unknown(addr));
+    }
+    // A signal handler must not re-enter the membrane: the frame it interrupted
+    // on this thread may be mid-validation, holding arena locks or a pinned EBR
+    // epoch that a nested pin/unpin would release early (use-after-free of
+    // retired blocks -- glibc then aborted in its tcache at thread exit;
+    // bd-na6ede). The handler's string calls proceed unbounded, as for any
+    // pointer the membrane does not know.
+    if in_signal_handler_now() {
         return Some(PointerAbstraction::unknown(addr));
     }
     let pipeline = crate::membrane_state::ready_pipeline()?;

@@ -1963,6 +1963,15 @@ unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_vo
         remember_current_pthread_self(host_thread);
         remember_host_thread_tid(host_thread, core_self_tid());
     }
+    // Create the membrane's per-thread validation cache now, while this thread
+    // holds no lock. Created lazily, its destructor registration callocs from
+    // inside whatever validation first touches it -- which can be a memmove
+    // nested under an arena shard lock this thread holds (a BTreeMap node
+    // split), and the calloc then waited on that same shard forever
+    // (bd-na6ede). Strict mode never validates through it.
+    if !crate::runtime_policy::strict_passthrough_active() {
+        frankenlibc_membrane::tls_cache::with_tls_cache(|_| ());
+    }
     unsafe { start_routine(start_arg) }
 }
 
