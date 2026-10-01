@@ -919,10 +919,13 @@ fn pow_log_inline(ix: u64) -> (f64, f64) {
     let logc = f64::from_bits(POW_LOG_TAB[3 * i + 1]);
     let logctail = f64::from_bits(POW_LOG_TAB[3 * i + 2]);
 
+    // glibc's FMA build contracts every multiply-add whose product has a
+    // single use (see `exp`); `ar`, `ar2` and `ar3` have several, so stay
+    // separate products.
     let r = z.mul_add(invc, -1.0); // __builtin_fma(z, invc, -1.0)
-    let t1 = kd * ln2hi + logc;
+    let t1 = kd.mul_add(ln2hi, logc);
     let t2 = t1 + r;
-    let lo1 = kd * ln2lo + logctail;
+    let lo1 = kd.mul_add(ln2lo, logctail);
     let lo2 = t1 - t2 + r;
 
     let ar = a0 * r; // A[0] = -0.5
@@ -931,7 +934,11 @@ fn pow_log_inline(ix: u64) -> (f64, f64) {
     let hi = t2 + ar2;
     let lo3 = ar.mul_add(r, -ar2); // __builtin_fma(ar, r, -ar2)
     let lo4 = t2 - hi + ar2;
-    let p = ar3 * (a1 + r * a2 + ar2 * (a3 + r * a4 + ar2 * (a5 + r * a6)));
+    let p = ar3
+        * ar2.mul_add(
+            ar2.mul_add(r.mul_add(a6, a5), r.mul_add(a4, a3)),
+            r.mul_add(a2, a1),
+        );
     let lo = lo1 + lo2 + lo3 + lo4 + p;
     let y = hi + lo;
     let tail = hi - y + lo;
@@ -946,16 +953,18 @@ fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
         // k > 0, the exponent of scale might have overflowed by <= 460.
         sbits = sbits.wrapping_sub(1009u64 << 52);
         let scale = f64::from_bits(sbits);
-        let y = f64::from_bits(0x7f00_0000_0000_0000) * (scale + scale * tmp); // 0x1p1009
+        let y = f64::from_bits(0x7f00_0000_0000_0000) * scale.mul_add(tmp, scale); // 0x1p1009
         return y;
     }
-    // k < 0, subnormal range.
+    // k < 0, subnormal range. `scale * tmp` feeds two sums: unfused (see
+    // `exp_specialcase`).
     sbits = sbits.wrapping_add(1022u64 << 52);
     let scale = f64::from_bits(sbits);
-    let mut y = scale + scale * tmp;
+    let scaled_tmp = scale * tmp;
+    let mut y = scale + scaled_tmp;
     if y.abs() < 1.0 {
         let one = if y < 0.0 { -1.0 } else { 1.0 };
-        let lo = scale - y + scale * tmp;
+        let lo = scale - y + scaled_tmp;
         let hi = one + y;
         let lo = one - hi + y + lo;
         y = (hi + lo) - one;
@@ -1001,23 +1010,23 @@ fn pow_exp_inline(x: f64, xtail: f64, sign_bias: u64) -> f64 {
         abstop = 0;
     }
 
-    let z = invln2n * x;
-    let kd = z + shift; // math_narrow_eval == identity (FLT_EVAL_METHOD==0)
+    // Fused exactly as `exp` (glibc's FMA build contracts single-use products).
+    let kd = invln2n.mul_add(x, shift);
     let ki = kd.to_bits();
     let kd = kd - shift;
-    let mut r = x + kd * negln2hin + kd * negln2lon;
+    let mut r = kd.mul_add(negln2lon, kd.mul_add(negln2hin, x));
     r += xtail;
     let idx = (2 * (ki % 128)) as usize;
     let top = ki.wrapping_add(sign_bias) << (52 - 7);
     let tail = f64::from_bits(EXP2D_TAB[idx]);
     let sbits = EXP2D_TAB[idx + 1].wrapping_add(top);
     let r2 = r * r;
-    let tmp = tail + r + r2 * (c2 + r * c3) + r2 * r2 * (c4 + r * c5);
+    let tmp = (r2 * r2).mul_add(c5.mul_add(r, c4), r2.mul_add(r.mul_add(c3, c2), tail + r));
     if abstop == 0 {
         return pow_exp_specialcase(tmp, sbits, ki);
     }
     let scale = f64::from_bits(sbits);
-    scale + scale * tmp
+    scale.mul_add(tmp, scale)
 }
 
 /// Fused `x^y`. Faithful port of glibc `__pow`; handles the full IEEE domain
@@ -1110,7 +1119,7 @@ pub fn pow_fused(x: f64, y: f64) -> f64 {
 
     let (hi, lo) = pow_log_inline(ix);
     let ehi = y * hi;
-    let elo = y * lo + y.mul_add(hi, -ehi); // y*lo + __builtin_fma(y, hi, -ehi)
+    let elo = y.mul_add(lo, y.mul_add(hi, -ehi)); // y*lo + __builtin_fma(y, hi, -ehi), contracted
     pow_exp_inline(ehi, elo, sign_bias)
 }
 
@@ -2071,54 +2080,6 @@ fn pow_profile_exp_1_337_grid(base: f64) -> Option<f64> {
     None
 }
 
-/// `base` raised to a small integer power via exponentiation by squaring.
-/// `n.unsigned_abs()` must be small (the caller gates on `<= POWI_MAX_EXP`) so
-/// the multiply chain stays well inside the 4-ULP glibc parity budget.
-#[inline]
-fn powi_squaring(base: f64, n: i64) -> f64 {
-    let mut result = 1.0_f64;
-    let mut b = base;
-    let mut e = n.unsigned_abs();
-    while e > 0 {
-        if e & 1 == 1 {
-            result *= b;
-        }
-        e >>= 1;
-        if e > 0 {
-            b *= b;
-        }
-    }
-    if n < 0 { 1.0 / result } else { result }
-}
-
-/// `base` raised to a small half-integer exponent via `base^n * sqrt(base)`.
-/// The caller only reaches this for strictly positive finite bases, so libm's
-/// negative/zero/special-case semantics remain on the general path.
-#[inline]
-fn pow_half_integer_fast_path(base: f64, exponent: f64) -> Option<f64> {
-    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
-        return None;
-    }
-
-    let shifted = exponent - 0.5;
-    let n = shifted as i64;
-    if n as f64 == shifted && n.unsigned_abs() <= POWI_MAX_EXP {
-        // `powi_squaring(base, n)` can overflow to ±inf (or underflow to 0) for an
-        // extreme base even when the true `base^exponent` is finite and nonzero —
-        // e.g. base = 5e-324, n = -1 gives 1/base = inf, yet inf * sqrt(base) is a
-        // spurious inf where glibc returns ~4.5e161. When the intermediate is
-        // degenerate, defer to libm::pow (exact for these rare extremes) instead of
-        // propagating the bad intermediate.
-        let p = powi_squaring(base, n);
-        if !p.is_finite() || p == 0.0 {
-            return None;
-        }
-        Some(p * base.sqrt())
-    } else {
-        None
-    }
-}
-
 // Superseded by `pow_fused` (glibc-class, bit-exact). Retained for its
 // differential/golden tests only; no longer on the live `pow` path.
 #[inline]
@@ -2171,72 +2132,20 @@ fn pow_medium_log2_exp2_fast_path(base: f64, exponent: f64) -> Option<f64> {
     }
 }
 
-/// Largest |integer exponent| handled by the fast path. Each squaring/multiply
-/// adds at most ~0.5 ULP; capping the magnitude here keeps the result within
-/// the 4-ULP-vs-glibc contract (verified by `pow_integer_fast_path_within_4_ulps`).
-const POWI_MAX_EXP: u64 = 8;
-
-#[inline]
-fn pow_may_hit_small_integer_or_half_exponent(exponent: f64) -> bool {
-    let bits = exponent.to_bits() & 0x7fff_ffff_ffff_ffff;
-    if bits == 0 {
-        return true;
-    }
-
-    let biased_exp = ((bits >> 52) & 0x7ff) as i32;
-    if biased_exp == 0 || biased_exp == 0x7ff {
-        return false;
-    }
-
-    let exponent_of_two = biased_exp - 1023;
-    if !(-1..=3).contains(&exponent_of_two) {
-        return false;
-    }
-
-    let fractional_mask = (1_u64 << (52 - (exponent_of_two + 1) as u32)) - 1;
-    (bits & fractional_mask) == 0
-}
-
 #[inline]
 pub fn pow(base: f64, exponent: f64) -> f64 {
-    // Fast path: small integer exponents (and y == 0.5) on a finite base.
-    // Exponentiation by squaring is ~10x faster than the full kernel and, bounded
-    // to small magnitudes, stays within the 4-ULP glibc parity contract. Every
-    // positive-base exponent that cannot be a small integer or half-integer takes
-    // the bit-lattice corridor straight to `pow_fused`, skipping two f64->i64
-    // probes. IEEE special cases and negative bases keep the full classifier.
-    if base.is_finite() && exponent.is_finite() {
-        if base > 0.0 && !pow_may_hit_small_integer_or_half_exponent(exponent) {
-            return pow_fused(base, exponent);
-        }
-
-        // pow(±0, y) for finite y < 0 is a pole (result ±inf): glibc raises
-        // FE_DIVBYZERO — EXCEPT y == -1.0, which glibc special-cases as a bare
-        // reciprocal and leaves flag-free (verified vs host glibc). The fast-path
-        // `1.0/result` does not reliably emit a hardware divide for these
-        // constant-folded inputs, so re-raise it explicitly. Value unchanged.
-        if base == 0.0 && exponent < 0.0 && exponent != -1.0 {
-            let _ = core::hint::black_box(
-                core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
-            );
-        }
-        let n = exponent as i64;
-        if n as f64 == exponent && n.unsigned_abs() <= POWI_MAX_EXP {
-            return powi_squaring(base, n);
-        }
-        if exponent == 0.5 && base >= 0.0 {
-            // C99: pow(±0, y) is +0 for y > 0 that is not an odd integer, so
-            // pow(-0.0, 0.5) must be +0.0 — but (-0.0).sqrt() is -0.0. Force a
-            // positive zero for either signed zero; sqrt is exact otherwise.
-            return if base == 0.0 { 0.0 } else { base.sqrt() };
-        }
-        if let Some(result) = pow_half_integer_fast_path(base, exponent) {
-            return result;
-        }
+    // Every input goes through the fused log+exp kernel (glibc/ARM `__pow`),
+    // as in glibc: there are no integer or half-integer shortcuts, because
+    // repeated squaring rounds at each step and sqrt*powi twice -- x^3 differed
+    // from glibc on 26% of inputs, x^7 on 66%, x^2.5 on 35% (bd-otip6a).
+    //
+    // pow(±0, y) for finite y < 0 is a pole: glibc raises FE_DIVBYZERO --
+    // except y == -1.0, which it leaves flag-free (verified vs host glibc).
+    if base == 0.0 && exponent.is_finite() && exponent < 0.0 && exponent != -1.0 {
+        let _ = core::hint::black_box(
+            core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
+        );
     }
-    // Fused single-routine log+exp kernel (glibc/ARM `__pow`): bit-exact vs the
-    // host glibc `pow` over the whole IEEE domain, and faster than both the old
-    // unfused `exp2(y*log2(x))` medium path and the `libm::pow` general fallback.
     pow_fused(base, exponent)
 }
 
@@ -2292,10 +2201,16 @@ mod tests {
     }
 
     #[test]
-    fn pow_integer_fast_path_within_4_ulps() {
-        // Sweep the gated fast-path domain (|n| <= POWI_MAX_EXP, plus 0.5) over a
-        // wide spread of finite bases incl. negatives, zeros, sub/huge, and verify
-        // every result is within 4 ULP of the host glibc pow (f64::powf).
+    fn pow_integer_and_half_exponents_match_host_glibc() {
+        // Small integer and half-integer exponents once took shortcuts
+        // (squaring, sqrt*powi) that differed from glibc on 26-66% of inputs.
+        // They now run the fused kernel like everything else and must equal
+        // the host glibc pow (f64::powf) bit for bit -- on FMA hardware, where
+        // glibc runs the contracted build this kernel reproduces.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             0.0,
             -0.0,
@@ -2319,57 +2234,26 @@ mod tests {
             0.999_999,
             1.000_001,
         ];
-        for &base in &bases {
-            for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
-                let exp_f = n as f64;
-                let got = pow(base, exp_f);
-                let want = base.powf(exp_f);
+        let mut exponents: Vec<f64> = (-8..=8).map(|n| n as f64).collect();
+        exponents.extend((-8..=8).map(|n| n as f64 + 0.5));
+        // Plus a dense sweep of positive bases, where the shortcuts ran most.
+        let mut s = 0x9e37_79b9_7f4a_7c15u64;
+        let mut swept: Vec<f64> = bases.to_vec();
+        for _ in 0..20_000 {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            swept.push((s >> 11) as f64 / (1u64 << 53) as f64 * 10.0);
+        }
+        for &base in &swept {
+            for &y in &exponents {
+                let got = pow(base, y);
+                let want = base.powf(y);
                 assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, {exp_f}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                    got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan()),
+                    "pow({base:e}, {y}) = {got:e} but host glibc = {want:e}"
                 );
             }
-            if base >= 0.0 {
-                let got = pow(base, 0.5);
-                let want = base.powf(0.5);
-                assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, 0.5) = {got:?} but glibc = {want:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn pow_irrational_corridor_classifier_keeps_small_exponent_lattice() {
-        for n in -8..=8 {
-            let integer = n as f64;
-            assert!(
-                pow_may_hit_small_integer_or_half_exponent(integer),
-                "{integer} should stay eligible for the integer fast path"
-            );
-
-            let half = integer + 0.5;
-            assert!(
-                pow_may_hit_small_integer_or_half_exponent(half),
-                "{half} should stay eligible for the half-integer fast path"
-            );
-        }
-
-        for exponent in [
-            1.337,
-            -1.337,
-            0.25,
-            0.75,
-            8.25,
-            f64::MIN_POSITIVE,
-            f64::INFINITY,
-            f64::NAN,
-        ] {
-            assert!(
-                !pow_may_hit_small_integer_or_half_exponent(exponent),
-                "{exponent:?} should use the direct fused corridor"
-            );
         }
     }
 
@@ -2618,7 +2502,7 @@ mod tests {
             1e6,
         ];
         for &base in &bases {
-            for n in -(POWI_MAX_EXP as i64)..=(POWI_MAX_EXP as i64) {
+            for n in -8..=8 {
                 let exponent = n as f64 + 0.5;
                 let got = pow(base, exponent);
                 let want = base.powf(exponent);
@@ -2631,9 +2515,14 @@ mod tests {
     }
 
     #[test]
-    fn golden_pow_half_integer_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn pow_half_integer_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin of this corpus under the old sqrt*powi shortcut,
+        // whose outputs differed from glibc (35% of x^2.5 over [0, 10]); now
+        // the corpus is held to the host glibc pow bit for bit (bd-otip6a).
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             1e-6,
             1e-3,
@@ -2649,21 +2538,15 @@ mod tests {
             1e6,
         ];
         let exponents = [-7.5, -2.5, -0.5, 0.5, 1.5, 2.5, 4.5, 8.5];
-        let mut hasher = Sha256::new();
         for &base in &bases {
             for &exponent in &exponents {
-                hasher.update(pow(base, exponent).to_bits().to_le_bytes());
+                assert_eq!(
+                    pow(base, exponent).to_bits(),
+                    base.powf(exponent).to_bits(),
+                    "pow({base}, {exponent}) differs from host glibc"
+                );
             }
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        assert_eq!(
-            digest, "5d10fe8318e0cba5afc8a3260fa342ca472bf559ead08bc67b82ae3a307e3a61",
-            "pow half-integer golden corpus hash drifted"
-        );
     }
 
     #[test]
@@ -2983,9 +2866,15 @@ mod tests {
     }
 
     #[test]
-    fn golden_pow_medium_log2_exp2_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn pow_medium_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin "re-pinned 2026-06-19" as bit-exact vs glibc; it
+        // was not: the unfused kernel differed from glibc on 3 of these 100
+        // pairs. The corpus is now compared with the host glibc pow directly
+        // (bd-otip6a); see `exp_is_bit_identical_to_host_glibc` for the guard.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let bases = [
             EXP_MEDIUM_MIN,
             0.500_000_000_000_000_1,
@@ -3011,35 +2900,15 @@ mod tests {
             POW_MEDIUM_EXP_MAX,
         ];
 
-        let mut hasher = Sha256::new();
         for &base in &bases {
             for &exponent in &exponents {
-                let got = pow(base, exponent);
-                let want = base.powf(exponent);
-                assert!(
-                    within_ulps(got, want, 4),
-                    "pow({base}, {exponent}) = {got:?} but glibc = {want:?} (>4 ULP)"
+                assert_eq!(
+                    pow(base, exponent).to_bits(),
+                    base.powf(exponent).to_bits(),
+                    "pow({base}, {exponent}) differs from host glibc"
                 );
-                hasher.update(base.to_bits().to_le_bytes());
-                hasher.update(exponent.to_bits().to_le_bytes());
-                hasher.update(got.to_bits().to_le_bytes());
             }
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        // Re-pinned 2026-06-19: the whole non-fast-path domain (including the
-        // former `exp_1_337` profile column) now routes through `pow_fused`, the
-        // fused glibc `__pow` port, so every corpus output is bit-exact vs glibc
-        // — strictly more correct than the prior unfused `exp2(y*log2(x))` /
-        // profile-poly bits. Every per-pair `within_ulps(_, _, 4)` check above
-        // still passes; the new digest captures the glibc-exact bits.
-        assert_eq!(
-            digest, "d93930700713873b0ac2c4fd85de5c9cba51d5feec95e3acb845a8d95ce88cd7",
-            "pow medium log2/exp2 golden corpus hash drifted: got {digest}"
-        );
     }
 
     #[test]
