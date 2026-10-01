@@ -1,11 +1,84 @@
 //! Exponential and logarithmic functions.
 
+/// `exp`: ARM optimized-routines' algorithm -- the one glibc 2.43 ships --
+/// over the shared `__exp_data` table, so results are bit-identical to glibc's
+/// (bd-otip6a: the previous `exp2(x·log2 e)` route, within a 4-ULP contract,
+/// was not correctly rounded on ~34% of inputs, a visible difference in any
+/// program that prints a float). On FMA hardware glibc runs a build of this
+/// kernel compiled with contraction, so the multiply-adds are fused exactly
+/// where its compiler fuses them: every product with a single use (measured:
+/// 0 differences from glibc on 3.7M interior and 3M large-|x| inputs; 1873
+/// with no fusion). |x| >= 1024, inf and nan keep the generic path.
 #[inline]
 pub fn exp(x: f64) -> f64 {
-    if let Some(result) = exp_medium_exp2_fast_path(x) {
-        return result;
+    let abstop = ((x.to_bits() >> 52) & 0x7ff) as u32;
+    if abstop >= 0x409 {
+        // |x| >= 1024, inf, nan: overflow/underflow/special values.
+        return libm::exp(x);
     }
-    libm::exp(x)
+    if abstop < 0x3c9 {
+        // |x| < 2^-54: avoids a spurious underflow; 0 is a common input.
+        return 1.0 + x;
+    }
+    let invln2n = f64::from_bits(POW_EXP_INVLN2N);
+    let negln2hin = f64::from_bits(POW_EXP_NEGLN2HIN);
+    let negln2lon = f64::from_bits(POW_EXP_NEGLN2LON);
+    let shift = f64::from_bits(POW_EXP_SHIFT);
+    let c2 = f64::from_bits(POW_EXP_C[0]);
+    let c3 = f64::from_bits(POW_EXP_C[1]);
+    let c4 = f64::from_bits(POW_EXP_C[2]);
+    let c5 = f64::from_bits(POW_EXP_C[3]);
+
+    // exp(x) = 2^(k/N) * exp(r), x = k*ln2/N + r, |r| <= ln2/2N, N = 128.
+    let kd = invln2n.mul_add(x, shift);
+    let ki = kd.to_bits();
+    let kd = kd - shift;
+    let r = kd.mul_add(negln2lon, kd.mul_add(negln2hin, x));
+    let idx = (2 * (ki % 128)) as usize;
+    let top = ki << (52 - 7);
+    let tail = f64::from_bits(EXP2D_TAB[idx]);
+    let sbits = EXP2D_TAB[idx + 1].wrapping_add(top);
+    let r2 = r * r;
+    let tmp = (r2 * r2).mul_add(r.mul_add(c5, c4), r2.mul_add(r.mul_add(c3, c2), tail + r));
+    if abstop >= 0x408 {
+        // |x| >= 512: the scale's exponent may over/underflow.
+        return exp_specialcase(tmp, sbits, ki);
+    }
+    let scale = f64::from_bits(sbits);
+    scale.mul_add(tmp, scale)
+}
+
+/// `exp` for |x| in [512, 1024): rescale around the exponent overflow, and
+/// round once before scaling into the subnormal range. In the k < 0 branch
+/// `scale * tmp` feeds two sums, so glibc's compiler cannot fuse it there --
+/// neither may we (measured: fusing it gives 926 differences in 3M).
+#[inline]
+fn exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
+    if (ki & 0x8000_0000) == 0 {
+        // k > 0: the scale's exponent overflowed by at most 460.
+        sbits = sbits.wrapping_sub(1009u64 << 52);
+        let scale = f64::from_bits(sbits);
+        return f64::from_bits(0x7f00_0000_0000_0000) * scale.mul_add(tmp, scale); // 0x1p1009
+    }
+    // k < 0: possibly subnormal.
+    sbits = sbits.wrapping_add(1022u64 << 52);
+    let scale = f64::from_bits(sbits);
+    let scaled_tmp = scale * tmp;
+    let mut y = scale + scaled_tmp;
+    if y < 1.0 {
+        let lo = scale - y + scaled_tmp;
+        let hi = 1.0 + y;
+        let lo = 1.0 - hi + y + lo;
+        y = (hi + lo) - 1.0;
+        if y == 0.0 {
+            y = 0.0; // never -0
+        }
+        // Raise FE_UNDERFLOW explicitly, as glibc does: the scaled result
+        // need not raise it itself.
+        let min_norm = f64::from_bits(0x0010_0000_0000_0000); // 0x1p-1022
+        let _ = core::hint::black_box(core::hint::black_box(min_norm) * min_norm);
+    }
+    f64::from_bits(0x0010_0000_0000_0000) * y // 0x1p-1022
 }
 
 #[inline]
@@ -1998,38 +2071,6 @@ fn pow_profile_exp_1_337_grid(base: f64) -> Option<f64> {
     None
 }
 
-/// Range over which `exp(x) = exp2(x * log2e)` stays within 4 ULP of glibc.
-/// The error is dominated by the rounding of the `x*log2e` product (~0.5*|x|
-/// ULP after exp2 amplification), so it stays <=4 ULP up to |x| = 5 and jumps
-/// to ~7 ULP by |x| = 6 (measured by a 2M-point sweep). libm::exp2 is markedly
-/// cheaper than libm::exp, so this covers the common decay/softmax ranges that
-/// previously fell to the slower libm::exp path. Note this is the EXP argument
-/// range, distinct from the [`EXP_MEDIUM_MIN`]/[`EXP_MEDIUM_MAX`] pow-base gate.
-const EXP_FAST_MIN: f64 = -708.0;
-const EXP_FAST_MAX: f64 = 709.0;
-/// Low part of `log2(e)` for the compensated reduction (residual after the f64 const).
-const LOG2_E_LO: f64 = f64::from_bits(0x3c7777d0ffda0d24);
-
-/// Fast path for the finite normal-result range via fl's FUSED exp2 kernel with a
-/// compensated reduction (mirrors `exp10`): exp(x) = 2^(x·log2 e). Carry x·LOG2_E in
-/// extended precision — `fma` recovers the product's rounding error, `LOG2_E_LO` adds
-/// the constant's residual, and the small `e·ln2` term corrects exp2 — so a single f64
-/// `log2(e)` does not leave the reduction error to be amplified by exp2. This replaces
-/// the old narrow `[-5,5]` path that called the SLOW generic `libm::exp2` (and left the
-/// rest of the range on the even-slower `libm::exp`). Over/underflow/inf/nan defer to
-/// `libm::exp` (the cold tails). Within the 4-ULP-vs-glibc math contract.
-#[inline]
-fn exp_medium_exp2_fast_path(x: f64) -> Option<f64> {
-    if (EXP_FAST_MIN..=EXP_FAST_MAX).contains(&x) {
-        let hi = std::f64::consts::LOG2_E;
-        let p = x * hi;
-        let e = x.mul_add(hi, -p) + x * LOG2_E_LO;
-        Some(crate::math::exp2(p) * (1.0 + e * std::f64::consts::LN_2))
-    } else {
-        None
-    }
-}
-
 /// `base` raised to a small integer power via exponentiation by squaring.
 /// `n.unsigned_abs()` must be small (the caller gates on `<= POWI_MAX_EXP`) so
 /// the multiply chain stays well inside the 4-ULP glibc parity budget.
@@ -3002,10 +3043,20 @@ mod tests {
     }
 
     #[test]
-    fn exp_medium_exp2_fast_path_within_4_ulps() {
+    fn exp_is_bit_identical_to_host_glibc() {
+        // `x.exp()` here is the test binary's libm, i.e. the host glibc. Its
+        // FMA build (what this kernel reproduces) is selected on FMA hardware;
+        // without FMA glibc rounds a few interior cases differently.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let mut inputs = vec![
-            EXP_FAST_MIN,
-            EXP_FAST_MAX,
+            -745.0,
+            -708.5,
+            -600.0,
+            512.0,
+            709.7,
             -4.999,
             -2.5,
             -1.0,
@@ -3019,31 +3070,38 @@ mod tests {
             2.468_75,
             4.999,
         ];
-        // Dense deterministic sweep across the whole [-5, 5] fast-path interval.
+        // Deterministic sweep: small, medium, and the large/subnormal-result
+        // range handled by `exp_specialcase`.
         let mut s = 0x2545_f491_4f6c_dd1du64;
-        for _ in 0..1_000_000 {
+        for i in 0..1_200_000 {
             s ^= s << 13;
             s ^= s >> 7;
             s ^= s << 17;
-            inputs.push(-5.0 + (s >> 11) as f64 * (10.0 / (1u64 << 53) as f64));
+            let unit = (s >> 11) as f64 / (1u64 << 53) as f64;
+            let span = [1e-3, 1.0, 40.0, 745.0][i % 4];
+            inputs.push((unit * 2.0 - 1.0) * span);
         }
 
+        let mut mismatches = 0usize;
+        let mut first = None;
         for x in inputs {
             let got = exp(x);
             let want = x.exp();
-            assert!(
-                within_ulps(got, want, 4),
-                "exp({x}) = {got:?} but host exp = {want:?} (>4 ULP)"
-            );
+            if got.to_bits() != want.to_bits() {
+                mismatches += 1;
+                first.get_or_insert((x, got, want));
+            }
         }
+        assert_eq!(
+            mismatches, 0,
+            "exp differs from host glibc on {mismatches} inputs; first {first:?}"
+        );
     }
 
     #[test]
-    fn exp_medium_exp2_fast_path_preserves_fallback_cases() {
-        // The fused compensated fast path now covers all finite-result inputs
-        // [-708, 709] (validated <=2 ULP vs glibc by the exp_ULP_sweep in math_survey).
-        // OUTSIDE it — overflow (>709 -> +inf), underflow (<-708 -> 0), ±inf, NaN — exp
-        // stays bit-identical to libm::exp.
+    fn exp_overflow_underflow_and_special_values() {
+        // Overflow (+inf), underflow (0), ±inf and NaN agree with libm::exp:
+        // the kernel's own large-|x| branch reaches the same inf/0.
         let cold = [f64::NEG_INFINITY, -745.2, 710.0, f64::INFINITY];
         for x in cold {
             assert_eq!(
@@ -3053,8 +3111,10 @@ mod tests {
             );
         }
         assert!(exp(f64::NAN).is_nan());
-        // In-range stays within the 4-ULP-vs-glibc contract the rest of the math family
-        // uses (libm::exp is correctly rounded, so <=4 ULP of it implies the contract).
+        assert_eq!(exp(0.0), 1.0);
+        assert_eq!(exp(-0.0), 1.0);
+        // Sanity against an independent implementation (libm::exp is within
+        // ~1 ULP; the kernel itself is checked bit-exact against glibc above).
         for x in [-20.0, -6.0, 6.0, 20.0, -700.0, 700.0, 0.5, 2.5] {
             let ulp = (exp(x).to_bits() as i64 - libm::exp(x).to_bits() as i64).abs();
             assert!(
@@ -3065,9 +3125,16 @@ mod tests {
     }
 
     #[test]
-    fn golden_exp_medium_exp2_corpus_sha256() {
-        use sha2::{Digest, Sha256};
-
+    fn exp_medium_corpus_matches_host_glibc() {
+        // Was a SHA-256 pin of this corpus's outputs under the old 4-ULP
+        // exp2-based route -- outputs that differed from glibc on 27 of these
+        // 72 inputs. The corpus is now held to glibc itself, bit for bit
+        // (bd-otip6a); see `exp_is_bit_identical_to_host_glibc` for the FMA
+        // guard.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
         let mut inputs = vec![
             EXP_MEDIUM_MIN,
             0.500_000_000_000_000_1,
@@ -3080,23 +3147,13 @@ mod tests {
         ];
         inputs.extend((0..64).map(|k| 0.5 + (k as f64) * 0.031_25));
 
-        let mut hasher = Sha256::new();
         for x in inputs {
-            hasher.update(exp(x).to_bits().to_le_bytes());
+            assert_eq!(
+                exp(x).to_bits(),
+                x.exp().to_bits(),
+                "exp({x}) differs from host glibc"
+            );
         }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        // Regenerated when the exp fast path moved from the slow `libm::exp2` over a
-        // narrow `[-5,5]` to fl's FUSED exp2 with a compensated reduction over the full
-        // `[-708,709]` range — validated <=2 ULP vs glibc across the whole domain (4M-pt
-        // sweep in the math_survey example), within the 4-ULP-vs-glibc family contract.
-        assert_eq!(
-            digest, "20261b5712acfca980cd3cd398fa6211bf4ebf32c946e37fd02282a380a2559c",
-            "exp medium exp2 golden corpus hash drifted"
-        );
     }
 
     #[test]
