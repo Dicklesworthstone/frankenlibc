@@ -1744,17 +1744,16 @@ pub fn acosh(x: f64) -> f64 {
         if ix == 0x7ff0_0000_0000_0000 || aix > (0x7ffu64 << 53) {
             return x + x;
         }
-        // Domain error: the default NaN with FE_INVALID.
-        let z = x - x;
-        return z / z;
+        // Domain error: the default NaN with FE_INVALID (runtime sqrt of a
+        // negative number, as upstream's 0.0/0.0).
+        return (-1.0 - x.abs()).sqrt();
     }
     if ix <= 0x3ff0_0000_0000_0000 {
         // 0 <= x <= 1
         if ix == 0x3ff0_0000_0000_0000 {
             return 0.0;
         }
-        let z = x - x;
-        return z / z;
+        return (-1.0 - x).sqrt();
     }
     // x > 1
     let g;
@@ -2248,7 +2247,7 @@ fn erfc_asympt_fast(x: f64) -> (f64, f64, f64) {
     zl += l;
     for j in [15usize, 13, 11, 9, 7, 5, 3] {
         let (h, l) = d_mul(zh, zl, uh, ul);
-        let (hh, ll) = fasttwosum(p[(j + 1) / 2], h);
+        let (hh, ll) = fasttwosum(p[j.div_ceil(2)], h);
         zh = hh;
         zl = ll + l;
     }
