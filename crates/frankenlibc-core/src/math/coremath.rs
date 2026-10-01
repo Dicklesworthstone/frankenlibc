@@ -28,7 +28,10 @@ use super::erf_data::{
     ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS, ERFC_ASYMPT_EXCEPTIONS, ERFC_E2, ERFC_NEG_EXCEPTIONS,
     ERFC_POS_EXCEPTIONS, ERFC_T, ERFC_TACC, EXP_T1, EXP_T2,
 };
-use super::trig_data::{SIN_C2U, SIN_PC, SIN_PS, SIN_S1U, SIN_S2U, SIN_T, SIN_U1, SIN_U2};
+use super::trig_data::{
+    SIN_C2U, SIN_PC, SIN_PS, SIN_S1U, SIN_S2U, SIN_T, SIN_U1, SIN_U2, TRIG_C, TRIG_PC, TRIG_PCFAST,
+    TRIG_PS, TRIG_PSFAST, TRIG_S, TRIG_SC, TRIG_T,
+};
 
 const MASK52: u64 = u64::MAX >> 12;
 
@@ -3136,6 +3139,663 @@ pub fn sin(x: f64) -> f64 {
     sin_large(x)
 }
 
+// --- cos / tan shared infrastructure (CORE-MATH cos.c, tan.c: dint.h) ---------
+
+/// A 128-bit binary floating-point value (CORE-MATH `dint64_t`):
+/// `(-1)^sgn * r/2^128 * 2^ex` with `r` normalised to bit 127 when non-zero.
+#[derive(Clone, Copy)]
+struct Dint {
+    r: u128,
+    ex: i64,
+    sgn: u64,
+}
+
+impl Dint {
+    const fn from_parts((hi, lo, ex, sgn): (u64, u64, i64, u64)) -> Self {
+        Self {
+            r: ((hi as u128) << 64) | lo as u128,
+            ex,
+            sgn,
+        }
+    }
+
+    #[inline(always)]
+    fn hi(&self) -> u64 {
+        (self.r >> 64) as u64
+    }
+
+    #[inline(always)]
+    fn lo(&self) -> u64 {
+        self.r as u64
+    }
+
+    #[inline(always)]
+    fn set_hi_lo(&mut self, hi: u64, lo: u64) {
+        self.r = (u128::from(hi) << 64) | u128::from(lo);
+    }
+}
+
+/// `dint_tod(ZERO)` is 0.
+const DINT_ZERO: Dint = Dint::from_parts((0, 0, -1076, 0));
+/// 2^-11.
+const DINT_MAGIC: Dint = Dint::from_parts((1 << 63, 0, -10, 0));
+
+/// Compare |a| and |b|: -1, 0 or 1.
+#[inline(always)]
+fn cmp_dint_abs(a: &Dint, b: &Dint) -> i32 {
+    if a.hi() == 0 {
+        return if b.hi() == 0 { 0 } else { -1 };
+    }
+    if b.hi() == 0 {
+        return 1;
+    }
+    match a.ex.cmp(&b.ex).then(a.r.cmp(&b.r)) {
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
+    }
+}
+
+/// `a + b` with error below 2 ulps (exact in the Sterbenz case).
+#[inline(always)]
+fn add_dint(a: &Dint, b: &Dint) -> Dint {
+    if a.r == 0 {
+        return *b;
+    }
+    let (a, b) = match cmp_dint_abs(a, b) {
+        0 => {
+            if a.sgn ^ b.sgn != 0 {
+                return DINT_ZERO;
+            }
+            let mut r = *a;
+            r.ex += 1;
+            return r;
+        }
+        -1 => (b, a),
+        _ => (a, b),
+    };
+    // |a| > |b|, so a.ex >= b.ex.
+    let big_a = a.r;
+    let k = (a.ex - b.ex) as u64;
+    let big_b = if k < 128 { b.r >> k } else { 0 };
+    let mut ex = a.ex;
+    let c = if a.sgn ^ b.sgn != 0 {
+        let mut c = big_a.wrapping_sub(big_b);
+        let ch = (c >> 64) as u64;
+        let mut sh = if ch != 0 {
+            ch.leading_zeros()
+        } else {
+            64 + (c as u64).leading_zeros()
+        };
+        if sh > 0 {
+            c = if k == 1 {
+                // Sterbenz case: keep the bit B lost to the shift.
+                (big_a << sh).wrapping_sub(b.r << (sh - 1))
+            } else {
+                (big_a << sh).wrapping_sub(big_b << sh)
+            };
+            ex -= i64::from(sh);
+            sh = ((c >> 64) as u64).leading_zeros();
+        }
+        ex -= i64::from(sh);
+        c << sh
+    } else {
+        let mut c = big_a.wrapping_add(big_b);
+        if c < big_a {
+            c = (1u128 << 127) | (c >> 1);
+            ex += 1;
+        }
+        c
+    };
+    Dint {
+        r: c,
+        ex,
+        sgn: a.sgn,
+    }
+}
+
+/// `a * b` with error below 6 ulps.
+#[inline(always)]
+fn mul_dint(a: &Dint, b: &Dint) -> Dint {
+    let bh = u128::from(b.hi());
+    let bl = u128::from(b.lo());
+    let m1 = u128::from(a.hi()) * bl;
+    let m2 = u128::from(a.lo()) * bh;
+    let mut r = u128::from(a.hi()) * bh;
+    r += (m1 >> 64) + (m2 >> 64);
+    let e = (r >> 127) as u32;
+    Dint {
+        r: r << (1 - e),
+        ex: a.ex + b.ex + i64::from(e) - 1,
+        sgn: a.sgn ^ b.sgn,
+    }
+}
+
+/// `a * b` assuming the low word of `b` is zero; error below 2 ulps.
+#[inline(always)]
+fn mul_dint_21(a: &Dint, b: &Dint) -> Dint {
+    let bh = u128::from(b.hi());
+    let hi = u128::from(a.hi()) * bh;
+    let lo = u128::from(a.lo()) * bh;
+    let r = hi + (lo >> 64);
+    let e = (r >> 127) as u32;
+    Dint {
+        r: r << (1 - e),
+        ex: a.ex + b.ex + i64::from(e) - 1,
+        sgn: a.sgn ^ b.sgn,
+    }
+}
+
+/// Convert a non-zero double.
+#[inline(always)]
+fn dint_fromd(b: f64) -> Dint {
+    let u = b.to_bits();
+    let e = ((u >> 52) & 0x7ff) as i64;
+    let m = (u & MASK52) + if e != 0 { 1 << 52 } else { 0 };
+    let e = e - 0x3fe;
+    let t = m.leading_zeros();
+    Dint {
+        r: u128::from(m << t) << 64,
+        ex: e - if t > 11 { i64::from(t) - 12 } else { 0 },
+        sgn: u64::from(b < 0.0),
+    }
+}
+
+/// Round to the subnormal precision when the value is below 2^-1022
+/// (round-to-nearest; CORE-MATH also handles the directed modes).
+#[inline(always)]
+fn subnormalize_dint(a: &mut Dint) {
+    if a.ex > -1023 {
+        return;
+    }
+    let ex = (-(1011 + a.ex)) as u32;
+    let mut hi = a.hi().checked_shr(ex).unwrap_or(0);
+    let md = a.hi().checked_shr(ex - 1).unwrap_or(0) & 1;
+    let lo = (a.hi() & u64::MAX.checked_shr(ex).unwrap_or(0)) != 0 || a.lo() != 0;
+    hi += if lo { md } else { hi & md };
+    let mut new_hi = hi.checked_shl(ex).unwrap_or(0);
+    if new_hi == 0 {
+        a.ex += 1;
+        new_hi = 1 << 63;
+    }
+    a.set_hi_lo(new_hi, 0);
+}
+
+/// Round to the nearest double.
+#[inline(always)]
+fn dint_tod(mut a: Dint) -> f64 {
+    subnormalize_dint(&mut a);
+    let hi = a.hi();
+    let mut r = f64::from_bits((hi >> 11) | (0x3ffu64 << 52));
+    let mut rd = 0.0;
+    if (hi >> 10) & 1 != 0 {
+        rd += hf!("0x1p-53");
+    }
+    if hi & 0x3ff != 0 || a.lo() != 0 {
+        rd += hf!("0x1p-54");
+    }
+    if a.sgn != 0 {
+        rd = -rd;
+    }
+    r = f64::from_bits(r.to_bits() | (a.sgn << 63));
+    r += rd;
+    let e = if a.ex > -1022 {
+        if a.ex > 1024 {
+            if a.ex == 1025 {
+                r *= 2.0;
+                hf!("0x1p+1023")
+            } else {
+                r = f64::MAX;
+                f64::MAX
+            }
+        } else {
+            f64::from_bits((((a.ex + 1022) & 0x7ff) as u64) << 52)
+        }
+    } else if a.ex < -1073 {
+        if a.ex == -1074 {
+            r *= 0.5;
+        } else {
+            r = f64::from_bits(1);
+        }
+        f64::from_bits(1)
+    } else {
+        f64::from_bits(1u64 << (a.ex + 1073))
+    };
+    r * e
+}
+
+/// Shift `x` so that bit 127 of `r` is set (when non-zero).
+#[inline(always)]
+fn normalize_dint(x: &mut Dint) {
+    let (hi, lo) = (x.hi(), x.lo());
+    if hi != 0 {
+        let cnt = hi.leading_zeros();
+        if cnt != 0 {
+            x.set_hi_lo((hi << cnt) | (lo >> (64 - cnt)), lo << cnt);
+        }
+        x.ex -= i64::from(cnt);
+    } else if lo != 0 {
+        let cnt = lo.leading_zeros();
+        x.set_hi_lo(lo << cnt, 0);
+        x.ex -= 64 + i64::from(cnt);
+    }
+}
+
+/// `(a + b, carry)` on 64-bit words.
+#[inline(always)]
+fn add_carry(a: u64, b: u64) -> (u64, u64) {
+    let (s, c) = a.overflowing_add(b);
+    (s, u64::from(c))
+}
+
+/// X/(2 pi) mod 1 with relative error below 2^-126.67; `x` normalised in
+/// and out.
+fn trig_reduce(x: &mut Dint) {
+    let t = &TRIG_T;
+    let e = x.ex;
+    let xh = u128::from(x.hi());
+    if e <= 1 {
+        // |X| < 2: multiply by T[0]/2^64 + T[1]/2^128.
+        let u = xh * u128::from(t[1]);
+        let tiny = u as u64;
+        let lo = (u >> 64) as u64;
+        let u = xh * u128::from(t[0]);
+        let (lo, carry) = add_carry(lo, u as u64);
+        x.set_hi_lo(((u >> 64) as u64) + carry, lo);
+        let e0 = x.ex;
+        normalize_dint(x);
+        let shift = e0 - x.ex;
+        if shift != 0 {
+            let lo = x.lo() | (tiny >> (64 - shift));
+            x.set_hi_lo(x.hi(), lo);
+        }
+        return;
+    }
+    // 2 <= e <= 1024
+    let i = if e < 127 {
+        0
+    } else {
+        ((e - 127 + 64 - 1) / 64) as usize
+    };
+    let mut c = [0u64; 5];
+    let u = xh * u128::from(t[i + 3]);
+    c[0] = u as u64;
+    c[1] = (u >> 64) as u64;
+    let u = xh * u128::from(t[i + 2]);
+    let (s, carry) = add_carry(c[1], u as u64);
+    c[1] = s;
+    c[2] = ((u >> 64) as u64) + carry;
+    let u = xh * u128::from(t[i + 1]);
+    let (s, carry) = add_carry(c[2], u as u64);
+    c[2] = s;
+    c[3] = ((u >> 64) as u64) + carry;
+    let u = xh * u128::from(t[i]);
+    let (s, carry) = add_carry(c[3], u as u64);
+    c[3] = s;
+    c[4] = ((u >> 64) as u64).wrapping_add(carry);
+    let f = e - 64 * i as i64;
+    let (hi, lo, tiny);
+    if f < 64 {
+        hi = (c[4] << f) | (c[3] >> (64 - f));
+        lo = (c[3] << f) | (c[2] >> (64 - f));
+        tiny = (c[2] << f) | (c[1] >> (64 - f));
+    } else if f == 64 {
+        hi = c[3];
+        lo = c[2];
+        tiny = c[1];
+    } else {
+        // 65 <= f <= 127: one more term.
+        let g = f - 64;
+        let u = (xh * u128::from(t[i + 4])) >> 64;
+        let (s, carry0) = c[0].overflowing_add(u as u64);
+        c[0] = s;
+        if carry0 {
+            c[1] = c[1].wrapping_add(1);
+            if c[1] == 0 {
+                c[2] = c[2].wrapping_add(1);
+                if c[2] == 0 {
+                    c[3] = c[3].wrapping_add(1);
+                    if c[3] == 0 {
+                        c[4] = c[4].wrapping_add(1);
+                    }
+                }
+            }
+        }
+        hi = (c[3] << g) | (c[2] >> (64 - g));
+        lo = (c[2] << g) | (c[1] >> (64 - g));
+        tiny = (c[1] << g) | (c[0] >> (64 - g));
+    }
+    x.set_hi_lo(hi, lo);
+    x.ex = 0;
+    normalize_dint(x);
+    if x.ex < 0 {
+        let lo = x.lo() | (tiny >> (64 + x.ex));
+        x.set_hi_lo(x.hi(), lo);
+    }
+}
+
+/// Split X in [0, 1) as i/2^11 + X' with 0 <= X' < 2^-11 (exact).
+#[inline(always)]
+fn trig_reduce2(x: &mut Dint) -> u64 {
+    if x.ex <= -11 {
+        return 0;
+    }
+    let sh = (64 - 11 - x.ex) as u32;
+    let i = x.hi() >> sh;
+    x.set_hi_lo(x.hi() & ((1u64 << sh) - 1), x.lo());
+    normalize_dint(x);
+    i
+}
+
+/// `c1/2^64 + c0/2^128` as a double-double.
+#[inline(always)]
+fn trig_set_dd(mut c1: u64, mut c0: u64) -> (f64, f64) {
+    if c1 != 0 {
+        let e = u64::from(c1.leading_zeros());
+        if e != 0 {
+            c1 = (c1 << e) | (c0 >> (64 - e));
+            c0 <<= e;
+        }
+        let f = 0x3fe - e;
+        let h = f64::from_bits((f << 52) | ((c1 << 1) >> 12));
+        let c0 = (c1 << 53) | (c0 >> 11);
+        let l = if c0 != 0 {
+            let g = u64::from(c0.leading_zeros());
+            let c0 = c0 << g;
+            f64::from_bits(((f - 53 - g) << 52) | ((c0 << 1) >> 12))
+        } else {
+            0.0
+        };
+        (h, l)
+    } else if c0 != 0 {
+        let e = u64::from(c0.leading_zeros());
+        let f = 0x3fe - 64 - e;
+        let c0 = c0 << (e + 1); // most significant bit shifted out
+        let h = f64::from_bits((f << 52) | (c0 >> 12));
+        let c0 = c0 << 52;
+        let l = if c0 != 0 {
+            let g = u64::from(c0.leading_zeros());
+            let c0 = c0 << (g + 1);
+            f64::from_bits(((f - 64 - g) << 52) | (c0 >> 12))
+        } else {
+            0.0
+        };
+        (h, l)
+    } else {
+        (0.0, 0.0)
+    }
+}
+
+/// For 0x1.6a09e667f3bccp-27 < x: `(i, h, l, err1)` with i/2^11 + h + l ~
+/// frac(x/(2 pi)) up to absolute error `err1`.
+#[inline(always)]
+fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
+    let (h, l, err1);
+    if x <= hf!("0x1.921fb54442d17p+2") {
+        // x < 2 pi
+        const CH: f64 = hf!("0x1.45f306dc9c883p-3");
+        const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
+        let (hh, ll) = a_mul(CH, x);
+        h = hh;
+        l = CL.mul_add(x, ll);
+        err1 = hf!("0x1.d9p-105") * h;
+    } else {
+        let tt = &TRIG_T;
+        let t = x.to_bits();
+        let e = ((t >> 52) & 0x7ff) as i64; // 1025 <= e <= 2046
+        let m = (1u64 << 52) | (t & MASK52);
+        let mut c = [0u64; 3];
+        let shift;
+        if e <= 1074 {
+            let u = u128::from(m) * u128::from(tt[1]);
+            c[0] = u as u64;
+            c[1] = (u >> 64) as u64;
+            let u = u128::from(m) * u128::from(tt[0]);
+            let (s, carry) = add_carry(c[1], u as u64);
+            c[1] = s;
+            c[2] = ((u >> 64) as u64) + carry;
+            shift = 1075 - e; // 1 <= shift <= 50
+        } else {
+            let i = ((e - 1138 + 63) / 64) as usize;
+            let u = u128::from(m) * u128::from(tt[i + 2]);
+            c[0] = u as u64;
+            c[1] = (u >> 64) as u64;
+            let u = u128::from(m) * u128::from(tt[i + 1]);
+            let (s, carry) = add_carry(c[1], u as u64);
+            c[1] = s;
+            c[2] = ((u >> 64) as u64) + carry;
+            let u = u128::from(m) * u128::from(tt[i]);
+            c[2] = c[2].wrapping_add(u as u64);
+            shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
+        }
+        if shift == 64 {
+            c[0] = c[1];
+            c[1] = c[2];
+        } else {
+            c[0] = (c[1] << (64 - shift)) | (c[0] >> shift);
+            c[1] = (c[2] << (64 - shift)) | (c[1] >> shift);
+        }
+        let (hh, ll) = trig_set_dd(c[1], c[0]);
+        h = hh;
+        l = ll;
+        err1 = hf!("0x1.01p-76");
+    }
+    let i = (h * hf!("0x1p11")).floor();
+    let h = i.mul_add(hf!("-0x1p-11"), h);
+    (i as u64, h, l, err1)
+}
+
+/// sin2pi(xh + xl) for 2^-24 <= xh + xl < 2^-11 + 2^-24, given
+/// uh + ul ~ (xh + xl)^2; absolute error < 2^-77.09.
+#[inline(always)]
+fn trig_eval_ps_fast(xh: f64, xl: f64, uh: f64, ul: f64) -> (f64, f64) {
+    let p = &TRIG_PSFAST;
+    let mut h = p[4];
+    h = h.mul_add(uh, p[3]);
+    h = h.mul_add(uh, p[2]);
+    let (h, mut l) = s_mul(h, uh, ul);
+    let (h, t) = fasttwosum(p[0], h);
+    l += p[1] + t;
+    d_mul_trig(h, l, xh, xl)
+}
+
+/// cos2pi(xh + xl) for 2^-24 <= xh + xl < 2^-11 + 2^-24; relative error
+/// < 2^-69.96.
+#[inline(always)]
+fn trig_eval_pc_fast(uh: f64, ul: f64) -> (f64, f64) {
+    let p = &TRIG_PCFAST;
+    let mut h = p[4];
+    h = h.mul_add(uh, p[3]);
+    h = h.mul_add(uh, p[2]);
+    let (h, mut l) = s_mul(h, uh, ul);
+    let (h, t) = fasttwosum(p[0], h);
+    l += p[1] + t;
+    (h, l)
+}
+
+/// sin2pi(X) for 0 <= X < 2^-11, X2 ~ X^2.
+#[inline(always)]
+fn trig_eval_ps(x: &Dint, x2: &Dint) -> Dint {
+    let ps = |k: usize| Dint::from_parts(TRIG_PS[k]);
+    let mut y = mul_dint_21(x2, &ps(5));
+    y = add_dint(&y, &ps(4));
+    for k in [3usize, 2, 1, 0] {
+        y = mul_dint(&y, x2);
+        y = add_dint(&y, &ps(k));
+    }
+    mul_dint(&y, x)
+}
+
+/// cos2pi(X) for 0 <= X < 2^-11, X2 ~ X^2.
+#[inline(always)]
+fn trig_eval_pc(x2: &Dint) -> Dint {
+    let pc = |k: usize| Dint::from_parts(TRIG_PC[k]);
+    let mut y = mul_dint_21(x2, &pc(5));
+    y = add_dint(&y, &pc(4));
+    for k in [3usize, 2, 1, 0] {
+        y = mul_dint(&y, x2);
+        y = add_dint(&y, &pc(k));
+    }
+    y
+}
+
+// --- cos (CORE-MATH src/binary64/cos/cos.c) ------------------------------------
+
+/// cos.c `d_mul`: `(ah + al) * (bh + bl) - al*bl`, adding the cross terms
+/// in the opposite order to pow.c's.
+#[inline(always)]
+fn d_mul_trig(ah: f64, al: f64, bh: f64, bl: f64) -> (f64, f64) {
+    let (hi, s) = a_mul(ah, bh);
+    let t = al.mul_add(bh, s);
+    (hi, ah.mul_add(bl, t))
+}
+
+/// Fast cos(x) for 0x1.6a09e667f3bccp-27 < x: `(h, l, err)`.
+#[inline(always)]
+fn cos_fast(x: f64) -> (f64, f64, f64) {
+    let (i, mut h, mut l, err1) = trig_reduce_fast(x);
+    let mut neg = (i >> 10) & 1;
+    let i = i & 0x3ff;
+    let mut is_cos = 1 ^ (i >> 9);
+    neg ^= i >> 9;
+    let mut i = (i & 0x1ff) as usize;
+    if i & 0x100 != 0 {
+        is_cos ^= 1;
+        i = 0x1ff - i;
+        h = hf!("0x1p-11") - h;
+        l = -l;
+    }
+    let sc = &TRIG_SC[i];
+    h -= sc[0];
+    let (uh, ul) = a_mul(h, h);
+    let ul = (h + h).mul_add(l, ul);
+    let (sh, sl) = trig_eval_ps_fast(h, l, uh, ul);
+    let (ch, cl) = trig_eval_pc_fast(uh, ul);
+    let err;
+    if is_cos == 0 {
+        let (sh, sl) = s_mul(sc[2], sh, sl);
+        let (ch, cl) = s_mul(sc[1], ch, cl);
+        let (hh, ll) = fasttwosum(ch, sh);
+        h = hh;
+        l = ll + (sl + cl);
+        err = hf!("0x1.55p-69");
+    } else {
+        let (ch, cl) = s_mul(sc[2], ch, cl);
+        let (sh, sl) = s_mul(sc[1], sh, sl);
+        let (hh, ll) = fasttwosum(ch, -sh);
+        h = hh;
+        l = ll + (cl - sl);
+        err = hf!("0x1.81p-69");
+    }
+    const SGN: [f64; 2] = [1.0, -1.0];
+    (h * SGN[neg as usize], l * SGN[neg as usize], err + err1)
+}
+
+/// Accurate cos(x) for 0x1.6a09e667f3bccp-27 < x in 128-bit arithmetic.
+#[cold]
+#[inline(never)]
+fn cos_accurate(x: f64) -> f64 {
+    let mut xd = dint_fromd(x);
+    trig_reduce(&mut xd);
+    let mut neg = false;
+    let mut is_cos = true;
+    let mut i = trig_reduce2(&mut xd) as usize;
+    if i & 0x400 != 0 {
+        neg = true;
+        i &= 0x3ff;
+    }
+    if i & 0x200 != 0 {
+        neg = !neg;
+        is_cos = false;
+        i &= 0x1ff;
+    }
+    if i & 0x100 != 0 {
+        is_cos = !is_cos;
+        xd.sgn = 1;
+        xd = add_dint(&DINT_MAGIC, &xd); // 2^-11 - X
+        i = 0x1ff - i;
+    }
+    let x2 = mul_dint(&xd, &xd);
+    let mut u = trig_eval_pc(&x2);
+    let mut v = trig_eval_ps(&xd, &x2);
+    let s_i = Dint::from_parts(TRIG_S[i]);
+    let c_i = Dint::from_parts(TRIG_C[i]);
+    if !is_cos {
+        u = mul_dint(&s_i, &u);
+        v = mul_dint(&c_i, &v);
+    } else {
+        u = mul_dint(&c_i, &u);
+        v = mul_dint(&s_i, &v);
+        v.sgn = 1 - v.sgn;
+    }
+    let mut u = add_dint(&u, &v);
+    const ERR: u64 = 41;
+    let lo0 = u.lo().wrapping_sub(ERR);
+    let hi0 = u.hi().wrapping_sub(u64::from(lo0 > u.lo()));
+    let lo1 = u.lo().wrapping_add(ERR);
+    let hi1 = u.hi().wrapping_add(u64::from(lo1 < u.lo()));
+    if (hi0 >> 10) != (hi1 >> 10) {
+        const EXCEPTIONS: [[f64; 3]; 5] = [
+            [
+                hf!("0x1.8000000000009p-23"),
+                hf!("0x1.fffffffffff7p-1"),
+                hf!("0x1.b56666666666cp-143"),
+            ],
+            [
+                hf!("0x1.8000000000024p-22"),
+                hf!("0x1.ffffffffffdcp-1"),
+                hf!("0x1.b56666666667ep-137"),
+            ],
+            [
+                hf!("0x1.800000000009p-21"),
+                hf!("0x1.ffffffffff7p-1"),
+                hf!("0x1.b5666666666c4p-131"),
+            ],
+            [
+                hf!("0x1.20000000000f3p-20"),
+                hf!("0x1.fffffffffebcp-1"),
+                hf!("0x1.37642666666fdp-127"),
+            ],
+            [
+                hf!("0x1.800000000024p-20"),
+                hf!("0x1.fffffffffdcp-1"),
+                hf!("0x1.b5666666667ddp-125"),
+            ],
+        ];
+        for e in &EXCEPTIONS {
+            if x.abs() == e[0] {
+                return e[1] + e[2];
+            }
+        }
+    }
+    if neg {
+        u.sgn = 1 - u.sgn;
+    }
+    dint_tod(u)
+}
+
+/// Correctly rounded `cos`.
+pub fn cos(x: f64) -> f64 {
+    let t = x.to_bits();
+    let e = (t >> 52) & 0x7ff;
+    if e == 0x7ff {
+        // ±inf: the default NaN with FE_INVALID; NaN propagates.
+        return x * 0.0;
+    }
+    let ax = x.abs();
+    if ax.to_bits() <= 0x3e46_a09e_667f_3bcc {
+        // |x| <= 0x1.6a09e667f3bccp-27: cos(x) rounds to 1.
+        return ax.mul_add(hf!("-0x1p-28"), 1.0);
+    }
+    let (h, l, err) = cos_fast(ax);
+    let left = h + (l - err);
+    let right = h + (l + err);
+    if left == right {
+        return left;
+    }
+    cos_accurate(ax)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3476,5 +4136,44 @@ mod tests {
             assert_eq!(got, want, "sin({x:#x}) = {got:#x}, CORE-MATH {want:#x}");
         }
         assert!(sin(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn cos_matches_core_math_on_corpus() {
+        // Pinned from the CORE-MATH C original (glibc's IBM cos differs from it
+        // on 547 of these inputs).
+        assert_eq!(corpus_hash(cos, -40, 40), 0x120e_4de5_ef7d_d712);
+    }
+
+    #[test]
+    fn cos_hard_and_special_cases() {
+        // (input, CORE-MATH result): the near-1 cut-off, accurate-path
+        // exceptions, the 2 pi and 2^52 reduction boundaries, huge arguments.
+        for (x, want) in [
+            (0x3e46_a09e_667f_3bccu64, 0x3ff0_0000_0000_0000u64),
+            (0x3e46_a09e_667f_3bcd, 0x3fef_ffff_ffff_ffff),
+            (0x3e88_0000_0000_0009, 0x3fef_ffff_ffff_ff70),
+            (0x3eb8_0000_0000_0240, 0x3fef_ffff_ffff_dc00),
+            (0x4019_21fb_5444_2d17, 0x3ff0_0000_0000_0000),
+            (0x4019_21fb_5444_2d18, 0x3ff0_0000_0000_0000),
+            (0x4330_0000_0000_0000, 0xbfdf_1300_d681_503f),
+            (0x432f_ffff_ffff_ffff, 0xbf7c_91a4_321f_73c8),
+            (0x7fe6_1a3d_b8c8_d129, 0x3ff0_0000_0000_0000),
+            (0x7526_ac5b_262c_a1ff, 0x3ff0_0000_0000_0000),
+            (0x3ff9_21fb_5444_2d18, 0x3c91_a626_3314_5c07),
+            (0xbff0_0000_0000_0000, 0x3fe1_4a28_0fb5_068c),
+            (0x4059_0000_0000_0000, 0x3feb_981d_bf66_5fdf),
+            (0x4480_f0cf_064d_d592, 0x3fe0_be2c_ef01_c8f4),
+            (0x7e37_e43c_8800_759c, 0xbfe2_6990_22ad_c4c1),
+            (0x7fef_ffff_ffff_ffff, 0xbfef_ffe6_2ecf_ab75),
+            (0x7ff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0x3ff0_0000_0000_0000),
+            (0x0000_0000_0000_0001, 0x3ff0_0000_0000_0000),
+        ] {
+            let got = cos(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "cos({x:#x}) = {got:#x}, CORE-MATH {want:#x}");
+        }
+        assert!(cos(f64::NAN).is_nan());
     }
 }

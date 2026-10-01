@@ -769,14 +769,8 @@ fn glibc_remquo_quo(quo: i32) -> i32 {
 /// Returns `(sin(x), cos(x))`.
 #[inline]
 pub fn sincos(x: f64) -> (f64, f64) {
-    // Mid-range [1.647e6, 1e15]: share the fast FMA pi/2 reduction (the same one that
-    // makes fl sin/cos beat glibc there) for BOTH outputs, instead of libm::sincos's
-    // slow Payne-Hanek rem_pio2. Bit-identical to (sin(x), cos(x)). Elsewhere
-    // unchanged (libm::sincos).
-    if let Some(sc) = crate::math::trig::sincos_band(x) {
-        return sc;
-    }
-    libm::sincos(x)
+    // Bit-identical to (sin(x), cos(x)), as glibc's sincos is to its sin and cos.
+    (crate::math::sin(x), crate::math::cos(x))
 }
 
 /// Parse a `nan()` tag string into a mantissa payload, matching glibc:

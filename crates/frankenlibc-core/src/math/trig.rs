@@ -42,49 +42,8 @@ pub fn sin(x: f64) -> f64 {
 
 #[inline]
 pub fn cos(x: f64) -> f64 {
-    let ax = x.abs();
-    // See `sin`: only `[TRIG_FAST_HI, TRIG_RED_MAX]` takes the FMA reduction.
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
-        return libm::cos(x);
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    match n & 3 {
-        0 => libm::cos(r),
-        1 => -libm::sin(r),
-        2 => -libm::cos(r),
-        _ => libm::sin(r),
-    }
-}
-
-/// Fused sin+cos over the fast FMA-reduction band `[TRIG_FAST_HI, TRIG_RED_MAX]`.
-/// Returns `Some((sin(x), cos(x)))` computed from a SINGLE `reduce_pio2_fma`
-/// instead of `libm::sincos`'s slower Payne–Hanek `rem_pio2`. The result is
-/// BIT-IDENTICAL to `(self::sin(x), self::cos(x))` (same reduction, same quadrant
-/// map, same `libm::sin/cos` on the reduced arg), so it inherits their already-green
-/// ≤1–2 ULP-vs-glibc conformance; outside the band the caller falls back to
-/// `libm::sincos` (unchanged behavior).
-///
-/// NOTE (rejected 2026-07-11, cc-sincos-band): lowering this threshold to `π/4` (mirroring
-/// the sin/cos/tan levers) is a MEASURED no-op — `libm::sincos` already shares ONE reduction
-/// for both outputs and already BEATS glibc's `sincos` on the common band (fl_cand/libm_orig
-/// = 1.001, both 0.74x glibc). The FMA path adds a double reduction (`reduce_pio2_fma` +
-/// `libm::sin(r)`/`libm::cos(r)`'s own `rem_pio2` fast-exits) that washes the savings. Do not
-/// retry without transcribing the sin/cos KERNELS to avoid the double reduction.
-#[inline]
-pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
-    let ax = x.abs();
-    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
-        return None;
-    }
-    let (n, r) = reduce_pio2_fma(x);
-    let s = libm::sin(r);
-    let c = libm::cos(r);
-    Some(match n & 3 {
-        0 => (s, c),
-        1 => (c, -s),
-        2 => (-s, -c),
-        _ => (-c, s),
-    })
+    // CORE-MATH's correctly rounded cos; see `sin` (bd-otip6a).
+    crate::math::coremath::cos(x)
 }
 
 /// Only `[TRIG_FAST_HI, TRIG_RED_MAX]`, where libm's Payne-Hanek reduction is slow,
