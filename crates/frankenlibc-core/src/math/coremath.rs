@@ -24,7 +24,10 @@
 //! contraction, so only the explicit `__builtin_fma` calls are kept as
 //! `mul_add`; every other operation is a plain IEEE operation.
 
-use super::erf_data::{ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS};
+use super::erf_data::{
+    ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS, ERFC_ASYMPT_EXCEPTIONS, ERFC_E2, ERFC_NEG_EXCEPTIONS,
+    ERFC_POS_EXCEPTIONS, ERFC_T, ERFC_TACC, EXP_T1, EXP_T2,
+};
 
 const MASK52: u64 = u64::MAX >> 12;
 
@@ -2093,6 +2096,333 @@ pub fn erf(x: f64) -> f64 {
     if x >= 0.0 { h + l } else { (-h) + (-l) }
 }
 
+// --- erfc (CORE-MATH src/binary64/erfc/erfc.c) -------------------------------
+//
+// erfc.c also clears a spurious FE_UNDERFLOW raised inside its asymptotic
+// fast path; that only affects the flag state, never a returned value, and is
+// not reproduced here.
+
+/// `a * (bh + bl)` as a double-double (pow.c `s_mul`).
+#[inline(always)]
+fn s_mul(a: f64, bh: f64, bl: f64) -> (f64, f64) {
+    let (hi, lo) = a_mul(a, bh);
+    (hi, a.mul_add(bl, lo))
+}
+
+/// `(ah + al) * (bh + bl) - al*bl` (pow.c `d_mul`).
+#[inline(always)]
+fn d_mul(ah: f64, al: f64, bh: f64, bl: f64) -> (f64, f64) {
+    let (hi, lo) = a_mul(ah, bh);
+    let lo = ah.mul_add(bl, lo);
+    (hi, al.mul_add(bh, lo))
+}
+
+/// `a + (bh + bl)` assuming |a| >= |bh| (pow.c `fast_sum`).
+#[inline(always)]
+fn fast_sum(a: f64, bh: f64, bl: f64) -> (f64, f64) {
+    let (hi, lo) = fasttwosum(a, bh);
+    (hi, lo + bl)
+}
+
+/// exp(zh + zl) for |z| < 0.000130273 (pow.c `q_1`).
+#[inline(always)]
+fn exp_q1(zh: f64, zl: f64) -> (f64, f64) {
+    const Q: [f64; 5] = [
+        hf("0x1p0"),
+        hf("0x1p0"),
+        hf("0x1p-1"),
+        hf("0x1.5555555995d37p-3"),
+        hf("0x1.55555558489dcp-5"),
+    ];
+    let z = zh + zl;
+    let q = Q[4].mul_add(zh, Q[3]);
+    let q = q.mul_add(z, Q[2]);
+    let (hi, lo) = fasttwosum(Q[1], q * z);
+    let (hi, lo) = d_mul(zh, zl, hi, lo);
+    fast_sum(Q[0], hi, lo)
+}
+
+/// exp(xh + xl) with relative error < 2^-74.139 (pow.c `exp_1`).
+#[inline(always)]
+fn exp_1(xh: f64, xl: f64) -> (f64, f64) {
+    const INVLOG2: f64 = hf("0x1.71547652b82fep+12");
+    const LOG2H: f64 = hf("0x1.62e42fefa39efp-13");
+    const LOG2L: f64 = hf("0x1.abc9e3b39803fp-68");
+    let k = (xh * INVLOG2).round_ties_even();
+    let (kh, kl) = s_mul(k, LOG2H, LOG2L);
+    let (yh, mut yl) = fasttwosum(xh - kh, xl);
+    yl -= kl;
+    let kk = k as i64;
+    let m = (kk >> 12) + 0x3ff;
+    let i2 = ((kk >> 6) & 0x3f) as usize;
+    let i1 = (kk & 0x3f) as usize;
+    let (hi, lo) = d_mul(EXP_T2[i1][0], EXP_T2[i1][1], EXP_T1[i2][0], EXP_T1[i2][1]);
+    let (qh, ql) = exp_q1(yh, yl);
+    let (hi, lo) = d_mul(hi, lo, qh, ql);
+    let d = f64::from_bits((m as u64) << 52);
+    (hi * d, lo * d)
+}
+
+/// `2^e * (h + l)` ~ exp(xh + xl) for -742 <= xh + xl <= -2.92, to about
+/// 104 bits. Returns `(h, l, e)`.
+fn exp_accurate(xh: f64, xl: f64) -> (f64, f64, i32) {
+    const INVLOG2: f64 = hf("0x1.71547652b82fep+0");
+    const LOG2H: f64 = hf("0x1.62e42fefa39efp-1");
+    const LOG2L: f64 = hf("0x1.abc9e3b398p-56");
+    const LOG2TINY: f64 = hf("0x1.f97b57a079a19p-103");
+    let e2 = &ERFC_E2;
+    let k = (xh * INVLOG2).round_ties_even() as i32;
+    let kd = -(k as f64);
+    let yh = kd.mul_add(LOG2H, xh);
+    let (th, tl) = two_sum(kd * LOG2L, xl);
+    let (yh, yl) = fasttwosum(yh, th);
+    let yl = kd.mul_add(LOG2TINY, yl + tl);
+    let mut h = e2[19 + 8];
+    for i in (16..=18).rev() {
+        h = h.mul_add(yh, e2[i + 8]);
+    }
+    let (th, tl) = a_mul(h, yh);
+    let tl = h.mul_add(yl, tl);
+    let (mut h, mut l) = fasttwosum(e2[15 + 8], th);
+    l += tl;
+    for i in (8..=14).rev() {
+        let (th, tl) = a_mul(h, yh);
+        let tl = h.mul_add(yl, tl);
+        let tl = l.mul_add(yh, tl);
+        let (hh, ll) = fasttwosum(e2[i + 8], th);
+        h = hh;
+        l = ll + tl;
+    }
+    for i in (0..=7).rev() {
+        let (th, tl) = a_mul(h, yh);
+        let tl = h.mul_add(yl, tl);
+        let tl = l.mul_add(yh, tl);
+        let (hh, ll) = fasttwosum(e2[2 * i], th);
+        h = hh;
+        l = ll + (tl + e2[2 * i + 1]);
+    }
+    (h, l, k)
+}
+
+/// Fast erfc(x) for 0x1.713786d9c7c09p+1 < x < 0x1.b39dc41e48bfdp+4 via
+/// exp(-x^2) p(1/x); returns `(h, l, absolute error bound)`.
+#[inline(always)]
+fn erfc_asympt_fast(x: f64) -> (f64, f64, f64) {
+    if x >= hf("0x1.9db1bb14e15cap+4") {
+        // erfc(x) < 2^-970: leave it to the accurate path.
+        return (0.0, 0.0, 1.0);
+    }
+    let (uh, ul) = a_mul(x, x);
+    let (eh, el) = exp_1(-uh, -ul);
+    let yh = 1.0 / x;
+    let yl = yh * (-x).mul_add(yh, 1.0);
+    const THRESHOLD: [f64; 6] = [
+        hf("0x1.d5p-4"),
+        hf("0x1.59da6ca291ba6p-3"),
+        hf("0x1.bcp-3"),
+        hf("0x1.0cp-2"),
+        hf("0x1.38p-2"),
+        hf("0x1.63p-2"),
+    ];
+    let mut i = 0;
+    while i < THRESHOLD.len() - 1 && yh > THRESHOLD[i] {
+        i += 1;
+    }
+    let p = &ERFC_T[i];
+    let (uh, ul) = a_mul(yh, yh);
+    let ul = (2.0 * yh).mul_add(yl, ul);
+    let mut zh = p[12];
+    zh = zh.mul_add(uh, p[11]);
+    zh = zh.mul_add(uh, p[10]);
+    let (h, l) = s_mul(zh, uh, ul);
+    let (mut zh, mut zl) = fasttwosum(p[9], h);
+    zl += l;
+    for j in [15usize, 13, 11, 9, 7, 5, 3] {
+        let (h, l) = d_mul(zh, zl, uh, ul);
+        let (hh, ll) = fasttwosum(p[(j + 1) / 2], h);
+        zh = hh;
+        zl = ll + l;
+    }
+    let (h, l) = d_mul(zh, zl, uh, ul);
+    let (zh, mut zl) = fasttwosum(p[0], h);
+    zl += l + p[1];
+    let (uh, ul) = d_mul(zh, zl, yh, yl);
+    let (h, l) = d_mul(uh, ul, eh, el);
+    let err = if h >= hf("0x1.151b9a3fdd5c9p-955") {
+        hf("0x1.d9p-68") * h
+    } else {
+        hf("0x1p-1022")
+    };
+    (h, l, err)
+}
+
+/// Fast erfc(x) for -0x1.7744f8f74e94bp+2 < x < 0x1.b39dc41e48bfdp+4 as
+/// `(h, l, absolute error bound)`.
+#[inline(always)]
+fn erfc_fast(x: f64) -> (f64, f64, f64) {
+    if x < 0.0 {
+        // erfc(x) = 1 + erf(-x)
+        let (h, l, err) = erf_fast(-x);
+        let err = err * h;
+        let (h, t) = fasttwosum(1.0, h);
+        return (h, t + l, err + hf("0x1.4p-102"));
+    }
+    if x <= hf("0x1.713786d9c7c09p+1") {
+        let (h, l, err) = erf_fast(x);
+        let err = err * h;
+        let (h, t) = fasttwosum(1.0, -h);
+        let l = t - l;
+        if x >= hf("0x1.e861fbb24c00ap-2") {
+            return (h, l, err);
+        }
+        return (h, l, err + hf("0x1.4p-104"));
+    }
+    erfc_asympt_fast(x)
+}
+
+/// Accurate erfc(x) for 0x1.b59ffb450828cp+0 < x < 0x1.b39dc41e48bfdp+4.
+#[inline(never)]
+fn erfc_asympt_accurate(x: f64) -> f64 {
+    for e in &ERFC_ASYMPT_EXCEPTIONS {
+        if x == e[0] {
+            return e[1] + e[2];
+        }
+    }
+    if x == hf("0x1.a8f7bfbd15495p+4") {
+        // Subnormal hard case: 0x1.99ef5883f656cp-1024 - 2^-1076.
+        return f64::from_bits(1).mul_add(-0.25, f64::from_bits(0x0006_67bd_620f_d95b));
+    }
+    let (uh, ul) = a_mul(x, x);
+    let (eh, el, e) = exp_accurate(-uh, -ul);
+    let yh = 1.0 / x;
+    let yl = yh * (-x).mul_add(yh, 1.0);
+    const THRESHOLD: [f64; 10] = [
+        hf("0x1.45p-4"),
+        hf("0x1.e0p-4"),
+        hf("0x1.3fp-3"),
+        hf("0x1.95p-3"),
+        hf("0x1.f5p-3"),
+        hf("0x1.31p-2"),
+        hf("0x1.71p-2"),
+        hf("0x1.bcp-2"),
+        hf("0x1.0bp-1"),
+        hf("0x1.3p-1"),
+    ];
+    let mut i = 0;
+    while i < THRESHOLD.len() - 1 && yh > THRESHOLD[i] {
+        i += 1;
+    }
+    let p = &ERFC_TACC[i];
+    let (uh, ul) = a_mul(yh, yh);
+    let ul = (2.0 * yh).mul_add(yl, ul);
+    // p has degree 29 + 2i; its leading coefficient is p[14 + 6 + i].
+    let mut zh = p[14 + 6 + i];
+    let mut zl = 0.0f64;
+    let mut j = 27 + 2 * i;
+    while j >= 13 {
+        let (h, l) = a_mul(zh, uh);
+        let l = zh.mul_add(ul, l);
+        let l = zl.mul_add(uh, l);
+        let (hh, ll) = two_sum(p[(j - 1) / 2 + 6], h);
+        zh = hh;
+        zl = ll + l;
+        j -= 2;
+    }
+    for j in [11usize, 9, 7, 5, 3, 1] {
+        let (h, l) = a_mul(zh, uh);
+        let l = zh.mul_add(ul, l);
+        let l = zl.mul_add(uh, l);
+        let (hh, ll) = two_sum(p[j - 1], h);
+        zh = hh;
+        zl = ll + (l + p[j]);
+    }
+    let (uh, ul) = a_mul(zh, yh);
+    let ul = zh.mul_add(yl, ul);
+    let ul = zl.mul_add(yh, ul);
+    let (uh, ul) = fasttwosum(uh, ul);
+    let (h, l) = a_mul(uh, eh);
+    let l = uh.mul_add(el, l);
+    let l = ul.mul_add(eh, l);
+    let mut res = libm::scalbn(h + l, e);
+    if res < hf("0x1p-1022") {
+        // Subnormal result: round h + l at the scaled precision directly.
+        let mut corr = h - libm::scalbn(res, -e);
+        corr += l;
+        res += libm::scalbn(corr, e);
+    }
+    res
+}
+
+#[inline(never)]
+fn erfc_accurate(x: f64) -> f64 {
+    if x < 0.0 {
+        for e in &ERFC_NEG_EXCEPTIONS {
+            if x == e[0] {
+                return e[1] + e[2];
+            }
+        }
+        let (h, l) = erf_accurate(-x);
+        let (h, t) = fasttwosum(1.0, h);
+        return h + (t + l);
+    }
+    if x <= hf("0x1.b59ffb450828cp+0") {
+        // erfc(x) >= 2^-6
+        for e in &ERFC_POS_EXCEPTIONS {
+            if x == e[0] {
+                return e[1] + e[2];
+            }
+        }
+        let (h, l) = erf_accurate(x);
+        let (h, t) = fasttwosum(1.0, -h);
+        return h + (t - l);
+    }
+    erfc_asympt_accurate(x)
+}
+
+/// Correctly rounded `erfc`.
+pub fn erfc(x: f64) -> f64 {
+    let t = x.to_bits();
+    let at = t & 0x7fff_ffff_ffff_ffff;
+    if t >= 0x8000_0000_0000_0000 {
+        // x = -NaN or x <= 0 (excluding +0)
+        if t >= 0xc017_744f_8f74_e94b {
+            // NaN or x <= -0x1.7744f8f74e94bp+2: erfc(x) rounds to 2.
+            if t >= 0xfff0_0000_0000_0000 {
+                if t == 0xfff0_0000_0000_0000 {
+                    return 2.0;
+                }
+                return x + x;
+            }
+            return 2.0 - hf("0x1p-54");
+        }
+        if hf("-0x1.c5bf891b4ef6ap-54") <= x {
+            return (-x).mul_add(hf("0x1p-54"), 1.0);
+        }
+    } else {
+        // x = +NaN or x >= 0 (excluding -0)
+        if at >= 0x403b_39dc_41e4_8bfd {
+            // NaN or x >= 0x1.b39dc41e48bfdp+4: erfc(x) < 2^-1075.
+            if at >= 0x7ff0_0000_0000_0000 {
+                if at == 0x7ff0_0000_0000_0000 {
+                    return 0.0;
+                }
+                return x + x;
+            }
+            return f64::from_bits(1) * 0.25;
+        }
+        if x <= hf("0x1.c5bf891b4ef6ap-55") {
+            return (-x).mul_add(hf("0x1p-54"), 1.0);
+        }
+    }
+    let (h, l, err) = erfc_fast(x);
+    let left = h + (l - err);
+    let right = h + (l + err);
+    if left == right {
+        return left;
+    }
+    erfc_accurate(x)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2311,5 +2641,51 @@ mod tests {
             assert_eq!(got, want, "erf({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
         }
         assert!(erf(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn erfc_matches_glibc_2_43_on_corpus() {
+        assert_eq!(corpus_hash(erfc, -30, 5), 0xf56c_08ba_062d_376e);
+    }
+
+    #[test]
+    fn erfc_hard_and_special_cases() {
+        // (input, glibc 2.43 result): every branch cut-off, the subnormal
+        // hard case, table exceptions and the asymptotic range.
+        for (x, want) in [
+            (0x403a_8f7b_fbd1_5495u64, 0x0006_67bd_620f_d95bu64),
+            (0xbc9c_5bf8_91b4_ef6b, 0x3ff0_0000_0000_0001),
+            (0xbc9c_5bf8_91b4_ef6a, 0x3ff0_0000_0000_0000),
+            (0x3c8c_5bf8_91b4_ef6a, 0x3ff0_0000_0000_0000),
+            (0x3c8c_5bf8_91b4_ef6b, 0x3fef_ffff_ffff_ffff),
+            (0x3ffb_59ff_b450_828c, 0x3f90_0000_0000_0004),
+            (0x3ffb_59ff_b450_828d, 0x3f90_0000_0000_0000),
+            (0x4007_1378_6d9c_7c09, 0x3f07_ae95_6ac8_3f61),
+            (0x4007_1378_6d9c_7c0a, 0x3f07_ae95_6ac8_3f4f),
+            (0x4039_db1b_b14e_15ca, 0x034f_ffff_ffff_fef3),
+            (0x403a_8b12_fc6e_4892, 0x000f_ffff_ffff_ffe0),
+            (0x403b_39dc_41e4_8bfc, 0x0000_0000_0000_0001),
+            (0x403b_39dc_41e4_8bfd, 0x0000_0000_0000_0000),
+            (0xc017_744f_8f74_e94a, 0x3fff_ffff_ffff_ffff),
+            (0xc017_744f_8f74_e94b, 0x4000_0000_0000_0000),
+            (0x3fde_861f_bb24_c00a, 0x3fe0_0000_0000_0000),
+            (0x3fbd_4af8_adb9_0116, 0x3feb_e2e3_45c3_1801),
+            (0xbfff_9a4a_209c_a0e4, 0x3fff_eaa1_66e3_84c9),
+            (0x4034_8de4_52fb_1a15, 0x1983_c2a1_2640_45ad),
+            (0x3ffb_8940_788b_825d, 0x3f8e_97ea_f108_0bff),
+            (0xbff8_0000_0000_0000, 0x3fff_752a_ab89_bd70),
+            (0x3fe0_0000_0000_0000, 0x3fde_b021_47ce_245c),
+            (0x4008_0000_0000_0000, 0x3ef7_29df_6503_422a),
+            (0x4024_0000_0000_0000, 0x36a7_d8a7_f2a8_a2d0),
+            (0x403a_0000_0000_0000, 0x02a2_84bf_e1cd_ea24),
+            (0x7ff0_0000_0000_0000, 0x0000_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0x4000_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0x3ff0_0000_0000_0000),
+            (0x0000_0000_0000_0000, 0x3ff0_0000_0000_0000),
+        ] {
+            let got = erfc(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "erfc({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
+        }
+        assert!(erfc(f64::NAN).is_nan());
     }
 }

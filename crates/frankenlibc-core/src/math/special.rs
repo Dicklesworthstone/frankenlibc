@@ -365,19 +365,13 @@ pub fn lgamma(x: f64) -> f64 {
 /// Complementary error function: 1 - erf(x).
 #[inline]
 pub fn erfc(x: f64) -> f64 {
-    // Negative saturation short-circuit: erfc(x) = 1 - erf(x) rounds to exactly 2.0
-    // in f64 for x <= -6 (erf(-6) rounds to -1.0; 1-(-0.99999999999999997848) = 2.0),
-    // and glibc returns exactly 2.0 there. 2.0 is a normal value — no underflow flag,
-    // unlike the large-POSITIVE tail below (which must keep raising FE_UNDERFLOW). So
-    // skip the libm::erfc call for the whole x <= -6 tail. Bit-identical. (x=-inf ->
-    // erfc(-inf)=2 also lands here; NaN, x in (-6,...) fall through unchanged.)
-    if x <= -6.0 {
-        return 2.0;
-    }
-    let r = libm::erfc(x);
+    // CORE-MATH's correctly rounded erfc, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::erfc differed on 31% of inputs (bd-otip6a).
+    let r = crate::math::coremath::erfc(x);
     // erfc(x) for large finite positive x underflows toward 0; glibc raises
-    // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
-    // is an exact limit (no underflow), so exclude non-finite x.
+    // FE_UNDERFLOW on the subnormal/zero result, which the constant-folded
+    // 2^-1074/4 tail does not. erfc(+inf)=0 is an exact limit (no underflow),
+    // so exclude non-finite x.
     if x.is_finite() && x > 0.0 && r < f64::MIN_POSITIVE {
         let _ = core::hint::black_box(
             core::hint::black_box(f64::MIN_POSITIVE) * core::hint::black_box(f64::MIN_POSITIVE),
