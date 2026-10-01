@@ -738,7 +738,7 @@ run_optional_case() {
 # case that PASSES fails the run, so the entry must be removed with the fix.
 # Tracked known failures: "mode:case=bead". Each must fail; an unexpected pass
 # is XPASS (a failure) so the entry is removed once fixed.
-KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-hardened:malloc_signal_reentry=bd-na6ede}"
+KNOWN_FAILING_CASES="${KNOWN_FAILING_CASES:-}"
 xfails=0
 
 known_failure_bead() {

@@ -107,6 +107,14 @@ struct AllocatorReentrySlot {
     /// `MT_STATS_MERGE_EVENTS` events; see `record_slot_mt_stats`.
     mt_stats_lock: AtomicBool,
     mt_stats: UnsafeCell<MallocStatsState>,
+    /// Set (by this thread only) from just before it takes the native-fallback
+    /// table lock until just after it releases it; see
+    /// `fallback_table_entered_on_this_thread`.
+    in_fallback_table: AtomicBool,
+    /// Stack address of the innermost user signal handler frame entered on
+    /// this thread through signal_abi's trampolines, 0 when none; see
+    /// `in_signal_handler`.
+    signal_handler_sp: AtomicUsize,
 }
 
 // SAFETY: a live thread owns exactly one reentry slot: keyed by its TCB self
@@ -128,8 +136,65 @@ impl AllocatorReentrySlot {
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
             mt_stats_lock: AtomicBool::new(false),
             mt_stats: UnsafeCell::new(MallocStatsState::new()),
+            in_fallback_table: AtomicBool::new(false),
+            signal_handler_sp: AtomicUsize::new(0),
         }
     }
+}
+
+/// An address in the caller's stack frame (stacks grow down on every target).
+#[inline(always)]
+fn current_stack_address() -> usize {
+    let probe = 0u8;
+    core::hint::black_box(&probe) as *const u8 as usize
+}
+
+/// True while this thread runs a user signal handler (or anything it calls).
+///
+/// Recorded as the trampoline's stack address rather than a depth: a handler
+/// that leaves by `siglongjmp` never runs its exit code, and a depth would then
+/// stay raised forever. A stack address goes stale harmlessly -- once control
+/// is back above the trampoline's frame, the current stack address is above it.
+#[inline]
+fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
+    let handler_sp = slot.signal_handler_sp.load(Ordering::Relaxed);
+    handler_sp != 0 && current_stack_address() <= handler_sp
+}
+
+/// Marks a user signal handler running on this thread (bd-na6ede). While it
+/// runs, every allocator entry takes the reentrant path, which uses only the
+/// lock-free bump heap: the interrupted frame may hold any allocator lock --
+/// fl's or the host allocator's under the hardened arena -- and the handler
+/// waiting for it would never end. Restores the outer handler's mark on drop.
+pub(crate) struct SignalHandlerAllocScope {
+    slot: Option<&'static AllocatorReentrySlot>,
+    previous: usize,
+}
+
+impl Drop for SignalHandlerAllocScope {
+    fn drop(&mut self) {
+        if let Some(slot) = self.slot {
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+            slot.signal_handler_sp.store(self.previous, Ordering::Relaxed);
+        }
+    }
+}
+
+pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
+    let slot = current_allocator_reentry_slot();
+    let mut previous = 0;
+    if let Some(slot) = slot {
+        let here = current_stack_address();
+        previous = slot.signal_handler_sp.load(Ordering::Relaxed);
+        // An outer mark below this frame is stale (its handler was left by
+        // siglongjmp); keep only one that still encloses us.
+        if previous != 0 && previous < here {
+            previous = 0;
+        }
+        slot.signal_handler_sp.store(here, Ordering::Relaxed);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+    SignalHandlerAllocScope { slot, previous }
 }
 
 static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
@@ -3695,22 +3760,49 @@ static FALLBACK_ALLOC_TABLE_LOCK: AtomicBool = AtomicBool::new(false);
 static FALLBACK_ALLOC_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
 static FALLBACK_ALLOC_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
 
-struct FallbackAllocTableGuard;
+struct FallbackAllocTableGuard {
+    slot: Option<&'static AllocatorReentrySlot>,
+}
 
 impl Drop for FallbackAllocTableGuard {
     fn drop(&mut self) {
         FALLBACK_ALLOC_TABLE_LOCK.store(false, Ordering::Release);
+        if let Some(slot) = self.slot {
+            core::sync::atomic::compiler_fence(Ordering::SeqCst);
+            slot.in_fallback_table.store(false, Ordering::Relaxed);
+        }
     }
 }
 
 fn lock_fallback_alloc_table() -> FallbackAllocTableGuard {
+    // Mark this thread BEFORE waiting, so a signal handler that interrupts
+    // anywhere from here to the release sees it (no window between acquiring
+    // and marking).
+    let slot = current_allocator_reentry_slot();
+    if let Some(slot) = slot {
+        slot.in_fallback_table.store(true, Ordering::Relaxed);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
     while FALLBACK_ALLOC_TABLE_LOCK
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
         std::hint::spin_loop();
     }
-    FallbackAllocTableGuard
+    FallbackAllocTableGuard { slot }
+}
+
+/// True when this reentrant allocator entry must not touch the fallback table
+/// or the host allocator: this thread is inside (or about to enter) the table
+/// lock, or is running a signal handler whose interrupted frame may hold the
+/// table lock or a host allocator lock. Waiting for either would never end --
+/// the holder is the frame we interrupted (bd-na6ede: hardened arena blocks come
+/// from host memory tracked in this table, so both are held often). Callers use
+/// the lock-free bump heap instead.
+fn fallback_table_entered_on_this_thread() -> bool {
+    current_allocator_reentry_slot().is_some_and(|slot| {
+        slot.in_fallback_table.load(Ordering::Relaxed) || in_signal_handler(slot)
+    })
 }
 
 #[inline]
@@ -4389,6 +4481,9 @@ impl Drop for AllocatorReentryGuard {
 #[inline]
 fn enter_allocator_reentry_guard() -> Option<AllocatorReentryGuard> {
     let slot = current_allocator_reentry_slot()?;
+    if in_signal_handler(slot) {
+        return None;
+    }
     let guard = slot
         .allocator_depth
         .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
@@ -4710,6 +4805,10 @@ unsafe fn realloc_segment_owned(
 #[inline]
 unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
     let req = size.max(1);
+    if fallback_table_entered_on_this_thread() {
+        // Lock-free bump memory, recognised by free without the table.
+        return unsafe { bump_alloc(req) };
+    }
     // SAFETY: early loader/bootstrap allocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_malloc(req) };
@@ -4722,6 +4821,13 @@ unsafe fn bootstrap_malloc_passthrough(size: usize) -> *mut c_void {
 
 #[inline]
 unsafe fn bootstrap_calloc_passthrough(nmemb: usize, size: usize) -> *mut c_void {
+    if fallback_table_entered_on_this_thread() {
+        let Some(total) = nmemb.checked_mul(size) else {
+            return std::ptr::null_mut();
+        };
+        // Bump memory is never reused, so it is already zero.
+        return unsafe { bump_alloc(total.max(1)) };
+    }
     // SAFETY: early loader/bootstrap allocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_calloc(nmemb, size) };
@@ -4744,6 +4850,21 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
     }
     if segment_owned_index(ptr as usize).is_some() {
         return unsafe { realloc_segment_owned(None, ptr, size.max(1)) };
+    }
+    if fallback_table_entered_on_this_thread() {
+        // No table access here (see `fallback_table_entered_on_this_thread`):
+        // a bump block's size is in its header; any other block's is unknown,
+        // so fail and leave it intact, as realloc may.
+        let Some(old_size) = (unsafe { bump_allocation_size(ptr) }) else {
+            return std::ptr::null_mut();
+        };
+        let out = unsafe { bump_alloc(size) };
+        if !out.is_null() {
+            // SAFETY: both blocks are live and at least min(old, new) long.
+            unsafe { std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size)) };
+            let _ = unsafe { bump_mmap_release(ptr) };
+        }
+        return out;
     }
     // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
@@ -4769,6 +4890,13 @@ unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
         }
         SegmentFreeResult::OwnedInvalid(_) => return,
         SegmentFreeResult::NotOwned => {}
+    }
+    if fallback_table_entered_on_this_thread() {
+        // Cannot consult the table. What the paths above hand out in this
+        // state is bump memory: release an overflow mapping (static-heap bump
+        // frees are no-ops), and leak anything else rather than wait.
+        let _ = unsafe { bump_mmap_release(ptr) };
+        return;
     }
     let tracked_size = fallback_remove_sized(ptr);
     // SAFETY: early loader/bootstrap frees must bypass runtime policy and
@@ -5760,6 +5888,22 @@ pub unsafe extern "C" fn posix_memalign(
     }
 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+        if fallback_table_entered_on_this_thread() {
+            // Host allocator off-limits here (signal handler / table holder).
+            if memptr.is_null()
+                || !alignment.is_power_of_two()
+                || alignment % core::mem::size_of::<*mut c_void>() != 0
+            {
+                return libc::EINVAL;
+            }
+            let out = unsafe { bump_alloc_aligned(size, alignment) };
+            if out.is_null() {
+                return libc::ENOMEM;
+            }
+            // SAFETY: memptr checked non-null above.
+            unsafe { *memptr = out };
+            return 0;
+        }
         // SAFETY: forwards arguments to libc-compatible fallback implementation.
         return unsafe { native_libc_posix_memalign(memptr, alignment, size) };
     };
@@ -5879,6 +6023,10 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     }
 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+        if fallback_table_entered_on_this_thread() {
+            // Host allocator off-limits here (signal handler / table holder).
+            return unsafe { bump_alloc_aligned(size, alignment) };
+        }
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_memalign(alignment, size) };
         fallback_insert_sized(out, size.max(1));
@@ -5986,6 +6134,10 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     }
 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
+        if fallback_table_entered_on_this_thread() {
+            // Host allocator off-limits here (signal handler / table holder).
+            return unsafe { bump_alloc_aligned(size, alignment) };
+        }
         // SAFETY: direct delegation avoids recursive aligned-allocation lock paths.
         let out = unsafe { native_libc_aligned_alloc(alignment, size) };
         fallback_insert_sized(out, size.max(1));
