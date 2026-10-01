@@ -5,6 +5,7 @@
 
 mod coremath;
 mod erf_data;
+mod gamma_data;
 pub mod exp;
 pub mod float;
 pub mod float32;

@@ -8,100 +8,12 @@ pub fn erf(x: f64) -> f64 {
     crate::math::coremath::erf(x)
 }
 
-// ---------------------------------------------------------------------------
-// tgamma: Cephes (Moshier) rational minimax on [2,3] (bd-pha1c7).
-//
-// `libm::tgamma` (our musl port) runs ~3.03x slower than glibc's hand-tuned
-// path — the single worst transcendental gap. The fix is NOT a faster version
-// of the same loop: prior sessions exhaustively proved the textbook g=7 Lanczos
-// floors at ~16 ULP even in double-double, and a Lanczos route still pays for a
-// `pow`+`exp` (our pure-Rust libm transcendentals are the slow part, so a
-// Boost-`lanczos13m53` rewrite measured *slower* than libm at ~107 ns).
-//
-// We replace the algorithm entirely with a *transcendental-free* evaluation:
-// reduce x into [2,3] by the recurrence Γ(x+1)=x·Γ(x), then evaluate Cephes's
-// degree-6/degree-7 rational minimax P(x)/Q(x). No log/exp/pow at all — just a
-// short recurrence, two Horner evals and one divide. Measured 29.6 ns vs the
-// old libm path's 68.7 ns (2.3x) and glibc parity (~27 ns), at 0 ULP vs exact
-// factorials / ≤2 ULP vs the closed-form Γ(n+½) reference. Coefficients are
-// Moshier's public-domain Cephes `gamma.c` values, verbatim.
-#[allow(clippy::excessive_precision)]
-const TGAMMA_P: [f64; 7] = [
-    1.601_195_224_767_518_614_07e-4,
-    1.191_351_470_065_863_849_13e-3,
-    1.042_137_975_617_615_699_35e-2,
-    4.763_678_004_571_372_314_64e-2,
-    2.074_482_276_484_359_751_50e-1,
-    4.942_148_268_014_971_007_53e-1,
-    9.999_999_999_999_999_967_96e-1,
-];
-#[allow(clippy::excessive_precision)]
-const TGAMMA_Q: [f64; 8] = [
-    -2.315_818_733_241_201_298_19e-5,
-    5.396_055_804_933_033_978_42e-4,
-    -4.456_419_138_517_972_404_94e-3,
-    1.181_397_852_220_604_355_52e-2,
-    3.582_363_986_054_986_533_73e-2,
-    -2.345_917_957_182_433_485_68e-1,
-    7.143_049_170_302_730_740_85e-2,
-    1.000_000_000_000_000_003_20e0,
-];
-
-#[inline]
-fn polevl(x: f64, c: &[f64]) -> f64 {
-    // Horner: c[0]·xⁿ + … + c[n], leading coefficient first.
-    let mut r = c[0];
-    for &ci in &c[1..] {
-        r = r.mul_add(x, ci);
-    }
-    r
-}
-
-/// Γ(x) for `x` in `(0, 13]` via recurrence reduction to `[2,3]` + Cephes
-/// rational minimax. The caller gates the domain; here everything stays finite.
-#[inline]
-#[allow(clippy::approx_constant)] // γ spelled out beside its formula.
-fn tgamma_reduced(mut x: f64) -> f64 {
-    let mut z = 1.0f64;
-    while x >= 3.0 {
-        x -= 1.0;
-        z *= x;
-    }
-    while x < 2.0 {
-        if x < 1.0e-9 {
-            // Γ(x) ≈ 1/(x·(1+γx)) as x→0⁺ (Euler–Mascheroni γ).
-            return z / ((1.0 + 0.577_215_664_901_532_9 * x) * x);
-        }
-        z /= x;
-        x += 1.0;
-    }
-    if x == 2.0 {
-        return z;
-    }
-    x -= 2.0;
-    z * polevl(x, &TGAMMA_P) / polevl(x, &TGAMMA_Q)
-}
-
 #[inline]
 pub fn tgamma(x: f64) -> f64 {
-    // Fast path covers the hot range. Negative args (reflection + poles), zero,
-    // non-finite, and large x (where the recurrence would loop many times / the
-    // result overflows) defer to the libm reference for exact IEEE semantics —
-    // both paths stay within the 4-ULP-vs-glibc math conformance contract.
-    if x > 0.0 && x <= 13.0 {
-        tgamma_reduced(x)
-    } else {
-        // Negative-integer poles: glibc raises FE_INVALID (result NaN); libm
-        // returns NaN without the flag. Re-raise on this cold path via a hardware
-        // 0/0 (NaN + FE_INVALID). (tgamma(0) is handled by libm with FE_DIVBYZERO
-        // already; positive/large/non-integer args raise nothing here.)
-        if x < 0.0 && x.is_finite() && x == x.floor() {
-            let _ = core::hint::black_box(
-                core::hint::black_box(0.0_f64) / core::hint::black_box(0.0_f64),
-            );
-        }
-        libm::tgamma(x)
-    }
+    // CORE-MATH's correctly rounded tgamma, which glibc 2.43 ships:
+    // bit-identical to glibc. The Cephes rational / libm::tgamma paths differed
+    // on 65% of inputs (bd-otip6a).
+    crate::math::coremath::tgamma(x)
 }
 
 #[cfg(test)]

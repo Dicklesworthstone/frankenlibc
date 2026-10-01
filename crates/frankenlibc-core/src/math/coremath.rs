@@ -28,6 +28,13 @@ use super::erf_data::{
     ERF_C, ERF_C2, ERF_TINY_EXCEPTIONS, ERFC_ASYMPT_EXCEPTIONS, ERFC_E2, ERFC_NEG_EXCEPTIONS,
     ERFC_POS_EXCEPTIONS, ERFC_T, ERFC_TACC, EXP_T1, EXP_T2,
 };
+use super::gamma_data::{
+    TG_ACC_CH4, TG_ACC_CH8, TG_ACC_CH16, TG_ACC_CH26, TG_ACC_CH32, TG_ACC_CH64, TG_ACC_CH96,
+    TG_ACC_CH128, TG_ACC_CH160, TG_ACC_CL4, TG_ACC_CL8, TG_ACC_CL16, TG_ACC_CL26, TG_ACC_CL32,
+    TG_ACC_CL64, TG_ACC_CL96, TG_ACC_CL128, TG_ACC_CL160, TG_ACC0_C, TG_ACC0_CC, TG_ASYM_BIG,
+    TG_ASYM_SMALL, TG_DB, TG_E0, TG_E1, TG_EXP_C, TG_LOG_L1, TG_LOG_L2, TG_LOG_R1, TG_LOG_R2,
+    TG_MID_C, TG_MID_CC, TG_SMALL_C, TG_SMALL_CC, TG_ST,
+};
 use super::trig_data::{
     SIN_C2U, SIN_PC, SIN_PS, SIN_S1U, SIN_S2U, SIN_T, SIN_U1, SIN_U2, TRIG_C, TRIG_PC, TRIG_PCFAST,
     TRIG_PS, TRIG_PSFAST, TRIG_S, TRIG_SC, TRIG_T, TRIG_TINV,
@@ -4035,6 +4042,605 @@ pub fn tan(x: f64) -> f64 {
     tan_accurate(x)
 }
 
+// --- tgamma (CORE-MATH src/binary64/tgamma/tgamma.c) ---------------------------
+
+/// tgamma.c `sumdd`: `(xh + xl) + (yh + yl)` ordering the FastTwoSum by
+/// magnitude.
+#[inline(always)]
+fn sumdd_ordered(xh: f64, xl: f64, yh: f64, yl: f64) -> (f64, f64) {
+    let (sh, sl) = if xh.abs() > yh.abs() {
+        fasttwosum(xh, yh)
+    } else {
+        fasttwosum(yh, xh)
+    };
+    (sh, (xl + yl) + sl)
+}
+
+/// tgamma.c `twosum`: FastTwoSum with the operands ordered by magnitude.
+#[inline(always)]
+fn twosum_ordered(x: f64, y: f64) -> (f64, f64) {
+    if x.abs() > y.abs() {
+        fasttwosum(x, y)
+    } else {
+        fasttwosum(y, x)
+    }
+}
+
+/// tgamma.c `muldd3`: double-double product, normalised.
+#[inline(always)]
+fn muldd3(xh: f64, xl: f64, yh: f64, yl: f64) -> (f64, f64) {
+    let ch = xh * yh;
+    let cl1 = xh.mul_add(yh, -ch);
+    let tl0 = xl * yl;
+    let tl1 = tl0 + xh * yl;
+    let cl2 = tl1 + xl * yh;
+    let cl3 = cl1 + cl2;
+    fasttwosum(ch, cl3)
+}
+
+/// tgamma.c `mulddd`: `x * (ch + cl)`.
+#[inline(always)]
+fn mulddd_tg(x: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let ahhh = ch * x;
+    (ahhh, cl * x + ch.mul_add(x, -ahhh))
+}
+
+/// tgamma.c `polydd`: double-double Horner at `xh + xl`.
+#[inline(always)]
+fn polydd_tg(xh: f64, xl: f64, c: &[[f64; 2]], l: f64) -> (f64, f64) {
+    let mut i = c.len() - 1;
+    let (mut ch, mut cl) = fasttwosum(c[i][0], l);
+    cl += c[i][1];
+    while i > 0 {
+        i -= 1;
+        (ch, cl) = muldd_sin(xh, xl, ch, cl);
+        (ch, cl) = fastsum_dd(c[i][0], c[i][1], ch, cl);
+    }
+    (ch, cl)
+}
+
+/// tgamma.c `polyddd`: double-double Horner at the double `x`.
+#[inline(always)]
+fn polyddd_tg(x: f64, c: &[[f64; 2]], l: f64) -> (f64, f64) {
+    let mut i = c.len() - 1;
+    let (mut ch, mut cl) = fasttwosum(c[i][0], l);
+    cl += c[i][1];
+    while i > 0 {
+        i -= 1;
+        (ch, cl) = mulddd_tg(x, ch, cl);
+        (ch, cl) = sumdd_ordered(c[i][0], c[i][1], ch, cl);
+    }
+    (ch, cl)
+}
+
+/// tgamma.c `polyd`: Horner on the high parts only.
+#[inline(always)]
+fn polyd_tg(x: f64, c: &[[f64; 2]]) -> f64 {
+    let mut i = c.len() - 1;
+    let mut ch = c[i][0];
+    while i > 0 {
+        i -= 1;
+        ch = c[i][0] + x * ch;
+    }
+    ch
+}
+
+/// Split `x` so that ulp(xh) = 2^-25 (exact for |x| <= 2^26).
+#[inline(always)]
+fn splt(x: f64) -> (f64, f64) {
+    const OFF: f64 = hf!("0x1.8p27");
+    let xh = (x + OFF) - OFF;
+    (xh, x - xh)
+}
+
+/// `x * (x0 + x1 + x2)` as a triple `(l0, l1, l2)`.
+#[inline(always)]
+fn sprod(x: f64, x0: f64, x1: f64, x2: f64) -> (f64, f64, f64) {
+    let z0 = x * x0;
+    let z0l = x.mul_add(x0, -z0);
+    let z1 = x * x1;
+    let z2 = x * x2 + x.mul_add(x1, -z1);
+    let (z0, e) = splt(z0);
+    let (e, z0l) = fasttwosum(e, z0l);
+    let (l1, e) = twosum_ordered(e, z1);
+    (z0, l1, e + z0l + z2)
+}
+
+/// Triple-double polynomial with leading coefficients `ch` and a
+/// double-double tail `cl`, at `d` (tgamma.c `poly3`).
+fn tg_poly3(d: f64, ch: &[f64], cl: &[[f64; 2]]) -> (f64, f64) {
+    let (mut t0, mut t1, mut t2) = (1.0, 0.0, 0.0);
+    let mut s0 = ch[0];
+    let (mut s1, mut s2) = (0.0, 0.0);
+    for &c in &ch[1..] {
+        (t0, t1, t2) = sprod(d, t0, t1, t2);
+        s0 += t0 * c;
+        let (fh, fl) = mulddd_tg(c, t1, t2);
+        (s1, s2) = sumdd_ordered(s1, s2, fh, fl);
+    }
+    let (fh, fl) = polyddd_tg(d, cl, 0.0);
+    (s1, s2) = sumdd_ordered(s1, s2, fh, fl);
+    let (s0, s1) = fasttwosum(s0, s1);
+    let (s1, _) = fasttwosum(s1, s2);
+    (s0, s1)
+}
+
+/// Raise FE_UNDERFLOW (and FE_INEXACT), as upstream's `raise_underflow`.
+#[inline(always)]
+fn raise_underflow() {
+    let tiny = core::hint::black_box(f64::MIN_POSITIVE);
+    let _ = core::hint::black_box(tiny * tiny);
+}
+
+/// Accurate tgamma, for inputs whose fast-path rounding test failed.
+#[cold]
+#[inline(never)]
+fn tgamma_accurate(x: f64) -> f64 {
+    if x.abs() < 0.25 {
+        let c = &TG_ACC0_C;
+        let x2 = x * x;
+        let x4 = x2 * x2;
+        let mut c0 = c[0] + x * c[1] + x2 * (c[2] + x * c[3]);
+        let c4 = c[4] + x * c[5] + x2 * (c[6] + x * c[7]);
+        c0 += x4 * c4;
+        let (ch, cl) = polyddd_tg(x, &TG_ACC0_CC, x * c0);
+        let fh = 1.0 / x;
+        let dh = fh.mul_add(-x, 1.0);
+        let fl = dh * fh;
+        let fll = fl.mul_add(-x, dh) * fh;
+        let (fl, fll) = sumdd_ordered(fl, fll, ch, cl);
+        let (fl, fll) = twosum_ordered(fl, fll);
+        let (fh, fl) = fasttwosum(fh, fl);
+        let (mut fl, fll) = fasttwosum(fl, fll);
+        let (_, et) = fasttwosum(fh, 2.0 * fl);
+        if et == 0.0 {
+            if 1.0f64.copysign(fl) * 1.0f64.copysign(fll) > 0.0 {
+                fl *= 1.0 + hf!("0x1p-50");
+            } else {
+                fl *= 1.0 - hf!("0x1p-50");
+            }
+        }
+        return fh + fl;
+    }
+    let ix = x.floor();
+    let d = 2.0 * (x - (ix + 0.5));
+    let i = ix as i32;
+    let (ch, cl, top, mut eoff): (&[f64], &[[f64; 2]], i32, i32) = if i > 159 {
+        (&TG_ACC_CH160, &TG_ACC_CL160, 160, 942)
+    } else if i > 127 {
+        (&TG_ACC_CH128, &TG_ACC_CL128, 128, 713)
+    } else if i > 95 {
+        (&TG_ACC_CH96, &TG_ACC_CL96, 96, 495)
+    } else if i > 63 {
+        (&TG_ACC_CH64, &TG_ACC_CL64, 64, 293)
+    } else if i > 31 {
+        (&TG_ACC_CH32, &TG_ACC_CL32, 32, 115)
+    } else if i > 25 {
+        (&TG_ACC_CH26, &TG_ACC_CL26, 26, 86)
+    } else if i > 15 {
+        (&TG_ACC_CH16, &TG_ACC_CL16, 16, 42)
+    } else if i > 7 {
+        (&TG_ACC_CH8, &TG_ACC_CL8, 8, 14)
+    } else {
+        (&TG_ACC_CH4, &TG_ACC_CL4, 4, 3)
+    };
+    let (mut fh, mut fl) = tg_poly3(d, ch, cl);
+    let jm = top - i;
+    let (mut wh, mut wl) = (1.0, 0.0);
+    if jm > 0 {
+        // Gamma(x) = Gamma(x + jm) / (x (x+1) ... (x+jm-1))
+        let (mut xph, mut xpl) = (x, 0.0);
+        wh = xph;
+        for _ in 1..jm {
+            let l;
+            (xph, l) = if xph.abs() > 1.0 {
+                fasttwosum(xph, 1.0)
+            } else {
+                fasttwosum(1.0, xph)
+            };
+            xpl += l;
+            (xph, xpl) = fasttwosum(xph, xpl);
+            (wh, wl) = muldd3(xph, xpl, wh, wl);
+            if wh.abs() > hf!("0x1p518") {
+                wh *= hf!("0x1p-500");
+                wl *= hf!("0x1p-500");
+                eoff -= 500;
+            }
+        }
+    } else if jm < 0 {
+        // Gamma(x) = Gamma(x - |jm|) * (x-1) (x-2) ... (x-|jm|)
+        let (mut xph, mut xpl) = (x - 1.0, 0.0);
+        wh = xph;
+        for _ in 0..(-1 - jm) {
+            let l;
+            (xph, l) = fasttwosum(xph, -1.0);
+            xpl += l;
+            (xph, xpl) = fasttwosum(xph, xpl);
+            (wh, wl) = muldd3(xph, xpl, wh, wl);
+        }
+    }
+    if jm > 0 {
+        let rh = 1.0 / wh;
+        let rl = (rh.mul_add(-wh, 1.0) - wl * rh) * rh;
+        (fh, fl) = muldd3(fh, fl, rh, rl);
+    } else if jm < 0 {
+        (fh, fl) = muldd3(fh, fl, wh, wl);
+    }
+    // Directed-rounding corrections; both are exactly zero to nearest.
+    let mut crr = 0.0;
+    if jm <= 0 {
+        crr = ((hf!("0x1p-54") + hf!("0x1p-107")) - hf!("0x1p-54"))
+            + ((hf!("0x1p-53") - hf!("0x1p-107")) - hf!("0x1p-53"));
+        fl += fh * (f64::from(jm) * crr);
+    } else {
+        let op = hf!("0x1p-53") - hf!("0x1p-107");
+        let om = hf!("-0x1p-53") + hf!("0x1p-107");
+        if op == -om {
+            crr = hf!("0x1p-53") - op;
+        }
+        fl -= fh * (f64::from(jm - 5) * crr * 1.04);
+    }
+    let eps = hf!("0x1.ep-103") * fh;
+    let ub = fh + (fl + eps);
+    let lb = fh + (fl - eps);
+    let mut res = (fh + fl).to_bits();
+    let re = ((res >> 52) & 0x7ff) as i64;
+    if re + i64::from(eoff) <= 0 {
+        // Subnormal result: round at the subnormal precision.
+        res = res.wrapping_sub(((i64::from(eoff) + re - 1) as u64) << 52);
+        res &= 0xfffu64 << 52;
+        let (h, l) = fasttwosum(f64::from_bits(res), fh);
+        fl += l;
+        res = (h + fl).to_bits();
+        res &= !(0x7ffu64 << 52);
+        raise_underflow();
+    } else {
+        res = res.wrapping_add((eoff as u64) << 52);
+    }
+    let res = f64::from_bits(res);
+    if ub != lb {
+        for e in &TG_DB {
+            if e[0] == x {
+                return e[1] + e[2];
+            }
+        }
+    }
+    res
+}
+
+/// log(x) as a double-double for x > 0 (tgamma.c `as_logd`).
+#[inline(never)]
+fn tg_logd(x: f64) -> (f64, f64) {
+    let mut t = x.to_bits();
+    let e = (t >> 52) as i32 - 0x3ff;
+    t &= MASK52;
+    let ed = f64::from(e);
+    let (i1, i2) = log_table_index(t);
+    let tf = f64::from_bits(t | (0x3ffu64 << 52));
+    let r = TG_LOG_R1[i1] * TG_LOG_R2[i2];
+    let o = r * tf;
+    let dxl = r.mul_add(tf, -o);
+    let dxh = o - 1.0;
+    const C: [f64; 4] = [
+        hf!("-0x1.fffffffffffd3p-2"),
+        hf!("0x1.55555555543d5p-2"),
+        hf!("-0x1.000002bb2d74ep-2"),
+        hf!("0x1.999a692c56e4ep-3"),
+    ];
+    let dx = r.mul_add(tf, -1.0);
+    let dx2 = dx * dx;
+    let f = dx2 * ((C[0] + dx * C[1]) + dx2 * (C[2] + dx * C[3]));
+    let lt = (TG_LOG_L1[i1][1] + TG_LOG_L2[i2][1]) + ed * hf!("0x1.62e42fef8p-1");
+    let lh = lt + dxh;
+    let mut ll = (lt - lh) + dxh;
+    ll += ((TG_LOG_L1[i1][0] + TG_LOG_L2[i2][0]) + hf!("0x1.1cf79abc9e3b4p-36") * ed) + dxl;
+    ll += f;
+    (lh, ll)
+}
+
+/// sin(pi x) as a double-double for 0 <= x < 1 (tgamma.c `as_sinpid`).
+#[inline(never)]
+fn tg_sinpid(x: f64) -> (f64, f64) {
+    let x = (x - 0.5).abs() * 128.0;
+    let ix = x.round_ties_even();
+    let d = ix - x;
+    let d2 = d * d;
+    let ky = ix as usize;
+    let kx = 64 - ky;
+    let (sh, sl) = (TG_ST[kx][1], TG_ST[kx][0]);
+    let (ch, cl) = (TG_ST[ky][1], TG_ST[ky][0]);
+    const C: [f64; 4] = [
+        hf!("-0x1.3bd3cc9be45dep-12"),
+        hf!("0x1.03c1f081b5ac4p-26"),
+        hf!("-0x1.55d3c7e3bd8bfp-42"),
+        hf!("0x1.e1f4826790653p-59"),
+    ];
+    const C0: f64 = hf!("-0x1.692b66e3cf6e8p-66");
+    const S: [f64; 4] = [
+        hf!("0x1.921fb54442d18p-6"),
+        hf!("-0x1.4abbce625be53p-19"),
+        hf!("0x1.466bc67748efcp-34"),
+        hf!("-0x1.32d26e446373ap-50"),
+    ];
+    const S0: f64 = hf!("0x1.1a624b88c9448p-60");
+    let p = d2 * (C[1] + d2 * (C[2] + d2 * C[3]));
+    let q = d2 * (S[1] + d2 * (S[2] + d2 * S[3]));
+    let (qh, mut ql) = fasttwosum(S[0], q);
+    ql += S0;
+    let (ch, cl) = muldd_sin(qh, ql, ch, cl);
+    let (th, mut tl) = fasttwosum(C[0], p);
+    tl += C0;
+    let (th, tl) = mulddd_tg(d, th, tl);
+    let (ph, pl) = muldd_sin(th, tl, sh, sl);
+    let (ch, cl) = fastsum_dd(ch, cl, ph, pl);
+    let (ch, cl) = mulddd_tg(d, ch, cl);
+    fastsum_dd(sh, sl, ch, cl)
+}
+
+/// exp(x + l) as `2^e * (h + l)` (tgamma.c `as_expd`).
+#[inline(never)]
+fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) {
+    const LN2H: f64 = hf!("0x1.71547652b82fep+10");
+    const LN2L: f64 = hf!("0x1.777d0ffda0d24p-46");
+    let (xh, xl) = muldd_sin(x, l, LN2H, LN2L);
+    let ix = xh.round_ties_even();
+    let (xh, xl) = fasttwosum(xh - ix, xl);
+    let k = ix as i32;
+    let i0 = ((k >> 5) & 31) as usize;
+    let i1 = (k & 31) as usize;
+    let e = k >> 10;
+    let (rh, rl) = muldd_sin(TG_E0[i0][1], TG_E0[i0][0], TG_E1[i1][1], TG_E1[i1][0]);
+    const M: usize = 1;
+    let c = &TG_EXP_C;
+    let fl = xh * polyd_tg(xh, &c[M..]);
+    let (fh, fl) = polydd_tg(xh, xl, &c[..M], fl);
+    let (fh, fl) = muldd_sin(xh, xl, fh, fl);
+    let (fh, el) = fasttwosum(1.0, fh);
+    let fl = fl + el;
+    let (rh, rl) = muldd_sin(rh, rl, fh, fl);
+    (rh, rl, e)
+}
+
+/// log(Gamma(x)) by Stirling's series, for x > 3 (tgamma.c `as_lgamma_asym`).
+#[inline(never)]
+fn tg_lgamma_asym(xh: f64, xl: f64) -> (f64, f64) {
+    let zh = 1.0 / xh;
+    let dz = xl * zh;
+    let zl = (zh.mul_add(-xh, 1.0) - dz) * zh;
+    let (lh, mut ll) = tg_logd(xh);
+    ll += dz;
+    let (lh0, ll0) = muldd_sin(xh - 0.5, xl, lh - 1.0, ll);
+    let (z2h, z2l) = muldd_sin(zh, zl, zh, zl);
+    let x2 = z2h * z2h;
+    let (lh, ll, fh, fl);
+    if xh > 11.5 {
+        let c = &TG_ASYM_BIG;
+        (lh, ll) = fastsum_dd(lh0, ll0, c[0][0], c[0][1]);
+        let (b, q) = (&c[1..2], &c[2..]);
+        let q0 = q[0][0] + z2h * q[1][0];
+        let q2 = q[2][0] + z2h * q[3][0];
+        let q4 = q[4][0] + z2h * q[5][0];
+        let tail = z2h * (q0 + x2 * (q2 + x2 * q4));
+        (fh, fl) = polydd_tg(z2h, z2l, b, tail);
+    } else {
+        let c = &TG_ASYM_SMALL;
+        (lh, ll) = fastsum_dd(lh0, ll0, c[0][0], c[0][1]);
+        let x4 = x2 * x2;
+        let (b, q) = (&c[1..3], &c[3..]);
+        let mut q0 = q[0][0] + z2h * q[1][0];
+        let q2 = q[2][0] + z2h * q[3][0];
+        let mut q4 = q[4][0] + z2h * q[5][0];
+        let q6 = q[6][0] + z2h * q[7][0];
+        let q8 = q[8][0] + z2h * q[9][0];
+        q4 += x2 * (q6 + x2 * q8);
+        q0 += x2 * q2;
+        q0 += x4 * q4;
+        (fh, fl) = polydd_tg(z2h, z2l, b, z2h * q0);
+    }
+    let (fh, fl) = muldd_sin(zh, zl, fh, fl);
+    fastsum_dd(lh, ll, fh, fl)
+}
+
+/// tgamma's domain-error result: FE_INVALID and glibc's positive quiet NaN
+/// (glibc 2.43 returns 0x7ff8000000000000, not the x86 default NaN).
+#[inline(never)]
+fn tgamma_domain_nan(x: f64) -> f64 {
+    let n = (-1.0 - x.abs()).sqrt(); // raises FE_INVALID
+    f64::from_bits(n.to_bits() & !(1u64 << 63))
+}
+
+/// Correctly rounded `tgamma`.
+pub fn tgamma(x: f64) -> f64 {
+    let t = x.to_bits();
+    let ax = t << 1;
+    if ax >= 0x7ffu64 << 53 {
+        if ax == 0x7ffu64 << 53 {
+            // -inf: domain error; +inf: +inf.
+            return if t >> 63 != 0 {
+                tgamma_domain_nan(x)
+            } else {
+                x
+            };
+        }
+        return x + x; // NaN
+    }
+    let z = x;
+    if x.abs() < 0.25 {
+        if ax < 0x71e0_0000_0000_0000 {
+            // |x| < 2^-112: Gamma(x) ~ 1/x
+            if x == f64::from_bits(0x0004_0000_0000_0000) {
+                // 2^-1024: avoid the spurious overflow of 1/x.
+                return core::hint::black_box(f64::MAX) + hf!("0x1p+970");
+            }
+            let mut r = 1.0 / x;
+            if x == 0.0 {
+                return r;
+            }
+            if r.mul_add(x, -1.0) == 0.0 {
+                r -= 0.5; // raise FE_INEXACT for x = 2^k
+            }
+            return r;
+        }
+        let c = &TG_SMALL_C;
+        let x2 = x * x;
+        let x4 = x2 * x2;
+        let x8 = x4 * x4;
+        let mut c0 = c[0] + x * c[1] + x2 * (c[2] + x * c[3]);
+        let c4 = c[4] + x * c[5] + x2 * (c[6] + x * c[7]);
+        let mut c8 = c[8] + x * c[9] + x2 * (c[10] + x * c[11]);
+        let c12 = c[12] + x * c[13] + x2 * (c[14] + x * c[15]);
+        c0 += x4 * c4;
+        c8 += x4 * c12;
+        let cl = x * (c0 + x8 * c8);
+        let (ch, cl) = polyddd_tg(x, &TG_SMALL_CC, cl);
+        let fh = 1.0 / z;
+        let fl = fh.mul_add(-z, 1.0) * fh;
+        let (fh, fl) = fastsum_dd(fh, fl, ch, cl);
+        let eps = fh * (3.5e-19 + (x2 * x4) * 4e-15);
+        let ub = fh + (fl + eps);
+        let lb = fh + (fl - eps);
+        if ub != lb {
+            return tgamma_accurate(x);
+        }
+        return ub;
+    }
+    if x >= hf!("0x1.573fae561f648p+7") {
+        let big = core::hint::black_box(hf!("0x1.fp1023"));
+        return big + big; // overflow
+    }
+    let fx = x.floor();
+    if fx == x {
+        // x integer
+        if x == 0.0 {
+            return 1.0 / x;
+        }
+        if x < 0.0 {
+            return tgamma_domain_nan(x);
+        }
+        let k = fx as i64;
+        let (mut t0h, mut t0l, mut x0) = (1.0, 0.0, 1.0);
+        for _ in 1..k {
+            (t0h, t0l) = mulddd_tg(x0, t0h, t0l);
+            x0 += 1.0;
+        }
+        return t0h + t0l;
+    }
+    if x <= -184.0 {
+        // |Gamma(x)| < 2^-1078: underflows to ±0.
+        let k = fx as i64; // saturating, as upstream's clamp
+        let s = if k & 1 != 0 {
+            hf!("-0x1p-1022")
+        } else {
+            hf!("0x1p-1022")
+        };
+        return core::hint::black_box(hf!("0x1p-1022")) * s;
+    }
+    if x < -3.0 {
+        // Reflection: Gamma(x) = pi / (sin(pi x) Gamma(1 - x)).
+        let (lh, ll) = fasttwosum(-x, 1.0);
+        let (lh, ll) = tg_lgamma_asym(lh, ll);
+        let (lh, ll, e) = tg_expd(lh, ll);
+        let ix = x.floor();
+        let dx = x - ix;
+        let ip = ix as i32;
+        let (sh, sl) = tg_sinpid(dx);
+        let (lh, ll) = muldd_sin(sh, sl, lh, ll);
+        const PIH: f64 = hf!("0x1.921fb54442d18p+1");
+        const PIL: f64 = hf!("0x1.1a62633145c07p-53");
+        let rcp = 1.0 / lh;
+        let mut rh = rcp * PIH;
+        let mut rl = rcp * (PIL - ll * rh - rh.mul_add(lh, -PIH));
+        if ip & 1 != 0 {
+            rh = -rh;
+            rl = -rl;
+        }
+        let eps = rh * (8.7e-21 - x * 1.46e-22);
+        let shift = ((i64::from(e)) << 52) as u64;
+        if ip >= -170 {
+            let ub = rh + (rl + eps);
+            let lb = rh + (rl - eps);
+            if ub != lb {
+                return tgamma_accurate(x);
+            }
+            return f64::from_bits(ub.to_bits().wrapping_sub(shift));
+        }
+        let mut th = rh.to_bits();
+        let re = ((th >> 52) & 0x7ff) as i32;
+        if re - e <= 0 {
+            // Subnormal result.
+            th = th.wrapping_add(((e - re + 1) as u64) << 52);
+            th &= 0xfffu64 << 52;
+            let (h, l) = fasttwosum(f64::from_bits(th), rh);
+            rh = h;
+            rl += l;
+            let ub = rh + (rl + eps);
+            let lb = rh + (rl - eps);
+            if ub != lb {
+                return tgamma_accurate(x);
+            }
+            let r = f64::from_bits(ub.to_bits() & !(0x7ffu64 << 52));
+            raise_underflow();
+            return r;
+        }
+        let ub = rh + (rl + eps);
+        let lb = rh + (rl - eps);
+        if ub != lb {
+            return tgamma_accurate(x);
+        }
+        return f64::from_bits(ub.to_bits().wrapping_sub(shift));
+    }
+    if x > 4.0 {
+        let (lh, ll) = tg_lgamma_asym(x, 0.0);
+        let (lh, ll, e) = tg_expd(lh, ll);
+        let eps = lh * (2e-21 + x * 1.84e-22);
+        let ub = lh + (ll + eps);
+        let lb = lh + (ll - eps);
+        if ub != lb {
+            return tgamma_accurate(x);
+        }
+        return f64::from_bits(ub.to_bits().wrapping_add(((i64::from(e)) << 52) as u64));
+    }
+    // -3 <= x <= 4, |x| >= 1/4: polynomial around 3.5, shifted by the
+    // recurrence.
+    let c = &TG_MID_C;
+    let m = z - 3.5;
+    let i = m.round_ties_even();
+    let d = z - (i + 3.5);
+    let d2 = d * d;
+    let d4 = d2 * d2;
+    let fl = d
+        * ((c[10] + d * c[11])
+            + d2 * (c[12] + d * c[13])
+            + d4 * ((c[14] + d * c[15]) + d2 * (c[16] + d * c[17])));
+    let (fh, fl) = polyddd_tg(d, &TG_MID_CC[..10], fl);
+    let jm = i.abs() as i32;
+    let (mut wh, mut wl) = (1.0, 0.0);
+    let (mut xph, mut xpl) = (z, 0.0);
+    if jm != 0 {
+        wh = xph;
+        for _ in 1..jm {
+            let l;
+            (xph, l) = if xph.abs() > 1.0 {
+                fasttwosum(xph, 1.0)
+            } else {
+                fasttwosum(1.0, xph)
+            };
+            xpl += l;
+            (wh, wl) = muldd_sin(xph, xpl, wh, wl);
+        }
+    }
+    let rh = 1.0 / wh;
+    let rl = (rh.mul_add(-wh, 1.0) - wl * rh) * rh;
+    let (fh, fl) = muldd_sin(rh, rl, fh, fl);
+    let eps = fh * 1e-21;
+    let ub = fh + (fl + eps);
+    let lb = fh + (fl - eps);
+    if ub != lb {
+        return tgamma_accurate(x);
+    }
+    ub
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4455,5 +5061,58 @@ mod tests {
             assert_eq!(got, want, "tan({x:#x}) = {got:#x}, CORE-MATH {want:#x}");
         }
         assert!(tan(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn tgamma_matches_glibc_2_43_on_corpus() {
+        assert_eq!(corpus_hash(tgamma, -30, 8), 0x9a7b_1d5e_fde8_4461);
+    }
+
+    #[test]
+    fn tgamma_hard_and_special_cases() {
+        // (input, glibc 2.43 result): database entries, the 2^-1024 / 2^-112 /
+        // 1/4 / 4 / -3 / -184 / overflow boundaries, subnormal results, the
+        // integer and pole cases and their positive-NaN domain result.
+        for (x, want) in [
+            (0xc064_8ba8_e27d_09adu64, 0x82f0_b34f_909c_5c92u64),
+            (0x4063_a0b3_58e9_e93b, 0x7938_1a5f_a517_374f),
+            (0xc013_fc07_c800_57fd, 0xc001_4fd6_b28f_b843),
+            (0x3ff0_9ef8_f46e_e74b, 0x3fef_5443_da4b_c3be),
+            (0x0004_0000_0000_0000, 0x7ff0_0000_0000_0000),
+            (0x0008_0000_0000_0000, 0x7fe0_0000_0000_0000),
+            (0x0000_0000_0000_0001, 0x7ff0_0000_0000_0000),
+            (0x8000_0000_0000_0001, 0xfff0_0000_0000_0000),
+            (0x38f0_0000_0000_0000, 0x46f0_0000_0000_0000),
+            (0x38ef_ffff_ffff_ffff, 0x46f0_0000_0000_0001),
+            (0x3fcf_ffff_ffff_ffff, 0x400d_013f_c47e_eeeb),
+            (0x3fd0_0000_0000_0000, 0x400d_013f_c47e_eeea),
+            (0xbfd0_0000_0000_0000, 0xc013_9b4e_8b50_f62c),
+            (0x4008_0000_0000_0000, 0x4000_0000_0000_0000),
+            (0x4010_0000_0000_0000, 0x4018_0000_0000_0000),
+            (0x4010_0000_0000_0001, 0x4018_0000_0000_0008),
+            (0xc008_0000_0000_0001, 0x42f5_5555_5555_5552),
+            (0xc004_0000_0000_0000, 0xbfee_3ff8_12e3_2183),
+            (0x4024_0000_0000_0000, 0x4116_2600_0000_0000),
+            (0x4065_6000_0000_0000, 0x7fa4_ab78_6441_8639),
+            (0x4065_7333_3333_3333, 0x7fec_3ada_dc51_07b1),
+            (0x4065_73fa_e561_f648, 0x7ff0_0000_0000_0000),
+            (0x4065_73fa_e561_f647, 0x7fef_ffff_ffff_fe51),
+            (0xc065_5000_0000_0000, 0x8017_d237_4dfc_da7a),
+            (0xc065_7000_0000_0000, 0x0000_238e_e05c_879e),
+            (0xc066_f000_0000_0000, 0x0000_0000_0000_0000),
+            (0xc067_1000_0000_0000, 0x8000_0000_0000_0000),
+            (0x7ff0_0000_0000_0000, 0x7ff0_0000_0000_0000),
+            (0x0000_0000_0000_0000, 0x7ff0_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0xfff0_0000_0000_0000),
+            (0xc008_0000_0000_0000, 0x7ff8_0000_0000_0000),
+            (0xfe37_e43c_8800_759c, 0x7ff8_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0x7ff8_0000_0000_0000),
+            (0xbff0_0000_0000_0000, 0x7ff8_0000_0000_0000),
+            (0xc000_0000_0000_0000, 0x7ff8_0000_0000_0000),
+        ] {
+            let got = tgamma(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "tgamma({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
+        }
+        assert!(tgamma(f64::NAN).is_nan());
     }
 }
