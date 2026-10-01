@@ -1010,6 +1010,835 @@ pub fn atanh(x: f64) -> f64 {
     atanh_refine(x, th, tl, hf("0x1.71547652b82fep+1") * (lh + ll).abs())
 }
 
+// --- asinh / acosh (CORE-MATH src/binary64/{asinh,acosh}) -------------------
+//
+// asinh.c and acosh.c each carry their own variants of the double-double
+// helpers; the variants below are kept distinct so each kernel performs
+// exactly the upstream operation sequence.
+
+/// asinh.c `muldd_acc`: the product normalised with the `z = x - s; e = z + y`
+/// FastTwoSum variant.
+#[inline(always)]
+fn muldd_acc_alt(xh: f64, xl: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let ahlh = ch * xl;
+    let alhh = cl * xh;
+    let ahhh = ch * xh;
+    let mut ahhl = ch.mul_add(xh, -ahhh);
+    ahhl += alhh + ahlh;
+    let s = ahhh + ahhl;
+    (s, (ahhh - s) + ahhl)
+}
+
+/// asinh.c / acosh.c `mulddd`: double-double times double, normalised.
+#[inline(always)]
+fn mulddd_norm(xh: f64, xl: f64, ch: f64) -> (f64, f64) {
+    let ahlh = ch * xl;
+    let ahhh = ch * xh;
+    let mut ahhl = ch.mul_add(xh, -ahhh);
+    ahhl += ahlh;
+    let s = ahhh + ahhl;
+    (s, (ahhh - s) + ahhl)
+}
+
+/// asinh.c `polydd`.
+#[inline(always)]
+fn polydd_alt(xh: f64, xl: f64, c: &[[f64; 2]], l: f64) -> (f64, f64) {
+    let mut i = c.len() - 1;
+    let mut ch = c[i][0] + l;
+    let mut cl = ((c[i][0] - ch) + l) + c[i][1];
+    while i > 0 {
+        i -= 1;
+        (ch, cl) = muldd_acc_alt(xh, xl, ch, cl);
+        let th = ch + c[i][0];
+        let tl = (c[i][0] - th) + ch;
+        ch = th;
+        cl += tl + c[i][1];
+    }
+    (ch, cl)
+}
+
+/// acosh.c `adddd`: TwoSum(xh, ch) + (xl + cl).
+#[inline(always)]
+fn adddd_twosum(xh: f64, xl: f64, ch: f64, cl: f64) -> (f64, f64) {
+    let s = xh + ch;
+    let a_prime = s - ch;
+    let b_prime = s - a_prime;
+    let t = (xh - a_prime) + (ch - b_prime);
+    (s, t + (xl + cl))
+}
+
+/// Table indices `(i1, i2)` for the 2^(-i1/32) * 2^(-i2/1024) range reduction
+/// of a mantissa `m` (exponent field cleared): a piecewise-linear log2(1+m).
+#[inline(always)]
+fn log_table_index(m: u64) -> (usize, usize) {
+    let i = (m >> (52 - 5)) as usize;
+    let d = (m & (u64::MAX >> 17)) as i64;
+    let (c0, c1) = LOG_B[i];
+    let j = m
+        .wrapping_add((c0 as u64) << 33)
+        .wrapping_add((c1 as i64).wrapping_mul(d >> 16) as u64)
+        >> (52 - 10);
+    ((j >> 5) as usize, (j & 0x1f) as usize)
+}
+
+/// `(low, high)` parts of -log(r1[i]) (asinh/acosh scaling).
+const LOG2_L1: [[f64; 2]; 33] = [
+    [hf("0x0p+0"), hf("0x0p+0")],
+    [hf("-0x1.269e2038315b3p-46"), hf("0x1.62e4eacd4p-6")],
+    [hf("-0x1.3f2558bddfc47p-45"), hf("0x1.62e3ce7218p-5")],
+    [hf("0x1.07ea13c34efb5p-45"), hf("0x1.0a2ab6d3ecp-4")],
+    [hf("0x1.8f3e77084d3bap-44"), hf("0x1.62e4a86d8cp-4")],
+    [hf("-0x1.8d92a005f1a7ep-46"), hf("0x1.bb9db7062cp-4")],
+    [hf("0x1.58239e799bfe5p-44"), hf("0x1.0a2b1a22ccp-3")],
+    [hf("-0x1.a93fcf5f593b7p-44"), hf("0x1.3687f0a298p-3")],
+    [hf("-0x1.db4cac32fd2b5p-46"), hf("0x1.62e4116b64p-3")],
+    [hf("-0x1.0e65a92ee0f3bp-46"), hf("0x1.8f409e4df6p-3")],
+    [hf("-0x1.8261383d475f1p-44"), hf("0x1.bb9d15001cp-3")],
+    [hf("-0x1.359886207513bp-44"), hf("0x1.e7f9a8c94p-3")],
+    [hf("0x1.811f87496ceb7p-44"), hf("0x1.0a2b052ddbp-2")],
+    [hf("0x1.4991ec6cb435cp-44"), hf("0x1.205955ef73p-2")],
+    [hf("-0x1.4581abfeb8927p-44"), hf("0x1.3687bd9121p-2")],
+    [hf("0x1.cab48f6942703p-44"), hf("0x1.4cb5e8f2b5p-2")],
+    [hf("-0x1.df2c452fde132p-47"), hf("0x1.62e4420e2p-2")],
+    [hf("0x1.6109f4fdb74bdp-45"), hf("0x1.791292c46ap-2")],
+    [hf("-0x1.6b95fbdac7696p-44"), hf("0x1.8f40af84e7p-2")],
+    [hf("0x1.7394fa880cbdap-46"), hf("0x1.a56ed8f865p-2")],
+    [hf("-0x1.50b06a94eccabp-46"), hf("0x1.bb9d6505b4p-2")],
+    [hf("-0x1.be2abf0b38989p-44"), hf("0x1.d1cb91e728p-2")],
+    [hf("-0x1.7d6bf1e34da04p-44"), hf("0x1.e7f9d139e2p-2")],
+    [hf("-0x1.423c1e14de6edp-44"), hf("0x1.fe27db9b0ep-2")],
+    [hf("0x1.c46f1a0efbbc2p-44"), hf("0x1.0a2b25060a8p-1")],
+    [hf("0x1.834fe4e3e6018p-45"), hf("0x1.154244482ap-1")],
+    [hf("0x1.6a03d0f02b65p-46"), hf("0x1.20597312988p-1")],
+    [hf("0x1.d437056526f3p-44"), hf("0x1.2b707145dep-1")],
+    [hf("-0x1.a0233728405c5p-45"), hf("0x1.3687b0e0b28p-1")],
+    [hf("-0x1.4dbdda10d2bf1p-45"), hf("0x1.419ec5d3f68p-1")],
+    [hf("0x1.f7d0a25d154f2p-44"), hf("0x1.4cb5f9fc02p-1")],
+    [hf("0x1.15ede4d803b18p-44"), hf("0x1.57cd28421a8p-1")],
+    [hf("0x1.ef35793c7673p-45"), hf("0x1.62e42fefa38p-1")],
+];
+
+/// `(low, high)` parts of -log(r2[i]) (asinh/acosh scaling).
+const LOG2_L2: [[f64; 2]; 33] = [
+    [hf("0x0p+0"), hf("0x0p+0")],
+    [hf("0x1.5abdac3638e99p-44"), hf("0x1.631ec81ep-11")],
+    [hf("-0x1.16b8be9bbe239p-45"), hf("0x1.62fd8127p-10")],
+    [hf("-0x1.364c6315542ebp-44"), hf("0x1.0a2520508p-9")],
+    [hf("0x1.734abe459c9p-45"), hf("0x1.62dadc1dp-9")],
+    [hf("0x1.0cf8a761431bfp-44"), hf("0x1.bb9ff94dp-9")],
+    [hf("0x1.da2718eb78708p-45"), hf("0x1.0a2a2def8p-8")],
+    [hf("0x1.34ada62c59b93p-44"), hf("0x1.368c0fae4p-8")],
+    [hf("0x1.d09ab376682d4p-44"), hf("0x1.62e58e4f8p-8")],
+    [hf("-0x1.3cb7b94329211p-45"), hf("0x1.8f46bd28cp-8")],
+    [hf("-0x1.eec5c297c41dp-45"), hf("0x1.bb9f8312p-8")],
+    [hf("-0x1.6411b9395d15p-44"), hf("0x1.e7fff8f3p-8")],
+    [hf("-0x1.1c0e59a43053cp-44"), hf("0x1.0a2c0006ep-7")],
+    [hf("0x1.6506596e077b6p-46"), hf("0x1.205bdb6fp-7")],
+    [hf("0x1.e256bce6faa27p-44"), hf("0x1.36877c86ep-7")],
+    [hf("0x1.bd42467b0c8d1p-51"), hf("0x1.4cb6f5578p-7")],
+    [hf("-0x1.c4f92132ff0fp-44"), hf("0x1.62e230e8cp-7")],
+    [hf("-0x1.80be08bfab39p-44"), hf("0x1.7911440f6p-7")],
+    [hf("-0x1.f0b1319ceb1f7p-44"), hf("0x1.8f443020ap-7")],
+    [hf("0x1.a65fcfb8de99bp-45"), hf("0x1.a572dbef4p-7")],
+    [hf("0x1.4233885d3779cp-46"), hf("0x1.bb9d449a6p-7")],
+    [hf("0x1.f46a59e646edbp-44"), hf("0x1.d1cb8491cp-7")],
+    [hf("-0x1.c3d2f11c11446p-44"), hf("0x1.e7fd9d2aap-7")],
+    [hf("0x1.7763f78a1e0ccp-45"), hf("0x1.fe2b6f978p-7")],
+    [hf("0x1.b4c37fc60c043p-44"), hf("0x1.0a2a7c7a5p-6")],
+    [hf("-0x1.5b8a822859be3p-46"), hf("0x1.15412ca86p-6")],
+    [hf("-0x1.f2d8c9fc064p-44"), hf("0x1.2059c9005p-6")],
+    [hf("-0x1.e80e79c20378dp-44"), hf("0x1.2b703f49bp-6")],
+    [hf("0x1.68256e4329bdbp-44"), hf("0x1.3688a1a8dp-6")],
+    [hf("0x1.7e9741da248c3p-44"), hf("0x1.419edc7bap-6")],
+    [hf("0x1.e330dccce602bp-45"), hf("0x1.4cb7034fap-6")],
+    [hf("0x1.2f32b5d18eefbp-49"), hf("0x1.57cd01187p-6")],
+    [hf("-0x1.269e2038315b3p-46"), hf("0x1.62e4eacd4p-6")],
+];
+
+/// log(1+dx) - dx on |dx| < 2^-11.3 (asinh/acosh).
+const LOG2_C: [f64; 5] = [
+    hf("-0x1p-1"),
+    hf("0x1.555555555553p-2"),
+    hf("-0x1.fffffffffffap-3"),
+    hf("0x1.99999e33a6366p-3"),
+    hf("-0x1.555559ef9525fp-3"),
+];
+const LOG2_L2H: f64 = hf("0x1.62e42fefa38p-1");
+const LOG2_L2L: f64 = hf("0x1.ef35793c7673p-45");
+const LOG2_L20: f64 = hf("0x1.62e42fefa38p-2");
+const LOG2_L21: f64 = hf("0x1.ef35793c768p-46");
+const LOG2_L22: f64 = hf("-0x1.9ff0342542fc3p-91");
+
+/// Fast-path log reduction shared by asinh and acosh: for a mantissa `m`
+/// (exponent field cleared) returns `(i1, i2, dx, f)` with `dx = r*t - 1`
+/// and `f ~ log(1+dx) - dx`.
+#[inline(always)]
+fn log2_reduce(m: u64) -> (usize, usize, f64, f64) {
+    let (i1, i2) = log_table_index(m);
+    let tf = f64::from_bits(m | (0x3ffu64 << 52));
+    let r = LOG_R1[i1] * LOG_R2[i2];
+    let dx = r.mul_add(tf, -1.0);
+    let dx2 = dx * dx;
+    let c = &LOG2_C;
+    let f = dx2 * ((c[0] + dx * c[1]) + dx2 * ((c[2] + dx * c[3]) + dx2 * c[4]));
+    (i1, i2, dx, f)
+}
+
+/// Double-double helper set one kernel's refinement runs with.
+type PolyDd = fn(f64, f64, &[[f64; 2]], f64) -> (f64, f64);
+type DdOp = fn(f64, f64, f64, f64) -> (f64, f64);
+
+/// Triple-double log(zh + zl)/2 refinement shared by asinh and acosh, where
+/// `e` is the exponent `zh` is scaled by and `a` ~ log2(zh + zl). Returns the
+/// unscaled `(v0, v1, v2)`.
+#[inline(always)]
+fn log2_refine_core(
+    zh: f64,
+    zl: f64,
+    e: i32,
+    a: f64,
+    polydd_fn: PolyDd,
+    muldd_acc_fn: DdOp,
+    adddd_fn: DdOp,
+) -> (f64, f64, f64) {
+    let tf = f64::from_bits((zh.to_bits() & MASK52) | (0x3ffu64 << 52));
+    let ed = e as f64;
+    let v = (a - ed + hf("0x1.00008p+0")).to_bits();
+    let i = v.wrapping_sub(0x3ffu64 << 52) >> (52 - 16);
+    let i1 = ((i >> 12) & 0x1f) as usize;
+    let i2 = ((i >> 8) & 0xf) as usize;
+    let i3 = ((i >> 4) & 0xf) as usize;
+    let i4 = (i & 0xf) as usize;
+    let el2 = LOG2_L22 * ed;
+    let el1 = LOG2_L21 * ed;
+    let el0 = LOG2_L20 * ed;
+    let ll = &LOG_LL;
+    let mut l0 = ll[0][i1][0] + ll[1][i2][0] + (ll[2][i3][0] + ll[3][i4][0]);
+    let l1 = ll[0][i1][1] + ll[1][i2][1] + (ll[2][i3][1] + ll[3][i4][1]);
+    let l2 = ll[0][i1][2] + ll[1][i2][2] + (ll[2][i3][2] + ll[3][i4][2]);
+    l0 += el0;
+    let t12 = LOG_T1[i1] * LOG_T2[i2];
+    let t34 = LOG_T3[i3] * LOG_T4[i4];
+    let th = t12 * t34;
+    let tl = t12.mul_add(t34, -th);
+    let dh = th * tf;
+    let dl = th.mul_add(tf, -dh);
+    let sh = tl * tf;
+    let sl = tl.mul_add(tf, -sh);
+    let (xh, mut xl) = fasttwosum(dh - 1.0, dl);
+    if zl != 0.0 {
+        let zl_scaled = f64::from_bits(zl.to_bits().wrapping_sub(((e as i64) << 52) as u64));
+        xl += th * zl_scaled;
+    }
+    let (xh, xl) = adddd_fn(xh, xl, sh, sl);
+    let cl = &REFINE_CL;
+    let sl = xh * (cl[0] + xh * (cl[1] + xh * cl[2]));
+    let (sh, sl) = polydd_fn(xh, xl, &REFINE_CH, sl);
+    let (sh, sl) = muldd_acc_fn(xh, xl, sh, sl);
+    let (sh, sl) = adddd_fn(sh, sl, el1, el2);
+    let (sh, sl) = adddd_fn(sh, sl, l1, l2);
+    let (v0, v2) = fasttwosum(l0, sh);
+    let (v1, v2) = fasttwosum(v2, sl);
+    (v0, v1, v2)
+}
+
+/// Nudge `v1` off an exact power of two towards `v2`, where the final
+/// rounding could otherwise land on a tie. Returns `(v1, bits of v1)`.
+#[inline(always)]
+fn nudge_power_of_two(v1: f64, v2: f64) -> (f64, u64) {
+    let mut t = v1.to_bits();
+    if t & MASK52 == 0 {
+        if (v2.to_bits() ^ t) >> 63 != 0 {
+            t = t.wrapping_sub(1);
+        } else {
+            t = t.wrapping_add(1);
+        }
+        return (f64::from_bits(t), t);
+    }
+    (v1, t)
+}
+
+/// asinh accurate path for |x| < 1/4: odd series in double-double.
+#[inline(never)]
+fn asinh_zero(x: f64, x2h: f64, x2l: f64) -> f64 {
+    const CH: [[f64; 2]; 12] = [
+        [hf("-0x1.5555555555555p-3"), hf("-0x1.5555555555555p-57")],
+        [hf("0x1.3333333333333p-4"), hf("0x1.99999999949dfp-59")],
+        [hf("-0x1.6db6db6db6db7p-5"), hf("0x1.2492496091b0cp-60")],
+        [hf("0x1.f1c71c71c71c7p-6"), hf("0x1.c71a35cfa0671p-62")],
+        [hf("-0x1.6e8ba2e8ba2e9p-6"), hf("0x1.17f937248cf81p-60")],
+        [hf("0x1.1c4ec4ec4ec4fp-6"), hf("-0x1.74e3c1dfd4c3dp-60")],
+        [hf("-0x1.c999999999977p-7"), hf("-0x1.38e7a467ecc55p-61")],
+        [hf("0x1.7a87878786c7ep-7"), hf("0x1.a83c7bace55ebp-61")],
+        [hf("-0x1.3fde50d764083p-7"), hf("-0x1.d024df7fa0542p-61")],
+        [hf("0x1.12ef3ceae4d12p-7"), hf("-0x1.ba9c13deb261fp-61")],
+        [hf("-0x1.df3bd104aa267p-8"), hf("-0x1.546da9bc5b32ap-62")],
+        [hf("0x1.a685fc5de7a04p-8"), hf("0x1.40d284a1d67f9p-62")],
+    ];
+    const CL: [f64; 5] = [
+        hf("-0x1.7828d553ec8p-8"),
+        hf("0x1.51712f7bee368p-8"),
+        hf("-0x1.2e6d98527bcc6p-8"),
+        hf("0x1.0095da47b392cp-8"),
+        hf("-0x1.3b92d6368192cp-9"),
+    ];
+    let y2 = x2h * (CL[0] + x2h * (CL[1] + x2h * (CL[2] + x2h * (CL[3] + x2h * CL[4]))));
+    let (y1, y2) = polydd_alt(x2h, x2l, &CH, y2);
+    let (y1, y2) = muldd_acc_alt(y1, y2, x2h, x2l);
+    let (y1, y2) = mulddd_norm(y1, y2, x);
+    let (y0, y1) = fasttwosum(x, y1);
+    let (y1, y2) = fasttwosum(y1, y2);
+    let (y1, _) = nudge_power_of_two(y1, y2);
+    y0 + y1
+}
+
+/// Inputs where the asinh refinement cannot decide: `(|x|, high, low)`.
+const ASINH_DB: [[f64; 3]; 35] = [
+    [
+        hf("0x1.00f9476450863p-2"),
+        hf("0x1.fcb35067f343cp-3"),
+        hf("0x1p-57"),
+    ],
+    [
+        hf("0x1.1f0a79315b287p-2"),
+        hf("0x1.1b68aae88febap-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.2b9618ff7acb7p-2"),
+        hf("0x1.27781d9aa4e25p-2"),
+        hf("-0x1p-56"),
+    ],
+    [
+        hf("0x1.389ef683f3aa7p-2"),
+        hf("0x1.33f52db6df1afp-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.3b07e0c779ddap-2"),
+        hf("0x1.364303e1ad8f6p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.48441df33b6d3p-2"),
+        hf("0x1.42e385800f0a4p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.687bd068c1c1ep-2"),
+        hf("0x1.616cc75d49226p-2"),
+        hf("-0x1p-56"),
+    ],
+    [
+        hf("0x1.8740c4453a056p-2"),
+        hf("0x1.7e4f2ad132a1dp-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.891acda11167ep-2"),
+        hf("0x1.8009d924a3ffdp-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.bafc3479fc9ccp-2"),
+        hf("0x1.ae3773250e7d2p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.c59869f17b483p-2"),
+        hf("0x1.b7efa91915c95p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.c8be879787986p-2"),
+        hf("0x1.bad0485e0fe0ap-2"),
+        hf("-0x1p-56"),
+    ],
+    [
+        hf("0x1.e73b46abb01e1p-2"),
+        hf("0x1.d68039861ab53p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.ed6236da268bp-2"),
+        hf("0x1.dc0cb8f638126p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.f399ebafc1951p-2"),
+        hf("0x1.e1a4f519fab77p-2"),
+        hf("-0x1p-56"),
+    ],
+    [
+        hf("0x1.f70975ab0d471p-2"),
+        hf("0x1.e4bae8bcd6ea6p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.fbdd4a37760b7p-2"),
+        hf("0x1.e90f16eb88c09p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.fee72efb4bfddp-2"),
+        hf("0x1.ebc791a88bed8p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.02339d6bdb741p-1"),
+        hf("0x1.f0b2264e34555p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.09e7c831b1a23p-1"),
+        hf("0x1.fe694c3c89138p-2"),
+        hf("0x1p-56"),
+    ],
+    [
+        hf("0x1.16d32c862fc3bp-1"),
+        hf("0x1.0a9c9334066dbp-1"),
+        hf("-0x1p-55"),
+    ],
+    [
+        hf("0x1.857954132083dp-1"),
+        hf("0x1.67425fe575c88p-1"),
+        hf("-0x1p-55"),
+    ],
+    [
+        hf("0x1.8a5c3b60f7e11p-1"),
+        hf("0x1.6b23ad4415a17p-1"),
+        hf("-0x1p-55"),
+    ],
+    [
+        hf("0x1.9740eb419dd04p-1"),
+        hf("0x1.754ab7535d47dp-1"),
+        hf("0x1p-55"),
+    ],
+    [
+        hf("0x1.a16d9cc06011ap-1"),
+        hf("0x1.7d3755d851062p-1"),
+        hf("-0x1p-55"),
+    ],
+    [
+        hf("0x1.bb635be2213d1p-1"),
+        hf("0x1.91167cae3cfa9p-1"),
+        hf("0x1p-55"),
+    ],
+    [
+        hf("0x1.d4b21ebf542fp-1"),
+        hf("0x1.a3fc7e4dd47d1p-1"),
+        hf("-0x1p-55"),
+    ],
+    [
+        hf("0x1.7b8516ffd2406p+0"),
+        hf("0x1.2f5d3b178914ap+0"),
+        hf("0x1p-54"),
+    ],
+    [
+        hf("0x1.9295b9116e2e2p+0"),
+        hf("0x1.3bffa8863976p+0"),
+        hf("0x1p-54"),
+    ],
+    [
+        hf("0x1.fedc65e32714p+0"),
+        hf("0x1.710f91e844f9bp+0"),
+        hf("0x1p-54"),
+    ],
+    [
+        hf("0x1.57e377b3f0b4bp+1"),
+        hf("0x1.b6e2c73f41415p+0"),
+        hf("0x1p-54"),
+    ],
+    [
+        hf("0x1.6056b06a21918p+3"),
+        hf("0x1.8c0a26d055288p+1"),
+        hf("0x1p-53"),
+    ],
+    [
+        hf("0x1.843e1b5e5979cp+4"),
+        hf("0x1.f0f978201eb84p+1"),
+        hf("0x1p-53"),
+    ],
+    [
+        hf("0x1.fee8f69c4cd25p+10"),
+        hf("0x1.0a19aebb51e9p+3"),
+        hf("-0x1p-51"),
+    ],
+    [
+        hf("0x1.0fbc6c02b1c9p+24"),
+        hf("0x1.16369cd53bb69p+4"),
+        hf("0x1p-50"),
+    ],
+];
+
+/// asinh accurate path: log(zh + zl) where zh + zl ~ |x| + sqrt(x^2 + 1).
+#[inline(never)]
+fn asinh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
+    let e = (zh.to_bits() >> 52) as i32 - 0x3ff + i32::from(zl == 0.0);
+    let (v0, v1, v2) = log2_refine_core(zh, zl, e, a, polydd_alt, muldd_acc_alt, adddd);
+    let (v0, v1) = fasttwosum(v0, v1);
+    let (v1, v2) = fasttwosum(v1, v2);
+    let s2 = 2.0f64.copysign(x);
+    let v0 = v0 * s2;
+    let (v1, t) = nudge_power_of_two(v1 * s2, v2 * s2);
+    let er = t.wrapping_add(41) & MASK52;
+    let de = ((v0.to_bits() >> 52) & 0x7ff).wrapping_sub((t >> 52) & 0x7ff);
+    let res = v0 + v1;
+    if de > 99 || er < 80 {
+        let ax = x.abs();
+        let sgn = 1.0f64.copysign(x);
+        for d in &ASINH_DB {
+            if d[0] == ax {
+                return sgn * d[1] + sgn * d[2];
+            }
+        }
+    }
+    res
+}
+
+/// Correctly rounded `asinh`.
+pub fn asinh(x: f64) -> f64 {
+    let ax = x.abs();
+    let u = ax.to_bits();
+    if u < 0x3fbb_0000_0000_0000 {
+        // |x| < 0x1.bp-4
+        if u < 0x3e57_1374_4912_3ef7 {
+            // |x| < 0x1.7137449123ef7p-26: asinh(x) rounds to x. x = ±0 is
+            // returned as is since fma(-2^-60, -0, -0) is +0.
+            if u == 0 {
+                return x;
+            }
+            return hf("-0x1p-60").mul_add(x, x);
+        }
+        let x2h = x * x;
+        let x2l = x.mul_add(x, -x2h);
+        let x3h = x2h * x;
+        let sl = if u < 0x3f93_0000_0000_0000 {
+            if u < 0x3f30_0000_0000_0000 {
+                if u < 0x3e5a_0000_0000_0000 {
+                    x3h * hf("-0x1.5555555555555p-3")
+                } else {
+                    x3h * (hf("-0x1.5555555555555p-3") + x2h * hf("0x1.3333327c57c6p-4"))
+                }
+            } else {
+                const CL: [f64; 4] = [
+                    hf("-0x1.5555555555555p-3"),
+                    hf("0x1.333333332f2ffp-4"),
+                    hf("-0x1.6db6d9a665159p-5"),
+                    hf("0x1.f186866d775fp-6"),
+                ];
+                x3h * (CL[0] + x2h * (CL[1] + x2h * (CL[2] + x2h * CL[3])))
+            }
+        } else {
+            const CL: [f64; 7] = [
+                hf("-0x1.5555555555555p-3"),
+                hf("0x1.333333333331p-4"),
+                hf("-0x1.6db6db6da466cp-5"),
+                hf("0x1.f1c71c2ea7be4p-6"),
+                hf("-0x1.6e8b651b09d72p-6"),
+                hf("0x1.1c309fc0e69c2p-6"),
+                hf("-0x1.bab7833c1ep-7"),
+            ];
+            let c1 = CL[1] + x2h * CL[2];
+            let c3 = CL[3] + x2h * CL[4];
+            let c5 = CL[5] + x2h * CL[6];
+            let x4 = x2h * x2h;
+            x3h * (CL[0] + x2h * (c1 + x4 * (c3 + x4 * c5)))
+        };
+        let eps = hf("0x1.79p-53") * x3h;
+        let lb = x + (sl - eps);
+        let ub = x + (sl + eps);
+        if lb == ub {
+            return lb;
+        }
+        return asinh_zero(x, x2h, x2l);
+    }
+
+    // |x| >= 0x1.bp-4: asinh(|x|) = log(|x| + sqrt(x^2 + 1)) = log(ah + al).
+    let mut x2h = 0.0;
+    let mut x2l = 0.0;
+    let ah;
+    let mut al;
+    let mut off = 0x3ff;
+    if u < 0x4190_0000_0000_0000 {
+        // |x| < 2^26
+        x2h = x * x;
+        x2l = x.mul_add(x, -x2h);
+        let (th, mut tl) = if u < 0x3ff0_0000_0000_0000 {
+            fasttwosum(1.0, x2h)
+        } else {
+            fasttwosum(x2h, 1.0)
+        };
+        tl += x2l;
+        let sh = th.sqrt();
+        let rs = 0.5 / th;
+        al = (tl - sh.mul_add(sh, -th)) * (rs * sh);
+        let (s, t) = fasttwosum(sh, ax);
+        ah = s;
+        al += t;
+    } else if u < 0x4330_0000_0000_0000 {
+        // |x| < 2^52
+        ah = 2.0 * ax;
+        al = 0.5 / ax;
+    } else {
+        if u >= 0x7ff0_0000_0000_0000 {
+            return x + x; // ±inf or NaN
+        }
+        off = 0x3fe;
+        ah = ax;
+        al = 0.0;
+    }
+
+    let t = ah.to_bits();
+    let e = (t >> 52) as i32 - off;
+    let ed = e as f64;
+    let (i1, i2, dx, f) = log2_reduce(t & MASK52);
+    let lh = LOG2_L2H * ed + (LOG2_L1[i1][1] + LOG2_L2[i2][1]);
+    let mut ll = LOG2_L2L * ed + LOG2_L1[i1][0] + LOG2_L2[i2][0] + al / ah + f;
+    ll += dx;
+    let sgn = 1.0f64.copysign(x);
+    let lh = lh * sgn;
+    let ll = ll * sgn;
+    let eps = 1.63e-19;
+    let lb = lh + (ll - eps);
+    let ub = lh + (ll + eps);
+    if lb == ub {
+        return lb;
+    }
+    if ax < hf("0x1p-2") {
+        return asinh_zero(x, x2h, x2l);
+    }
+    asinh_refine(x, ah, al, hf("0x1.71547652b82fep+0") * lb.abs())
+}
+
+/// acosh accurate path for 1 < x < 0x1.1e83e425aee63p+0, with `z = x - 1`
+/// and `sh + sl ~ sqrt(2z)`.
+#[inline(never)]
+fn acosh_one(z: f64, sh: f64, sl: f64) -> f64 {
+    const CH: [[f64; 2]; 10] = [
+        [hf("-0x1.5555555555555p-4"), hf("-0x1.5555555554af1p-58")],
+        [hf("0x1.3333333333333p-6"), hf("0x1.9999998933f0ep-61")],
+        [hf("-0x1.6db6db6db6db7p-8"), hf("0x1.24929b16ec6b7p-63")],
+        [hf("0x1.f1c71c71c71c7p-10"), hf("0x1.c56d45e265e2cp-66")],
+        [hf("-0x1.6e8ba2e8ba2e9p-11"), hf("0x1.6d50ce7188d3dp-65")],
+        [hf("0x1.1c4ec4ec4ec43p-12"), hf("0x1.c6791d1cf399ap-66")],
+        [hf("-0x1.c99999999914fp-14"), hf("0x1.ee0d9408a2e2ap-68")],
+        [hf("0x1.7a878787648e2p-15"), hf("-0x1.1cea281e08012p-69")],
+        [hf("-0x1.3fde50d0cb4b9p-16"), hf("0x1.0335101403d9dp-72")],
+        [hf("0x1.12ef3bf8a0a74p-17"), hf("0x1.f9c6b51787043p-80")],
+    ];
+    const CL: [f64; 6] = [
+        hf("-0x1.df3b9d1296ea9p-19"),
+        hf("0x1.a681d7d2298ebp-20"),
+        hf("-0x1.77ead7b1ca449p-21"),
+        hf("0x1.4edd2ddb3721fp-22"),
+        hf("-0x1.1bf173531ee23p-23"),
+        hf("0x1.613229230e255p-25"),
+    ];
+    let y2 = z * (CL[0] + z * (CL[1] + z * (CL[2] + z * (CL[3] + z * (CL[4] + z * CL[5])))));
+    let (y1, y2) = polydd(z, 0.0, &CH, y2);
+    let (y1, y2) = mulddd_norm(y1, y2, z);
+    let (y0, mut y1) = fasttwosum(1.0, y1);
+    y1 += y2;
+    let (y0, y1) = muldd_acc(y0, y1, sh, sl);
+    y0 + y1
+}
+
+/// Inputs where the acosh refinement cannot decide: `(x, high, low)`.
+const ACOSH_DB: [[f64; 3]; 7] = [
+    [
+        hf("0x1.5bff041b260fep+0"),
+        hf("0x1.a6031cd5f93bap-1"),
+        hf("0x1p-55"),
+    ],
+    [
+        hf("0x1.9efdca62b700ap+0"),
+        hf("0x1.104b648f113a1p+0"),
+        hf("0x1p-54"),
+    ],
+    [
+        hf("0x1.a5bf3acfde4b2p+0"),
+        hf("0x1.1585720f35cd9p+0"),
+        hf("-0x1p-54"),
+    ],
+    [
+        hf("0x1.45ea160ddc71fp+7"),
+        hf("0x1.725811dcf6782p+2"),
+        hf("0x1p-52"),
+    ],
+    [
+        hf("0x1.2a686e4b567cep+10"),
+        hf("0x1.f1c928e7f1e65p+2"),
+        hf("0x1p-52"),
+    ],
+    [
+        hf("0x1.cb62eec26bd78p+15"),
+        hf("0x1.759a2ad4c4d56p+3"),
+        hf("0x1p-51"),
+    ],
+    [
+        hf("0x1.3bf8009648dcp+16"),
+        hf("0x1.7fce95ea5c653p+3"),
+        hf("-0x1p-53"),
+    ],
+];
+
+/// acosh accurate path; `a` ~ acosh(x)/log(2).
+#[inline(never)]
+fn acosh_refine(x: f64, a: f64) -> f64 {
+    let ix = x.to_bits();
+    let (zh, zl, huge) = if ix < 0x4190_0000_0000_0000 {
+        // x < 2^26
+        let x2h = x * x;
+        let x2l = x.mul_add(x, -x2h);
+        let (wh, wl) = fasttwosum(x2h - 1.0, x2l);
+        let sh = wh.sqrt();
+        let sl = (wl - sh.mul_add(sh, -wh)) / (2.0 * sh);
+        let (zh, mut zl) = fasttwosum(x, sh);
+        zl += sl;
+        let (zh, zl) = fasttwosum(zh, zl);
+        (zh, zl, 0)
+    } else if ix < 0x4330_0000_0000_0000 {
+        (2.0 * x, -0.5 / x, 0)
+    } else {
+        // zh = x with e + 1 below, so that 2x cannot overflow.
+        (x, 0.0, 1)
+    };
+    let e = (zh.to_bits() >> 52) as i32 - 0x3ff + huge;
+    let (v0, v1, v2) = log2_refine_core(zh, zl, e, a, polydd, muldd_acc, adddd_twosum);
+    let v0 = v0 * 2.0;
+    let (v1, t) = nudge_power_of_two(v1 * 2.0, v2 * 2.0);
+    let er = t.wrapping_add(7) & MASK52;
+    let de = ((v0.to_bits() >> 52) & 0x7ff).wrapping_sub((t >> 52) & 0x7ff);
+    let res = v0 + v1;
+    if de > 102 || er < 15 {
+        for d in &ACOSH_DB {
+            if d[0] == x {
+                return d[1] + d[2];
+            }
+        }
+    }
+    res
+}
+
+/// Correctly rounded `acosh`.
+pub fn acosh(x: f64) -> f64 {
+    let ix = x.to_bits();
+    if ix >= 0x7ff0_0000_0000_0000 {
+        // x < 0 (sign bit set), +inf or NaN.
+        let aix = ix << 1;
+        if ix == 0x7ff0_0000_0000_0000 || aix > (0x7ffu64 << 53) {
+            return x + x;
+        }
+        // Domain error: the default NaN with FE_INVALID.
+        let z = x - x;
+        return z / z;
+    }
+    if ix <= 0x3ff0_0000_0000_0000 {
+        // 0 <= x <= 1
+        if ix == 0x3ff0_0000_0000_0000 {
+            return 0.0;
+        }
+        let z = x - x;
+        return z / z;
+    }
+    // x > 1
+    let g;
+    let eps;
+    let mut off = 0x3fe;
+    let mut t = ix;
+    if ix < 0x3ff1_e83e_425a_ee63 {
+        // 1 < x < 0x1.1e83e425aee63p+0: acosh(1+z) = sqrt(2z) * (1 + series).
+        let z = x - 1.0;
+        let iz = (-0.25) / z;
+        let zt = 2.0 * z;
+        let sh = zt.sqrt();
+        let sl = sh.mul_add(sh, -zt) * (sh * iz);
+        const CL: [f64; 9] = [
+            hf("-0x1.5555555555555p-4"),
+            hf("0x1.3333333332f95p-6"),
+            hf("-0x1.6db6db6d5534cp-8"),
+            hf("0x1.f1c71c1e04356p-10"),
+            hf("-0x1.6e8b8e3e40d58p-11"),
+            hf("0x1.1c4ba825ac4fep-12"),
+            hf("-0x1.c9045534e6d9ep-14"),
+            hf("0x1.71fedae26a76bp-15"),
+            hf("-0x1.f1f4f8cc65342p-17"),
+        ];
+        let z2 = z * z;
+        let z4 = z2 * z2;
+        let p = CL[0]
+            + z * (((CL[1] + z * CL[2]) + z2 * (CL[3] + z * CL[4]))
+                + z4 * ((CL[5] + z * CL[6]) + z2 * (CL[7] + z * CL[8])));
+        let ds = (sh * z).mul_add(p, sl);
+        let eps = ds * hf("0x1.00p-50") - hf("0x1p-104") * sh;
+        let lb = sh + (ds - eps);
+        let ub = sh + (ds + eps);
+        if lb == ub {
+            return lb;
+        }
+        return acosh_one(z, sh, sl);
+    } else if ix < 0x405b_f000_0000_0000 {
+        // x < 111.75: log(x + sqrt(x^2 - 1)) via the double-double sum.
+        off = 0x3ff;
+        let x2h = x * x;
+        let wh = x2h - 1.0;
+        let wl = x.mul_add(x, -x2h);
+        let sh = wh.sqrt();
+        let ish = 0.5 / wh;
+        let sl = (wl - sh.mul_add(sh, -wh)) * (sh * ish);
+        let (th, mut tl) = fasttwosum(x, sh);
+        tl += sl;
+        t = th.to_bits();
+        g = tl / th;
+        eps = hf("0x1.81p-63");
+    } else if ix < 0x4087_1000_0000_0000 {
+        // 111.75 <= x < 738: log(2x) + g(1/x^2).
+        const CL: [f64; 4] = [
+            hf("0x1.5c4b6148816e2p-66"),
+            hf("-0x1.000000000005cp-2"),
+            hf("-0x1.7fffffebf3e6cp-4"),
+            hf("-0x1.aab6691f2bae7p-5"),
+        ];
+        let z = 1.0 / (x * x);
+        g = CL[0] + z * (CL[1] + z * (CL[2] + z * CL[3]));
+        eps = hf("0x1.c3p-63");
+    } else if ix < 0x40e0_1000_0000_0000 {
+        // 738 <= x < 32896
+        const CL: [f64; 3] = [
+            hf("-0x1.7f77c8429c6c6p-67"),
+            hf("-0x1.ffffffffff214p-3"),
+            hf("-0x1.8000268641bfep-4"),
+        ];
+        let z = 1.0 / (x * x);
+        g = CL[0] + z * (CL[1] + z * CL[2]);
+        eps = hf("0x1.9ap-63");
+    } else if ix < 0x41ea_0000_0000_0000 {
+        // 32896 <= x < 0x1.ap+31
+        const CL: [f64; 2] = [hf("0x1.7a0ed2effdd1p-67"), hf("-0x1.000000017d048p-2")];
+        let z = 1.0 / (x * x);
+        g = CL[0] + z * CL[1];
+        eps = hf("0x1.99p-63");
+    } else {
+        g = 0.0;
+        eps = hf("0x1.b2p-63");
+    }
+    let e = (t >> 52) as i32 - off;
+    let ed = e as f64;
+    let (i1, i2, dx, f) = log2_reduce(t & MASK52);
+    let lh = (LOG2_L1[i1][1] + LOG2_L2[i2][1]) + LOG2_L2H * ed;
+    let t1 = (LOG2_L2L * ed) + (LOG2_L1[i1][0] + LOG2_L2[i2][0]);
+    let t2 = f + t1;
+    let t3 = g + t2;
+    let ll = dx + t3;
+    let lb = lh + (ll - eps);
+    let ub = lh + (ll + eps);
+    if lb == ub {
+        return lb;
+    }
+    acosh_refine(x, hf("0x1.71547652b82fep+0") * lb)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1065,7 +1894,7 @@ mod tests {
     }
 
     /// FNV-1a over the result bits of `f` on the 1M-input corpus.
-    fn corpus_hash(f: fn(f64) -> f64, lo: i32, hi: i32) -> u64 {
+    fn corpus_hash(f: impl Fn(f64) -> f64, lo: i32, hi: i32) -> u64 {
         let mut c = Corpus::new();
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for i in 0..1_000_000 {
@@ -1116,5 +1945,82 @@ mod tests {
         }
         assert!(atanh(f64::NAN).is_nan());
         assert_eq!(atanh(f64::INFINITY).to_bits(), 0xfff8_0000_0000_0000);
+    }
+
+    #[test]
+    fn asinh_matches_glibc_2_43_on_corpus() {
+        assert_eq!(corpus_hash(asinh, -30, 70), 0x6678_0a49_ce1d_22d5);
+    }
+
+    #[test]
+    fn acosh_matches_glibc_2_43_on_corpus() {
+        // Inputs below 1 are folded to 1 + |x| so most land in the domain.
+        let map = |x: f64| {
+            let a = x.abs();
+            if a >= 1.0 { a } else { 1.0 + a }
+        };
+        assert_eq!(
+            corpus_hash(|x| acosh(map(x)), -30, 70),
+            0xf070_9603_79c1_a916
+        );
+    }
+
+    #[test]
+    fn asinh_hard_and_special_cases() {
+        // (input, glibc 2.43 result): branch cut-offs, database entries and
+        // the upstream-documented rounding-test failures.
+        for (x, want) in [
+            (0x3fd0_0f94_7645_0863u64, 0x3fcf_cb35_067f_343cu64),
+            (0xbfd0_0f94_7645_0863, 0xbfcf_cb35_067f_343c),
+            (0x4170_fbc6_c02b_1c90, 0x4031_6369_cd53_bb69),
+            (0xc09f_ee8f_69c4_cd25, 0xc020_a19a_ebb5_1e90),
+            (0x3e57_1374_4912_3ef7, 0x3e57_1374_4912_3ef6),
+            (0x3e57_1374_4912_3ef6, 0x3e57_1374_4912_3ef6),
+            (0x3fb0_19bc_f56d_16f7, 0x3fb0_1706_93c3_c51b),
+            (0x5d3e_ece8_f780_2fb0, 0x4074_5beb_97c2_8a38),
+            (0x4330_0000_0000_0000, 0x4042_5e4f_7b27_37fa),
+            (0x4190_0000_0000_0000, 0x4032_b708_8723_20e2),
+            (0x7fef_ffff_ffff_ffff, 0x4086_33ce_8fb9_f87e),
+            (0x3fbb_0000_0000_0000, 0x3fba_f33f_d027_faa7),
+            (0x3ffd_4b21_ebf5_42f0, 0x3ff5_d85b_ea38_3b41),
+            (0x0000_0000_0000_0001, 0x0000_0000_0000_0001),
+            (0x8000_0000_0000_0000, 0x8000_0000_0000_0000),
+            (0x7ff0_0000_0000_0000, 0x7ff0_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0xfff0_0000_0000_0000),
+        ] {
+            let got = asinh(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "asinh({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
+        }
+        assert!(asinh(f64::NAN).is_nan());
+    }
+
+    #[test]
+    fn acosh_hard_and_special_cases() {
+        for (x, want) in [
+            (0x3ff5_bff0_41b2_60feu64, 0x3fea_6031_cd5f_93bau64),
+            (0x40f3_bf80_0964_8dc0, 0x4027_fce9_5ea5_c653),
+            (0x4092_a686_e4b5_67ce, 0x401f_1c92_8e7f_1e65),
+            (0x4073_bf80_0964_8dc0, 0x4019_cb8f_1645_b3d1),
+            (0x3ff0_0000_0000_0001, 0x3e56_a09e_667f_3bcc),
+            (0x3ff1_e83e_425a_ee62, 0x3fde_f248_83d6_bb51),
+            (0x3ff1_e83e_425a_ee63, 0x3fde_f248_83d6_bb59),
+            (0x3ff0_0a80_0422_847a, 0x3fb2_5391_da7f_5aff),
+            (0x405b_f000_0000_0000, 0x4015_a337_7f67_b77e),
+            (0x4087_1000_0000_0000, 0x401d_3038_810e_918e),
+            (0x40e0_1000_0000_0000, 0x4026_3041_ffa2_68fa),
+            (0x41ea_0000_0000_0000, 0x4036_aa8d_3c78_f60b),
+            (0x4330_0000_0000_0000, 0x4042_5e4f_7b27_37fa),
+            (0x7fef_ffff_ffff_ffff, 0x4086_33ce_8fb9_f87e),
+            (0x3ff0_0000_0000_0000, 0x0000_0000_0000_0000),
+            (0x7ff0_0000_0000_0000, 0x7ff0_0000_0000_0000),
+            (0x3fe0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0xbff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0x8000_0000_0000_0000, 0xfff8_0000_0000_0000),
+            (0xfff0_0000_0000_0000, 0xfff8_0000_0000_0000),
+        ] {
+            let got = acosh(f64::from_bits(x)).to_bits();
+            assert_eq!(got, want, "acosh({x:#x}) = {got:#x}, glibc 2.43 {want:#x}");
+        }
+        assert!(acosh(f64::NAN).is_nan());
     }
 }

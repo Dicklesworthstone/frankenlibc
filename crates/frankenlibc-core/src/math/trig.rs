@@ -279,17 +279,16 @@ pub fn tanh(x: f64) -> f64 {
 
 #[inline]
 pub fn asinh(x: f64) -> f64 {
-    // fdlibm-derived libm::asinh, as glibc's. The asymptotic-series (|x| >= 16)
-    // and plain-log (1 <= |x| < 16) shortcuts differed from glibc on 25% of
-    // inputs in [-100, 100] vs 6.6% for libm, at about glibc's speed (bd-otip6a).
-    libm::asinh(x)
+    // CORE-MATH's correctly rounded asinh, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::asinh differed on 6.6% of inputs (bd-otip6a).
+    crate::math::coremath::asinh(x)
 }
 
 #[inline]
 pub fn acosh(x: f64) -> f64 {
-    // fdlibm-derived libm::acosh, as glibc's: the |x| >= 16 asymptotic series
-    // differed from glibc on 24.5% of inputs in [1, 100] vs 6.4% (bd-otip6a).
-    libm::acosh(x)
+    // CORE-MATH's correctly rounded acosh, which glibc 2.43 ships: bit-identical
+    // to glibc. fdlibm's libm::acosh differed on 6.4% of inputs (bd-otip6a).
+    crate::math::coremath::acosh(x)
 }
 
 #[inline]
