@@ -1193,26 +1193,25 @@ pub fn log(x: f64) -> f64 {
         if ix == LOG_ONE {
             return 0.0;
         }
+        // Multiply-adds fused as glibc's FMA build fuses them: a product goes
+        // into every user when all users are adds in the same block (see
+        // `log2`). Measured: this rule matches glibc on 4M inputs; the earlier
+        // unfused evaluation differed on 10-91 per million near 1 (bd-otip6a).
         let r = x - 1.0;
         let r2 = r * r;
         let r3 = r * r2;
         let b = &LOG_B;
-        let mut y = r3
-            * (b[1]
-                + r * b[2]
-                + r2 * b[3]
-                + r3 * (b[4]
-                    + r * b[5]
-                    + r2 * b[6]
-                    + r3 * (b[7] + r * b[8] + r2 * b[9] + r3 * b[10])));
+        let inner2 = r3.mul_add(b[10], r2.mul_add(b[9], r.mul_add(b[8], b[7])));
+        let inner = r3.mul_add(inner2, r2.mul_add(b[6], r.mul_add(b[5], b[4])));
+        let poly = r3.mul_add(inner, r2.mul_add(b[3], r.mul_add(b[2], b[1])));
         let w = r * f64::from_bits(0x41a0000000000000); // 0x1p27
         let rhi = r + w - w;
         let rlo = r - rhi;
-        let w = rhi * rhi * b[0]; // b[0] == -0.5
-        let hi = r + w;
-        let mut lo = r - hi + w;
-        lo += b[0] * rlo * (rhi + r);
-        y += lo;
+        let rr = rhi * rhi;
+        let hi = rr.mul_add(b[0], r); // b[0] == -0.5
+        let mut lo = rr.mul_add(b[0], r - hi);
+        lo = (b[0] * rlo).mul_add(rhi + r, lo);
+        let mut y = r3.mul_add(poly, lo);
         y += hi;
         return y;
     }
@@ -1228,13 +1227,14 @@ pub fn log(x: f64) -> f64 {
         // r ~= z/c - 1, |r| < 1/256.
         let r = z.mul_add(invc, -1.0);
         let kd = k as f64;
-        // hi + lo = r + log(c) + k·Ln2.
-        let w = kd * LOG_LN2HI + logc;
+        // hi + lo = r + log(c) + k·Ln2, fused as glibc's FMA build fuses it.
+        let w = kd.mul_add(LOG_LN2HI, logc);
         let hi = w + r;
-        let lo = w - hi + r + kd * LOG_LN2LO;
+        let lo = kd.mul_add(LOG_LN2LO, w - hi + r);
         let r2 = r * r;
         let a = &LOG_A;
-        return lo + r2 * a[0] + r * r2 * (a[1] + r * a[2] + r2 * (a[3] + r * a[4])) + hi;
+        let p = r2.mul_add(r.mul_add(a[4], a[3]), r.mul_add(a[2], a[1]));
+        return (r * r2).mul_add(p, r2.mul_add(a[0], lo)) + hi;
     }
 
     // Cold: ±0, subnormal, ±inf, NaN, or negative. Keep the prior FE-flag raising
@@ -1324,31 +1324,40 @@ pub fn log2(x: f64) -> f64 {
     r2.mul_add(p, lo) + hi
 }
 
-/// `log10` via the cheaper natural-log kernel: `log10(x) = ln(x) * log10(e)`.
-///
-/// Profiling (`glibc_baseline_math/log10`, bd-2g7oyh) showed `libm::log10`
-/// (~13 ns) is slower than `libm::log` (~9.5 ns); glibc's `log10` is hand-tuned,
-/// leaving fl `log10` ~1.07x behind. Routing through `libm::log` scaled by
-/// `LOG10_E` is ~1.34x faster on the kernel and beats glibc. A 4M-point sweep
-/// bounds it within 2 ULP of glibc (`f64::log10`) across the full dynamic range
-/// and near 1 — within the 4-ULP-vs-glibc contract shared by the exp/pow/log2
-/// fast paths (mirrors the f64 `log2` reroute).
-///
-/// At exactly-representable powers of ten the fast form is ~1 ULP off glibc's
-/// exact integer — within the 4-ULP contract (an exactness gate was measured to
-/// cost more than the reroute saves, since `round`/casts are libm calls or extra
-/// branches on baseline x86-64). Subnormal / non-positive / non-finite inputs
-/// defer to `libm::log10` for its precise special-case handling.
+/// `log10`: fdlibm's `e_log10` recombination around the natural log -- what
+/// glibc's log10 does, with `log` being the same ARM kernel `log` above -- so
+/// results are bit-identical to glibc's (bd-otip6a: `ln(x) * log10(e)` differed
+/// on 16% of inputs, e.g. powers of ten). x = 2^k * m with m in [1, 2) (or
+/// [0.5, 1) for k < 0, keeping the split symmetric), then
+/// log10(x) = k*log10(2)_lo + log(m)/ln(10) + k*log10(2)_hi. Verified against
+/// glibc with a C harness before porting: 0 differences / 3M finite inputs
+/// incl. subnormals. Plain (unfused) arithmetic: glibc builds this function
+/// without FMA. Zero, negatives, inf and nan keep libm's values and flags.
 #[inline]
 pub fn log10(x: f64) -> f64 {
-    if x.is_normal() && x > 0.0 {
-        // log10(x) = ln(x)·log10(e). Use the dedicated bit-exact f64 `log` kernel (ARM
-        // __log) instead of the generic `libm::log` — same `*LOG10_E` structure, but the
-        // ln is now ~glibc-grade (was the ~2x-slow generic). Within the 4-ULP-vs-glibc
-        // contract. Subnormal/non-positive/non-finite defer to libm::log10.
-        return log(x) * core::f64::consts::LOG10_E;
+    const TWO54: f64 = 1.801_439_850_948_198_4e16;
+    const IVLN10: f64 = 4.342_944_819_032_518_166_68e-1;
+    const LOG10_2HI: f64 = 3.010_299_956_636_117_713_06e-1;
+    const LOG10_2LO: f64 = 3.694_239_077_158_930_786_16e-13;
+    if !(x > 0.0 && x.is_finite()) {
+        return libm::log10(x);
     }
-    libm::log10(x)
+    let mut x = x;
+    let mut hx = (x.to_bits() >> 32) as i32;
+    let mut k: i32 = 0;
+    if hx < 0x0010_0000 {
+        // Subnormal: scale into the normal range.
+        k -= 54;
+        x *= TWO54;
+        hx = (x.to_bits() >> 32) as i32;
+    }
+    k += (hx >> 20) - 1023;
+    let i = ((k as u32 & 0x8000_0000) >> 31) as i32;
+    hx = (hx & 0x000f_ffff) | ((0x3ff - i) << 20);
+    let y = f64::from(k + i);
+    let m = f64::from_bits(((hx as u32 as u64) << 32) | (x.to_bits() & 0xffff_ffff));
+    let z = y * LOG10_2LO + IVLN10 * log(m);
+    z + y * LOG10_2HI
 }
 
 #[inline]
@@ -1995,24 +2004,31 @@ mod tests {
 
     #[test]
     fn log10_fast_path_within_4_ulps_of_glibc() {
-        // `f64::log10` lowers to host glibc, pinning the `ln(x) * log10(e)` fast
-        // path directly against it.
-        let mut x = 1e-300_f64;
-        while x < 1e300 {
-            assert!(
-                within_ulps(log10(x), x.log10(), 4),
-                "log10({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+        // `f64::log10` lowers to host glibc: log10 must equal it bit for bit
+        // (bd-otip6a) where glibc's `log` is its FMA build (reproduced by `log`).
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
+        let check = |x: f64| {
+            assert_eq!(
+                log10(x).to_bits(),
+                x.log10().to_bits(),
+                "log10({x:e}) = {:e} but host glibc = {:e}",
                 log10(x),
                 x.log10()
             );
+        };
+        for i in 1..20_000u64 {
+            check(f64::from_bits(i * 225_179_981_368)); // subnormals
+        }
+        let mut x = f64::MIN_POSITIVE;
+        while x < 1e300 {
+            check(x);
             x *= 1.0000071;
         }
-        for d in 0..1_000_000i64 {
-            let x = 1.0 + (d as f64) * 2e-9;
-            assert!(
-                within_ulps(log10(x), x.log10(), 4),
-                "near-1 log10({x}) >4 ULP"
-            );
+        for d in -1_000_000..1_000_000i64 {
+            check(1.0 + (d as f64) * 1e-7);
         }
         for &x in &[
             0.5,
@@ -2025,14 +2041,13 @@ mod tests {
             f64::MIN_POSITIVE,
             f64::MAX,
         ] {
-            assert!(within_ulps(log10(x), x.log10(), 4), "log10({x:e}) >4 ULP");
+            check(x);
         }
-        // Powers of ten stay within 4 ULP of glibc (no exactness gate — the
-        // fast form is ~1 ULP off the exact integer at 10^0..10^22).
+        // Powers of ten: glibc returns the exact integer; so must we.
         for k in -307i32..=308 {
             let p = libm::exp10(k as f64);
             if p.is_normal() {
-                assert!(within_ulps(log10(p), p.log10(), 4), "log10(10^{k}) >4 ULP");
+                check(p);
             }
         }
         // Special inputs defer to libm::log10 and match glibc exactly.
@@ -2045,26 +2060,35 @@ mod tests {
 
     #[test]
     fn log_fast_path_within_4_ulps_of_glibc() {
-        // `f64::ln` lowers to glibc `log`, so this pins the `log` kernel
-        // directly against it. Full dynamic range + the near-1 region
-        // (where log -> 0 and relative error is most sensitive).
-        let mut x = 1e-300_f64;
-        while x < 1e300 {
-            assert!(
-                within_ulps(log(x), x.ln(), 4),
-                "log({x:e}) = {:?} but glibc = {:?} (>4 ULP)",
+        // `f64::ln` lowers to glibc `log`: the kernel must equal it bit for
+        // bit (bd-otip6a) where glibc runs its FMA build. Full dynamic range,
+        // and densely on both sides of 1 (near-1 path and the k = 0 / -1 table
+        // rows), where the previously unfused evaluation differed.
+        #[cfg(target_arch = "x86_64")]
+        if !std::arch::is_x86_feature_detected!("fma") {
+            return;
+        }
+        let check = |x: f64| {
+            assert_eq!(
+                log(x).to_bits(),
+                x.ln().to_bits(),
+                "log({x:e}) = {:e} but host glibc = {:e}",
                 log(x),
                 x.ln()
             );
+        };
+        let mut x = f64::MIN_POSITIVE;
+        while x < 1e300 {
+            check(x);
             x *= 1.0000071;
         }
-        for d in 0..1_000_000i64 {
-            let x = 1.0 + (d as f64) * 2e-9;
-            assert!(within_ulps(log(x), x.ln(), 4), "near-1 log({x}) >4 ULP");
+        for d in 0..3_000_000i64 {
+            check(0.4 + (d as f64) * 4e-7);
         }
         for &x in &[
             0.5,
             0.323,
+            0.511_201_276_223_082_5,
             std::f64::consts::E,
             std::f64::consts::PI,
             1e-3,
@@ -2073,7 +2097,7 @@ mod tests {
             f64::MIN_POSITIVE,
             f64::MAX,
         ] {
-            assert!(within_ulps(log(x), x.ln(), 4), "log({x:e}) >4 ULP");
+            check(x);
         }
         // Special inputs defer to libm::log and match glibc exactly.
         assert!(log(f64::NAN).is_nan());
