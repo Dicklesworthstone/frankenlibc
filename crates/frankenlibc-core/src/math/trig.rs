@@ -133,7 +133,10 @@ pub fn acos(x: f64) -> f64 {
 
 #[inline]
 pub fn atan(x: f64) -> f64 {
-    libm::atan(x)
+    // CORE-MATH's correctly rounded atan. glibc's IBM atan is correctly rounded
+    // on all but ~0.02-0.1% of inputs, so this differs from glibc 10-70x less
+    // often than fdlibm's libm::atan did (1.4%; bd-otip6a).
+    crate::math::coremath::atan(x)
 }
 
 #[inline]
