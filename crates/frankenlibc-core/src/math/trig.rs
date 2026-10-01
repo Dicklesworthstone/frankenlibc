@@ -35,12 +35,14 @@ fn reduce_pio2_fma(x: f64) -> (i64, f64) {
 #[inline]
 pub fn sin(x: f64) -> f64 {
     let ax = x.abs();
-    // Route the reduce-needing band `[π/4, TRIG_RED_MAX]` through the fast FMA Cody-Waite
-    // reduction instead of `libm::sin`'s slower internal `rem_pio2` — same mechanism as the
-    // landed f64 `tan` lever (glibc 2.42 sped up its dbl-64 trig, exposing libm's medium-range
-    // reduction). `|x| < π/4` needs no reduction (stays on libm); the reduction is ≤2 ULP and
-    // only more accurate for smaller `x`, within the ≤4-ULP trig contract.
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
+    // Only the band where libm's reduction is genuinely slow (Payne-Hanek above
+    // `TRIG_FAST_HI`, 7-10x glibc) takes the FMA Cody-Waite reduction. Below it
+    // libm keeps its own reduction, which carries the reduced argument's low
+    // part into the kernel; the FMA route evaluates a single-double `r` and,
+    // when it was extended down to π/4, differed from glibc on 16% of inputs in
+    // [-10, 10] vs 3% for libm, which is also within 1.1x of glibc's speed
+    // there (bd-otip6a).
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
         return libm::sin(x);
     }
     let (n, r) = reduce_pio2_fma(x);
@@ -55,9 +57,8 @@ pub fn sin(x: f64) -> f64 {
 #[inline]
 pub fn cos(x: f64) -> f64 {
     let ax = x.abs();
-    // See `sin`: route `[π/4, TRIG_RED_MAX]` through the fast FMA reduction (same mechanism as
-    // the landed `tan` lever); `|x| < π/4` stays on libm. ≤2 ULP, within the ≤4-ULP contract.
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
+    // See `sin`: only `[TRIG_FAST_HI, TRIG_RED_MAX]` takes the FMA reduction.
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
         return libm::cos(x);
     }
     let (n, r) = reduce_pio2_fma(x);
@@ -100,20 +101,16 @@ pub(crate) fn sincos_band(x: f64) -> Option<(f64, f64)> {
     })
 }
 
-/// Below π/4 no reduction is needed (`libm::tan` is a direct small-arg kernel eval), so
-/// leave it on libm. From π/4 up to `TRIG_RED_MAX` we route through the fast FMA
-/// Cody-Waite reduction (`reduce_pio2_fma`, 3 FMAs) + the already-fast small-arg kernel,
-/// instead of `libm::tan`'s slower internal `rem_pio2`. glibc 2.42 sped up its dbl-64
-/// `tan`, exposing libm's medium-range reduction as the gap (f64 `tan` measured 1.68x
-/// slower than glibc 2.42). The reduction is proven ≤2 ULP on the large-arg band and is
-/// only MORE accurate for smaller `x` (smaller quotient), so it stays within the ≤4-ULP
-/// trig contract (`conformance_diff_trig_special`). Odd by construction: `reduce_pio2_fma`
-/// is odd (round-ties-even is odd), so `tan(-x) == -tan(x)` exactly. Above `TRIG_RED_MAX`
-/// the 3-part split runs out of precision — defer to libm for the rare astronomical case.
+/// Only `[TRIG_FAST_HI, TRIG_RED_MAX]`, where libm's Payne-Hanek reduction is slow,
+/// takes the FMA Cody-Waite reduction (`reduce_pio2_fma`) + the small-arg kernel; see
+/// `sin`. Extended down to π/4 it differed from glibc on 34% of inputs in [-10, 10]
+/// (single-double `r`, and `-1/tan(r)` rounding twice) vs 4% for libm, at about glibc's
+/// speed (bd-otip6a). Odd by construction: `reduce_pio2_fma` is odd, so `tan(-x) ==
+/// -tan(x)`. Above `TRIG_RED_MAX` the 3-part split runs out of precision -- libm.
 #[inline]
 pub fn tan(x: f64) -> f64 {
     let ax = x.abs();
-    if ax < core::f64::consts::FRAC_PI_4 || !(ax <= TRIG_RED_MAX) {
+    if ax < TRIG_FAST_HI || !(ax <= TRIG_RED_MAX) {
         return libm::tan(x);
     }
     let (n, r) = reduce_pio2_fma(x);
@@ -282,50 +279,16 @@ pub fn tanh(x: f64) -> f64 {
 
 #[inline]
 pub fn asinh(x: f64) -> f64 {
-    // Large-|x| asinh is dominated by sign(x)*log(2|x|). The previously rejected
-    // rewrite was sqrt-bound; this asymptotic path removes the sqrt on the hot
-    // large-input band and corrects log(2|x|) by the exact series in z=1/x^2:
-    // asinh(x)-log(2x) = z/4 - 3z^2/32 + 5z^3/96 - 35z^4/1024 + 63z^5/2560 + O(z^6).
-    let ax = x.abs();
-    if ax >= 16.0 {
-        let z = 1.0 / (ax * ax);
-        let mut p: f64 = 63.0 / 2560.0;
-        p = p.mul_add(z, -35.0 / 1024.0);
-        p = p.mul_add(z, 5.0 / 96.0);
-        p = p.mul_add(z, -3.0 / 32.0);
-        p = p.mul_add(z, 0.25);
-        let r = crate::math::log(ax) + core::f64::consts::LN_2 + z * p;
-        return if x.is_sign_negative() { -r } else { r };
-    }
-    if ax >= 1.0 {
-        // Midrange [1,16): x+√(x²+1) ≥ 1+√2 — NO cancellation — so the PLAIN log form
-        // (one sqrt + fl's fused f64 `log`) is accurate to ≤2 ULP (asinh is gated ≤2 ULP)
-        // and beats libm::asinh's heavier internal log+branch path. This is NOT the
-        // rejected log1p form (asinh = log1p(|x| + x²/(√(x²+1)+1)), 1.80x — extra divide +
-        // non-inlined log1p); the bare log avoids both.
-        let r = crate::math::log(ax + (ax * ax + 1.0).sqrt());
-        return if x.is_sign_negative() { -r } else { r };
-    }
-    // |x| < 1: x+√(x²+1) → 1 cancellation needs extra precision — libm::asinh is tighter.
+    // fdlibm-derived libm::asinh, as glibc's. The asymptotic-series (|x| >= 16)
+    // and plain-log (1 <= |x| < 16) shortcuts differed from glibc on 25% of
+    // inputs in [-100, 100] vs 6.6% for libm, at about glibc's speed (bd-otip6a).
     libm::asinh(x)
 }
 
 #[inline]
 pub fn acosh(x: f64) -> f64 {
-    // Large-x acosh is dominated by log(2x). The previously rejected rewrite was
-    // sqrt-bound; this asymptotic path removes the sqrt on the hot large-input band and
-    // corrects log(2x) by the exact series in z=1/x^2:
-    // acosh(x)-log(2x) = -z/4 - 3z^2/32 - 5z^3/96 - 35z^4/1024 - 63z^5/2560 + O(z^6).
-    if x >= 16.0 {
-        let z = 1.0 / (x * x);
-        let mut p: f64 = -63.0 / 2560.0;
-        p = p.mul_add(z, -35.0 / 1024.0);
-        p = p.mul_add(z, -5.0 / 96.0);
-        p = p.mul_add(z, -3.0 / 32.0);
-        p = p.mul_add(z, -0.25);
-        return crate::math::log(x) + core::f64::consts::LN_2 + z * p;
-    }
-    // The near-1/midrange log1p form measured 1.43x (sqrt-bound); libm::acosh is tighter.
+    // fdlibm-derived libm::acosh, as glibc's: the |x| >= 16 asymptotic series
+    // differed from glibc on 24.5% of inputs in [1, 100] vs 6.4% (bd-otip6a).
     libm::acosh(x)
 }
 

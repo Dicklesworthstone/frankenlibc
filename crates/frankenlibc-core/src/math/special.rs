@@ -2,13 +2,11 @@
 
 #[inline]
 pub fn erf(x: f64) -> f64 {
-    if x.is_finite() && x.abs() < 2.5 {
-        if x < 0.0 {
-            -erf_profile_band(-x)
-        } else {
-            erf_profile_band(x)
-        }
-    } else if x.abs() >= 6.0 {
+    // fdlibm-derived libm::erf, as glibc's: a Cephes rational band on |x| < 2.5
+    // (sized to a benchmark's argument range) differed from glibc on 8.8% of
+    // inputs in [-6, 6] vs 2.2% for libm, which is faster than glibc anyway
+    // (15.8 vs 29.2 ns; bd-otip6a).
+    if x.abs() >= 6.0 {
         // Saturation short-circuit: `erf(x)` rounds to exactly ±1.0 in f64 for
         // |x| >= 6 (1 - erf(6) ≈ 2.15e-17 < 2^-53, and glibc returns exactly ±1.0
         // there), so skip the `libm::erf` call — bit-identical. `±inf` also lands
@@ -18,104 +16,6 @@ pub fn erf(x: f64) -> f64 {
     } else {
         libm::erf(x)
     }
-}
-
-// ---------------------------------------------------------------------------
-// erf: Cephes/Moshier rational pieces for the profiled [0.5,2.5) band.
-//
-// The libc baseline exercises `erf(x)` over `x in [0.5,2.5)`. `libm::erf`
-// follows the full fdlibm decision tree there, while this path evaluates the
-// two relevant public-domain Cephes rational pieces directly: a no-exp rational
-// for [0,1), and an erfc-shaped exp(-x*x) * P/Q piece for [1,2.5). Public
-// `erfc` is intentionally unchanged because the corresponding sub-1.0
-// complement branch exceeded the 4-ULP glibc contract in dense replay.
-#[allow(clippy::excessive_precision)]
-const ERF_T: [f64; 5] = [
-    9.604_973_739_870_516_387_49e0,
-    9.002_601_972_038_426_892_17e1,
-    2.232_005_345_946_843_192_26e3,
-    7.003_325_141_128_050_754_73e3,
-    5.559_230_130_103_949_627_68e4,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERF_U: [f64; 5] = [
-    3.356_171_416_475_030_996_47e1,
-    5.213_579_497_801_526_797_95e2,
-    4.594_323_829_709_801_279_87e3,
-    2.262_900_006_138_909_342_46e4,
-    4.926_739_426_086_359_210_86e4,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERFC_P: [f64; 9] = [
-    2.461_969_814_735_305_125_24e-10,
-    5.641_895_648_310_688_219_77e-1,
-    7.463_210_564_422_699_126_87e0,
-    4.863_719_709_856_813_666_14e1,
-    1.965_208_329_560_770_982_42e2,
-    5.264_451_949_954_773_586_31e2,
-    9.345_285_271_719_576_075_40e2,
-    1.027_551_886_895_157_102_72e3,
-    5.575_353_353_693_993_275_26e2,
-];
-
-#[allow(clippy::excessive_precision)]
-const ERFC_Q: [f64; 8] = [
-    1.322_819_511_547_449_925_08e1,
-    8.670_721_408_859_897_423_29e1,
-    3.549_377_788_878_198_910_62e2,
-    9.757_085_017_432_054_897_53e2,
-    1.823_909_166_879_097_362_89e3,
-    2.246_337_608_187_109_817_92e3,
-    1.656_663_091_941_613_501_82e3,
-    5.575_353_408_177_276_755_46e2,
-];
-
-#[inline]
-fn erf_profile_band(x: f64) -> f64 {
-    if x < 1.0 {
-        let z = x * x;
-        x * polevl(z, &ERF_T) / p1evl(z, &ERF_U)
-    } else {
-        1.0 - erfc_profile_band_tail(x)
-    }
-}
-
-#[inline]
-fn erfc_profile_band_tail(x: f64) -> f64 {
-    // Use `libm::exp` (pure Rust), NOT `(-x*x).exp()`. The std `f64::exp` lowers
-    // to a call to the `exp` symbol, which in the shipped libc.so is our OWN
-    // interposed `exp` — so this hot erf/erfc path would pay a full membrane
-    // round-trip (runtime_policy decide/observe + re-entry) on every call instead
-    // of a direct inlined polynomial. Same convention/recursion-safety reason the
-    // rest of this file uses `libm::*` (see the tgamma path at the libm::exp(-t)
-    // call below). Bit-identical result.
-    libm::exp(-x * x) * polevl(x, &ERFC_P) / p1evl(x, &ERFC_Q)
-}
-
-// DISPROVEN (cc/BoldFalcon, 2026-06-27): do NOT generalize this grid gate to a plain
-// `(1.0..2.5).contains(|x|)` band to win the general-argument erfc perf gap (fl
-// `libm::erfc` measured ~1.63x slower than glibc on a mixed argument set). The Cephes
-// exp(-x*x)*P/Q rational is a DIFFERENT approximation than glibc's fdlibm and cannot
-// track its bits in general: a dense ULP sweep vs the live host glibc showed the band
-// drifting OFF the 4-ULP erf/erfc contract — 8 ULP by x=3.0, 16 by 4.0, 34 by 7.0,
-// and (decisively) 6 ULP at x=2.20 on worker hz2's glibc 2.42, i.e. it breaks
-// CONTRACT even inside [1,2.5) and the exact figure varies by the worker's glibc
-// version. fl's `libm::erfc` is itself fdlibm-derived (glibc-close, ~<=2 ULP), so
-// routing general args to Cephes is an accuracy REGRESSION, not a free win. The grid
-// gate stays narrow on purpose: it only fires on the exact x = 0.5 + k/32 (k<64)
-// points the glibc_baseline_bench replays, where the divergence is small. The real
-// erfc speed-up needs a glibc-bit-matching fdlibm-erfc port (split exp for accuracy),
-// not a Cephes substitution. Reverted; no host-comparator win exists for this lever.
-#[inline]
-fn is_erfc_profile_grid_tail(x: f64) -> bool {
-    if !(1.0..2.5).contains(&x) {
-        return false;
-    }
-    let scaled = (x - 0.5) * 32.0;
-    let k = scaled as u32;
-    k < 64 && scaled == k as f64
 }
 
 // ---------------------------------------------------------------------------
@@ -161,16 +61,6 @@ const TGAMMA_Q: [f64; 8] = [
 fn polevl(x: f64, c: &[f64]) -> f64 {
     // Horner: c[0]·xⁿ + … + c[n], leading coefficient first.
     let mut r = c[0];
-    for &ci in &c[1..] {
-        r = r.mul_add(x, ci);
-    }
-    r
-}
-
-#[inline]
-fn p1evl(x: f64, c: &[f64]) -> f64 {
-    // Horner with an implicit leading 1: xⁿ + c[0]·xⁿ⁻¹ + … + c[n].
-    let mut r = x + c[0];
     for &ci in &c[1..] {
         r = r.mul_add(x, ci);
     }
@@ -494,11 +384,7 @@ pub fn erfc(x: f64) -> f64 {
     if x <= -6.0 {
         return 2.0;
     }
-    let r = if is_erfc_profile_grid_tail(x) {
-        erfc_profile_band_tail(x)
-    } else {
-        libm::erfc(x)
-    };
+    let r = libm::erfc(x);
     // erfc(x) for large finite positive x underflows toward 0; glibc raises
     // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
     // is an exact limit (no underflow), so exclude non-finite x.
