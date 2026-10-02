@@ -40,12 +40,17 @@ pub fn global_alien_cs_ring() -> &'static MetricRing {
 
 /// Emit a metric event to the global alien CS ring.
 ///
-/// This is the hot-path emission point. The only cost when no
-/// consumer is attached is a single atomic increment + lock acquisition
-/// on the ring's internal mutex.
+/// This is the hot-path emission point: EBR pins and unpins on every
+/// hardened validation. The ring exists once a consumer has asked for it
+/// through [`global_alien_cs_ring`]; until then an event costs one atomic
+/// load. Emitting unconditionally took the ring's global mutex and read the
+/// clock twice per validation with no reader in production -- 4% of a
+/// hardened 8-thread run, plus the lock contention (bd-rc0923-epic-eeuy4f.9).
 #[inline]
 pub fn emit_alien_cs_event(kind: MetricEventKind, value: u64, concept: &'static str) {
-    global_alien_cs_ring().emit(kind, value, concept);
+    if let Some(ring) = GLOBAL_ALIEN_CS_RING.get() {
+        ring.emit(kind, value, concept);
+    }
 }
 
 /// Unified diagnostics snapshot across all four Alien CS concepts.
