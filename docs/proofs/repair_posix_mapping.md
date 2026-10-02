@@ -11,7 +11,7 @@ This table records the deterministic mapping from hardened invalid-input class t
 | `wide_copy_overflow` | `WideChar/wcscpy` | Repair | `TruncateWithNull` | `tsm.repair.widechar.wide_copy_overflow.v1` | `[65, 0]` | `0` |
 | `iconv_unsupported_encoding` | `Iconv/iconv_open` | Deny | `None` | `tsm.deny.iconv.iconv_unsupported_encoding.v1` | `open_err errno=22` | `22` |
 | `poll_oversized_nfds` | `Poll/poll` | Repair | `ClampSize` | `tsm.repair.poll.poll_oversized_nfds.v1` | `POLL_CLAMPED` | `0` |
-| `locale_unsupported_fallback` | `Locale/setlocale` | Repair | `ReturnSafeDefault` | `tsm.repair.locale.locale_unsupported_fallback.v1` | `C` | `0` |
+| `locale_unsupported_fallback` | `Locale/setlocale` | Deny | `None` | `tsm.repair.locale.locale_unsupported_fallback.v1` | `NULL` | `2` |
 | `mmap_invalid_protection` | `VirtualMemory/mmap` | Repair | `UpgradeToSafeVariant` | `tsm.repair.virtual_memory.mmap_invalid_protection.v1` | `MAPPED_REPAIRED` | `0` |
 | `mmap_missing_visibility` | `VirtualMemory/mmap` | Repair | `UpgradeToSafeVariant` | `tsm.repair.virtual_memory.mmap_missing_visibility.v1` | `MAPPED_REPAIRED` | `0` |
 | `startup_unterminated_auxv` | `Startup/__frankenlibc_startup_phase0` | Deny | `None` | `tsm.deny.startup.startup_unterminated_auxv.v1` | `DENY_INVALID_STARTUP_CONTEXT` | `7` |

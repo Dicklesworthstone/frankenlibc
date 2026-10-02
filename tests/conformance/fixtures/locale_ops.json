@@ -99,10 +99,10 @@
       "function": "setlocale",
       "spec_section": "C11 7.11.1.1 setlocale",
       "inputs": { "category": 6, "locale": "xx_INVALID.UTF-8" },
-      "expected_output": "C",
-      "expected_errno": 0,
+      "expected_output": "NULL",
+      "expected_errno": 2,
       "mode": "hardened",
-      "note": "Unsupported locale falls back to C in hardened mode"
+      "note": "Unsupported locale is refused (NULL) in hardened mode as in strict: reporting a locale that is not active made programs believe it was (bd-rc0923-epic-eeuy4f.10)"
     },
     {
       "name": "newlocale_c_locale_strict",

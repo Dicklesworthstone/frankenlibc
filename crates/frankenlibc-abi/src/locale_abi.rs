@@ -798,18 +798,13 @@ pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *c
 
     let mut resolved = Vec::with_capacity(requests.len());
     for (cat, req) in &requests {
+        // Unavailable in both modes: NULL, as glibc. Hardened used to return
+        // the current locale's name as if the switch had worked -- a silent
+        // lie that made programs (CPython's locale tests, strptime, re)
+        // believe de_DE/fr_FR/ja_JP were active. The current locale is left
+        // untouched either way, so nothing is re-encoded.
         match resolve_category(*cat, req) {
             Some(r) => resolved.push((*cat, r)),
-            None if mode.heals_enabled() => {
-                // Hardened: report the current locale instead of failing;
-                // an unknown NAME must not re-encode the caller's data.
-                runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);
-                return if category == locale_core::LC_ALL {
-                    lc_all_report()
-                } else {
-                    category_name(category).as_ptr() as *const c_char
-                };
-            }
             None => {
                 unsafe { set_abi_errno(libc::ENOENT) };
                 runtime_policy::observe(ApiFamily::Locale, decision.profile, 8, true);

@@ -90,7 +90,7 @@
     },
     {
       "id": "locale_unsupported_fallback",
-      "description": "Requested locale is unsupported and hardened mode falls back to safe default locale."
+      "description": "Requested locale is unsupported; hardened mode refuses it (NULL) like strict instead of reporting a locale that is not active."
     },
     {
       "id": "mmap_invalid_protection",
@@ -211,8 +211,8 @@
       "api_family": "Locale",
       "symbol": "setlocale",
       "invalid_input_class": "locale_unsupported_fallback",
-      "decision_path": "Repair",
-      "healing_action": "ReturnSafeDefault",
+      "decision_path": "Deny",
+      "healing_action": "None",
       "policy_id": "tsm.repair.locale.locale_unsupported_fallback.v1",
       "fixture_case_refs": [
         "tests/conformance/fixtures/locale_ops.json#/cases/setlocale_unsupported_hardened"
@@ -307,7 +307,7 @@
     "total_invalid_input_classes": 15,
     "covered_invalid_input_classes": 15,
     "entry_count": 15,
-    "repair_entries": 9,
-    "deny_entries": 6
+    "repair_entries": 8,
+    "deny_entries": 7
   }
 }
