@@ -294,6 +294,20 @@ fn clock_gettime_clock_id_valid(clock_id: c_int) -> bool {
     clock_gettime_common_clock_id(clock_id)
         || time_core::valid_clock_id(clock_id)
         || time_core::valid_clock_id_extended(clock_id)
+        || kernel_judged_clock_id(clock_id)
+}
+
+/// Clock ids only the kernel can judge. A negative id encodes a process or
+/// thread CPU clock (`clock_getcpuclockid`, `pthread_getcpuclockid`) or a
+/// posix-clock fd; 8, 9 and 11 are the alarm clocks and `CLOCK_TAI`. glibc
+/// hands every id to the kernel, which answers EINVAL for the bad ones.
+#[inline]
+fn kernel_judged_clock_id(clock_id: c_int) -> bool {
+    clock_id < 0
+        || matches!(
+            clock_id,
+            libc::CLOCK_REALTIME_ALARM | libc::CLOCK_BOOTTIME_ALARM | libc::CLOCK_TAI
+        )
 }
 
 #[inline]
@@ -1491,7 +1505,7 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut libc::timeval, tz: *mut c_void) -
 /// POSIX `clock_getres` — get the resolution of a clock.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clock_getres(clock_id: c_int, res: *mut libc::timespec) -> c_int {
-    if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
+    if !clock_gettime_clock_id_valid(clock_id) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -1577,7 +1591,7 @@ pub unsafe extern "C-unwind" fn clock_nanosleep(
         return errno::EFAULT;
     }
 
-    if !time_core::valid_clock_id(clock_id) && !time_core::valid_clock_id_extended(clock_id) {
+    if !clock_gettime_clock_id_valid(clock_id) {
         runtime_policy::observe(ApiFamily::Time, decision.profile, 6, true);
         return errno::EINVAL;
     }

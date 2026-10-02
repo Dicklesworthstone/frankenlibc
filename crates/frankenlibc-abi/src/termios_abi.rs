@@ -503,6 +503,32 @@ fn set_baud_fields(termios_p: *mut libc::termios, baud: u32, input: bool, output
     0
 }
 
+/// Shared body of `cfsetispeed`/`cfsetospeed`: `c_cflag` gets the CBAUD code
+/// of the rate `speed` names (BOTHER for a non-standard rate), and
+/// `c_ispeed`/`c_ospeed` keep `speed` exactly as passed, so `cfget*speed`
+/// returns what the same caller set -- the number for glibc >= 2.42 callers,
+/// the code for older ones. The kernel reads those fields only under BOTHER,
+/// where they hold the number.
+fn set_speed_fields(
+    termios_p: *mut libc::termios,
+    speed: libc::speed_t,
+    input: bool,
+    output: bool,
+) {
+    if set_baud_fields(termios_p, speed_to_baud(speed), input, output) != 0 {
+        return;
+    }
+    // SAFETY: set_baud_fields succeeded, so the pointer is valid and fits.
+    unsafe {
+        if input {
+            (*termios_p).c_ispeed = speed;
+        }
+        if output {
+            (*termios_p).c_ospeed = speed;
+        }
+    }
+}
+
 /// `cfsetibaud` — set the input baud rate from an actual baud number.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cfsetibaud(termios_p: *mut libc::termios, baud: u32) -> c_int {
@@ -590,6 +616,56 @@ fn baud_rate_to_constant(speed: libc::speed_t) -> libc::speed_t {
         _ if termios_core::valid_baud_rate(speed) => speed,
         _ => libc::BOTHER,
     }
+}
+
+/// The baud number a `cfset*speed` argument names.
+///
+/// glibc 2.42 made `speed_t` the plain number (`B9600 == 9600`), and its
+/// `cfsetispeed@@GLIBC_2.42` accepts any value: a standard rate gets its CBAUD
+/// code in `c_cflag`, any other rate BOTHER, and the number is kept in
+/// `c_ispeed`/`c_ospeed` (measured on 2.43). Programs built against older
+/// glibc pass the legacy code instead (`B38400 == 017`), and fl exports one
+/// unversioned symbol for both, so a legacy code value (`01..=017`,
+/// `010001..=010017`) is read as the rate it names. Taken literally those
+/// would be 1-15 or 4097-4111 baud, which glibc 2.43 would store as BOTHER
+/// rates; no device runs at them.
+fn speed_to_baud(speed: libc::speed_t) -> u32 {
+    const LEGACY: [(libc::speed_t, u32); 30] = [
+        (libc::B50, 50),
+        (libc::B75, 75),
+        (libc::B110, 110),
+        (libc::B134, 134),
+        (libc::B150, 150),
+        (libc::B200, 200),
+        (libc::B300, 300),
+        (libc::B600, 600),
+        (libc::B1200, 1200),
+        (libc::B1800, 1800),
+        (libc::B2400, 2400),
+        (libc::B4800, 4800),
+        (libc::B9600, 9600),
+        (libc::B19200, 19200),
+        (libc::B38400, 38400),
+        (libc::B57600, 57600),
+        (libc::B115200, 115200),
+        (libc::B230400, 230400),
+        (libc::B460800, 460800),
+        (libc::B500000, 500000),
+        (libc::B576000, 576000),
+        (libc::B921600, 921600),
+        (libc::B1000000, 1000000),
+        (libc::B1152000, 1152000),
+        (libc::B1500000, 1500000),
+        (libc::B2000000, 2000000),
+        (libc::B2500000, 2500000),
+        (libc::B3000000, 3000000),
+        (libc::B3500000, 3500000),
+        (libc::B4000000, 4000000),
+    ];
+    LEGACY
+        .iter()
+        .find(|(code, _)| *code == speed)
+        .map_or(speed, |&(_, baud)| baud)
 }
 
 fn termios2_to_termios(src: &libc::termios2) -> libc::termios {
@@ -936,21 +1012,9 @@ pub unsafe extern "C" fn cfsetispeed(termios_p: *mut libc::termios, speed: u32) 
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
     }
-    // glibc's cfsetispeed accepts ONLY a recognized `Bxxx` baud-rate constant.
-    // Any other argument — `BOTHER`, a raw numeric baud (e.g. 9600), or garbage
-    // — is rejected with EINVAL, leaving the structure untouched. (fl previously
-    // substituted BOTHER and returned 0, diverging on both the return value and
-    // the resulting c_cflag bits.) bd-wc9fye.
-    if !termios_core::valid_baud_rate(speed) {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
+    // Any rate is accepted, as by glibc 2.42's cfsetispeed (see set_speed_fields).
     let before = unsafe { std::ptr::read(termios_p) };
-    unsafe {
-        (*termios_p).c_cflag = ((*termios_p).c_cflag & !(libc::CIBAUD as libc::tcflag_t))
-            | input_speed_bits(speed as libc::speed_t);
-        (*termios_p).c_ispeed = speed as libc::speed_t;
-    }
+    set_speed_fields(termios_p, speed, true, false);
     let after = unsafe { std::ptr::read(termios_p) };
     let _ = observe_ptr_transition(
         "cfsetispeed",
@@ -992,21 +1056,9 @@ pub unsafe extern "C" fn cfsetospeed(termios_p: *mut libc::termios, speed: u32) 
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
     }
-    // glibc's cfsetospeed accepts ONLY a recognized `Bxxx` baud-rate constant;
-    // BOTHER, a raw numeric baud, or garbage is rejected with EINVAL and the
-    // structure is left unchanged (see cfsetispeed above). bd-wc9fye.
-    if !termios_core::valid_baud_rate(speed) {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
-        return -1;
-    }
+    // Any rate is accepted, as by glibc 2.42's cfsetospeed (see set_speed_fields).
     let before = unsafe { std::ptr::read(termios_p) };
-    unsafe {
-        let next =
-            ((*termios_p).c_cflag & !(libc::CBAUD as libc::tcflag_t)) | speed as libc::tcflag_t;
-        (*termios_p).c_cflag = next as libc::tcflag_t;
-        (*termios_p).c_ospeed = speed as libc::speed_t;
-    }
+    set_speed_fields(termios_p, speed, false, true);
     let after = unsafe { std::ptr::read(termios_p) };
     let _ = observe_ptr_transition(
         "cfsetospeed",
