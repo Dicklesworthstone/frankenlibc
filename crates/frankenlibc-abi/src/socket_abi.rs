@@ -40,7 +40,7 @@ unsafe fn tracked_sockaddr_output_fits(addr: *mut libc::sockaddr, addrlen: *mut 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int) -> c_int {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, domain as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -48,20 +48,10 @@ pub unsafe extern "C" fn socket(domain: c_int, sock_type: c_int, protocol: c_int
         return -1;
     }
 
-    // In strict mode, reject unknown address families early.
-    // In hardened mode, let the kernel decide (it may support AF values we don't enumerate).
-    if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
+    // The kernel judges the family and type, as with glibc: it answers
+    // EAFNOSUPPORT / EINVAL itself. A userspace allow-list (UNIX, INET,
+    // INET6, NETLINK) refused AF_PACKET, AF_ALG, AF_CAN, AF_BLUETOOTH,
+    // AF_VSOCK, AF_XDP ... in strict mode.
     let (rc, adverse) = match raw_syscall::sys_socket(domain, sock_type, protocol) {
         Ok(fd) => (fd, false),
         Err(e) => {
@@ -688,7 +678,8 @@ pub unsafe extern "C" fn socketpair(
     protocol: c_int,
     sv: *mut c_int,
 ) -> c_int {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
+    let (_mode, decision) =
+        runtime_policy::decide(ApiFamily::Socket, sv as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -707,18 +698,7 @@ pub unsafe extern "C" fn socketpair(
         return -1;
     }
 
-    if !socket_core::valid_address_family(domain) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EAFNOSUPPORT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    if !socket_core::valid_socket_type(sock_type) && !mode.heals_enabled() {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
+    // Family and type are the kernel's to judge (see socket).
     let (rc, adverse) =
         match unsafe { raw_syscall::sys_socketpair(domain, sock_type, protocol, sv) } {
             Ok(()) => (0, false),

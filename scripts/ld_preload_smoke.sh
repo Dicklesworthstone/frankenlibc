@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+SOCKET_FAMILIES_BIN="${BIN_DIR}/fixture_socket_families"
+cc -O2 "${ROOT}/tests/integration/fixture_socket_families.c" -o "${SOCKET_FAMILIES_BIN}"
 SIGNAL_BACKTRACE_BIN="${BIN_DIR}/fixture_signal_backtrace"
 cc -O2 -rdynamic "${ROOT}/tests/integration/fixture_signal_backtrace.c" -o "${SIGNAL_BACKTRACE_BIN}"
 SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
@@ -877,6 +879,8 @@ EOF
   run_corpus_case "${mode}" "signal_waits" "${SIGNAL_WAITS_BIN}" || mode_failed=1
   # backtrace() inside signal handlers unwinds through fl's restorer.
   run_corpus_case "${mode}" "signal_backtrace" "${SIGNAL_BACKTRACE_BIN}" || mode_failed=1
+  # socket()/socketpair() leave family and type to the kernel.
+  run_corpus_case "${mode}" "socket_families" "${SOCKET_FAMILIES_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys
