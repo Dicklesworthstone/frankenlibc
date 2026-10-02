@@ -4258,16 +4258,19 @@ pub unsafe extern "C" fn pthread_setspecific(
 /// skipped: glibc does not run key destructors at process exit.
 fn ensure_host_thread_key_teardown() {
     thread_local! {
-        static REGISTERED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+        static DECIDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    // Once per thread: the backend and main-thread checks cannot change for
+    // its lifetime, and they cost a gettid and a getpid syscall on every
+    // non-null pthread_setspecific when they ran first.
+    if DECIDED.try_with(|d| d.replace(true)).unwrap_or(true) {
+        return;
     }
     if current_threading_backend() != THREAD_BACKEND_HOST {
         return;
     }
     let tid = frankenlibc_core::syscall::sys_gettid();
     if tid == frankenlibc_core::syscall::sys_getpid() {
-        return;
-    }
-    if REGISTERED.try_with(|r| r.replace(true)).unwrap_or(true) {
         return;
     }
     // SAFETY: a plain thread-exit callback with no object; fl's own DSO handle.

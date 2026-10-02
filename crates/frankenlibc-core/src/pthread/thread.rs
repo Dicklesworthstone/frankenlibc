@@ -551,6 +551,10 @@ pub unsafe fn create_thread(
     // via CLONE_CHILD_CLEARTID.
     let child_tid_ptr = parent_tid_ptr; // Same location — tid serves both purposes.
 
+    // The child shares this thread's TLS (no CLONE_SETTLS below), so a
+    // TLS-cached tid would answer with ours.
+    super::tls::disable_tid_cache();
+
     // Execute clone.
     // SAFETY: All pointers are valid. child_sp is a properly prepared stack.
     let result = unsafe {

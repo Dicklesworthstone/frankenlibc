@@ -255,6 +255,10 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
         Some(host_fork) => {
             // SAFETY: plain call of host fork; fl's locks are held by the caller.
             let pid = unsafe { host_fork() };
+            if pid == 0 {
+                // The thread-local tid cache still holds the parent's tid.
+                frankenlibc_core::pthread::tls::note_fork_child();
+            }
             if pid < 0 {
                 Err(crate::host_resolve::host_errno(libc::EAGAIN))
             } else {

@@ -4084,6 +4084,10 @@ pub unsafe fn sys_utimensat(
 pub fn sys_clone_fork(flags: usize) -> Result<i32, i32> {
     // Simple clone for fork: flags=SIGCHLD, stack=0, no other args
     let ret = unsafe { raw::syscall2(SYS_CLONE, flags, 0) };
+    if ret == 0 {
+        // Child: the thread-local tid cache still holds the parent's tid.
+        crate::pthread::tls::note_fork_child();
+    }
     syscall_result(ret).map(|v| v as i32)
 }
 
