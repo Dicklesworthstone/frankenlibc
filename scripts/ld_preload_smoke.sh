@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_thread_stack_bounds.c" -o "${THREAD_STACK_BOUNDS_BIN}"
 GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
 cc -O2 "${ROOT}/tests/integration/fixture_gettext_catalogs.c" -o "${GETTEXT_CATALOGS_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
@@ -865,6 +867,20 @@ EOF
     run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
   fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
+  # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.
+  run_corpus_case "${mode}" "thread_stack_bounds" "${THREAD_STACK_BOUNDS_BIN}" || mode_failed=1
+  # CPython 3.14 sizes its C stack from pthread_getattr_np; wrong bounds made
+  # every finished thread leak its arguments (refcounts stayed raised).
+  run_optional_case "python3" "${mode}" "python_thread_refcounts" python3 -c '
+import sys, _thread, threading, time
+class B: pass
+b = B()
+for _ in range(3):
+    _thread.start_new_thread(lambda a: None, (b,))
+    time.sleep(0.1)
+t = threading.Thread(target=lambda a: None, args=(b,)); t.start(); t.join()
+print("refcount", sys.getrefcount(b), "thread", sys.getrefcount(t))
+print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_optional_case "node" "${mode}" "node_eval" node -e 'console.log([1, 2, 3].map((x) => x * 7).join(","))' || mode_failed=1
   # Local time (bd-rc0923-epic-eeuy4f.11): zone files, POSIX rules, edge values.
   local tz_case=0

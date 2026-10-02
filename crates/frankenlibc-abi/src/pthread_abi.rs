@@ -1407,47 +1407,81 @@ fn thread_tid_appears_alive(tid: i32) -> bool {
 /// For the main thread the kernel labels the mapping `[stack]`. For spawned
 /// threads there is no such label, but we can locate the mapping that contains
 /// the current stack pointer.
-fn stack_bounds_from_proc_maps(tid: i32) -> Option<(usize, usize)> {
-    // Try thread-specific maps first, fall back to process-wide.
-    let maps_content = std::fs::read_to_string(format!("/proc/self/task/{tid}/maps"))
-        .or_else(|_| std::fs::read_to_string("/proc/self/maps"))
-        .ok()?;
-
-    // First pass: look for the explicit [stack] annotation (main thread).
-    for line in maps_content.lines() {
-        if line.ends_with("[stack]")
-            && let Some((start, end)) = parse_maps_range(line)
+/// Stack bounds as glibc's `pthread_getattr_np` reports them, from
+/// /proc/self/maps: `(lowest usable address, size, guard size)`.
+///
+/// The main thread (`main_thread`) gets glibc's RLIMIT_STACK extent: the top
+/// is the page after the initial stack pointer (`__libc_stack_end`, which the
+/// kernel reports as `startstack` in /proc/self/stat), the size is the
+/// rlimit minus the part of the mapping above that page, page-aligned and
+/// clamped to the gap down to the next mapping; no guard. Any other thread
+/// must be the caller: its stack is the mapping holding the current stack
+/// pointer, and an adjacent inaccessible mapping just below is its guard
+/// (glibc reports `stackblock + guard` and `stackblock_size - guard`, the
+/// same range). The `[stack]` label names only the main stack, even in a
+/// thread's own /proc/self/task/<tid>/maps.
+fn stack_bounds_from_proc_maps(main_thread: bool) -> Option<(usize, usize, usize)> {
+    let maps = std::fs::read_to_string("/proc/self/maps").ok()?;
+    let page = 4096usize;
+    let anchor = if main_thread {
+        let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+        // Fields after the parenthesised command name; startstack is field 28.
+        let after_comm = &stat[stat.rfind(')')? + 2..];
+        after_comm.split(' ').nth(25)?.parse::<usize>().ok()?
+    } else {
+        let sp: usize;
+        #[cfg(target_arch = "x86_64")]
         {
-            return Some((start, end - start));
+            // SAFETY: reading rsp is a single instruction with no side effects.
+            unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack)) };
         }
-    }
-
-    // Second pass: find the mapping containing our current stack pointer.
-    // This handles spawned threads whose stack mappings have no label.
-    let sp: usize;
-    #[cfg(target_arch = "x86_64")]
-    {
-        // SAFETY: reading rsp is a single instruction with no side effects.
-        unsafe { core::arch::asm!("mov {}, rsp", out(reg) sp, options(nomem, nostack)) };
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
-    }
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        return None;
-    }
-
-    for line in maps_content.lines() {
-        if let Some((start, end)) = parse_maps_range(line)
-            && sp >= start
-            && sp < end
+        #[cfg(target_arch = "aarch64")]
         {
-            return Some((start, end - start));
+            unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack)) };
         }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            return None;
+        }
+        sp
+    };
+    let mut previous: Option<(usize, usize, bool)> = None;
+    for line in maps.lines() {
+        let Some((start, end)) = parse_maps_range(line) else {
+            continue;
+        };
+        let inaccessible = line
+            .split_whitespace()
+            .nth(1)
+            .is_some_and(|perms| perms.starts_with("---"));
+        if (start..end).contains(&anchor) {
+            let (below_start, below_end, below_inaccessible) = previous.unwrap_or((0, 0, false));
+            if main_thread {
+                let stack_end = (anchor & !(page - 1)) + page;
+                let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+                // SAFETY: getrlimit writes a complete rlimit on success.
+                unsafe {
+                    raw_syscall::sys_getrlimit(
+                        libc::RLIMIT_STACK as i32,
+                        limit.as_mut_ptr().cast::<u8>(),
+                    )
+                }
+                .ok()?;
+                // SAFETY: initialized by the successful call above.
+                let rlim = unsafe { limit.assume_init() }.rlim_cur as usize;
+                let mut size = rlim.saturating_sub(end - stack_end) / page * page;
+                size = size.min(stack_end - below_end);
+                return Some((stack_end - size, size, 0));
+            }
+            let guard = if below_inaccessible && below_end == start {
+                below_end - below_start
+            } else {
+                0
+            };
+            return Some((start, end - start, guard));
+        }
+        previous = Some((start, end, inaccessible));
     }
-
     None
 }
 
@@ -4321,9 +4355,13 @@ pub unsafe extern "C-unwind" fn pthread_once(
 // only need to be self-consistent (not glibc-layout-compatible).
 // ---------------------------------------------------------------------------
 
-/// Default stack size for new threads.
-/// Override at runtime with `FRANKENLIBC_THREAD_STACK_SIZE` (bytes).
-/// glibc uses 8 MiB; our default is 2 MiB as a compact baseline.
+/// Default stack size for new threads, glibc's rule: the RLIMIT_STACK soft
+/// limit rounded up to a page (8 MiB under the usual `ulimit -s 8192`), the
+/// 2 MiB architecture default when it is unlimited, PTHREAD_STACK_MIN when it
+/// is smaller. Stacks are committed lazily, so the size is address space,
+/// not memory. A thread made with a NULL attr gets this size from the host's
+/// pthread_create in interpose mode, so a default-initialized attr must
+/// agree. Override at runtime with `FRANKENLIBC_THREAD_STACK_SIZE` (bytes).
 fn attr_default_stack_size() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CACHED: AtomicUsize = AtomicUsize::new(0);
@@ -4332,15 +4370,30 @@ fn attr_default_stack_size() -> usize {
         return cached;
     }
 
+    let rlimit_size = || {
+        let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: getrlimit writes a complete rlimit on success.
+        let rc = unsafe {
+            raw_syscall::sys_getrlimit(libc::RLIMIT_STACK as i32, limit.as_mut_ptr().cast::<u8>())
+        };
+        // SAFETY: initialized when the call succeeded.
+        let soft = rc.ok().map(|()| unsafe { limit.assume_init() }.rlim_cur);
+        match soft {
+            None | Some(libc::RLIM_INFINITY) => ATTR_DEFAULT_STACK_SIZE,
+            Some(soft) => (soft as usize)
+                .max(ATTR_MIN_STACK_SIZE)
+                .next_multiple_of(4096),
+        }
+    };
     if !attr_stack_size_env_lookup_enabled() {
-        return ATTR_DEFAULT_STACK_SIZE;
+        return rlimit_size();
     }
 
     let size = std::env::var("FRANKENLIBC_THREAD_STACK_SIZE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&v| v >= ATTR_MIN_STACK_SIZE)
-        .unwrap_or(ATTR_DEFAULT_STACK_SIZE);
+        .unwrap_or_else(rlimit_size);
     CACHED.store(size, Ordering::Relaxed);
     size
 }
@@ -4364,6 +4417,7 @@ const PTHREAD_SCOPE_PROCESS: c_int = 1;
 /// Minimum stack size: PTHREAD_STACK_MIN (typically 16 KiB on Linux x86_64).
 const ATTR_MIN_STACK_SIZE: usize = 16384;
 
+/// glibc's x86_64 ARCH_STACK_DEFAULT_SIZE, used when RLIMIT_STACK is unlimited.
 const ATTR_DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
 
 /// Magic tag to identify managed attr structs.
@@ -5401,23 +5455,46 @@ pub unsafe extern "C" fn pthread_getattr_np(
         return 0;
     }
 
-    // Fallback: parse /proc/self/task/<tid>/maps to discover stack boundaries.
-    // This handles the main thread (not created by pthread_create) and any
-    // thread whose handle we can't locate in our registries.
-    let probe_tid = if thread == native_pthread_self() {
+    // A thread the host glibc created: ask the host, which knows its stack
+    // block and guard exactly (glibc >= 2.42 guards stacks with
+    // MADV_GUARD_INSTALL, invisible in /proc/self/maps).
+    if !force_native_threading_enabled()
+        && host_thread_is_registered(thread_key)
+        && let Some((stack_addr, stack_size, guard_size, detach_state)) =
+            crate::host_resolve::host_thread_stack(thread)
+    {
+        unsafe {
+            (*data).detach_state = detach_state;
+            (*data).stack_size = stack_size;
+            (*data).guard_size = guard_size;
+            (*data).stack_addr = stack_addr;
+        }
+        return 0;
+    }
+
+    // Fallback: /proc/self/maps, for the main thread (not created by
+    // pthread_create) and for the calling thread when no registry knows it.
+    // Another thread's stack cannot be found from here without its stack
+    // pointer.
+    let calling = thread == native_pthread_self();
+    let probe_tid = if calling {
         core_self_tid()
     } else {
         resolve_thread_tid(thread).unwrap_or(-1)
     };
+    // SAFETY: getpid has no preconditions.
+    let main_thread = probe_tid == unsafe { libc::getpid() };
     if probe_tid > 0
-        && let Some((stack_start, stack_size)) = stack_bounds_from_proc_maps(probe_tid)
+        && (calling || main_thread)
+        && let Some((stack_start, stack_size, guard_size)) =
+            stack_bounds_from_proc_maps(main_thread)
     {
         // The main thread is always joinable (it cannot be detached).
         unsafe {
             (*data).detach_state = libc::PTHREAD_CREATE_JOINABLE;
-            (*data).stack_size = stack_size.saturating_sub(ATTR_DEFAULT_GUARD_SIZE);
-            (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
-            (*data).stack_addr = stack_start + ATTR_DEFAULT_GUARD_SIZE;
+            (*data).stack_size = stack_size;
+            (*data).guard_size = guard_size;
+            (*data).stack_addr = stack_start;
         }
         return 0;
     }

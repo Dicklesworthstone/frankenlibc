@@ -23,6 +23,11 @@ static HOST_PTHREAD_UNREGISTER_CANCEL_RESTORE: AtomicUsize = AtomicUsize::new(0)
 static HOST_PTHREAD_UNWIND_NEXT: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_JOIN: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_DETACH: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_GETATTR_NP: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_ATTR_GETSTACK: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_ATTR_GETGUARDSIZE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_ATTR_GETDETACHSTATE: AtomicUsize = AtomicUsize::new(0);
+static HOST_PTHREAD_ATTR_DESTROY: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_EXIT: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_SELF: AtomicUsize = AtomicUsize::new(0);
 static HOST_PTHREAD_TRYJOIN_NP: AtomicUsize = AtomicUsize::new(0);
@@ -825,6 +830,14 @@ pub(crate) fn bootstrap_host_symbols() {
         ("__pthread_unwind_next", &HOST_PTHREAD_UNWIND_NEXT),
         ("pthread_join", &HOST_PTHREAD_JOIN),
         ("pthread_detach", &HOST_PTHREAD_DETACH),
+        ("pthread_getattr_np", &HOST_PTHREAD_GETATTR_NP),
+        ("pthread_attr_getstack", &HOST_PTHREAD_ATTR_GETSTACK),
+        ("pthread_attr_getguardsize", &HOST_PTHREAD_ATTR_GETGUARDSIZE),
+        (
+            "pthread_attr_getdetachstate",
+            &HOST_PTHREAD_ATTR_GETDETACHSTATE,
+        ),
+        ("pthread_attr_destroy", &HOST_PTHREAD_ATTR_DESTROY),
         ("pthread_exit", &HOST_PTHREAD_EXIT),
         ("pthread_self", &HOST_PTHREAD_SELF),
         ("pthread_tryjoin_np", &HOST_PTHREAD_TRYJOIN_NP),
@@ -1003,6 +1016,49 @@ pub(crate) fn host_pthread_join_raw()
 
 pub(crate) fn host_pthread_detach_raw() -> Option<unsafe extern "C" fn(libc::pthread_t) -> i32> {
     load_host_symbol(&HOST_PTHREAD_DETACH).map(|addr| unsafe { core::mem::transmute(addr) })
+}
+
+/// The stack and detach state host glibc reports for a thread it created:
+/// `(lowest usable address, size, guard size, detach state)`, read through
+/// the host's own `pthread_getattr_np` and attribute accessors (its
+/// `pthread_attr_t` layout is not fl's).
+pub(crate) fn host_thread_stack(thread: libc::pthread_t) -> Option<(usize, usize, usize, c_int)> {
+    type GetAttr = unsafe extern "C" fn(libc::pthread_t, *mut libc::pthread_attr_t) -> c_int;
+    type GetStack =
+        unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
+    type GetSize = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
+    type GetInt = unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
+    type Destroy = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
+    // SAFETY: each cache holds the address of the host function of that name,
+    // whose C signature is the one transmuted to.
+    let (getattr, getstack, getguard, getdetach, destroy) = unsafe {
+        (
+            core::mem::transmute::<usize, GetAttr>(load_host_symbol(&HOST_PTHREAD_GETATTR_NP)?),
+            core::mem::transmute::<usize, GetStack>(load_host_symbol(&HOST_PTHREAD_ATTR_GETSTACK)?),
+            core::mem::transmute::<usize, GetSize>(load_host_symbol(
+                &HOST_PTHREAD_ATTR_GETGUARDSIZE,
+            )?),
+            core::mem::transmute::<usize, GetInt>(load_host_symbol(
+                &HOST_PTHREAD_ATTR_GETDETACHSTATE,
+            )?),
+            core::mem::transmute::<usize, Destroy>(load_host_symbol(&HOST_PTHREAD_ATTR_DESTROY)?),
+        )
+    };
+    let mut attr = core::mem::MaybeUninit::<libc::pthread_attr_t>::zeroed();
+    // SAFETY: `thread` is a live host thread and `attr` is writable storage
+    // of the host's pthread_attr_t size.
+    if unsafe { getattr(thread, attr.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let (mut addr, mut size, mut guard, mut detach) = (core::ptr::null_mut(), 0, 0, 0);
+    // SAFETY: `attr` was initialized by the host's pthread_getattr_np.
+    unsafe {
+        getstack(attr.as_ptr(), &mut addr, &mut size);
+        getguard(attr.as_ptr(), &mut guard);
+        getdetach(attr.as_ptr(), &mut detach);
+        destroy(attr.as_mut_ptr());
+    }
+    Some((addr as usize, size, guard, detach))
 }
 
 pub(crate) fn host_pthread_exit_raw() -> Option<unsafe extern "C-unwind" fn(*mut c_void) -> !> {
