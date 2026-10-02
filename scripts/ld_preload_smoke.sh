@@ -219,6 +219,8 @@ SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_signal_waits.c" -o "${SIGNAL_WAITS_BIN}"
 THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_thread_stack_bounds.c" -o "${THREAD_STACK_BOUNDS_BIN}"
+WCSCOLL_LOCALE_BIN="${BIN_DIR}/fixture_wcscoll_locale"
+cc -O2 "${ROOT}/tests/integration/fixture_wcscoll_locale.c" -o "${WCSCOLL_LOCALE_BIN}"
 GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
 cc -O2 "${ROOT}/tests/integration/fixture_gettext_catalogs.c" -o "${GETTEXT_CATALOGS_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
@@ -932,6 +934,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
   # LC_MESSAGES: .mo catalogs, plural rules, LANGUAGE, codeset conversion.
   run_corpus_case "${mode}" "gettext_catalogs_en_us" /usr/bin/env LANG=en_US.UTF-8 "${GETTEXT_CATALOGS_BIN}" || mode_failed=1
+  # LC_COLLATE for wide strings: wcscoll signs and wcsxfrm key order.
+  run_corpus_case "${mode}" "wcscoll_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${WCSCOLL_LOCALE_BIN}" || mode_failed=1
   run_optional_case "dpkg" "${mode}" "gettext_dpkg_help_en_us" /usr/bin/env LANG=en_US.UTF-8 dpkg --help || mode_failed=1
   # LC_CTYPE: wide classification/case/width, every code point.
   for wide_locale in C C.UTF-8 en_US.UTF-8; do

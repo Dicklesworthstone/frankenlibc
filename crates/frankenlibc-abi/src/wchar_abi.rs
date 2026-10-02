@@ -7192,8 +7192,48 @@ pub unsafe extern "C" fn wcsftime(
     wide_i
 }
 
+/// The active named collation and two wide strings as UTF-8, when an
+/// LC_COLLATE with rules is active under a UTF-8 LC_CTYPE (the tables index
+/// the locale's multibyte form). `None` falls back to code-point order.
+unsafe fn named_wide_collation(
+    s1: *const libc::wchar_t,
+    s2: *const libc::wchar_t,
+) -> Option<(
+    frankenlibc_core::locale::collate::CollateTables<'static>,
+    Vec<u8>,
+    Vec<u8>,
+)> {
+    if s1.is_null()
+        || s2.is_null()
+        || !matches!(
+            crate::locale_abi::active_charset(),
+            crate::locale_abi::Charset::Utf8
+        )
+    {
+        return None;
+    }
+    let tables = crate::locale_abi::named_collate()?;
+    let utf8 = |s: *const libc::wchar_t| -> Option<Vec<u8>> {
+        // SAFETY: wcscoll/wcsxfrm's contract: NUL-terminated wide strings.
+        let len = unsafe { wcslen(s as *const u32) };
+        let wide = unsafe { std::slice::from_raw_parts(s.cast::<u32>(), len) };
+        let mut out = Vec::with_capacity(len);
+        for &c in wide {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(char::from_u32(c)?.encode_utf8(&mut buf).as_bytes());
+        }
+        Some(out)
+    };
+    Some((tables, utf8(s1)?, utf8(s2)?))
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wcscoll(s1: *const libc::wchar_t, s2: *const libc::wchar_t) -> c_int {
+    // A named UTF-8 LC_COLLATE: the narrow strings' collation (the same
+    // weights glibc applies to both forms).
+    if let Some((tables, a, b)) = unsafe { named_wide_collation(s1, s2) } {
+        return tables.compare(&a, &b);
+    }
     // C/POSIX locale: collation order IS code-point order, so wcscoll == wcscmp.
     // Delegate to the wcscmp ABI (fused single-pass 128-byte-SIMD scan with early
     // exit) instead of the old 2× wcslen length scans + a separate
@@ -7211,6 +7251,23 @@ pub unsafe extern "C" fn wcsxfrm(
 ) -> usize {
     if src.is_null() {
         return 0;
+    }
+
+    // A named UTF-8 LC_COLLATE: strxfrm's sort key of the narrow string, one
+    // key byte per wide char. Key bytes are nonzero and wchar_t compares
+    // them in the same order, so wcscmp on these keys orders like wcscoll.
+    // (glibc's wide keys hold other values; their order is the same.)
+    if let Some((tables, key_src, _)) = unsafe { named_wide_collation(src, src) } {
+        let key = tables.sort_key(&key_src);
+        if !dest.is_null() && key.len() < n {
+            for (i, &byte) in key.iter().enumerate() {
+                // SAFETY: the caller provides `n` > key.len() wide chars at dest.
+                unsafe { *dest.add(i) = libc::wchar_t::from(byte) };
+            }
+            // SAFETY: as above; index key.len() < n.
+            unsafe { *dest.add(key.len()) = 0 };
+        }
+        return key.len();
     }
 
     // SAFETY: source string is scanned until NUL.

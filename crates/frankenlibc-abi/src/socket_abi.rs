@@ -530,7 +530,10 @@ pub unsafe extern "C" fn setsockopt(
         return -1;
     }
 
-    if (optval.is_null() && optlen > 0) || !tracked_region_fits(optval, optlen as usize) {
+    // A NULL optval with a nonzero optlen is valid for some options -- the
+    // kernel reads only optlen (AF_ALG's ALG_SET_AEAD_AUTHSIZE) -- and
+    // faults by itself where it does dereference; glibc passes both through.
+    if !optval.is_null() && !tracked_region_fits(optval, optlen as usize) {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
         return -1;

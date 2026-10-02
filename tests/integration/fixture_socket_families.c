@@ -8,6 +8,7 @@
  * result class and errno are printed, so kernel support decides both.
  */
 #include <errno.h>
+#include <linux/if_alg.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -62,6 +63,20 @@ int main(void) {
             }
             putchar('\n');
         }
+    }
+
+    /* AF_ALG AEAD: the tag size is passed as optlen with a NULL optval. */
+    int alg = socket(AF_ALG, SOCK_SEQPACKET, 0);
+    if (alg >= 0) {
+        struct sockaddr_alg sa = {.salg_family = AF_ALG, .salg_type = "aead", .salg_name = "gcm(aes)"};
+        int b = bind(alg, (struct sockaddr *)&sa, sizeof sa);
+        errno = 0;
+        int r = setsockopt(alg, SOL_ALG, ALG_SET_AEAD_AUTHSIZE, NULL, 16);
+        printf("AF_ALG gcm(aes): bind=%d setsockopt(AEAD_AUTHSIZE, NULL, 16)=%d %s\n", b, r,
+               r ? strerror(errno) : "");
+        close(alg);
+    } else {
+        printf("AF_ALG unavailable\n");
     }
     return 0;
 }
