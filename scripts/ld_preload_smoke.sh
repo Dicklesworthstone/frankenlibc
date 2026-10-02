@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
+cc -O2 "${ROOT}/tests/integration/fixture_gettext_catalogs.c" -o "${GETTEXT_CATALOGS_BIN}"
 WIDE_CTYPE_BIN="${BIN_DIR}/fixture_wide_ctype"
 cc -O2 "${ROOT}/tests/integration/fixture_wide_ctype.c" -o "${WIDE_CTYPE_BIN}"
 FORK_MT_BIN="${BIN_DIR}/fixture_fork_mt"
@@ -822,7 +824,10 @@ EOF
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
   # Its getopt_long table lacks the NULL terminator: works only if main's
   # stack starts zeroed, as glibc's startup leaves it (segfaulted under fl).
-  run_optional_case "aa-features-abi" "${mode}" "aa_features_abi_unknown_option" aa-features-abi --version || mode_failed=1
+  # It exits 1 by design; the wrapper prints that status (139 on the crash)
+  # so the case itself exits 0 and the status is compared as output.
+  run_optional_case "aa-features-abi" "${mode}" "aa_features_abi_unknown_option" \
+    /bin/sh -c 'aa-features-abi --version; echo "exit=$?"' || mode_failed=1
 
   # --- real-world corpus (bd-rc0923-epic-eeuy4f.4) ---
   local tree="${CORPUS_DIR}/tree"
@@ -874,6 +879,9 @@ EOF
   run_corpus_case "${mode}" "strftime_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "strftime_locale_c_utf8" /usr/bin/env LANG=C.UTF-8 "${STRFTIME_LOCALE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "date_locale_en_us" /usr/bin/env LANG=en_US.UTF-8 TZ=UTC date -d @1700000000 || mode_failed=1
+  # LC_MESSAGES: .mo catalogs, plural rules, LANGUAGE, codeset conversion.
+  run_corpus_case "${mode}" "gettext_catalogs_en_us" /usr/bin/env LANG=en_US.UTF-8 "${GETTEXT_CATALOGS_BIN}" || mode_failed=1
+  run_optional_case "dpkg" "${mode}" "gettext_dpkg_help_en_us" /usr/bin/env LANG=en_US.UTF-8 dpkg --help || mode_failed=1
   # LC_CTYPE: wide classification/case/width, every code point.
   for wide_locale in C C.UTF-8 en_US.UTF-8; do
     run_corpus_case "${mode}" "wide_ctype_${wide_locale//[.-]/_}" "${WIDE_CTYPE_BIN}" "${wide_locale}" || mode_failed=1

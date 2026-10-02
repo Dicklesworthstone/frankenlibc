@@ -21484,7 +21484,7 @@ fn bind_textdomain_codeset_fixture_actual() -> Result<String, String> {
     let requested =
         CString::new("ISO-8859-1").map_err(|_| "codeset contains interior NUL".to_string())?;
     // SAFETY: Both pointers are valid NUL-terminated strings for the duration
-    // of the call; the ABI returns a static UTF-8 string.
+    // of the call; the ABI returns its own stored copy of the codeset.
     let ptr = unsafe {
         frankenlibc_abi::unistd_abi::bind_textdomain_codeset(domain.as_ptr(), requested.as_ptr())
     };

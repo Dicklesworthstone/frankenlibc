@@ -2228,23 +2228,23 @@ pub unsafe extern "C" fn __uselocale(loc: *mut c_void) -> *mut c_void {
 pub unsafe extern "C" fn __duplocale(loc: *mut c_void) -> *mut c_void {
     unsafe { crate::locale_abi::duplocale(loc) }
 }
-// __dcgettext/__dgettext: native — return msgid untranslated (C locale passthrough)
+// __dcgettext/__dgettext: glibc's internal aliases of dcgettext/dgettext.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __dcgettext(
     domainname: *const c_char,
     msgid: *const c_char,
     category: c_int,
 ) -> *mut c_char {
-    let _ = (domainname, category);
-    msgid as *mut c_char
+    unsafe {
+        crate::locale_abi::dcigettext(domainname, msgid, std::ptr::null(), false, 1, category)
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __dgettext(
     domainname: *const c_char,
     msgid: *const c_char,
 ) -> *mut c_char {
-    let _ = domainname;
-    msgid as *mut c_char
+    unsafe { crate::locale_abi::dgettext(domainname, msgid) }
 }
 
 // ==========================================================================

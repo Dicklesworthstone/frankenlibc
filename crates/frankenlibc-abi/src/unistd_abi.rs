@@ -19061,61 +19061,34 @@ pub unsafe extern "C" fn pthread_getschedparam(
 }
 
 // ===========================================================================
-// Batch: i18n / gettext extensions — Passthrough fallback (no .mo lookup)
+// Batch: i18n / gettext extensions — .mo catalogs via locale_abi::dcigettext
 // ===========================================================================
-//
-// These exports satisfy the gettext ABI surface so binaries that link against
-// the gettext family load and run, but no .mo file lookup is performed and
-// LC_MESSAGES routing is ignored. POSIX/gettext semantics permit returning
-// msgid (or msgid_plural for n != 1) when no translation is available, which
-// is exactly what a fully-untranslated process state looks like, so callers
-// see well-defined behaviour. Replacing this with a real .mo loader is a
-// future implementation step (bd-892vp tracks the rename and NULL guards).
 
-/// GNU `dcgettext` — domain-specific, category-specific gettext.
-///
-/// Passthrough fallback: returns `msgid` unchanged (no translation table
-/// loaded). NULL `msgid` returns NULL without dereferencing.
+/// GNU `dcgettext` — translate `msgid` in `domainname` for `category`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dcgettext(
-    _domainname: *const c_char,
+    domainname: *const c_char,
     msgid: *const c_char,
-    _category: c_int,
+    category: c_int,
 ) -> *mut c_char {
-    if msgid.is_null() {
-        return std::ptr::null_mut();
+    unsafe {
+        crate::locale_abi::dcigettext(domainname, msgid, std::ptr::null(), false, 1, category)
     }
-    msgid as *mut c_char
 }
 
-/// GNU `dcngettext` — domain-specific plural gettext.
-///
-/// Passthrough fallback: returns `msgid` (n == 1) or `msgid_plural`
-/// (otherwise). NULL inputs return NULL without dereferencing.
+/// GNU `dcngettext` — the plural form `n` selects, in `domainname` for `category`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dcngettext(
-    _domainname: *const c_char,
+    domainname: *const c_char,
     msgid: *const c_char,
     msgid_plural: *const c_char,
     n: c_ulong,
-    _category: c_int,
+    category: c_int,
 ) -> *mut c_char {
-    if n == 1 {
-        if msgid.is_null() {
-            return std::ptr::null_mut();
-        }
-        msgid as *mut c_char
-    } else {
-        if msgid_plural.is_null() {
-            return std::ptr::null_mut();
-        }
-        msgid_plural as *mut c_char
-    }
+    unsafe { crate::locale_abi::dcigettext(domainname, msgid, msgid_plural, true, n, category) }
 }
 
-/// GNU `dngettext` — domain-specific plural gettext (LC_MESSAGES).
-///
-/// Passthrough fallback via [`dcngettext`].
+/// GNU `dngettext` — the plural form `n` selects, in `domainname` (LC_MESSAGES).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dngettext(
     domainname: *const c_char,
@@ -19124,7 +19097,7 @@ pub unsafe extern "C" fn dngettext(
     n: c_ulong,
 ) -> *mut c_char {
     unsafe {
-        dcngettext(domainname, msgid, msgid_plural, n, 5 /* LC_MESSAGES */)
+        crate::locale_abi::dcigettext(domainname, msgid, msgid_plural, true, n, libc::LC_MESSAGES)
     }
 }
 
@@ -21795,29 +21768,17 @@ pub unsafe extern "C" fn backtrace_symbols_fd(buffer: *const *mut c_void, size: 
 }
 
 // ===========================================================================
-// Batch: bind_textdomain_codeset — Passthrough (UTF-8 only)
+// Batch: bind_textdomain_codeset
 // ===========================================================================
-//
-// FrankenLibC operates exclusively in UTF-8: the wide-char/multibyte path
-// (mbrtowc, mbsrtowcs, etc.) is hardwired to UTF-8 codec, and locale_abi
-// does not maintain a per-domain codeset registry. This export honours the
-// gettext ABI by returning the static string "UTF-8" for any caller that
-// queries or attempts to set a codeset; if a future change adds per-domain
-// codeset routing, it must replace this with a real registry (bd-892vp).
 
-/// `bind_textdomain_codeset` — set/query encoding for a gettext domain.
-///
-/// Passthrough: any non-NULL `domainname` is accepted; the returned pointer
-/// is the static C string `"UTF-8"`, which is the only codeset this libc
-/// ever uses internally. Callers querying a codeset they previously set to
-/// something other than UTF-8 will observe `"UTF-8"`, not their stored
-/// value — the codeset registry is intentionally absent.
+/// `bind_textdomain_codeset` — set/query the encoding of a gettext domain's
+/// translations; NULL when none has been bound (the locale's codeset applies).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn bind_textdomain_codeset(
-    _domainname: *const c_char,
-    _codeset: *const c_char,
+    domainname: *const c_char,
+    codeset: *const c_char,
 ) -> *mut c_char {
-    c"UTF-8".as_ptr() as *mut c_char
+    unsafe { crate::locale_abi::bind_textdomain_codeset_impl(domainname, codeset) }
 }
 
 // ===========================================================================

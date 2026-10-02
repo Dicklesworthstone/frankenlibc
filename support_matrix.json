@@ -1932,8 +1932,8 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Set/query encoding for gettext domain; always returns UTF-8",
-      "hardened_semantics": "Codeset query returning UTF-8",
+      "strict_semantics": "Per-domain codeset registry (NULL when unbound); translations are converted to it with iconv //TRANSLIT",
+      "hardened_semantics": "Same as strict",
       "default_stub": false
     },
     {
@@ -1941,8 +1941,8 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc bindtextdomain",
-      "hardened_semantics": "Passthrough to glibc bindtextdomain",
+      "strict_semantics": "Native per-domain catalog directory binding",
+      "hardened_semantics": "Native per-domain catalog directory binding",
       "default_stub": false
     },
     {
@@ -2738,7 +2738,7 @@
       "status": "Implemented",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "GNU dcgettext: domain+category gettext (passthrough)",
+      "strict_semantics": "GNU dcgettext: native .mo catalog lookup for a domain and category",
       "hardened_semantics": "Same as strict",
       "default_stub": false
     },
@@ -2756,8 +2756,8 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc dgettext",
-      "hardened_semantics": "Passthrough to glibc dgettext",
+      "strict_semantics": "Native .mo catalog lookup in a domain",
+      "hardened_semantics": "Native .mo catalog lookup in a domain",
       "default_stub": false
     },
     {
@@ -6130,8 +6130,8 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gettext",
-      "hardened_semantics": "Passthrough to glibc gettext",
+      "strict_semantics": "Native .mo catalog lookup (LANGUAGE, locale-name variants, glibc's translation cache)",
+      "hardened_semantics": "Native .mo catalog lookup (LANGUAGE, locale-name variants, glibc's translation cache)",
       "default_stub": false
     },
     {
@@ -8828,8 +8828,8 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc ngettext",
-      "hardened_semantics": "Passthrough to glibc ngettext",
+      "strict_semantics": "Native .mo lookup with Plural-Forms evaluation",
+      "hardened_semantics": "Native .mo lookup with Plural-Forms evaluation",
       "default_stub": false
     },
     {
@@ -14620,8 +14620,8 @@
       "status": "Implemented",
       "module": "locale_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc textdomain",
-      "hardened_semantics": "Passthrough to glibc textdomain",
+      "strict_semantics": "Native current text domain selection",
+      "hardened_semantics": "Native current text domain selection",
       "default_stub": false
     },
     {
