@@ -4374,26 +4374,25 @@ pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> 
         }
     }
 }
-// __open/__open64: native syscall
+// __open/__open64: glibc's internal aliases of open, which is variadic: the
+// mode is the third argument with O_CREAT/O_TMPFILE. It is taken as a fixed
+// third parameter, as `open` does (the same register on x86_64); these used
+// to pass mode 0, creating files with no permissions.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __open(pathname: *const c_char, flags: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __open(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __open64(pathname: *const c_char, flags: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_open(pathname as *const u8, flags, 0) } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __open64(
+    pathname: *const c_char,
+    flags: c_int,
+    mode: libc::mode_t,
+) -> c_int {
+    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
 }
 // __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
