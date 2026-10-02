@@ -43,6 +43,7 @@ static HOST_ERRNO_LOCATION: AtomicUsize = AtomicUsize::new(0);
 static HOST_DLVSYM: AtomicUsize = AtomicUsize::new(0);
 static HOST_DL_ITERATE_PHDR: AtomicUsize = AtomicUsize::new(0);
 static HOST_DLADDR: AtomicUsize = AtomicUsize::new(0);
+static HOST_DLADDR1: AtomicUsize = AtomicUsize::new(0);
 static RESOLVED: AtomicUsize = AtomicUsize::new(0);
 static HOST_IMAGE: OnceLock<LoadedGlibcImage> = OnceLock::new();
 static HOST_LOADER_IMAGE: OnceLock<LoadedGlibcImage> = OnceLock::new();
@@ -853,6 +854,7 @@ pub(crate) fn bootstrap_host_symbols() {
         ("dlvsym", &HOST_DLVSYM),
         ("dl_iterate_phdr", &HOST_DL_ITERATE_PHDR),
         ("dladdr", &HOST_DLADDR),
+        ("dladdr1", &HOST_DLADDR1),
     ] {
         if cache.load(Ordering::Acquire) == 0 {
             let a = resolve_host_symbol_raw(symbol).unwrap_or(0);
@@ -1208,6 +1210,13 @@ pub(crate) fn host_dl_iterate_phdr_cached() -> Option<usize> {
 #[inline]
 pub(crate) fn host_dladdr_cached() -> Option<usize> {
     load_host_symbol(&HOST_DLADDR)
+}
+
+/// The host's `dladdr1`, whose `RTLD_DL_LINKMAP`/`RTLD_DL_SYMENT` results
+/// point into the host loader's own structures.
+#[inline]
+pub(crate) fn host_dladdr1_cached() -> Option<usize> {
+    load_host_symbol(&HOST_DLADDR1)
 }
 
 #[inline]

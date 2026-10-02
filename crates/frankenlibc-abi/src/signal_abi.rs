@@ -106,18 +106,40 @@ impl KernelSigaction {
     }
 }
 
+// The x86_64 Linux signal restorer: the kernel returns here when a handler
+// returns, and it must issue a bare rt_sigreturn. Unwinders (libgcc, used by
+// glibc's backtrace) look up a return address's FDE at `ra - 1`; with the
+// restorer at a function boundary that lands in the PREVIOUS function's FDE,
+// and backtrace() from a signal handler stopped there -- or crashed, inside
+// a SIGSEGV handler (CPython's faulthandler). glibc's __restore_rt is
+// preceded by a nop for this reason. Here the nop has no FDE either, so the
+// unwinder falls back to recognizing the exact bytes at `ra`
+// (48 c7 c0 0f 00 00 00 0f 05: mov $15,%rax; syscall) and reads the
+// interrupted registers from the ucontext the kernel pushed.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-#[unsafe(naked)]
-unsafe extern "C" fn signal_restorer_trampoline() {
-    // SAFETY: this is the x86_64 Linux signal restorer sequence. The kernel
-    // enters here after a user handler returns and expects a bare rt_sigreturn
-    // syscall with no Rust prologue/epilogue.
-    std::arch::naked_asm!("mov rax, 15", "syscall", "ud2",);
+std::arch::global_asm!(
+    ".pushsection .text.frankenlibc_signal_restorer,\"ax\",@progbits",
+    ".p2align 4",
+    "nop",
+    ".globl frankenlibc_signal_restorer",
+    ".hidden frankenlibc_signal_restorer",
+    ".type frankenlibc_signal_restorer,@function",
+    "frankenlibc_signal_restorer:",
+    "mov rax, 15",
+    "syscall",
+    "ud2",
+    ".size frankenlibc_signal_restorer, . - frankenlibc_signal_restorer",
+    ".popsection",
+);
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+unsafe extern "C" {
+    fn frankenlibc_signal_restorer();
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn signal_restorer_trampoline_addr() -> usize {
-    signal_restorer_trampoline as *const () as usize
+    frankenlibc_signal_restorer as *const () as usize
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]

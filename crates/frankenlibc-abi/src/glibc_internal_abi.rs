@@ -5785,8 +5785,27 @@ pub unsafe extern "C" fn dladdr1(
     addr: *const c_void,
     info: *mut c_void,
     extra_info: *mut *mut c_void,
-    _flags: c_int,
+    flags: c_int,
 ) -> c_int {
+    // The host knows every object it loaded and returns its link_map /
+    // ElfW(Sym) for RTLD_DL_LINKMAP / RTLD_DL_SYMENT. Callers dereference
+    // them on success: CPython's faulthandler reads map->l_addr, and
+    // segfaulted on the NULL left here before.
+    #[cfg(not(feature = "standalone"))]
+    if !addr.is_null()
+        && !info.is_null()
+        && let Some(host) = crate::host_resolve::host_dladdr1_cached()
+    {
+        type Dladdr1Fn =
+            unsafe extern "C" fn(*const c_void, *mut c_void, *mut *mut c_void, c_int) -> c_int;
+        // SAFETY: the cache holds the host's dladdr1, of this C signature.
+        let host_fn: Dladdr1Fn = unsafe { std::mem::transmute(host) };
+        let rc = unsafe { host_fn(addr, info, extra_info, flags) };
+        if rc != 0 {
+            return rc;
+        }
+    }
+    // Objects only fl's own loader knows: dladdr's answer, no extra info.
     if !extra_info.is_null() {
         unsafe { *extra_info = std::ptr::null_mut() };
     }

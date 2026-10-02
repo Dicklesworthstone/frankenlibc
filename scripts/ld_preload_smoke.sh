@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+SIGNAL_BACKTRACE_BIN="${BIN_DIR}/fixture_signal_backtrace"
+cc -O2 -rdynamic "${ROOT}/tests/integration/fixture_signal_backtrace.c" -o "${SIGNAL_BACKTRACE_BIN}"
 SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_signal_waits.c" -o "${SIGNAL_WAITS_BIN}"
 THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
@@ -873,6 +875,15 @@ EOF
   run_corpus_case "${mode}" "thread_stack_bounds" "${THREAD_STACK_BOUNDS_BIN}" || mode_failed=1
   # pthread_kill/sigqueue at the main thread; EINTR from semaphore waits.
   run_corpus_case "${mode}" "signal_waits" "${SIGNAL_WAITS_BIN}" || mode_failed=1
+  # backtrace() inside signal handlers unwinds through fl's restorer.
+  run_corpus_case "${mode}" "signal_backtrace" "${SIGNAL_BACKTRACE_BIN}" || mode_failed=1
+  # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
+  run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
+import faulthandler, subprocess, sys
+faulthandler.dump_c_stack(open("/dev/null", "w"))
+r = subprocess.run([sys.executable, "-X", "faulthandler", "-c", "import faulthandler; faulthandler._sigsegv()"],
+                   capture_output=True, text=True)
+print("rc", r.returncode, "c-stack frames" , r.stderr.count("Binary file") > 2, "ext-modules", "Extension modules:" in r.stderr)' || mode_failed=1
   # CPython 3.14 sizes its C stack from pthread_getattr_np; wrong bounds made
   # every finished thread leak its arguments (refcounts stayed raised).
   run_optional_case "python3" "${mode}" "python_thread_refcounts" python3 -c '
