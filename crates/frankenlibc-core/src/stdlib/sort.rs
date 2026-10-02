@@ -1,9 +1,5 @@
 //! Sorting and searching functions.
 
-/// Slices at or below this length are finished with insertion sort. Matches
-/// the pattern-defeating quicksort (pdqsort) reference threshold.
-const MAX_INSERTION: usize = 20;
-const INSERTION_STACK_SCRATCH: usize = 64;
 const I32_FAST_LANE_MIN: usize = 64;
 const I32_FAST_LANE_MAX: usize = 2048;
 const I64_FAST_LANE_MIN: usize = 64;
@@ -28,28 +24,18 @@ const U8_COUNTING_LANE_MIN: usize = 256;
 /// comparators restore and fall through.
 const BYTE_LEX16_RADIX_LANE_MIN: usize = 1024;
 
-/// Generic qsort implementation: a pattern-defeating quicksort (pdqsort,
-/// Orson Peters 2014) ported to operate on raw byte chunks through a
-/// comparison callback, in 100% safe Rust.
+/// Generic qsort implementation, in 100% safe Rust: a STABLE sort, as glibc
+/// 2.43's qsort is (a merge sort; equal elements keep their input order).
 ///
 /// `base`: the entire array as bytes.
 /// `width`: size of each element in bytes.
 /// `compare`: comparison function returning <0, 0, >0.
 ///
-/// Over the median-of-three introsort it replaces, pdqsort delivers a
-/// fundamentally different complexity profile rather than a constant-factor
-/// tweak:
-///   * O(n) on already-sorted, reverse-sorted, and constant inputs (sorted-run
-///     detection + an equal-element partition that skips duplicate blocks),
-///   * a guaranteed O(n·log n) worst case (heapsort fallback once the count of
-///     imbalanced partitions exceeds ~log n), and
-///   * adversarial-pattern resistance (deterministic shuffles break up median
-///     killers that drive naive quicksort to O(n²)).
-///
-/// Behavior parity is absolute: like C `qsort`, the result is the input
-/// multiset in non-decreasing comparator order; the relative order of
-/// equal-comparing elements is unspecified (this sort is unstable), exactly
-/// as glibc `qsort` leaves it.
+/// Integer/radix lanes handle common fixed-width keys without per-element
+/// comparator calls when their result is indistinguishable from the stable
+/// one; everything else takes `stable_sort`, an index merge sort that is
+/// O(n log n) worst case, about n comparisons on sorted input, and never
+/// panics on an inconsistent comparator.
 pub fn qsort<F>(base: &mut [u8], width: usize, compare: F)
 where
     F: Fn(&[u8], &[u8]) -> i32 + Copy,
@@ -62,18 +48,239 @@ where
         return;
     }
 
-    if try_integer_unstable_lanes(base, width, num, &compare, true) {
-        return;
+    // glibc 2.43's qsort is a stable merge sort (measured: equal keys keep
+    // their input order at every size; fl's pdqsort reordered them from
+    // n = 31 up, bd-8p8q15). A stable result is unique, so any stable sort
+    // reproduces glibc's for a consistent comparator.
+    //
+    // The integer/radix lanes order by value. That equals the stable order
+    // only when comparator-equal neighbours are byte-identical, so a lane's
+    // result is kept only then; otherwise the input is restored.
+    if lanes_may_apply(width, num) {
+        let original = base[..num * width].to_vec();
+        if try_integer_unstable_lanes(base, width, num, &compare, true) {
+            if equal_runs_are_uniform(&base[..num * width], width, &compare) {
+                return;
+            }
+            base[..num * width].copy_from_slice(&original);
+        }
     }
 
-    if width > 8 && num <= u32::MAX as usize && std_index_sort(base, width, num, &compare) {
+    stable_sort(base, width, num, &compare);
+}
+
+/// Whether any integer/radix lane in `try_integer_unstable_lanes` can fire.
+fn lanes_may_apply(width: usize, num: usize) -> bool {
+    match width {
+        1 => num > U8_COUNTING_LANE_MIN,
+        2 => num > NARROW_RADIX_LANE_MIN,
+        4 => num >= I32_FAST_LANE_MIN,
+        8 => num >= I64_FAST_LANE_MIN,
+        16 => num > BYTE_LEX16_RADIX_LANE_MIN,
+        _ => false,
+    }
+}
+
+/// True when every pair of neighbours the comparator calls equal is
+/// byte-identical: then reordering within equal runs is invisible.
+fn equal_runs_are_uniform<F>(active: &[u8], width: usize, compare: &F) -> bool
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    active
+        .chunks_exact(width)
+        .zip(active.chunks_exact(width).skip(1))
+        .all(|(a, b)| a == b || compare(a, b) != 0)
+}
+
+/// Stable sort of `num` elements of `width` bytes: a merge sort over an
+/// index permutation (comparisons through `compare`), then one pass that
+/// applies the permutation. Never panics, whatever the comparator returns.
+fn stable_sort<F>(base: &mut [u8], width: usize, num: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    // Small elements are merged directly, so comparisons read neighbouring
+    // memory; an index sort chases scattered elements on every comparison
+    // (2.5x slower on 1M 24-byte records). Larger ones are sorted by index,
+    // as glibc's merge sort does above 32 bytes.
+    if width <= 32 {
+        stable_merge_sort_direct(&mut base[..num * width], width, compare);
         return;
     }
+    let mut idx: Vec<usize> = (0..num).collect();
+    let less_eq = |a: usize, b: usize| compare(elem(base, width, a), elem(base, width, b)) <= 0;
+    stable_merge_sort_indices(&mut idx, &less_eq);
+    if idx.iter().enumerate().all(|(i, &j)| i == j) {
+        return;
+    }
+    let mut out = vec![0u8; num * width];
+    for (dst, &src) in idx.iter().enumerate() {
+        out[dst * width..(dst + 1) * width].copy_from_slice(elem(base, width, src));
+    }
+    base[..num * width].copy_from_slice(&out);
+}
 
-    // Number of imbalanced partitions tolerated before falling back to
-    // heapsort. floor(log2(num)) + 1 keeps the bad-case bound at O(n·log n).
-    let limit = usize::BITS - num.leading_zeros();
-    pdqsort_recurse(base, width, &compare, 0, num, None, limit);
+/// Dispatch to a width-specialised merge sort: with `W` a constant, element
+/// copies compile to plain moves instead of a memcpy call per element
+/// (pointer-sized elements -- qsort of `char *` -- were 1.5x glibc).
+fn stable_merge_sort_direct<F>(data: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    match width {
+        4 => stable_merge_sort_width::<4, F>(data, 4, compare),
+        8 => stable_merge_sort_width::<8, F>(data, 8, compare),
+        16 => stable_merge_sort_width::<16, F>(data, 16, compare),
+        24 => stable_merge_sort_width::<24, F>(data, 24, compare),
+        32 => stable_merge_sort_width::<32, F>(data, 32, compare),
+        _ => stable_merge_sort_width::<0, F>(data, width, compare),
+    }
+}
+
+/// Top-down stable merge sort of the elements themselves, as glibc's is:
+/// halves are sorted recursively, so small subarrays -- and whatever their
+/// elements point to -- are finished while still in cache. (Bottom-up passes
+/// re-walked all n elements per level; on 1M `char *` the comparator's
+/// string reads missed cache and the sort ran 1.9x glibc.) Leaves of up to 16
+/// are binary-insertion sorted; an already-ordered pair of halves is left as
+/// is. `W` is the element width when nonzero (then `width == W`).
+fn stable_merge_sort_width<const W: usize, F>(data: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    let width = if W == 0 { width } else { W };
+    let mut scratch = vec![0u8; data.len()];
+    merge_sort_rec::<W, F>(data, &mut scratch, width, compare);
+}
+
+fn merge_sort_rec<const W: usize, F>(data: &mut [u8], scratch: &mut [u8], width: usize, compare: &F)
+where
+    F: Fn(&[u8], &[u8]) -> i32,
+{
+    const RUN: usize = 16;
+    let width = if W == 0 { width } else { W };
+    let n = data.len() / width;
+    if n <= RUN {
+        for i in 1..n {
+            // Binary search for the first element strictly greater than
+            // element i (comparisons are the dominant cost: they cross FFI).
+            let (mut lo, mut hi) = (0, i);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if compare(
+                    &data[mid * width..(mid + 1) * width],
+                    &data[i * width..(i + 1) * width],
+                ) <= 0
+                {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            if lo < i {
+                // Shift element by element through a stack copy: with `W`
+                // constant these are plain moves. (`rotate_right` lowered to
+                // a memmove call per insertion, and in this crate memmove is
+                // the exported ABI one.) Direct-path widths are <= 32.
+                let mut held = [0u8; 32];
+                held[..width].copy_from_slice(&data[i * width..(i + 1) * width]);
+                for j in (lo..i).rev() {
+                    let (head, tail) = data.split_at_mut((j + 1) * width);
+                    tail[..width].copy_from_slice(&head[j * width..]);
+                }
+                data[lo * width..(lo + 1) * width].copy_from_slice(&held[..width]);
+            }
+        }
+        return;
+    }
+    let mid = n / 2;
+    {
+        let (left, right) = data.split_at_mut(mid * width);
+        let (left_scratch, right_scratch) = scratch.split_at_mut(mid * width);
+        merge_sort_rec::<W, F>(left, left_scratch, width, compare);
+        merge_sort_rec::<W, F>(right, right_scratch, width, compare);
+    }
+    let at = |i: usize| i * width..(i + 1) * width;
+    if compare(&data[at(mid - 1)], &data[at(mid)]) <= 0 {
+        return;
+    }
+    let (mut i, mut j, mut k) = (0, mid, 0);
+    while i < mid && j < n {
+        // Take from the right only when strictly smaller.
+        let from = if compare(&data[at(i)], &data[at(j)]) <= 0 {
+            i += 1;
+            i - 1
+        } else {
+            j += 1;
+            j - 1
+        };
+        scratch[at(k)].copy_from_slice(&data[at(from)]);
+        k += 1;
+    }
+    // Any right-half remainder is already in place; the left remainder goes
+    // to the end, then the merged prefix is copied back.
+    if i < mid {
+        let rest = mid - i;
+        data.copy_within(i * width..mid * width, (n - rest) * width);
+    }
+    data[..k * width].copy_from_slice(&scratch[..k * width]);
+}
+
+/// Bottom-up stable merge sort of indices: binary-insertion-sorted runs of
+/// `RUN`, then merges, skipping a merge whose halves are already in order
+/// (so sorted input costs about n comparisons). `le(a, b)` is "a may stay
+/// before b"; ties take the left run first, which is what keeps it stable.
+fn stable_merge_sort_indices(idx: &mut [usize], le: &impl Fn(usize, usize) -> bool) {
+    const RUN: usize = 16;
+    let n = idx.len();
+    for start in (0..n).step_by(RUN) {
+        let run = &mut idx[start..(start + RUN).min(n)];
+        for i in 1..run.len() {
+            let x = run[i];
+            // First position whose element is strictly greater than x.
+            let (mut lo, mut hi) = (0, i);
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                if le(run[mid], x) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            run.copy_within(lo..i, lo + 1);
+            run[lo] = x;
+        }
+    }
+    let mut buf = vec![0usize; n];
+    let mut width = RUN;
+    while width < n {
+        let mut start = 0;
+        while start + width < n {
+            let mid = start + width;
+            let end = (start + 2 * width).min(n);
+            if !le(idx[mid - 1], idx[mid]) {
+                let (mut i, mut j, mut k) = (start, mid, start);
+                while i < mid && j < end {
+                    // Take from the right only when strictly smaller.
+                    if le(idx[i], idx[j]) {
+                        buf[k] = idx[i];
+                        i += 1;
+                    } else {
+                        buf[k] = idx[j];
+                        j += 1;
+                    }
+                    k += 1;
+                }
+                buf[k..k + (mid - i)].copy_from_slice(&idx[i..mid]);
+                k += mid - i;
+                buf[k..k + (end - j)].copy_from_slice(&idx[j..end]);
+                idx[start..end].copy_from_slice(&buf[start..end]);
+            }
+            start = end;
+        }
+        width *= 2;
+    }
 }
 
 /// Try the verify-then-commit integer sort lanes shared by the unstable entry points.
@@ -342,26 +549,6 @@ where
         }
         prev = current;
     }
-    true
-}
-
-/// Indirect sort for large elements: stdlib-sort `0..num` u32 indices by the
-/// comparator, then materialize the permutation into a scratch buffer and copy
-/// back. Returns `true` (always handles the call when invoked).
-fn std_index_sort<F>(base: &mut [u8], width: usize, num: usize, compare: &F) -> bool
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    let mut idx: Vec<u32> = (0..num as u32).collect();
-    idx.sort_unstable_by(|&i, &j| {
-        compare(elem(base, width, i as usize), elem(base, width, j as usize)).cmp(&0)
-    });
-    let mut out = vec![0u8; num * width];
-    for (dst, &src) in idx.iter().enumerate() {
-        let s = src as usize;
-        out[dst * width..dst * width + width].copy_from_slice(elem(base, width, s));
-    }
-    base[..num * width].copy_from_slice(&out);
     true
 }
 
@@ -898,422 +1085,6 @@ where
     true
 }
 
-/// pdqsort core. Operates on the element-index range `[lo, hi)` of `buf`.
-///
-/// `pred`, when present, is the index of the pivot element immediately
-/// preceding this range; it is already in its final sorted position and never
-/// moves, so it is safe to keep as an index. The invariant `buf[pred] <= every
-/// element in [lo, hi)` lets us detect and collapse runs of duplicate keys.
-fn pdqsort_recurse<F>(
-    buf: &mut [u8],
-    width: usize,
-    compare: &F,
-    mut lo: usize,
-    mut hi: usize,
-    mut pred: Option<usize>,
-    mut limit: u32,
-) where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    let mut was_balanced = true;
-    let mut was_partitioned = true;
-
-    loop {
-        let len = hi - lo;
-
-        // Small slices: insertion sort is the fastest finisher and keeps the
-        // stable behavior the small-input conformance fixtures expect.
-        if len <= MAX_INSERTION {
-            if len >= 2 {
-                insertion_sort(&mut buf[lo * width..hi * width], width, compare);
-            }
-            return;
-        }
-
-        // Too many imbalanced partitions: switch to heapsort for a hard
-        // O(n·log n) guarantee on adversarial input.
-        if limit == 0 {
-            heapsort(&mut buf[lo * width..hi * width], width, compare);
-            return;
-        }
-
-        // The previous partition was lopsided: shuffle a few elements to
-        // destroy the pattern that caused it, then spend one limit token.
-        if !was_balanced {
-            break_patterns(buf, width, lo, hi);
-            limit -= 1;
-        }
-
-        let (pivot, likely_sorted) = choose_pivot(buf, width, compare, lo, hi);
-
-        // If the slice looks nearly sorted and the last partition was clean,
-        // try a bounded insertion sort; if it finishes the slice, we are done
-        // in O(n) instead of O(n·log n).
-        if was_balanced
-            && was_partitioned
-            && likely_sorted
-            && partial_insertion_sort(buf, width, compare, lo, hi)
-        {
-            return;
-        }
-
-        // If the predecessor pivot equals this pivot then every element in the
-        // range is >= pred == pivot. Collapse the equal block in one pass and
-        // recurse only on the strictly-greater tail — O(n) on low-cardinality
-        // keys instead of the repeated full scans of a naive partition.
-        if let Some(p) = pred
-            && compare(elem(buf, width, p), elem(buf, width, pivot)) >= 0
-        {
-            lo = partition_equal(buf, width, compare, lo, hi, pivot);
-            continue;
-        }
-
-        let (mid, partitioned) = pdq_partition(buf, width, compare, lo, hi, pivot);
-        was_partitioned = partitioned;
-
-        let left_len = mid - lo;
-        let right_len = hi - (mid + 1);
-        was_balanced = left_len.min(right_len) >= len / 8;
-
-        // Recurse into the smaller side and loop on the larger to bound stack
-        // depth to O(log n). The pivot at `mid` is now final and becomes the
-        // predecessor of whichever side sits to its right.
-        if left_len < right_len {
-            pdqsort_recurse(buf, width, compare, lo, mid, pred, limit);
-            lo = mid + 1;
-            pred = Some(mid);
-        } else {
-            pdqsort_recurse(buf, width, compare, mid + 1, hi, Some(mid), limit);
-            hi = mid;
-        }
-    }
-}
-
-/// Order two index variables so that `buf[*x] <= buf[*y]`, counting reorders.
-#[inline]
-fn sort2_idx<F>(
-    buf: &[u8],
-    width: usize,
-    compare: &F,
-    x: &mut usize,
-    y: &mut usize,
-    swaps: &mut usize,
-) where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    if compare(elem(buf, width, *y), elem(buf, width, *x)) < 0 {
-        core::mem::swap(x, y);
-        *swaps += 1;
-    }
-}
-
-/// Order three index variables so that `buf[*a] <= buf[*b] <= buf[*c]`.
-#[inline]
-fn sort3_idx<F>(
-    buf: &[u8],
-    width: usize,
-    compare: &F,
-    a: &mut usize,
-    b: &mut usize,
-    c: &mut usize,
-    swaps: &mut usize,
-) where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    sort2_idx(buf, width, compare, a, b, swaps);
-    sort2_idx(buf, width, compare, b, c, swaps);
-    sort2_idx(buf, width, compare, a, b, swaps);
-}
-
-/// Replace `*a` with the index of the median of `{*a-1, *a, *a+1}`.
-#[inline]
-fn sort_adjacent_idx<F>(buf: &[u8], width: usize, compare: &F, a: &mut usize, swaps: &mut usize)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    let tmp = *a;
-    let mut p = tmp - 1;
-    let mut r = tmp + 1;
-    sort3_idx(buf, width, compare, &mut p, a, &mut r, swaps);
-}
-
-/// Choose a pivot for `[lo, hi)` using a median-of-three (median-of-medians for
-/// large slices). Returns the pivot's element index and `true` when the slice
-/// is likely already sorted. If it looks reverse-sorted, the range is reversed
-/// in place so the caller can treat it as ascending.
-fn choose_pivot<F>(buf: &mut [u8], width: usize, compare: &F, lo: usize, hi: usize) -> (usize, bool)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    const SHORTEST_MEDIAN_OF_MEDIANS: usize = 50;
-    const MAX_SWAPS: usize = 4 * 3;
-
-    let len = hi - lo;
-    let quarter = len / 4;
-    let mut a = lo + quarter;
-    let mut b = lo + quarter * 2;
-    let mut c = lo + quarter * 3;
-    let mut swaps = 0usize;
-
-    if len >= 8 {
-        if len >= SHORTEST_MEDIAN_OF_MEDIANS {
-            sort_adjacent_idx(buf, width, compare, &mut a, &mut swaps);
-            sort_adjacent_idx(buf, width, compare, &mut b, &mut swaps);
-            sort_adjacent_idx(buf, width, compare, &mut c, &mut swaps);
-        }
-        sort3_idx(buf, width, compare, &mut a, &mut b, &mut c, &mut swaps);
-    }
-
-    if swaps < MAX_SWAPS {
-        (b, swaps == 0)
-    } else {
-        // The candidates were maximally out of order — the slice is likely
-        // descending. Reverse it so downstream logic sees ascending data.
-        reverse_range(buf, width, lo, hi);
-        let rel_b = b - lo;
-        (lo + (len - 1 - rel_b), true)
-    }
-}
-
-/// Reverse the element range `[lo, hi)` in place.
-fn reverse_range(buf: &mut [u8], width: usize, lo: usize, hi: usize) {
-    let mut i = lo;
-    let mut j = hi;
-    while i < j {
-        j -= 1;
-        swap_chunks(buf, i, j, width);
-        i += 1;
-    }
-}
-
-/// Forward (Lomuto-style) partition of `[lo, hi)` around the pivot at index
-/// `pivot`. Returns the pivot's final element index and whether the range was
-/// already partitioned. A single forward scan keeps one cache stream and good
-/// hardware prefetch, which measures faster here than a bidirectional Hoare
-/// scan despite Hoare's lower swap count. Elements equal to the pivot are sent
-/// right; runs of them are collapsed separately via `partition_equal`.
-fn pdq_partition<F>(
-    buf: &mut [u8],
-    width: usize,
-    compare: &F,
-    lo: usize,
-    hi: usize,
-    pivot: usize,
-) -> (usize, bool)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    // Stash the pivot value at the front so comparisons reference a fixed slot.
-    swap_chunks(buf, lo, pivot, width);
-
-    let mut store = lo + 1;
-    let mut was_partitioned = true;
-    let mut j = lo + 1;
-    while j < hi {
-        if compare(elem(buf, width, j), elem(buf, width, lo)) < 0 {
-            if j != store {
-                swap_chunks(buf, store, j, width);
-                was_partitioned = false;
-            }
-            store += 1;
-        }
-        j += 1;
-    }
-
-    // Elements [lo+1, store) are < pivot; move the pivot to the boundary so it
-    // sits in its final sorted position.
-    let mid = store - 1;
-    swap_chunks(buf, lo, mid, width);
-    (mid, was_partitioned)
-}
-
-/// Partition `[lo, hi)` into the block of elements equal to the pivot (at
-/// `pivot`) followed by the strictly-greater elements. Returns the index of the
-/// first strictly-greater element. Used when the predecessor pivot equals this
-/// pivot, collapsing duplicate runs in a single linear pass.
-fn partition_equal<F>(
-    buf: &mut [u8],
-    width: usize,
-    compare: &F,
-    lo: usize,
-    hi: usize,
-    pivot: usize,
-) -> usize
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    swap_chunks(buf, lo, pivot, width);
-
-    let mut l = lo + 1;
-    let mut r = hi;
-    loop {
-        // Advance over elements equal to the pivot (all are >= pivot here, so
-        // `pivot >= elem` means equal).
-        while l < r && compare(elem(buf, width, lo), elem(buf, width, l)) >= 0 {
-            l += 1;
-        }
-        while l < r && compare(elem(buf, width, lo), elem(buf, width, r - 1)) < 0 {
-            r -= 1;
-        }
-        if l >= r {
-            break;
-        }
-        r -= 1;
-        swap_chunks(buf, l, r, width);
-        l += 1;
-    }
-    l
-}
-
-/// Bounded insertion sort used as the nearly-sorted shortcut. Performs at most
-/// `MAX_STEPS` corrective insertions; returns `true` only if the whole range
-/// `[lo, hi)` ends up fully sorted. A `false` return may leave the range
-/// partially reordered, which is harmless: the caller proceeds to partition it.
-fn partial_insertion_sort<F>(
-    buf: &mut [u8],
-    width: usize,
-    compare: &F,
-    lo: usize,
-    hi: usize,
-) -> bool
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    const MAX_STEPS: usize = 5;
-    const SHORTEST_SHIFTING: usize = 50;
-
-    let len = hi - lo;
-    let mut i = lo + 1;
-    for _ in 0..MAX_STEPS {
-        // Skip the in-order prefix.
-        while i < hi && compare(elem(buf, width, i), elem(buf, width, i - 1)) >= 0 {
-            i += 1;
-        }
-        if i == hi {
-            return true;
-        }
-        if len < SHORTEST_SHIFTING {
-            return false;
-        }
-        // Insert the out-of-order element at `i` into the sorted prefix.
-        let mut j = i;
-        while j > lo && compare(elem(buf, width, j - 1), elem(buf, width, j)) > 0 {
-            swap_chunks(buf, j - 1, j, width);
-            j -= 1;
-        }
-        i += 1;
-    }
-    false
-}
-
-/// Deterministically shuffle a few elements of `[lo, hi)` to break up patterns
-/// (e.g. median-of-three killers) that cause repeated imbalanced partitions.
-/// Seeded solely by `len`, so the result is reproducible and the final sort
-/// order is unaffected.
-fn break_patterns(buf: &mut [u8], width: usize, lo: usize, hi: usize) {
-    let len = hi - lo;
-    if len < 8 {
-        return;
-    }
-    let mut seed = len as u64;
-    let modulus = len.next_power_of_two();
-    let pos = (len / 4) * 2;
-    for i in 0..3 {
-        // xorshift64 — cheap, deterministic pseudo-random index.
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        let mut other = (seed as usize) & (modulus - 1);
-        if other >= len {
-            other -= len;
-        }
-        swap_chunks(buf, lo + pos - 1 + i, lo + other, width);
-    }
-}
-
-fn swap_chunks(buffer: &mut [u8], i: usize, j: usize, width: usize) {
-    if i == j {
-        return;
-    }
-    let (head, tail) = if i < j {
-        buffer.split_at_mut(j * width)
-    } else {
-        buffer.split_at_mut(i * width)
-    };
-
-    let first = if i < j {
-        &mut head[i * width..(i + 1) * width]
-    } else {
-        &mut head[j * width..(j + 1) * width]
-    };
-
-    first.swap_with_slice(&mut tail[0..width]);
-}
-
-/// Insertion sort fallback for small or deeply-recursed subarrays.
-fn insertion_sort<F>(buffer: &mut [u8], width: usize, compare: &F)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    if width <= INSERTION_STACK_SCRATCH {
-        insertion_sort_block_move(buffer, width, compare);
-        return;
-    }
-    insertion_sort_adjacent_swaps(buffer, width, compare);
-}
-
-fn insertion_sort_adjacent_swaps<F>(buffer: &mut [u8], width: usize, compare: &F)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    let count = buffer.len() / width;
-    for i in 1..count {
-        let mut j = i;
-        while j > 0 {
-            let cmp = compare(
-                &buffer[(j - 1) * width..j * width],
-                &buffer[j * width..(j + 1) * width],
-            );
-            if cmp <= 0 {
-                break;
-            }
-            swap_chunks(buffer, j - 1, j, width);
-            j -= 1;
-        }
-    }
-}
-
-fn insertion_sort_block_move<F>(buffer: &mut [u8], width: usize, compare: &F)
-where
-    F: Fn(&[u8], &[u8]) -> i32,
-{
-    debug_assert!(width <= INSERTION_STACK_SCRATCH);
-    let count = buffer.len() / width;
-    let mut scratch = [0u8; INSERTION_STACK_SCRATCH];
-    for i in 1..count {
-        let item_start = i * width;
-        let item_end = item_start + width;
-        let mut insert = i;
-        while insert > 0 {
-            let prev_start = (insert - 1) * width;
-            let prev_end = insert * width;
-            if compare(&buffer[prev_start..prev_end], &buffer[item_start..item_end]) <= 0 {
-                break;
-            }
-            insert -= 1;
-        }
-
-        if insert == i {
-            continue;
-        }
-
-        scratch[..width].copy_from_slice(&buffer[item_start..item_end]);
-        let dest_start = insert * width;
-        buffer.copy_within(dest_start..item_start, dest_start + width);
-        buffer[dest_start..dest_start + width].copy_from_slice(&scratch[..width]);
-    }
-}
-
 /// Generic bsearch implementation.
 pub fn bsearch<'a, K, F>(key: &K, base: &'a [u8], width: usize, compare: F) -> Option<&'a [u8]>
 where
@@ -1365,20 +1136,9 @@ where
         return;
     }
 
-    // Copy the elements out so Rust's stable timsort can reorder
-    // them by value (instead of permuting an index array, which
-    // becomes hairy for non-trivial widths).
-    let mut elems: Vec<Vec<u8>> = (0..num)
-        .map(|i| base[i * width..(i + 1) * width].to_vec())
-        .collect();
-    elems.sort_by(|a, b| match compare(a, b).cmp(&0) {
-        core::cmp::Ordering::Less => core::cmp::Ordering::Less,
-        core::cmp::Ordering::Equal => core::cmp::Ordering::Equal,
-        core::cmp::Ordering::Greater => core::cmp::Ordering::Greater,
-    });
-    for (i, e) in elems.iter().enumerate() {
-        base[i * width..(i + 1) * width].copy_from_slice(e);
-    }
+    // The same stable sort as qsort. (Vec::sort_by may panic on a C
+    // comparator that is not a total order; this never does.)
+    stable_sort(base, width, num, &compare);
 }
 
 /// In-place BSD `heapsort`: builds a max-heap on the byte buffer
@@ -1505,8 +1265,71 @@ mod sort_variant_tests {
     use super::*;
     use sha2::{Digest, Sha256};
 
-    /// `swap_chunks` moves 8-byte blocks and then a byte tail, so widths that
-    /// are NOT a multiple of 8 exercise a different path from the aligned ones.
+    /// qsort is stable at every size and width, as glibc 2.43's is
+    /// (bd-8p8q15): records sorted by a 4-byte key keep the input order of
+    /// equal keys. pdqsort broke it from n = 31. Widths 4 and 8 put the key
+    /// in the whole element, so the integer lanes run and must also hold.
+    #[test]
+    fn qsort_is_stable_like_glibc() {
+        let mut seed: u32 = 12345;
+        for n in [2usize, 5, 17, 31, 64, 100, 257, 1000, 5000, 70_000] {
+            for width in [4usize, 8, 12, 24] {
+                let mut buf = vec![0u8; n * width];
+                for i in 0..n {
+                    seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                    let key = (seed >> 16) % 5;
+                    let e = &mut buf[i * width..(i + 1) * width];
+                    e[..4].copy_from_slice(&key.to_ne_bytes());
+                    if width >= 8 {
+                        e[4..8].copy_from_slice(&(i as u32).to_ne_bytes());
+                    }
+                }
+                let key = |e: &[u8]| u32::from_ne_bytes(e[..4].try_into().unwrap());
+                qsort(&mut buf, width, |a: &[u8], b: &[u8]| {
+                    key(a).cmp(&key(b)) as i32
+                });
+                let elems: Vec<&[u8]> = buf.chunks_exact(width).collect();
+                for pair in elems.windows(2) {
+                    assert!(
+                        key(pair[0]) <= key(pair[1]),
+                        "n={n} width={width}: unsorted"
+                    );
+                    if width >= 8 && key(pair[0]) == key(pair[1]) {
+                        let seq = |e: &[u8]| u32::from_ne_bytes(e[4..8].try_into().unwrap());
+                        assert!(seq(pair[0]) < seq(pair[1]), "n={n} width={width}: unstable");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A comparator that is not a total order (C callers have them) must
+    /// not panic: Vec::sort_by may, so neither qsort nor mergesort uses it.
+    #[test]
+    fn inconsistent_comparator_never_panics() {
+        let mut buf: Vec<u8> = (0..4000u32).flat_map(|v| v.to_ne_bytes()).collect();
+        let state = core::cell::Cell::new(7u32);
+        let random = |_: &[u8], _: &[u8]| -> i32 {
+            state.set(state.get().wrapping_mul(1_103_515_245).wrapping_add(12345));
+            (state.get() >> 16) as i32 % 3 - 1
+        };
+        qsort(&mut buf, 12, random);
+        mergesort(&mut buf, 12, random);
+        let mut sorted: Vec<u32> = buf
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| u32::from_ne_bytes(*c))
+            .collect();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            (0..4000).collect::<Vec<_>>(),
+            "elements lost or duplicated"
+        );
+    }
+
+    /// Whole elements must travel at widths that are NOT a multiple of 8.
     ///
     /// A struct of three `int`s is width 12 and C programs sort those, so the
     /// tail is not a hypothetical. A swap that dropped or duplicated the tail
@@ -1516,7 +1339,7 @@ mod sort_variant_tests {
     /// FULL element travels, by giving every element a payload that the
     /// comparator never looks at.
     #[test]
-    fn swap_chunks_moves_the_whole_element_at_unaligned_widths() {
+    fn qsort_moves_the_whole_element_at_unaligned_widths() {
         for width in [12usize, 20, 7, 9] {
             const NUM: usize = 64;
             let mut buf = vec![0u8; NUM * width];
@@ -1547,7 +1370,7 @@ mod sort_variant_tests {
                     assert_eq!(
                         byte, want,
                         "width {width}: element {i} (key {key}) lost its payload at byte {b} — \
-                         swap_chunks moved only part of the element"
+                         only part of the element moved"
                     );
                 }
             }
