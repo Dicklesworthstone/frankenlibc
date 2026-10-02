@@ -7404,7 +7404,9 @@ pub unsafe extern "C" fn pthread_sigqueue(
     sig: c_int,
     value: libc::sigval,
 ) -> c_int {
-    if !(1..=64).contains(&sig) {
+    // glibc refuses only its internal SIGCANCEL/SIGSETXID; the kernel judges
+    // the rest (signal 0 is an existence check, > 64 is EINVAL).
+    if frankenlibc_core::signal::glibc_reserved_signal(sig) {
         return libc::EINVAL;
     }
     match resolve_thread_tid(thread) {

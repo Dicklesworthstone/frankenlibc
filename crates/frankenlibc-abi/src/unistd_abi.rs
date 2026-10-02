@@ -23391,9 +23391,19 @@ pub unsafe extern "C" fn clone(
     stack: *mut c_void,
     flags: c_int,
     arg: *mut c_void,
-    _args: ...
+    mut args: ...
 ) -> c_int {
-    // clone is extremely ABI-sensitive; delegate to glibc.
+    // clone is extremely ABI-sensitive; delegate to glibc, with its optional
+    // ptid, tls and ctid arguments (read by glibc only under
+    // CLONE_PARENT_SETTID / CLONE_SETTLS / CLONE_CHILD_*TID; uninspected
+    // otherwise). Forwarding only four arguments broke those flags.
+    let (ptid, tls, ctid) = unsafe {
+        (
+            args.next_arg::<*mut c_void>(),
+            args.next_arg::<*mut c_void>(),
+            args.next_arg::<*mut c_void>(),
+        )
+    };
     type CloneFn = unsafe extern "C" fn(
         Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
         *mut c_void,
@@ -23410,7 +23420,7 @@ pub unsafe extern "C" fn clone(
         }
     });
     match *FUNC {
-        Some(f) => unsafe { f(fn_ptr, stack, flags, arg) },
+        Some(f) => unsafe { f(fn_ptr, stack, flags, arg, ptid, tls, ctid) },
         None => {
             unsafe { set_abi_errno(libc::ENOSYS) };
             -1
