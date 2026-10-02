@@ -205,6 +205,37 @@ pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
 static ALLOCATOR_REENTRY_SLOTS: [AllocatorReentrySlot; ALLOCATOR_REENTRY_SLOT_COUNT] =
     [const { AllocatorReentrySlot::new() }; ALLOCATOR_REENTRY_SLOT_COUNT];
 
+/// One bit per slot that has ever been claimed (by thread key or by tid); bits
+/// are never cleared. Only a claimed slot can have its stats lock taken, so
+/// walks that must visit every possibly-locked slot use this instead of
+/// touching all of `ALLOCATOR_REENTRY_SLOTS`: the table is ~7.4 MiB of
+/// initialized data, and storing to every slot in a fork child dirtied ~1800
+/// pages per fork (12 ms per fork+exit+wait vs glibc 0.37 ms).
+static ALLOCATOR_REENTRY_SLOTS_CLAIMED: [AtomicU64; ALLOCATOR_REENTRY_SLOT_COUNT / 64] =
+    [const { AtomicU64::new(0) }; ALLOCATOR_REENTRY_SLOT_COUNT / 64];
+
+/// Record that `slot` has been claimed.
+#[inline]
+fn note_slot_claimed(slot: &AllocatorReentrySlot) {
+    let index = (slot as *const AllocatorReentrySlot as usize
+        - ALLOCATOR_REENTRY_SLOTS.as_ptr() as usize)
+        / std::mem::size_of::<AllocatorReentrySlot>();
+    ALLOCATOR_REENTRY_SLOTS_CLAIMED[index / 64].fetch_or(1 << (index % 64), Ordering::Release);
+}
+
+/// Call `f` on every slot that has ever been claimed.
+#[inline]
+fn for_each_claimed_slot(mut f: impl FnMut(&'static AllocatorReentrySlot)) {
+    for (word_index, word) in ALLOCATOR_REENTRY_SLOTS_CLAIMED.iter().enumerate() {
+        let mut bits = word.load(Ordering::Acquire);
+        while bits != 0 {
+            let bit = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            f(&ALLOCATOR_REENTRY_SLOTS[word_index * 64 + bit]);
+        }
+    }
+}
+
 // Global last-thread cache: the slot the single thread used last.
 // Stores (1 << 32) | slot_index. Zero means "cache empty".
 //
@@ -309,6 +340,7 @@ fn allocator_reentry_slot_for_key(key: usize) -> Option<&'static AllocatorReentr
                 .compare_exchange(0, KEY_CLAIMED_TID, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok() =>
             {
+                note_slot_claimed(slot);
                 bind_slot_to_thread_key(slot, Some(key));
                 return Some(slot);
             }
@@ -408,6 +440,7 @@ fn allocator_reentry_slot_for_tid(
                 .compare_exchange(0, tid, Ordering::AcqRel, Ordering::Acquire)
             {
                 Ok(_) => {
+                    note_slot_claimed(slot);
                     bind_slot_to_thread_key(slot, thread_key);
                     return Some(slot);
                 }
@@ -3282,9 +3315,13 @@ impl Drop for MallocForkGuard {
 /// forking thread survives the clone, so a slot lock another thread held then
 /// has no owner left, and a stats sweep over all slots would spin on it.
 pub(crate) fn malloc_fork_child_release_slot_locks() {
-    for slot in &ALLOCATOR_REENTRY_SLOTS {
-        slot.mt_stats_lock.store(false, Ordering::Release);
-    }
+    // Only claimed slots can hold the lock; touching the rest would dirty the
+    // whole table in every child.
+    for_each_claimed_slot(|slot| {
+        if slot.mt_stats_lock.load(Ordering::Relaxed) {
+            slot.mt_stats_lock.store(false, Ordering::Release);
+        }
+    });
 }
 
 fn global_alloc_stats() -> Option<&'static FlatCombiningStats> {
@@ -3368,10 +3405,7 @@ fn lock_slot_mt_stats(slot: &AllocatorReentrySlot) {
 /// lock stays held is skipped: in a fork child it belongs to a thread that no
 /// longer exists.
 fn merge_all_slot_mt_stats(global: &FlatCombiningStats) {
-    for slot in &ALLOCATOR_REENTRY_SLOTS {
-        if slot.tid.load(Ordering::Acquire) == 0 {
-            continue;
-        }
+    for_each_claimed_slot(|slot| {
         let mut spins = 0u32;
         while slot
             .mt_stats_lock
@@ -3385,12 +3419,12 @@ fn merge_all_slot_mt_stats(global: &FlatCombiningStats) {
             std::hint::spin_loop();
         }
         if spins > 1 << 20 {
-            continue;
+            return;
         }
         // SAFETY: `mt_stats_lock` is held.
         global.merge_signed_and_reset(unsafe { &mut *slot.mt_stats.get() });
         slot.mt_stats_lock.store(false, Ordering::Release);
-    }
+    });
 }
 
 /// Publish a thread's single-threaded-era stats accumulator into the global combiner.
