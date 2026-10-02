@@ -20,6 +20,64 @@ use crate::tls_cache::bump_shard_epoch;
 /// Maximum quarantine queue size in bytes.
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
+/// Where arena blocks (header + user bytes + canary) come from.
+///
+/// Defaults to the Rust global allocator. Inside libc.so that allocator IS the
+/// library's own exported `malloc`, so every arena block took a second trip
+/// through the allocator entry -- the reentrant bootstrap path and its
+/// globally locked host-allocation table -- once to allocate and once to free;
+/// that table was a third of hardened time with eight threads. The ABI layer
+/// installs the host allocator directly instead.
+#[derive(Clone, Copy)]
+pub struct RawBlockAllocator {
+    /// Allocate `size` bytes aligned to `align` (a power of two); null on failure.
+    pub alloc: unsafe fn(size: usize, align: usize) -> *mut u8,
+    /// Release a block returned by `alloc` with the same `size` and `align`.
+    pub dealloc: unsafe fn(ptr: *mut u8, size: usize, align: usize),
+}
+
+static RAW_BLOCK_ALLOCATOR: std::sync::OnceLock<RawBlockAllocator> = std::sync::OnceLock::new();
+
+/// Use `allocator` for every arena block. Only possible before the first block
+/// is allocated -- blocks must be freed by the allocator that made them -- so
+/// returns false (and changes nothing) once the default is in use.
+pub fn install_raw_block_allocator(allocator: RawBlockAllocator) -> bool {
+    RAW_BLOCK_ALLOCATOR.set(allocator).is_ok()
+}
+
+fn raw_block_allocator() -> &'static RawBlockAllocator {
+    RAW_BLOCK_ALLOCATOR.get_or_init(|| RawBlockAllocator {
+        alloc: global_alloc_block,
+        dealloc: global_dealloc_block,
+    })
+}
+
+unsafe fn global_alloc_block(size: usize, align: usize) -> *mut u8 {
+    match std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the layout is valid and non-zero (it always includes the header).
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+unsafe fn global_dealloc_block(ptr: *mut u8, size: usize, align: usize) {
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size, align) {
+        // SAFETY: the caller passes a block from `global_alloc_block` with this layout.
+        unsafe { std::alloc::dealloc(ptr, layout) };
+    }
+}
+
+/// Release an arena block through the allocator that made it.
+///
+/// # Safety
+///
+/// `raw_base` came from this arena's block allocator with this size and
+/// alignment, and is released exactly once.
+unsafe fn release_block(raw_base: usize, total_size: usize, align: usize) {
+    // SAFETY: forwarded caller contract.
+    unsafe { (raw_block_allocator().dealloc)(raw_base as *mut u8, total_size, align) };
+}
+
 /// Number of shards for arena locks (power of 2).
 ///
 /// MUST equal `crate::tls_cache::NUM_TLS_CACHE_SHARDS`. The two constants
@@ -97,16 +155,12 @@ impl Drop for ArenaShard {
             let offset = slot.user_base.saturating_sub(slot.raw_base);
             let total_size = offset + slot.user_size + CANARY_SIZE;
             let align = offset.max(1);
-            if let Ok(layout) = std::alloc::Layout::from_size_align(total_size, align) {
-                // SAFETY: slot.raw_base was returned by std::alloc::alloc with this layout.
-                unsafe { std::alloc::dealloc(slot.raw_base as *mut u8, layout) };
-            }
+            // SAFETY: slot.raw_base came from the block allocator with this layout.
+            unsafe { release_block(slot.raw_base, total_size, align) };
         }
         while let Some(entry) = self.quarantine.pop_front() {
-            if let Ok(layout) = std::alloc::Layout::from_size_align(entry.total_size, entry.align) {
-                // SAFETY: entry.raw_base was returned by std::alloc::alloc with this layout.
-                unsafe { std::alloc::dealloc(entry.raw_base as *mut u8, layout) };
-            }
+            // SAFETY: entry.raw_base came from the block allocator with this layout.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
         }
     }
 }
@@ -201,10 +255,10 @@ impl AllocationArena {
             .next_generation
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Allocate raw memory via system allocator
-        let layout = std::alloc::Layout::from_size_align(total_size, align).ok()?;
-        // SAFETY: Layout is valid.
-        let raw_ptr = unsafe { std::alloc::alloc(layout) };
+        // Allocate raw memory from the block allocator.
+        std::alloc::Layout::from_size_align(total_size, align).ok()?;
+        // SAFETY: size and alignment form a valid, non-zero layout.
+        let raw_ptr = unsafe { (raw_block_allocator().alloc)(total_size, align) };
         if raw_ptr.is_null() {
             return None;
         }
@@ -516,13 +570,9 @@ impl AllocationArena {
     /// this entry's grace period, and each entry must be reclaimed exactly once.
     pub(crate) unsafe fn deallocate_drained(drained: &[QuarantineEntry]) {
         for entry in drained {
-            let layout = std::alloc::Layout::from_size_align(entry.total_size, entry.align)
-                .expect("valid layout");
             // SAFETY: the caller guarantees each drained entry came from this
             // arena and has not already been handed to deferred reclamation.
-            unsafe {
-                std::alloc::dealloc(entry.raw_base as *mut u8, layout);
-            }
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
         }
     }
 }

@@ -2833,6 +2833,26 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
     }
 }
 
+/// Give the membrane arena the host allocator for its blocks, before the
+/// pipeline (the only arena) allocates any. Through the Rust global allocator
+/// they re-entered this library's `malloc`/`free` and were recorded in, then
+/// removed from, the globally locked fallback table on every hardened
+/// malloc/free; nothing reads those entries -- the arena knows its blocks.
+pub(crate) fn install_arena_block_allocator() {
+    unsafe fn alloc(size: usize, align: usize) -> *mut u8 {
+        // SAFETY: memalign accepts any power-of-two alignment; null on failure.
+        unsafe { native_libc_memalign(align, size) }.cast()
+    }
+    unsafe fn dealloc(ptr: *mut u8, _size: usize, _align: usize) {
+        // SAFETY: `ptr` came from `alloc` above: host memory or a bump block,
+        // both of which native_libc_free releases correctly.
+        unsafe { native_libc_free(ptr.cast()) }
+    }
+    let _ = frankenlibc_membrane::arena::install_raw_block_allocator(
+        frankenlibc_membrane::arena::RawBlockAllocator { alloc, dealloc },
+    );
+}
+
 #[inline]
 unsafe fn native_libc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     // SAFETY: direct call to libc allocator symbol.

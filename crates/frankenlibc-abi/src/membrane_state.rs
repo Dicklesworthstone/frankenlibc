@@ -76,6 +76,7 @@ fn initialize_global_pipeline() -> Option<&'static ValidationPipeline> {
         };
     }
 
+    crate::malloc_abi::install_arena_block_allocator();
     let pipeline = Box::new(ValidationPipeline::with_runtime_math(runtime_math_enabled));
     let ptr = Box::into_raw(pipeline);
     PIPELINE_PTR.store(ptr, Ordering::Release);
