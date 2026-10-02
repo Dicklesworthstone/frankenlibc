@@ -5638,21 +5638,24 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
         (None, Some(b)) => b.min(n),
         (None, None) => n,
     };
-    let adverse = repair && cmp_limit < n;
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads.
     // SWAR word-at-a-time compare via the shared page-guarded scan_strcmp, bounded
     // by `cmp_limit`; byte-identical to the old scalar loop.
-    let (result, span) = unsafe {
+    let (result, span, hit_limit) = unsafe {
         let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
         if hit_limit {
-            (0, i)
+            (0, i, true)
         } else {
             let a = *s1.add(i) as u8;
             let b = *s2.add(i) as u8;
-            ((a as c_int) - (b as c_int), i.saturating_add(1))
+            ((a as c_int) - (b as c_int), i.saturating_add(1), false)
         }
     };
+    // Only a compare that actually ran into the clamp was repaired: one that
+    // stopped at a difference or a NUL first never needed the bytes past it
+    // (OpenSSL's `strncmp(name, "...", n)` against short allocations).
+    let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
         record_truncation(n, cmp_limit);
@@ -5957,7 +5960,10 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
 
     let safe_src_len = if repair {
         match known_remaining(src as usize) {
-            Some(b) if b < n => {
+            // strncpy stops reading at the NUL: a source shorter than `n` that
+            // is terminated inside its allocation is the ordinary case (Python's
+            // `strncpy(janname, tm->tm_zone, 9)`), not an over-read to repair.
+            Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
                 adverse = true;
                 global_healing_policy().record(&HealingAction::ClampSize {
                     requested: n,
@@ -5965,6 +5971,7 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
                 });
                 b
             }
+            Some(b) if b < n => b,
             _ => n,
         }
     } else {
@@ -7755,12 +7762,18 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
         (None, Some(b)) => b.min(n),
         (None, None) => n,
     };
-    let adverse = repair && cmp_limit < n;
-
     // SAFETY: bounded compare within cmp_limit.
     // Fused SWAR case-compare (shared scan_strcasecmp), byte-identical to the old
     // scalar tolower loop; bounded by cmp_limit and page-cross guarded.
-    let result = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit).0 };
+    let (result, span) = unsafe { scan_strcasecmp::<true>(s1, s2, cmp_limit) };
+    // Repaired only if the compare ran into the clamp: equal through all
+    // `cmp_limit` bytes with no NUL among them (a NUL at the last byte also
+    // reports `span == cmp_limit`, so look at it). As in strncmp.
+    // SAFETY: `cmp_limit - 1` was just read by the scan.
+    let hit_limit = result == 0
+        && span == cmp_limit
+        && (cmp_limit == 0 || unsafe { *s1.add(cmp_limit - 1) } != 0);
+    let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
         record_truncation(n, cmp_limit);
