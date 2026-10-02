@@ -205,6 +205,8 @@ STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
 cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
+THREAD_KEY_DTOR_TEARDOWN_BIN="${BIN_DIR}/fixture_thread_key_dtor_teardown"
+cc -O2 -fno-builtin -pthread "${ROOT}/tests/integration/fixture_thread_key_dtor_teardown.c" -o "${THREAD_KEY_DTOR_TEARDOWN_BIN}"
 SEM_TIMEDWAIT_WAKE_BIN="${BIN_DIR}/fixture_sem_timedwait_wake"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_sem_timedwait_wake.c" -o "${SEM_TIMEDWAIT_WAKE_BIN}"
 ARG_PASSTHROUGH_BIN="${BIN_DIR}/fixture_arg_passthrough"
@@ -903,6 +905,8 @@ EOF
   run_corpus_case "${mode}" "sem_timedwait_wake" "${SEM_TIMEDWAIT_WAKE_BIN}" || mode_failed=1
   # qsort keeps equal keys in input order, as glibc's merge sort does.
   run_corpus_case "${mode}" "qsort_stable" "${QSORT_STABLE_BIN}" || mode_failed=1
+  # Key destructors run after thread-locals are gone; memmove there must not abort.
+  run_corpus_case "${mode}" "thread_key_dtor_teardown" "${THREAD_KEY_DTOR_TEARDOWN_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys

@@ -296,7 +296,8 @@ static VALIDATION_DEPTH: AtomicU32 = AtomicU32::new(0);
 
 struct PinnedEpochGuard<'a> {
     _guard: crate::ebr::EbrGuard<'a>,
-    #[cfg(feature = "owned-tls-cache")]
+    /// A registration owned by this guard, when no thread-cached one exists
+    /// (owned-tls-cache builds, or a thread whose TLS is being torn down).
     _owned_handle: Option<crate::ebr::EbrHandle<'a>>,
 }
 
@@ -371,7 +372,12 @@ impl ValidationPipeline {
         #[cfg(not(feature = "owned-tls-cache"))]
         {
             let collector_id = std::sync::Arc::as_ptr(&self.collector) as usize;
-            EBR_HANDLE.with(|cell| {
+            // `try_with`: validation also runs during thread teardown -- host
+            // thread-key destructors (OpenSSL's per-thread cleanup) call
+            // memmove after this TLS is destroyed, and `with` panicked there,
+            // aborting the process in hardened mode. Then pin through an
+            // owned registration instead.
+            let cached = EBR_HANDLE.try_with(|cell| {
                 let mut cached = cell.borrow_mut();
                 let needs_refresh = !matches!(
                     cached.as_ref(),
@@ -398,17 +404,18 @@ impl ValidationPipeline {
                         .expect("EBR handle cache initialized")
                         .1
                         .pin(),
+                    _owned_handle: None,
                 }
-            })
-        }
-        #[cfg(feature = "owned-tls-cache")]
-        {
-            let handle = self.collector.register();
-            let guard = handle.pin();
-            PinnedEpochGuard {
-                _guard: guard,
-                _owned_handle: Some(handle),
+            });
+            if let Ok(guard) = cached {
+                return guard;
             }
+        }
+        let handle = self.collector.register();
+        let guard = handle.pin();
+        PinnedEpochGuard {
+            _guard: guard,
+            _owned_handle: Some(handle),
         }
     }
 

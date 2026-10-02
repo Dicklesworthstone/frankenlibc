@@ -1675,6 +1675,27 @@ fn ensure_minimal_panic_hook() {
                     };
                 }
                 let _ = unsafe { syscall::sys_write(libc::STDERR_FILENO, b"\n".as_ptr(), 1) };
+                // The location is usually inside std (thread_local's `with`,
+                // RefCell borrow), so print the caller chain too, as
+                // `object(+offset)` lines: the process is about to abort, and
+                // without this a report names no fl function at all.
+                #[cfg(not(feature = "standalone"))]
+                {
+                    const TRACE: &[u8] = b"frankenlibc: panic backtrace:\n";
+                    let _ = unsafe {
+                        syscall::sys_write(libc::STDERR_FILENO, TRACE.as_ptr(), TRACE.len())
+                    };
+                    let mut frames = [std::ptr::null_mut::<std::ffi::c_void>(); 48];
+                    // SAFETY: `frames` holds 48 slots; both calls only read them.
+                    unsafe {
+                        let n = crate::unistd_abi::backtrace(frames.as_mut_ptr(), 48);
+                        crate::unistd_abi::backtrace_symbols_fd(
+                            frames.as_ptr(),
+                            n,
+                            libc::STDERR_FILENO,
+                        );
+                    }
+                }
             }
             PANIC_HOOK_WRITE_STATE.store(PANIC_HOOK_WRITE_IDLE, AtomicOrdering::Release);
         }));
