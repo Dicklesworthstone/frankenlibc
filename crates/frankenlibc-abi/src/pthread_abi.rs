@@ -1386,6 +1386,16 @@ fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
         return Some(tid);
     }
 
+    // A thread no registry knows -- the main thread above all -- has its tid
+    // as its pthread_t (see native_pthread_self). Handles are heap pointers,
+    // never this small; tgkill(pid, tid, 0) confirms it is one of ours.
+    if let Ok(tid) = i32::try_from(thread)
+        && tid > 0
+        && thread_tid_appears_alive(tid)
+    {
+        return Some(tid);
+    }
+
     None
 }
 
@@ -7433,7 +7443,7 @@ pub unsafe extern "C" fn pthread_sigqueue(
                 Err(errno) => errno,
             }
         }
-        None => 301,
+        None => libc::ESRCH,
     }
 }
 

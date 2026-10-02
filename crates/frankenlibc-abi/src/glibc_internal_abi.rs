@@ -7419,11 +7419,10 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
                 )
             })
         } {
-            if err == libc::ETIMEDOUT {
-                unsafe { crate::errno_abi::set_abi_errno(err) };
-                return -1;
-            }
-            if err != libc::EAGAIN && err != libc::EINTR {
+            // A signal handler interrupting the wait fails it with EINTR, even
+            // under SA_RESTART, as glibc's sem_clockwait does: CPython's lock
+            // acquire waits here and must return to run Python signal handlers.
+            if err != libc::EAGAIN {
                 unsafe { crate::errno_abi::set_abi_errno(err) };
                 return -1;
             }

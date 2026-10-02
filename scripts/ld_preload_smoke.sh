@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+SIGNAL_WAITS_BIN="${BIN_DIR}/fixture_signal_waits"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_signal_waits.c" -o "${SIGNAL_WAITS_BIN}"
 THREAD_STACK_BOUNDS_BIN="${BIN_DIR}/fixture_thread_stack_bounds"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_thread_stack_bounds.c" -o "${THREAD_STACK_BOUNDS_BIN}"
 GETTEXT_CATALOGS_BIN="${BIN_DIR}/fixture_gettext_catalogs"
@@ -869,6 +871,8 @@ EOF
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.
   run_corpus_case "${mode}" "thread_stack_bounds" "${THREAD_STACK_BOUNDS_BIN}" || mode_failed=1
+  # pthread_kill/sigqueue at the main thread; EINTR from semaphore waits.
+  run_corpus_case "${mode}" "signal_waits" "${SIGNAL_WAITS_BIN}" || mode_failed=1
   # CPython 3.14 sizes its C stack from pthread_getattr_np; wrong bounds made
   # every finished thread leak its arguments (refcounts stayed raised).
   run_optional_case "python3" "${mode}" "python_thread_refcounts" python3 -c '
