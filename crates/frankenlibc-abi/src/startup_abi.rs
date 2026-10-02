@@ -808,6 +808,25 @@ unsafe fn call_executable_init(
     Ok(())
 }
 
+/// Bytes of stack below the startup frame cleared before `main` runs.
+const MAIN_STACK_SCRUB_BYTES: usize = 32 * 1024;
+
+/// Zero the stack region the program's `main` frame is about to occupy.
+///
+/// `main`'s uninitialized locals read whatever startup left there. glibc's
+/// startup happens to leave zeros, and real programs depend on that without
+/// knowing it: aa-features-abi builds its `getopt_long` table on the stack
+/// without the NULL terminator, so `--version` works under glibc only because
+/// the next slot is zero; under fl it held a stale pointer and getopt_long
+/// faulted. Clearing the region also keeps startup data out of `main`'s
+/// uninitialized locals. Called from the frame that calls `main`, so this
+/// function's frame (the zeroed array) covers the region `main` reuses.
+#[inline(never)]
+fn scrub_stack_for_main() {
+    let mut region = [0u8; MAIN_STACK_SCRUB_BYTES];
+    core::hint::black_box(&mut region);
+}
+
 unsafe fn startup_phase0_impl(
     main: Option<MainFn>,
     argc: c_int,
@@ -1044,6 +1063,7 @@ unsafe fn startup_phase0_impl(
     }
 
     path.push(StartupCheckpoint::CallMain);
+    scrub_stack_for_main();
     // SAFETY: callback pointer + argv/envp pointers are validated for phase-0 fixture usage.
     let rc = unsafe { main_fn(normalized_argc as c_int, ubp_av, resolved_envp) };
 

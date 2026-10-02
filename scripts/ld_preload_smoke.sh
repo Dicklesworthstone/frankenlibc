@@ -820,6 +820,9 @@ EOF
   run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
   run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
+  # Its getopt_long table lacks the NULL terminator: works only if main's
+  # stack starts zeroed, as glibc's startup leaves it (segfaulted under fl).
+  run_optional_case "aa-features-abi" "${mode}" "aa_features_abi_unknown_option" aa-features-abi --version || mode_failed=1
 
   # --- real-world corpus (bd-rc0923-epic-eeuy4f.4) ---
   local tree="${CORPUS_DIR}/tree"
