@@ -5346,7 +5346,15 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
     // path paying a call.
     //
     // SAFETY: "reentry_guard" is live and its slot is exclusively ours.
-    unsafe { free_membrane_path(&reentry_guard, ptr) }
+    let heal = unsafe { free_membrane_path(&reentry_guard, ptr) };
+    if let Some(action) = heal {
+        // Recorded outside the guard: the healing log allocates, and under the
+        // guard those allocations take the bootstrap passthrough, which hands
+        // ARENA blocks (the log ring's buffer, made by an earlier hardened
+        // call) to host realloc/free -- "corrupted size vs. prev_size".
+        drop(reentry_guard);
+        global_healing_policy().record(&action);
+    }
 }
 
 /// The arena/membrane half of [`free`], out of line so its frame is not charged
@@ -5359,8 +5367,13 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 ///
 /// `ptr` is arena-owned (every other ownership class returned in [`free`]) and
 /// `reentry_guard` is the live allocator guard held by the caller.
+///
+/// Returns the repair to record once the caller has released the guard.
 #[inline(never)]
-unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_void) {
+unsafe fn free_membrane_path(
+    reentry_guard: &AllocatorReentryGuard,
+    ptr: *mut c_void,
+) -> Option<HealingAction> {
     let _trace_scope = runtime_policy::entrypoint_scope("free");
     let _signal_guard =
         enter_signal_critical_section(SignalCriticalSectionKind::MallocFastbinMutation);
@@ -5372,7 +5385,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
             recent_page,
             Some(stage_index(&ordering, CheckStage::Null)),
         );
-        return;
+        return None;
     }
 
     let (_, decision) =
@@ -5385,7 +5398,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
             Some(stage_index(&ordering, CheckStage::Arena)),
         );
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, true);
-        return;
+        return None;
     }
 
     let Some(pipeline) = crate::membrane_state::try_global_pipeline() else {
@@ -5394,7 +5407,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
         unsafe { native_libc_free_host_only(reentry_guard.slot, ptr) };
         runtime_policy::observe(ApiFamily::Allocator, decision.profile, 6, false);
         record_allocator_stage_outcome(&ordering, aligned, recent_page, None);
-        return;
+        return None;
     };
 
     let known_size = pipeline
@@ -5403,6 +5416,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
         .and_then(|slot| (slot.user_base == ptr as usize).then_some(slot.user_size));
 
     let mut adverse = false;
+    let mut heal = None;
     let result = pipeline.free(ptr.cast());
 
     match result {
@@ -5423,8 +5437,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
         FreeResult::DoubleFree => {
             adverse = true;
             if runtime_policy::mode().heals_enabled() {
-                let policy = global_healing_policy();
-                policy.record(&HealingAction::IgnoreDoubleFree);
+                heal = Some(HealingAction::IgnoreDoubleFree);
             }
             // Strict mode: double free is silently ignored too (safer than UB).
             // A real glibc would abort, but our membrane prioritizes defined behavior.
@@ -5436,8 +5449,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
             } else {
                 adverse = true;
                 if runtime_policy::mode().heals_enabled() {
-                    let policy = global_healing_policy();
-                    policy.record(&HealingAction::IgnoreForeignFree);
+                    heal = Some(HealingAction::IgnoreForeignFree);
                 }
                 // Strict mode: foreign pointer free is ignored.
             }
@@ -5459,6 +5471,7 @@ unsafe fn free_membrane_path(reentry_guard: &AllocatorReentryGuard, ptr: *mut c_
             None
         },
     );
+    heal
 }
 
 // ---------------------------------------------------------------------------
@@ -5734,7 +5747,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             // Arena lookup deliberately includes quarantined blocks. They are
             // evidence of a retired allocation, not permission to read its bytes
             // or return it from the in-place shrink path.
-            global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
             record_allocator_stage_outcome(
                 &ordering,
                 aligned,
@@ -5758,6 +5770,9 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 // SAFETY: errno is local to the calling thread.
                 unsafe { set_abi_errno(ENOMEM as c_int) };
             }
+            // Outside the guard: the healing log allocates (see `free`).
+            drop(reentry_guard);
+            global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
             return out;
         }
         Some(slot) if slot.user_base == old_addr => slot.user_size,
@@ -5807,8 +5822,6 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
 
             // Foreign pointer -- in hardened mode, treat as malloc
             if runtime_policy::mode().heals_enabled() {
-                let policy = global_healing_policy();
-                policy.record(&HealingAction::ReallocAsMalloc { size });
                 record_allocator_stage_outcome(
                     &ordering,
                     aligned,
@@ -5824,6 +5837,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 // This repair is a new allocation, not allocator recursion.
                 // Let malloc retain its normal membrane ownership and policy.
                 drop(reentry_guard);
+                global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc
