@@ -119,8 +119,10 @@ pub unsafe extern "C" fn listen(sockfd: c_int, backlog: c_int) -> c_int {
         return -1;
     }
 
-    let effective_backlog = socket_core::valid_backlog(backlog);
-    let (rc, adverse) = match raw_syscall::sys_listen(sockfd, effective_backlog) {
+    // The kernel caps the backlog itself, as unsigned, at the runtime
+    // net.core.somaxconn: listen(fd, -1) means "the maximum". Clamping to
+    // [0, 4096] here turned -1 into a zero backlog and capped larger ones.
+    let (rc, adverse) = match raw_syscall::sys_listen(sockfd, backlog) {
         Ok(()) => (0, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };

@@ -1379,7 +1379,15 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
-    if !signal_core::catchable_signal(signum) {
+    // glibc: out-of-range signals and its internal SIGCANCEL/SIGSETXID
+    // (32, 33 -- which the host's threads really use in interpose mode) are
+    // EINVAL; SIGKILL/SIGSTOP only when a new action is given, so querying
+    // every handler from 1 to NSIG succeeds.
+    let uncatchable = signum == libc::SIGKILL || signum == libc::SIGSTOP;
+    if !signal_core::valid_signal(signum)
+        || signal_core::glibc_reserved_signal(signum)
+        || (uncatchable && !act.is_null())
+    {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;

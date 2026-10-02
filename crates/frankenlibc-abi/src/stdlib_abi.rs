@@ -3503,8 +3503,6 @@ pub unsafe extern "C" fn putenv(string: *mut c_char) -> c_int {
 
 const MKTEMP_SUFFIX_LEN: usize = 6;
 const MKTEMP_CHARS: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const MKOSTEMP_ALLOWED_FLAGS: c_int =
-    libc::O_APPEND | libc::O_CLOEXEC | libc::O_SYNC | libc::O_DSYNC | libc::O_RSYNC;
 
 static MKTEMP_NONCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -3522,10 +3520,10 @@ unsafe fn mkostemps_inner(template: *mut c_char, suffixlen: c_int, flags: c_int)
         unsafe { set_abi_errno(libc::EINVAL) };
         return (-1, true);
     }
-    if flags & !MKOSTEMP_ALLOWED_FLAGS != 0 {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return (-1, true);
-    }
+    // glibc has no flag list: any open flags are passed with the access mode
+    // forced to O_RDWR. An allow-list here refused O_NOFOLLOW, O_NONBLOCK,
+    // O_NOATIME, O_DIRECT ... with EINVAL.
+    let flags = flags & !libc::O_ACCMODE;
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,

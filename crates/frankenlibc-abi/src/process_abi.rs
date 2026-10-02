@@ -486,23 +486,23 @@ pub unsafe extern "C-unwind" fn waitpid(
         return -1;
     }
 
-    // Sanitize options in hardened mode.
-    let opts = if mode.heals_enabled() && !process::valid_wait_options(options) {
+    // Kernel first: __WALL, __WCLONE and __WNOTHREAD are valid wait4
+    // options (debuggers wait with __WALL); hardened repairs only options
+    // the kernel rejected.
+    let wait = |opts: c_int| unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
+        })
+    };
+    let mut rc = wait(options);
+    if mode.heals_enabled() && rc == Err(libc::EINVAL) && !process::valid_wait_options(options) {
         let sanitized = process::sanitize_wait_options(options);
         global_healing_policy().record(&HealingAction::ClampSize {
             requested: options as usize,
             clamped: sanitized as usize,
         });
-        sanitized
-    } else {
-        options
-    };
-
-    let rc = unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-        })
-    };
+        rc = wait(sanitized);
+    }
 
     match rc {
         Ok(child_pid) => {
@@ -1324,14 +1324,14 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGDEF != 0)
         .map_or(0, |attr| attr.sigdefault);
     if let Err(error) = spawn_protocol::reset_child_signals(defaults) {
-        unsafe { child_spawn_fail(err_fd, err_slot,error) };
+        unsafe { child_spawn_fail(err_fd, err_slot, error) };
     }
 
     // Apply spawn attributes if provided
     if let Some(attr) = ctx.spawn_attrs {
         let err = unsafe { apply_spawn_attrs(attr) };
         if err != 0 {
-            unsafe { child_spawn_fail(err_fd, err_slot,err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
     }
 
@@ -1339,7 +1339,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
     if let Some(fa) = ctx.spawn_actions {
         let err = unsafe { apply_file_actions(fa, err_fd) };
         if err != 0 {
-            unsafe { child_spawn_fail(err_fd, err_slot,err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
     }
 
@@ -1355,7 +1355,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         .filter(|attr| c_int::from(attr.flags) & libc::POSIX_SPAWN_SETSIGMASK != 0)
         .map_or(ctx.original_mask, |attr| attr.sigmask);
     if let Err(error) = spawn_protocol::install_signal_mask(final_mask) {
-        unsafe { child_spawn_fail(err_fd, err_slot,error) };
+        unsafe { child_spawn_fail(err_fd, err_slot, error) };
     }
 
     // Try execve for each candidate path; reading the slice does not allocate.
@@ -1375,7 +1375,7 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
         // Without a PATH search, preserve the syscall's exact errno
         // (in particular ENOTDIR), rather than folding it into ENOENT.
         if !ctx.is_path_search {
-            unsafe { child_spawn_fail(err_fd, err_slot,err) };
+            unsafe { child_spawn_fail(err_fd, err_slot, err) };
         }
         match err {
             libc::ENOENT | libc::ENOTDIR | libc::ESTALE | libc::ENODEV | libc::ETIMEDOUT => {}
@@ -1384,14 +1384,14 @@ unsafe extern "C" fn spawn_child_main(ctx: *const SpawnChildContext<'_>) -> ! {
             }
             // A terminal error (notably ENOEXEC) wins over an earlier
             // EACCES. posix_spawnp must not run an implicit shell here.
-            _ => unsafe { child_spawn_fail(err_fd, err_slot,err) },
+            _ => unsafe { child_spawn_fail(err_fd, err_slot, err) },
         }
     }
 
     if saw_eacces {
         final_err = libc::EACCES;
     }
-    unsafe { child_spawn_fail(err_fd, err_slot,final_err) };
+    unsafe { child_spawn_fail(err_fd, err_slot, final_err) };
 }
 
 /// Stack for a `CLONE_VM` spawn child.
@@ -1596,20 +1596,21 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     // closefrom is handled separately by excluding this private descriptor.
     if use_pipe
         && let Err(error) = spawn_protocol::reserve_error_fd(&mut err_pipe[1], |fd| {
-        spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
-            || spawn_actions.is_some_and(|fa| {
-                fa.actions.iter().any(|action| match action {
-                    SpawnFileAction::Close(value)
-                    | SpawnFileAction::Fchdir(value)
-                    | SpawnFileAction::TcSetPgrp(value) => *value == fd,
-                    SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
-                    SpawnFileAction::Open {
-                        fd: destination, ..
-                    } => *destination == fd,
-                    SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+            spawn_attrs.is_some_and(|attr| attr.has_cgroup && attr.cgroup_fd == fd)
+                || spawn_actions.is_some_and(|fa| {
+                    fa.actions.iter().any(|action| match action {
+                        SpawnFileAction::Close(value)
+                        | SpawnFileAction::Fchdir(value)
+                        | SpawnFileAction::TcSetPgrp(value) => *value == fd,
+                        SpawnFileAction::Dup2 { oldfd, newfd } => *oldfd == fd || *newfd == fd,
+                        SpawnFileAction::Open {
+                            fd: destination, ..
+                        } => *destination == fd,
+                        SpawnFileAction::CloseFrom(_) | SpawnFileAction::Chdir { .. } => false,
+                    })
                 })
-            })
-    }) {
+        })
+    {
         let _ = raw_syscall::sys_close(err_pipe[0]);
         let _ = raw_syscall::sys_close(err_pipe[1]);
         return error;

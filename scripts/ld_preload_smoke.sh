@@ -203,6 +203,8 @@ ICONV_FLAGS_BIN="${BIN_DIR}/fixture_iconv_flags"
 cc -O2 "${ROOT}/tests/integration/fixture_iconv_flags.c" -o "${ICONV_FLAGS_BIN}"
 STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
+ARG_PASSTHROUGH_BIN="${BIN_DIR}/fixture_arg_passthrough"
+cc -O2 "${ROOT}/tests/integration/fixture_arg_passthrough.c" -o "${ARG_PASSTHROUGH_BIN}"
 VM_ADVICE_BIN="${BIN_DIR}/fixture_vm_advice"
 cc -O2 "${ROOT}/tests/integration/fixture_vm_advice.c" -o "${VM_ADVICE_BIN}"
 LSEEK_SPARSE_BIN="${BIN_DIR}/fixture_lseek_sparse"
@@ -889,6 +891,8 @@ EOF
   run_corpus_case "${mode}" "lseek_sparse" "${LSEEK_SPARSE_BIN}" || mode_failed=1
   # madvise/mmap/msync values the kernel accepts are not rewritten.
   run_corpus_case "${mode}" "vm_advice" "${VM_ADVICE_BIN}" || mode_failed=1
+  # sigaction queries, mkostemp flags, waitpid __WALL, listen(-1).
+  run_corpus_case "${mode}" "arg_passthrough" "${ARG_PASSTHROUGH_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys

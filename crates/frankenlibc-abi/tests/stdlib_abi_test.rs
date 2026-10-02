@@ -908,27 +908,39 @@ fn mkstemps_preserves_suffix_and_replaces_pattern() {
 }
 
 #[test]
-fn mkostemps_rejects_invalid_flag_bits() {
-    // SAFETY: __errno_location points to this thread-local errno.
-    unsafe {
-        *__errno_location() = 0;
-    }
-    let mut template = temp_template("mkostemps-invalid", ".bin");
-
-    // O_TRUNC is not accepted by mkostemps flag contract in this implementation.
+fn mkostemps_accepts_any_open_flags_like_glibc() {
+    // glibc has no flag list: it opens with (flags & ~O_ACCMODE) | O_RDWR |
+    // O_CREAT | O_EXCL. Measured on glibc 2.43: mkostemps(t, 4,
+    // O_CLOEXEC | O_TRUNC) returns a close-on-exec fd. fl used to refuse
+    // anything outside O_APPEND/O_CLOEXEC/O_SYNC/O_DSYNC/O_RSYNC with EINVAL.
+    let mut template = temp_template("mkostemps-anyflags", ".bin");
     // SAFETY: template is writable and NUL-terminated.
     let fd = unsafe {
         mkostemps(
             template.as_mut_ptr().cast(),
             4,
-            libc::O_CLOEXEC | libc::O_TRUNC,
+            libc::O_CLOEXEC | libc::O_TRUNC | libc::O_WRONLY,
         )
     };
-    assert_eq!(fd, -1);
-
-    // SAFETY: read thread-local errno after call.
-    let err = unsafe { *__errno_location() };
-    assert_eq!(err, libc::EINVAL);
+    assert!(fd >= 0, "mkostemps refused O_CLOEXEC|O_TRUNC|O_WRONLY");
+    // SAFETY: fd is the descriptor just returned.
+    let (fd_flags, fl_flags) = unsafe {
+        (
+            libc::fcntl(fd, libc::F_GETFD),
+            libc::fcntl(fd, libc::F_GETFL),
+        )
+    };
+    assert_ne!(fd_flags & libc::FD_CLOEXEC, 0, "O_CLOEXEC not applied");
+    assert_eq!(
+        fl_flags & libc::O_ACCMODE,
+        libc::O_RDWR,
+        "access mode must be O_RDWR"
+    );
+    // SAFETY: fd is open; the template now names the created file.
+    unsafe {
+        libc::close(fd);
+        libc::unlink(template.as_ptr().cast());
+    }
 }
 
 #[test]
