@@ -6856,8 +6856,14 @@ pub unsafe extern "C-unwind" fn sem_timedwait(
         return -1;
     }
     let atom = unsafe { sem_as_atomic(sem) };
+    // Register as a waiter before checking the value, as sem_wait does:
+    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
+    // unregistered sem_timedwait slept until its deadline after every post
+    // (CPython's multiprocessing Barrier, built on timed SemLock waits,
+    // stalled for its full timeouts).
+    let _registration = unsafe { sem_register_waiter(sem) };
     loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
+        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
         if val > 0
             && atom
                 .compare_exchange_weak(
