@@ -4958,6 +4958,36 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         }
         return out;
     }
+    // A bump block (made inside a signal handler, or while this thread held
+    // the fallback table) is not host memory: host realloc on it aborted the
+    // process with "double free or corruption (out)" (perl
+    // run/runenv_hashseed.t, hardened). Move it into a host block instead.
+    if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
+        let out = unsafe { bootstrap_malloc_passthrough(size) };
+        if !out.is_null() {
+            // SAFETY: both blocks are live and at least min(old, new) long.
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+                let _ = bump_mmap_release(ptr);
+            }
+        }
+        return out;
+    }
+    // A hardened-arena block (fl-internal state allocated outside the
+    // allocator guard, e.g. a log ring, and grown inside it) is not a host
+    // chunk either: its user pointer sits 32 bytes into one. Copy it out;
+    // the old block stays allocated, since retiring it takes arena locks
+    // this reentrant call may already be under.
+    if let Some(old_size) = arena_block_size_lockfree(ptr) {
+        let out = unsafe { bootstrap_malloc_passthrough(size) };
+        if !out.is_null() {
+            // SAFETY: both blocks are live and at least min(old, new) long.
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+            }
+        }
+        return out;
+    }
     // SAFETY: early loader/bootstrap reallocations must bypass runtime policy
     // and use the same native/bump fallback path as reentrant allocator calls.
     let out = unsafe { native_libc_realloc(ptr, size) };
@@ -5018,6 +5048,12 @@ unsafe fn bootstrap_free_passthrough(ptr: *mut c_void) {
         return;
     }
     let tracked_size = fallback_remove_sized(ptr);
+    if tracked_size.is_none() && arena_block_size_lockfree(ptr).is_some() {
+        // A hardened-arena block freed under the allocator guard: host free
+        // on it corrupts the host heap, and the arena's own free takes locks
+        // this reentrant call may be under. Leave it allocated.
+        return;
+    }
     // SAFETY: early loader/bootstrap frees must bypass runtime policy and
     // return host-owned allocations through the native fallback path.
     unsafe { native_libc_free(ptr) };
