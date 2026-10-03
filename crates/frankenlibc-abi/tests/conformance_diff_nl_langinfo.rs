@@ -96,6 +96,49 @@ fn diff_nl_langinfo_c_locale_items() {
     );
 }
 
+/// Every item of LC_PAPER, LC_NAME, LC_ADDRESS, LC_TELEPHONE, LC_MEASUREMENT
+/// and LC_IDENTIFICATION (categories 7..=12) in the C locale. fl returned ""
+/// for all of them (perl's Langinfo.t and XS-APItest locale.t check
+/// _NL_IDENTIFICATION_TERRITORY == "ISO"). Integer items (paper height and
+/// width, country number) come back as the pointer value, compared as such;
+/// strings byte for byte (_NL_MEASUREMENT_MEASUREMENT is the byte 1).
+#[test]
+fn diff_nl_langinfo_c_locale_extended_categories() {
+    // (category, number of items including the trailing CODESET)
+    let categories: &[(u32, u32)] = &[(7, 3), (8, 7), (9, 13), (10, 5), (11, 2), (12, 16)];
+    let mut divs = Vec::new();
+    let mut compared = 0;
+    for &(category, count) in categories {
+        for index in 0..count {
+            let item = ((category << 16) | index) as libc::nl_item;
+            let fl_ptr = unsafe { fl::nl_langinfo(item) };
+            let lc_ptr = unsafe { nl_langinfo(item) };
+            let render = |p: *const c_char| -> String {
+                if (p as usize) < 65536 {
+                    format!("int {}", p as usize)
+                } else {
+                    format!("{:?}", unsafe { CStr::from_ptr(p) })
+                }
+            };
+            let (f, g) = (render(fl_ptr), render(lc_ptr));
+            if f != g {
+                divs.push(Divergence {
+                    case: format!("{category}.{index}"),
+                    frankenlibc: f,
+                    glibc: g,
+                });
+            }
+            compared += 1;
+        }
+    }
+    assert_eq!(compared, 46);
+    assert!(
+        divs.is_empty(),
+        "nl_langinfo extended-category divergences:\n{}",
+        render_divs(&divs)
+    );
+}
+
 #[test]
 fn nl_langinfo_diff_coverage_report() {
     eprintln!(

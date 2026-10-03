@@ -1127,10 +1127,95 @@ fn codeset_ptr(charset: Charset) -> *const c_char {
     }
 }
 
+/// The C locale's LC_PAPER..LC_IDENTIFICATION items (categories 7..=12), as
+/// glibc defines them. `Codeset` marks each category's CODESET item, which
+/// follows the active charset; `Int` items are returned as the pointer value
+/// itself, as glibc does (paper height/width, country number).
+enum CItem {
+    Str(&'static CStr),
+    Int(usize),
+    Codeset,
+}
+
+const LC_PAPER_C: &[CItem] = &[CItem::Int(297), CItem::Int(210), CItem::Codeset];
+const LC_NAME_C: &[CItem] = &[
+    CItem::Str(c"%p%t%g%t%m%t%f"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+const LC_ADDRESS_C: &[CItem] = &[
+    CItem::Str(c"%a%N%f%N%d%N%b%N%s %h %e %r%N%C-%z %T%N%c%N"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+const LC_TELEPHONE_C: &[CItem] = &[
+    CItem::Str(c"+%c %a %l"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+// _NL_MEASUREMENT_MEASUREMENT is the byte 1 (metric), not a C string of text.
+const LC_MEASUREMENT_C: &[CItem] = &[CItem::Str(c"\x01"), CItem::Codeset];
+const LC_IDENTIFICATION_C: &[CItem] = &[
+    CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
+    CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
+    CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
+    CItem::Str(c"Keld Simonsen"),
+    CItem::Str(c"keld@dkuug.dk"),
+    CItem::Str(c"+45 3122-6543"),
+    CItem::Str(c"+45 3325-6543"),
+    CItem::Str(c""),
+    CItem::Str(c"ISO"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c"1.0"),
+    CItem::Str(c"1997-12-20"),
+    CItem::Str(c"i18n:1999"),
+    CItem::Codeset,
+];
+
 #[inline(always)]
-fn langinfo_non_time_non_codeset(item: libc::nl_item) -> *const c_char {
+fn langinfo_non_time_non_codeset(
+    item: libc::nl_item,
+    codeset: impl FnOnce() -> *const c_char,
+) -> *const c_char {
     let category = (item as u32) >> 16;
     let index = ((item as u32) & 0xffff) as usize;
+    let extended = match category {
+        7 => Some(LC_PAPER_C),
+        8 => Some(LC_NAME_C),
+        9 => Some(LC_ADDRESS_C),
+        10 => Some(LC_TELEPHONE_C),
+        11 => Some(LC_MEASUREMENT_C),
+        12 => Some(LC_IDENTIFICATION_C),
+        _ => None,
+    };
+    if let Some(table) = extended {
+        // These categories were all "" here; perl's Langinfo.t and
+        // XS-APItest locale.t check _NL_IDENTIFICATION_TERRITORY == "ISO".
+        return match table.get(index) {
+            Some(CItem::Str(s)) => s.as_ptr(),
+            Some(CItem::Int(v)) => *v as *const c_char,
+            Some(CItem::Codeset) => codeset(),
+            None => c"".as_ptr(),
+        };
+    }
     match category {
         1 => {
             if index < 2 {
@@ -1166,7 +1251,7 @@ fn langinfo_c_fast(item: libc::nl_item, charset: Charset) -> *const c_char {
     if item == libc::CODESET {
         return codeset_ptr(charset);
     }
-    langinfo_non_time_non_codeset(item)
+    langinfo_non_time_non_codeset(item, || codeset_ptr(charset))
 }
 
 #[inline]
@@ -1261,7 +1346,7 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         if item == libc::CODESET {
             return active_codeset_ptr();
         }
-        return langinfo_non_time_non_codeset(item);
+        return langinfo_non_time_non_codeset(item, active_codeset_ptr);
     }
     nl_langinfo_with_policy(item)
 }
