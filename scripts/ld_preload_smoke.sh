@@ -205,6 +205,8 @@ STRFTIME_LOCALE_BIN="${BIN_DIR}/fixture_strftime_locale"
 cc -O2 "${ROOT}/tests/integration/fixture_strftime_locale.c" -o "${STRFTIME_LOCALE_BIN}"
 QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
 cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
+APP_SBRK_MALLOC_BIN="${BIN_DIR}/fixture_app_sbrk_malloc"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_sbrk_malloc.c" -o "${APP_SBRK_MALLOC_BIN}"
 SIGNAL_HANDLER_REALLOC_BIN="${BIN_DIR}/fixture_signal_handler_realloc"
 cc -O2 "${ROOT}/tests/integration/fixture_signal_handler_realloc.c" -o "${SIGNAL_HANDLER_REALLOC_BIN}"
 LONG_DOUBLE_MATH_BIN="${BIN_DIR}/fixture_long_double_math"
@@ -915,6 +917,8 @@ EOF
   run_corpus_case "${mode}" "long_double_math" "${LONG_DOUBLE_MATH_BIN}" || mode_failed=1
   # realloc of pre-signal memory inside a signal handler (perl POSIX::SigAction).
   run_corpus_case "${mode}" "signal_handler_realloc" "${SIGNAL_HANDLER_REALLOC_BIN}" || mode_failed=1
+  # An application's own sbrk-based malloc (bash's lib/malloc) beside fl's.
+  run_corpus_case "${mode}" "app_sbrk_malloc" "${APP_SBRK_MALLOC_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys

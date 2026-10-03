@@ -18122,13 +18122,10 @@ pub unsafe extern "C" fn getdtablesize() -> c_int {
 // brk / sbrk — RawSyscall
 // ---------------------------------------------------------------------------
 
-static CURRENT_BRK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// POSIX `brk` — set the program break.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
     let new_brk = syscall::sys_brk(addr as usize);
-    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
     if new_brk < addr as usize {
         unsafe { set_abi_errno(libc::ENOMEM) };
         -1
@@ -18140,14 +18137,12 @@ pub unsafe extern "C" fn brk(addr: *mut c_void) -> c_int {
 /// POSIX `sbrk` — adjust the program break.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
-    let current = CURRENT_BRK.load(std::sync::atomic::Ordering::Relaxed);
-    let current = if current == 0 {
-        let b = syscall::sys_brk(0);
-        CURRENT_BRK.store(b, std::sync::atomic::Ordering::Relaxed);
-        b
-    } else {
-        current
-    };
+    // Ask the kernel every time. The host allocator (which fl's native paths
+    // use) moves the break with its own brk calls, so a cached value went
+    // stale: an application's own sbrk-based malloc (bash's) was handed memory
+    // the host heap already owned, and the two overwrote each other -- bash
+    // built from source segfaulted in its first getenv.
+    let current = syscall::sys_brk(0);
 
     if increment == 0 {
         return current as *mut c_void;
@@ -18164,7 +18159,6 @@ pub unsafe extern "C" fn sbrk(increment: isize) -> *mut c_void {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return usize::MAX as *mut c_void;
     }
-    CURRENT_BRK.store(new_brk, std::sync::atomic::Ordering::Relaxed);
     current as *mut c_void
 }
 
