@@ -2745,6 +2745,12 @@ fn futex_rwlock_wrlock(word: &AtomicI32, private: bool) -> c_int {
         }
 
         let state = word.load(Ordering::Acquire);
+        if state == 0 {
+            // Released since the CAS. Waiting for "still 0" sleeps on a free
+            // lock whose unlock already woke everyone, until some later unlock
+            // -- forever if none comes.
+            continue;
+        }
 
         #[cfg(target_os = "linux")]
         {
@@ -2877,6 +2883,10 @@ fn futex_rwlock_timed_wrlock(
             return 0;
         }
         let state = word.load(Ordering::Acquire);
+        if state == 0 {
+            // Released since the CAS; see futex_rwlock_wrlock.
+            continue;
+        }
         let rc = futex_wait_timed(word, state, abstime, private);
         if rc == 0 {
             continue;
