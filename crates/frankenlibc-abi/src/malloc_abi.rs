@@ -4838,7 +4838,27 @@ unsafe fn realloc_segment_owned(
             }
         },
         // A reentrant/bootstrap realloc must not borrow thread-local segment
-        // state without the outer guard; move it to the retained host path.
+        // state without the outer guard; move it to the retained host path --
+        // or, inside a signal handler, to the lock-free bump heap: the host
+        // allocator's locks may be held by the interrupted frame, and a host
+        // block could not be resized again from the handler (a second
+        // realloc there returned NULL).
+        None if fallback_table_entered_on_this_thread() => {
+            let out = unsafe { bump_alloc(requested) };
+            if !out.is_null() {
+                // SAFETY: both blocks are live; bounded by the smaller size.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        ptr.cast::<u8>(),
+                        out.cast::<u8>(),
+                        old_requested.min(requested),
+                    );
+                }
+                // No stats or table updates here: both may take locks.
+                let _ = segment_free(None, ptr);
+            }
+            return out;
+        }
         None => (unsafe { native_libc_malloc(requested) }, None),
     };
     if out.is_null() {
@@ -4917,16 +4937,24 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
     }
     if fallback_table_entered_on_this_thread() {
         // No table access here (see `fallback_table_entered_on_this_thread`):
-        // a bump block's size is in its header; any other block's is unknown,
+        // a bump block's size is in its header, and so is a hardened-arena
+        // block's (its verified fingerprint); any other block's is unknown,
         // so fail and leave it intact, as realloc may.
-        let Some(old_size) = (unsafe { bump_allocation_size(ptr) }) else {
+        let bump_size = unsafe { bump_allocation_size(ptr) };
+        let Some(old_size) = bump_size.or_else(|| arena_block_size_lockfree(ptr)) else {
             return std::ptr::null_mut();
         };
         let out = unsafe { bump_alloc(size) };
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
             unsafe { std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size)) };
-            let _ = unsafe { bump_mmap_release(ptr) };
+            if bump_size.is_some() {
+                let _ = unsafe { bump_mmap_release(ptr) };
+            }
+            // An arena block stays allocated: retiring it takes arena locks
+            // the interrupted frame may hold. A signal handler's realloc
+            // leaks the old block rather than failing -- perl's POSIX
+            // SigAction handlers grow arrays and die on a NULL.
         }
         return out;
     }
@@ -4943,6 +4971,33 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         record_alloc_stats(None, req);
     }
     out
+}
+
+/// The user size of a hardened-arena block, read from its fingerprint header
+/// without the arena's locks (a signal handler may not take them): `None`
+/// unless the 24 bytes before `ptr` are on the same page (so reading them
+/// cannot fault on a page-aligned host chunk) and verify as this address's
+/// fingerprint.
+fn arena_block_size_lockfree(ptr: *mut c_void) -> Option<usize> {
+    use frankenlibc_membrane::fingerprint::{AllocationFingerprint, FINGERPRINT_SIZE};
+    let addr = ptr as usize;
+    if addr % 16 != 0 || addr & 0xfff < FINGERPRINT_SIZE {
+        return None;
+    }
+    let mut header = [0u8; FINGERPRINT_SIZE];
+    // SAFETY: the header lies in the same page as `ptr`, a pointer the caller
+    // handed to realloc, so the page is mapped.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            (addr - FINGERPRINT_SIZE) as *const u8,
+            header.as_mut_ptr(),
+            FINGERPRINT_SIZE,
+        );
+    }
+    let fingerprint = AllocationFingerprint::from_bytes(&header);
+    fingerprint
+        .verify(addr)
+        .then_some(fingerprint.size as usize)
 }
 
 #[inline]
