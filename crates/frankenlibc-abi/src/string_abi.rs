@@ -11945,8 +11945,9 @@ pub unsafe extern "C" fn strfromf(
 
 /// C23 `strfroml` — convert long double to string with format.
 ///
-/// On x86_64 Linux, long double is 80-bit extended but we use f64 approximation.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+/// The x86_64 export is the x87 entry point in `math_abi::x87_math_entry`;
+/// this f64 form serves the other targets.
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfroml(
     s: *mut c_char,
     n: usize,

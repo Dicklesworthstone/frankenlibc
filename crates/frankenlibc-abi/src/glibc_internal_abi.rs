@@ -747,7 +747,7 @@ pub unsafe extern "C" fn strfromf64(
 ) -> c_int {
     unsafe { crate::string_abi::strfromd(str, n, fmt, fp) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn strfromf64x(
     str: *mut c_char,
     n: SizeT,
@@ -758,7 +758,7 @@ pub unsafe extern "C" fn strfromf64x(
 }
 /// Parse a `strfrom`-style `%[flags][width][.precision]CONV` format string into
 /// a `FmtSpec` (defaults to `%g` if the conversion can't be parsed).
-unsafe fn parse_f128_fmt(fmt: *const c_char) -> frankenlibc_core::float128::FmtSpec {
+pub(crate) unsafe fn parse_f128_fmt(fmt: *const c_char) -> frankenlibc_core::float128::FmtSpec {
     use frankenlibc_core::float128::FmtSpec;
     let mut spec = FmtSpec {
         conv: b'g',
@@ -4843,11 +4843,11 @@ pub unsafe extern "C" fn __xpg_sigpause(sig: c_int) -> c_int {
     }
 }
 // --- Native math: long-double classification (long double = f64 in this ABI) ---
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __signbitl(x: f64) -> c_int {
     (x.to_bits() >> 63) as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -4857,11 +4857,11 @@ pub unsafe extern "C" fn __isinfl(x: f64) -> c_int {
         0
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn __finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -5751,7 +5751,7 @@ pub unsafe extern "C" fn chflags(path: *const c_char, flags: c_ulong) -> c_int {
     -1
 }
 // copysignl: native — copy sign of y to x
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn copysignl(x: f64, y: f64) -> f64 {
     f64::from_bits((x.to_bits() & 0x7FFF_FFFF_FFFF_FFFF) | (y.to_bits() & 0x8000_0000_0000_0000))
 }
@@ -6012,7 +6012,7 @@ pub unsafe extern "C" fn fdetach(path: *const c_char) -> c_int {
     -1
 }
 // frexpl: native — decompose into significand * 2^exp (0.5 <= |frac| < 1.0)
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn frexpl(x: f64, exp: *mut c_int) -> f64 {
     if x == 0.0 || x.is_nan() || x.is_infinite() {
         if !exp.is_null() {
@@ -6626,7 +6626,7 @@ pub unsafe extern "C" fn isinff(x: f32) -> c_int {
         0
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
     if x == f64::INFINITY {
         1
@@ -6640,11 +6640,11 @@ pub unsafe extern "C" fn isinfl(x: f64) -> c_int {
 pub unsafe extern "C" fn isnanf(x: f32) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn isnanl(x: f64) -> c_int {
     x.is_nan() as c_int
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn finitel(x: f64) -> c_int {
     x.is_finite() as c_int
 }
@@ -6677,7 +6677,7 @@ pub unsafe extern "C" fn lchmod(pathname: *const c_char, mode: c_uint) -> c_int 
     }
 }
 // ldexpl: native — x * 2^exp via repeated doubling/halving
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ldexpl(x: f64, exp: c_int) -> f64 {
     native_ldexp(x, exp)
 }
@@ -6728,7 +6728,7 @@ pub unsafe extern "C" fn mkstemps64(template: *mut c_char, suffixlen: c_int) -> 
     unsafe { crate::stdlib_abi::mkstemps(template, suffixlen) }
 }
 // modfl: native — split into integer + fractional parts
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
     if x.is_nan() || x.is_infinite() {
         if !iptr.is_null() {
@@ -7320,7 +7320,7 @@ pub unsafe extern "C" fn ruserpass(
     -1
 }
 // scalbnl: native — x * 2^n (same as ldexp)
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn scalbnl(x: f64, n: c_int) -> f64 {
     native_ldexp(x, n)
 }

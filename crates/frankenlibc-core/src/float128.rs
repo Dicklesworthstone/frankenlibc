@@ -782,6 +782,44 @@ pub fn x87_to_binary128(bytes: &[u8; 10]) -> u128 {
     sign | (exp_field << 112) | fraction
 }
 
+/// binary128 bits to x87 80-bit extended, rounded to nearest-even.
+///
+/// The inverse of [`x87_to_binary128`] wherever that one is defined, and the
+/// rounding step for any `long double` result computed in binary128. Both
+/// formats have a 15-bit exponent with bias 16383, so only the fraction
+/// narrows (112 to 63 bits): `exponent:fraction` rounded as one integer lets a
+/// carry out of the fraction bump the exponent -- into the next binade, from
+/// subnormal to normal, or to infinity. NaNs keep their top payload bits and
+/// stay NaNs (quiet bit set if truncation would empty the payload).
+pub fn binary128_to_x87(bits: u128) -> [u8; 10] {
+    let sign = (bits >> 127) as u16;
+    let magnitude = bits & !(1u128 << 127);
+    let exp_field = (magnitude >> 112) as u16;
+    let frac112 = magnitude & ((1u128 << 112) - 1);
+    let (exp, frac63) = if exp_field == 0x7fff {
+        if frac112 == 0 {
+            (0x7fff, 0u64)
+        } else {
+            let payload = (frac112 >> 49) as u64;
+            (0x7fff, if payload == 0 { 1u64 << 62 } else { payload })
+        }
+    } else {
+        let mut q = magnitude >> 49;
+        let rem = magnitude & ((1u128 << 49) - 1);
+        let half = 1u128 << 48;
+        if rem > half || (rem == half && q & 1 == 1) {
+            q += 1;
+        }
+        ((q >> 63) as u16, (q & ((1u128 << 63) - 1)) as u64)
+    };
+    // The explicit integer bit: set for normals, infinities and NaNs.
+    let int_bit = if exp == 0 { 0 } else { 1u64 << 63 };
+    let mut out = [0u8; 10];
+    out[..8].copy_from_slice(&(int_bit | frac63).to_le_bytes());
+    out[8..].copy_from_slice(&((sign << 15) | exp).to_le_bytes());
+    out
+}
+
 /// Correctly-rounded x87 80-bit extended for the hexadecimal value
 /// `(-1)^negative · 0x<int_hex>.<frac_hex> · 2^binexp`.
 ///
@@ -2054,6 +2092,79 @@ mod tests {
         assert_eq!((wide >> 112) & 0x7fff, 16386);
         assert_eq!(wide >> 127, 0);
         assert_eq!(wide & ((1u128 << 112) - 1), 9u128 << 108);
+    }
+
+    fn x87_enc(sign: bool, exp: u16, significand: u64) -> [u8; 10] {
+        let mut b = [0u8; 10];
+        b[..8].copy_from_slice(&significand.to_le_bytes());
+        b[8..].copy_from_slice(&((u16::from(sign) << 15) | exp).to_le_bytes());
+        b
+    }
+
+    /// Narrowing undoes widening exactly for every canonical x87 encoding:
+    /// zeros, subnormals, normals across the exponent range, infinities, NaNs.
+    #[test]
+    fn binary128_to_x87_round_trips_every_canonical_encoding() {
+        let significands = [
+            1u64 << 63,
+            (1u64 << 63) | 1,
+            u64::MAX,
+            0xc90f_daa2_2168_c235,
+            (1u64 << 63) | (1u64 << 62),
+        ];
+        let mut cases = 0;
+        for sign in [false, true] {
+            for exp in [1u16, 2, 0x3ffe, 0x3fff, 0x4000, 0x403e, 0x7ffd, 0x7ffe] {
+                for &s in &significands {
+                    let v = x87_enc(sign,exp, s);
+                    assert_eq!(binary128_to_x87(x87_to_binary128(&v)), v, "{v:02x?}");
+                    cases += 1;
+                }
+            }
+            for s in [0u64, 1, 0x7fff_ffff_ffff_ffff, 0x1234_5678] {
+                let v = x87_enc(sign,0, s);
+                assert_eq!(binary128_to_x87(x87_to_binary128(&v)), v, "{v:02x?}");
+                cases += 1;
+            }
+            let inf = x87_enc(sign,0x7fff, 1u64 << 63);
+            assert_eq!(binary128_to_x87(x87_to_binary128(&inf)), inf);
+            let qnan = x87_enc(sign,0x7fff, (1u64 << 63) | (1u64 << 62) | 0xabc);
+            assert_eq!(binary128_to_x87(x87_to_binary128(&qnan)), qnan);
+            cases += 2;
+        }
+        assert_eq!(cases, 2 * (8 * 5 + 4 + 2));
+    }
+
+    /// The 49 dropped bits round to nearest, ties to even, with carries into
+    /// the exponent (next binade, subnormal -> normal, overflow -> infinity).
+    #[test]
+    fn binary128_to_x87_rounds_to_nearest_even() {
+        let one = 0x3fffu128 << 112;
+        let half_ulp = 1u128 << 48;
+        // 1 + half an x87 ulp: tie, even (fraction 0) stays.
+        assert_eq!(binary128_to_x87(one | half_ulp), x87_enc(false, 0x3fff, 1u64 << 63));
+        // Just above the tie rounds up.
+        assert_eq!(
+            binary128_to_x87(one | half_ulp | 1),
+            x87_enc(false, 0x3fff, (1u64 << 63) | 1)
+        );
+        // Odd fraction + exact tie rounds up to even.
+        assert_eq!(
+            binary128_to_x87(one | (1u128 << 49) | half_ulp),
+            x87_enc(false, 0x3fff, (1u64 << 63) | 2)
+        );
+        // All-ones fraction carries into the exponent: 2 - tiny -> 2.
+        let below_two = one | ((1u128 << 112) - 1);
+        assert_eq!(binary128_to_x87(below_two), x87_enc(false, 0x4000, 1u64 << 63));
+        // Largest subnormal + carry becomes the smallest normal.
+        let sub = (1u128 << 112) - 1;
+        assert_eq!(binary128_to_x87(sub), x87_enc(false, 1, 1u64 << 63));
+        // Overflow past the largest finite value is infinity.
+        let max = (0x7ffeu128 << 112) | ((1u128 << 112) - 1);
+        assert_eq!(binary128_to_x87(max), x87_enc(false, 0x7fff, 1u64 << 63));
+        // A NaN whose payload lives only in the dropped bits stays a NaN.
+        let nan = (0x7fffu128 << 112) | 1;
+        assert_eq!(binary128_to_x87(nan), x87_enc(false, 0x7fff, (1u64 << 63) | (1u64 << 62)));
     }
 
     /// Every class maps through the one expression: the boundary encodings are
