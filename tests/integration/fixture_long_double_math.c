@@ -9,6 +9,7 @@
  * result agrees on. Output matches glibc.
  */
 #define _GNU_SOURCE
+#include <complex.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -72,6 +73,16 @@ int main(void) {
     _Float64x fx = 2.0F64x;
     printf("f64x: sqrt=%La exp2=%La ldexp=%La\n", (long double)sqrtf64x(fx),
            (long double)exp2f64x(fx), (long double)ldexpf64x(fx, 3));
+    /* long double _Complex: 32 bytes in memory in, ST(0)/ST(1) out. */
+    long double _Complex z = 3.0L - 4.0L * I, w = 0.5L + 0.25L * I;
+    long double _Complex e = cexpl(z), sq = csqrtl(z), pw = cpowl(w, z), cj = conjl(z);
+    printf("cabs=%La carg=%.12Lg creal=%La cimag=%La conj=%La,%La\n", cabsl(z), cargl(z),
+           creall(z), cimagl(z), creall(cj), cimagl(cj));
+    printf("cexp=%.12Lg,%.12Lg csqrt=%La,%La cpow=%.12Lg,%.12Lg clog=%.12Lg,%.12Lg\n", creall(e),
+           cimagl(e), creall(sq), cimagl(sq), creall(pw), cimagl(pw), creall(clogl(z)),
+           cimagl(clogl(z)));
+    printf("csin=%.12Lg ctanh=%.12Lg casin=%.12Lg catanh=%.12Lg\n", cimagl(csinl(w)),
+           creall(ctanhl(w)), creall(casinl(w)), cimagl(catanhl(w)));
     /* The x87 stack must still be usable after all of the above. */
     volatile long double a = 1.25L, b = 2.5L;
     printf("after: %La\n", a + b);

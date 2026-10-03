@@ -2842,6 +2842,141 @@ mod x87_math_entry {
         canonicalizef64x;
     }
 
+    // `long double _Complex`: an argument is 32 bytes in memory (real, then
+    // imaginary, each a 16-byte slot); a complex result returns real in ST(0)
+    // and imaginary in ST(1).
+    use super::{
+        cabsf128, cacosf128, cacoshf128, cargf128, casinf128, casinhf128, catanf128,
+        catanhf128, ccosf128, ccoshf128, cexpf128, clog10f128, clogf128, conjf128,
+        cpowf128, cprojf128, csinf128, csinhf128, csqrtf128, ctanf128, ctanhf128,
+        CFloat128Complex,
+    };
+
+    #[inline]
+    unsafe fn ldc(slot: *const u8) -> CFloat128Complex {
+        // SAFETY: a 32-byte complex argument slot.
+        unsafe { CFloat128Complex { re: ld(slot), im: ld(slot.add(16)) } }
+    }
+
+    #[inline]
+    unsafe fn stc(out: *mut u8, z: CFloat128Complex) {
+        // SAFETY: the shim's 32-byte result area.
+        unsafe {
+            st(out, z.re);
+            st(out.add(16), z.im);
+        }
+    }
+
+    /// `long double _Complex f(long double _Complex)` for (l, f64x) pairs.
+    macro_rules! complex_unary {
+        ($($l:ident $x:ident $helper:ident = $f:path;)*) => {$(
+            unsafe extern "C" fn $helper(z: *const u8, out: *mut u8) {
+                // SAFETY: argument and result areas from the shim.
+                unsafe { stc(out, $f(ldc(z))) }
+            }
+            complex_unary!(@shim $l $helper);
+            complex_unary!(@shim $x $helper);
+        )*};
+        (@shim $name:ident $helper:ident) => {
+            #[unsafe(no_mangle)]
+            #[unsafe(naked)]
+            pub unsafe extern "C" fn $name(_z: *const c_void) -> f64 {
+                std::arch::naked_asm!(
+                    "sub rsp, 40", "lea rdi, [rsp + 48]", "mov rsi, rsp", "call {h}",
+                    "fld tbyte ptr [rsp + 16]", "fld tbyte ptr [rsp]", "add rsp, 40", "ret",
+                    h = sym $helper,
+                );
+            }
+        };
+    }
+
+    /// `long double f(long double _Complex)`: the complex argument starts at
+    /// the same slot a real one would, so the shape is the unary one.
+    macro_rules! real_shim {
+        ($($name:ident = $helper:ident;)*) => {$(
+            #[unsafe(no_mangle)]
+            #[unsafe(naked)]
+            pub unsafe extern "C" fn $name(_z: *const c_void) -> f64 {
+                std::arch::naked_asm!(
+                    "sub rsp, 24", "lea rdi, [rsp + 32]", "mov rsi, rsp", "call {h}",
+                    "fld tbyte ptr [rsp]", "add rsp, 24", "ret", h = sym $helper,
+                );
+            }
+        )*};
+    }
+
+    complex_unary! {
+        conjl conjf64x h_conj = conjf128;
+        cprojl cprojf64x h_cproj = cprojf128;
+        cexpl cexpf64x h_cexp = cexpf128;
+        clogl clogf64x h_clog = clogf128;
+        clog10l clog10f64x h_clog10 = clog10f128;
+        csqrtl csqrtf64x h_csqrt = csqrtf128;
+        csinl csinf64x h_csin = csinf128;
+        ccosl ccosf64x h_ccos = ccosf128;
+        ctanl ctanf64x h_ctan = ctanf128;
+        csinhl csinhf64x h_csinh = csinhf128;
+        ccoshl ccoshf64x h_ccosh = ccoshf128;
+        ctanhl ctanhf64x h_ctanh = ctanhf128;
+        casinl casinf64x h_casin = casinf128;
+        cacosl cacosf64x h_cacos = cacosf128;
+        catanl catanf64x h_catan = catanf128;
+        casinhl casinhf64x h_casinh = casinhf128;
+        cacoshl cacoshf64x h_cacosh = cacoshf128;
+        catanhl catanhf64x h_catanh = catanhf128;
+    }
+
+    unsafe extern "C" fn h_cabs(z: *const u8, out: *mut u8) {
+        // SAFETY: argument and result slots from the shim.
+        unsafe { st(out, cabsf128(ldc(z))) }
+    }
+    unsafe extern "C" fn h_carg(z: *const u8, out: *mut u8) {
+        // SAFETY: argument and result slots from the shim.
+        unsafe { st(out, cargf128(ldc(z))) }
+    }
+    unsafe extern "C" fn h_creal(z: *const u8, out: *mut u8) {
+        // SAFETY: argument and result slots from the shim.
+        unsafe { st(out, ldc(z).re) }
+    }
+    unsafe extern "C" fn h_cimag(z: *const u8, out: *mut u8) {
+        // SAFETY: argument and result slots from the shim.
+        unsafe { st(out, ldc(z).im) }
+    }
+    real_shim! {
+        cabsl = h_cabs;
+        cabsf64x = h_cabs;
+        cargl = h_carg;
+        cargf64x = h_carg;
+        creall = h_creal;
+        crealf64x = h_creal;
+        cimagl = h_cimag;
+        cimagf64x = h_cimag;
+    }
+
+    /// `cpowl(z, w)`: two 32-byte complex arguments.
+    unsafe extern "C" fn h_cpow(z: *const u8, w: *const u8, out: *mut u8) {
+        // SAFETY: argument and result areas from the shim.
+        unsafe { stc(out, cpowf128(ldc(z), ldc(w))) }
+    }
+    #[unsafe(no_mangle)]
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn cpowl(_z: *const c_void) -> f64 {
+        std::arch::naked_asm!(
+            "sub rsp, 40", "lea rdi, [rsp + 48]", "lea rsi, [rsp + 80]", "mov rdx, rsp",
+            "call {h}", "fld tbyte ptr [rsp + 16]", "fld tbyte ptr [rsp]", "add rsp, 40", "ret",
+            h = sym h_cpow,
+        );
+    }
+    #[unsafe(no_mangle)]
+    #[unsafe(naked)]
+    pub unsafe extern "C" fn cpowf64x(_z: *const c_void) -> f64 {
+        std::arch::naked_asm!(
+            "sub rsp, 40", "lea rdi, [rsp + 48]", "lea rsi, [rsp + 80]", "mov rdx, rsp",
+            "call {h}", "fld tbyte ptr [rsp + 16]", "fld tbyte ptr [rsp]", "add rsp, 40", "ret",
+            h = sym h_cpow,
+        );
+    }
+
     /// `int strfroml(char *s, size_t n, const char *fmt, long double v)`: the
     /// three register arguments stay; the value's slot address joins them.
     /// Formats the exact x87 value (the old export read a double from XMM0).
@@ -3862,7 +3997,7 @@ pub unsafe extern "C" fn crealf(z: CFloatComplex) -> f32 {
     z.re
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn creall(z: CLongDoubleComplex) -> f64 {
     z.re
 }
@@ -3877,7 +4012,7 @@ pub unsafe extern "C" fn cimagf(z: CFloatComplex) -> f32 {
     z.im
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cimagl(z: CLongDoubleComplex) -> f64 {
     z.im
 }
@@ -3898,7 +4033,7 @@ pub unsafe extern "C" fn conjf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     CLongDoubleComplex {
         re: z.re,
@@ -3916,7 +4051,7 @@ pub unsafe extern "C" fn cargf(z: CFloatComplex) -> f32 {
     frankenlibc_core::math::atan2f(z.im, z.re)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cargl(z: CLongDoubleComplex) -> f64 {
     frankenlibc_core::math::atan2(z.im, z.re)
 }
@@ -3931,7 +4066,7 @@ pub unsafe extern "C" fn cabsf(z: CFloatComplex) -> f32 {
     frankenlibc_core::math::hypotf(z.re, z.im)
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cabsl(z: CLongDoubleComplex) -> f64 {
     frankenlibc_core::math::hypot(z.re, z.im)
 }
@@ -3962,7 +4097,7 @@ pub unsafe extern "C" fn cprojf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cprojl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     if z.re.is_infinite() || z.im.is_infinite() {
         CLongDoubleComplex {
@@ -3991,7 +4126,7 @@ pub unsafe extern "C" fn cexpf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cexpl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_exp(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4012,7 +4147,7 @@ pub unsafe extern "C" fn clogf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn clogl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_log(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4033,7 +4168,7 @@ pub unsafe extern "C" fn csqrtf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csqrtl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let (re, im) = c_sqrt(z.re, z.im);
     CLongDoubleComplex { re, im }
@@ -4061,7 +4196,7 @@ pub unsafe extern "C" fn cpowf(base: CFloatComplex, exp: CFloatComplex) -> CFloa
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cpowl(
     base: CLongDoubleComplex,
     exp: CLongDoubleComplex,
@@ -4097,7 +4232,7 @@ pub unsafe extern "C" fn csinf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { csin(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4125,7 +4260,7 @@ pub unsafe extern "C" fn ccosf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ccos(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4154,7 +4289,7 @@ pub unsafe extern "C" fn ctanf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ctan(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4182,7 +4317,7 @@ pub unsafe extern "C" fn csinhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { csinh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4208,7 +4343,7 @@ pub unsafe extern "C" fn ccoshf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ccosh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4234,7 +4369,7 @@ pub unsafe extern "C" fn ctanhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { ctanh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4264,7 +4399,7 @@ pub unsafe extern "C" fn casinf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { casin(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4290,7 +4425,7 @@ pub unsafe extern "C" fn cacosf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacosl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { cacos(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4318,7 +4453,7 @@ pub unsafe extern "C" fn catanf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { catan(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4346,7 +4481,7 @@ pub unsafe extern "C" fn casinhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { casinh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4386,7 +4521,7 @@ pub unsafe extern "C" fn cacoshf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacoshl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { cacosh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -4412,7 +4547,7 @@ pub unsafe extern "C" fn catanhf(z: CFloatComplex) -> CFloatComplex {
     }
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanhl(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { catanh(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -7478,7 +7613,7 @@ pub unsafe extern "C" fn clog10f(z: CFloatComplex) -> CFloatComplex {
         im: r.im / ln10,
     }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn clog10l(z: CLongDoubleComplex) -> CLongDoubleComplex {
     let r = unsafe { clog10(CDoubleComplex { re: z.re, im: z.im }) };
     CLongDoubleComplex { re: r.re, im: r.im }
@@ -7507,7 +7642,7 @@ pub unsafe extern "C" fn clog10f32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn clog10f64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn clog10f64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog10(z) }
 }
@@ -13763,7 +13898,7 @@ pub unsafe extern "C" fn cabsf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cabsf64(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cabsf64x(z: CDoubleComplex) -> f64 {
     unsafe { cabs(z) }
 }
@@ -13784,7 +13919,7 @@ pub unsafe extern "C" fn cargf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cargf64(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cargf64x(z: CDoubleComplex) -> f64 {
     unsafe { carg(z) }
 }
@@ -13805,7 +13940,7 @@ pub unsafe extern "C" fn cimagf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn cimagf64(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cimagf64x(z: CDoubleComplex) -> f64 {
     unsafe { cimag(z) }
 }
@@ -13825,7 +13960,7 @@ pub unsafe extern "C" fn crealf32x(z: CDoubleComplex) -> f64 {
 pub unsafe extern "C" fn crealf64(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn crealf64x(z: CDoubleComplex) -> f64 {
     unsafe { creal(z) }
 }
@@ -13847,7 +13982,7 @@ pub unsafe extern "C" fn cacosf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cacosf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacos(z) }
 }
@@ -13867,7 +14002,7 @@ pub unsafe extern "C" fn cacoshf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cacoshf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cacoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cacosh(z) }
 }
@@ -13887,7 +14022,7 @@ pub unsafe extern "C" fn casinf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn casinf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casin(z) }
 }
@@ -13907,7 +14042,7 @@ pub unsafe extern "C" fn casinhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn casinhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn casinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { casinh(z) }
 }
@@ -13927,7 +14062,7 @@ pub unsafe extern "C" fn catanf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn catanf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catan(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catan(z) }
 }
@@ -13947,7 +14082,7 @@ pub unsafe extern "C" fn catanhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn catanhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn catanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { catanh(z) }
 }
@@ -13967,7 +14102,7 @@ pub unsafe extern "C" fn ccosf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ccosf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccosf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccos(z) }
 }
@@ -13987,7 +14122,7 @@ pub unsafe extern "C" fn ccoshf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ccoshf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ccoshf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ccosh(z) }
 }
@@ -14007,7 +14142,7 @@ pub unsafe extern "C" fn cexpf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cexpf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cexpf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cexp(z) }
 }
@@ -14027,7 +14162,7 @@ pub unsafe extern "C" fn clogf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn clogf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn clogf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { clog(z) }
 }
@@ -14253,7 +14388,7 @@ pub unsafe extern "C" fn conjf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn conjf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn conjf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { conj(z) }
 }
@@ -14277,7 +14412,7 @@ pub unsafe extern "C" fn cprojf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn cprojf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cprojf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { cproj(z) }
 }
@@ -14307,7 +14442,7 @@ pub unsafe extern "C" fn csinf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csinf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csin(z) }
 }
@@ -14327,7 +14462,7 @@ pub unsafe extern "C" fn csinhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csinhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csinhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csinh(z) }
 }
@@ -14347,7 +14482,7 @@ pub unsafe extern "C" fn csqrtf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn csqrtf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn csqrtf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { csqrt(z) }
 }
@@ -14825,7 +14960,7 @@ pub unsafe extern "C" fn ctanf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ctanf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctan(z) }
 }
@@ -14845,7 +14980,7 @@ pub unsafe extern "C" fn ctanhf32x(z: CDoubleComplex) -> CDoubleComplex {
 pub unsafe extern "C" fn ctanhf64(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn ctanhf64x(z: CDoubleComplex) -> CDoubleComplex {
     unsafe { ctanh(z) }
 }
@@ -14867,7 +15002,7 @@ pub unsafe extern "C" fn cpowf32x(a: CDoubleComplex, b: CDoubleComplex) -> CDoub
 pub unsafe extern "C" fn cpowf64(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
     unsafe { cpow(a, b) }
 }
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+#[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
 pub unsafe extern "C" fn cpowf64x(a: CDoubleComplex, b: CDoubleComplex) -> CDoubleComplex {
     unsafe { cpow(a, b) }
 }
