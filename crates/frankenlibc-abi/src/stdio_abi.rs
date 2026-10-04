@@ -5296,11 +5296,18 @@ pub unsafe extern "C-unwind" fn ftell(stream: *mut c_void) -> c_long {
     // ESPIPE there (its lseek does); fl returned its byte counter. Probed once.
     if s.fd() >= 0 && !s.is_mem_backed() {
         if s.seekability() == 0 {
-            let seekable = !matches!(
-                raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_CUR),
-                Err(e) if e == libc::ESPIPE
-            );
-            s.set_seekability(if seekable { 1 } else { 2 });
+            match raw_syscall::sys_lseek(s.fd(), 0, libc::SEEK_CUR) {
+                Ok(_) => s.set_seekability(1),
+                Err(e) if e == libc::ESPIPE => s.set_seekability(2),
+                // Like glibc, whose ftell on a stream with no cached offset is
+                // an lseek: a descriptor closed behind stdio's back reports
+                // EBADF (gnulib test-ftello4); nothing is cached.
+                Err(e) => {
+                    unsafe { set_abi_errno(e) };
+                    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                    return -1;
+                }
+            }
         }
         if s.seekability() == 2 {
             unsafe { set_abi_errno(errno::ESPIPE) };
@@ -11939,28 +11946,29 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
         return -1;
     }
 
-    // Try unlink first; if EISDIR, try rmdir.
-    if let Ok(()) = unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, 0) } {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
-        return 0;
-    }
-
-    // Check if it's a directory.
-    let errno_val = std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(errno::EIO);
-    if errno_val == errno::EISDIR
-        && let Ok(()) = unsafe {
-            raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
-        }
-    {
-        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
-        return 0;
-    }
-
-    let final_errno = std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(errno::EIO);
+    // Try unlink first; if EISDIR, try rmdir. The raw syscalls report their
+    // errno in `Err` and never touch the thread's errno, so reading
+    // `last_os_error()` here saw a stale value and directories were never
+    // rmdir'd (gnulib test-canonicalize-lgpl: remove of an empty dir failed).
+    let final_errno =
+        match unsafe { raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, 0) } {
+            Ok(()) => {
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+                return 0;
+            }
+            Err(errno::EISDIR) => match unsafe {
+                raw_syscall::sys_unlinkat(libc::AT_FDCWD, pathname as *const u8, libc::AT_REMOVEDIR)
+            } {
+                Ok(()) => {
+                    // glibc's remove leaves the failed unlink's EISDIR in errno.
+                    unsafe { set_abi_errno(errno::EISDIR) };
+                    runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
+                    return 0;
+                }
+                Err(e) => e,
+            },
+            Err(e) => e,
+        };
     unsafe { set_abi_errno(final_errno) };
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
     -1
