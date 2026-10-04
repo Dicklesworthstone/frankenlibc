@@ -2733,6 +2733,19 @@ pub(crate) fn observe(
         return;
     }
 
+    // Allocators call mmap/munmap/madvise/mremap from inside their own
+    // critical sections. Building the kernel here allocates through the
+    // `malloc` symbol, which a program may define itself (Bun/mimalloc
+    // export malloc): mimalloc's first mmap re-entered mimalloc mid-init,
+    // got NULL, and fl aborted with "memory allocation of 408 bytes failed"
+    // (the Claude Code binary, `--version`). Observe into an existing kernel
+    // only.
+    if family == ApiFamily::VirtualMemory
+        && KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY
+    {
+        return;
+    }
+
     // ERRNO TRANSPARENCY (bd-q1mkwh). Everything below this line is telemetry —
     // certificate lookups, a reentry guard, a panic-hook install, and the
     // kernel's own bookkeeping — and all of it takes locks. A futex wait whose
