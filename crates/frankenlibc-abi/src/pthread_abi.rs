@@ -971,6 +971,33 @@ fn rwlock_word_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicI32
     Some(rwlock.cast::<AtomicI32>())
 }
 
+/// glibc `pthread_rwlock_t` fields fl reuses beside its word (0) and magic
+/// (4): `__flags` holds the preference kind — where glibc and
+/// PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP put it — and
+/// `__wrphase_futex` counts writers waiting for the lock.
+const RWLOCK_KIND_OFFSET: usize = 48;
+const RWLOCK_WRITERS_WAITING_OFFSET: usize = 8;
+const RWLOCK_PREFER_WRITER_NONRECURSIVE: u32 = 2;
+
+/// The waiting-writer counter of a PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
+/// lock, or `None` for the default reader-preferring kinds (glibc ignores
+/// PREFER_WRITER_NP too). Under that kind a reader does not join while a
+/// writer waits, so readers cannot starve writers (gnulib test-rwlock1, whose
+/// glthread rwlocks request it).
+fn rwlock_writer_pref(rwlock: *mut libc::pthread_rwlock_t) -> Option<&'static AtomicI32> {
+    if rwlock.is_null() || !(rwlock as usize).is_multiple_of(std::mem::align_of::<AtomicI32>()) {
+        return None;
+    }
+    let base = rwlock.cast::<u8>();
+    // SAFETY: `pthread_rwlock_t` is 56 bytes on LP64 and 4-aligned (checked):
+    // both offsets lie inside it.
+    let kind = unsafe { &*base.add(RWLOCK_KIND_OFFSET).cast::<AtomicU32>() };
+    if kind.load(Ordering::Relaxed) != RWLOCK_PREFER_WRITER_NONRECURSIVE {
+        return None;
+    }
+    Some(unsafe { &*base.add(RWLOCK_WRITERS_WAITING_OFFSET).cast::<AtomicI32>() })
+}
+
 fn rwlock_magic_ptr(rwlock: *mut libc::pthread_rwlock_t) -> Option<*mut AtomicU32> {
     if rwlock.is_null() {
         return None;
@@ -2699,10 +2726,13 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     0
 }
 
-fn futex_rwlock_rdlock(word: &AtomicI32, private: bool) -> c_int {
+fn futex_rwlock_rdlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32>) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
-        if state >= 0 {
+        // Writer preference: with a writer waiting, wait like a blocked reader.
+        // The waiting writer changes `word` when it acquires, and every unlock
+        // that frees the lock wakes all waiters, so this sleep always ends.
+        if state >= 0 && !wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
             if state == i32::MAX {
                 return libc::EAGAIN;
             }
@@ -2735,12 +2765,57 @@ fn futex_rwlock_rdlock(word: &AtomicI32, private: bool) -> c_int {
     }
 }
 
-fn futex_rwlock_wrlock(word: &AtomicI32, private: bool) -> c_int {
+/// A writer counted in a writer-preferring lock's waiting count for as long as
+/// it waits. Dropping it uncounts the writer; if it gives up without the lock
+/// (timeout, error), readers it was holding back are woken.
+struct WaitingWriter<'a> {
+    waiting: Option<&'a AtomicI32>,
+    word: &'a AtomicI32,
+    private: bool,
+    acquired: bool,
+}
+
+impl<'a> WaitingWriter<'a> {
+    fn new(word: &'a AtomicI32, private: bool) -> Self {
+        Self {
+            waiting: None,
+            word,
+            private,
+            acquired: false,
+        }
+    }
+
+    /// Count this writer as waiting (once), before it first sleeps.
+    fn register(&mut self, wpref: Option<&'a AtomicI32>) {
+        if self.waiting.is_none()
+            && let Some(w) = wpref
+        {
+            w.fetch_add(1, Ordering::AcqRel);
+            self.waiting = Some(w);
+        }
+    }
+}
+
+impl Drop for WaitingWriter<'_> {
+    fn drop(&mut self) {
+        if let Some(w) = self.waiting {
+            w.fetch_sub(1, Ordering::AcqRel);
+            #[cfg(target_os = "linux")]
+            if !self.acquired {
+                let _ = futex_wake_word(self.word, i32::MAX, self.private);
+            }
+        }
+    }
+}
+
+fn futex_rwlock_wrlock(word: &AtomicI32, private: bool, wpref: Option<&AtomicI32>) -> c_int {
+    let mut waiter = WaitingWriter::new(word, private);
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
+            waiter.acquired = true;
             return 0;
         }
 
@@ -2751,6 +2826,7 @@ fn futex_rwlock_wrlock(word: &AtomicI32, private: bool) -> c_int {
             // -- forever if none comes.
             continue;
         }
+        waiter.register(wpref);
 
         #[cfg(target_os = "linux")]
         {
@@ -2810,10 +2886,10 @@ fn futex_rwlock_unlock(word: &AtomicI32, private: bool) -> c_int {
     }
 }
 
-fn futex_rwlock_tryrdlock(word: &AtomicI32) -> c_int {
+fn futex_rwlock_tryrdlock(word: &AtomicI32, wpref: Option<&AtomicI32>) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
-        if state < 0 || state == i32::MAX {
+        if state < 0 || state == i32::MAX || wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
             return libc::EBUSY;
         }
         if word
@@ -2838,10 +2914,12 @@ fn futex_rwlock_timed_rdlock(
     word: &AtomicI32,
     abstime: *const libc::timespec,
     private: bool,
+    wpref: Option<&AtomicI32>,
 ) -> c_int {
     loop {
         let state = word.load(Ordering::Acquire);
-        if state >= 0 {
+        // Writer preference: see futex_rwlock_rdlock.
+        if state >= 0 && !wpref.is_some_and(|w| w.load(Ordering::Acquire) > 0) {
             if state == i32::MAX {
                 return libc::EAGAIN;
             }
@@ -2874,12 +2952,15 @@ fn futex_rwlock_timed_wrlock(
     word: &AtomicI32,
     abstime: *const libc::timespec,
     private: bool,
+    wpref: Option<&AtomicI32>,
 ) -> c_int {
+    let mut waiter = WaitingWriter::new(word, private);
     loop {
         if word
             .compare_exchange(0, -1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
+            waiter.acquired = true;
             return 0;
         }
         let state = word.load(Ordering::Acquire);
@@ -2887,6 +2968,7 @@ fn futex_rwlock_timed_wrlock(
             // Released since the CAS; see futex_rwlock_wrlock.
             continue;
         }
+        waiter.register(wpref);
         let rc = futex_wait_timed(word, state, abstime, private);
         if rc == 0 {
             continue;
@@ -3991,6 +4073,19 @@ pub unsafe extern "C" fn pthread_rwlock_init(
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
     word.store(0, Ordering::Release);
+    // The preference kind and an empty waiting-writer count (see
+    // rwlock_writer_pref).
+    let kind = if attr.is_null() {
+        0
+    } else {
+        rwlockattr_kind(unsafe { *(attr as *const c_int) })
+    };
+    let base = rwlock.cast::<u8>();
+    // SAFETY: inside the 4-aligned 56-byte rwlock object (word_ptr checked).
+    unsafe {
+        (*base.add(RWLOCK_KIND_OFFSET).cast::<AtomicU32>()).store(kind as u32, Ordering::Relaxed);
+        (*base.add(RWLOCK_WRITERS_WAITING_OFFSET).cast::<AtomicI32>()).store(0, Ordering::Relaxed);
+    }
     if mark_managed_rwlock(rwlock, pshared == libc::PTHREAD_PROCESS_SHARED) {
         0
     } else {
@@ -4034,7 +4129,7 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_rdlock(word, rwlock_is_private(rwlock))
+    futex_rwlock_rdlock(word, rwlock_is_private(rwlock), rwlock_writer_pref(rwlock))
 }
 
 /// POSIX `pthread_rwlock_wrlock`.
@@ -4051,7 +4146,7 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(rwlock: *mut libc::pthread_rwlock
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_wrlock(word, rwlock_is_private(rwlock))
+    futex_rwlock_wrlock(word, rwlock_is_private(rwlock), rwlock_writer_pref(rwlock))
 }
 
 /// POSIX `pthread_rwlock_unlock`.
@@ -4085,7 +4180,7 @@ pub unsafe extern "C" fn pthread_rwlock_tryrdlock(rwlock: *mut libc::pthread_rwl
     };
     // SAFETY: `word_ptr` is alignment-checked and points to caller-owned rwlock storage.
     let word = unsafe { &*word_ptr };
-    futex_rwlock_tryrdlock(word)
+    futex_rwlock_tryrdlock(word, rwlock_writer_pref(rwlock))
 }
 
 /// POSIX `pthread_rwlock_trywrlock`.
@@ -7053,7 +7148,12 @@ pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
         return libc::EINVAL;
     };
     let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_rdlock(word, abstime, rwlock_is_private(rwlock))
+    futex_rwlock_timed_rdlock(
+        word,
+        abstime,
+        rwlock_is_private(rwlock),
+        rwlock_writer_pref(rwlock),
+    )
 }
 
 /// POSIX `pthread_rwlock_timedwrlock` — timed write lock.
@@ -7077,7 +7177,12 @@ pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
         return libc::EINVAL;
     };
     let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_wrlock(word, abstime, rwlock_is_private(rwlock))
+    futex_rwlock_timed_wrlock(
+        word,
+        abstime,
+        rwlock_is_private(rwlock),
+        rwlock_writer_pref(rwlock),
+    )
 }
 
 /// GNU `pthread_rwlock_clockrdlock` — clock-specific timed read lock.
