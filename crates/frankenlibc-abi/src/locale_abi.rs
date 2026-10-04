@@ -1072,7 +1072,183 @@ static LC_TIME_C_TABLE: PtrTable<50> = PtrTable([
     c"".as_ptr(),
 ]);
 
-// Compile-time offset assertions for the table above.
+/// Widen a NUL-terminated ASCII byte string into a `wchar_t` (u32) string.
+const fn widen<const N: usize>(s: &[u8; N]) -> [u32; N] {
+    let mut out = [0u32; N];
+    let mut i = 0;
+    while i < N {
+        out[i] = s[i] as u32;
+        i += 1;
+    }
+    out
+}
+
+/// A static `wchar_t` string, as the `*const c_char` nl_langinfo returns.
+macro_rules! wstr {
+    ($s:literal) => {{
+        static W: [u32; $s.len()] = widen($s);
+        W.as_ptr().cast::<c_char>()
+    }};
+}
+
+/// Offset of `_NL_TIME_CODESET`, which follows the active charset.
+const LC_TIME_CODESET_OFFSET: usize = 110;
+
+/// LC_TIME items 50..=158 of glibc's C locale, after ERA_T_FMT: the era
+/// count, the `wchar_t` forms of every name and format, the week data, the
+/// `%+` date format, and the C23/POSIX ALTMON_n / _NL_ABALTMON_n names with
+/// their wide forms. fl returned `""` for all of them, so ALTMON_1 was empty
+/// (gnulib test-nl_langinfo) and a `_NL_W*` item read as a wide string ran off
+/// a one-byte narrow literal. Word items are the value itself as the pointer,
+/// as glibc returns them. Offset 110 (`_NL_TIME_CODESET`) is a placeholder:
+/// callers return the charset's codeset.
+static LC_TIME_EXT_C_TABLE: PtrTable<109> = PtrTable([
+    // 50 _NL_TIME_ERA_NUM_ENTRIES (word 0), 51 _NL_TIME_ERA_ENTRIES
+    core::ptr::null(),
+    c"".as_ptr(),
+    // 52..=58 _NL_WABDAY_1..7
+    wstr!(b"Sun\0"),
+    wstr!(b"Mon\0"),
+    wstr!(b"Tue\0"),
+    wstr!(b"Wed\0"),
+    wstr!(b"Thu\0"),
+    wstr!(b"Fri\0"),
+    wstr!(b"Sat\0"),
+    // 59..=65 _NL_WDAY_1..7
+    wstr!(b"Sunday\0"),
+    wstr!(b"Monday\0"),
+    wstr!(b"Tuesday\0"),
+    wstr!(b"Wednesday\0"),
+    wstr!(b"Thursday\0"),
+    wstr!(b"Friday\0"),
+    wstr!(b"Saturday\0"),
+    // 66..=77 _NL_WABMON_1..12
+    wstr!(b"Jan\0"),
+    wstr!(b"Feb\0"),
+    wstr!(b"Mar\0"),
+    wstr!(b"Apr\0"),
+    wstr!(b"May\0"),
+    wstr!(b"Jun\0"),
+    wstr!(b"Jul\0"),
+    wstr!(b"Aug\0"),
+    wstr!(b"Sep\0"),
+    wstr!(b"Oct\0"),
+    wstr!(b"Nov\0"),
+    wstr!(b"Dec\0"),
+    // 78..=89 _NL_WMON_1..12
+    wstr!(b"January\0"),
+    wstr!(b"February\0"),
+    wstr!(b"March\0"),
+    wstr!(b"April\0"),
+    wstr!(b"May\0"),
+    wstr!(b"June\0"),
+    wstr!(b"July\0"),
+    wstr!(b"August\0"),
+    wstr!(b"September\0"),
+    wstr!(b"October\0"),
+    wstr!(b"November\0"),
+    wstr!(b"December\0"),
+    // 90..=95 _NL_WAM_STR, _NL_WPM_STR, _NL_WD_T_FMT, _NL_WD_FMT, _NL_WT_FMT,
+    // _NL_WT_FMT_AMPM
+    wstr!(b"AM\0"),
+    wstr!(b"PM\0"),
+    wstr!(b"%a %b %e %H:%M:%S %Y\0"),
+    wstr!(b"%m/%d/%y\0"),
+    wstr!(b"%H:%M:%S\0"),
+    wstr!(b"%I:%M:%S %p\0"),
+    // 96..=100 _NL_WERA_YEAR, _NL_WERA_D_FMT, _NL_WALT_DIGITS,
+    // _NL_WERA_D_T_FMT, _NL_WERA_T_FMT
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    wstr!(b"\0"),
+    // 101 _NL_TIME_WEEK_NDAYS, 102 _NL_TIME_WEEK_1STDAY (word),
+    // 103 _NL_TIME_WEEK_1STWEEK, 104 _NL_TIME_FIRST_WEEKDAY,
+    // 105 _NL_TIME_FIRST_WORKDAY, 106 _NL_TIME_CAL_DIRECTION
+    c"\x07".as_ptr(),
+    core::ptr::without_provenance(19971130),
+    c"\x04".as_ptr(),
+    c"\x01".as_ptr(),
+    c"\x02".as_ptr(),
+    c"\x01".as_ptr(),
+    // 107 _NL_TIME_TIMEZONE, 108 _DATE_FMT, 109 _NL_W_DATE_FMT,
+    // 110 _NL_TIME_CODESET (placeholder, see above)
+    c"".as_ptr(),
+    c"%a %b %e %H:%M:%S %Z %Y".as_ptr(),
+    wstr!(b"%a %b %e %H:%M:%S %Z %Y\0"),
+    c"".as_ptr(),
+    // 111..=122 ALTMON_1..12
+    c"January".as_ptr(),
+    c"February".as_ptr(),
+    c"March".as_ptr(),
+    c"April".as_ptr(),
+    c"May".as_ptr(),
+    c"June".as_ptr(),
+    c"July".as_ptr(),
+    c"August".as_ptr(),
+    c"September".as_ptr(),
+    c"October".as_ptr(),
+    c"November".as_ptr(),
+    c"December".as_ptr(),
+    // 123..=134 _NL_WALTMON_1..12
+    wstr!(b"January\0"),
+    wstr!(b"February\0"),
+    wstr!(b"March\0"),
+    wstr!(b"April\0"),
+    wstr!(b"May\0"),
+    wstr!(b"June\0"),
+    wstr!(b"July\0"),
+    wstr!(b"August\0"),
+    wstr!(b"September\0"),
+    wstr!(b"October\0"),
+    wstr!(b"November\0"),
+    wstr!(b"December\0"),
+    // 135..=146 _NL_ABALTMON_1..12
+    c"Jan".as_ptr(),
+    c"Feb".as_ptr(),
+    c"Mar".as_ptr(),
+    c"Apr".as_ptr(),
+    c"May".as_ptr(),
+    c"Jun".as_ptr(),
+    c"Jul".as_ptr(),
+    c"Aug".as_ptr(),
+    c"Sep".as_ptr(),
+    c"Oct".as_ptr(),
+    c"Nov".as_ptr(),
+    c"Dec".as_ptr(),
+    // 147..=158 _NL_WABALTMON_1..12
+    wstr!(b"Jan\0"),
+    wstr!(b"Feb\0"),
+    wstr!(b"Mar\0"),
+    wstr!(b"Apr\0"),
+    wstr!(b"May\0"),
+    wstr!(b"Jun\0"),
+    wstr!(b"Jul\0"),
+    wstr!(b"Aug\0"),
+    wstr!(b"Sep\0"),
+    wstr!(b"Oct\0"),
+    wstr!(b"Nov\0"),
+    wstr!(b"Dec\0"),
+]);
+
+/// LC_TIME item at `offset` (from ABDAY_1) past the 50-entry base table, if
+/// it is one of the C locale's 50..=158 items. `codeset` serves offset 110.
+#[inline]
+fn lc_time_ext_c(offset: usize, codeset: impl FnOnce() -> *const c_char) -> Option<*const c_char> {
+    if !(50..159).contains(&offset) {
+        return None;
+    }
+    if offset == LC_TIME_CODESET_OFFSET {
+        return Some(codeset());
+    }
+    Some(LC_TIME_EXT_C_TABLE.0[offset - 50])
+}
+
+// Compile-time offset assertions for the tables above.
+const _: () = assert!(libc::ABDAY_1 + 111 == 0x2006f); // ALTMON_1
+const _: () = assert!(libc::ABDAY_1 + 135 == 0x20087); // _NL_ABALTMON_1
+const _: () = assert!(libc::ABDAY_1 + 108 == 0x2006c); // _DATE_FMT
 const _: () = assert!(libc::DAY_1 - libc::ABDAY_1 == 7);
 const _: () = assert!(libc::DAY_7 - libc::ABDAY_1 == 13);
 const _: () = assert!(libc::ABMON_1 - libc::ABDAY_1 == 14);
@@ -1248,6 +1424,9 @@ fn langinfo_c_fast(item: libc::nl_item, charset: Charset) -> *const c_char {
         // SAFETY: offset is bounds-checked < 50.
         return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
     }
+    if let Some(p) = lc_time_ext_c(offset, || codeset_ptr(charset)) {
+        return p;
+    }
     if item == libc::CODESET {
         return codeset_ptr(charset);
     }
@@ -1342,6 +1521,9 @@ pub unsafe extern "C" fn nl_langinfo(item: libc::nl_item) -> *const c_char {
         if offset < 50 {
             // SAFETY: offset is bounds-checked < 50.
             return unsafe { *LC_TIME_C_TABLE.0.get_unchecked(offset) };
+        }
+        if let Some(p) = lc_time_ext_c(offset, active_codeset_ptr) {
+            return p;
         }
         if item == libc::CODESET {
             return active_codeset_ptr();

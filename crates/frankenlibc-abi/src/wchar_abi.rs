@@ -4172,15 +4172,12 @@ pub unsafe extern "C" fn mbrtowc(
 ) -> usize {
     const MB_INCOMPLETE: usize = usize::MAX - 1;
 
-    // s == NULL resets the conversion state (equivalent to mbrtowc(NULL,"",1,ps)).
+    // s == NULL resets the conversion state: it is mbrtowc(NULL, "", 1, ps), so
+    // `pwc` is NOT written (glibc leaves it; gnulib test-mbrtowc checks).
     if s.is_null() {
         if !ps.is_null() {
             // SAFETY: ps is a valid mbstate_t per the C contract.
             unsafe { mbstate_partial_clear(ps) };
-        }
-        if !pwc.is_null() {
-            // SAFETY: pwc is caller-provided out pointer.
-            unsafe { *pwc = 0 };
         }
         return 0;
     }
@@ -8753,6 +8750,12 @@ pub unsafe extern "C" fn mbrtoc16(
     n: usize,
     ps: *mut c_void,
 ) -> usize {
+    // s == NULL is mbrtoc16(NULL, "", 1, ps): nothing is stored (as mbrtowc).
+    let pc16 = if s.is_null() {
+        std::ptr::null_mut()
+    } else {
+        pc16
+    };
     let pending = unsafe { c16_pending_get(ps) };
 
     if pending != 0 {

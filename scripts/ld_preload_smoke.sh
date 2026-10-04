@@ -211,6 +211,8 @@ MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
 cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
 REMOVE_DIR_FTELL_EBADF_BIN="${BIN_DIR}/fixture_remove_dir_ftell_ebadf"
 cc -O2 -Wno-unused-result "${ROOT}/tests/integration/fixture_remove_dir_ftell_ebadf.c" -o "${REMOVE_DIR_FTELL_EBADF_BIN}"
+LANGINFO_TIME_MBRTOWC_NULL_BIN="${BIN_DIR}/fixture_langinfo_time_mbrtowc_null"
+cc -O2 "${ROOT}/tests/integration/fixture_langinfo_time_mbrtowc_null.c" -o "${LANGINFO_TIME_MBRTOWC_NULL_BIN}"
 FPURGE_FREOPEN_BIN="${BIN_DIR}/fixture_fpurge_freopen"
 cc -O2 "${ROOT}/tests/integration/fixture_fpurge_freopen.c" -o "${FPURGE_FREOPEN_BIN}"
 MALLOC_ENOMEM_BIN="${BIN_DIR}/fixture_malloc_enomem"
@@ -943,6 +945,8 @@ EOF
   run_corpus_case "${mode}" "fpurge_freopen" "${FPURGE_FREOPEN_BIN}" || mode_failed=1
   # remove() of an empty dir; ftello EBADF on a closed fd (gnulib canonicalize/ftello4).
   run_corpus_case "${mode}" "remove_dir_ftell_ebadf" "${REMOVE_DIR_FTELL_EBADF_BIN}" || mode_failed=1
+  # LC_TIME items 50..158 (ALTMON, wide names); mbrtowc(pwc, NULL) (gnulib).
+  run_corpus_case "${mode}" "langinfo_time_mbrtowc_null" "${LANGINFO_TIME_MBRTOWC_NULL_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys
