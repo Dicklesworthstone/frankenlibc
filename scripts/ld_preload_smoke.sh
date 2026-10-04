@@ -207,6 +207,8 @@ QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
 cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
 GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
 cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -o "${GLOB_RESET_BIN}"
+MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
+cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
 MALLOC_ENOMEM_BIN="${BIN_DIR}/fixture_malloc_enomem"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_enomem.c" -o "${MALLOC_ENOMEM_BIN}"
 GNU_REGEX_API_BIN="${BIN_DIR}/fixture_gnu_regex_api"
@@ -931,6 +933,8 @@ EOF
   run_corpus_case "${mode}" "gnu_regex_api" "${GNU_REGEX_API_BIN}" || mode_failed=1
   # Every failed allocation leaves errno == ENOMEM (gnulib test-*-gnu).
   run_corpus_case "${mode}" "malloc_enomem" "${MALLOC_ENOMEM_BIN}" || mode_failed=1
+  # memchr/memccpy stop at the first match before an unmapped page (gnulib test-memchr).
+  run_corpus_case "${mode}" "memchr_page_boundary" "${MEMCHR_PAGE_BOUNDARY_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys

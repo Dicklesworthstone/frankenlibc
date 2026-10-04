@@ -4829,6 +4829,14 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
                 }
                 return std::ptr::null_mut();
             }
+            // A word read past a match could fault when the range crosses into a
+            // page the caller only covered with an overshooting `n`.
+            if (p as usize & (MEMCHR_PAGE - 1)) + n > MEMCHR_PAGE {
+                return match unsafe { memchr_page_bounded(p, needle, n) } {
+                    Some(idx) => unsafe { (p as *mut u8).add(idx).cast() },
+                    None => std::ptr::null_mut(),
+                };
+            }
             let mut i = 0usize;
             unsafe {
                 while i + 8 <= n {
@@ -4860,8 +4868,14 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
             }
             return std::ptr::null_mut();
         }
-        let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
-        return match frankenlibc_core::string::mem::memchr(bytes, needle, n) {
+        // One-page range (the common case): no later page to protect.
+        let found = if (s as usize & (MEMCHR_PAGE - 1)) + n <= MEMCHR_PAGE {
+            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
+            frankenlibc_core::string::mem::memchr(bytes, needle, n)
+        } else {
+            unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
+        };
+        return match found {
             Some(idx) => unsafe { (s as *mut u8).add(idx).cast() },
             None => std::ptr::null_mut(),
         };
@@ -4873,6 +4887,53 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
     // above on every call for registers it never touches. Measured there: a flat
     // 14.0 Ir per call at every length, equal to the prologue/epilogue count.
     unsafe { memchr_validating(s, c, n) }
+}
+
+const MEMCHR_PAGE: usize = 4096;
+
+/// First `needle` in `[s, s + n)`, never touching a page beyond the one holding
+/// the first match. memchr stops at the first occurrence (Austin Group 454), so
+/// callers may pass an `n` running past the object into an unmapped page; the
+/// core scan reads whole SIMD blocks of its slice and faulted there (gnulib
+/// test-memchr, SIGSEGV). It is handed one page-bounded segment at a time.
+///
+/// # Safety
+///
+/// Every byte of `[s, s + n)` up to and including the first match is readable.
+#[inline]
+unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    let mut off = 0usize;
+    while off < n {
+        let addr = (s as usize).wrapping_add(off);
+        let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
+        // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
+        // unexamined byte the caller vouches for, so the whole page is mapped.
+        let bytes = unsafe { std::slice::from_raw_parts(s.add(off), seg) };
+        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, needle, seg) {
+            return Some(off + idx);
+        }
+        off += seg;
+    }
+    None
+}
+
+/// `memccpy` that reads `src` only up to the first `c`, like glibc: `n` may run
+/// past the source object (e.g. `memccpy(dst, str, 0, sizeof dst)` on a string
+/// ending at a page edge), which the core's whole-range scan faulted on.
+///
+/// # Safety
+///
+/// `src` is readable up to and including the first `c` (or for `n` bytes), and
+/// `dst` is writable for as many bytes as are copied.
+#[inline]
+unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) -> *mut c_void {
+    let found = unsafe { memchr_page_bounded(src, c, n) };
+    let len = found.map_or(n, |i| i + 1);
+    unsafe { std::ptr::copy(src, dst, len) };
+    match found {
+        Some(_) => unsafe { dst.add(len).cast() },
+        None => std::ptr::null_mut(),
+    }
 }
 
 #[cold]
@@ -4939,8 +5000,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
 
     // SAFETY: `scan_len` is either original `n` or clamped by known bounds.
     unsafe {
-        let bytes = std::slice::from_raw_parts(s.cast::<u8>(), scan_len);
-        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, c as u8, scan_len) {
+        if let Some(idx) = memchr_page_bounded(s.cast::<u8>(), c as u8, scan_len) {
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -9191,14 +9251,7 @@ pub unsafe extern "C" fn memccpy(
         if n == 0 || dst.is_null() || src.is_null() {
             return std::ptr::null_mut();
         }
-        return unsafe {
-            let d_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), n);
-            let s_slice = std::slice::from_raw_parts(src.cast::<u8>(), n);
-            match frankenlibc_core::string::memccpy(d_slice, s_slice, c as u8, n) {
-                Some(idx) => (dst as *mut u8).add(idx).cast(),
-                None => std::ptr::null_mut(),
-            }
-        };
+        return unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, n) };
     }
 
     let Some(_membrane_guard) = enter_string_membrane_guard() else {
@@ -9268,14 +9321,7 @@ pub unsafe extern "C" fn memccpy(
     );
 
     // SAFETY: `copy_len` is original `n` or clamped to known bounds.
-    let result = unsafe {
-        let d_slice = std::slice::from_raw_parts_mut(dst.cast::<u8>(), copy_len);
-        let s_slice = std::slice::from_raw_parts(src.cast::<u8>(), copy_len);
-        match frankenlibc_core::string::memccpy(d_slice, s_slice, c as u8, copy_len) {
-            Some(idx) => (dst as *mut u8).add(idx).cast(),
-            None => std::ptr::null_mut(),
-        }
-    };
+    let result = unsafe { memccpy_page_bounded(dst.cast(), src.cast(), c as u8, copy_len) };
 
     record_string_stage_outcome(&ordering, aligned, recent_page, None);
     runtime_policy::observe(
