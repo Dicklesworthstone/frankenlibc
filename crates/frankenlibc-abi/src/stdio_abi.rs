@@ -1538,9 +1538,22 @@ impl std::ops::DerefMut for StreamGuard<'_> {
 impl Drop for StreamGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        if self.flags_word != 0 {
-            mirror_stream_flags(self.flags_word, &self.guard);
+        let handle = resolve_flags_word(self.flags_word);
+        if handle != 0 {
+            mirror_stream_flags(handle, &self.guard);
         }
+    }
+}
+
+/// A cell's `flags_word` is the handle address, or for stdin/stdout/stderr
+/// `fd + 1`, resolved here to the std handle without the registry lock (0
+/// until the std slot addresses are published).
+#[inline]
+fn resolve_flags_word(flags_word: usize) -> usize {
+    if (1..=3).contains(&flags_word) {
+        io_internal_abi::native_stdio_slot_addr_lockfree(flags_word - 1)
+    } else {
+        flags_word
     }
 }
 
@@ -1644,13 +1657,35 @@ impl StreamRegistry {
             readable: true,
             ..Default::default()
         };
+        // Each standard stream mirrors its EOF/ERR state into the glibc-layout
+        // handle the `stdin`/`stdout`/`stderr` symbols point at: glibc's inline
+        // ferror_unlocked/feof_unlocked (which gnulib's close_stdin uses via
+        // unlocked-io.h) read `_flags` directly. Without a handle the bits
+        // never moved, so `fread` from a closed stdin left ferror_unlocked 0
+        // and close_stdin reported success (gnulib test-closein, test-yesno).
+        // The handle address is resolved lock-free at mirror time (see
+        // `resolve_flags_word`): looking it up here took the native registry
+        // lock, and this lazy init can run with that lock held (dash hung).
+        let std_handle = |fd: c_int| fd as usize + 1;
+        // A standard stream starts where its inherited descriptor is (a shell
+        // hands a child stdin mid-file): ftell and fseek(SEEK_CUR) build on
+        // this offset, which used to start at 0.
+        let at_fd_offset = |mut stream: StdioStream| {
+            if let Ok(cur) = raw_syscall::sys_lseek(stream.fd(), 0, libc::SEEK_CUR) {
+                stream.set_offset(cur);
+            }
+            stream
+        };
         streams.insert(
             STDIN_SENTINEL,
-            new_stream_cell(fd_stream(
-                libc::STDIN_FILENO,
-                stdin_flags,
-                std_stream_buf_mode(libc::STDIN_FILENO),
-            )),
+            new_stream_cell_with_handle(
+                at_fd_offset(fd_stream(
+                    libc::STDIN_FILENO,
+                    stdin_flags,
+                    std_stream_buf_mode(libc::STDIN_FILENO),
+                )),
+                std_handle(libc::STDIN_FILENO),
+            ),
         );
 
         // Pre-register stdout (fd 1).
@@ -1660,11 +1695,14 @@ impl StreamRegistry {
         };
         streams.insert(
             STDOUT_SENTINEL,
-            new_stream_cell(fd_stream(
-                libc::STDOUT_FILENO,
-                stdout_flags,
-                std_stream_buf_mode(libc::STDOUT_FILENO),
-            )),
+            new_stream_cell_with_handle(
+                at_fd_offset(fd_stream(
+                    libc::STDOUT_FILENO,
+                    stdout_flags,
+                    std_stream_buf_mode(libc::STDOUT_FILENO),
+                )),
+                std_handle(libc::STDOUT_FILENO),
+            ),
         );
 
         // Pre-register stderr (fd 2).
@@ -1674,7 +1712,10 @@ impl StreamRegistry {
         };
         streams.insert(
             STDERR_SENTINEL,
-            new_stream_cell(StdioStream::new(libc::STDERR_FILENO, stderr_flags)),
+            new_stream_cell_with_handle(
+                at_fd_offset(StdioStream::new(libc::STDERR_FILENO, stderr_flags)),
+                std_handle(libc::STDERR_FILENO),
+            ),
         );
 
         Self { streams }
@@ -3000,9 +3041,17 @@ fn sync_input_position(stream: &mut StdioStream) {
     if fd < 0 || stream.is_mem_backed() || stream.readable_buffered() == 0 {
         return;
     }
-    if raw_syscall::sys_lseek(fd, stream.offset(), libc::SEEK_SET).is_ok() {
+    // Back up over the unread bytes relative to where the descriptor is, as
+    // glibc does (lseek(fd, read_ptr - read_end, SEEK_CUR)). An absolute seek
+    // to the logical offset was wrong whenever that offset had not started
+    // from the descriptor's real position — stdin inherited at offset N
+    // starts at 0 — so close_stdin left a shared fd mid-line (gnulib
+    // test-yesno).
+    let unread = stream.readable_buffered() as i64;
+    if let Ok(pos) = raw_syscall::sys_lseek(fd, -unread, libc::SEEK_CUR) {
         let eof = stream.is_eof();
         let _ = stream.prepare_seek();
+        stream.set_offset(pos);
         if eof {
             stream.set_eof();
         }
@@ -3379,6 +3428,13 @@ fn fdopen_native_impl(fd: c_int, open_flags: &OpenFlags) -> *mut c_void {
         && let Ok(end_off) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_END)
     {
         stream.set_offset(end_off);
+    } else if let Ok(cur) = raw_syscall::sys_lseek(fd, 0, libc::SEEK_CUR) {
+        // Any other stream starts where the descriptor is: fdopen of an fd
+        // at offset 1 reads byte 1 and ftell reports 2 after one fgetc. The
+        // logical offset began at 0, so fclose/fflush synced the descriptor
+        // back to the wrong place (gnulib test-fclose; a shared fd re-read
+        // bytes already consumed).
+        stream.set_offset(cur);
     }
 
     // The FILE * handed back is a glibc-layout handle (bd-rc0923-epic-eeuy4f.1):
@@ -3562,13 +3618,15 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
         }
     }
 
-    // Close the fd (don't close stdin/stdout/stderr sentinel fds).
+    // Close the fd — for stdin/stdout/stderr too, as glibc does: coreutils'
+    // close_stdout/close_stdin judge success by fclose's result, and an fd
+    // already closed behind stdio's back must report EBADF (gnulib
+    // test-closein, test-fclose). The raw close reports its errno only in
+    // the result.
     if fd >= 0
-        && id != STDIN_SENTINEL
-        && id != STDOUT_SENTINEL
-        && id != STDERR_SENTINEL
-        && raw_syscall::sys_close(fd).is_err()
+        && let Err(e) = raw_syscall::sys_close(fd)
     {
+        unsafe { set_abi_errno(e) };
         adverse = true;
     }
 
@@ -5402,12 +5460,23 @@ pub unsafe extern "C-unwind" fn ferror(stream: *mut c_void) -> c_int {
     // Single-threaded inline fast path (see feof): cached => non-mem fd stream => read
     // `is_error()` directly, skipping the 3 per-call locks. Byte-identical.
     if let Some(p) = write_cache_lookup_by_stream(stream) {
-        // SAFETY: ST-gated + gen-valid ⇒ pointer live, shared read only.
-        return if unsafe { (*p).is_error() } { 1 } else { 0 };
+        // SAFETY: ST-gated + gen-valid ⇒ pointer live, unique for this call.
+        if unsafe { (*p).is_error() } {
+            return 1;
+        }
+        if header_err_seen(stream) {
+            unsafe { (*p).set_error() };
+            return 1;
+        }
+        return 0;
     }
     // MT-safe cell-cache fast path (see feof): threaded loops otherwise pay the map lock per call.
     if let Some(cell) = stream_cell_cache_lookup(stream) {
-        return if cell.lock().is_error() { 1 } else { 0 };
+        let mut s = cell.lock();
+        if !s.is_error() && header_err_seen(stream) {
+            s.set_error();
+        }
+        return if s.is_error() { 1 } else { 0 };
     }
     let id = canonical_stream_id(stream);
     if id == 0 {
@@ -5421,16 +5490,54 @@ pub unsafe extern "C-unwind" fn ferror(stream: *mut c_void) -> c_int {
         return unsafe { host_ferror(stream) };
     }
     if let Some(cell) = stream_cell(id) {
-        let s = cell.lock();
+        let mut s = cell.lock();
+        if !s.is_error() && header_err_seen(stream) {
+            s.set_error();
+        }
         if s.is_error() { 1 } else { 0 }
     } else {
         0
     }
 }
 
+/// The handle's glibc `_IO_ERR_SEEN` bit was set from outside fl — gnulib's
+/// `fseterr` does `fp->_flags |= _IO_ERR_SEEN` on glibc. fl mirrors its own
+/// state into `_flags` but never read it back, so ferror stayed 0 (gnulib
+/// test-fseterr). Callers adopt it into the stream state so it persists
+/// until clearerr, as in glibc.
+#[inline]
+fn header_err_seen(stream: *mut c_void) -> bool {
+    use io_internal_abi::glibc_flag_bits::ERR_SEEN;
+    let handle = stream as usize;
+    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        return false;
+    }
+    // SAFETY: a non-sentinel FILE * is a live glibc-layout handle whose first
+    // field is the aligned `_flags` int (see mirror_stream_flags).
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    word.load(Ordering::Relaxed) & ERR_SEEN != 0
+}
+
+/// Clear `_IO_EOF_SEEN | _IO_ERR_SEEN` in a live handle's `_flags` (clearerr).
+#[inline]
+fn clear_header_eof_err(stream: *mut c_void) {
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
+    let handle = stream as usize;
+    if handle == 0 || (STDIN_SENTINEL..0x2000_0000).contains(&handle) {
+        return;
+    }
+    // SAFETY: as in header_err_seen.
+    let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
+    word.fetch_and(!(EOF_SEEN | ERR_SEEN), Ordering::Relaxed);
+}
+
 /// POSIX `clearerr`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clearerr(stream: *mut c_void) {
+    // Clear the caller-visible header bits too: not every path below mirrors
+    // the stream state back (the standard streams' does not), and a bit set
+    // there by gnulib's fseterr would otherwise be re-adopted by ferror.
+    clear_header_eof_err(stream);
     // ST fast path: a cache hit is a non-mem fd stream (fast_fixed_mem_read(id)==None), so
     // the slow path reduces to `s.clear_err()` — do it directly, skipping the 3 per-call
     // locks. Byte-identical. Mutating, but ST-gated ⇒ unique access.

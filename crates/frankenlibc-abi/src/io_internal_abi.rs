@@ -1641,6 +1641,18 @@ static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
     AtomicUsize::new(0),
 ];
 
+/// Address of the std handle for `fd` (0..=2) without taking the registry
+/// lock, or 0 if the slot addresses are not published yet. Safe to call while
+/// the native registry lock is held.
+pub(crate) fn native_stdio_slot_addr_lockfree(fd: usize) -> usize {
+    if fd >= NATIVE_STDIO_SLOT_ADDR.len()
+        || !STDIO_CHAIN_INITIALIZED.load(std::sync::atomic::Ordering::Acquire)
+    {
+        return 0;
+    }
+    NATIVE_STDIO_SLOT_ADDR[fd].load(Ordering::Acquire)
+}
+
 /// Access the global stream registry.
 ///
 /// On first access, initializes the stdio chain links and bloom filter.
