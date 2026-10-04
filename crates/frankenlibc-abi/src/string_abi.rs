@@ -13263,13 +13263,43 @@ pub unsafe extern "C" fn envz_strip(envz: *mut *mut c_char, envz_len: *mut usize
 // Many legacy programs and GNU utilities use this API instead of the newer
 // POSIX regcomp/regexec interface. We implement using our existing regex core.
 
-/// Default syntax bits for the old GNU regex API.
-static RE_SYNTAX: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// The live `re_syntax_options`. As in glibc, that variable IS the syntax
+/// state: programs assign it directly (coreutils expr), `re_set_syntax`
+/// writes it and `re_compile_pattern` reads it. fl kept a private copy that
+/// only `re_set_syntax` updated, so expr compiled with syntax 0 (no
+/// intervals: `a\{1\}` matched nothing). An executable that references the
+/// variable owns a COPY-relocated instance, so resolve the one in use through
+/// the dynamic linker instead of assuming fl's own definition.
+fn re_syntax_options_ptr() -> *mut libc::c_ulong {
+    static PTR: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PTR.get_or_init(|| {
+        // SAFETY: RTLD_DEFAULT lookup of a NUL-terminated symbol name.
+        let sym =
+            unsafe { crate::dlfcn_abi::dlsym(std::ptr::null_mut(), c"re_syntax_options".as_ptr()) };
+        if sym.is_null() {
+            // SAFETY: taking the address of fl's own definition.
+            unsafe { std::ptr::addr_of_mut!(crate::glibc_internal_abi::re_syntax_options) as usize }
+        } else {
+            sym as usize
+        }
+    }) as *mut libc::c_ulong
+}
+
+fn current_re_syntax() -> u64 {
+    // SAFETY: the pointer names the process's `re_syntax_options` word.
+    unsafe { std::ptr::read_volatile(re_syntax_options_ptr()) as u64 }
+}
 
 /// `re_set_syntax` — set default syntax options for regex compilation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn re_set_syntax(syntax: u64) -> u64 {
-    RE_SYNTAX.swap(syntax, std::sync::atomic::Ordering::Relaxed)
+    let ptr = re_syntax_options_ptr();
+    // SAFETY: as `current_re_syntax`; glibc's update is equally unsynchronized.
+    unsafe {
+        let old = std::ptr::read_volatile(ptr);
+        std::ptr::write_volatile(ptr, syntax as libc::c_ulong);
+        old as u64
+    }
 }
 
 /// `re_compile_pattern` — compile a regex pattern (GNU old API).
@@ -13291,7 +13321,7 @@ pub unsafe extern "C" fn re_compile_pattern(
     unsafe { regex_release_buffer(layout) };
 
     let pat_slice = unsafe { core::slice::from_raw_parts(pattern as *const u8, length) };
-    let syntax = RE_SYNTAX.load(std::sync::atomic::Ordering::Relaxed);
+    let syntax = current_re_syntax();
     // glibc's re_compile_pattern always sets `newline_anchor`; callers (sed) may
     // clear it before searching, which regex_compiled_for_search honours.
     let cflags =

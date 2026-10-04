@@ -131,6 +131,20 @@ int main(void) {
         printf("\n");
     }
 
+    /* coreutils expr assigns re_syntax_options directly instead of calling
+     * re_set_syntax; re_compile_pattern must read that variable (fl kept a
+     * private copy, so intervals were off and `a\{1\}b` matched nothing). */
+    re_set_syntax(RE_SYNTAX_EMACS);
+    re_syntax_options = RE_SYNTAX_POSIX_BASIC & ~RE_CONTEXT_INVALID_DUP & ~RE_NO_EMPTY_RANGES;
+    memset(&b, 0, sizeof b);
+    err = re_compile_pattern("a\\{1,2\\}b", 9, &b);
+    printf("direct re_syntax_options: %s match=%d\n", err ? err : "ok",
+           err ? -9 : re_match(&b, "aab", 3, 0, NULL));
+    if (!err)
+        regfree(&b);
+    printf("re_set_syntax returns %#lx\n", (unsigned long)re_set_syntax(RE_SYNTAX_GREP));
+    printf("re_syntax_options now %#lx\n", (unsigned long)re_syntax_options);
+
     free(regs.start);
     free(regs.end);
     return 0;
