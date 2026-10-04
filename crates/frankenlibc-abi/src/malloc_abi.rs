@@ -547,7 +547,18 @@ fn enter_native_reentry_guard_for_slot(
 }
 
 static BUMP_POS: AtomicUsize = AtomicUsize::new(0);
-const BUMP_SIZE: usize = 256 * 1024 * 1024; // 256 MiB to cover strict preload startup.
+/// Standalone builds have no host allocator: the bump heap is all there is.
+#[cfg(feature = "standalone")]
+const BUMP_SIZE: usize = 256 * 1024 * 1024;
+/// Preloaded, the bump heap only serves allocations made before the host
+/// allocator resolves or re-entrantly inside it: 0 bytes for echo, sort, git,
+/// perl, bash, python3 and claude in strict mode, 52 KiB in hardened
+/// (measured 2026-10-04); anything beyond spills into reclaimable overflow
+/// mappings. Its size is address space every process pays for: at 256 MiB the
+/// library alone exceeded the `ulimit -v` budgets programs and test suites set
+/// (coreutils cut-huge-range, printf-surprise), so nothing could even load.
+#[cfg(not(feature = "standalone"))]
+const BUMP_SIZE: usize = 8 * 1024 * 1024;
 const BUMP_ALIGN: usize = 16;
 const BUMP_HEADER_WORDS: usize = 2;
 const BUMP_HEADER_SIZE: usize = std::mem::size_of::<usize>() * BUMP_HEADER_WORDS;
