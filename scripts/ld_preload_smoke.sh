@@ -221,6 +221,8 @@ GETCWD_DEEP_BIN="${BIN_DIR}/fixture_getcwd_deep"
 cc -O2 "${ROOT}/tests/integration/fixture_getcwd_deep.c" -o "${GETCWD_DEEP_BIN}"
 RWLOCK_WRITER_PREFERENCE_BIN="${BIN_DIR}/fixture_rwlock_writer_preference"
 cc -O2 "${ROOT}/tests/integration/fixture_rwlock_writer_preference.c" -o "${RWLOCK_WRITER_PREFERENCE_BIN}" -lpthread
+REGEX_UTF8_BIN="${BIN_DIR}/fixture_regex_utf8"
+cc -O2 "${ROOT}/tests/integration/fixture_regex_utf8.c" -o "${REGEX_UTF8_BIN}"
 APP_MALLOC_SPAWNS_THREAD_BIN="${BIN_DIR}/fixture_app_malloc_spawns_thread"
 cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_malloc_spawns_thread.c" -o "${APP_MALLOC_SPAWNS_THREAD_BIN}" -lpthread
 LANGINFO_TIME_MBRTOWC_NULL_BIN="${BIN_DIR}/fixture_langinfo_time_mbrtowc_null"
@@ -966,6 +968,7 @@ EOF
   run_corpus_case "${mode}" "rwlock_writer_preference" "${RWLOCK_WRITER_PREFERENCE_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "getcwd_deep" "${GETCWD_DEEP_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "app_malloc_spawns_thread" "${APP_MALLOC_SPAWNS_THREAD_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "regex_utf8" "${REGEX_UTF8_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "stdio_closed_std_read_errors" "${STDIO_CLOSED_STD_READ_ERRORS_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '

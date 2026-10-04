@@ -68,6 +68,11 @@ pub const REG_RPAREN_ORD: i32 = 1 << 18;
 /// `\+`/`\?` literals (GNU syntax without RE_BK_PLUS_QM, e.g. the default
 /// Emacs syntax 0 that coreutils tac's separator regex uses).
 pub const REG_PLUS_QM_OPS: i32 = 1 << 17;
+/// fl-internal cflag: the pattern was compiled in a UTF-8 locale, as glibc's
+/// regcomp decides from LC_CTYPE at compile time. `.`, bracket expressions and
+/// `\w`/`\s` then match one whole character (1..=4 bytes) and never an invalid
+/// byte; named classes, ICASE and word boundaries classify wide characters.
+pub const REG_UTF8: i32 = 1 << 16;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -133,6 +138,8 @@ enum Ast {
         ranges: Vec<(u8, u8)>,
         negated: bool,
     },
+    /// One whole character in a UTF-8 pattern (REG_UTF8), 1..=4 bytes.
+    MbChar(Box<MbClass>),
     Anchor(AnchorKind),
     Group {
         index: usize, // 1-based
@@ -177,6 +184,229 @@ enum AnchorKind {
 #[inline]
 fn regex_is_word_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// Decode the UTF-8 character at the start of `s`: `(codepoint, length)`, or
+/// `None` for an invalid or truncated sequence. Overlong forms, surrogates and
+/// values past U+10FFFF are invalid, as for glibc's UTF-8 `mbrtowc`.
+#[inline]
+fn decode_utf8(s: &[u8]) -> Option<(u32, usize)> {
+    let b0 = *s.first()?;
+    if b0 < 0x80 {
+        return Some((u32::from(b0), 1));
+    }
+    let (len, init, min) = match b0 {
+        0xC2..=0xDF => (2, u32::from(b0 & 0x1F), 0x80),
+        0xE0..=0xEF => (3, u32::from(b0 & 0x0F), 0x800),
+        0xF0..=0xF4 => (4, u32::from(b0 & 0x07), 0x1_0000),
+        _ => return None,
+    };
+    let tail = s.get(1..len)?;
+    let mut cp = init;
+    for &b in tail {
+        if b & 0xC0 != 0x80 {
+            return None;
+        }
+        cp = (cp << 6) | u32::from(b & 0x3F);
+    }
+    if cp < min || cp > 0x10_FFFF || (0xD800..=0xDFFF).contains(&cp) {
+        return None;
+    }
+    Some((cp, len))
+}
+
+/// The character ending exactly at byte offset `end` of `s`, if the bytes
+/// before `end` end with a complete valid UTF-8 sequence.
+#[inline]
+fn decode_utf8_before(s: &[u8], end: usize) -> Option<u32> {
+    for len in 1..=4.min(end) {
+        if let Some((cp, n)) = decode_utf8(&s[end - len..end])
+            && n == len
+        {
+            return Some(cp);
+        }
+    }
+    None
+}
+
+#[inline]
+fn regex_is_word_char(cp: u32) -> bool {
+    cp == u32::from(b'_') || crate::string::wchar::iswalnum(cp)
+}
+
+/// Whether the characters on each side of byte offset `pos` are word
+/// characters (text edges are not). In a UTF-8 locale these are whole
+/// characters, as glibc's `IS_WIDE_WORD_CHAR` (`iswalnum` or `_`); an invalid
+/// byte is never a word character.
+#[inline]
+fn word_sides(input: &[u8], pos: usize, utf8: bool) -> (bool, bool) {
+    if !utf8 {
+        let left = pos > 0 && regex_is_word_byte(input[pos - 1]);
+        let right = pos < input.len() && regex_is_word_byte(input[pos]);
+        return (left, right);
+    }
+    let left = pos > 0 && decode_utf8_before(input, pos).is_some_and(regex_is_word_char);
+    let right =
+        decode_utf8(&input[pos.min(input.len())..]).is_some_and(|(cp, _)| regex_is_word_char(cp));
+    (left, right)
+}
+
+// Named character classes of a multibyte bracket expression (`MbClass::classes`).
+const MB_ALPHA: u16 = 1 << 0;
+const MB_UPPER: u16 = 1 << 1;
+const MB_LOWER: u16 = 1 << 2;
+const MB_DIGIT: u16 = 1 << 3;
+const MB_ALNUM: u16 = 1 << 4;
+const MB_SPACE: u16 = 1 << 5;
+const MB_BLANK: u16 = 1 << 6;
+const MB_PRINT: u16 = 1 << 7;
+const MB_GRAPH: u16 = 1 << 8;
+const MB_CNTRL: u16 = 1 << 9;
+const MB_PUNCT: u16 = 1 << 10;
+const MB_XDIGIT: u16 = 1 << 11;
+/// `\w`: `iswalnum` or `_`.
+const MB_WORD: u16 = 1 << 12;
+
+/// One character of a UTF-8 pattern: `.`, a bracket expression, `\w`/`\W`,
+/// `\s`/`\S`, or a case-folded literal. Matches exactly one valid character;
+/// invalid bytes match nothing, as in glibc (`.` and `[^x]` skip them).
+#[derive(Debug, Clone)]
+struct MbClass {
+    /// ASCII members, with negation, ICASE folding, and the newline/NUL rules
+    /// for `.` and nonmatching lists already applied.
+    ascii: [u64; 2],
+    /// Non-ASCII members before negation: codepoint ranges ...
+    ranges: Vec<(u32, u32)>,
+    /// ... and named classes (`MB_*` bits).
+    classes: u16,
+    negated: bool,
+    icase: bool,
+    /// ICASE: `towupper` of every single-character member. glibc compares
+    /// case-insensitively by uppercase: `x` matches member `m` iff
+    /// `towupper(x) == towupper(m)` (so µ, Μ and μ match each other, while
+    /// the Ohm sign, Kelvin sign and ẞ match only themselves).
+    folded: Vec<u32>,
+}
+
+/// Non-ASCII characters whose uppercase is an ASCII letter (dotless ı -> I,
+/// long ſ -> S). Under ICASE in a UTF-8 locale they match those letters.
+const MB_ASCII_UPPER_FOLDS: [u32; 2] = [0x131, 0x17F];
+
+impl MbClass {
+    fn new(
+        ascii: [u64; 2],
+        ranges: Vec<(u32, u32)>,
+        classes: u16,
+        negated: bool,
+        icase: bool,
+    ) -> Self {
+        let mut ascii = ascii;
+        let mut folded = Vec::new();
+        if icase {
+            for &(lo, hi) in &ranges {
+                if lo != hi {
+                    continue;
+                }
+                let upper = crate::string::wchar::towupper(lo);
+                folded.push(upper);
+                // ı / ſ: their ASCII uppercase letter, in both cases, matches.
+                if lo >= 0x80 && upper < 0x80 {
+                    let upper = upper as u8;
+                    for b in [upper, upper.to_ascii_lowercase()] {
+                        let bit = 1u64 << (b & 63);
+                        if negated {
+                            ascii[(b >> 6) as usize] &= !bit;
+                        } else {
+                            ascii[(b >> 6) as usize] |= bit;
+                        }
+                    }
+                }
+            }
+            folded.sort_unstable();
+            folded.dedup();
+        }
+        Self {
+            ascii,
+            ranges,
+            classes,
+            negated,
+            icase,
+            folded,
+        }
+    }
+
+    /// Whether one valid character `cp` is a member.
+    #[inline]
+    fn matches_cp(&self, cp: u32) -> bool {
+        if cp < 0x80 {
+            return (self.ascii[(cp >> 6) as usize] >> (cp & 63)) & 1 != 0;
+        }
+        let hit = self.contains(cp) || (self.icase && self.contains_icase(cp));
+        hit != self.negated
+    }
+
+    /// ICASE membership of a non-ASCII `cp` that is not itself a member:
+    /// single members by uppercase equality; ranges and named classes through
+    /// `cp`'s case variants.
+    fn contains_icase(&self, cp: u32) -> bool {
+        let upper = crate::string::wchar::towupper(cp);
+        if self.folded.binary_search(&upper).is_ok() {
+            return true;
+        }
+        let lower = crate::string::wchar::towlower(cp);
+        let wide = |c: u32| {
+            self.ranges
+                .iter()
+                .any(|&(lo, hi)| lo != hi && (lo..=hi).contains(&c))
+                || self.class_contains(c)
+        };
+        (upper != cp && wide(upper)) || (lower != cp && wide(lower))
+    }
+
+    fn contains(&self, cp: u32) -> bool {
+        self.ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp)) || self.class_contains(cp)
+    }
+
+    fn class_contains(&self, cp: u32) -> bool {
+        use crate::string::wchar as w;
+        let c = self.classes;
+        c != 0
+            && ((c & MB_ALPHA != 0 && w::iswalpha(cp))
+                || (c & MB_UPPER != 0 && w::iswupper(cp))
+                || (c & MB_LOWER != 0 && w::iswlower(cp))
+                || (c & MB_DIGIT != 0 && w::iswdigit(cp))
+                || (c & MB_ALNUM != 0 && w::iswalnum(cp))
+                || (c & MB_SPACE != 0 && w::iswspace(cp))
+                || (c & MB_BLANK != 0 && w::iswblank(cp))
+                || (c & MB_PRINT != 0 && w::iswprint(cp))
+                || (c & MB_GRAPH != 0 && w::iswgraph(cp))
+                || (c & MB_CNTRL != 0 && w::iswcntrl(cp))
+                || (c & MB_PUNCT != 0 && w::iswpunct(cp))
+                || (c & MB_XDIGIT != 0 && w::iswxdigit(cp))
+                || (c & MB_WORD != 0 && regex_is_word_char(cp)))
+    }
+
+    /// The character at the start of `s`, if it is a member: its byte length.
+    #[inline]
+    fn match_at(&self, s: &[u8]) -> Option<usize> {
+        let (cp, len) = decode_utf8(s)?;
+        self.matches_cp(cp).then_some(len)
+    }
+
+    /// The byte values a match can begin with (a superset: every lead byte
+    /// when any non-ASCII character could match).
+    fn first_bytes(&self) -> FirstByteSet {
+        let mut set = FirstByteSet::empty();
+        for b in 0u8..0x80 {
+            if (self.ascii[(b >> 6) as usize] >> (b & 63)) & 1 != 0 {
+                set.insert(b);
+            }
+        }
+        if self.negated || self.classes != 0 || !self.ranges.is_empty() {
+            set = set.union(FirstByteSet::range(0xC2, 0xF4));
+        }
+        set
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +492,12 @@ impl FirstByteSet {
         // First/last set bit across the 256-bit table, a word at a time (this
         // runs once per search: a per-byte scan was ~250 bit tests per call).
         let (lo_word, lo_bits) = self.words.iter().enumerate().find(|(_, w)| **w != 0)?;
-        let (hi_word, hi_bits) = self.words.iter().enumerate().rev().find(|(_, w)| **w != 0)?;
+        let (hi_word, hi_bits) = self
+            .words
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, w)| **w != 0)?;
         let lo = (lo_word * 64 + lo_bits.trailing_zeros() as usize) as u8;
         let hi = (hi_word * 64 + 63 - hi_bits.leading_zeros() as usize) as u8;
         // Contiguous iff the population exactly fills [lo, hi].
@@ -484,7 +719,7 @@ fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
             inner,
             min: 0,
             max: None,
-        }) if matches!(**inner, Ast::AnyChar) => i += 1,
+        }) if is_any_char(inner) => i += 1,
         _ => return None,
     }
     let mut suffix = Vec::new();
@@ -496,6 +731,23 @@ fn lit_dotstar_lit_bytes(ast: &Ast) -> Option<(Vec<u8>, Vec<u8>)> {
         i += 1;
     }
     Some((prefix, suffix))
+}
+
+/// `.` matching every character, byte-wise or (UTF-8 patterns) every valid
+/// character. The `prefix.*suffix` closed form holds for the UTF-8 one only
+/// over valid UTF-8; `PikeVm::execute` checks the spanned bytes.
+fn is_any_char(ast: &Ast) -> bool {
+    match ast {
+        Ast::AnyChar => true,
+        Ast::MbChar(class) => {
+            class.negated
+                && class.ranges.is_empty()
+                && class.classes == 0
+                && class.ascii[0] | 1 == u64::MAX
+                && class.ascii[1] == u64::MAX
+        }
+        _ => false,
+    }
 }
 
 /// Find the leftmost occurrence of `needle` in `haystack`, case-insensitively
@@ -530,6 +782,7 @@ fn analyze_ast(ast: &Ast) -> AstAnalysis {
                 AstAnalysis::linear(false, set)
             }
         }
+        Ast::MbChar(class) => AstAnalysis::linear(false, class.first_bytes()),
         Ast::Anchor(_) => AstAnalysis::linear(true, FirstByteSet::empty()),
         Ast::Group { inner, .. } => analyze_ast(inner),
         Ast::BackRef(_) => {
@@ -620,7 +873,11 @@ fn ast_contains_backref(ast: &Ast) -> bool {
         Ast::Concat(items) => items.iter().any(ast_contains_backref),
         Ast::Alternate(left, right) => ast_contains_backref(left) || ast_contains_backref(right),
         Ast::Repeat { inner, .. } => ast_contains_backref(inner),
-        Ast::Literal(_) | Ast::AnyChar | Ast::CharClass { .. } | Ast::Anchor(_) => false,
+        Ast::Literal(_)
+        | Ast::AnyChar
+        | Ast::CharClass { .. }
+        | Ast::MbChar(_)
+        | Ast::Anchor(_) => false,
     }
 }
 
@@ -631,6 +888,8 @@ fn estimate_nfa_states(ast: &Ast) -> usize {
         | Ast::CharClass { .. }
         | Ast::Anchor(_)
         | Ast::BackRef(_) => 1,
+        // The character instruction plus its three continuation slots.
+        Ast::MbChar(_) => 4,
         Ast::Group { inner, .. } => estimate_nfa_states(inner).saturating_add(2),
         Ast::Concat(items) => items.iter().fold(0usize, |sum, item| {
             sum.saturating_add(estimate_nfa_states(item))
@@ -712,6 +971,13 @@ enum MatchKind {
         /// nested per-range character loop). `bit[c]` set ⇔ byte `c` matches.
         set: [u64; 4],
     },
+    /// One whole UTF-8 character at `sp` (REG_UTF8). Always followed by three
+    /// `MbCont`; a match of length `n` continues at `pc + 5 - n`, so exactly
+    /// `n - 1` continuation bytes remain to step over. It decodes ahead of `sp`,
+    /// so an NFA containing it is not byte-local (no membership DFA).
+    MbChar(Box<MbClass>),
+    /// A continuation byte of the character an `MbChar` already validated.
+    MbCont,
     AnchorStart {
         newline: bool,
     },
@@ -826,6 +1092,8 @@ pub struct CompiledRegex {
     anchor_newline: bool,
     /// `.` matches NUL (REG_DOT_NUL).
     dot_nul: bool,
+    /// Compiled with REG_UTF8.
+    utf8: bool,
     complexity_certificate: RegexComplexityCertificate,
     /// Set of bytes that can begin a match, when a sound first-byte prefilter
     /// applies (non-nullable, non-`.`-leading, case-sensitive). `Some` lets the
@@ -962,6 +1230,15 @@ struct Parser<'a> {
     rparen_literal: bool,
     /// BRE: unescaped `+`/`?` are operators (REG_PLUS_QM_OPS).
     plus_qm_ops: bool,
+    /// UTF-8 locale (REG_UTF8): multibyte characters are single atoms.
+    utf8: bool,
+    // What an `MbClass` bakes in at parse time: ICASE, `.` excluding `\n`
+    // (REG_NEWLINE / REG_DOT_NOT_NEWLINE), nonmatching lists excluding `\n`
+    // (REG_NEWLINE / REG_LIST_NOT_NEWLINE), `.` matching NUL (REG_DOT_NUL).
+    icase: bool,
+    dot_newline: bool,
+    list_newline: bool,
+    dot_nul: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -988,7 +1265,79 @@ impl<'a> Parser<'a> {
                 cflags & REG_RPAREN_ORD != 0
             },
             plus_qm_ops: cflags & REG_PLUS_QM_OPS != 0,
+            utf8: cflags & REG_UTF8 != 0,
+            icase: cflags & REG_ICASE != 0,
+            dot_newline: cflags & (REG_NEWLINE | REG_DOT_NOT_NEWLINE) != 0,
+            list_newline: cflags & (REG_NEWLINE | REG_LIST_NOT_NEWLINE) != 0,
+            dot_nul: cflags & REG_DOT_NUL != 0,
         }
+    }
+
+    /// A one-character class over ASCII `ascii_ranges` plus non-ASCII
+    /// codepoint `ranges` and named `classes`, with this pattern's ICASE and
+    /// nonmatching-list newline rule applied.
+    fn mb_class(
+        &self,
+        ascii_ranges: &[(u8, u8)],
+        ranges: Vec<(u32, u32)>,
+        classes: u16,
+        negated: bool,
+    ) -> Ast {
+        let set = build_class_bitset(ascii_ranges, negated, self.icase, self.list_newline);
+        Ast::MbChar(Box::new(MbClass::new(
+            [set[0], set[1]],
+            ranges,
+            classes,
+            negated,
+            self.icase,
+        )))
+    }
+
+    /// `.` in a UTF-8 pattern: any valid character, minus `\n` and NUL where
+    /// the syntax excludes them.
+    fn mb_dot(&self) -> Ast {
+        let mut ascii = [u64::MAX, u64::MAX];
+        if self.dot_newline {
+            ascii[0] &= !(1u64 << b'\n');
+        }
+        if !self.dot_nul {
+            ascii[0] &= !1;
+        }
+        Ast::MbChar(Box::new(MbClass::new(ascii, Vec::new(), 0, true, false)))
+    }
+
+    /// Under ICASE in a UTF-8 pattern, an ASCII letter that a non-ASCII
+    /// character uppercases to (i/I: ı, s/S: ſ) matches that character too, so
+    /// it is a one-character class instead of a byte literal.
+    fn icase_ascii_needs_mb(&self, ch: u8) -> bool {
+        self.utf8
+            && self.icase
+            && MB_ASCII_UPPER_FOLDS
+                .iter()
+                .any(|&cp| crate::string::wchar::towupper(cp) == u32::from(ch.to_ascii_uppercase()))
+    }
+
+    /// In a UTF-8 pattern, the whole valid multibyte character starting at
+    /// `pos` (consumed) as one atom: its bytes in sequence, or under ICASE a
+    /// class of its case variants. `None` (nothing consumed) for an ASCII or
+    /// invalid byte, which stays a single-byte literal as in glibc.
+    fn take_mb_literal(&mut self) -> Option<Ast> {
+        if !self.utf8 {
+            return None;
+        }
+        let (cp, len) = decode_utf8(&self.pat[self.pos..])?;
+        if len < 2 {
+            return None;
+        }
+        let bytes = &self.pat[self.pos..self.pos + len];
+        self.pos += len;
+        let cased =
+            crate::string::wchar::towlower(cp) != cp || crate::string::wchar::towupper(cp) != cp;
+        Some(if self.icase && cased {
+            self.mb_class(&[], vec![(cp, cp)], 0, false)
+        } else {
+            Ast::Concat(bytes.iter().map(|&b| Ast::Literal(b)).collect())
+        })
     }
 
     /// At an alternative separator: `|` (ERE), `\|` (BRE), or a newline
@@ -1066,10 +1415,12 @@ impl<'a> Parser<'a> {
             }
             match self.peek() {
                 None => break,
-                _ => {
-                    let atom = self.parse_quantified()?;
-                    items.push(atom);
-                }
+                _ => match self.parse_quantified()? {
+                    // An unquantified multibyte literal's bytes join the run, so
+                    // the literal-prefix and required-substring scans see them.
+                    Ast::Concat(bytes) => items.extend(bytes),
+                    atom => items.push(atom),
+                },
             }
         }
 
@@ -1405,7 +1756,11 @@ impl<'a> Parser<'a> {
             }
             Some(b'.') => {
                 self.advance();
-                Ok(Ast::AnyChar)
+                Ok(if self.utf8 {
+                    self.mb_dot()
+                } else {
+                    Ast::AnyChar
+                })
             }
             Some(b'[') => self.parse_bracket(),
             Some(b'(') if self.extended => {
@@ -1489,35 +1844,24 @@ impl<'a> Parser<'a> {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::BufferEnd))
                     }
-                    // GNU character-class escapes (C locale): `\w` == [[:alnum:]_],
-                    // `\s` == [[:space:]], and their negations `\W`/`\S`.
-                    Some(b'w') => {
+                    // GNU character-class escapes: `\w` == [_[:alnum:]],
+                    // `\s` == [[:space:]], and their negations `\W`/`\S`; in a
+                    // UTF-8 pattern they classify whole characters.
+                    Some(op @ (b'w' | b'W' | b's' | b'S')) => {
                         self.advance();
-                        Ok(Ast::CharClass {
-                            ranges: vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
-                            negated: false,
-                        })
-                    }
-                    Some(b'W') => {
-                        self.advance();
-                        Ok(Ast::CharClass {
-                            ranges: vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')],
-                            negated: true,
-                        })
-                    }
-                    Some(b's') => {
-                        self.advance();
-                        // [ \t\n\v\f\r] — whitespace bytes 0x09..=0x0D plus space.
-                        Ok(Ast::CharClass {
-                            ranges: vec![(0x09, 0x0D), (b' ', b' ')],
-                            negated: false,
-                        })
-                    }
-                    Some(b'S') => {
-                        self.advance();
-                        Ok(Ast::CharClass {
-                            ranges: vec![(0x09, 0x0D), (b' ', b' ')],
-                            negated: true,
+                        let word = op.eq_ignore_ascii_case(&b'w');
+                        let negated = op.is_ascii_uppercase();
+                        let ranges: Vec<(u8, u8)> = if word {
+                            vec![(b'0', b'9'), (b'A', b'Z'), (b'a', b'z'), (b'_', b'_')]
+                        } else {
+                            // [ \t\n\v\f\r] — whitespace bytes 0x09..=0x0D plus space.
+                            vec![(0x09, 0x0D), (b' ', b' ')]
+                        };
+                        Ok(if self.utf8 {
+                            let class = if word { MB_WORD } else { MB_SPACE };
+                            self.mb_class(&ranges, Vec::new(), class, negated)
+                        } else {
+                            Ast::CharClass { ranges, negated }
                         })
                     }
                     // A BRE interval with nothing to repeat (pattern start, or
@@ -1526,7 +1870,14 @@ impl<'a> Parser<'a> {
                     // `^\{1\}` matches the text "{1}").
                     Some(b'{') if !self.extended && !self.dup_stacks => Err(REG_BADRPT),
                     Some(ch) => {
+                        if let Some(atom) = self.take_mb_literal() {
+                            return Ok(atom);
+                        }
                         self.advance();
+                        if self.icase_ascii_needs_mb(ch) {
+                            let cp = u32::from(ch);
+                            return Ok(self.mb_class(&[(ch, ch)], vec![(cp, cp)], 0, false));
+                        }
                         // Escaped metacharacter becomes literal
                         Ok(Ast::Literal(ch))
                     }
@@ -1565,7 +1916,14 @@ impl<'a> Parser<'a> {
                     }
                     return Err(REG_BADRPT);
                 }
+                if let Some(atom) = self.take_mb_literal() {
+                    return Ok(atom);
+                }
                 self.advance();
+                if self.icase_ascii_needs_mb(ch) {
+                    let cp = u32::from(ch);
+                    return Ok(self.mb_class(&[(ch, ch)], vec![(cp, cp)], 0, false));
+                }
                 Ok(Ast::Literal(ch))
             }
         }
@@ -1574,7 +1932,24 @@ impl<'a> Parser<'a> {
     fn parse_bracket(&mut self) -> Result<Ast, i32> {
         self.advance(); // skip [
         let mut negated = false;
+        // Byte members (ASCII members in a UTF-8 pattern) ...
         let mut ranges: Vec<(u8, u8)> = Vec::new();
+        // ... and, in a UTF-8 pattern, the non-ASCII members and named classes.
+        let mut mb_ranges: Vec<(u32, u32)> = Vec::new();
+        let mut classes: u16 = 0;
+        // Add the members `lo..=hi` (codepoints; bytes outside UTF-8 mode). A
+        // UTF-8 pattern keeps every member as a codepoint range too, for the
+        // ICASE uppercase comparison of non-ASCII input.
+        fn add(utf8: bool, lo: u32, hi: u32, ranges: &mut Vec<(u8, u8)>, mb: &mut Vec<(u32, u32)>) {
+            if !utf8 {
+                ranges.push((lo as u8, hi as u8));
+                return;
+            }
+            if lo < 0x80 {
+                ranges.push((lo as u8, hi.min(0x7F) as u8));
+            }
+            mb.push((lo, hi));
+        }
 
         if self.peek() == Some(b'^') {
             negated = true;
@@ -1600,8 +1975,9 @@ impl<'a> Parser<'a> {
                 Some(b'[') if self.pat.get(self.pos + 1) == Some(&b':') => {
                     self.advance(); // [
                     self.advance(); // :
-                    let class_ranges = self.parse_posix_class()?;
+                    let (class_ranges, class_bit) = self.parse_posix_class()?;
                     ranges.extend_from_slice(&class_ranges);
+                    classes |= class_bit;
                     if self.peek() == Some(b'-')
                         && self.pat.get(self.pos + 1).is_some_and(|&b| b != b']')
                     {
@@ -1621,10 +1997,11 @@ impl<'a> Parser<'a> {
                     {
                         return Err(REG_ERANGE);
                     }
-                    ranges.push((ch, ch));
+                    add(self.utf8, ch, ch, &mut ranges, &mut mb_ranges);
                 }
-                // A literal byte or a collating symbol `[.c.]`; either may be a
-                // range endpoint (`[[.a.]-z]` == `[a-z]`).
+                // A literal character or a collating symbol `[.c.]`; either may
+                // be a range endpoint (`[[.a.]-z]` == `[a-z]`). In a UTF-8
+                // pattern a range spans codepoints.
                 _ => {
                     let start = self.read_bracket_element()?;
                     if self.peek() == Some(b'-')
@@ -1635,35 +2012,57 @@ impl<'a> Parser<'a> {
                         if end < start {
                             return Err(REG_ERANGE);
                         }
-                        ranges.push((start, end));
+                        add(self.utf8, start, end, &mut ranges, &mut mb_ranges);
                     } else {
-                        ranges.push((start, start));
+                        add(self.utf8, start, start, &mut ranges, &mut mb_ranges);
                     }
                 }
             }
         }
 
+        // A UTF-8 bracket that can match a non-ASCII character is one whole
+        // character: a nonmatching list, a non-ASCII member, a named class
+        // with non-ASCII members (all but digit and xdigit), or under ICASE an
+        // ASCII letter some non-ASCII character uppercases to.
+        if self.utf8
+            && (negated
+                || mb_ranges.iter().any(|&(_, hi)| hi >= 0x80)
+                || classes & !(MB_DIGIT | MB_XDIGIT) != 0
+                || ranges
+                    .iter()
+                    .any(|&(lo, hi)| (lo..=hi).any(|b| self.icase_ascii_needs_mb(b))))
+        {
+            return Ok(self.mb_class(&ranges, mb_ranges, classes, negated));
+        }
         Ok(Ast::CharClass { ranges, negated })
     }
 
     /// Read one range-eligible bracket element: a collating symbol `[.c.]`
-    /// (yielding its single collating character) or a plain literal byte.
-    fn read_bracket_element(&mut self) -> Result<u8, i32> {
+    /// (yielding its single collating character) or a plain literal character
+    /// (one byte, or in a UTF-8 pattern one whole character).
+    fn read_bracket_element(&mut self) -> Result<u32, i32> {
         if self.peek() == Some(b'[') && self.pat.get(self.pos + 1) == Some(&b'.') {
             self.advance(); // [
             self.advance(); // .
             self.read_coll_element(b'.')
         } else {
-            self.advance().ok_or(REG_EBRACK)
+            if self.utf8
+                && let Some((cp, len)) = decode_utf8(&self.pat[self.pos..])
+            {
+                self.pos += len;
+                return Ok(cp);
+            }
+            self.advance().map(u32::from).ok_or(REG_EBRACK)
         }
     }
 
     /// Read the body of an equivalence class (`marker == b'='`) or collating
     /// symbol (`marker == b'.'`) up to the closing `marker` + `]`, having
     /// already consumed the opening `[` and `marker`. In the C locale a valid
-    /// element is exactly one character; an unterminated body is REG_EBRACK and
-    /// an empty or multi-character (named) body is REG_ECOLLATE — matching glibc.
-    fn read_coll_element(&mut self, marker: u8) -> Result<u8, i32> {
+    /// element is exactly one character (in a UTF-8 pattern, possibly several
+    /// bytes); an unterminated body is REG_EBRACK and an empty or
+    /// multi-character (named) body is REG_ECOLLATE — matching glibc.
+    fn read_coll_element(&mut self, marker: u8) -> Result<u32, i32> {
         let mut buf: Vec<u8> = Vec::new();
         loop {
             match self.peek() {
@@ -1680,13 +2079,20 @@ impl<'a> Parser<'a> {
             }
         }
         if buf.len() == 1 {
-            Ok(buf[0])
-        } else {
-            Err(REG_ECOLLATE)
+            return Ok(u32::from(buf[0]));
         }
+        if self.utf8
+            && let Some((cp, len)) = decode_utf8(&buf)
+            && len == buf.len()
+        {
+            return Ok(cp);
+        }
+        Err(REG_ECOLLATE)
     }
 
-    fn parse_posix_class(&mut self) -> Result<Vec<(u8, u8)>, i32> {
+    /// A named class `[:name:]` (opening `[:` consumed): its ASCII members
+    /// and its `MB_*` bit for the non-ASCII members of a UTF-8 pattern.
+    fn parse_posix_class(&mut self) -> Result<(Vec<(u8, u8)>, u16), i32> {
         let start = self.pos;
         while self.pos < self.pat.len() && self.pat[self.pos] != b':' {
             self.pos += 1;
@@ -1697,29 +2103,35 @@ impl<'a> Parser<'a> {
         let class_name = &self.pat[start..self.pos];
         self.pos += 2; // skip :]
 
-        let ranges = match class_name {
-            b"alpha" => vec![(b'A', b'Z'), (b'a', b'z')],
-            b"upper" => vec![(b'A', b'Z')],
-            b"lower" => vec![(b'a', b'z')],
-            b"digit" => vec![(b'0', b'9')],
-            b"alnum" => vec![(b'A', b'Z'), (b'a', b'z'), (b'0', b'9')],
-            b"space" => vec![
-                (b' ', b' '),
-                (b'\t', b'\t'),
-                (b'\n', b'\n'),
-                (b'\r', b'\r'),
-                (b'\x0b', b'\x0b'),
-                (b'\x0c', b'\x0c'),
-            ],
-            b"blank" => vec![(b' ', b' '), (b'\t', b'\t')],
-            b"print" => vec![(b' ', b'~')],
-            b"graph" => vec![(b'!', b'~')],
-            b"cntrl" => vec![(0, 0x1f), (0x7f, 0x7f)],
-            b"punct" => vec![(b'!', b'/'), (b':', b'@'), (b'[', b'`'), (b'{', b'~')],
-            b"xdigit" => vec![(b'0', b'9'), (b'A', b'F'), (b'a', b'f')],
+        let (ranges, bit) = match class_name {
+            b"alpha" => (vec![(b'A', b'Z'), (b'a', b'z')], MB_ALPHA),
+            b"upper" => (vec![(b'A', b'Z')], MB_UPPER),
+            b"lower" => (vec![(b'a', b'z')], MB_LOWER),
+            b"digit" => (vec![(b'0', b'9')], MB_DIGIT),
+            b"alnum" => (vec![(b'A', b'Z'), (b'a', b'z'), (b'0', b'9')], MB_ALNUM),
+            b"space" => (
+                vec![
+                    (b' ', b' '),
+                    (b'\t', b'\t'),
+                    (b'\n', b'\n'),
+                    (b'\r', b'\r'),
+                    (b'\x0b', b'\x0b'),
+                    (b'\x0c', b'\x0c'),
+                ],
+                MB_SPACE,
+            ),
+            b"blank" => (vec![(b' ', b' '), (b'\t', b'\t')], MB_BLANK),
+            b"print" => (vec![(b' ', b'~')], MB_PRINT),
+            b"graph" => (vec![(b'!', b'~')], MB_GRAPH),
+            b"cntrl" => (vec![(0, 0x1f), (0x7f, 0x7f)], MB_CNTRL),
+            b"punct" => (
+                vec![(b'!', b'/'), (b':', b'@'), (b'[', b'`'), (b'{', b'~')],
+                MB_PUNCT,
+            ),
+            b"xdigit" => (vec![(b'0', b'9'), (b'A', b'F'), (b'a', b'f')], MB_XDIGIT),
             _ => return Err(REG_ECTYPE),
         };
-        Ok(ranges)
+        Ok((ranges, bit))
     }
 }
 
@@ -1795,6 +2207,12 @@ impl Compiler {
                         self.compile_list_newline,
                     ),
                 }));
+            }
+            Ast::MbChar(class) => {
+                self.emit(NfaInstr::Match(MatchKind::MbChar(class.clone())));
+                for _ in 0..3 {
+                    self.emit(NfaInstr::Match(MatchKind::MbCont));
+                }
             }
             Ast::Anchor(AnchorKind::Start { line }) => {
                 self.emit(NfaInstr::Match(MatchKind::AnchorStart {
@@ -1942,6 +2360,8 @@ struct PikeVm<'a> {
     bulk_table: Option<&'a [Option<[u64; 4]>]>,
     /// The compile-time `build_closure_table` of `nfa`; `None` closes lazily.
     closure_table: Option<&'a ClosureTable>,
+    /// Compiled with REG_UTF8: word assertions classify whole characters.
+    utf8: bool,
 }
 
 /// Thread state in Pike VM
@@ -2059,12 +2479,19 @@ impl<'a> PikeVm<'a> {
             min_start: 0,
             bulk_table: None,
             closure_table: None,
+            utf8: false,
         }
     }
 
     /// Search for matches starting at or after `min_start` only.
     fn starting_at(mut self, min_start: usize) -> Self {
         self.min_start = min_start;
+        self
+    }
+
+    /// Classify word characters as UTF-8 characters (REG_UTF8 patterns).
+    fn with_utf8(mut self, utf8: bool) -> Self {
+        self.utf8 = utf8;
         self
     }
 
@@ -2097,7 +2524,17 @@ impl<'a> PikeVm<'a> {
         offsets.push(0u32);
         for pc in 0..n {
             list.clear();
-            self.lm_closure(pc, 0, 0, false, false, &mut list, &mut visited, pc as u64 + 1, 0);
+            self.lm_closure(
+                pc,
+                0,
+                0,
+                false,
+                false,
+                &mut list,
+                &mut visited,
+                pc as u64 + 1,
+                0,
+            );
             if pcs.len() + list.len() > ClosureTable::MAX_ENTRIES {
                 return None;
             }
@@ -2247,10 +2684,14 @@ impl<'a> PikeVm<'a> {
                     None => return None,
                 }
             };
-            let mut slots = vec![-1i32; self.num_slots];
-            slots[0] = start as i32;
-            slots[1] = end as i32;
-            return Some(slots);
+            // A UTF-8 `.` skips invalid bytes: the closed form holds only when
+            // the bytes `.*` spans are valid UTF-8; otherwise the NFA decides.
+            if !self.utf8 || core::str::from_utf8(&self.input[after..end - suffix.len()]).is_ok() {
+                let mut slots = vec![-1i32; self.num_slots];
+                slots[0] = start as i32;
+                slots[1] = end as i32;
+                return Some(slots);
+            }
         }
         let notbol = self.eflags & REG_NOTBOL != 0;
         let noteol = self.eflags & REG_NOTEOL != 0;
@@ -2432,6 +2873,16 @@ impl<'a> PikeVm<'a> {
         })
     }
 
+    /// True when every consuming instruction decides on the current byte alone.
+    /// `MbChar` decodes the bytes after it, so a DFA keyed on single bytes
+    /// cannot represent it.
+    fn is_byte_local(&self) -> bool {
+        !self
+            .nfa
+            .iter()
+            .any(|i| matches!(i, NfaInstr::Match(MatchKind::MbChar(_))))
+    }
+
     /// Epsilon-closure frontier of `entries`: the consuming-`Match` and `Accept`
     /// PCs reachable through Split/Jump/Save, sorted+deduped so the set can key a
     /// DFA state. Reuses `add_thread` in membership mode (empty slots, so every
@@ -2508,6 +2959,7 @@ impl<'a> PikeVm<'a> {
 
         if !(MIN_NFA_INSTRS..=MAX_NFA_INSTRS).contains(&self.nfa.len())
             || !self.is_pos_independent()
+            || !self.is_byte_local()
         {
             return None;
         }
@@ -2561,12 +3013,7 @@ impl<'a> PikeVm<'a> {
                 let frontier =
                     self.dfa_frontier(&entries, &mut scratch, &mut visited, &mut generation);
                 let old_len = state_pcs.len();
-                let next = self.dfa_intern(
-                    frontier,
-                    &mut interner,
-                    &mut state_pcs,
-                    &mut accepting,
-                );
+                let next = self.dfa_intern(frontier, &mut interner, &mut state_pcs, &mut accepting);
                 if state_pcs.len() != old_len {
                     frontier_pcs = frontier_pcs.checked_add(state_pcs.last()?.len())?;
                     if state_pcs.len() > MAX_STATES || frontier_pcs > MAX_FRONTIER_PCS {
@@ -2664,6 +3111,7 @@ impl<'a> PikeVm<'a> {
         generation: &mut u64,
     ) -> bool {
         if self.is_pos_independent()
+            && self.is_byte_local()
             && let Some(result) = self.any_match_dfa(visited, generation)
         {
             return result;
@@ -2743,17 +3191,19 @@ impl<'a> PikeVm<'a> {
                 }
                 match &self.nfa[t.pc] {
                     NfaInstr::Accept => return true,
-                    NfaInstr::Match(mk) if self.matches(mk, sp, notbol, noteol) => {
-                        self.add_thread(
-                            &mut next,
-                            Thread {
-                                pc: t.pc + 1,
-                                slots: t.slots,
-                            },
-                            sp + 1,
-                            anchors,
-                            &mut closure,
-                        );
+                    NfaInstr::Match(mk) => {
+                        if let Some(target) = self.step_target(t.pc, mk, sp) {
+                            self.add_thread(
+                                &mut next,
+                                Thread {
+                                    pc: target,
+                                    slots: t.slots,
+                                },
+                                sp + 1,
+                                anchors,
+                                &mut closure,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -3095,24 +3545,24 @@ impl<'a> PikeVm<'a> {
                     NfaInstr::Accept => {
                         best = Some(best.map_or(start, |b| b.min(start)));
                     }
-                    NfaInstr::Match(mk)
-                        if sp < input_len && self.matches_byte(mk, self.input[sp]) =>
-                    {
-                        self.lm_push_cached_closure(
-                            pc + 1,
-                            start,
-                            sp + 1,
-                            notbol,
-                            noteol,
-                            &mut next,
-                            visited,
-                            cur_gen,
-                            use_closure_cache,
-                            &mut closure_cache,
-                            &mut cache_visited,
-                            &mut cache_gen,
-                            &mut cache_scratch,
-                        );
+                    NfaInstr::Match(mk) => {
+                        if let Some(target) = self.step_target(pc, mk, sp) {
+                            self.lm_push_cached_closure(
+                                target,
+                                start,
+                                sp + 1,
+                                notbol,
+                                noteol,
+                                &mut next,
+                                visited,
+                                cur_gen,
+                                use_closure_cache,
+                                &mut closure_cache,
+                                &mut cache_visited,
+                                &mut cache_gen,
+                                &mut cache_scratch,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -3428,14 +3878,15 @@ impl<'a> PikeVm<'a> {
                     continue;
                 }
                 match &self.nfa[t.pc] {
-                    NfaInstr::Match(mk) if self.matches(mk, sp, notbol, noteol) => {
-                        let new_t = Thread {
-                            pc: t.pc + 1,
-                            slots: t.slots,
-                        };
-                        self.add_thread(&mut next, new_t, sp + 1, anchors, &mut closure);
+                    NfaInstr::Match(mk) => {
+                        if let Some(target) = self.step_target(t.pc, mk, sp) {
+                            let new_t = Thread {
+                                pc: target,
+                                slots: t.slots,
+                            };
+                            self.add_thread(&mut next, new_t, sp + 1, anchors, &mut closure);
+                        }
                     }
-                    NfaInstr::Match(_) => {}
                     NfaInstr::Accept => {
                         let mut final_slots = t.slots;
                         final_slots[1] = sp as i32; // group 0 end
@@ -3671,8 +4122,7 @@ impl<'a> PikeVm<'a> {
     /// a "left" char (`input[sp-1]`, absent at the text start) and a "right" char
     /// (`input[sp]`, absent at the text end); text edges count as non-word.
     fn check_word_assertion(&self, mk: &MatchKind, sp: usize) -> bool {
-        let left = sp > 0 && regex_is_word_byte(self.input[sp - 1]);
-        let right = sp < self.input.len() && regex_is_word_byte(self.input[sp]);
+        let (left, right) = word_sides(self.input, sp, self.utf8);
         match mk {
             MatchKind::WordBoundary { negate } => (left != right) != *negate,
             MatchKind::WordStart => !left && right,
@@ -3685,11 +4135,19 @@ impl<'a> PikeVm<'a> {
         }
     }
 
-    fn matches(&self, mk: &MatchKind, sp: usize, _notbol: bool, _noteol: bool) -> bool {
+    /// The PC a thread at `pc` continues from once its consuming `mk` accepts
+    /// the input at `sp`, or `None` when it does not match there. Every byte
+    /// step goes through here: an `MbChar` consumes its lead byte and skips
+    /// the continuation slots its character does not need.
+    #[inline]
+    fn step_target(&self, pc: usize, mk: &MatchKind, sp: usize) -> Option<usize> {
         if sp >= self.input.len() {
-            return false;
+            return None;
         }
-        self.matches_byte(mk, self.input[sp])
+        match mk {
+            MatchKind::MbChar(class) => class.match_at(&self.input[sp..]).map(|len| pc + 5 - len),
+            _ => self.matches_byte(mk, self.input[sp]).then_some(pc + 1),
+        }
     }
 
     /// Whether a consuming `MatchKind` accepts the byte `ch`. This is the
@@ -3710,6 +4168,11 @@ impl<'a> PikeVm<'a> {
                 // into `set` at compile time (see `build_class_bitset`).
                 (set[(ch >> 6) as usize] >> (ch & 63)) & 1 != 0
             }
+            // Its `MbChar` already validated the whole character.
+            MatchKind::MbCont => ch & 0xC0 == 0x80,
+            // Decodes ahead of the byte: only `step_target` can evaluate it, and
+            // the byte-keyed paths that call this skip NFAs containing it.
+            MatchKind::MbChar(_) => false,
             // Zero-width assertions are handled in add_thread, not here.
             MatchKind::AnchorStart { .. }
             | MatchKind::AnchorEnd { .. }
@@ -3752,6 +4215,8 @@ struct BacktrackVm<'a> {
     literal_prefix: Option<&'a [u8]>,
     /// Earliest match start; see `PikeVm::min_start`.
     min_start: usize,
+    /// Compiled with REG_UTF8: word assertions classify whole characters.
+    utf8: bool,
 }
 
 struct BacktrackConfig<'a> {
@@ -3766,6 +4231,7 @@ struct BacktrackConfig<'a> {
     eflags: i32,
     prefilter: Option<FirstByteSet>,
     literal_prefix: Option<&'a [u8]>,
+    utf8: bool,
 }
 
 impl<'a> BacktrackVm<'a> {
@@ -3786,6 +4252,7 @@ impl<'a> BacktrackVm<'a> {
             prefilter: config.prefilter,
             literal_prefix: config.literal_prefix,
             min_start: 0,
+            utf8: config.utf8,
         }
     }
 
@@ -3891,6 +4358,13 @@ impl<'a> BacktrackVm<'a> {
                     Vec::new()
                 }
             }
+            Ast::MbChar(class) => match class.match_at(&self.input[pos.min(self.input.len())..]) {
+                Some(len) => vec![BacktrackState {
+                    pos: pos + len,
+                    slots,
+                }],
+                None => Vec::new(),
+            },
             Ast::Anchor(AnchorKind::Start { line }) => {
                 if self.check_anchor_start(pos, *line) {
                     vec![BacktrackState { pos, slots }]
@@ -4125,8 +4599,7 @@ impl<'a> BacktrackVm<'a> {
     /// GNU word assertion (`\b`/`\B`/`\<`/`\>`) at `pos`; text edges count as
     /// non-word. Mirrors the Pike-VM evaluation for the backtracking path.
     fn check_word_assertion(&self, kind: AnchorKind, pos: usize) -> bool {
-        let left = pos > 0 && regex_is_word_byte(self.input[pos - 1]);
-        let right = pos < self.input.len() && regex_is_word_byte(self.input[pos]);
+        let (left, right) = word_sides(self.input, pos, self.utf8);
         match kind {
             AnchorKind::WordBoundary { negate } => (left != right) != negate,
             AnchorKind::WordStart => !left && right,
@@ -4170,7 +4643,11 @@ fn mark_line_anchors(ast: &mut Ast, bol: bool, eol: bool) -> bool {
             true
         }
         Ast::Anchor(_) => true,
-        Ast::Literal(_) | Ast::AnyChar | Ast::CharClass { .. } | Ast::BackRef(_) => false,
+        Ast::Literal(_)
+        | Ast::AnyChar
+        | Ast::CharClass { .. }
+        | Ast::MbChar(_)
+        | Ast::BackRef(_) => false,
         Ast::Group { inner, .. } => mark_line_anchors(inner, bol, eol),
         Ast::Alternate(l, r) => {
             // Both branches start from the same surrounding context.
@@ -4299,10 +4776,8 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
             // A single leading byte is better served by the first-byte prefilter,
             // except when it is the WHOLE pattern (`s/a/b/g`): then it is a
             // `literal_is_whole` memchr with no NFA run per match.
-            let whole_single_byte = lit.len() == 1
-                && num_groups == 0
-                && !has_backref
-                && is_all_literal(&ast);
+            let whole_single_byte =
+                lit.len() == 1 && num_groups == 0 && !has_backref && is_all_literal(&ast);
             if lit.len() >= 2 || whole_single_byte {
                 (Some(lit), None)
             } else if !analysis.first_bytes.any && analysis.first_bytes.count() > 0 {
@@ -4364,6 +4839,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         list_newline,
         anchor_newline,
         dot_nul: cflags & REG_DOT_NUL != 0,
+        utf8: cflags & REG_UTF8 != 0,
         complexity_certificate,
         prefilter,
         literal_prefix,
@@ -4544,7 +5020,8 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         false,
         None,
         None,
-    );
+    )
+    .with_utf8(compiled.utf8);
     let notbol = eflags & REG_NOTBOL != 0;
     let noteol = eflags & REG_NOTEOL != 0;
     let mut visited = vec![0u64; compiled.nfa.len()];
@@ -4745,6 +5222,7 @@ fn regex_exec_byte_slots_from(
             eflags,
             prefilter: compiled.prefilter,
             literal_prefix: compiled.literal_prefix.as_deref(),
+            utf8: compiled.utf8,
         })
         .starting_at(start);
         return vm.execute();
@@ -4766,6 +5244,7 @@ fn regex_exec_byte_slots_from(
             .map(|(p, s)| (p.as_slice(), s.as_slice())),
     )
     .starting_at(start)
+    .with_utf8(compiled.utf8)
     .with_bulk_table(&compiled.bulk_table)
     .with_closure_table(compiled.closure_table.as_ref());
 
@@ -4902,6 +5381,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// REG_UTF8 (a UTF-8 LC_CTYPE at regcomp): one whole character per `.`,
+    /// bracket, `\w`; invalid bytes never match `.` or a nonmatching list;
+    /// ICASE by towupper equality. Expected bounds captured from host glibc
+    /// 2.43 under C.UTF-8 (tests/integration/fixture_regex_utf8.c).
+    #[test]
+    fn utf8_patterns_match_whole_characters_like_glibc() {
+        fn bounds(pat: &[u8], input: &[u8], cflags: i32) -> Option<(i32, i32, i32, i32)> {
+            let compiled = regex_compile_bytes(pat, cflags | REG_UTF8).unwrap();
+            let mut m = [RegMatch::default(); 2];
+            (regex_exec_bytes(&compiled, input, &mut m, 0) == 0)
+                .then(|| (m[0].rm_so, m[0].rm_eo, m[1].rm_so, m[1].rm_eo))
+        }
+        const E: i32 = REG_EXTENDED;
+        let cases: &[(&[u8], &[u8], i32, Option<(i32, i32)>)] = &[
+            (b".", "é".as_bytes(), E, Some((0, 2))),
+            (b"^.$", "é".as_bytes(), E, Some((0, 2))),
+            (b"^..$", "é".as_bytes(), E, None),
+            (b".$", "aé".as_bytes(), E, Some((1, 3))),
+            (b"[[:lower:]]", "é".as_bytes(), E, Some((0, 2))),
+            (b"[[:upper:]]", "xÉ".as_bytes(), E, Some((1, 3))),
+            (b"[[:alpha:]]+", "1été!".as_bytes(), E, Some((1, 6))),
+            (b"[^a]", "é".as_bytes(), E, Some((0, 2))),
+            ("é*".as_bytes(), "ééx".as_bytes(), E, Some((0, 4))),
+            ("^é\\{2\\}$".as_bytes(), "éé".as_bytes(), 0, Some((0, 4))),
+            ("[é]".as_bytes(), "xé".as_bytes(), E, Some((1, 3))),
+            (b"\\w+", "été x".as_bytes(), E, Some((0, 5))),
+            (b"\\bt", "ét".as_bytes(), E, None),
+            (b"\\W", "é-".as_bytes(), E, Some((2, 3))),
+            ("É".as_bytes(), "é".as_bytes(), E | REG_ICASE, Some((0, 2))),
+            (b".", b"\xff", E, None),
+            (b"a.b", b"a\xffb", E, None),
+            (b"a..b", "aéb".as_bytes(), E, None),
+            (b"[^x]", b"\xff", E, None),
+            (b"\xa9", "é".as_bytes(), E, Some((1, 2))),
+            ("€.".as_bytes(), "€😀".as_bytes(), E, Some((0, 7))),
+            (b"x*", "é".as_bytes(), E, Some((0, 0))),
+            // `prefix.*suffix` closed form: only over valid UTF-8.
+            (b"a.*b", "xaébéb!".as_bytes(), E, Some((1, 8))),
+            (b"a.*b", b"a\xffb", E, None),
+            (b"a.*b", b"ab\xffab", E, Some((0, 2))),
+            // µ (U+00B5), Μ (U+039C) and μ (U+03BC) share an uppercase; the
+            // Ohm sign (U+2126) uppercases to itself, so ω does not match it.
+            ("µ".as_bytes(), "μ".as_bytes(), E | REG_ICASE, Some((0, 2))),
+            ("ω".as_bytes(), "\u{2126}".as_bytes(), E | REG_ICASE, None),
+            (b"s", "ſ".as_bytes(), E | REG_ICASE, Some((0, 2))),
+            (b"[s]", "ſ".as_bytes(), E | REG_ICASE, Some((0, 2))),
+            ("ı".as_bytes(), b"I", E | REG_ICASE, Some((0, 1))),
+        ];
+        for &(pat, input, cflags, want) in cases {
+            let got = bounds(pat, input, cflags).map(|(so, eo, _, _)| (so, eo));
+            assert_eq!(got, want, "pattern {pat:?} on {input:?}");
+        }
+        // A backreference repeats the whole captured character.
+        assert_eq!(bounds(b"(.)\\1", "éé".as_bytes(), E), Some((0, 4, 0, 2)));
+        // Without REG_UTF8 the same patterns stay byte-oriented.
+        let compiled = regex_compile_bytes(b"^.$", E).unwrap();
+        let mut m = [RegMatch::default(); 1];
+        assert_eq!(
+            regex_exec_bytes(&compiled, "é".as_bytes(), &mut m, 0),
+            REG_NOMATCH
+        );
     }
 
     #[test]

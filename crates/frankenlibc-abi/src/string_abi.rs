@@ -10702,6 +10702,16 @@ unsafe fn legacy_regex_write_regs(
         }
     }
 }
+/// The engine flags the current locale implies: like glibc's regcomp, a
+/// pattern compiled under a UTF-8 LC_CTYPE matches whole characters.
+fn regex_locale_cflags() -> c_int {
+    if crate::locale_abi::mb_cur_max() > 1 {
+        frankenlibc_core::string::regex::REG_UTF8
+    } else {
+        0
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn regcomp(
     preg: *mut c_void,
@@ -10725,8 +10735,9 @@ pub unsafe extern "C" fn regcomp(
 
     // Only the POSIX cflags reach the engine: its higher bits are fl-internal
     // GNU-syntax selectors, and glibc ignores undefined regcomp flags.
-    let posix_cflags =
-        cflags & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB);
+    let posix_cflags = (cflags
+        & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB))
+        | regex_locale_cflags();
     match regex::regex_compile(&pat_bytes, posix_cflags) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
@@ -13283,7 +13294,8 @@ pub unsafe extern "C" fn re_compile_pattern(
     let syntax = RE_SYNTAX.load(std::sync::atomic::Ordering::Relaxed);
     // glibc's re_compile_pattern always sets `newline_anchor`; callers (sed) may
     // clear it before searching, which regex_compiled_for_search honours.
-    let cflags = legacy_regex_syntax_to_cflags(syntax) | regex::REG_NEWLINE_ANCHOR;
+    let cflags =
+        legacy_regex_syntax_to_cflags(syntax) | regex::REG_NEWLINE_ANCHOR | regex_locale_cflags();
 
     match regex::regex_compile_bytes(pat_slice, cflags) {
         Ok(compiled) => {
