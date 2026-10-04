@@ -1736,8 +1736,9 @@ impl StreamRegistry {
     /// (0 = none); see [`StreamCellInner`].
     fn insert_stream_with_handle(&mut self, id: usize, stream: StdioStream, handle: usize) {
         REGISTRY_GEN.fetch_add(1, Ordering::Release);
-        if handle != 0 {
-            mirror_stream_flags(handle, &stream);
+        let resolved = resolve_flags_word(handle);
+        if resolved != 0 {
+            mirror_stream_flags(resolved, &stream);
         }
         self.streams
             .insert(id, new_stream_cell_with_handle(stream, handle));
@@ -2264,7 +2265,14 @@ fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
         return false;
     }
     // A closed fl `FILE` handle is still ours: its vtable points at fl
-    // trampolines, so host glibc must never interpret it.
+    // trampolines, so host glibc must never interpret it. That includes the
+    // stdin/stdout/stderr slots: after fclose(stdout), GNU error() still calls
+    // fflush(stdout), and host glibc aborted with "invalid stdio handle"
+    // (coreutils close_stdout on a write error: `false --version > /dev/full`).
+    let addr = stream as usize;
+    if addr != 0 && (0..3).any(|fd| io_internal_abi::native_stdio_slot_addr_lockfree(fd) == addr) {
+        return false;
+    }
     !io_internal_abi::is_native_handle_slot_address(stream)
 }
 
@@ -10883,6 +10891,10 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
             }
             if rc == 0 {
                 s.set_eof();
+            } else if rc < 0 {
+                // A read error (e.g. EISDIR) sets the error indicator, as
+                // glibc's fscanf does; it used to look like plain EOF.
+                s.set_error();
             }
             return (ScanfReadBuf::take(), ScanfReadState::SeekableFd { base });
         }
@@ -10920,7 +10932,7 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
         if rc == 0 {
             s.set_eof();
         }
-        if rc < 0 && cookie {
+        if rc < 0 {
             s.set_error();
         }
         (
@@ -12022,7 +12034,17 @@ pub unsafe extern "C-unwind" fn freopen(
         }
         id
     } else {
-        0
+        // A reopened stdin/stdout/stderr keeps mirroring into its std handle
+        // (resolved lock-free, see resolve_flags_word): with 0 here, a read
+        // error after freopen(path, "r", stdin) never reached the inline
+        // ferror_unlocked (coreutils uniq/tsort/shuf, which freopen stdin,
+        // exited 0 on a directory: tests/misc/read-errors.sh).
+        match id {
+            STDIN_SENTINEL => 1,
+            STDOUT_SENTINEL => 2,
+            STDERR_SENTINEL => 3,
+            _ => 0,
+        }
     };
     reg.insert_stream_with_handle(id, new_stream, handle);
 
