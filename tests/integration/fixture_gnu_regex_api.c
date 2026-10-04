@@ -47,6 +47,16 @@ int main(void) {
     compile(&b, "o.b", basic);
     search(&b, "foo\nbar", 7, NULL);
     regfree(&b);
+    /* sed s///M: no RE_DOT_NEWLINE, RE_HAT_LISTS_NOT_NEWLINE. */
+    compile(&b, "o.b", (basic & ~RE_DOT_NEWLINE) | RE_HAT_LISTS_NOT_NEWLINE);
+    search(&b, "foo\nbar", 7, NULL);
+    regfree(&b);
+    compile(&b, "o[^x]b", (basic & ~RE_DOT_NEWLINE) | RE_HAT_LISTS_NOT_NEWLINE);
+    search(&b, "foo\nbar", 7, NULL);
+    regfree(&b);
+    compile(&b, "o[^x]b", basic);
+    search(&b, "foo\nbar", 7, NULL);
+    regfree(&b);
 
     memset(&b, 0, sizeof b);
     re_set_syntax(basic);

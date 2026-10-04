@@ -10263,7 +10263,9 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
 const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_DOT_NEWLINE: u64 = 1 << 6;
 const RE_DOT_NOT_NULL: u64 = 1 << 7;
+const RE_HAT_LISTS_NOT_NEWLINE: u64 = 1 << 8;
 const RE_LIMITED_OPS: u64 = 1 << 10;
 const RE_NO_BK_BRACES: u64 = 1 << 12;
 const RE_NO_BK_PARENS: u64 = 1 << 13;
@@ -10354,6 +10356,12 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
     }
     if syntax & RE_DOT_NOT_NULL == 0 {
         cflags |= regex::REG_DOT_NUL;
+    }
+    if syntax & RE_DOT_NEWLINE == 0 {
+        cflags |= regex::REG_DOT_NOT_NEWLINE;
+    }
+    if syntax & RE_HAT_LISTS_NOT_NEWLINE != 0 {
+        cflags |= regex::REG_LIST_NOT_NEWLINE;
     }
     cflags
 }

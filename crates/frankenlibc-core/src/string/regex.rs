@@ -31,6 +31,11 @@ pub const REG_NEWLINE_ANCHOR: i32 = 1 << 20;
 /// fl-internal cflag: `.` matches NUL (GNU syntax without RE_DOT_NOT_NULL, e.g.
 /// sed). Only observable on the binary-safe byte paths.
 pub const REG_DOT_NUL: i32 = 1 << 21;
+/// fl-internal cflag: `.` does not match `\n` (GNU syntax without RE_DOT_NEWLINE).
+pub const REG_DOT_NOT_NEWLINE: i32 = 1 << 22;
+/// fl-internal cflag: nonmatching lists do not match `\n` (GNU
+/// RE_HAT_LISTS_NOT_NEWLINE; sed `s///M`).
+pub const REG_LIST_NOT_NEWLINE: i32 = 1 << 23;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -781,7 +786,10 @@ pub struct CompiledRegex {
     total_slots: usize,
     nosub: bool,
     icase: bool,
+    /// `.` excludes `\n` (REG_NEWLINE or REG_DOT_NOT_NEWLINE).
     newline: bool,
+    /// Nonmatching lists exclude `\n` (REG_NEWLINE or REG_LIST_NOT_NEWLINE).
+    list_newline: bool,
     /// `^`/`$` match at line boundaries (REG_NEWLINE or REG_NEWLINE_ANCHOR).
     anchor_newline: bool,
     /// `.` matches NUL (REG_DOT_NUL).
@@ -1542,7 +1550,10 @@ impl<'a> Parser<'a> {
 struct Compiler {
     nfa: Vec<NfaInstr>,
     compile_icase: bool,
+    /// `.` excludes `\n` (REG_NEWLINE or REG_DOT_NOT_NEWLINE).
     compile_newline: bool,
+    /// Nonmatching lists exclude `\n` (REG_NEWLINE or REG_LIST_NOT_NEWLINE).
+    compile_list_newline: bool,
     compile_anchor_newline: bool,
     compile_dot_nul: bool,
     /// Next free slot index for hidden (non-capture) repeat-progress slots.
@@ -1557,7 +1568,8 @@ impl Compiler {
         Self {
             nfa: Vec::new(),
             compile_icase: cflags & REG_ICASE != 0,
-            compile_newline: newline,
+            compile_newline: newline || cflags & REG_DOT_NOT_NEWLINE != 0,
+            compile_list_newline: newline || cflags & REG_LIST_NOT_NEWLINE != 0,
             compile_anchor_newline: newline || cflags & REG_NEWLINE_ANCHOR != 0,
             compile_dot_nul: cflags & REG_DOT_NUL != 0,
             next_hidden_slot: (num_groups + 1) * 2,
@@ -1600,7 +1612,7 @@ impl Compiler {
                         ranges,
                         *negated,
                         self.compile_icase,
-                        self.compile_newline,
+                        self.compile_list_newline,
                     ),
                 }));
             }
@@ -3552,6 +3564,7 @@ struct BacktrackVm<'a> {
     num_slots: usize,
     icase: bool,
     newline: bool,
+    list_newline: bool,
     anchor_newline: bool,
     dot_nul: bool,
     eflags: i32,
@@ -3567,6 +3580,7 @@ struct BacktrackConfig<'a> {
     num_slots: usize,
     icase: bool,
     newline: bool,
+    list_newline: bool,
     anchor_newline: bool,
     dot_nul: bool,
     eflags: i32,
@@ -3585,6 +3599,7 @@ impl<'a> BacktrackVm<'a> {
             num_slots: config.num_slots,
             icase: config.icase,
             newline: config.newline,
+            list_newline: config.list_newline,
             anchor_newline: config.anchor_newline,
             dot_nul: config.dot_nul,
             eflags: config.eflags,
@@ -3884,7 +3899,7 @@ impl<'a> BacktrackVm<'a> {
             // Under REG_NEWLINE a NONMATCHING list ("[^…]") never matches '\n',
             // even when '\n' is not listed (POSIX): "a <newline> shall not be
             // matched by ... any form of a nonmatching list".
-            if self.newline && ch == b'\n' {
+            if self.list_newline && ch == b'\n' {
                 return false;
             }
             !found
@@ -4042,8 +4057,11 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     mark_line_anchors(&mut ast, true, true);
 
     let icase = cflags & REG_ICASE != 0;
-    let newline = cflags & REG_NEWLINE != 0;
-    let anchor_newline = newline || cflags & REG_NEWLINE_ANCHOR != 0;
+    let reg_newline = cflags & REG_NEWLINE != 0;
+    // `newline`: `.` excludes `\n`; `list_newline`: nonmatching lists do.
+    let newline = reg_newline || cflags & REG_DOT_NOT_NEWLINE != 0;
+    let list_newline = reg_newline || cflags & REG_LIST_NOT_NEWLINE != 0;
+    let anchor_newline = reg_newline || cflags & REG_NEWLINE_ANCHOR != 0;
     let nosub = cflags & REG_NOSUB != 0;
     let has_backref = ast_contains_backref(&ast);
 
@@ -4158,6 +4176,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         nosub,
         icase,
         newline,
+        list_newline,
         anchor_newline,
         dot_nul: cflags & REG_DOT_NUL != 0,
         complexity_certificate,
@@ -4535,6 +4554,7 @@ fn regex_exec_byte_slots_from(
             num_slots,
             icase: compiled.icase,
             newline: compiled.newline,
+            list_newline: compiled.list_newline,
             anchor_newline: compiled.anchor_newline,
             dot_nul: compiled.dot_nul,
             eflags,
