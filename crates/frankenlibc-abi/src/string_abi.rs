@@ -10852,6 +10852,34 @@ pub unsafe extern "C" fn glob(
 
     let gt = pglob as *mut GlobT;
 
+    // Reset the result first, as glibc does: every return -- GLOB_NOMATCH
+    // and the errors included -- leaves a glob_t that globfree accepts.
+    // make's parse_file_seq globs into an uninitialized stack glob_t and
+    // calls globfree unconditionally; the stale pathv aborted make with
+    // "free(): invalid pointer".
+    if !append {
+        unsafe {
+            if flags & glob_core::GLOB_DOOFFS == 0 {
+                (*gt).gl_offs = 0;
+            }
+            (*gt).gl_pathc = 0;
+            (*gt).gl_pathv = std::ptr::null_mut();
+            let offs = (*gt).gl_offs;
+            if offs > 0 {
+                let slots = crate::malloc_abi::raw_alloc(
+                    (offs + 1) * std::mem::size_of::<*mut c_char>(),
+                ) as *mut *mut c_char;
+                if slots.is_null() {
+                    return glob_core::GLOB_NOSPACE;
+                }
+                for i in 0..=offs {
+                    *slots.add(i) = std::ptr::null_mut();
+                }
+                (*gt).gl_pathv = slots;
+            }
+        }
+    }
+
     // Read current state for GLOB_APPEND.
     let (existing_paths, existing_count) = if append {
         let pathc = unsafe { (*gt).gl_pathc };
@@ -10950,12 +10978,11 @@ pub unsafe extern "C" fn glob(
             // Null-terminate.
             unsafe { *pathv.add(offs + total) = std::ptr::null_mut() };
 
-            // Free old pathv array (not the strings — those were moved).
-            if append {
-                let old_pathv = unsafe { (*gt).gl_pathv };
-                if !old_pathv.is_null() {
-                    unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
-                }
+            // Free old pathv array (not the strings -- those were moved; a
+            // fresh call's array holds only the GLOB_DOOFFS null slots).
+            let old_pathv = unsafe { (*gt).gl_pathv };
+            if !old_pathv.is_null() {
+                unsafe { crate::malloc_abi::raw_free(old_pathv.cast()) };
             }
 
             // Write glob_t fields.
