@@ -10316,6 +10316,7 @@ const RE_INTERVALS: u64 = 1 << 9;
 const RE_NEWLINE_ALT: u64 = 1 << 11;
 const RE_NO_BK_REFS: u64 = 1 << 14;
 const RE_CONTEXT_INVALID_DUP: u64 = 1 << 24;
+const RE_UNMATCHED_RIGHT_PAREN_ORD: u64 = 1 << 17;
 const RE_DOT_NEWLINE: u64 = 1 << 6;
 const RE_DOT_NOT_NULL: u64 = 1 << 7;
 const RE_HAT_LISTS_NOT_NEWLINE: u64 = 1 << 8;
@@ -10427,15 +10428,30 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
         if syntax & RE_INVALID_INTERVAL_ORD != 0 {
             cflags |= regex::REG_INVALID_INTERVAL_ORD;
         }
-        if syntax & RE_INTERVALS == 0 {
-            cflags |= regex::REG_NO_INTERVALS;
-        }
+    }
+    if syntax & RE_INTERVALS == 0 {
+        cflags |= regex::REG_NO_INTERVALS;
+    }
+    // BRE without RE_BK_PLUS_QM (e.g. the default syntax 0, which coreutils
+    // tac uses for -r separators): unescaped `+`/`?` are the operators.
+    if !uses_extended_syntax && syntax & (RE_BK_PLUS_QM | RE_LIMITED_OPS) == 0 {
+        cflags |= regex::REG_PLUS_QM_OPS;
     }
     if syntax & RE_NO_BK_REFS != 0 {
         cflags |= regex::REG_NO_BK_REFS;
     }
     if !uses_extended_syntax && syntax & RE_CONTEXT_INVALID_DUP == 0 {
         cflags |= regex::REG_DUP_STACKS;
+    }
+    // Unmatched close paren: ordinary under RE_UNMATCHED_RIGHT_PAREN_ORD,
+    // else "Unmatched ) or \)" (coreutils expr).
+    match (
+        uses_extended_syntax,
+        syntax & RE_UNMATCHED_RIGHT_PAREN_ORD != 0,
+    ) {
+        (true, false) => cflags |= regex::REG_RPAREN_ERROR,
+        (false, true) => cflags |= regex::REG_RPAREN_ORD,
+        _ => {}
     }
     if syntax & RE_NEWLINE_ALT != 0 {
         cflags |= regex::REG_NEWLINE_ALT;
@@ -10707,7 +10723,11 @@ pub unsafe extern "C" fn regcomp(
         return regex::REG_BADPAT;
     };
 
-    match regex::regex_compile(&pat_bytes, cflags) {
+    // Only the POSIX cflags reach the engine: its higher bits are fl-internal
+    // GNU-syntax selectors, and glibc ignores undefined regcomp flags.
+    let posix_cflags =
+        cflags & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB);
+    match regex::regex_compile(&pat_bytes, posix_cflags) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
@@ -10740,6 +10760,8 @@ pub unsafe extern "C" fn regcomp(
             regex_set_regs_allocated(&mut layout.flags, REGS_UNALLOCATED);
             0
         }
+        // glibc's regcomp reports an unmatched close paren as REG_EPAREN.
+        Err(regex::REG_ERPAREN) => regex::REG_EPAREN,
         Err(code) => code,
     }
 }
@@ -13383,8 +13405,7 @@ pub unsafe extern "C" fn re_search_2(
     // Returns (start, end) with `match_slots` filled when registers are wanted.
     let search_from = |from: usize, slots: &mut [regex::RegMatch]| -> Option<(usize, usize)> {
         if nosub {
-            let (so, eo) =
-                regex::regex_match_bounds_bytes_from(compiled, &haystack, from, eflags)?;
+            let (so, eo) = regex::regex_match_bounds_bytes_from(compiled, &haystack, from, eflags)?;
             Some((so as usize, eo as usize))
         } else if regex::regex_exec_bytes_from(compiled, &haystack, from, slots, eflags) == 0 {
             Some((slots[0].rm_so as usize, slots[0].rm_eo as usize))
@@ -13506,8 +13527,7 @@ pub unsafe extern "C" fn re_match_2(
     }
 
     let mut match_slots = vec![regex::RegMatch::default(); compiled.num_regs().max(2)];
-    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, eflags) != 0
-    {
+    if regex::regex_exec_bytes_from(compiled, &haystack, start_pos, &mut match_slots, eflags) != 0 {
         return -1;
     }
     let (rm_so, rm_eo) = (match_slots[0].rm_so, match_slots[0].rm_eo);

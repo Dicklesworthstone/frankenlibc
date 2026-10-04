@@ -58,6 +58,16 @@ pub const REG_LEADING_OPS_LITERAL: i32 = 1 << 29;
 /// fl-internal cflag: BRE `*` / `\{` may follow another quantifier instead of
 /// REG_BADRPT (GNU syntax without RE_CONTEXT_INVALID_DUP; grep).
 pub const REG_DUP_STACKS: i32 = 1 << 30;
+/// fl-internal cflag: an unmatched ERE `)` is REG_ERPAREN instead of a literal
+/// (GNU ERE syntax without RE_UNMATCHED_RIGHT_PAREN_ORD).
+pub const REG_RPAREN_ERROR: i32 = 1 << 19;
+/// fl-internal cflag: an unmatched BRE `\)` is a literal `)` instead of
+/// REG_ERPAREN (GNU BRE syntax with RE_UNMATCHED_RIGHT_PAREN_ORD).
+pub const REG_RPAREN_ORD: i32 = 1 << 18;
+/// fl-internal cflag: in a BRE, unescaped `+` and `?` are the operators and
+/// `\+`/`\?` literals (GNU syntax without RE_BK_PLUS_QM, e.g. the default
+/// Emacs syntax 0 that coreutils tac's separator regex uses).
+pub const REG_PLUS_QM_OPS: i32 = 1 << 17;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -944,6 +954,14 @@ struct Parser<'a> {
     leading_ops_literal: bool,
     /// BRE `*` / `\{` may follow another quantifier (REG_DUP_STACKS).
     dup_stacks: bool,
+    /// Open groups enclosing the current position (an unmatched close paren
+    /// is one seen at depth 0).
+    group_depth: usize,
+    /// An unmatched `)` (ERE) / `\)` (BRE) is an ordinary character instead
+    /// of REG_ERPAREN (GNU RE_UNMATCHED_RIGHT_PAREN_ORD; POSIX regcomp ERE).
+    rparen_literal: bool,
+    /// BRE: unescaped `+`/`?` are operators (REG_PLUS_QM_OPS).
+    plus_qm_ops: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -961,6 +979,15 @@ impl<'a> Parser<'a> {
             newline_alt: cflags & REG_NEWLINE_ALT != 0,
             leading_ops_literal: cflags & REG_LEADING_OPS_LITERAL != 0,
             dup_stacks: cflags & REG_DUP_STACKS != 0,
+            group_depth: 0,
+            // glibc: regcomp's ERE syntax has RE_UNMATCHED_RIGHT_PAREN_ORD
+            // (`a)` matches "a)"), its BRE syntax does not (`a\)` is an error).
+            rparen_literal: if cflags & REG_EXTENDED != 0 {
+                cflags & REG_RPAREN_ERROR == 0
+            } else {
+                cflags & REG_RPAREN_ORD != 0
+            },
+            plus_qm_ops: cflags & REG_PLUS_QM_OPS != 0,
         }
     }
 
@@ -996,13 +1023,8 @@ impl<'a> Parser<'a> {
     fn parse(&mut self) -> Result<Ast, i32> {
         let ast = self.parse_alternation()?;
         if self.pos < self.pat.len() {
-            // Unparsed characters remain
-            if self.extended {
-                // In ERE, unmatched ) is an error
-                if self.pat[self.pos] == b')' {
-                    return Err(REG_EPAREN);
-                }
-            }
+            // Unparsed characters remain (unmatched close parens are handled
+            // in parse_concat).
             return Err(REG_BADPAT);
         }
         Ok(ast)
@@ -1025,19 +1047,26 @@ impl<'a> Parser<'a> {
             if self.alternative_separator().is_some() {
                 break;
             }
+            let close_paren = if self.extended {
+                self.peek() == Some(b')')
+            } else {
+                self.pos + 1 < self.pat.len()
+                    && self.pat[self.pos] == b'\\'
+                    && self.pat[self.pos + 1] == b')'
+            };
+            if close_paren {
+                if self.group_depth > 0 {
+                    break;
+                }
+                // Unmatched: an ordinary character where the syntax says so
+                // (parse_atom yields the literal), else glibc's REG_ERPAREN.
+                if !self.rparen_literal {
+                    return Err(REG_ERPAREN);
+                }
+            }
             match self.peek() {
                 None => break,
-                Some(b')') if self.extended => break,
                 _ => {
-                    // Check for BRE \)
-                    if !self.extended
-                        && self.pos + 1 < self.pat.len()
-                        && self.pat[self.pos] == b'\\'
-                        && self.pat[self.pos + 1] == b')'
-                    {
-                        break;
-                    }
-
                     let atom = self.parse_quantified()?;
                     items.push(atom);
                 }
@@ -1127,12 +1156,32 @@ impl<'a> Parser<'a> {
                         };
                         quantified = true;
                     }
+                    // Syntax without RE_BK_PLUS_QM: unescaped `+`/`?` repeat.
+                    Some(op @ (b'+' | b'?')) if self.plus_qm_ops => {
+                        if matches!(node, Ast::Anchor(_)) {
+                            return Ok(node);
+                        }
+                        self.advance();
+                        node = Ast::Repeat {
+                            inner: Box::new(node),
+                            min: u32::from(op == b'+'),
+                            max: if op == b'?' { Some(1) } else { None },
+                        };
+                        quantified = true;
+                    }
                     _ => {
                         // BRE GNU quantifier extensions: `\{m,n\}`, `\+`, `\?`.
                         // Plain `+`/`?` are literals in BRE.
                         if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
                             match self.pat[self.pos + 1] {
+                                b'+' | b'?' if self.plus_qm_ops => return Ok(node),
+                                b'{' if self.no_intervals => return Ok(node),
                                 b'{' => {
+                                    if matches!(node, Ast::Anchor(_)) {
+                                        // An anchor is not repeated: the `\{`
+                                        // starts the next expression (parse_atom).
+                                        return Ok(node);
+                                    }
                                     if quantified && !self.dup_stacks {
                                         // glibc: `\{` after a quantifier is BADRPT.
                                         return Err(REG_BADRPT);
@@ -1258,45 +1307,55 @@ impl<'a> Parser<'a> {
         Ok((min, max))
     }
 
+    /// `\{m\}`, `\{m,\}`, `\{,n\}` or `\{m,n\}` with `pos` just past `\{`. As
+    /// glibc: running out of pattern before `\}` is REG_EBRACE (`a\{1,x`),
+    /// other bad content is REG_BADBR (`a\{1a\}`, `a\{\}`, a second comma).
     fn parse_bre_brace_quantifier(&mut self, atom: Ast) -> Result<Ast, i32> {
-        // `\{,m\}` (leading comma) is the GNU extension for `\{0,m\}`.
-        let min = if self.peek() == Some(b',') {
-            0
-        } else {
-            self.parse_decimal()?
-        };
-        let max;
-
-        match self.peek() {
-            Some(b',') => {
-                self.advance();
-                // Check for \}
-                if self.pos + 1 < self.pat.len()
-                    && self.pat[self.pos] == b'\\'
-                    && self.pat[self.pos + 1] == b'}'
-                {
-                    max = None;
+        fn at_close(p: &Parser<'_>) -> bool {
+            p.pat.get(p.pos) == Some(&b'\\') && p.pat.get(p.pos + 1) == Some(&b'}')
+        }
+        // One bound: digits up to `,` or `\}`. None = empty.
+        fn bound(p: &mut Parser<'_>) -> Result<Option<u32>, i32> {
+            let mut val: Option<u32> = None;
+            let mut bad = false;
+            loop {
+                if p.pos >= p.pat.len() {
+                    return Err(REG_EBRACE);
+                }
+                if at_close(p) || p.pat[p.pos] == b',' {
+                    break;
+                }
+                let c = p.pat[p.pos];
+                p.pos += 1;
+                if c.is_ascii_digit() {
+                    val = Some(
+                        val.unwrap_or(0)
+                            .saturating_mul(10)
+                            .saturating_add((c - b'0') as u32),
+                    );
                 } else {
-                    let m = self.parse_decimal()?;
-                    max = Some(m);
-                    if m < min {
-                        return Err(REG_BADBR);
-                    }
+                    bad = true;
                 }
             }
-            _ => {
-                max = Some(min);
-            }
+            if bad { Err(REG_BADBR) } else { Ok(val) }
         }
-
-        // Expect \}
-        if self.pos + 1 < self.pat.len()
-            && self.pat[self.pos] == b'\\'
-            && self.pat[self.pos + 1] == b'}'
-        {
-            self.pos += 2;
+        let first = bound(self)?;
+        let (min, max) = if self.peek() == Some(b',') {
+            self.advance();
+            let second = bound(self)?;
+            if !at_close(self) {
+                return Err(REG_BADBR);
+            }
+            (first.unwrap_or(0), second)
         } else {
-            return Err(REG_EBRACE);
+            let Some(m) = first else {
+                return Err(REG_BADBR);
+            };
+            (m, Some(m))
+        };
+        self.pos += 2; // skip \}
+        if max.is_some_and(|m| m < min) {
+            return Err(REG_BADBR);
         }
         // POSIX.2: an interval bound larger than RE_DUP_MAX is REG_BADBR.
         if min > RE_DUP_MAX || max.is_some_and(|m| m > RE_DUP_MAX) {
@@ -1308,27 +1367,6 @@ impl<'a> Parser<'a> {
             min,
             max,
         })
-    }
-
-    fn parse_decimal(&mut self) -> Result<u32, i32> {
-        let mut val: u32 = 0;
-        let mut found = false;
-        while let Some(ch) = self.peek() {
-            if ch.is_ascii_digit() {
-                self.advance();
-                val = val
-                    .checked_mul(10)
-                    .and_then(|v| v.checked_add((ch - b'0') as u32))
-                    .ok_or(REG_BADBR)?;
-                found = true;
-            } else {
-                break;
-            }
-        }
-        if !found {
-            return Err(REG_BADBR);
-        }
-        Ok(val)
     }
 
     fn parse_atom(&mut self) -> Result<Ast, i32> {
@@ -1374,7 +1412,10 @@ impl<'a> Parser<'a> {
                 self.advance();
                 self.group_count += 1;
                 let idx = self.group_count;
-                let inner = self.parse_alternation()?;
+                self.group_depth += 1;
+                let inner = self.parse_alternation();
+                self.group_depth -= 1;
+                let inner = inner?;
                 if self.advance() != Some(b')') {
                     return Err(REG_EPAREN);
                 }
@@ -1391,7 +1432,10 @@ impl<'a> Parser<'a> {
                         self.advance();
                         self.group_count += 1;
                         let idx = self.group_count;
-                        let inner = self.parse_alternation()?;
+                        self.group_depth += 1;
+                        let inner = self.parse_alternation();
+                        self.group_depth -= 1;
+                        let inner = inner?;
                         // Expect \)
                         if self.pos + 1 < self.pat.len()
                             && self.pat[self.pos] == b'\\'
@@ -1476,6 +1520,11 @@ impl<'a> Parser<'a> {
                             negated: true,
                         })
                     }
+                    // A BRE interval with nothing to repeat (pattern start, or
+                    // after an anchor): REG_BADRPT under RE_CONTEXT_INVALID_DUP
+                    // (POSIX regcomp), else an ordinary `{` (GNU expr/grep:
+                    // `^\{1\}` matches the text "{1}").
+                    Some(b'{') if !self.extended && !self.dup_stacks => Err(REG_BADRPT),
                     Some(ch) => {
                         self.advance();
                         // Escaped metacharacter becomes literal
@@ -5287,6 +5336,23 @@ mod tests {
         // BRE without a group is ESUBREG; `a**` is BADRPT in POSIX BRE.
         assert_eq!(regex_compile(b"(a)\\1", 0).err(), Some(REG_ESUBREG));
         assert_eq!(regex_compile(b"a**", 0).err(), Some(REG_BADRPT));
+        // Unmatched close paren: literal in POSIX ERE, ERPAREN in BRE (glibc's
+        // regcomp then reports it as EPAREN; the ABI maps it).
+        assert!(compile_and_match("a)", "xa)", REG_EXTENDED));
+        assert_eq!(regex_compile(b"a\\)", 0).err(), Some(REG_ERPAREN));
+        assert_eq!(regex_compile(b"\\)", 0).err(), Some(REG_ERPAREN));
+        // BRE interval errors, as glibc regcomp.
+        assert_eq!(regex_compile(b"a\\{1a\\}", 0).err(), Some(REG_BADBR));
+        assert_eq!(regex_compile(b"a\\{1,x", 0).err(), Some(REG_EBRACE));
+        // A BRE `\{` with nothing to repeat is BADRPT under POSIX regcomp...
+        assert_eq!(regex_compile(b"\\{1\\}", 0).err(), Some(REG_BADRPT));
+        assert_eq!(regex_compile(b"^\\{1\\}", 0).err(), Some(REG_BADRPT));
+        // ...and literal text without RE_CONTEXT_INVALID_DUP (coreutils expr).
+        assert!(compile_and_match("^\\{1\\}", "{1}", REG_DUP_STACKS));
+        // Syntax 0 (no RE_BK_PLUS_QM): `+`/`?` repeat, `\+` is literal.
+        assert!(compile_and_match("\\._+", "x.__", REG_PLUS_QM_OPS));
+        assert!(!compile_and_match("a\\+", "aa", REG_PLUS_QM_OPS));
+        assert!(compile_and_match("a\\+", "a+", REG_PLUS_QM_OPS));
     }
 
     #[test]

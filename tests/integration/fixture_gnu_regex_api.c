@@ -107,8 +107,17 @@ int main(void) {
         {"a**", RE_SYNTAX_GREP, "grep"},         {"a**", RE_SYNTAX_POSIX_BASIC, "pbasic"},
         {"(a)\\1", RE_SYNTAX_POSIX_EXTENDED, "pext"}, {"^*a", RE_SYNTAX_POSIX_EXTENDED, "pext"},
         {"a{x}", RE_SYNTAX_POSIX_EXTENDED, "pext"},
+        /* Default syntax 0 (Emacs; coreutils tac -r): unescaped + and ? repeat,
+         * \{ is literal. */
+        {"a_+", 0, "emacs"}, {"\\._+", 0, "emacs"}, {"a\\+", 0, "emacs"},
+        {"a\\{1\\}", 0, "emacs"},
+        /* coreutils expr: POSIX BRE without RE_CONTEXT_INVALID_DUP. */
+        {"a\\)", RE_SYNTAX_POSIX_BASIC & ~RE_CONTEXT_INVALID_DUP, "expr"},
+        {"^\\{1\\}", RE_SYNTAX_POSIX_BASIC & ~RE_CONTEXT_INVALID_DUP, "expr"},
+        {"a\\{1a\\}", RE_SYNTAX_POSIX_BASIC & ~RE_CONTEXT_INVALID_DUP, "expr"},
+        {"a\\{1,x", RE_SYNTAX_POSIX_BASIC & ~RE_CONTEXT_INVALID_DUP, "expr"},
     };
-    const char *subj = "xa{1aa*a1";
+    const char *subj = "xa{1aa*a1{1}a__x._+.__a+";
     for (unsigned i = 0; i < sizeof syn_cases / sizeof syn_cases[0]; i++) {
         memset(&b, 0, sizeof b);
         re_set_syntax(syn_cases[i].syn);
