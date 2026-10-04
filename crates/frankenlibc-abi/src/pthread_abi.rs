@@ -68,6 +68,7 @@ use crate::runtime_policy;
 use crate::util::{ArtifactHashMap, ArtifactHashSet, artifact_hash_map, artifact_hash_set};
 
 type StartRoutine = unsafe extern "C" fn(*mut c_void) -> *mut c_void;
+type ResolvedPthreadGettidNpFn = unsafe extern "C" fn(libc::pthread_t) -> libc::pid_t;
 type ResolvedPthreadAttrInitFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
 type ResolvedPthreadAttrDestroyFn = unsafe extern "C" fn(*mut libc::pthread_attr_t) -> c_int;
 type ResolvedPthreadAttrSetdetachstateFn =
@@ -165,6 +166,10 @@ struct HostThreadStartContext {
     arg: *mut c_void,
     host_thread: AtomicUsize,
     handoff_state: AtomicI32,
+    /// The creator registers the child's TID itself and never touches this
+    /// context again: the child takes its handle from host `pthread_self`
+    /// and frees the context. See [`new_host_thread_start_context`].
+    child_owned: bool,
 }
 
 const STRICT_HOST_THREAD_TLS_GAP_BYTES: usize = 4 * 1024 * 1024;
@@ -215,6 +220,7 @@ static CANCEL_PENDING_REGISTRY: LazyLock<Mutex<ArtifactHashMap<usize, bool>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
 static HOST_LIBC_SYMBOL_CACHE: LazyLock<Mutex<ArtifactHashMap<&'static str, usize>>> =
     LazyLock::new(|| Mutex::new(artifact_hash_map()));
+static RESOLVED_PTHREAD_GETTID_NP_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_INIT_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
@@ -498,10 +504,7 @@ fn resolve_loaded_libc_symbol_direct(symbol: &'static str) -> Option<usize> {
         .iter()
         .find(|sym| sym.is_defined() && get_string(dynstr, sym.st_name).ok() == Some(symbol))
         .map(|sym| base.saturating_add(sym.st_value) as usize)?;
-    HOST_LIBC_SYMBOL_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(symbol, symbol_addr);
+    insert_without_growing_under_lock(&HOST_LIBC_SYMBOL_CACHE, symbol, symbol_addr);
     Some(symbol_addr)
 }
 
@@ -582,6 +585,18 @@ unsafe fn resolve_cached_pthread_attr_symbol(
 ) -> Option<usize> {
     let ptr = *slot.get_or_init(|| unsafe { resolve_host_symbol_with_aliases(names) as usize });
     (ptr != 0).then_some(ptr)
+}
+
+/// Host glibc's `pthread_gettid_np` (GLIBC_2.42): a host thread's kernel TID,
+/// which `clone` stores before the host `pthread_create` returns.
+unsafe fn resolved_pthread_gettid_np_fn() -> Option<ResolvedPthreadGettidNpFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_GETTID_NP_PTR,
+            &[b"pthread_gettid_np\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadGettidNpFn>(ptr) })
 }
 
 unsafe fn resolved_pthread_attr_init_fn() -> Option<ResolvedPthreadAttrInitFn> {
@@ -1169,10 +1184,7 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
     if thread == 0 || tid <= 0 {
         return;
     }
-    HOST_THREAD_TID_REGISTRY
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(thread as usize, tid);
+    insert_without_growing_under_lock(&HOST_THREAD_TID_REGISTRY, thread as usize, tid);
     // Publish AFTER the insert is visible, then wake every creating thread
     // waiting for any registration; each re-checks its own key. Without this
     // the creator only ever polled, and gave up. bd-4atx9e.
@@ -1180,6 +1192,46 @@ fn remember_host_thread_tid(thread: libc::pthread_t, tid: i32) {
     #[cfg(target_os = "linux")]
     {
         let _ = futex_wake_private(&HOST_THREAD_REGISTRATION_EPOCH, i32::MAX);
+    }
+}
+
+/// Insert into a registry that `pthread_create` itself locks, without ever
+/// allocating while the registry's lock is held. The table grows through the
+/// process's `malloc`, which is the application's own allocator when the
+/// executable exports one (Bun links mimalloc), and that allocator may start a
+/// thread of its own: its `pthread_create` then waited on this very lock, held
+/// by the same thread, forever (`claude --help`, bd-e54e25). A larger table is
+/// built with the lock released, entries are moved into it (no allocation: it
+/// already has room), and the old table is freed after unlocking.
+fn insert_without_growing_under_lock<K: Eq + std::hash::Hash, V>(
+    registry: &Mutex<ArtifactHashMap<K, V>>,
+    key: K,
+    value: V,
+) {
+    let mut grown: Option<ArtifactHashMap<K, V>> = None;
+    loop {
+        let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() < map.capacity() || map.contains_key(&key) {
+            map.insert(key, value);
+            drop(map);
+            drop(grown);
+            return;
+        }
+        // A table built too small (the registry grew meanwhile) stays in
+        // `grown` and is replaced, and so freed, after the lock is released.
+        if let Some(mut bigger) = grown.take_if(|b| b.capacity() > map.len()) {
+            bigger.extend(map.drain());
+            bigger.insert(key, value);
+            let old = std::mem::replace(&mut *map, bigger);
+            drop(map);
+            drop(old);
+            return;
+        }
+        let want = map.len() * 2 + 8;
+        drop(map);
+        let mut bigger = artifact_hash_map();
+        bigger.reserve(want);
+        grown = Some(bigger);
     }
 }
 
@@ -1249,6 +1301,74 @@ fn wait_for_host_thread_registration(thread: libc::pthread_t) -> bool {
             return false;
         }
         futex_wait_private_timeout(&HOST_THREAD_REGISTRATION_EPOCH, epoch, 1_000_000);
+    }
+}
+
+/// Allocate the trampoline's start context. When host `pthread_gettid_np`
+/// exists, the context is child-owned and the creator will not wait for the
+/// child at all, as glibc's `pthread_create` never does: an application may
+/// create a thread while holding a lock the new thread needs before it could
+/// register itself (Bun's allocator, hardened `claude --help`, bd-e54e25), so
+/// a creator blocked on that registration deadlocked until its timeout, once
+/// per thread.
+fn new_host_thread_start_context(
+    start_routine: StartRoutine,
+    arg: *mut c_void,
+) -> (
+    *mut HostThreadStartContext,
+    Option<ResolvedPthreadGettidNpFn>,
+) {
+    // SAFETY: resolving a host symbol has no preconditions.
+    let gettid = unsafe { resolved_pthread_gettid_np_fn() };
+    let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
+        start_routine,
+        arg,
+        host_thread: AtomicUsize::new(0),
+        handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+        child_owned: gettid.is_some(),
+    }));
+    (start_ctx, gettid)
+}
+
+/// Publish a successful host `pthread_create`'s handle and register the
+/// child's kernel TID, so tid-based entry points (pthread_gettid_np,
+/// pthread_kill, pthread_getaffinity_np, ...) see the thread as soon as
+/// `pthread_create` returns.
+///
+/// # Safety
+/// `thread_out` must be writable; `start_ctx` must come from
+/// [`new_host_thread_start_context`] together with `gettid`, and the host
+/// create must have succeeded with it.
+unsafe fn finish_host_thread_create(
+    start_ctx: *mut HostThreadStartContext,
+    gettid: Option<ResolvedPthreadGettidNpFn>,
+    host_thread: libc::pthread_t,
+    thread_out: *mut libc::pthread_t,
+) {
+    unsafe { *thread_out = host_thread };
+    if let Some(gettid) = gettid {
+        // The child owns `start_ctx` (and may already have freed it). An
+        // insert, not remove-then-insert, replaces the entry of an earlier
+        // thread that had this pthread_t; the child stores the same TID.
+        // SAFETY: `host_thread` was just created by the host library.
+        let tid = unsafe { gettid(host_thread) };
+        if tid > 0 {
+            insert_without_growing_under_lock(&HOST_THREAD_TID_REGISTRY, host_thread as usize, tid);
+        }
+        return;
+    }
+
+    // Clear any stale registration from a previous thread that reused this pthread_t.
+    HOST_THREAD_TID_REGISTRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&(host_thread as usize));
+
+    publish_host_thread_handoff(start_ctx, host_thread);
+    if wait_for_host_thread_registration(host_thread) {
+        // SAFETY: the child copied the start routine/argument before
+        // publishing its TID, so the parent can reclaim the handoff box.
+        drop(unsafe { Box::from_raw(start_ctx) });
     }
 }
 
@@ -1843,12 +1963,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     arg: *mut c_void,
 ) -> c_int {
     let Some(data_ptr) = managed_attr_data_for_host_translation(attr) else {
-        let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
-            start_routine,
-            arg,
-            host_thread: AtomicUsize::new(0),
-            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
-        }));
+        let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
         let mut host_thread: libc::pthread_t = 0;
         let rc = unsafe {
             host_create(
@@ -1862,20 +1977,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             drop(unsafe { Box::from_raw(start_ctx) });
         } else {
             // SAFETY: pthread_create validated `thread_out` as writable before dispatch.
-            unsafe { *thread_out = host_thread };
-
-            // Clear any stale registration from a previous thread that reused this pthread_t.
-            HOST_THREAD_TID_REGISTRY
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&(host_thread as usize));
-
-            publish_host_thread_handoff(start_ctx, host_thread);
-            if wait_for_host_thread_registration(host_thread) {
-                // SAFETY: the child copied the start routine/argument before
-                // publishing its TID, so the parent can reclaim the handoff box.
-                drop(unsafe { Box::from_raw(start_ctx) });
-            }
+            unsafe { finish_host_thread_create(start_ctx, gettid, host_thread, thread_out) };
         }
         return rc;
     };
@@ -1981,12 +2083,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
     }
 
     let result = if rc == 0 {
-        let start_ctx = Box::into_raw(Box::new(HostThreadStartContext {
-            start_routine,
-            arg,
-            host_thread: AtomicUsize::new(0),
-            handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
-        }));
+        let (start_ctx, gettid) = new_host_thread_start_context(start_routine, arg);
         let mut host_thread: libc::pthread_t = 0;
         unsafe {
             let create_rc = host_create(
@@ -1998,20 +2095,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
             if create_rc != 0 {
                 drop(Box::from_raw(start_ctx));
             } else {
-                *thread_out = host_thread;
-
-                // Clear any stale registration from a previous thread that reused this pthread_t.
-                HOST_THREAD_TID_REGISTRY
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&(host_thread as usize));
-
-                publish_host_thread_handoff(start_ctx, host_thread);
-                if wait_for_host_thread_registration(host_thread) {
-                    // SAFETY: the child copied the start routine/argument before
-                    // publishing its TID, so the parent can reclaim the handoff box.
-                    drop(Box::from_raw(start_ctx));
-                }
+                finish_host_thread_create(start_ctx, gettid, host_thread, thread_out);
             }
             create_rc
         }
@@ -2025,11 +2109,23 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 }
 
 unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
-    let start_ctx = unsafe { &*arg.cast::<HostThreadStartContext>() };
+    let start_ctx_ptr = arg.cast::<HostThreadStartContext>();
+    let start_ctx = unsafe { &*start_ctx_ptr };
     let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
-    let host_thread = wait_for_host_thread_handoff(start_ctx);
+    let child_owned = start_ctx.child_owned;
+    let host_thread = if child_owned {
+        // SAFETY: the resolved host symbol points to `pthread_self`.
+        resolved_thread_self_raw().map_or(0, |host_self| unsafe { host_self() })
+    } else {
+        wait_for_host_thread_handoff(start_ctx)
+    };
     let start_routine = start_ctx.start_routine;
     let start_arg = start_ctx.arg;
+    if child_owned {
+        // SAFETY: the creator never touches a child-owned context after the
+        // host create, and nothing below reads `start_ctx`.
+        drop(unsafe { Box::from_raw(start_ctx_ptr) });
+    }
     if host_thread != 0 {
         remember_current_pthread_self(host_thread);
         remember_host_thread_tid(host_thread, core_self_tid());
@@ -3073,6 +3169,7 @@ pub fn pthread_host_thread_handoff_probe_new_for_tests() -> usize {
         arg: std::ptr::null_mut(),
         host_thread: AtomicUsize::new(0),
         handoff_state: AtomicI32::new(HOST_THREAD_HANDOFF_PENDING),
+        child_owned: false,
     })) as usize
 }
 
