@@ -91,6 +91,37 @@ int main(void) {
     search(&b, "a1;", 3, &regs);
     regfree(&b);
 
+    /* Syntax bits: egrep drops an operator with nothing to repeat and keeps a
+     * malformed interval as text; awk takes leading operators, `{` and `\1`
+     * literally; grep's newline separates alternatives and lets `**` stack;
+     * POSIX ERE has backreferences. */
+    static const struct {
+        const char *pat;
+        reg_syntax_t syn;
+        const char *name;
+    } syn_cases[] = {
+        {"*a", RE_SYNTAX_POSIX_EGREP, "egrep"},  {"{1", RE_SYNTAX_POSIX_EGREP, "egrep"},
+        {"a{1", RE_SYNTAX_POSIX_EGREP, "egrep"}, {"a{}", RE_SYNTAX_POSIX_EGREP, "egrep"},
+        {"zz\na", RE_SYNTAX_POSIX_EGREP, "egrep"}, {"*a", RE_SYNTAX_AWK, "awk"},
+        {"a{1", RE_SYNTAX_AWK, "awk"},           {"(a)\\1", RE_SYNTAX_AWK, "awk"},
+        {"a**", RE_SYNTAX_GREP, "grep"},         {"a**", RE_SYNTAX_POSIX_BASIC, "pbasic"},
+        {"(a)\\1", RE_SYNTAX_POSIX_EXTENDED, "pext"}, {"^*a", RE_SYNTAX_POSIX_EXTENDED, "pext"},
+        {"a{x}", RE_SYNTAX_POSIX_EXTENDED, "pext"},
+    };
+    const char *subj = "xa{1aa*a1";
+    for (unsigned i = 0; i < sizeof syn_cases / sizeof syn_cases[0]; i++) {
+        memset(&b, 0, sizeof b);
+        re_set_syntax(syn_cases[i].syn);
+        err = re_compile_pattern(syn_cases[i].pat, strlen(syn_cases[i].pat), &b);
+        printf("%-6s %-6s %s", syn_cases[i].name, syn_cases[i].pat[0] == 'z' ? "zz\\na" : syn_cases[i].pat,
+               err ? err : "ok");
+        if (!err) {
+            printf(" pos=%d", re_search(&b, subj, (int)strlen(subj), 0, (int)strlen(subj), NULL));
+            regfree(&b);
+        }
+        printf("\n");
+    }
+
     free(regs.start);
     free(regs.end);
     return 0;

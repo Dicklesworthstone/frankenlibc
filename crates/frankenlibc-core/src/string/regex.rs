@@ -36,6 +36,28 @@ pub const REG_DOT_NOT_NEWLINE: i32 = 1 << 22;
 /// fl-internal cflag: nonmatching lists do not match `\n` (GNU
 /// RE_HAT_LISTS_NOT_NEWLINE; sed `s///M`).
 pub const REG_LIST_NOT_NEWLINE: i32 = 1 << 23;
+/// fl-internal cflag: ERE `* + ? {` with nothing to repeat (pattern, group or
+/// alternative start, or after an anchor) are skipped instead of REG_BADRPT
+/// (GNU RE_CONTEXT_INDEP_OPS without RE_CONTEXT_INVALID_OPS; egrep syntax).
+pub const REG_CONTEXT_INDEP_OPS: i32 = 1 << 24;
+/// fl-internal cflag: a malformed ERE interval is a literal `{` (GNU
+/// RE_INVALID_INTERVAL_ORD; egrep syntax).
+pub const REG_INVALID_INTERVAL_ORD: i32 = 1 << 25;
+/// fl-internal cflag: `\1`..`\9` are literal digits (GNU RE_NO_BK_REFS; awk).
+pub const REG_NO_BK_REFS: i32 = 1 << 26;
+/// fl-internal cflag: ERE `{` is an ordinary character (GNU syntax without
+/// RE_INTERVALS; awk).
+pub const REG_NO_INTERVALS: i32 = 1 << 27;
+/// fl-internal cflag: a newline separates alternatives (GNU RE_NEWLINE_ALT;
+/// grep/egrep pattern lists).
+pub const REG_NEWLINE_ALT: i32 = 1 << 28;
+/// fl-internal cflag: ERE `* + ? {` with nothing to repeat are ordinary
+/// characters (GNU syntax with neither RE_CONTEXT_INDEP_OPS nor
+/// RE_CONTEXT_INVALID_OPS; awk).
+pub const REG_LEADING_OPS_LITERAL: i32 = 1 << 29;
+/// fl-internal cflag: BRE `*` / `\{` may follow another quantifier instead of
+/// REG_BADRPT (GNU syntax without RE_CONTEXT_INVALID_DUP; grep).
+pub const REG_DUP_STACKS: i32 = 1 << 30;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -896,11 +918,32 @@ impl CompiledRegex {
 // Parser
 // ---------------------------------------------------------------------------
 
+/// Internal parse results for a malformed ERE interval, mapped to REG_EBRACE /
+/// REG_BADBR (or a literal `{` under REG_INVALID_INTERVAL_ORD).
+const MALFORMED_INTERVAL_EBRACE: i32 = -1001;
+const MALFORMED_INTERVAL_BADBR: i32 = -1002;
+
 struct Parser<'a> {
     pat: &'a [u8],
     pos: usize,
     extended: bool,
     group_count: usize,
+    /// ERE: an operator with nothing to repeat is skipped (REG_CONTEXT_INDEP_OPS).
+    ignore_leading_ops: bool,
+    /// ERE: a malformed interval is a literal `{` (REG_INVALID_INTERVAL_ORD).
+    invalid_interval_literal: bool,
+    /// The next `{` was restored from a malformed interval: take it literally.
+    literal_brace_next: bool,
+    /// `\1`..`\9` are literal digits (REG_NO_BK_REFS).
+    no_backrefs: bool,
+    /// ERE `{` is an ordinary character (REG_NO_INTERVALS).
+    no_intervals: bool,
+    /// A newline separates alternatives like `|` (REG_NEWLINE_ALT).
+    newline_alt: bool,
+    /// ERE `* + ? {` with nothing to repeat are literals (REG_LEADING_OPS_LITERAL).
+    leading_ops_literal: bool,
+    /// BRE `*` / `\{` may follow another quantifier (REG_DUP_STACKS).
+    dup_stacks: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -910,6 +953,25 @@ impl<'a> Parser<'a> {
             pos: 0,
             extended: cflags & REG_EXTENDED != 0,
             group_count: 0,
+            ignore_leading_ops: cflags & REG_CONTEXT_INDEP_OPS != 0,
+            invalid_interval_literal: cflags & REG_INVALID_INTERVAL_ORD != 0,
+            literal_brace_next: false,
+            no_backrefs: cflags & REG_NO_BK_REFS != 0,
+            no_intervals: cflags & REG_NO_INTERVALS != 0,
+            newline_alt: cflags & REG_NEWLINE_ALT != 0,
+            leading_ops_literal: cflags & REG_LEADING_OPS_LITERAL != 0,
+            dup_stacks: cflags & REG_DUP_STACKS != 0,
+        }
+    }
+
+    /// At an alternative separator: `|` (ERE), `\|` (BRE), or a newline
+    /// under REG_NEWLINE_ALT. Returns its length.
+    fn alternative_separator(&self) -> Option<usize> {
+        match self.peek() {
+            Some(b'\n') if self.newline_alt => Some(1),
+            Some(b'|') if self.extended => Some(1),
+            Some(b'\\') if !self.extended && self.pat.get(self.pos + 1) == Some(&b'|') => Some(2),
+            _ => None,
         }
     }
 
@@ -948,25 +1010,11 @@ impl<'a> Parser<'a> {
 
     fn parse_alternation(&mut self) -> Result<Ast, i32> {
         let mut left = self.parse_concat()?;
-
-        if self.extended {
-            while self.peek() == Some(b'|') {
-                self.advance();
-                let right = self.parse_concat()?;
-                left = Ast::Alternate(Box::new(left), Box::new(right));
-            }
-        } else {
-            // BRE: alternation via \|
-            while self.pos + 1 < self.pat.len()
-                && self.pat[self.pos] == b'\\'
-                && self.pat[self.pos + 1] == b'|'
-            {
-                self.pos += 2;
-                let right = self.parse_concat()?;
-                left = Ast::Alternate(Box::new(left), Box::new(right));
-            }
+        while let Some(len) = self.alternative_separator() {
+            self.pos += len;
+            let right = self.parse_concat()?;
+            left = Ast::Alternate(Box::new(left), Box::new(right));
         }
-
         Ok(left)
     }
 
@@ -974,20 +1022,20 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
 
         loop {
+            if self.alternative_separator().is_some() {
+                break;
+            }
             match self.peek() {
                 None => break,
-                Some(b'|') if self.extended => break,
                 Some(b')') if self.extended => break,
                 _ => {
-                    // Check for BRE \| or \)
+                    // Check for BRE \)
                     if !self.extended
                         && self.pos + 1 < self.pat.len()
                         && self.pat[self.pos] == b'\\'
+                        && self.pat[self.pos + 1] == b')'
                     {
-                        let next = self.pat[self.pos + 1];
-                        if next == b'|' || next == b')' {
-                            break;
-                        }
+                        break;
                     }
 
                     let atom = self.parse_quantified()?;
@@ -1013,6 +1061,12 @@ impl<'a> Parser<'a> {
         let mut quantified = false;
         loop {
             if self.extended {
+                // glibc: an anchor is never repeated; an operator after it
+                // starts a new expression (REG_BADRPT for `^*`, skipped under
+                // REG_CONTEXT_INDEP_OPS). That is parse_atom's business.
+                if matches!(node, Ast::Anchor(_)) {
+                    return Ok(node);
+                }
                 match self.peek() {
                     Some(b'*') => {
                         self.advance();
@@ -1038,8 +1092,12 @@ impl<'a> Parser<'a> {
                             max: Some(1),
                         };
                     }
-                    Some(b'{') => {
+                    Some(b'{') if !self.no_intervals => {
                         node = self.parse_brace_quantifier(node)?;
+                        if self.literal_brace_next {
+                            // Malformed interval kept as text: `{` is the next atom.
+                            return Ok(node);
+                        }
                     }
                     _ => return Ok(node),
                 }
@@ -1053,8 +1111,9 @@ impl<'a> Parser<'a> {
                 // repeated). So only treat `*` as a quantifier on a non-anchor.
                 match self.peek() {
                     Some(b'*') => {
-                        if quantified {
-                            // glibc: a `*` after another quantifier is REG_BADRPT.
+                        if quantified && !self.dup_stacks {
+                            // glibc: a `*` after another quantifier is REG_BADRPT
+                            // (RE_CONTEXT_INVALID_DUP, as POSIX regcomp has).
                             return Err(REG_BADRPT);
                         }
                         if matches!(node, Ast::Anchor(_)) {
@@ -1074,7 +1133,7 @@ impl<'a> Parser<'a> {
                         if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
                             match self.pat[self.pos + 1] {
                                 b'{' => {
-                                    if quantified {
+                                    if quantified && !self.dup_stacks {
                                         // glibc: `\{` after a quantifier is BADRPT.
                                         return Err(REG_BADRPT);
                                     }
@@ -1112,50 +1171,91 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_brace_quantifier(&mut self, atom: Ast) -> Result<Ast, i32> {
-        self.advance(); // skip {
-        // Lower bound. `{,m}` (leading comma) is the GNU extension for
-        // `{0,m}`; an empty `{}` is bad content; anything else that is not a
-        // digit makes the brace itself malformed.
-        let min = match self.peek() {
-            Some(b',') => 0,
-            Some(c) if c.is_ascii_digit() => self.parse_decimal()?,
-            Some(b'}') => return Err(REG_BADBR),
-            _ => return Err(REG_EBRACE),
-        };
-        let max;
+        let brace = self.pos;
+        match self.parse_brace_bounds() {
+            Ok((min, max)) => Ok(Ast::Repeat {
+                inner: Box::new(atom),
+                min,
+                max,
+            }),
+            // GNU RE_INVALID_INTERVAL_ORD: a malformed interval is not an
+            // error; its `{` is an ordinary character (egrep `a{1` matches
+            // the text "a{1"). Out-of-order bounds stay REG_BADBR, as glibc.
+            Err(MALFORMED_INTERVAL_EBRACE | MALFORMED_INTERVAL_BADBR)
+                if self.invalid_interval_literal =>
+            {
+                self.pos = brace;
+                self.literal_brace_next = true;
+                Ok(atom)
+            }
+            Err(MALFORMED_INTERVAL_EBRACE) => Err(REG_EBRACE),
+            Err(MALFORMED_INTERVAL_BADBR) => Err(REG_BADBR),
+            Err(e) => Err(e),
+        }
+    }
 
-        match self.peek() {
-            Some(b',') => {
-                self.advance();
-                if self.peek() == Some(b'}') {
-                    max = None; // unbounded
-                } else {
-                    let m = self.parse_decimal()?;
-                    max = Some(m);
-                    if m < min {
-                        return Err(REG_BADBR);
+    /// Parse `{m}`, `{m,}`, `{,n}` or `{m,n}` with `pos` at the `{`. As glibc:
+    /// running out of pattern before the `}` is REG_EBRACE (`a{1,`), any other
+    /// non-digit is REG_BADBR (`a{x}`), as is `{}`; both come back as the
+    /// MALFORMED_INTERVAL_* markers so the caller can apply
+    /// RE_INVALID_INTERVAL_ORD.
+    fn parse_brace_bounds(&mut self) -> Result<(u32, Option<u32>), i32> {
+        self.advance(); // skip {
+        // One bound: digits up to `,` or `}`. None = empty, Err = bad content.
+        let bound = |p: &mut Self| -> Result<Option<u32>, i32> {
+            let mut val: Option<u32> = None;
+            let mut bad = false;
+            loop {
+                match p.peek() {
+                    None => return Err(MALFORMED_INTERVAL_EBRACE),
+                    Some(b',' | b'}') => break,
+                    Some(c) if c.is_ascii_digit() => {
+                        p.advance();
+                        val = val
+                            .unwrap_or(0)
+                            .checked_mul(10)
+                            .and_then(|v| v.checked_add((c - b'0') as u32))
+                            .or(Some(u32::MAX));
+                    }
+                    Some(_) => {
+                        p.advance();
+                        bad = true;
                     }
                 }
             }
-            Some(b'}') => {
-                max = Some(min); // exact count
+            if bad {
+                // glibc keeps scanning to the `}`; an unterminated one is EBRACE.
+                return Err(MALFORMED_INTERVAL_BADBR);
             }
-            _ => return Err(REG_EBRACE),
-        }
-
-        if self.advance() != Some(b'}') {
-            return Err(REG_EBRACE);
+            Ok(val)
+        };
+        let first = bound(self)?;
+        let (min, max) = if self.peek() == Some(b',') {
+            self.advance();
+            let second = bound(self)?;
+            if self.peek() != Some(b'}') {
+                // A second comma (`{1,2,3}`): REG_BADBR even under
+                // RE_INVALID_INTERVAL_ORD, as glibc.
+                return Err(REG_BADBR);
+            }
+            (first.unwrap_or(0), second)
+        } else {
+            // `{}`: no bound at all — REG_BADBR even under
+            // RE_INVALID_INTERVAL_ORD, as glibc.
+            let Some(m) = first else {
+                return Err(REG_BADBR);
+            };
+            (m, Some(m))
+        };
+        self.advance(); // skip }
+        if max.is_some_and(|m| m < min) {
+            return Err(REG_BADBR);
         }
         // POSIX.2: an interval bound larger than RE_DUP_MAX is REG_BADBR.
         if min > RE_DUP_MAX || max.is_some_and(|m| m > RE_DUP_MAX) {
             return Err(REG_BADBR);
         }
-
-        Ok(Ast::Repeat {
-            inner: Box::new(atom),
-            min,
-            max,
-        })
+        Ok((min, max))
     }
 
     fn parse_bre_brace_quantifier(&mut self, atom: Ast) -> Result<Ast, i32> {
@@ -1306,7 +1406,10 @@ impl<'a> Parser<'a> {
                             inner: Box::new(inner),
                         })
                     }
-                    Some(ch @ b'1'..=b'9') if !self.extended => {
+                    // Backreference, in ERE too: glibc accepts `\N` with
+                    // REG_EXTENDED (`(a)\1` matches "aa"); fl matched a literal
+                    // digit (gnulib test-regex: 24 ERE backref cases).
+                    Some(ch @ b'1'..=b'9') if !self.no_backrefs => {
                         self.advance();
                         let idx = (ch - b'0') as usize;
                         if idx > self.group_count {
@@ -1382,7 +1485,35 @@ impl<'a> Parser<'a> {
             }
             Some(ch) => {
                 // In ERE, these are special and shouldn't appear as atoms
-                if self.extended && (ch == b'*' || ch == b'+' || ch == b'?' || ch == b'{') {
+                if self.extended
+                    && (ch == b'*'
+                        || ch == b'+'
+                        || ch == b'?'
+                        || (ch == b'{' && !self.no_intervals))
+                {
+                    if ch == b'{' && self.literal_brace_next {
+                        self.literal_brace_next = false;
+                        self.advance();
+                        return Ok(Ast::Literal(b'{'));
+                    }
+                    if self.leading_ops_literal {
+                        // GNU syntax with neither RE_CONTEXT_INDEP_OPS nor
+                        // RE_CONTEXT_INVALID_OPS (awk): an ordinary character.
+                        self.advance();
+                        return Ok(Ast::Literal(ch));
+                    }
+                    if self.ignore_leading_ops {
+                        // GNU RE_CONTEXT_INDEP_OPS: nothing to repeat, so the
+                        // operator is dropped (egrep `*a` == `a`, `{1` == `1`).
+                        self.advance();
+                        if self.peek().is_none()
+                            || self.peek() == Some(b')')
+                            || self.alternative_separator().is_some()
+                        {
+                            return Ok(Ast::Concat(Vec::new()));
+                        }
+                        return self.parse_atom();
+                    }
                     return Err(REG_BADRPT);
                 }
                 self.advance();
@@ -3814,9 +3945,14 @@ impl<'a> BacktrackVm<'a> {
         if bounds.max.is_none_or(|limit| count < limit) {
             for next in self.match_ast(inner, state.pos, state.slots.clone(), depth + 1) {
                 if next.pos == state.pos {
-                    // A zero-width iteration can repeat to satisfy any remaining
-                    // minimum (`\(a*\)\1\{9\}` with an empty `\1`).
-                    Self::push_state(out, next);
+                    // A zero-width iteration is taken as the first one, or to
+                    // satisfy a remaining minimum by repetition (`\(a*\)\1\{9\}`
+                    // with an empty `\1`) — never after a byte-consuming one
+                    // once the minimum is met, as glibc (bug 11053:
+                    // `\(a*\)*a*\1` on "a" gives \1 = [0,0), not [1,1)).
+                    if count == 0 || count < bounds.min {
+                        Self::push_state(out, next);
+                    }
                     continue;
                 }
                 self.collect_repeat(inner, next, count + 1, bounds, depth + 1, out);
@@ -5128,6 +5264,55 @@ mod tests {
             groups(b"^\\(a*\\)\\1\\{9\\}\\(a\\{0,9\\}\\)\\([0-9]*\\)", b"a1;"),
             [(0, 2), (0, 0), (0, 1), (1, 2)]
         );
+    }
+
+    #[test]
+    fn ere_backrefs_anchor_repeats_and_interval_errors_match_glibc() {
+        // Error codes are glibc 2.39 regcomp(REG_EXTENDED) results.
+        let err = |p: &[u8]| regex_compile(p, REG_EXTENDED).err();
+        assert_eq!(err(b"a{1"), Some(REG_EBRACE));
+        assert_eq!(err(b"a{1,"), Some(REG_EBRACE));
+        assert_eq!(err(b"a{1x"), Some(REG_EBRACE));
+        assert_eq!(err(b"a{x}"), Some(REG_BADBR));
+        assert_eq!(err(b"a{}"), Some(REG_BADBR));
+        assert_eq!(err(b"a{2,1}"), Some(REG_BADBR));
+        assert_eq!(err(b"a{1,2,3}"), Some(REG_BADBR));
+        assert_eq!(err(b"^*a"), Some(REG_BADRPT));
+        assert_eq!(err(b"x$*"), Some(REG_BADRPT));
+        assert_eq!(err(b"(|*a)"), Some(REG_BADRPT));
+        // `\N` is a backreference in ERE too (glibc: `(a)\1` matches "aa").
+        assert!(compile_and_match("(a)\\1", "xaa", REG_EXTENDED));
+        assert!(!compile_and_match("(a)\\1", "xa1", REG_EXTENDED));
+        assert_eq!(err(b"(a)\\2"), Some(REG_ESUBREG));
+        // BRE without a group is ESUBREG; `a**` is BADRPT in POSIX BRE.
+        assert_eq!(regex_compile(b"(a)\\1", 0).err(), Some(REG_ESUBREG));
+        assert_eq!(regex_compile(b"a**", 0).err(), Some(REG_BADRPT));
+    }
+
+    #[test]
+    fn gnu_syntax_flags_follow_glibc() {
+        let first = |p: &[u8], cflags: i32, s: &[u8]| {
+            let re = regex_compile_bytes(p, REG_EXTENDED | cflags).unwrap();
+            regex_match_bounds_bytes_from(&re, s, 0, 0).map(|(so, _)| so)
+        };
+        let s = b"xa{1aa*a1";
+        // egrep (RE_CONTEXT_INDEP_OPS): an operator with nothing to repeat is dropped.
+        assert_eq!(first(b"*a", REG_CONTEXT_INDEP_OPS, s), Some(1));
+        assert_eq!(first(b"{1", REG_CONTEXT_INDEP_OPS, s), Some(3));
+        assert_eq!(first(b"a|*b", REG_CONTEXT_INDEP_OPS, s), Some(1));
+        // RE_INVALID_INTERVAL_ORD: a malformed interval is literal text...
+        assert_eq!(first(b"a{1", REG_INVALID_INTERVAL_ORD, s), Some(1));
+        // ...but `{}` and `{1,2,3}` stay errors.
+        assert!(regex_compile_bytes(b"a{}", REG_EXTENDED | REG_INVALID_INTERVAL_ORD).is_err());
+        assert!(regex_compile_bytes(b"a{1,2,3}", REG_EXTENDED | REG_INVALID_INTERVAL_ORD).is_err());
+        // awk: leading operators literal, no intervals, no backreferences.
+        assert_eq!(first(b"*a", REG_LEADING_OPS_LITERAL, s), Some(6));
+        assert_eq!(first(b"a{1", REG_NO_INTERVALS, s), Some(1));
+        assert_eq!(first(b"(a)\\1", REG_NO_BK_REFS, s), Some(7));
+        // grep/egrep: a newline separates alternatives.
+        assert_eq!(first(b"zz\na", REG_NEWLINE_ALT, s), Some(1));
+        // grep BRE: `a**` stacks.
+        assert!(regex_compile_bytes(b"a**", REG_DUP_STACKS).is_ok());
     }
 
     #[test]

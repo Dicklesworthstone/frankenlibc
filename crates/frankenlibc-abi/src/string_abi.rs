@@ -10309,6 +10309,13 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
 const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_CONTEXT_INDEP_OPS: u64 = 1 << 4;
+const RE_CONTEXT_INVALID_OPS: u64 = 1 << 5;
+const RE_INVALID_INTERVAL_ORD: u64 = 1 << 21;
+const RE_INTERVALS: u64 = 1 << 9;
+const RE_NEWLINE_ALT: u64 = 1 << 11;
+const RE_NO_BK_REFS: u64 = 1 << 14;
+const RE_CONTEXT_INVALID_DUP: u64 = 1 << 24;
 const RE_DOT_NEWLINE: u64 = 1 << 6;
 const RE_DOT_NOT_NULL: u64 = 1 << 7;
 const RE_HAT_LISTS_NOT_NEWLINE: u64 = 1 << 8;
@@ -10408,6 +10415,30 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
     }
     if syntax & RE_HAT_LISTS_NOT_NEWLINE != 0 {
         cflags |= regex::REG_LIST_NOT_NEWLINE;
+    }
+    if uses_extended_syntax {
+        if syntax & RE_CONTEXT_INVALID_OPS == 0 {
+            cflags |= if syntax & RE_CONTEXT_INDEP_OPS != 0 {
+                regex::REG_CONTEXT_INDEP_OPS
+            } else {
+                regex::REG_LEADING_OPS_LITERAL
+            };
+        }
+        if syntax & RE_INVALID_INTERVAL_ORD != 0 {
+            cflags |= regex::REG_INVALID_INTERVAL_ORD;
+        }
+        if syntax & RE_INTERVALS == 0 {
+            cflags |= regex::REG_NO_INTERVALS;
+        }
+    }
+    if syntax & RE_NO_BK_REFS != 0 {
+        cflags |= regex::REG_NO_BK_REFS;
+    }
+    if !uses_extended_syntax && syntax & RE_CONTEXT_INVALID_DUP == 0 {
+        cflags |= regex::REG_DUP_STACKS;
+    }
+    if syntax & RE_NEWLINE_ALT != 0 {
+        cflags |= regex::REG_NEWLINE_ALT;
     }
     cflags
 }
