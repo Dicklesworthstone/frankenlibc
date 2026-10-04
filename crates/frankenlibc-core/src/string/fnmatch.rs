@@ -949,8 +949,13 @@ fn ext_match_at(
         b'*' => {
             // Collapse a run of plain `*`s, but STOP at a `*` that opens an
             // extglob group (`*(`) — that one is an operator, not a wildcard.
+            // An unterminated `*(` is a plain `*`: stopping there recursed on
+            // the same position forever (`**(!()`, gnulib test-fnmatch SIGSEGV).
             let mut p = pi;
-            while pat.get(p) == Some(&b'*') && pat.get(p + 1) != Some(&b'(') {
+            while pat.get(p) == Some(&b'*')
+                && (pat.get(p + 1) != Some(&b'(')
+                    || parse_extglob_group(pat, p, noescape).is_none())
+            {
                 p += 1;
             }
             if lp_blocked(si) {
@@ -1978,5 +1983,15 @@ mod tests {
         // glibc: fnmatch("*", "", 0) = 0
         assert!(m("*", "", FnmatchFlags::NONE));
         assert!(m("**", "", FnmatchFlags::NONE));
+    }
+
+    #[test]
+    fn extmatch_unterminated_star_group_is_a_plain_star() {
+        // glibc: fnmatch("**(!()", "**(!()", FNM_EXTMATCH) == 0. fl recursed on
+        // the unterminated `*(` until the stack overflowed (gnulib test-fnmatch).
+        let ext = FnmatchFlags::EXTMATCH;
+        assert!(m("**(!()", "**(!()", ext));
+        assert!(m("*(", "ab(", ext));
+        assert!(!m("*(", "ab", ext));
     }
 }

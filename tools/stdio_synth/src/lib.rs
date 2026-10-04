@@ -122,6 +122,9 @@ pub enum PrintfHandler {
     Pointer,
     StoreCount,
     LiteralPercent,
+    /// C23 `%b` / `%B` (glibc 2.35+).
+    UnsignedBinaryLower,
+    UnsignedBinaryUpper,
 }
 
 /// Argument category for type dispatch.
@@ -390,6 +393,12 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             "unsigned_decimal" => (PrintfHandler::UnsignedDecimal, ArgCategory::UnsignedInt),
             "unsigned_hex_lower" => (PrintfHandler::UnsignedHexLower, ArgCategory::UnsignedInt),
             "unsigned_hex_upper" => (PrintfHandler::UnsignedHexUpper, ArgCategory::UnsignedInt),
+            "unsigned_binary_lower" => {
+                (PrintfHandler::UnsignedBinaryLower, ArgCategory::UnsignedInt)
+            }
+            "unsigned_binary_upper" => {
+                (PrintfHandler::UnsignedBinaryUpper, ArgCategory::UnsignedInt)
+            }
             "float_fixed_lower" | "float_fixed_upper" => {
                 (PrintfHandler::FloatFixed, ArgCategory::Float)
             }
@@ -413,7 +422,9 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             | PrintfHandler::UnsignedOctal
             | PrintfHandler::UnsignedDecimal
             | PrintfHandler::UnsignedHexLower
-            | PrintfHandler::UnsignedHexUpper => {
+            | PrintfHandler::UnsignedHexUpper
+            | PrintfHandler::UnsignedBinaryLower
+            | PrintfHandler::UnsignedBinaryUpper => {
                 0b0111_1111 // hh, h, l, ll, j, z, t
             }
             PrintfHandler::FloatFixed
@@ -440,7 +451,10 @@ pub fn generate_printf_table(grammar: &PrintfGrammar) -> [PrintfRoute; 256] {
             PrintfHandler::SignedDecimal => 0b11111,   // all flags valid
             PrintfHandler::UnsignedOctal => 0b11001,   // -, #, 0 (not + or space)
             PrintfHandler::UnsignedDecimal => 0b10001, // -, 0 (not +, space, #)
-            PrintfHandler::UnsignedHexLower | PrintfHandler::UnsignedHexUpper => 0b11001, // -, #, 0
+            PrintfHandler::UnsignedHexLower
+            | PrintfHandler::UnsignedHexUpper
+            | PrintfHandler::UnsignedBinaryLower
+            | PrintfHandler::UnsignedBinaryUpper => 0b11001, // -, #, 0
             PrintfHandler::FloatFixed
             | PrintfHandler::FloatExp
             | PrintfHandler::FloatGeneral
@@ -569,6 +583,8 @@ pub fn emit_printf_table_source(table: &[PrintfRoute; 256]) -> String {
             PrintfHandler::UnsignedDecimal => "PrintfHandler::UnsignedDecimal",
             PrintfHandler::UnsignedHexLower => "PrintfHandler::UnsignedHexLower",
             PrintfHandler::UnsignedHexUpper => "PrintfHandler::UnsignedHexUpper",
+            PrintfHandler::UnsignedBinaryLower => "PrintfHandler::UnsignedBinaryLower",
+            PrintfHandler::UnsignedBinaryUpper => "PrintfHandler::UnsignedBinaryUpper",
             PrintfHandler::FloatFixed => "PrintfHandler::FloatFixed",
             PrintfHandler::FloatExp => "PrintfHandler::FloatExp",
             PrintfHandler::FloatGeneral => "PrintfHandler::FloatGeneral",
@@ -737,7 +753,7 @@ fn format_byte_literal(byte: u8) -> String {
 }
 
 fn ordered_valid_printf_indices(table: &[PrintfRoute; 256]) -> Vec<usize> {
-    const PREFERRED_ORDER: &[u8] = b"diouxXfFeEgGaAcspn%";
+    const PREFERRED_ORDER: &[u8] = b"diouxXbBfFeEgGaAcspn%";
     ordered_valid_indices(PREFERRED_ORDER, |idx| {
         table[idx].handler != PrintfHandler::Invalid
     })

@@ -637,7 +637,6 @@ unsafe fn set_abi_errno_if_clear(err: c_int) {
 
 const MAX_EXPLICIT_BZERO_LEN: usize = isize::MAX as usize;
 const ENV_NAME_SCAN_LIMIT: usize = 131_072;
-const NUMERIC_STRING_SCAN_LIMIT: usize = 131_072;
 
 #[inline]
 fn bounded_zero_len(ptr: *mut c_void, requested: usize) -> Option<usize> {
@@ -672,17 +671,37 @@ fn env_name_scan_bound(ptr: *const c_char) -> usize {
         .unwrap_or(ENV_NAME_SCAN_LIMIT)
 }
 
+/// Length of the strtod/strtof token prefix at `ptr`: leading C whitespace,
+/// then the bytes a decimal, hex, inf or nan(...) token can contain (plus the
+/// locale radix). The parser never looks past it. Requiring the NUL within a
+/// 128 KiB scan made strtod parse nothing when the string ran on (gnulib
+/// test-strtod's 1 MB "-0e1000…0" gave +0 with endptr == nptr); scanning to
+/// the NUL uncapped would cost O(buffer) per call for a program walking a
+/// large buffer number by number. Stops at a known allocation bound.
 #[inline]
-fn numeric_string_scan_bound(ptr: *const c_char) -> usize {
-    known_remaining(ptr as usize)
-        .map(|remaining| remaining.min(NUMERIC_STRING_SCAN_LIMIT))
-        .unwrap_or(NUMERIC_STRING_SCAN_LIMIT)
-}
-
-#[inline]
-unsafe fn scan_terminated_numeric_string(ptr: *const c_char) -> Option<usize> {
-    let (len, terminated) = unsafe { scan_c_string(ptr, Some(numeric_string_scan_bound(ptr))) };
-    terminated.then_some(len)
+unsafe fn scan_numeric_token(ptr: *const c_char) -> usize {
+    let bound = known_remaining(ptr as usize).unwrap_or(usize::MAX);
+    let radix = frankenlibc_core::stdio::printf::numeric_radix_byte();
+    let p = ptr.cast::<u8>();
+    let mut i = 0usize;
+    // SAFETY: each byte read precedes the string's NUL (the loops stop on any
+    // byte outside the token set, NUL included) and lies within `bound`.
+    unsafe {
+        while i < bound && matches!(*p.add(i), b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') {
+            i += 1;
+        }
+        while i < bound {
+            let b = *p.add(i);
+            if !(b.is_ascii_alphanumeric()
+                || matches!(b, b'+' | b'-' | b'.' | b'(' | b')' | b'_')
+                || (radix == Some(b) && b != 0))
+            {
+                break;
+            }
+            i += 1;
+        }
+    }
+    i
 }
 
 #[inline]
@@ -2968,16 +2987,8 @@ pub unsafe extern "C" fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -
         return value;
     }
 
-    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-        if let Some(p) = profile {
-            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
-        }
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
-        }
-        return 0.0;
-    };
-    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+    let len = unsafe { scan_numeric_token(nptr) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len) };
     let (val, consumed, exact) = frankenlibc_core::stdlib::conversion::strtod_impl(slice);
     if !endptr.is_null() {
         unsafe { *endptr = nptr.add(consumed) as *mut c_char };
@@ -3128,16 +3139,8 @@ pub unsafe extern "C" fn strtof(nptr: *const c_char, endptr: *mut *mut c_char) -
         Some(decision.profile)
     };
 
-    let Some(len) = (unsafe { scan_terminated_numeric_string(nptr) }) else {
-        if let Some(p) = profile {
-            runtime_policy::observe(ApiFamily::Stdlib, p, 5, true);
-        }
-        if !endptr.is_null() {
-            unsafe { *endptr = nptr as *mut c_char };
-        }
-        return 0.0;
-    };
-    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len + 1) };
+    let len = unsafe { scan_numeric_token(nptr) };
+    let slice = unsafe { std::slice::from_raw_parts(nptr.cast::<u8>(), len) };
     let (value, consumed, exact_subnormal) =
         frankenlibc_core::stdlib::conversion::strtof_impl(slice);
     if !endptr.is_null() {

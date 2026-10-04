@@ -3310,7 +3310,20 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
         }
     }
 
-    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+    getopt_write_stderr(&msg);
+}
+
+/// Write a getopt diagnostic through the `stderr` stream, as glibc does
+/// (`__fxprintf`): a program that reopened or buffered stderr sees it there.
+/// fl wrote to fd 2 directly, so ftell(stderr) never moved (gnulib
+/// test-getopt detects the message that way).
+fn getopt_write_stderr(msg: &[u8]) {
+    let stream = unsafe { crate::stdio_abi::stderr };
+    if stream.is_null() {
+        let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+        return;
+    }
+    let _ = unsafe { crate::stdio_abi::fwrite(msg.as_ptr().cast(), 1, msg.len(), stream) };
 }
 
 /// glibc's long-option diagnostics (`argv[0]: <parts>\n` on stderr), under the
@@ -3332,7 +3345,7 @@ unsafe fn emit_long_getopt_diagnostic(argv: *const *mut c_char, optspec: &[u8], 
         msg.extend_from_slice(part);
     }
     msg.push(b'\n');
-    let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
+    getopt_write_stderr(&msg);
 }
 
 /// The part of a getopt step that happens BEFORE an option is parsed, shared
@@ -3724,8 +3737,11 @@ unsafe fn parse_getopt_long(
             GETOPT_NEXTCHAR = None;
         }
         let mut next_index = unsafe { libc_optind + 1 };
+        // glibc: an `=` gives the argument even when empty (`--p=` sets optarg
+        // to ""), for required and optional arguments alike, and is an error
+        // on an option that takes none (gnulib test-getopt_long).
         match unsafe { (*opt_ptr).has_arg } {
-            0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+            0 if !inline_value.is_null() => {
                 unsafe {
                     emit_long_getopt_diagnostic(
                         argv,
@@ -3743,7 +3759,7 @@ unsafe fn parse_getopt_long(
                 return Some(b'?' as c_int);
             }
             1 => {
-                if !inline_value.is_null() && unsafe { *inline_value != 0 } {
+                if !inline_value.is_null() {
                     unsafe {
                         libc_optarg = inline_value as *mut c_char;
                     }
@@ -3776,7 +3792,7 @@ unsafe fn parse_getopt_long(
                     next_index += 1;
                 }
             }
-            2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+            2 if !inline_value.is_null() => unsafe {
                 libc_optarg = inline_value as *mut c_char;
             },
             _ => {}
@@ -3924,15 +3940,16 @@ unsafe fn getopt_route_w_long(
         GETOPT_NEXTCHAR = None;
     }
     let mut final_index = space_arg_idx;
+    // As for `--name=`: an `=` gives the argument even when empty.
     match unsafe { (*option).has_arg } {
-        0 if !inline_value.is_null() && unsafe { *inline_value != 0 } => {
+        0 if !inline_value.is_null() => {
             unsafe {
                 libc_optopt = (*option).val;
                 libc_optind = final_index;
             }
             return b'?' as c_int;
         }
-        1 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+        1 if !inline_value.is_null() => unsafe {
             libc_optarg = inline_value as *mut c_char;
         },
         1 => {
@@ -3954,7 +3971,7 @@ unsafe fn getopt_route_w_long(
             unsafe { libc_optarg = value };
             final_index += 1;
         }
-        2 if !inline_value.is_null() && unsafe { *inline_value != 0 } => unsafe {
+        2 if !inline_value.is_null() => unsafe {
             libc_optarg = inline_value as *mut c_char;
         },
         _ => {}
@@ -27534,6 +27551,13 @@ pub unsafe extern "C" fn utimensat(
 /// `futimens` — change timestamps of an open file.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const libc::timespec) -> c_int {
+    // glibc: a negative fd is EBADF before the syscall. The kernel's
+    // utimensat(AT_FDCWD, NULL, ...) would instead update the current
+    // directory and succeed (gnulib test-futimens).
+    if fd < 0 {
+        unsafe { set_abi_errno(libc::EBADF) };
+        return -1;
+    }
     match unsafe { syscall::sys_utimensat(fd, std::ptr::null(), times as *const u8, 0) } {
         Ok(()) => 0,
         Err(e) => {

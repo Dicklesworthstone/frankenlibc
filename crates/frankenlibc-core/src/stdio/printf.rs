@@ -156,6 +156,9 @@ enum PrintfHandler {
     Pointer,
     StoreCount,
     LiteralPercent,
+    /// C23 `%b` / `%B` (glibc 2.35+).
+    UnsignedBinaryLower,
+    UnsignedBinaryUpper,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +202,8 @@ enum UnsignedFormatKind {
     Octal,
     HexLower,
     HexUpper,
+    BinaryLower,
+    BinaryUpper,
 }
 
 impl UnsignedFormatKind {
@@ -208,6 +213,7 @@ impl UnsignedFormatKind {
             Self::Octal => (8, false),
             Self::HexLower => (16, false),
             Self::HexUpper => (16, true),
+            Self::BinaryLower | Self::BinaryUpper => (2, false),
         }
     }
 
@@ -217,6 +223,8 @@ impl UnsignedFormatKind {
             Self::Octal => b"0",
             Self::HexLower => b"0x",
             Self::HexUpper => b"0X",
+            Self::BinaryLower => b"0b",
+            Self::BinaryUpper => b"0B",
         }
     }
 
@@ -337,6 +345,12 @@ impl PrintfRoute {
             )),
             PrintfHandler::UnsignedHexUpper => Some(RawValueRenderKind::UnsignedInt(
                 UnsignedFormatKind::HexUpper,
+            )),
+            PrintfHandler::UnsignedBinaryLower => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::BinaryLower,
+            )),
+            PrintfHandler::UnsignedBinaryUpper => Some(RawValueRenderKind::UnsignedInt(
+                UnsignedFormatKind::BinaryUpper,
             )),
             PrintfHandler::FloatFixed => Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)),
             PrintfHandler::FloatExp => Some(RawValueRenderKind::Float(FloatFormatKind::Exp)),
@@ -1296,6 +1310,27 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
                 pos += 1;
                 LengthMod::BigL
             }
+            b'w' => {
+                // C23 `wN` / `wfN` (glibc 2.39): the width of intN_t /
+                // int_fastN_t, mapped to the LP64 modifier of the same size.
+                // int_fast16/32/64_t are `long` in glibc. Other N are invalid.
+                pos += 1;
+                let fast = pos < len && fmt[pos] == b'f';
+                if fast {
+                    pos += 1;
+                }
+                let digits_start = pos;
+                while pos < len && fmt[pos].is_ascii_digit() {
+                    pos += 1;
+                }
+                match (fast, &fmt[digits_start..pos]) {
+                    (_, b"8") => LengthMod::Hh,
+                    (false, b"16") => LengthMod::H,
+                    (false, b"32") => LengthMod::None,
+                    (false, b"64") | (true, b"16" | b"32" | b"64") => LengthMod::L,
+                    _ => return None,
+                }
+            }
             _ => LengthMod::None,
         }
     } else {
@@ -1326,7 +1361,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
     // long-double modifier only for floating conversions; it is not a blanket
     // alias (for example, `%Ln` stays invalid).
     let length = match (length, conversion) {
-        (LengthMod::BigL, b'd' | b'i' | b'o' | b'u' | b'x' | b'X') => LengthMod::Ll,
+        (LengthMod::BigL, b'd' | b'i' | b'o' | b'u' | b'x' | b'X' | b'b' | b'B') => LengthMod::Ll,
         (LengthMod::BigL, b's' | b'c') => LengthMod::L,
         (length, _) => length,
     };
