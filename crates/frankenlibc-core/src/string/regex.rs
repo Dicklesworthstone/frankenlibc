@@ -24,6 +24,13 @@ pub const REG_EXTENDED: i32 = 1;
 pub const REG_ICASE: i32 = 2;
 pub const REG_NEWLINE: i32 = 4;
 pub const REG_NOSUB: i32 = 8;
+/// fl-internal cflag (not a POSIX value): GNU `re_pattern_buffer.newline_anchor`.
+/// `^`/`$` also match after/before `\n`, but unlike REG_NEWLINE `.` and
+/// nonmatching lists still match `\n`. Used by the `re_search` family (sed `s///M`).
+pub const REG_NEWLINE_ANCHOR: i32 = 1 << 20;
+/// fl-internal cflag: `.` matches NUL (GNU syntax without RE_DOT_NOT_NULL, e.g.
+/// sed). Only observable on the binary-safe byte paths.
+pub const REG_DOT_NUL: i32 = 1 << 21;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -658,6 +665,8 @@ enum MatchKind {
     LiteralCi(u8, u8), // lowercase, uppercase
     AnyChar {
         newline: bool,
+        /// `.` also matches NUL (REG_DOT_NUL).
+        nul: bool,
     },
     CharClass {
         /// 256-bit membership table with negation, ICASE case-folding and
@@ -773,6 +782,10 @@ pub struct CompiledRegex {
     nosub: bool,
     icase: bool,
     newline: bool,
+    /// `^`/`$` match at line boundaries (REG_NEWLINE or REG_NEWLINE_ANCHOR).
+    anchor_newline: bool,
+    /// `.` matches NUL (REG_DOT_NUL).
+    dot_nul: bool,
     complexity_certificate: RegexComplexityCertificate,
     /// Set of bytes that can begin a match, when a sound first-byte prefilter
     /// applies (non-nullable, non-`.`-leading, case-sensitive). `Some` lets the
@@ -863,7 +876,7 @@ impl CompiledRegex {
     /// line boundaries). Used by the REG_STARTEND wrapper to decide whether a
     /// `\n` just before the match region makes its first position a BOL.
     pub fn newline_mode(&self) -> bool {
-        self.newline
+        self.anchor_newline
     }
 
     pub fn complexity_certificate(&self) -> RegexComplexityCertificate {
@@ -1530,6 +1543,8 @@ struct Compiler {
     nfa: Vec<NfaInstr>,
     compile_icase: bool,
     compile_newline: bool,
+    compile_anchor_newline: bool,
+    compile_dot_nul: bool,
     /// Next free slot index for hidden (non-capture) repeat-progress slots.
     /// Capture slots are `0..(num_groups+1)*2`; hidden slots are allocated
     /// above them, two per unbounded repeat (group-start and iteration-start).
@@ -1537,11 +1552,14 @@ struct Compiler {
 }
 
 impl Compiler {
-    fn new(icase: bool, newline: bool, num_groups: usize) -> Self {
+    fn new(cflags: i32, num_groups: usize) -> Self {
+        let newline = cflags & REG_NEWLINE != 0;
         Self {
             nfa: Vec::new(),
-            compile_icase: icase,
+            compile_icase: cflags & REG_ICASE != 0,
             compile_newline: newline,
+            compile_anchor_newline: newline || cflags & REG_NEWLINE_ANCHOR != 0,
+            compile_dot_nul: cflags & REG_DOT_NUL != 0,
             next_hidden_slot: (num_groups + 1) * 2,
         }
     }
@@ -1573,6 +1591,7 @@ impl Compiler {
             Ast::AnyChar => {
                 self.emit(NfaInstr::Match(MatchKind::AnyChar {
                     newline: self.compile_newline,
+                    nul: self.compile_dot_nul,
                 }));
             }
             Ast::CharClass { ranges, negated } => {
@@ -1587,12 +1606,12 @@ impl Compiler {
             }
             Ast::Anchor(AnchorKind::Start { line }) => {
                 self.emit(NfaInstr::Match(MatchKind::AnchorStart {
-                    newline: *line || self.compile_newline,
+                    newline: *line || self.compile_anchor_newline,
                 }));
             }
             Ast::Anchor(AnchorKind::End { line }) => {
                 self.emit(NfaInstr::Match(MatchKind::AnchorEnd {
-                    newline: *line || self.compile_newline,
+                    newline: *line || self.compile_anchor_newline,
                 }));
             }
             Ast::Anchor(AnchorKind::WordBoundary { negate }) => {
@@ -3490,9 +3509,10 @@ impl<'a> PikeVm<'a> {
         match mk {
             MatchKind::Literal(lit) => ch == *lit,
             MatchKind::LiteralCi(lo, hi) => ch == *lo || ch == *hi,
-            // glibc: `.` never matches NUL (only reachable via the binary-safe
-            // byte path; the C-string path has already truncated at NUL).
-            MatchKind::AnyChar { newline } => ch != 0 && !(*newline && ch == b'\n'),
+            // glibc: `.` never matches NUL unless the GNU syntax lacks
+            // RE_DOT_NOT_NULL (only reachable via the binary-safe byte path; the
+            // C-string path has already truncated at NUL).
+            MatchKind::AnyChar { newline, nul } => (*nul || ch != 0) && !(*newline && ch == b'\n'),
             MatchKind::CharClass { set } => {
                 // Single O(1) bit lookup; negation / ICASE / REG_NEWLINE are baked
                 // into `set` at compile time (see `build_class_bitset`).
@@ -3532,6 +3552,8 @@ struct BacktrackVm<'a> {
     num_slots: usize,
     icase: bool,
     newline: bool,
+    anchor_newline: bool,
+    dot_nul: bool,
     eflags: i32,
     prefilter: Option<FirstByteSet>,
     literal_prefix: Option<&'a [u8]>,
@@ -3545,6 +3567,8 @@ struct BacktrackConfig<'a> {
     num_slots: usize,
     icase: bool,
     newline: bool,
+    anchor_newline: bool,
+    dot_nul: bool,
     eflags: i32,
     prefilter: Option<FirstByteSet>,
     literal_prefix: Option<&'a [u8]>,
@@ -3561,6 +3585,8 @@ impl<'a> BacktrackVm<'a> {
             num_slots: config.num_slots,
             icase: config.icase,
             newline: config.newline,
+            anchor_newline: config.anchor_newline,
+            dot_nul: config.dot_nul,
             eflags: config.eflags,
             prefilter: config.prefilter,
             literal_prefix: config.literal_prefix,
@@ -3649,7 +3675,7 @@ impl<'a> BacktrackVm<'a> {
                 // binary-safe byte path (REG_STARTEND / GNU APIs); the C-string
                 // path truncates at the first NUL, so this is a no-op there.
                 if pos < self.input.len()
-                    && self.input[pos] != 0
+                    && (self.dot_nul || self.input[pos] != 0)
                     && !(self.newline && self.input[pos] == b'\n')
                 {
                     vec![BacktrackState {
@@ -3766,24 +3792,26 @@ impl<'a> BacktrackVm<'a> {
         if depth > Self::MAX_DEPTH || out.len() >= Self::MAX_STATES {
             return;
         }
-        if count >= bounds.min {
-            Self::push_state(out, state.clone());
-        }
-        if bounds.max.is_some_and(|limit| count >= limit) {
-            return;
-        }
-
-        for next in self.match_ast(inner, state.pos, state.slots, depth + 1) {
-            if next.pos == state.pos {
-                if count + 1 >= bounds.min {
+        // Greedy order: states with MORE iterations come first. `try_start` keeps
+        // the first state reaching the longest end, so among equally long overall
+        // matches an earlier repeat takes as much as it can — glibc's choice
+        // (`\(x*\)\1a*\(a*\)` on "aaa" gives `a*` all three bytes, not `\2`).
+        if bounds.max.is_none_or(|limit| count < limit) {
+            for next in self.match_ast(inner, state.pos, state.slots.clone(), depth + 1) {
+                if next.pos == state.pos {
+                    // A zero-width iteration can repeat to satisfy any remaining
+                    // minimum (`\(a*\)\1\{9\}` with an empty `\1`).
                     Self::push_state(out, next);
+                    continue;
                 }
-                continue;
+                self.collect_repeat(inner, next, count + 1, bounds, depth + 1, out);
+                if out.len() >= Self::MAX_STATES {
+                    return;
+                }
             }
-            self.collect_repeat(inner, next, count + 1, bounds, depth + 1, out);
-            if out.len() >= Self::MAX_STATES {
-                return;
-            }
+        }
+        if count >= bounds.min {
+            Self::push_state(out, state);
         }
     }
 
@@ -3883,7 +3911,7 @@ impl<'a> BacktrackVm<'a> {
         if pos == 0 {
             return !notbol;
         }
-        (line || self.newline) && self.input[pos - 1] == b'\n'
+        (line || self.anchor_newline) && self.input[pos - 1] == b'\n'
     }
 
     fn check_anchor_end(&self, pos: usize, line: bool) -> bool {
@@ -3891,7 +3919,7 @@ impl<'a> BacktrackVm<'a> {
         if pos == self.input.len() {
             return !noteol;
         }
-        (line || self.newline) && pos < self.input.len() && self.input[pos] == b'\n'
+        (line || self.anchor_newline) && pos < self.input.len() && self.input[pos] == b'\n'
     }
 
     /// GNU word assertion (`\b`/`\B`/`\<`/`\>`) at `pos`; text edges count as
@@ -4015,6 +4043,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
 
     let icase = cflags & REG_ICASE != 0;
     let newline = cflags & REG_NEWLINE != 0;
+    let anchor_newline = newline || cflags & REG_NEWLINE_ANCHOR != 0;
     let nosub = cflags & REG_NOSUB != 0;
     let has_backref = ast_contains_backref(&ast);
 
@@ -4022,7 +4051,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
     let (nfa, estimated_states) = if has_backref {
         (Vec::new(), estimate_nfa_states(&ast))
     } else {
-        let mut compiler = Compiler::new(icase, newline, num_groups);
+        let mut compiler = Compiler::new(cflags, num_groups);
         // Wrap entire pattern in group 0
         compiler.emit(NfaInstr::Save(0));
         compiler.compile(&ast);
@@ -4105,7 +4134,7 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
 
     // `^literal` position-0-only fast path: only when NOT REG_NEWLINE (else `^` also
     // matches after every `\n`) and no captures/backrefs.
-    let anchored_literal = if !newline && num_groups == 0 && !has_backref {
+    let anchored_literal = if !anchor_newline && num_groups == 0 && !has_backref {
         anchored_literal_bytes(&ast)
     } else {
         None
@@ -4129,6 +4158,8 @@ pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRe
         nosub,
         icase,
         newline,
+        anchor_newline,
+        dot_nul: cflags & REG_DOT_NUL != 0,
         complexity_certificate,
         prefilter,
         literal_prefix,
@@ -4504,6 +4535,8 @@ fn regex_exec_byte_slots_from(
             num_slots,
             icase: compiled.icase,
             newline: compiled.newline,
+            anchor_newline: compiled.anchor_newline,
+            dot_nul: compiled.dot_nul,
             eflags,
             prefilter: compiled.prefilter,
             literal_prefix: compiled.literal_prefix.as_deref(),
@@ -5012,6 +5045,82 @@ mod tests {
             "hello\nworld",
             REG_EXTENDED | REG_NEWLINE
         ));
+    }
+
+    #[test]
+    fn newline_anchor_moves_anchors_but_not_dot() {
+        // GNU newline_anchor (sed `s///M`): `^`/`$` match at `\n`, but `.` and
+        // nonmatching lists still match `\n` (unlike REG_NEWLINE).
+        let f = REG_NEWLINE_ANCHOR;
+        let bounds = |pat: &[u8], input: &[u8], cflags: i32, from: usize| {
+            let re = regex_compile_bytes(pat, cflags).unwrap();
+            regex_match_bounds_bytes_from(&re, input, from, 0)
+        };
+        assert_eq!(bounds(b"^b", b"foo\nbar", f, 1), Some((4, 5)));
+        assert_eq!(bounds(b"^b", b"foo\nbar", 0, 1), None);
+        assert_eq!(bounds(b"o$", b"foo\nbar", f, 0), Some((2, 3)));
+        assert_eq!(bounds(b"o.b", b"foo\nbar", f, 0), Some((2, 5)));
+        assert_eq!(bounds(b"o[^x]b", b"foo\nbar", f, 0), Some((2, 5)));
+        assert_eq!(bounds(b"o.b", b"foo\nbar", REG_NEWLINE, 0), None);
+        // `^foo` literal fast path must not pin the match to position 0.
+        assert_eq!(bounds(b"^bar", b"foo\nbar", f, 0), Some((4, 7)));
+        // Backreference patterns run on the backtracking VM.
+        assert_eq!(bounds(b"^\\(b\\)a", b"ab\nba", f, 0), Some((3, 5)));
+        assert_eq!(bounds(b"^\\(b\\)\\1", b"ab\nbb", f, 0), Some((3, 5)));
+        assert_eq!(bounds(b"^\\(b\\)\\1", b"ab\nbb", 0, 0), None);
+    }
+
+    #[test]
+    fn backref_patterns_give_earlier_repeats_greedy_priority() {
+        // Expected spans are glibc 2.39 regexec output (sed's dc.sed looped
+        // forever when `0*` matched empty and `\2` took the leading zero).
+        let groups = |pat: &[u8], input: &[u8]| {
+            let re = regex_compile_bytes(pat, 0).unwrap();
+            let mut m = vec![RegMatch::default(); re.num_regs()];
+            assert_eq!(regex_exec_bytes_from(&re, input, 0, &mut m, 0), 0);
+            m.iter().map(|r| (r.rm_so, r.rm_eo)).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            groups(
+                b"~\\(-*\\)\\1\\(-*\\);0*\\([^;]*[0-9]\\)[^~]*",
+                b"~;020.02;0~"
+            ),
+            [(0, 10), (1, 1), (1, 1), (3, 8)]
+        );
+        assert_eq!(
+            groups(b"\\(a*\\)\\1;0*\\([^;]*[0-9]\\)[^~]*", b";020.02;0~"),
+            [(0, 9), (0, 0), (2, 7)]
+        );
+        assert_eq!(
+            groups(b"\\(a*\\)\\1;0*\\([0-9]*\\)", b";0202"),
+            [(0, 5), (0, 0), (2, 5)]
+        );
+        assert_eq!(
+            groups(b"\\(a\\)\\1*b*\\(b*\\)", b"abbb"),
+            [(0, 4), (0, 1), (4, 4)]
+        );
+        assert_eq!(
+            groups(b"\\(x*\\)\\1a*\\(a*\\)", b"aaa"),
+            [(0, 3), (0, 0), (3, 3)]
+        );
+        // An empty backreference satisfies a counted minimum (sed misc.pl `factor`).
+        assert_eq!(
+            groups(b"^\\(a*\\)\\1\\{9\\}\\(a\\{0,9\\}\\)\\([0-9]*\\)", b"a1;"),
+            [(0, 2), (0, 0), (0, 1), (1, 2)]
+        );
+    }
+
+    #[test]
+    fn dot_nul_lets_dot_match_nul_byte() {
+        let bounds = |pat: &[u8], cflags: i32| {
+            let re = regex_compile_bytes(pat, cflags).unwrap();
+            regex_match_bounds_bytes_from(&re, b"\0x", 0, 0)
+        };
+        assert_eq!(bounds(b"^.", 0), None);
+        assert_eq!(bounds(b"^.", REG_DOT_NUL), Some((0, 1)));
+        // Backtracking VM (backreference forces it).
+        assert_eq!(bounds(b"^\\(.\\)\\1*x", 0), None);
+        assert_eq!(bounds(b"^\\(.\\)\\1*x", REG_DOT_NUL), Some((0, 2)));
     }
 
     #[test]

@@ -207,6 +207,8 @@ QSORT_STABLE_BIN="${BIN_DIR}/fixture_qsort_stable"
 cc -O2 "${ROOT}/tests/integration/fixture_qsort_stable.c" -o "${QSORT_STABLE_BIN}"
 GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
 cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -o "${GLOB_RESET_BIN}"
+GNU_REGEX_API_BIN="${BIN_DIR}/fixture_gnu_regex_api"
+cc -O2 "${ROOT}/tests/integration/fixture_gnu_regex_api.c" -o "${GNU_REGEX_API_BIN}"
 APP_SBRK_MALLOC_BIN="${BIN_DIR}/fixture_app_sbrk_malloc"
 cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_app_sbrk_malloc.c" -o "${APP_SBRK_MALLOC_BIN}"
 SIGNAL_HANDLER_REALLOC_BIN="${BIN_DIR}/fixture_signal_handler_realloc"
@@ -923,6 +925,8 @@ EOF
   run_corpus_case "${mode}" "app_sbrk_malloc" "${APP_SBRK_MALLOC_BIN}" || mode_failed=1
   # glob resets glob_t on every return (make globfrees unconditionally).
   run_corpus_case "${mode}" "glob_reset" "${GLOB_RESET_BIN}" || mode_failed=1
+  # GNU re_compile_pattern/re_search: newline_anchor, regs growth, errors (sed).
+  run_corpus_case "${mode}" "gnu_regex_api" "${GNU_REGEX_API_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys
