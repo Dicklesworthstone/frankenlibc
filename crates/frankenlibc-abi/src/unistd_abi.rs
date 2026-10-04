@@ -913,6 +913,34 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
                 runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
                 return alloc;
             }
+            Err(errno::ENAMETOOLONG) => {
+                unsafe { crate::malloc_abi::free(alloc as *mut libc::c_void) };
+                // Longer than a page: walk up instead (see getcwd_by_walking_up).
+                let path = match getcwd_by_walking_up() {
+                    Ok(path) => path,
+                    Err(e) => {
+                        unsafe { set_abi_errno(e) };
+                        return std::ptr::null_mut();
+                    }
+                };
+                let want = if size == 0 { path.len() + 1 } else { size };
+                if path.len() + 1 > want {
+                    unsafe { set_abi_errno(errno::ERANGE) };
+                    return std::ptr::null_mut();
+                }
+                let out = unsafe { crate::malloc_abi::malloc(want) as *mut c_char };
+                if out.is_null() {
+                    unsafe { set_abi_errno(errno::ENOMEM) };
+                    return std::ptr::null_mut();
+                }
+                // SAFETY: `out` holds `want >= path.len() + 1` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr(), out.cast::<u8>(), path.len());
+                    *out.add(path.len()) = 0;
+                }
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+                return out;
+            }
             Err(e) => {
                 unsafe { crate::malloc_abi::free(alloc as *mut libc::c_void) };
                 unsafe { set_abi_errno(e) };
@@ -934,12 +962,145 @@ pub unsafe extern "C" fn getcwd(buf: *mut c_char, size: usize) -> *mut c_char {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
             buf
         }
+        // Longer than a page: walk up instead (see getcwd_by_walking_up).
+        Err(errno::ENAMETOOLONG) => match getcwd_by_walking_up() {
+            Ok(path) if path.len() < effective_size => {
+                // SAFETY: `buf` holds `effective_size > path.len()` bytes.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(path.as_ptr(), buf.cast::<u8>(), path.len());
+                    *buf.add(path.len()) = 0;
+                }
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, false);
+                buf
+            }
+            Ok(_) => {
+                unsafe { set_abi_errno(errno::ERANGE) };
+                std::ptr::null_mut()
+            }
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                std::ptr::null_mut()
+            }
+        },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, true);
             std::ptr::null_mut()
         }
     }
+}
+
+/// The working directory's absolute path by walking `..` up to `/`, naming
+/// each step by its (dev, ino) in the parent. The Linux getcwd syscall fails
+/// with ENAMETOOLONG once the path exceeds a page; glibc then falls back to
+/// this walk, so getcwd still works for deep trees (gnulib test-getcwd, which
+/// builds a path longer than PATH_MAX). fl returned the syscall's error.
+fn getcwd_by_walking_up() -> Result<Vec<u8>, c_int> {
+    fn stat_of(dirfd: c_int, name: &[u8]) -> Result<libc::stat, c_int> {
+        let mut st = std::mem::MaybeUninit::<libc::stat>::zeroed();
+        let mut path = name.to_vec();
+        path.push(0);
+        // SAFETY: `path` is NUL-terminated and `st` is a writable stat buffer.
+        unsafe {
+            syscall::sys_newfstatat(
+                dirfd,
+                path.as_ptr(),
+                st.as_mut_ptr().cast(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )?;
+            Ok(st.assume_init())
+        }
+    }
+    let open_dir = |dirfd: c_int, name: &[u8]| -> Result<c_int, c_int> {
+        let mut path = name.to_vec();
+        path.push(0);
+        // SAFETY: NUL-terminated path.
+        unsafe {
+            syscall::sys_openat(
+                dirfd,
+                path.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+                0,
+            )
+        }
+    };
+
+    let root = stat_of(libc::AT_FDCWD, b"/")?;
+    let mut cur = stat_of(libc::AT_FDCWD, b".")?;
+    let mut dirfd = open_dir(libc::AT_FDCWD, b".")?;
+    let mut components: Vec<Vec<u8>> = Vec::new();
+    let mut entries = vec![0u8; 32 * 1024];
+    let result = loop {
+        if cur.st_dev == root.st_dev && cur.st_ino == root.st_ino {
+            break Ok(());
+        }
+        let parent_fd = match open_dir(dirfd, b"..") {
+            Ok(fd) => fd,
+            Err(e) => break Err(e),
+        };
+        let _ = syscall::sys_close(dirfd);
+        dirfd = parent_fd;
+        let parent = match stat_of(dirfd, b".") {
+            Ok(st) => st,
+            Err(e) => break Err(e),
+        };
+        // Find the entry of `parent` that is `cur`. Across a mount point the
+        // d_ino of the entry is the mounted-on inode, so confirm by stat.
+        let mut found: Option<Vec<u8>> = None;
+        'scan: loop {
+            // SAFETY: `entries` is a writable buffer of its length.
+            let n = match unsafe {
+                syscall::sys_getdents64(dirfd, entries.as_mut_ptr(), entries.len())
+            } {
+                Ok(0) => break 'scan,
+                Ok(n) => n,
+                Err(_) => break 'scan,
+            };
+            let mut off = 0usize;
+            while off + 19 <= n {
+                let ino = u64::from_ne_bytes(entries[off..off + 8].try_into().unwrap_or([0; 8]));
+                let reclen = u16::from_ne_bytes([entries[off + 16], entries[off + 17]]) as usize;
+                if reclen == 0 || off + reclen > n {
+                    break;
+                }
+                let name_bytes = &entries[off + 19..off + reclen];
+                let name = &name_bytes[..name_bytes
+                    .iter()
+                    .position(|&b| b == 0)
+                    .unwrap_or(name_bytes.len())];
+                off += reclen;
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                if parent.st_dev == cur.st_dev && ino != cur.st_ino {
+                    continue;
+                }
+                if let Ok(st) = stat_of(dirfd, name)
+                    && st.st_dev == cur.st_dev
+                    && st.st_ino == cur.st_ino
+                {
+                    found = Some(name.to_vec());
+                    break 'scan;
+                }
+            }
+        }
+        match found {
+            Some(name) => components.push(name),
+            None => break Err(errno::ENOENT),
+        }
+        cur = parent;
+    };
+    let _ = syscall::sys_close(dirfd);
+    result?;
+    let mut path = Vec::new();
+    for name in components.iter().rev() {
+        path.push(b'/');
+        path.extend_from_slice(name);
+    }
+    if path.is_empty() {
+        path.push(b'/');
+    }
+    Ok(path)
 }
 
 /// glibc reserved-namespace alias for [`getcwd`].
