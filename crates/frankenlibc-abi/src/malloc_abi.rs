@@ -2501,7 +2501,7 @@ unsafe fn native_libc_malloc(size: usize) -> *mut c_void {
         };
         if ptr != 0 {
             let f: HostMallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host malloc symbol is resolved as this exact ABI fn pointer.
-            unsafe { f(size) }
+            host_alloc_result(unsafe { f(size) })
         } else {
             unsafe { bump_alloc(size) }
         }
@@ -2570,7 +2570,7 @@ unsafe fn native_libc_calloc_with_slot(
         };
         if ptr != 0 {
             let host_calloc: HostCallocFn = unsafe { std::mem::transmute(ptr) }; // ubs:ignore - host calloc symbol is resolved as this exact ABI fn pointer.
-            unsafe { host_calloc(nmemb, size) }
+            host_alloc_result(unsafe { host_calloc(nmemb, size) })
         } else {
             let total = nmemb.checked_mul(size).unwrap_or(0);
             if total == 0 && nmemb != 0 && size != 0 {
@@ -2625,7 +2625,13 @@ unsafe fn native_libc_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
         };
         if host_ptr != 0 {
             let host_realloc: HostReallocFn = unsafe { std::mem::transmute(host_ptr) }; // ubs:ignore - host realloc symbol is resolved as this exact ABI fn pointer.
-            unsafe { host_realloc(ptr, size) }
+            let out = unsafe { host_realloc(ptr, size) };
+            // realloc(p, 0) legitimately returns NULL after freeing.
+            if size == 0 {
+                out
+            } else {
+                host_alloc_result(out)
+            }
         } else if let Some(old_size) = unsafe { bump_allocation_size(ptr) } {
             let out = unsafe { bump_alloc(size) };
             if !out.is_null() {
@@ -2827,10 +2833,22 @@ unsafe fn native_libc_memalign(alignment: usize, size: usize) -> *mut c_void {
             return unsafe { bump_alloc_aligned(size, alignment) };
         };
         match unsafe { host_memalign_fn() } {
-            Some(host_memalign) => unsafe { host_memalign(alignment, size) },
+            Some(host_memalign) => host_alloc_result(unsafe { host_memalign(alignment, size) }),
             None => unsafe { bump_alloc_aligned(size, alignment) },
         }
     }
+}
+
+/// A host allocator failure sets glibc's internal errno, which is not the
+/// `__errno_location` slot the application reads under fl, so the caller saw
+/// NULL with errno 0 (e.g. `malloc(1 << 62)`). Mirror ENOMEM into fl's errno.
+/// Also used where the membrane arena reports an allocation failure.
+#[inline(always)]
+fn host_alloc_result(out: *mut c_void) -> *mut c_void {
+    if out.is_null() {
+        unsafe { set_abi_errno(ENOMEM as c_int) };
+    }
+    out
 }
 
 /// Give the membrane arena the host allocator for its blocks, before the
@@ -4330,7 +4348,7 @@ pub fn bench_aligned_arena_alloc(alignment: usize, size: usize) -> *mut c_void {
     let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
         Some(pipeline) => match pipeline.allocate_aligned(req, alignment) {
             Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             // SAFETY: reentrant bootstrap falls back to the host aligned allocator.
@@ -5218,6 +5236,18 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 // malloc
 // ---------------------------------------------------------------------------
 
+/// glibc fails every request above PTRDIFF_MAX with errno ENOMEM before touching
+/// the heap; fl returned NULL with errno untouched (gnulib test-malloc-gnu,
+/// -calloc-gnu, -realloc-gnu, -reallocarray). Returns true (errno set) to reject.
+#[inline(always)]
+fn reject_oversize_request(size: usize) -> bool {
+    if size > isize::MAX as usize {
+        unsafe { set_abi_errno(ENOMEM as c_int) };
+        return true;
+    }
+    false
+}
+
 /// POSIX `malloc` -- allocates `size` bytes of uninitialized memory.
 ///
 /// Returns a pointer to the allocated memory, or null on failure.
@@ -5228,6 +5258,9 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
+    if reject_oversize_request(size) {
+        return std::ptr::null_mut();
+    }
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         bump_path_counter(&BOOTSTRAP_PATH_ALLOCS);
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
@@ -5327,7 +5360,7 @@ pub unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
     let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
         Some(pipeline) => match pipeline.allocate(req) {
             Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
@@ -5604,6 +5637,9 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
         unsafe { set_abi_errno(ENOMEM as c_int) };
         return std::ptr::null_mut();
     };
+    if reject_oversize_request(total) {
+        return std::ptr::null_mut();
+    }
 
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
@@ -5705,6 +5741,10 @@ pub unsafe extern "C" fn calloc(nmemb: usize, size: usize) -> *mut c_void {
 /// `ptr` must be null or a pointer previously returned by `malloc`/`calloc`/`realloc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    // The old block stays valid, as on any realloc failure.
+    if reject_oversize_request(size) {
+        return std::ptr::null_mut();
+    }
     let Some(reentry_guard) = enter_allocator_reentry_guard() else {
         // SAFETY: reentrant path bypasses membrane/runtime-policy to avoid allocator recursion.
         return unsafe { bootstrap_realloc_passthrough(ptr, size) };
@@ -6006,7 +6046,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 runtime_policy::scaled_cost(12, size),
                 true,
             );
-            return std::ptr::null_mut();
+            return host_alloc_result(std::ptr::null_mut());
         }
     };
 
@@ -6063,6 +6103,10 @@ pub unsafe extern "C" fn posix_memalign(
         || !alignment.is_multiple_of(std::mem::size_of::<usize>())
     {
         return EINVAL as c_int;
+    }
+    if reject_oversize_request(size) {
+        // glibc leaves errno == ENOMEM here as well as returning it.
+        return ENOMEM as c_int;
     }
 
     let Some(_reentry_guard) = enter_allocator_reentry_guard() else {
@@ -6141,7 +6185,7 @@ pub unsafe extern "C" fn posix_memalign(
     let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
         Some(pipeline) => match pipeline.allocate_aligned(req, alignment) {
             Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             // SAFETY: reentrant allocator bootstrap falls back to libc allocator.
@@ -6197,6 +6241,9 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     // POSIX requires alignment to be a power of two.
     if alignment == 0 || !alignment.is_power_of_two() {
         unsafe { set_abi_errno(EINVAL as c_int) };
+        return std::ptr::null_mut();
+    }
+    if reject_oversize_request(size) {
         return std::ptr::null_mut();
     }
 
@@ -6257,7 +6304,7 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
     let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
         Some(pipeline) => match pipeline.allocate_aligned(req, alignment) {
             Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             let out = unsafe { native_libc_memalign(alignment, req) };
@@ -6296,8 +6343,9 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 
 /// C11 `aligned_alloc` -- allocates `size` bytes of memory with specified alignment.
 ///
-/// `alignment` must be a valid alignment supported by the implementation.
-/// `size` must be a multiple of `alignment`.
+/// `alignment` must be a power of two (EINVAL otherwise). Any `size` is
+/// accepted: C17 (DR 460) dropped C11's size-multiple-of-alignment rule and
+/// glibc returns a block for `aligned_alloc(64, 100)`.
 /// Returns a pointer to the allocated memory, or null on failure.
 ///
 /// # Safety
@@ -6305,9 +6353,11 @@ pub unsafe extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void 
 /// Caller must eventually `free` the returned pointer exactly once.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
-    // C11 requires alignment to be a power of two and size to be a multiple of alignment.
-    if alignment == 0 || !alignment.is_power_of_two() || !size.is_multiple_of(alignment) {
+    if alignment == 0 || !alignment.is_power_of_two() {
         unsafe { set_abi_errno(EINVAL as c_int) };
+        return std::ptr::null_mut();
+    }
+    if reject_oversize_request(size) {
         return std::ptr::null_mut();
     }
 
@@ -6368,7 +6418,7 @@ pub unsafe extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_
     let out: *mut c_void = match crate::membrane_state::try_global_pipeline() {
         Some(pipeline) => match pipeline.allocate_aligned(req, alignment) {
             Some(ptr) => ptr.cast(),
-            None => std::ptr::null_mut(),
+            None => host_alloc_result(std::ptr::null_mut()),
         },
         None => {
             let out = unsafe { native_libc_aligned_alloc(alignment, req) };
