@@ -3907,8 +3907,10 @@ fn fopen_bad_modes_return_null_with_einval() {
     fs::write(&path, b"test").unwrap();
     let path_c = path_cstring(&path);
 
-    // Test various invalid mode strings
-    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"rw".as_ptr(), c"ar".as_ptr()];
+    // Invalid mode strings: empty or a bad first character. ("rw" and "ar"
+    // were listed here, but glibc opens both -- unknown modifier characters
+    // are ignored -- so they are not invalid.)
+    let bad_modes = [c"".as_ptr(), c"z".as_ptr(), c"tr".as_ptr(), c"+r".as_ptr()];
 
     for mode in &bad_modes {
         unsafe { *libc::__errno_location() = 0 };

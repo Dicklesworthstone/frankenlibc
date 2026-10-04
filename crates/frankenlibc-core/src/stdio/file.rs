@@ -86,11 +86,14 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
     }
     pos += 1;
 
-    // Modifiers: '+', 'b', 'x', 'e', 'm', 'c' in any order.
-    // glibc accepts 'e' (O_CLOEXEC), 'm' (mmap), 'c' (cancel-safe), 'x' (exclusive).
-    // Reject invalid modifiers like 'r', 'w', 'a' in non-primary position.
-    while pos < mode.len() {
+    // Modifiers, as glibc reads them: only the next six characters are
+    // examined, a ',' (the ",ccs=" charset suffix) ends them, '+', 'b', 'x',
+    // 'e', 'm', 'c' have meaning, and ANY other character is ignored --
+    // "rt" (sed opens scripts with it), "rw", "r b" all open fine there.
+    // Rejecting them made sed -f fail with EINVAL.
+    while pos < mode.len() && pos < 7 {
         match mode[pos] {
+            b',' => break,
             b'+' => {
                 flags.readable = true;
                 flags.writable = true;
@@ -98,10 +101,7 @@ pub fn parse_mode(mode: &[u8]) -> Option<OpenFlags> {
             b'b' => flags.binary = true,
             b'x' => flags.exclusive = true,
             b'e' => flags.cloexec = true,
-            b'm' | b'c' => {} // Accepted but no-op on Linux
-            // Reject 'r', 'w', 'a' in modifier position (e.g., "rw", "ar").
-            // Also reject any other unknown characters.
-            _ => return None,
+            _ => {} // 'm', 'c': no-ops here; anything else is ignored
         }
         pos += 1;
     }
@@ -1493,10 +1493,32 @@ mod tests {
 
     #[test]
     fn test_parse_mode_invalid() {
+        // Only an empty mode or a bad first character is invalid.
         assert!(parse_mode(b"").is_none());
         assert!(parse_mode(b"z").is_none());
-        assert!(parse_mode(b"rw").is_none());
-        assert!(parse_mode(b"ar").is_none());
+        assert!(parse_mode(b"tr").is_none());
+    }
+
+    /// glibc ignores unknown modifier characters ("rt", "rw", "r b"), reads
+    /// at most six of them, and stops at the ",ccs=" suffix. Verified against
+    /// glibc 2.43 fopen: "rt", "rbt", "rq", "rw", "ar", "r b", "r,ccs=UTF-8"
+    /// all open; "rw" is read-only.
+    #[test]
+    fn test_parse_mode_ignores_unknown_modifiers_like_glibc() {
+        let rt = parse_mode(b"rt").unwrap();
+        assert!(rt.readable && !rt.writable);
+        let rw = parse_mode(b"rw").unwrap();
+        assert!(rw.readable && !rw.writable && !rw.truncate);
+        let ar = parse_mode(b"ar").unwrap();
+        assert!(ar.writable && ar.append && !ar.readable);
+        assert!(parse_mode(b"r b").unwrap().binary);
+        let ccs = parse_mode(b"r,ccs=UTF-8").unwrap();
+        assert!(ccs.readable && !ccs.writable);
+        // '+' after the comma is part of the charset name, not a modifier.
+        assert!(!parse_mode(b"r,ccs=+").unwrap().writable);
+        // Only six modifier characters are read: a '+' in the seventh is not.
+        assert!(!parse_mode(b"rqqqqqq+").unwrap().writable);
+        assert!(parse_mode(b"rqqqqq+").unwrap().writable);
     }
 
     #[test]
