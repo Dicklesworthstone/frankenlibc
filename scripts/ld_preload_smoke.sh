@@ -209,6 +209,8 @@ GLOB_RESET_BIN="${BIN_DIR}/fixture_glob_reset"
 cc -O2 "${ROOT}/tests/integration/fixture_glob_reset.c" -o "${GLOB_RESET_BIN}"
 MEMCHR_PAGE_BOUNDARY_BIN="${BIN_DIR}/fixture_memchr_page_boundary"
 cc -O2 -fno-builtin "${ROOT}/tests/integration/fixture_memchr_page_boundary.c" -o "${MEMCHR_PAGE_BOUNDARY_BIN}"
+FPURGE_FREOPEN_BIN="${BIN_DIR}/fixture_fpurge_freopen"
+cc -O2 "${ROOT}/tests/integration/fixture_fpurge_freopen.c" -o "${FPURGE_FREOPEN_BIN}"
 MALLOC_ENOMEM_BIN="${BIN_DIR}/fixture_malloc_enomem"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_enomem.c" -o "${MALLOC_ENOMEM_BIN}"
 GNU_REGEX_API_BIN="${BIN_DIR}/fixture_gnu_regex_api"
@@ -935,6 +937,8 @@ EOF
   run_corpus_case "${mode}" "malloc_enomem" "${MALLOC_ENOMEM_BIN}" || mode_failed=1
   # memchr/memccpy stop at the first match before an unmapped page (gnulib test-memchr).
   run_corpus_case "${mode}" "memchr_page_boundary" "${MEMCHR_PAGE_BOUNDARY_BIN}" || mode_failed=1
+  # __fpurge position and freopen(stderr) identity (gnulib test-fpurge/-perror2).
+  run_corpus_case "${mode}" "fpurge_freopen" "${FPURGE_FREOPEN_BIN}" || mode_failed=1
   # faulthandler: dladdr1(RTLD_DL_LINKMAP) and unwinding in a SIGSEGV handler.
   run_optional_case "python3" "${mode}" "python_faulthandler_c_stack" python3 -c '
 import faulthandler, subprocess, sys

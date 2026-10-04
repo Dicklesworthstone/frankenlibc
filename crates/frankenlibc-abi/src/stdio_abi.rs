@@ -11913,7 +11913,10 @@ pub unsafe extern "C-unwind" fn freopen(
     reg.insert_stream_with_handle(id, new_stream, handle);
 
     runtime_policy::observe(ApiFamily::Stdio, decision.profile, 30, false);
-    id as *mut c_void
+    // The caller's own FILE *, as glibc returns: for stdin/stdout/stderr `id` is
+    // a registry sentinel, and returning it broke `freopen(p, m, stderr) ==
+    // stderr` (gnulib test-perror2).
+    stream
 }
 
 // ---------------------------------------------------------------------------

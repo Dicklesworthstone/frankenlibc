@@ -623,7 +623,16 @@ impl StdioStream {
 
     /// `__fpurge`: discard all buffered data — unread input and unflushed
     /// output, plus any pushed-back bytes — without writing it out.
+    ///
+    /// The logical offset already counts buffered writes and excludes unread
+    /// read-ahead, so it moves back to the descriptor's offset, as glibc's
+    /// ftell reports after `__fpurge`: before the discarded writes (gnulib
+    /// test-fpurge expects 4 after `fflush` at 4 then 2 purged bytes), and past
+    /// the discarded read-ahead.
     pub fn purge(&mut self) {
+        let pending = self.buffer.pending_write_data().len() as i64;
+        let unread = self.readable_buffered() as i64;
+        self.offset = self.offset - pending + unread;
         self.buffer.reset();
         self.ungetc_byte = None;
         self.read_pushback.clear();
