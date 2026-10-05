@@ -1943,19 +1943,21 @@ impl ValidationPipeline {
     /// nothing was freed), so the allocator's accounting need not look the
     /// pointer up in the arena a second time.
     pub fn free_with_size(&self, ptr: *mut u8) -> (FreeResult, usize) {
-        let (result, user_size, drained) = self.arena.free_with_size(ptr);
+        let (result, user_size, drained) = self.arena.free_batched(ptr);
         let retired_any = !drained.is_empty();
 
-        for entry in drained {
+        // One retirement for the whole batch (the arena hands drained entries
+        // out RETIRE_BATCH at a time): a boxed closure per entry was an
+        // allocation through the reentrant malloc path on every free.
+        if retired_any {
             let oracle = std::sync::Arc::clone(&self.page_oracle);
-
             self.collector.retire_quarantined(move || {
-                oracle.remove(entry.raw_base, entry.total_size);
-                // SAFETY: this drained entry was removed from the arena exactly
-                // once, and reclamation runs after the EBR grace period.
-                unsafe {
-                    AllocationArena::deallocate_drained(std::slice::from_ref(&entry));
+                for entry in &drained {
+                    oracle.remove(entry.raw_base, entry.total_size);
                 }
+                // SAFETY: these drained entries were removed from the arena
+                // exactly once, and reclamation runs after the EBR grace period.
+                unsafe { AllocationArena::deallocate_drained(&drained) };
             });
         }
         // Nothing else advances the epoch outside tests, so retired blocks

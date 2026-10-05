@@ -288,7 +288,19 @@ struct ArenaShard {
     quarantine: VecDeque<QuarantineEntry>,
     /// Total bytes in quarantine.
     quarantine_bytes: usize,
+    /// Entries drained from quarantine by batched frees and not yet handed
+    /// out for retirement (see `drain_quarantine_batched`).
+    retire_pending: Vec<QuarantineEntry>,
+    /// Total `total_size` of `retire_pending`.
+    retire_pending_bytes: usize,
 }
+
+/// Drained entries a batched free accumulates per shard before handing them
+/// out for retirement in one go...
+const RETIRE_BATCH: usize = 64;
+/// ...or as soon as they hold this many bytes, so parking never keeps more
+/// than ~1 MiB per shard (or one large block) from being reclaimed.
+const RETIRE_BATCH_BYTES: usize = 1024 * 1024;
 
 impl ArenaShard {
     fn new() -> Self {
@@ -298,6 +310,8 @@ impl ArenaShard {
             free_list: Vec::new(),
             quarantine: VecDeque::new(),
             quarantine_bytes: 0,
+            retire_pending: Vec::new(),
+            retire_pending_bytes: 0,
         }
     }
 }
@@ -326,6 +340,11 @@ impl Drop for ArenaShard {
         }
         while let Some(entry) = self.quarantine.pop_front() {
             // SAFETY: entry.raw_base came from the block allocator with this layout.
+            unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
+        }
+        // Drained by batched frees but never handed out for retirement.
+        for entry in self.retire_pending.drain(..) {
+            // SAFETY: as above; parked entries are released only here.
             unsafe { release_block(entry.raw_base, entry.total_size, entry.align) };
         }
     }
@@ -510,6 +529,21 @@ impl AllocationArena {
     /// the slot this call already locked -- callers that need the size for
     /// accounting otherwise paid a second locked index search to learn it.
     pub fn free_with_size(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, false)
+    }
+
+    /// [`Self::free_with_size`] whose drained entries are handed out in
+    /// batches of `RETIRE_BATCH` per shard (usually none): what the validation
+    /// pipeline retires through EBR, where each hand-out has a fixed cost.
+    pub fn free_batched(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        self.free_impl(user_ptr, true)
+    }
+
+    fn free_impl(
+        &self,
+        user_ptr: *mut u8,
+        batched: bool,
+    ) -> (FreeResult, usize, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 
@@ -565,7 +599,11 @@ impl AllocationArena {
             shard.quarantine_bytes += total_size;
 
             // Drain quarantine if over limit (returns entries without deallocating)
-            let drained = self.drain_quarantine(&mut shard);
+            let drained = if batched {
+                self.drain_quarantine_batched(&mut shard)
+            } else {
+                self.drain_quarantine(&mut shard)
+            };
 
             (canary_ok, user_size, drained)
         }; // shard lock is released here!
@@ -710,7 +748,36 @@ impl AllocationArena {
 
     fn drain_quarantine(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
         let mut drained = Vec::new();
+        self.drain_quarantine_into(shard, &mut drained);
+        drained
+    }
 
+    /// Like `drain_quarantine`, but parks drained entries in the shard and
+    /// hands them out only in batches of `RETIRE_BATCH`. Once the quarantine
+    /// is full every free drains an entry, and each hand-out costs the caller a
+    /// boxed EBR retirement and an epoch advance (a lock and a scan of every
+    /// thread slot) -- per free, that was a large part of a hardened
+    /// malloc+free. Parked entries are already out of the index and quarantine
+    /// (exactly as returned ones); only their blocks' release is delayed.
+    fn drain_quarantine_batched(&self, shard: &mut ArenaShard) -> Vec<QuarantineEntry> {
+        let mut pending = std::mem::take(&mut shard.retire_pending);
+        let before = pending.len();
+        self.drain_quarantine_into(shard, &mut pending);
+        shard.retire_pending_bytes += pending[before..]
+            .iter()
+            .map(|entry| entry.total_size)
+            .sum::<usize>();
+        if pending.len() >= RETIRE_BATCH || shard.retire_pending_bytes >= RETIRE_BATCH_BYTES {
+            shard.retire_pending = Vec::with_capacity(RETIRE_BATCH);
+            shard.retire_pending_bytes = 0;
+            pending
+        } else {
+            shard.retire_pending = pending;
+            Vec::new()
+        }
+    }
+
+    fn drain_quarantine_into(&self, shard: &mut ArenaShard, drained: &mut Vec<QuarantineEntry>) {
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
             || shard.quarantine.len() > crate::quarantine_controller::current_depth()
         {
@@ -736,8 +803,6 @@ impl AllocationArena {
 
             drained.push(entry);
         }
-
-        drained
     }
 
     /// Immediate deallocation of drained entries.
