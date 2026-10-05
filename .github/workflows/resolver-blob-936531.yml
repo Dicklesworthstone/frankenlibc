@@ -1,0 +1,78 @@
+name: Assemble verified resolver source
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/resolver-blob-936531.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  assemble:
+    if: github.repository == 'Dicklesworthstone/frankenlibc' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Create verified source blob without changing any branch
+        env:
+          API_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import hashlib
+          import json
+          import os
+          import urllib.request
+          import zlib
+
+          repository = 'Dicklesworthstone/frankenlibc'
+          original_sha = 'ae30387c026bf1a9597598ece07045865d8bb8d6'
+          expected_sha = '936531897916ff2a75b7b632672e4ea4939ec543'
+          path = 'crates/frankenlibc-abi/src/resolv_abi.rs'
+          encoded = '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'
+
+          def require(condition, message):
+              if not condition:
+                  raise RuntimeError(message)
+
+          def blob_sha(content):
+              return hashlib.sha1(b'blob ' + str(len(content)).encode() + b'\0' + content).hexdigest()
+
+          def api(method, suffix, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/' + repository + suffix,
+                  data=data,
+                  method=method,
+                  headers={
+                      'Authorization': 'Bearer ' + os.environ['API_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=45) as response:
+                  return json.load(response)
+
+          payload = zlib.decompress(base64.b64decode(encoded, validate=True))
+          require(hashlib.sha256(payload).hexdigest() == '0bf7da801f94b4e6520865b185c1d2a7b0cb435b0303dd52ce77a433537bb44d', 'Patch payload checksum mismatch')
+          edits = json.loads(payload)
+          response = api('GET', '/git/blobs/' + original_sha)
+          require(response['encoding'] == 'base64', 'Unexpected blob encoding')
+          source = base64.b64decode(response['content'])
+          require(blob_sha(source) == original_sha, 'Original source checksum mismatch')
+          text = source.decode('utf-8')
+          for edit in edits:
+              require(edit['path'] == path, 'Unexpected patch path')
+              before = edit['before']
+              require(before and text.count(before) == 1, 'Patch anchor must be unique: ' + edit['name'])
+              text = text.replace(before, edit['after'], 1)
+          updated = text.encode('utf-8')
+          require(blob_sha(updated) == expected_sha, 'Updated source checksum mismatch')
+          result = api('POST', '/git/blobs', {'content': text, 'encoding': 'utf-8'})
+          require(result['sha'] == expected_sha, 'GitHub blob checksum mismatch')
+          print('VERIFIED_RESOLVER_BLOB=' + result['sha'])
+          print('No commit or branch reference was created or changed by this job.')
+          PY
