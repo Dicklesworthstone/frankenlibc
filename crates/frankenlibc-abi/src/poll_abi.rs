@@ -269,22 +269,17 @@ pub unsafe extern "C-unwind" fn select(
         return -1;
     }
 
-    let actual_nfds = if !poll_core::valid_select_nfds(nfds) {
-        if mode.heals_enabled() {
-            let clamped = poll_core::clamp_select_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
-            clamped
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
-            return -1;
-        }
-    } else {
-        nfds
-    };
+    // A negative nfds is EINVAL in both modes. Hardened used to rewrite it to
+    // 0, turning a defined error into a silent timeout-only sleep; there is no
+    // memory hazard to heal (the kernel reads no set), and gnulib's
+    // test-select/test-pselect (sed, grep, diffutils) expect EINVAL as glibc
+    // gives. Oversized sets are caught below as EFAULT.
+    if !poll_core::valid_select_nfds(nfds) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
+        return -1;
+    }
+    let actual_nfds = nfds;
 
     if !tracked_fd_set_fits(readfds.cast_const(), actual_nfds)
         || !tracked_fd_set_fits(writefds.cast_const(), actual_nfds)
@@ -384,22 +379,13 @@ pub unsafe extern "C-unwind" fn pselect(
         return -1;
     }
 
-    let actual_nfds = if !poll_core::valid_select_nfds(nfds) {
-        if mode.heals_enabled() {
-            let clamped = poll_core::clamp_select_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
-            clamped
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, true);
-            return -1;
-        }
-    } else {
-        nfds
-    };
+    // A negative nfds is EINVAL in both modes (see `select`).
+    if !poll_core::valid_select_nfds(nfds) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, true);
+        return -1;
+    }
+    let actual_nfds = nfds;
 
     if !tracked_fd_set_fits(readfds.cast_const(), actual_nfds)
         || !tracked_fd_set_fits(writefds.cast_const(), actual_nfds)

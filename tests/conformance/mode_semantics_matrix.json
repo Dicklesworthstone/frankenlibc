@@ -281,7 +281,7 @@
       "family": "Poll",
       "api_family_enum": "Poll",
       "module": "poll_abi",
-      "heals_call_sites": 4,
+      "heals_call_sites": 2,
       "symbols": ["poll", "ppoll", "select", "pselect"],
       "strict_behavior": {
         "invalid_nfds": "Returns -1, sets EINVAL",
@@ -289,7 +289,7 @@
       },
       "hardened_behavior": {
         "invalid_nfds": "Clamps nfds to valid range, records healing",
-        "invalid_select_nfds": "Clamps to valid range, records healing"
+        "invalid_select_nfds": "Returns -1, sets EINVAL (negative nfds is a defined error, not a memory hazard; oversized sets are EFAULT)"
       }
     },
     {
@@ -518,7 +518,7 @@
   "summary": {
     "total_families": 20,
     "families_with_healing": 19,
-    "total_heals_call_sites": 141,
+    "total_heals_call_sites": 139,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",

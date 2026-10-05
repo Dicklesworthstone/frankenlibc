@@ -95,12 +95,6 @@ pub const fn clamp_poll_nfds(nfds: u64) -> u64 {
     if nfds > 1_048_576 { 1_048_576 } else { nfds }
 }
 
-/// Clamp invalid select nfds values for hardened repair paths.
-#[must_use]
-pub const fn clamp_select_nfds(nfds: i32) -> i32 {
-    if nfds < 0 { 0 } else { nfds }
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -169,13 +163,6 @@ mod tests {
         assert_eq!(clamp_poll_nfds(0), 0);
         assert_eq!(clamp_poll_nfds(100), 100);
         assert_eq!(clamp_poll_nfds(2_000_000), 1_048_576);
-    }
-
-    #[test]
-    fn clamp_select_nfds_check() {
-        assert_eq!(clamp_select_nfds(-5), 0);
-        assert_eq!(clamp_select_nfds(512), 512);
-        assert_eq!(clamp_select_nfds(2000), 2000);
     }
 
     // ===== glibc parity tests =====
