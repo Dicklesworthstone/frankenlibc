@@ -18,5 +18,12 @@ fn main() {
         // no missing _Unwind_* requirements. LLD (the Rust target default)
         // combines these nodes with rustc's anonymous visibility script.
         println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest}/version_scripts/fromfp.map");
+        // The `.symver name,alias,remove` directives in fromfp_abi drop the
+        // `__frankenlibc_c23_*` export names, but rustc's own anonymous
+        // version script still lists them and rustc links with
+        // --no-undefined-version, so every release link failed ("version
+        // script assignment of 'global' to symbol '__frankenlibc_c23_fromfp'
+        // failed: symbol not defined"). The later flag wins in LLD.
+        println!("cargo:rustc-cdylib-link-arg=-Wl,--undefined-version");
     }
 }
