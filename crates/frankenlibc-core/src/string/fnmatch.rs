@@ -779,6 +779,207 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
     pi == pat.len()
 }
 
+/// Character classification and case folding for [`fnmatch_wide`], answered by
+/// the caller from the active locale's wide-character tables.
+pub trait WideCtype {
+    /// Membership of `c` in the class `name` (`alpha`, `upper`, ...); `None`
+    /// for an unknown name, which matches nothing.
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool>;
+    /// Lower-case mapping used by `FNM_CASEFOLD`.
+    fn fold(&self, c: u32) -> u32;
+}
+
+/// fnmatch over characters rather than bytes, for a multibyte locale: `?` and
+/// a bracket expression consume one CHARACTER, and classes and case folding
+/// apply to non-ASCII characters (glibc converts both strings to wide
+/// characters in such a locale). The caller decodes both strings and falls
+/// back to [`fnmatch_match`] when they are not valid in the locale's
+/// encoding, as glibc does, and for `FNM_EXTMATCH`, which this does not
+/// implement.
+///
+/// Iterative with a single star backtrack point (like `fnmatch_simple`): a
+/// later `*` supersedes an earlier one, and a `*` never advances over '/'
+/// under `PATHNAME` nor over a leading period under `PERIOD`.
+pub fn fnmatch_wide(
+    pattern: &[u32],
+    text: &[u32],
+    flags: FnmatchFlags,
+    ctype: &dyn WideCtype,
+) -> bool {
+    const SLASH: u32 = b'/' as u32;
+    let pathname = flags.contains(FnmatchFlags::PATHNAME);
+    let noescape = flags.contains(FnmatchFlags::NOESCAPE);
+    let period = flags.contains(FnmatchFlags::PERIOD);
+    let leading_dir = flags.contains(FnmatchFlags::LEADING_DIR);
+    let casefold = flags.contains(FnmatchFlags::CASEFOLD);
+    let leading_period = |ti: usize| {
+        period && text[ti] == b'.' as u32 && (ti == 0 || (pathname && text[ti - 1] == SLASH))
+    };
+    let same = |a: u32, b: u32| a == b || (casefold && ctype.fold(a) == ctype.fold(b));
+    // A wildcard (`?`, `*`, bracket) may consume text[ti].
+    let wildcard_ok = |ti: usize| !(pathname && text[ti] == SLASH) && !leading_period(ti);
+
+    let (mut pi, mut ti) = (0usize, 0usize);
+    let mut star: Option<(usize, usize)> = None;
+    loop {
+        let mut advanced = false;
+        if pi < pattern.len() {
+            let pc = pattern[pi];
+            if pc == b'*' as u32 {
+                while pi < pattern.len() && pattern[pi] == b'*' as u32 {
+                    pi += 1;
+                }
+                star = Some((pi, ti));
+                continue;
+            }
+            if ti < text.len() {
+                if pc == b'?' as u32 {
+                    if wildcard_ok(ti) {
+                        pi += 1;
+                        ti += 1;
+                        advanced = true;
+                    }
+                } else if pc == b'[' as u32
+                    && let Some((end, matched)) =
+                        wide_bracket(pattern, pi, text[ti], noescape, casefold, ctype)
+                {
+                    if matched && wildcard_ok(ti) {
+                        pi = end;
+                        ti += 1;
+                        advanced = true;
+                    }
+                } else {
+                    // Literal, possibly escaped (a trailing `\` is literal).
+                    let (lit, width) = if pc == b'\\' as u32 && !noescape && pi + 1 < pattern.len()
+                    {
+                        (pattern[pi + 1], 2)
+                    } else {
+                        (pc, 1)
+                    };
+                    if same(lit, text[ti]) {
+                        pi += width;
+                        ti += 1;
+                        advanced = true;
+                    }
+                }
+            }
+        } else if ti == text.len() || (leading_dir && text[ti] == SLASH) {
+            return true;
+        }
+        if advanced {
+            continue;
+        }
+        // Mismatch: let the last `*` absorb one more character, if it may.
+        match star {
+            Some((sp, st)) if st < text.len() && wildcard_ok(st) => {
+                star = Some((sp, st + 1));
+                pi = sp;
+                ti = st + 1;
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Parse the bracket expression at `pattern[open]` (`[`) and test `c` against
+/// it. `Some((index past ']', matched))`, or `None` when it is not a bracket
+/// expression (no closing `]`), in which case the `[` is a literal. Literals
+/// and ranges fold under `FNM_CASEFOLD`; `[:class:]`, `[=x=]` and `[.x.]` do
+/// not, as in the byte matcher.
+fn wide_bracket(
+    pattern: &[u32],
+    open: usize,
+    c: u32,
+    noescape: bool,
+    casefold: bool,
+    ctype: &dyn WideCtype,
+) -> Option<(usize, bool)> {
+    let at = |i: usize| pattern.get(i).copied();
+    let is = |i: usize, b: u8| at(i) == Some(b as u32);
+    let mut i = open + 1;
+    let negate = is(i, b'!') || is(i, b'^');
+    if negate {
+        i += 1;
+    }
+    let fold = |x: u32| if casefold { ctype.fold(x) } else { x };
+    let mut matched = false;
+    let mut first = true;
+    loop {
+        let cur = at(i)?;
+        if cur == b']' as u32 && !first {
+            return Some((i + 1, matched != negate));
+        }
+        first = false;
+        // `[:class:]`, `[=x=]`, `[.x.]`.
+        if cur == b'[' as u32
+            && let Some(kind) =
+                at(i + 1).filter(|&k| k == b':' as u32 || k == b'=' as u32 || k == b'.' as u32)
+        {
+            let start = i + 2;
+            let mut j = start;
+            while j + 1 < pattern.len() && !(pattern[j] == kind && pattern[j + 1] == b']' as u32) {
+                j += 1;
+            }
+            if j + 1 >= pattern.len() {
+                return None;
+            }
+            let content = &pattern[start..j];
+            let next = j + 2;
+            if kind == b':' as u32 {
+                let name: Vec<u8> = content.iter().map(|&x| x as u8).collect();
+                if content.iter().all(|&x| x < 0x80) {
+                    matched |= ctype.in_class(&name, c).unwrap_or(false);
+                }
+                i = next;
+                continue;
+            }
+            // `[.x.]` may start a range; `[=x=]` may not.
+            if content.len() == 1 && kind == b'.' as u32 && is(next, b'-') && !is(next + 1, b']') {
+                let lo = content[0];
+                let (hi, after) = wide_range_end(pattern, next + 1, noescape)?;
+                matched |= (lo <= c && c <= hi)
+                    || (casefold && fold(lo) <= fold(c) && fold(c) <= fold(hi));
+                i = after;
+                continue;
+            }
+            matched |= content.len() == 1 && content[0] == c;
+            i = next;
+            continue;
+        }
+        let (lo, after_lo) = if cur == b'\\' as u32 && !noescape {
+            (at(i + 1)?, i + 2)
+        } else {
+            (cur, i + 1)
+        };
+        if is(after_lo, b'-') && at(after_lo + 1).is_some() && !is(after_lo + 1, b']') {
+            let (hi, after) = wide_range_end(pattern, after_lo + 1, noescape)?;
+            matched |=
+                (lo <= c && c <= hi) || (casefold && fold(lo) <= fold(c) && fold(c) <= fold(hi));
+            i = after;
+        } else {
+            matched |= lo == c || (casefold && fold(lo) == fold(c));
+            i = after_lo;
+        }
+    }
+}
+
+/// The high endpoint of a range at `pattern[i]`: a character, an escaped
+/// character, or a single-character `[.x.]`.
+fn wide_range_end(pattern: &[u32], i: usize, noescape: bool) -> Option<(u32, usize)> {
+    let cur = *pattern.get(i)?;
+    if cur == b'\\' as u32 && !noescape {
+        return Some((*pattern.get(i + 1)?, i + 2));
+    }
+    if cur == b'[' as u32 && pattern.get(i + 1) == Some(&(b'.' as u32)) {
+        let x = *pattern.get(i + 2)?;
+        if pattern.get(i + 3) == Some(&(b'.' as u32)) && pattern.get(i + 4) == Some(&(b']' as u32))
+        {
+            return Some((x, i + 5));
+        }
+    }
+    Some((cur, i + 1))
+}
+
 /// Match `text` against `pattern` per POSIX fnmatch semantics + the
 /// flags. Returns `true` if the entire `text` matches (modulo
 /// [`FnmatchFlags::LEADING_DIR`]).
@@ -1501,6 +1702,68 @@ mod tests {
 
     fn m(p: &str, t: &str, f: FnmatchFlags) -> bool {
         fnmatch_match(p.as_bytes(), t.as_bytes(), f)
+    }
+
+    /// A small Unicode-ish ctype for the wide matcher: char's own tables.
+    struct CharCtype;
+    impl WideCtype for CharCtype {
+        fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+            let ch = char::from_u32(c)?;
+            Some(match name {
+                b"alpha" => ch.is_alphabetic(),
+                b"upper" => ch.is_uppercase(),
+                b"lower" => ch.is_lowercase(),
+                b"digit" => ch.is_ascii_digit(),
+                b"space" => ch.is_whitespace(),
+                _ => return None,
+            })
+        }
+        fn fold(&self, c: u32) -> u32 {
+            char::from_u32(c)
+                .and_then(|ch| ch.to_lowercase().next())
+                .map_or(c, u32::from)
+        }
+    }
+
+    fn w(p: &str, t: &str, f: FnmatchFlags) -> bool {
+        let p: Vec<u32> = p.chars().map(u32::from).collect();
+        let t: Vec<u32> = t.chars().map(u32::from).collect();
+        fnmatch_wide(&p, &t, f, &CharCtype)
+    }
+
+    #[test]
+    fn wide_matcher_takes_whole_characters() {
+        let none = FnmatchFlags::NONE;
+        assert!(w("x?y", "xüy", none));
+        assert!(w("x?y", "x😋y", none));
+        assert!(!w("x??y", "xüy", none));
+        assert!(w("x[[:alpha:]]y", "xŁy", none));
+        assert!(!w("x[[:alpha:]]y", "x×y", none));
+        assert!(w("x[[:upper:]]y", "xЩy", none));
+        assert!(w("x[!a]y", "xßy", none));
+        assert!(w("[]ü]", "ü", none));
+        assert!(w("*ü", "aaü", none));
+        assert!(w("H\u{f6}hle", "H\u{d6}hLe", FnmatchFlags::CASEFOLD));
+        // `[:class:]` does not fold; literals and ranges do.
+        assert!(!w("[[:upper:]]", "ü", FnmatchFlags::CASEFOLD));
+        assert!(w("[Ü]", "ü", FnmatchFlags::CASEFOLD));
+        // PATHNAME / PERIOD / LEADING_DIR.
+        assert!(!w("ü*", "üa/b", FnmatchFlags::PATHNAME));
+        assert!(w(
+            "ü*",
+            "üa/b",
+            FnmatchFlags::PATHNAME | FnmatchFlags::LEADING_DIR
+        ));
+        assert!(!w("*ü", ".ü", FnmatchFlags::PERIOD));
+        assert!(w(".ü", ".ü", FnmatchFlags::PERIOD));
+        assert!(!w(
+            "ü/?b",
+            "ü/.b",
+            FnmatchFlags::PATHNAME | FnmatchFlags::PERIOD
+        ));
+        // Escapes and an unterminated bracket (a literal '[').
+        assert!(w("\\?ü", "?ü", none));
+        assert!(w("[ü", "[ü", none));
     }
 
     // A POSIX collating symbol `[.x.]` may be a range endpoint (glibc parity,

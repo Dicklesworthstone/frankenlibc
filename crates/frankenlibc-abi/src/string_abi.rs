@@ -10915,9 +10915,53 @@ pub unsafe extern "C" fn fnmatch(
     let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
     if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
-        0
-    } else {
-        FNM_NOMATCH
+        return 0;
+    }
+    // In a UTF-8 locale glibc 2.43 ALSO matches by characters: `?` and a
+    // bracket take one character and classes/case folding cover non-ASCII
+    // (gnulib test-fnmatch-3: fnmatch("x?y", "xüy") == 0). It reports a match
+    // when either reading matches -- measured: "?" and "??" both match "Ü",
+    // "???" does not; "[Ü][Ü]" matches "Ü" -- hence byte matching first and
+    // this only on a byte mismatch. Only relevant when a non-ASCII byte is
+    // present; invalid UTF-8 stays byte-only, as in glibc. Extended
+    // (FNM_EXTMATCH) patterns stay on the byte matcher.
+    if crate::locale_abi::mb_cur_max() > 1
+        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
+        && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
+        && let (Ok(p), Ok(s)) = (core::str::from_utf8(pat_bytes), core::str::from_utf8(str_bytes))
+    {
+        let p: Vec<u32> = p.chars().map(u32::from).collect();
+        let s: Vec<u32> = s.chars().map(u32::from).collect();
+        let matched =
+            frankenlibc_core::string::fnmatch::fnmatch_wide(&p, &s, core_flags, &LocaleWideCtype);
+        return if matched { 0 } else { FNM_NOMATCH };
+    }
+    FNM_NOMATCH
+}
+
+/// Wide-character classes and case folding of the active locale, for
+/// `fnmatch_wide`.
+struct LocaleWideCtype;
+
+impl frankenlibc_core::string::fnmatch::WideCtype for LocaleWideCtype {
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+        let mut cname = [0u8; 16];
+        if name.len() >= cname.len() {
+            return None;
+        }
+        cname[..name.len()].copy_from_slice(name);
+        // SAFETY: `cname` is NUL-terminated (zero-initialised, name shorter).
+        let desc = unsafe { crate::wchar_abi::wctype(cname.as_ptr()) };
+        if desc == 0 {
+            return None;
+        }
+        // SAFETY: plain classification of a code point.
+        Some(unsafe { crate::wchar_abi::iswctype(c, desc) } != 0)
+    }
+
+    fn fold(&self, c: u32) -> u32 {
+        // SAFETY: plain case mapping of a code point.
+        unsafe { crate::wchar_abi::towlower(c) }
     }
 }
 
