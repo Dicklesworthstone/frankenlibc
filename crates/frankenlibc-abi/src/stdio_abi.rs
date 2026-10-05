@@ -12815,28 +12815,37 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         // Child process.
         let child_exit = || -> ! { raw_syscall::sys_exit_group(127) };
 
+        // Move the child's pipe end onto `target`. If the pipe already landed
+        // there (the parent had closed stdin/stdout, so pipe2 returned fd 0 or
+        // 1), dup2 is a no-op and the old close-after-dup2 closed the child's
+        // own stdio (gnulib test-popen); only the inherited close-on-exec ("e"
+        // mode) has to be cleared, which dup2 would otherwise have done.
+        let install = |fd: c_int, target: c_int| {
+            if fd == target {
+                if raw_syscall::sys_fcntl(fd, libc::F_SETFD, 0).is_err() {
+                    child_exit();
+                }
+                return;
+            }
+            if raw_syscall::sys_dup2(fd, target).is_err() {
+                child_exit();
+            }
+            if raw_syscall::sys_close(fd).is_err() {
+                child_exit();
+            }
+        };
         if reading {
             // Parent reads from child's stdout: dup write end to stdout.
             if raw_syscall::sys_close(pipe_fds[0]).is_err() {
                 child_exit();
             }
-            if raw_syscall::sys_dup2(pipe_fds[1], libc::STDOUT_FILENO).is_err() {
-                child_exit();
-            }
-            if raw_syscall::sys_close(pipe_fds[1]).is_err() {
-                child_exit();
-            }
+            install(pipe_fds[1], libc::STDOUT_FILENO);
         } else {
             // Parent writes to child's stdin: dup read end to stdin.
             if raw_syscall::sys_close(pipe_fds[1]).is_err() {
                 child_exit();
             }
-            if raw_syscall::sys_dup2(pipe_fds[0], libc::STDIN_FILENO).is_err() {
-                child_exit();
-            }
-            if raw_syscall::sys_close(pipe_fds[0]).is_err() {
-                child_exit();
-            }
+            install(pipe_fds[0], libc::STDIN_FILENO);
         }
 
         let sh = c"/bin/sh".as_ptr();

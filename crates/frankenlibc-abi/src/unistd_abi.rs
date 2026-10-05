@@ -2165,7 +2165,10 @@ pub unsafe extern "C" fn fstatat(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    if path.is_null() || buf.is_null() {
+    // A NULL path is the kernel's to judge, as in glibc: with AT_EMPTY_PATH it
+    // means `dirfd` itself (Linux >= 6.11; gnulib test-fstatat), without it
+    // the kernel answers EFAULT.
+    if buf.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;

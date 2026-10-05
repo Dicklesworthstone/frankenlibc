@@ -6069,7 +6069,12 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
     // is clamped to safe_dst_len, and everything after it is NUL-filled — exactly
     // what the scalar loop produced.
     let copy_len = unsafe {
-        let k = scan_c_string(src, Some(safe_src_len)).0;
+        // `safe_src_len` is `n` whenever the source's extent is unknown: a cap,
+        // not a promise of readable bytes. `scan_c_string` loads whole windows
+        // under its bound and faulted on a string ending just before an
+        // unmapped page (gnulib test-strncpy, hardened); this scanner reads
+        // only up to the NUL or the bound.
+        let k = scan_c_string_nul_or_bound(src, safe_src_len).0;
         let copy_len = k.min(safe_dst_len);
         raw_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
         if copy_len < safe_dst_len {
@@ -6386,8 +6391,10 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
     // SAFETY: strict mode preserves raw strncat behavior; hardened mode bounds writes.
     let (work, adverse) = unsafe {
         let (dst_len, dst_terminated) = scan_c_string(dst.cast_const(), dst_bound);
-        let src_scan_bound = Some(src_bound.unwrap_or(usize::MAX).min(n));
-        let (src_len, src_terminated) = scan_c_string(src, src_scan_bound);
+        // A cap (`n`) unless the source extent is known: scan to the NUL or
+        // the bound without loading past either (see strncpy_core).
+        let src_scan_bound = src_bound.unwrap_or(usize::MAX).min(n);
+        let (src_len, src_terminated) = scan_c_string_nul_or_bound(src, src_scan_bound);
         if repair {
             match dst_bound {
                 Some(0) => {
