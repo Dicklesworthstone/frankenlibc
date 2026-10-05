@@ -223,6 +223,15 @@ impl CacheEntry {
 /// Thread-local validation cache.
 pub struct TlsValidationCache {
     entries: Box<[CacheEntry; CACHE_SIZE]>,
+    /// The two allocations validated most recently, matched by RANGE: an
+    /// interior pointer into one of them hits with exactly the guarantee an
+    /// exact-address hit gives (the allocation was fully validated and has
+    /// not been freed since; same shard-epoch check). The exact-address table
+    /// alone missed every interior pointer, so code walking a buffer (GNU
+    /// sort comparing lines in its line buffer) paid the full pipeline on
+    /// every string call (bd-rc0923-epic-eeuy4f.9).
+    ranges: [CacheEntry; 2],
+    next_range: usize,
     hits: u64,
     misses: u64,
 }
@@ -233,9 +242,33 @@ impl TlsValidationCache {
     pub fn new() -> Self {
         Self {
             entries: Box::new([CacheEntry::EMPTY; CACHE_SIZE]),
+            ranges: [CacheEntry::EMPTY; 2],
+            next_range: 0,
             hits: 0,
             misses: 0,
         }
+    }
+
+    /// A hit in the recently-validated allocation ranges.
+    #[inline]
+    fn range_hit(&mut self, addr: usize) -> Option<CachedValidation> {
+        for range in &mut self.ranges {
+            if range.valid
+                && addr >= range.user_base
+                && addr - range.user_base < range.user_size
+            {
+                if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
+                    return Some(CachedValidation {
+                        user_base: range.user_base,
+                        user_size: range.user_size,
+                        generation: range.generation,
+                        state: range.state,
+                    });
+                }
+                range.valid = false;
+            }
+        }
+        None
     }
 
     /// Look up a pointer in the cache.
@@ -264,6 +297,10 @@ impl TlsValidationCache {
             // mismatch on the next lookup.
             entry.valid = false;
         }
+        if let Some(hit) = self.range_hit(addr) {
+            self.hits += 1;
+            return Some(hit);
+        }
         self.misses += 1;
         None
     }
@@ -290,6 +327,10 @@ impl TlsValidationCache {
             }
             entry.valid = false;
         }
+        if let Some(hit) = self.range_hit(addr) {
+            self.hits += 1;
+            return Some(hit);
+        }
         None
     }
 
@@ -310,7 +351,7 @@ impl TlsValidationCache {
     ) {
         let idx = Self::index(addr);
         let shard_idx = tls_cache_shard_for(validation.user_base);
-        self.entries[idx] = CacheEntry {
+        let entry = CacheEntry {
             addr,
             user_base: validation.user_base,
             user_size: validation.user_size,
@@ -320,11 +361,26 @@ impl TlsValidationCache {
             shard_epoch: shard_epochs[shard_idx],
             valid: true,
         };
+        self.entries[idx] = entry;
+        if entry.user_size != 0 {
+            // Refresh the range already holding this allocation, else
+            // replace the older of the two.
+            if let Some(range) = self
+                .ranges
+                .iter_mut()
+                .find(|r| r.valid && r.user_base == entry.user_base)
+            {
+                *range = entry;
+            } else {
+                self.ranges[self.next_range] = entry;
+                self.next_range ^= 1;
+            }
+        }
     }
 
     /// Invalidate entries matching a specific allocation base.
     pub fn invalidate(&mut self, user_base: usize) {
-        for entry in self.entries.iter_mut() {
+        for entry in self.entries.iter_mut().chain(self.ranges.iter_mut()) {
             if entry.valid && entry.user_base == user_base {
                 entry.valid = false;
             }
@@ -334,6 +390,7 @@ impl TlsValidationCache {
     /// Invalidate all entries.
     pub fn invalidate_all(&mut self) {
         self.entries.fill(CacheEntry::EMPTY);
+        self.ranges = [CacheEntry::EMPTY; 2];
     }
 
     /// Get cache hit count.
@@ -937,5 +994,54 @@ mod tests {
             cache.lookup(addr).is_none(),
             "stale-snapshot insert must self-clean on next lookup"
         );
+    }
+
+    #[test]
+    fn interior_pointers_hit_recent_allocation_ranges_until_freed() {
+        let mut cache = TlsValidationCache::new();
+        let base = 0x9_0000;
+        let val = CachedValidation {
+            user_base: base,
+            user_size: 4096,
+            generation: 12,
+            state: SafetyState::Valid,
+        };
+        let epoch_guard = lock_tls_cache_epoch_for_tests();
+        cache.insert(base + 8, val, &snapshot_shard_epochs());
+
+        // Any address inside the allocation hits, with its allocation bounds.
+        let hit = cache.lookup(base + 4000).expect("interior pointer hits by range");
+        assert_eq!((hit.user_base, hit.user_size), (base, 4096));
+        assert!(cache.lookup_hit_only(base + 1).is_some());
+        // One past the end, and before the base, miss.
+        assert!(cache.lookup(base + 4096).is_none());
+        assert!(cache.lookup(base - 1).is_none());
+
+        // Two ranges are kept; a third allocation evicts the older one.
+        let other = |b: usize| CachedValidation {
+            user_base: b,
+            user_size: 256,
+            generation: 13,
+            state: SafetyState::Valid,
+        };
+        cache.insert(0xA_0000, other(0xA_0000), &snapshot_shard_epochs());
+        assert!(cache.lookup(base + 100).is_some(), "both ranges kept");
+        cache.insert(0xB_0000, other(0xB_0000), &snapshot_shard_epochs());
+        assert!(cache.lookup(0xA_0000 + 100).is_some());
+        assert!(cache.lookup(0xB_0000 + 100).is_some());
+        assert!(
+            cache.lookup(base + 100).is_none(),
+            "the older range was replaced"
+        );
+
+        // A free in the allocation's shard invalidates its range.
+        // (`bump_shard_epoch` takes the test lock itself: release ours.)
+        drop(epoch_guard);
+        bump_shard_epoch(tls_cache_shard_for(0xA_0000));
+        assert!(cache.lookup(0xA_0000 + 100).is_none(), "freed range misses");
+
+        // invalidate(user_base) clears ranges too.
+        cache.invalidate(0xB_0000);
+        assert!(cache.lookup(0xB_0000 + 100).is_none());
     }
 }
