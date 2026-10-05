@@ -2437,6 +2437,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
     }
     if newloc == GLOBAL_LOCALE_HANDLE {
         THREAD_LOCALE.with(|selected| selected.set(None));
+        frankenlibc_core::stdio::printf::clear_thread_numeric();
         return previous;
     }
     let Some(categories) = categories_for_handle(newloc) else {
@@ -2449,8 +2450,23 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
             categories,
         }));
     });
+    // printf's radix and `'` grouping follow the thread's LC_NUMERIC.
+    if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
+        let field = |item: libc::nl_item| {
+            // SAFETY: resolved_langinfo returns a NUL-terminated static string.
+            unsafe { std::ffi::CStr::from_ptr(resolved_langinfo(item, categories[slot])) }.to_bytes()
+        };
+        frankenlibc_core::stdio::printf::set_thread_numeric(
+            field(libc::RADIXCHAR),
+            field(libc::THOUSEP),
+            field(NL_GROUPING),
+        );
+    }
     previous
 }
+
+/// glibc's `__GROUPING` langinfo item (LC_NUMERIC index 2).
+const NL_GROUPING: libc::nl_item = (locale_core::LC_NUMERIC << 16) | 2;
 
 /// POSIX `freelocale`: release an owned object. Built-in immutable handles
 /// need no reclamation; category data itself remains cached independently.

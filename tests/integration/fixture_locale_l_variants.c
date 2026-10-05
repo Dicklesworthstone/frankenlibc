@@ -60,7 +60,10 @@ int main(void) {
     locale_t old = uselocale(l);
     strftime(buf, sizeof buf, "%c", &tm);
     printf("uselocale strftime=[%s] strcoll(a,B)=%d\n", buf, strcoll("a", "B") < 0 ? -1 : 1);
+    /* printf's ' grouping follows the thread's LC_NUMERIC */
+    printf("uselocale %%'d=[%'d] %%'.2f=[%'.2f]\n", 1234567, 9876543.21);
     uselocale(old);
+    printf("restored  %%'d=[%'d]\n", 1234567);
     freelocale(l);
     return 0;
 }

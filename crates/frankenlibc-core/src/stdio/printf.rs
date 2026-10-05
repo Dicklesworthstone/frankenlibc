@@ -1496,6 +1496,14 @@ static GROUPING_RULE: AtomicU64 = AtomicU64::new(0);
 /// empty separator and grouping disable grouping, as in glibc; so does a
 /// separator longer than seven bytes, which no locale uses.
 pub fn set_numeric_grouping(separator: &[u8], grouping: &[u8]) {
+    let (sep, rule) = pack_grouping(separator, grouping);
+    GROUPING_RULE.store(rule, Ordering::Relaxed);
+    GROUPING_SEPARATOR.store(sep, Ordering::Relaxed);
+}
+
+/// `(separator, rule)` in the packed forms of [`GROUPING_SEPARATOR`] and
+/// [`GROUPING_RULE`].
+fn pack_grouping(separator: &[u8], grouping: &[u8]) -> (u64, u64) {
     let mut rule = 0u64;
     for (i, &size) in grouping.iter().take(8).enumerate() {
         if size == 0 {
@@ -1510,8 +1518,61 @@ pub fn set_numeric_grouping(separator: &[u8], grouping: &[u8]) {
         }
         sep |= (separator.len() as u64) << 56;
     }
-    GROUPING_RULE.store(rule, Ordering::Relaxed);
-    GROUPING_SEPARATOR.store(sep, Ordering::Relaxed);
+    (sep, rule)
+}
+
+/// `decimal_point` in the packed form of [`DECIMAL_POINT`].
+fn pack_decimal_point(decimal_point: &[u8]) -> u64 {
+    let mut packed = 0u64;
+    if decimal_point != b"." && !decimal_point.is_empty() && decimal_point.len() <= 7 {
+        for (i, &b) in decimal_point.iter().enumerate() {
+            packed |= u64::from(b) << (8 * i);
+        }
+        packed |= (decimal_point.len() as u64) << 56;
+    }
+    packed
+}
+
+// A thread's own LC_NUMERIC, selected by uselocale: `[decimal_point,
+// separator, rule]` packed as the globals; `None` follows the global locale.
+// `ANY_THREAD_NUMERIC` keeps programs that never call uselocale off the TLS.
+std::thread_local! {
+    static THREAD_NUMERIC: core::cell::Cell<Option<[u64; 3]>> =
+        const { core::cell::Cell::new(None) };
+}
+static ANY_THREAD_NUMERIC: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Make this thread's numeric formatting follow `uselocale`'s LC_NUMERIC
+/// instead of the global locale's.
+pub fn set_thread_numeric(decimal_point: &[u8], separator: &[u8], grouping: &[u8]) {
+    let (sep, rule) = pack_grouping(separator, grouping);
+    let words = [pack_decimal_point(decimal_point), sep, rule];
+    ANY_THREAD_NUMERIC.store(true, Ordering::Relaxed);
+    let _ = THREAD_NUMERIC.try_with(|cell| cell.set(Some(words)));
+}
+
+/// Return this thread to the global locale's numeric formatting.
+pub fn clear_thread_numeric() {
+    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed) {
+        let _ = THREAD_NUMERIC.try_with(|cell| cell.set(None));
+    }
+}
+
+/// The numeric settings in effect for this thread: `[decimal_point,
+/// separator, rule]`.
+#[inline]
+fn numeric_words() -> [u64; 3] {
+    if ANY_THREAD_NUMERIC.load(Ordering::Relaxed)
+        && let Ok(Some(words)) = THREAD_NUMERIC.try_with(core::cell::Cell::get)
+    {
+        return words;
+    }
+    [
+        DECIMAL_POINT.load(Ordering::Relaxed),
+        GROUPING_SEPARATOR.load(Ordering::Relaxed),
+        GROUPING_RULE.load(Ordering::Relaxed),
+    ]
 }
 
 /// The active LC_NUMERIC `decimal_point` when it is not ".": bytes in the low
@@ -1522,28 +1583,21 @@ static DECIMAL_POINT: AtomicU64 = AtomicU64::new(0);
 /// conversion prints (glibc: `%f`, `%e`, `%g` and `%a` alike). "." or an
 /// unrepresentable (over seven bytes) value restores the C radix.
 pub fn set_numeric_decimal_point(decimal_point: &[u8]) {
-    let mut packed = 0u64;
-    if decimal_point != b"." && !decimal_point.is_empty() && decimal_point.len() <= 7 {
-        for (i, &b) in decimal_point.iter().enumerate() {
-            packed |= u64::from(b) << (8 * i);
-        }
-        packed |= (decimal_point.len() as u64) << 56;
-    }
-    DECIMAL_POINT.store(packed, Ordering::Relaxed);
+    DECIMAL_POINT.store(pack_decimal_point(decimal_point), Ordering::Relaxed);
 }
 
 /// Whether floats print the C locale's "." radix, so a renderer that writes
 /// "." itself (the ABI's direct `%f` path) may run.
 #[inline]
 pub fn numeric_radix_is_dot() -> bool {
-    DECIMAL_POINT.load(Ordering::Relaxed) == 0
+    numeric_words()[0] == 0
 }
 
 /// The LC_NUMERIC radix when it is ONE byte other than "." (de_DE's ','),
 /// for the float parsers; see `stdlib::conversion::c_radix_copy`.
 #[inline]
 pub fn numeric_radix_byte() -> Option<u8> {
-    let packed = DECIMAL_POINT.load(Ordering::Relaxed);
+    let packed = numeric_words()[0];
     ((packed >> 56) == 1).then_some(packed as u8)
 }
 
@@ -1557,7 +1611,7 @@ struct DecimalPoint {
 impl DecimalPoint {
     #[inline]
     fn active() -> Option<Self> {
-        let packed = DECIMAL_POINT.load(Ordering::Relaxed);
+        let packed = numeric_words()[0];
         if packed == 0 {
             return None;
         }
@@ -1616,8 +1670,7 @@ impl NumericGrouping {
         if !spec.flags.group {
             return None;
         }
-        let sep = GROUPING_SEPARATOR.load(Ordering::Relaxed);
-        let rule = GROUPING_RULE.load(Ordering::Relaxed);
+        let [_, sep, rule] = numeric_words();
         let separator_len = (sep >> 56) as usize;
         // A first size of CHAR_MAX (either signedness) means no grouping.
         if separator_len == 0 || rule == 0 || matches!(rule as u8, 0x7f | 0xff) {
