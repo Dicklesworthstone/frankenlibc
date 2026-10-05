@@ -1235,7 +1235,20 @@ fn insert_without_growing_under_lock<K: Eq + std::hash::Hash, V>(
     let mut grown: Option<ArtifactHashMap<K, V>> = None;
     loop {
         let mut map = registry.lock().unwrap_or_else(|e| e.into_inner());
-        if map.len() < map.capacity() || map.contains_key(&key) {
+        // An existing key (glibc reuses pthread_t values) is overwritten in
+        // place: `insert` reserves room for one more entry BEFORE looking the
+        // key up, so on a full table it grew under the lock anyway. In hardened
+        // mode that growth's memset validated through the membrane, whose
+        // first use on a new thread registers a TLS destructor under the
+        // loader lock -- held by a dlopen whose constructor (OpenBLAS) was in
+        // pthread_create waiting for this registry: CPython's test_pickle hung.
+        if let Some(slot) = map.get_mut(&key) {
+            *slot = value;
+            drop(map);
+            drop(grown);
+            return;
+        }
+        if map.len() < map.capacity() {
             map.insert(key, value);
             drop(map);
             drop(grown);
@@ -2133,6 +2146,17 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
 }
 
 unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_void {
+    // Create the membrane's per-thread validation cache first, while this
+    // thread holds no lock at all. Created lazily, its destructor registration
+    // callocs and takes the loader lock from inside whatever validation first
+    // touches it -- which can be a memmove nested under an arena shard lock
+    // this thread holds (a BTreeMap node split: the calloc then waited on that
+    // same shard forever, bd-na6ede) or a registry lock taken below while the
+    // creating thread holds the loader lock in a dlopen'd constructor and waits
+    // for that registry. Strict mode never validates through it.
+    if !crate::runtime_policy::strict_passthrough_active() {
+        frankenlibc_membrane::tls_cache::with_tls_cache(|_| ());
+    }
     let start_ctx_ptr = arg.cast::<HostThreadStartContext>();
     let start_ctx = unsafe { &*start_ctx_ptr };
     let _ = try_with_pthread_tls(|tls| tls.current_threading_backend = THREAD_BACKEND_HOST);
@@ -2153,15 +2177,6 @@ unsafe extern "C" fn host_thread_start_trampoline(arg: *mut c_void) -> *mut c_vo
     if host_thread != 0 {
         remember_current_pthread_self(host_thread);
         remember_host_thread_tid(host_thread, core_self_tid());
-    }
-    // Create the membrane's per-thread validation cache now, while this thread
-    // holds no lock. Created lazily, its destructor registration callocs from
-    // inside whatever validation first touches it -- which can be a memmove
-    // nested under an arena shard lock this thread holds (a BTreeMap node
-    // split), and the calloc then waited on that same shard forever
-    // (bd-na6ede). Strict mode never validates through it.
-    if !crate::runtime_policy::strict_passthrough_active() {
-        frankenlibc_membrane::tls_cache::with_tls_cache(|_| ());
     }
     unsafe { start_routine(start_arg) }
 }

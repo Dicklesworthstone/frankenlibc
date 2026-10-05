@@ -286,6 +286,10 @@ PTHREAD_PSHARED_IPC_BIN="${BIN_DIR}/fixture_pthread_pshared_ipc"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_pshared_ipc.c" -o "${PTHREAD_PSHARED_IPC_BIN}"
 PTHREAD_MUTEX_DESTROYED_BIN="${BIN_DIR}/fixture_pthread_mutex_destroyed"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_mutex_destroyed.c" -o "${PTHREAD_MUTEX_DESTROYED_BIN}"
+DLOPEN_CTOR_THREADS_BIN="${BIN_DIR}/fixture_dlopen_ctor_threads"
+DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
+cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
+cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -1056,6 +1060,7 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
   # fork/popen/system/posix_spawn while other threads are in malloc and stdio
   # (bd-rc0923-epic-eeuy4f.5).
   run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1
