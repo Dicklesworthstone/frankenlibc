@@ -193,6 +193,19 @@ const CASES: &[Case] = &[
         label: "locale_datetime",
         format: b"%c\0",
     },
+    // Controls for the strict exact-format dispatcher's DECLINE paths, which
+    // every non-exact format pays before the general formatter runs. Both are
+    // literal-led, so each pays the pure-literal pre-scan up to its first `%`
+    // (and `on %a, %b` is the shape a one-name fused leaf would have tried).
+    // Neither is a recognized shape, so any movement here is overhead.
+    Case {
+        label: "bracket_numeric_general",
+        format: b"[%Y-%m-%d %H:%M:%S]\0",
+    },
+    Case {
+        label: "two_names_general",
+        format: b"on %a, %b\0",
+    },
 ];
 
 fn self_identity() -> String {
