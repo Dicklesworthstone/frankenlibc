@@ -1784,6 +1784,43 @@ fn getaddrinfo_unknown_service_name_returns_eai_service() {
 }
 
 #[test]
+fn getaddrinfo_rejects_flags_outside_glibc_mask_before_other_hint_errors() {
+    let node = CString::new("127.0.0.1").unwrap();
+    let service = CString::new("80").unwrap();
+    let query = |family: c_int, socktype: c_int, flags: c_int| {
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = family;
+        hints.ai_socktype = socktype;
+        hints.ai_flags = flags;
+        let mut res: *mut libc::addrinfo = ptr::null_mut();
+        let rc =
+            unsafe { resolv_abi::getaddrinfo(node.as_ptr(), service.as_ptr(), &hints, &mut res) };
+        if !res.is_null() {
+            unsafe { resolv_abi::freeaddrinfo(res) };
+        }
+        rc
+    };
+    // glibc 2.43 accepts exactly bits 0..=10 (AI_PASSIVE .. AI_NUMERICSERV).
+    for bit in 0..11 {
+        assert_ne!(
+            query(libc::AF_INET, libc::SOCK_STREAM, 1 << bit),
+            libc::EAI_BADFLAGS,
+            "bit {bit}"
+        );
+    }
+    for bit in 11..32 {
+        assert_eq!(
+            query(libc::AF_INET, libc::SOCK_STREAM, 1i32.wrapping_shl(bit)),
+            libc::EAI_BADFLAGS,
+            "bit {bit}"
+        );
+    }
+    // The flag check precedes the family and socktype checks.
+    assert_eq!(query(77, 0, 0x10000), libc::EAI_BADFLAGS);
+    assert_eq!(query(libc::AF_INET, 99, 0x10000), libc::EAI_BADFLAGS);
+}
+
+#[test]
 fn getaddrinfo_ignores_malformed_service_protocol_field() {
     with_resolver_backends(
         Some(b"203.0.113.10 fixture-host\n"),

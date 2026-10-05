@@ -1579,7 +1579,6 @@ fn lookup_service_profiles(
 fn resolve_addrinfo_profiles(
     service: Option<&CStr>,
     hints: Option<&libc::addrinfo>,
-    repair: bool,
 ) -> Result<Profiles, c_int> {
     let Some(service) = service else {
         return profiles_for_port(0, hints, false);
@@ -1603,12 +1602,11 @@ fn resolve_addrinfo_profiles(
         return Ok(profiles);
     }
 
-    if repair {
-        global_healing_policy().record(&HealingAction::ReturnSafeDefault);
-        profiles_for_port(0, hints, false)
-    } else {
-        Err(libc::EAI_SERVICE)
-    }
+    // An unknown service name is EAI_SERVICE in both modes. Hardened used to
+    // "heal" it to port 0, so getaddrinfo("127.0.0.1", "nonsense") succeeded
+    // with an address nothing listens on (CPython's asyncio test expects the
+    // error); a failed name lookup carries no memory-safety risk.
+    Err(libc::EAI_SERVICE)
 }
 
 struct GethostbynameTarget {
@@ -2797,7 +2795,7 @@ pub unsafe extern "C" fn getaddrinfo(
     // SAFETY: caller owns the output slot; tracked extent is checked above.
     unsafe { ptr::write_unaligned(res, ptr::null_mut()) };
 
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Resolver,
         node as usize,
         0,
@@ -2815,8 +2813,6 @@ pub unsafe extern "C" fn getaddrinfo(
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
         return libc::EAI_FAIL;
     }
-    let repair = repair_enabled(mode.heals_enabled(), decision.action);
-
     // SAFETY: getaddrinfo accepts optional C-string pointers; opt_cstr
     // validates tracked allocation bounds before producing a CStr view.
     let node_cstr = match unsafe { opt_cstr(node) } {
@@ -2876,7 +2872,23 @@ pub unsafe extern "C" fn getaddrinfo(
         return libc::EAI_NONAME;
     }
 
-    let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref, repair) {
+    // glibc accepts only the flag bits it defines (AI_PASSIVE .. AI_NUMERICSERV,
+    // mask 0x7ff, measured against glibc 2.43 bit by bit) and rejects any other
+    // with EAI_BADFLAGS -- after the NULL/NULL EAI_NONAME check, before the
+    // family, socktype and service checks.
+    const GLIBC_AI_FLAGS_MASK: c_int = 0x7ff;
+    if hints_ref.is_some_and(|h| h.ai_flags & !GLIBC_AI_FLAGS_MASK != 0) {
+        record_resolver_stage_outcome(
+            &ordering,
+            aligned,
+            recent_page,
+            Some(stage_index(&ordering, CheckStage::Bounds)),
+        );
+        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+        return libc::EAI_BADFLAGS;
+    }
+
+    let profiles = match resolve_addrinfo_profiles(service_cstr, hints_ref) {
         Ok(profiles) => profiles,
         Err(err) => {
             record_resolver_stage_outcome(

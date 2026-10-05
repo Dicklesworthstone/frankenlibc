@@ -468,14 +468,14 @@
       "family": "Resolver",
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
-      "heals_call_sites": 3,
+      "heals_call_sites": 2,
       "symbols": ["getaddrinfo", "freeaddrinfo", "getnameinfo", "gai_strerror"],
       "strict_behavior": {
-        "invalid_hints": "Returns EAI_BADFLAGS/EAI_FAMILY",
+        "invalid_hints": "Returns EAI_BADFLAGS (any flag outside glibc's 0x7ff) / EAI_FAMILY / EAI_SOCKTYPE / EAI_SERVICE (unknown service name)",
         "buffer_overflow": "Proceeds as-is"
       },
       "hardened_behavior": {
-        "invalid_hints": "Heals via repair_enabled(), safe defaults",
+        "invalid_hints": "Same as strict (an unknown service used to heal to port 0)",
         "buffer_overflow": "Bounded output via repair_enabled()"
       }
     },
@@ -520,7 +520,7 @@
   "summary": {
     "total_families": 20,
     "families_with_healing": 16,
-    "total_heals_call_sites": 133,
+    "total_heals_call_sites": 132,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",
