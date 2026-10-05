@@ -847,6 +847,51 @@ impl StdioStream {
         (!window.is_empty()).then_some(window)
     }
 
+    /// Whether the C handle reports this stream as buffered (`_IO_UNBUFFERED`
+    /// clear): an fd-backed stream in Full or Line mode, as glibc reports it.
+    /// Code poking glibc's FILE fills such a stream's buffer in place ({fmt}
+    /// does once the bit is clear, after an `__overflow` that must leave a
+    /// [`write_window`](Self::write_window) behind), so memory-backed streams,
+    /// which never publish one, stay reported as unbuffered.
+    pub fn reports_buffered(&self) -> bool {
+        !self.is_mem_backed() && !matches!(self.buffer.mode(), BufMode::None)
+    }
+
+    /// Whether this stream can ever publish a [`write_window`](Self::write_window):
+    /// a writable stream [reported as buffered](Self::reports_buffered).
+    pub fn write_window_capable(&self) -> bool {
+        self.open_flags.writable && self.reports_buffered()
+    }
+
+    /// The write buffer a caller may fill in place, as `(base address, bytes
+    /// staged, capacity)`: what glibc exposes as `[_IO_write_base,
+    /// _IO_write_ptr, _IO_write_end)`, which the inline `putc_unlocked` fills
+    /// directly. `None` unless the stream is [`write_window_capable`] and in
+    /// write mode (its last operation wrote), so a read-mode stream keeps only
+    /// its read window. Bytes stored in place are accounted for by
+    /// [`commit_write_window`](Self::commit_write_window).
+    ///
+    /// [`write_window_capable`]: Self::write_window_capable
+    pub fn write_window(&self) -> Option<(usize, usize, usize)> {
+        if !self.write_window_capable() || !self.flags.last_write {
+            return None;
+        }
+        self.buffer.write_window()
+    }
+
+    /// Account for the caller having filled the write window up to `used`
+    /// bytes from its base (see [`write_window`](Self::write_window)).
+    pub fn commit_write_window(&mut self, used: usize) {
+        let added = self.buffer.commit_write(used);
+        if added == 0 {
+            return;
+        }
+        self.flags.io_started = true;
+        self.flags.last_write = true;
+        self.flags.eof = false;
+        self.offset = self.offset.saturating_add(added as i64);
+    }
+
     /// The opaque C handle token set by [`set_c_handle`](Self::set_c_handle).
     #[inline]
     pub fn c_handle(&self) -> usize {

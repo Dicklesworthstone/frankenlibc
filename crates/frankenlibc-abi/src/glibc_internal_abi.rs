@@ -4420,7 +4420,12 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
             libc::EOF
         };
     }
-    unsafe { crate::stdio_abi::fputc(c, fp) }
+    let rc = unsafe { crate::stdio_abi::fputc(c, fp) };
+    // Publish the write window again (fputc's fast path clears it), so the
+    // following inline putc_unlocked calls store straight into the buffer
+    // until it fills -- the write-side twin of __uflow's republish.
+    crate::stdio_abi::republish_read_window(fp);
+    rc
 }
 // __poll: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

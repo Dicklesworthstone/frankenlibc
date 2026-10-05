@@ -1894,6 +1894,13 @@ pub(crate) const IO_FILE_MODE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layo
 pub(crate) const IO_READ_PTR_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr);
 pub(crate) const IO_READ_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end);
 pub(crate) const IO_READ_BASE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base);
+/// Byte offsets of the glibc write-window and buffer pointers in a handle.
+pub(crate) const IO_WRITE_BASE_OFFSET: usize =
+    std::mem::offset_of!(_IO_FILE_Layout, _IO_write_base);
+pub(crate) const IO_WRITE_PTR_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_write_ptr);
+pub(crate) const IO_WRITE_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_write_end);
+pub(crate) const IO_BUF_BASE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_base);
+pub(crate) const IO_BUF_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_buf_end);
 
 /// Rewrite the caller-visible header of a registered handle after the stream
 /// behind it changed identity (`freopen`): new fd, open-mode bits, and a

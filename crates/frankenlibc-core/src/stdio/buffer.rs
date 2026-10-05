@@ -263,6 +263,39 @@ impl StreamBuffer {
         self.write_len = 0;
     }
 
+    /// The write buffer as `(base address, bytes staged, capacity)` for a
+    /// Full-buffered buffer whose storage exists: what glibc exposes as
+    /// `_IO_write_base`, `_IO_write_ptr - _IO_write_base` and
+    /// `_IO_buf_end - _IO_buf_base`, in Full or Line mode (a Line window is
+    /// published with `_IO_write_end == _IO_write_ptr`, as glibc does, so
+    /// every inline `putc` still reaches `__overflow` and its newline flush).
+    /// `None` in None mode and before the first buffered write materialises
+    /// the storage. The storage
+    /// is allocated once at full capacity and only replaced by `set_mode`
+    /// before any I/O, so the address stays valid while the stream is in use.
+    pub fn write_window(&self) -> Option<(usize, usize, usize)> {
+        if matches!(self.mode, BufMode::None)
+            || self.capacity == 0
+            || self.data.len() < self.capacity
+        {
+            return None;
+        }
+        Some((self.data.as_ptr() as usize, self.write_len, self.capacity))
+    }
+
+    /// Account for bytes the caller stored in place through
+    /// [`write_window`](Self::write_window): the staged length becomes `used`
+    /// if that only grows it within capacity. Returns the bytes added.
+    pub fn commit_write(&mut self, used: usize) -> usize {
+        if used <= self.write_len || used > self.capacity {
+            return 0;
+        }
+        let added = used - self.write_len;
+        self.write_len = used;
+        self.io_started = true;
+        added
+    }
+
     // -----------------------------------------------------------------------
     // Read-side operations
     // -----------------------------------------------------------------------
@@ -413,6 +446,11 @@ impl StreamBuffer {
     }
 
     fn write_line<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
+        // Materialise the storage on the first line-buffered write even when
+        // nothing stays staged, so the stream can publish its (glibc-style,
+        // `_IO_write_end == _IO_write_ptr`) write window right after the
+        // `__overflow` that {fmt} uses to force the buffer into existence.
+        self.ensure_storage();
         if self.write_len == 0 && data.last().copied() == Some(b'\n') {
             return WriteResult {
                 buffered: 0,
