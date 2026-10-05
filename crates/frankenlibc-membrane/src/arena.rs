@@ -17,7 +17,7 @@ use crate::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use crate::lattice::SafetyState;
 use crate::tls_cache::bump_shard_epoch;
 
-/// Maximum quarantine queue size in bytes.
+/// Maximum quarantine size in bytes, across all shards.
 const QUARANTINE_MAX_BYTES: usize = 64 * 1024 * 1024; // 64 MB
 
 /// Where arena blocks (header + user bytes + canary) come from.
@@ -358,6 +358,10 @@ pub struct AllocationArena {
     large: Mutex<std::collections::BTreeSet<usize>>,
     /// Global generation counter.
     next_generation: std::sync::atomic::AtomicU64,
+    /// Bytes and entries quarantined across all shards (the sum of the
+    /// shards' own counts, maintained where frees enter and drains leave).
+    quarantine_total_bytes: std::sync::atomic::AtomicUsize,
+    quarantine_total_entries: std::sync::atomic::AtomicUsize,
 }
 
 /// Result of a successful allocation in the arena.
@@ -400,6 +404,8 @@ impl AllocationArena {
             shards: shards.into_boxed_slice(),
             large: Mutex::new(std::collections::BTreeSet::new()),
             next_generation: std::sync::atomic::AtomicU64::new(1),
+            quarantine_total_bytes: std::sync::atomic::AtomicUsize::new(0),
+            quarantine_total_entries: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -590,13 +596,15 @@ impl AllocationArena {
             let total_size = offset + slot.user_size + CANARY_SIZE;
             let align = offset;
 
-            shard.quarantine.push_back(QuarantineEntry {
-                user_base,
-                raw_base,
-                total_size,
-                align,
-            });
-            shard.quarantine_bytes += total_size;
+            self.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base,
+                    raw_base,
+                    total_size,
+                    align,
+                },
+            );
 
             // Drain quarantine if over limit (returns entries without deallocating)
             let drained = if batched {
@@ -777,9 +785,30 @@ impl AllocationArena {
         }
     }
 
+    /// Append a freed block to `shard`'s quarantine, keeping the shard's and
+    /// the arena-wide totals together (the drain bound reads both).
+    fn enqueue_quarantine(&self, shard: &mut ArenaShard, entry: QuarantineEntry) {
+        shard.quarantine_bytes += entry.total_size;
+        self.quarantine_total_bytes
+            .fetch_add(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+        self.quarantine_total_entries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        shard.quarantine.push_back(entry);
+    }
+
     fn drain_quarantine_into(&self, shard: &mut ArenaShard, drained: &mut Vec<QuarantineEntry>) {
+        // The budget and the controller's depth bound the whole arena: checked
+        // per shard only, they let a hardened process hold 16x (one budget per
+        // shard) the documented 64 MB of freed memory -- a realloc- or
+        // printf-heavy loop grew to ~1.1 GB resident. A free drains its own
+        // shard's oldest entries while the arena is over budget, so one shard
+        // may still use the whole window when frees concentrate there.
+        let depth = crate::quarantine_controller::current_depth();
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
-            || shard.quarantine.len() > crate::quarantine_controller::current_depth()
+            || shard.quarantine.len() > depth
+            || self.quarantine_total_bytes.load(std::sync::atomic::Ordering::Relaxed)
+                > QUARANTINE_MAX_BYTES
+            || self.quarantine_total_entries.load(std::sync::atomic::Ordering::Relaxed) > depth
         {
             let Some(entry) = shard.quarantine.pop_front() else {
                 break;
@@ -800,6 +829,10 @@ impl AllocationArena {
             }
 
             shard.quarantine_bytes = shard.quarantine_bytes.saturating_sub(entry.total_size);
+            self.quarantine_total_bytes
+                .fetch_sub(entry.total_size, std::sync::atomic::Ordering::Relaxed);
+            self.quarantine_total_entries
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
             drained.push(entry);
         }
@@ -953,6 +986,35 @@ mod tests {
         }
     }
 
+    /// The documented 64 MB is the whole quarantine, not each shard's: 160 MB
+    /// of 1 MiB frees must leave at most (and close to) 64 MB held.
+    #[test]
+    fn quarantine_budget_is_global_across_shards() {
+        let arena = AllocationArena::new();
+        for _ in 0..160 {
+            let ptr = arena.allocate(1 << 20).expect("allocation should succeed");
+            let (result, drained) = arena.free(ptr.ptr);
+            unsafe {
+                AllocationArena::deallocate_drained(&drained);
+            }
+            assert_eq!(result, FreeResult::Freed);
+        }
+        let held: usize = arena.shards.iter().map(|s| s.lock().quarantine_bytes).sum();
+        assert_eq!(
+            held,
+            arena
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed),
+            "the arena total is the sum of the shards"
+        );
+        assert!(
+            held <= QUARANTINE_MAX_BYTES,
+            "quarantine holds {held} bytes, over the {QUARANTINE_MAX_BYTES}-byte budget"
+        );
+        // Still a real window: within one block of the whole budget.
+        assert!(held > QUARANTINE_MAX_BYTES - (2 << 20), "held only {held} bytes");
+    }
+
     #[test]
     fn free_promotes_slot_to_quarantined_with_new_generation() {
         let arena = AllocationArena::new();
@@ -1006,13 +1068,15 @@ mod tests {
             if idx == 0 {
                 oldest_user = user;
             }
-            shard.quarantine.push_back(QuarantineEntry {
-                user_base: user,
-                raw_base: raw,
-                total_size,
-                align,
-            });
-            shard.quarantine_bytes += total_size;
+            arena.enqueue_quarantine(
+                &mut shard,
+                QuarantineEntry {
+                    user_base: user,
+                    raw_base: raw,
+                    total_size,
+                    align,
+                },
+            );
         }
 
         assert_eq!(
@@ -1394,13 +1458,15 @@ mod tests {
         shard.slots.push(slot1);
         let slot1_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user1, slot1_idx);
-        shard.quarantine.push_back(QuarantineEntry {
-            user_base: user1,
-            raw_base: raw1,
-            total_size,
-            align,
-        });
-        shard.quarantine_bytes += total_size;
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user1,
+                raw_base: raw1,
+                total_size,
+                align,
+            },
+        );
 
         let raw2 = alloc_block(total_size, align);
         let user2 = raw2 + align;
@@ -1414,13 +1480,15 @@ mod tests {
         shard.slots.push(slot2);
         let slot2_idx = shard.slots.len() - 1;
         shard.addr_to_slot.insert(user2, slot2_idx);
-        shard.quarantine.push_back(QuarantineEntry {
-            user_base: user2,
-            raw_base: raw2,
-            total_size,
-            align,
-        });
-        shard.quarantine_bytes += total_size;
+        arena.enqueue_quarantine(
+            &mut shard,
+            QuarantineEntry {
+                user_base: user2,
+                raw_base: raw2,
+                total_size,
+                align,
+            },
+        );
 
         assert!(
             shard.quarantine_bytes > QUARANTINE_MAX_BYTES,
