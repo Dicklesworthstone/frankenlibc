@@ -3844,17 +3844,31 @@ static FALLBACK_ALLOC_PTRS: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
     [const { AtomicUsize::new(FALLBACK_SLOT_EMPTY) }; FALLBACK_ALLOC_TABLE_SLOTS];
 static FALLBACK_ALLOC_SIZES: [AtomicUsize; FALLBACK_ALLOC_TABLE_SLOTS] =
     [const { AtomicUsize::new(0) }; FALLBACK_ALLOC_TABLE_SLOTS];
-static FALLBACK_ALLOC_TABLE_LOCK: AtomicBool = AtomicBool::new(false);
+/// Reader-writer spin lock over the fallback table: the low bits count
+/// readers, `FALLBACK_TABLE_WRITER` marks the exclusive holder and
+/// `FALLBACK_TABLE_WRITER_WAITING` stops new readers so a writer (malloc /
+/// free / realloc bookkeeping) cannot starve. Lookups only read: with one
+/// exclusive lock, hardened mode's per-string-call `fallback_remaining` spun
+/// behind other threads' lookups (75% of its samples on the spin `pause` in a
+/// threaded GNU sort, bd-rc0923-epic-eeuy4f.9).
+static FALLBACK_ALLOC_TABLE_LOCK: AtomicUsize = AtomicUsize::new(0);
+const FALLBACK_TABLE_WRITER: usize = 1 << (usize::BITS - 1);
+const FALLBACK_TABLE_WRITER_WAITING: usize = 1 << (usize::BITS - 2);
 static FALLBACK_ALLOC_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
 static FALLBACK_ALLOC_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
 
 struct FallbackAllocTableGuard {
     slot: Option<&'static AllocatorReentrySlot>,
+    shared: bool,
 }
 
 impl Drop for FallbackAllocTableGuard {
     fn drop(&mut self) {
-        FALLBACK_ALLOC_TABLE_LOCK.store(false, Ordering::Release);
+        if self.shared {
+            FALLBACK_ALLOC_TABLE_LOCK.fetch_sub(1, Ordering::Release);
+        } else {
+            FALLBACK_ALLOC_TABLE_LOCK.store(0, Ordering::Release);
+        }
         if let Some(slot) = self.slot {
             core::sync::atomic::compiler_fence(Ordering::SeqCst);
             slot.in_fallback_table.store(false, Ordering::Relaxed);
@@ -3862,22 +3876,61 @@ impl Drop for FallbackAllocTableGuard {
     }
 }
 
-fn lock_fallback_alloc_table() -> FallbackAllocTableGuard {
-    // Mark this thread BEFORE waiting, so a signal handler that interrupts
-    // anywhere from here to the release sees it (no window between acquiring
-    // and marking).
+/// Mark this thread BEFORE waiting, so a signal handler that interrupts
+/// anywhere from here to the release sees it (no window between acquiring and
+/// marking).
+fn mark_fallback_table_entry() -> Option<&'static AllocatorReentrySlot> {
     let slot = current_allocator_reentry_slot();
     if let Some(slot) = slot {
         slot.in_fallback_table.store(true, Ordering::Relaxed);
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
     }
-    while FALLBACK_ALLOC_TABLE_LOCK
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
+    slot
+}
+
+/// Exclusive access, for anything that changes the table.
+fn lock_fallback_alloc_table() -> FallbackAllocTableGuard {
+    let slot = mark_fallback_table_entry();
+    loop {
+        let state = FALLBACK_ALLOC_TABLE_LOCK.load(Ordering::Relaxed);
+        if state & !FALLBACK_TABLE_WRITER_WAITING == 0 {
+            // No readers, no writer: take it (this clears the waiting bit; a
+            // still-waiting writer sets it again below).
+            if FALLBACK_ALLOC_TABLE_LOCK
+                .compare_exchange_weak(
+                    state,
+                    FALLBACK_TABLE_WRITER,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                return FallbackAllocTableGuard {
+                    slot,
+                    shared: false,
+                };
+            }
+        } else if state & FALLBACK_TABLE_WRITER_WAITING == 0 {
+            FALLBACK_ALLOC_TABLE_LOCK.fetch_or(FALLBACK_TABLE_WRITER_WAITING, Ordering::Relaxed);
+        }
         std::hint::spin_loop();
     }
-    FallbackAllocTableGuard { slot }
+}
+
+/// Shared access, for lookups that only read the table.
+fn lock_fallback_alloc_table_shared() -> FallbackAllocTableGuard {
+    let slot = mark_fallback_table_entry();
+    loop {
+        let state = FALLBACK_ALLOC_TABLE_LOCK.load(Ordering::Relaxed);
+        if state & (FALLBACK_TABLE_WRITER | FALLBACK_TABLE_WRITER_WAITING) == 0
+            && FALLBACK_ALLOC_TABLE_LOCK
+                .compare_exchange_weak(state, state + 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        {
+            return FallbackAllocTableGuard { slot, shared: true };
+        }
+        std::hint::spin_loop();
+    }
 }
 
 /// True when this reentrant allocator entry must not touch the fallback table
@@ -3928,7 +3981,7 @@ fn fallback_contains(ptr: *mut c_void) -> bool {
     let Some(key) = fallback_key(ptr) else {
         return false;
     };
-    let _guard = lock_fallback_alloc_table();
+    let _guard = lock_fallback_alloc_table_shared();
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
@@ -4188,7 +4241,7 @@ pub unsafe fn bench_fallback_update_size(ptr: *mut c_void, size: usize) -> bool 
 
 fn fallback_size(ptr: *mut c_void) -> Option<usize> {
     let key = fallback_key(ptr)?;
-    let _guard = lock_fallback_alloc_table();
+    let _guard = lock_fallback_alloc_table_shared();
     let start = fallback_start_index(key);
     for i in 0..1024 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
@@ -4523,7 +4576,7 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
         // table lock the interrupted frame may hold (bd-na6ede). No bound.
         return None;
     }
-    let _guard = lock_fallback_alloc_table();
+    let _guard = lock_fallback_alloc_table_shared();
     let start = fallback_start_index(addr);
     for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
