@@ -1,0 +1,52 @@
+name: Versioned fromfp ABI
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/**'
+      - 'crates/frankenlibc-core/src/math/**'
+      - 'tests/integration/fixture_fromfp_versions.c'
+      - 'scripts/check_fromfp_versions.sh'
+      - '.github/workflows/fromfp-abi.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deployed-abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve exact math and linker inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fromfp-source-${{ github.sha }}
+          path: |
+            crates/frankenlibc-abi/src/math_abi.rs
+            crates/frankenlibc-abi/src/lib.rs
+            crates/frankenlibc-abi/build.rs
+            crates/frankenlibc-abi/Cargo.toml
+            Cargo.toml
+          if-no-files-found: error
+          retention-days: 7
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Build deployed library
+        run: |
+          mkdir -p artifacts/fromfp
+          cargo build -p frankenlibc-abi --release -j2 2>&1 | tee artifacts/fromfp/build.log
+      - name: Check both ABIs in strict and hardened modes
+        run: bash scripts/check_fromfp_versions.sh 2>&1 | tee artifacts/fromfp/versions.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fromfp-results-${{ github.sha }}
+          path: artifacts/fromfp/
+          if-no-files-found: warn
+          retention-days: 7

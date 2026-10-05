@@ -9,6 +9,7 @@ mod gamma_data;
 pub mod exp;
 pub mod float;
 pub mod float32;
+pub mod fromfp;
 mod log2_data;
 mod log_data;
 pub mod special;

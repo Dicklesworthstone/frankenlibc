@@ -41,6 +41,14 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 /// Default thread stack size: 2 MiB (matches glibc default).
 const DEFAULT_STACK_SIZE: usize = 2 * 1024 * 1024;
 
+/// Minimum usable stack for the supported Linux native-thread backends.
+/// Reject smaller requests before writing the startup arguments into the map.
+const MIN_STACK_SIZE: usize = 16 * 1024;
+
+/// Both the x86-64 System V and AArch64 procedure-call ABIs require a
+/// 16-byte-aligned stack before calling the Rust/C trampoline.
+const THREAD_STACK_ALIGNMENT: usize = 16;
+
 /// Guard page size: 4 KiB.
 const GUARD_PAGE_SIZE: usize = 4096;
 
@@ -401,6 +409,9 @@ unsafe fn unmapself_and_exit(stack_base: usize, stack_total_size: usize) -> ! {
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 #[allow(unsafe_code)]
 fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32> {
+    if stack_size < MIN_STACK_SIZE {
+        return Err(crate::errno::EINVAL);
+    }
     let total_size = GUARD_PAGE_SIZE
         .checked_add(stack_size)
         .ok_or(crate::errno::ENOMEM)?;
@@ -429,7 +440,13 @@ fn allocate_thread_stack(stack_size: usize) -> Result<(usize, usize, usize), i32
         return Err(e);
     }
 
-    let usable_top = base as usize + total_size;
+    // A valid pthread stack size need not be a multiple of 16 (or even 8).
+    // mmap aligns the base, not base + length: using the unrounded end would
+    // make both ptr::write(ThreadStartArgs) and the child call frame unaligned.
+    // Round DOWN within the owned mapping, retaining its original length for
+    // reclamation. The minimum size leaves room for the startup gap and args
+    // even after losing up to THREAD_STACK_ALIGNMENT - 1 trailing bytes.
+    let usable_top = (base as usize + total_size) & !(THREAD_STACK_ALIGNMENT - 1);
     Ok((base as usize, total_size, usable_top))
 }
 
@@ -454,6 +471,8 @@ fn free_thread_stack(base: usize, total_size: usize) {
 /// * `start_routine` - Function pointer for the new thread to execute.
 ///   Signature: `extern "C" fn(*mut c_void) -> *mut c_void`, passed as usize.
 /// * `arg` - Argument to pass to `start_routine`, as usize.
+/// * `stack_size` - Usable stack size in bytes; 0 selects the default. Nonzero
+///   values below 16 KiB fail with EINVAL. Other sizes need not be aligned.
 ///
 /// # Returns
 ///
@@ -946,6 +965,53 @@ mod tests {
         let flag = unsafe { &*(arg as *const AtomicU32) };
         flag.store(42, Ordering::Release);
         0
+    }
+
+    #[test]
+    fn native_stack_allocation_rejects_small_and_overflowing_sizes() {
+        for size in [0, 1, THREAD_START_ARGS_GAP, MIN_STACK_SIZE - 1] {
+            assert_eq!(allocate_thread_stack(size), Err(crate::errno::EINVAL));
+        }
+        for size in [usize::MAX, usize::MAX - GUARD_PAGE_SIZE + 1] {
+            assert_eq!(allocate_thread_stack(size), Err(crate::errno::ENOMEM));
+        }
+    }
+
+    #[test]
+    fn native_stack_allocation_aligns_every_size_residue() {
+        for minimum in [MIN_STACK_SIZE, 64 * 1024] {
+            for residue in 0..THREAD_STACK_ALIGNMENT {
+                let size = minimum + residue;
+                let (base, total, top) = allocate_thread_stack(size).unwrap();
+                let frame = top - 16;
+                let args_size = core::mem::size_of::<ThreadStartArgs>();
+                let args = frame - THREAD_START_ARGS_GAP - ((args_size + 7) & !7);
+                // Release the allocation before assertions so a failed layout
+                // check does not leak the mapping. Only integer addresses remain.
+                free_thread_stack(base, total);
+                assert_eq!(total, GUARD_PAGE_SIZE + size);
+                assert_eq!(top % THREAD_STACK_ALIGNMENT, 0);
+                assert_eq!(frame % THREAD_STACK_ALIGNMENT, 0);
+                assert_eq!(args % core::mem::align_of::<ThreadStartArgs>(), 0);
+                assert!(args >= base + GUARD_PAGE_SIZE);
+                assert!(args + args_size <= frame - THREAD_START_ARGS_GAP);
+                assert!(top <= base + total);
+                assert!(base + total - top < THREAD_STACK_ALIGNMENT);
+            }
+        }
+    }
+
+    #[test]
+    fn native_custom_stack_sizes_create_and_join() {
+        let start_routine = echo_start as *const () as usize;
+        for residue in 0..THREAD_STACK_ALIGNMENT {
+            let size = 128 * 1024 + residue;
+            // SAFETY: echo_start is a valid C-ABI entry point. Its argument is
+            // an integer, and each successfully created handle is joined once.
+            let handle = unsafe { create_thread(start_routine, residue + 1, size) }.unwrap();
+            let result = unsafe { join_thread(handle) };
+            assert_eq!(result, Ok(residue + 1), "stack size {size}");
+        }
     }
 
     #[test]
