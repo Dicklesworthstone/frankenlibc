@@ -21,7 +21,6 @@ const MAX_FLOAT_PRECISION: usize = 65_535;
 // Format spec types
 // ---------------------------------------------------------------------------
 
-
 /// Short-append that stays out of the interposed `memcpy`.
 ///
 /// `Vec::extend_from_slice` lowers to `copy_nonoverlapping`, which in a process
@@ -2004,6 +2003,77 @@ fn float_grouping(spec: &FormatSpec) -> Option<NumericGrouping> {
     })
 }
 
+/// Precision past which a finite double's %f/%e/%a rendering is exact and every
+/// further digit is '0' (see [`format_float_huge_precision`]).
+const EXACT_FLOAT_DIGITS: usize = 1_100;
+
+/// [`format_float_with_dot`] for `precision > EXACT_FLOAT_DIGITS`: render the
+/// unpadded body at EXACT_FLOAT_DIGITS, splice in the `precision -
+/// EXACT_FLOAT_DIGITS` zeros where the fraction ends (before the exponent for
+/// %e and %g's exponent form, before 'p' for %a; %g without `#` drops trailing
+/// zeros, so it needs none), then apply the field width.
+fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, buf: &mut Vec<u8>) {
+    let conv = spec.conversion.to_ascii_lowercase();
+    let inner_flags = FormatFlags {
+        left_justify: false,
+        zero_pad: false,
+        ..spec.flags
+    };
+    let inner = FormatSpec::new(
+        inner_flags,
+        Width::None,
+        Precision::Fixed(EXACT_FLOAT_DIGITS),
+        spec.length,
+        spec.conversion,
+        None,
+    );
+    let mut body = Vec::new();
+    format_float_with_dot(value, &inner, &mut body);
+    let splice = match conv {
+        b'f' | b'e' | b'a' => true,
+        b'g' => spec.flags.alt_form,
+        _ => false,
+    };
+    if splice {
+        let extra = precision - EXACT_FLOAT_DIGITS;
+        let marker: &[u8] = if conv == b'a' { b"pP" } else { b"eE" };
+        let at = match conv {
+            b'f' => body.len(),
+            _ => body
+                .iter()
+                .rposition(|b| marker.contains(b))
+                .unwrap_or(body.len()),
+        };
+        // Degrade (fewer zeros) rather than abort when the memory is not there.
+        if body.try_reserve(extra).is_ok() {
+            body.splice(at..at, core::iter::repeat_n(b'0', extra));
+        }
+    }
+    let pad_total = resolve_width(spec).saturating_sub(body.len());
+    if pad_total == 0 {
+        buf.extend_from_slice(&body);
+    } else if spec.flags.left_justify {
+        buf.extend_from_slice(&body);
+        pad(buf, b' ', pad_total);
+    } else if spec.flags.zero_pad {
+        // Zeros go after the sign (and %a's "0x").
+        let mut pre = usize::from(matches!(body.first(), Some(b'-' | b'+' | b' ')));
+        if conv == b'a'
+            && body[pre..].len() >= 2
+            && body[pre] == b'0'
+            && matches!(body[pre + 1], b'x' | b'X')
+        {
+            pre += 2;
+        }
+        buf.extend_from_slice(&body[..pre]);
+        pad(buf, b'0', pad_total);
+        buf.extend_from_slice(&body[pre..]);
+    } else {
+        pad(buf, b' ', pad_total);
+        buf.extend_from_slice(&body);
+    }
+}
+
 /// [`format_float`] with the C locale's "." radix.
 fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
@@ -2011,6 +2081,15 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         Precision::None => 6, // POSIX default
         Precision::FromArg | Precision::FromArgPosition(_) => 6,
     };
+    // Beyond EXACT_FLOAT_DIGITS every further digit is a zero: a double's exact
+    // decimal expansion has at most 1074 fractional digits (%f) and 767
+    // significant digits (%e), and %a at most 13 hex digits. Render at that
+    // precision and splice the remaining zeros in, so `%.2000000f` prints all
+    // 2000000 digits as glibc does instead of stopping at the 65535 cap below.
+    if precision > EXACT_FLOAT_DIGITS && value.is_finite() {
+        format_float_huge_precision(value, spec, precision, buf);
+        return;
+    }
     // Rust's core::fmt stores precision as u16 internally and panics with
     // "Formatting argument out of range" for precision >= 65536. Cap to
     // 65535 to prevent a process abort from any adversarial `%.99999f`-style
@@ -2615,9 +2694,13 @@ fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64])
 }
 
 fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
-    // Bounded to prevent pathological allocations while allowing POSIX-conformant
-    // wide fields. 1 MiB is generous enough for any real-world format width.
-    let count = count.min(1_048_576);
+    // A field as wide as C asks for: glibc prints `%2000000d` in full, and the
+    // old 1 MiB cap silently cut such fields short (and the return count with
+    // them). A field too large for the memory available is dropped rather than
+    // aborting the process on an infallible allocation.
+    if count > 4096 && buf.try_reserve(count).is_err() {
+        return;
+    }
     buf.extend(std::iter::repeat_n(byte, count));
 }
 
@@ -4073,17 +4156,26 @@ mod tests {
         assert_eq!(grouped(&en, b"999"), b"999");
         assert_eq!(grouped(&en, b"1000"), b"1,000");
         assert_eq!(grouped(&en, b"1234567"), b"1,234,567");
-        assert_eq!(grouped(&en, b"9223372036854775807"), b"9,223,372,036,854,775,807");
+        assert_eq!(
+            grouped(&en, b"9223372036854775807"),
+            b"9,223,372,036,854,775,807"
+        );
         // A single size repeats too: "\3".
         assert_eq!(grouped(&grouping(b".", &[3]), b"1234567"), b"1.234.567");
         // en_IN: "\3\2" -- the first group three, then twos.
         let india = grouping(b",", &[3, 2]);
         assert_eq!(grouped(&india, b"123456789"), b"12,34,56,789");
         // CHAR_MAX ends grouping: only the first three split off.
-        assert_eq!(grouped(&grouping(b",", &[3, 0x7f]), b"1234567"), b"1234,567");
+        assert_eq!(
+            grouped(&grouping(b",", &[3, 0x7f]), b"1234567"),
+            b"1234,567"
+        );
         // Multi-byte separator (fr_FR's U+202F NARROW NO-BREAK SPACE).
         let fr = grouping("\u{202f}".as_bytes(), &[3]);
-        assert_eq!(grouped(&fr, b"1234567"), "1\u{202f}234\u{202f}567".as_bytes());
+        assert_eq!(
+            grouped(&fr, b"1234567"),
+            "1\u{202f}234\u{202f}567".as_bytes()
+        );
         // The float helper groups only the leading integer digits.
         assert_eq!(en.group_leading_digits(b"1234567.891"), b"1,234,567.891");
         assert_eq!(en.group_leading_digits(b"1.23457e+06"), b"1.23457e+06");
@@ -4391,8 +4483,8 @@ mod tests {
         // glibc accepts the historical uppercase `L` spelling on `s`/`c` as
         // the wide `l` form (same as `%ls`). Our parser sanitizes BigL to L
         // to match. Verified against glibc 2.42 (bd-2g7oyh).
-        let (spec, consumed) = parse_format_spec(b"Ls")
-            .expect("glibc accepts %Ls as the wide %ls form");
+        let (spec, consumed) =
+            parse_format_spec(b"Ls").expect("glibc accepts %Ls as the wide %ls form");
         assert_eq!(consumed, 2);
         assert_eq!(spec.length, LengthMod::L);
     }
@@ -5074,6 +5166,47 @@ mod tests {
     // panics ("Formatting argument out of range") for precision >= 65536.
     // format_float must cap precision before it reaches format!/%.*f, or any
     // C caller with a format like `%.99999f` would abort the process.
+    #[test]
+    fn huge_precision_and_width_are_rendered_in_full() {
+        let spec = |w: Width, p: usize, conv: u8, flags: FormatFlags| {
+            FormatSpec::new(flags, w, Precision::Fixed(p), LengthMod::None, conv, None)
+        };
+        let plain = FormatFlags::default();
+        // %.70000f of 1.5 is "1." followed by "5" and 69999 zeros (past the
+        // old 65535 cap, which stopped the output there).
+        let mut buf = Vec::new();
+        format_float(1.5, &spec(Width::None, 70_000, b'f', plain), &mut buf);
+        assert_eq!(buf.len(), 70_002);
+        assert_eq!(&buf[..3], b"1.5");
+        assert!(buf[3..].iter().all(|&b| b == b'0'));
+        // Above EXACT_FLOAT_DIGITS the digits match the exact rendering padded
+        // with zeros, before the exponent for %e.
+        let mut exact = Vec::new();
+        format_float(0.1, &spec(Width::None, 1_100, b'e', plain), &mut exact);
+        let mut huge = Vec::new();
+        format_float(0.1, &spec(Width::None, 1_300, b'e', plain), &mut huge);
+        let e = exact.iter().position(|&b| b == b'e').unwrap();
+        assert_eq!(&huge[..e], &exact[..e]);
+        assert!(huge[e..e + 200].iter().all(|&b| b == b'0'));
+        assert_eq!(&huge[e + 200..], &exact[e..]);
+        // Zero padding goes after the sign; widths past 1 MiB are not cut.
+        let zero = FormatFlags {
+            zero_pad: true,
+            ..FormatFlags::default()
+        };
+        let mut padded = Vec::new();
+        format_float(
+            -1.0,
+            &spec(Width::Fixed(1_300), 1_200, b'f', zero),
+            &mut padded,
+        );
+        assert_eq!(padded.len(), 1_300);
+        assert_eq!(&padded[..3], b"-00");
+        let mut wide = Vec::new();
+        format_signed(7, &spec(Width::Fixed(2_000_000), 0, b'd', plain), &mut wide);
+        assert_eq!(wide.len(), 2_000_000);
+    }
+
     #[test]
     fn format_float_does_not_panic_on_huge_precision() {
         // Exercise %f, %e, %g, %a at prec = 65536 (the first panicking value)
