@@ -827,6 +827,14 @@ fn lookup_active_ffi_pcc_certificate(
 }
 
 fn active_ffi_pcc_symbol_certificate() -> Option<&'static FfiPccCertificate> {
+    // A certificate is reached only through the trace context, and only
+    // `entrypoint_scope` sets one -- which it skips under strict passthrough.
+    // There the lookup can only find the fallback context (no certificate), but
+    // it paid a `__tls_get_addr` round-trip to learn that on every strict
+    // malloc/calloc/memcpy (bd-rc0923-epic-eeuy4f.26).
+    if strict_passthrough_active() {
+        return None;
+    }
     if !ensure_ffi_pcc_verified() {
         return None;
     }
