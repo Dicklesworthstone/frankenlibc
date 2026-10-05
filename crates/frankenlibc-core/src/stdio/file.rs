@@ -1298,7 +1298,20 @@ impl StdioStream {
 
     /// Push a byte back (ungetc). Returns false if already one pushed back.
     pub fn ungetc(&mut self, byte: u8) -> bool {
-        let pushed = if let Some(existing) = self.ungetc_byte {
+        // Like glibc, back the read position up over the byte just consumed
+        // (storing `byte` there; a seek discards the buffer, so the slot is
+        // never re-read as file data) instead of parking it aside: the
+        // pushed-back byte then stays inside the read window, which gnulib's
+        // freadahead counts (`ungetc` must leave its value unchanged).
+        let in_buffer = self.ungetc_byte.is_none()
+            && self.read_pushback.is_empty()
+            && !self.is_mem_backed()
+            && !self.flags.last_write
+            && self.buffer.readable() < self.buffer.capacity()
+            && self.buffer.unget(byte);
+        let pushed = if in_buffer {
+            true
+        } else if let Some(existing) = self.ungetc_byte {
             // Push the existing byte into the buffer, and replace ungetc_byte
             // with the new byte, maintaining LIFO order.
             if self.buffer.unget(existing) {
