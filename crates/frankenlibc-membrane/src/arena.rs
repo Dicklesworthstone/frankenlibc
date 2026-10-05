@@ -78,6 +78,172 @@ unsafe fn release_block(raw_base: usize, total_size: usize, align: usize) {
     unsafe { (raw_block_allocator().dealloc)(raw_base as *mut u8, total_size, align) };
 }
 
+/// Node storage for a shard's address index (`ArenaShard::addr_to_slot`).
+///
+/// The index is a `BTreeMap`, which allocates a node on roughly every sixth
+/// insert and frees one as entries drain from quarantine. Through the global
+/// allocator each of those was a trip through the library's own exported
+/// `malloc` -- the reentrant bootstrap path, its locked host-allocation table
+/// and the stats -- and with the frees it was ~15% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9). The pool keeps freed nodes on per-layout free
+/// lists and carves new ones from chunks taken from the raw block allocator
+/// (the host allocator inside libc.so), so the index never re-enters `malloc`.
+///
+/// Exclusivity: a pool is reachable only through the allocator handles of one
+/// shard's map, and that map is only touched with the shard's lock held, so
+/// the pool's cells are never accessed concurrently.
+struct IndexNodePool {
+    state: std::cell::UnsafeCell<IndexNodePoolState>,
+}
+
+struct IndexNodePoolState {
+    /// (size, align, free-list head) for each node layout seen; a BTreeMap of
+    /// one key/value type uses two (leaf and internal nodes).
+    bins: [(usize, usize, *mut u8); INDEX_POOL_BINS],
+    /// Unused tail of the newest chunk.
+    cursor: usize,
+    end: usize,
+    /// Intrusive list of chunks (first word of each), released on drop.
+    chunks: *mut u8,
+}
+
+const INDEX_POOL_BINS: usize = 4;
+const INDEX_POOL_CHUNK: usize = 64 * 1024;
+const INDEX_POOL_CHUNK_ALIGN: usize = 64;
+
+// SAFETY: see the exclusivity note on `IndexNodePool`: every access happens
+// under the owning shard's lock, which also orders accesses across threads.
+unsafe impl Send for IndexNodePool {}
+// SAFETY: as above.
+unsafe impl Sync for IndexNodePool {}
+
+impl IndexNodePool {
+    fn new() -> Self {
+        Self {
+            state: std::cell::UnsafeCell::new(IndexNodePoolState {
+                bins: [(0, 0, std::ptr::null_mut()); INDEX_POOL_BINS],
+                cursor: 0,
+                end: 0,
+                chunks: std::ptr::null_mut(),
+            }),
+        }
+    }
+}
+
+impl Drop for IndexNodePool {
+    fn drop(&mut self) {
+        let state = self.state.get_mut();
+        let mut chunk = state.chunks;
+        while !chunk.is_null() {
+            // SAFETY: each chunk stores the next chunk pointer in its first word.
+            let next = unsafe { chunk.cast::<*mut u8>().read() };
+            // SAFETY: the chunk came from the block allocator with this layout.
+            unsafe { release_block(chunk as usize, INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
+            chunk = next;
+        }
+    }
+}
+
+/// Allocator handle given to a shard's index map.
+#[derive(Clone)]
+struct IndexNodeAlloc(std::sync::Arc<IndexNodePool>);
+
+impl IndexNodeAlloc {
+    fn new() -> Self {
+        Self(std::sync::Arc::new(IndexNodePool::new()))
+    }
+
+    /// Bin for `layout`, claiming an empty one on first sight; `None` once all
+    /// are taken by other layouts (never for a BTreeMap, which has two).
+    fn bin(state: &mut IndexNodePoolState, layout: std::alloc::Layout) -> Option<usize> {
+        let key = (layout.size(), layout.align());
+        if let Some(index) = state.bins.iter().position(|b| (b.0, b.1) == key) {
+            return Some(index);
+        }
+        let index = state.bins.iter().position(|b| b.0 == 0)?;
+        state.bins[index] = (key.0, key.1, std::ptr::null_mut());
+        Some(index)
+    }
+}
+
+// SAFETY: clones share one pool through the `Arc`, so a block from either is
+// freed by the other, and the pool (with every block) lives until the last
+// clone drops.
+unsafe impl std::alloc::AllocatorClone for IndexNodeAlloc {}
+
+// SAFETY: blocks handed out are distinct, sized and aligned for their layout,
+// and stay valid until deallocated through this pool (whose chunks outlive
+// every node: the map drops its nodes before the last handle drops the pool).
+unsafe impl std::alloc::Allocator for IndexNodeAlloc {
+    fn allocate(
+        &self,
+        layout: std::alloc::Layout,
+    ) -> Result<std::ptr::NonNull<[u8]>, std::alloc::AllocError> {
+        let fits_pool = layout.size() >= std::mem::size_of::<*mut u8>()
+            && layout.align() <= INDEX_POOL_CHUNK_ALIGN
+            && layout.size() <= INDEX_POOL_CHUNK / 4;
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = if fits_pool {
+            Self::bin(state, layout)
+        } else {
+            None
+        };
+        let Some(bin) = bin else {
+            // SAFETY: valid non-zero layout; released through `deallocate`.
+            let ptr = unsafe { (raw_block_allocator().alloc)(layout.size(), layout.align()) };
+            return std::ptr::NonNull::new(ptr)
+                .map(|p| std::ptr::NonNull::slice_from_raw_parts(p, layout.size()))
+                .ok_or(std::alloc::AllocError);
+        };
+        let head = state.bins[bin].2;
+        if !head.is_null() {
+            // SAFETY: free nodes store the next free node in their first word.
+            state.bins[bin].2 = unsafe { head.cast::<*mut u8>().read() };
+            // SAFETY: `head` is a non-null node of this layout.
+            let ptr = unsafe { std::ptr::NonNull::new_unchecked(head) };
+            return Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()));
+        }
+        let mut start = state.cursor.next_multiple_of(layout.align());
+        if state.cursor == 0 || start + layout.size() > state.end {
+            // SAFETY: valid non-zero layout; the chunk is released on drop.
+            let chunk =
+                unsafe { (raw_block_allocator().alloc)(INDEX_POOL_CHUNK, INDEX_POOL_CHUNK_ALIGN) };
+            if chunk.is_null() {
+                return Err(std::alloc::AllocError);
+            }
+            // SAFETY: the chunk is at least one word and suitably aligned.
+            unsafe { chunk.cast::<*mut u8>().write(state.chunks) };
+            state.chunks = chunk;
+            state.cursor = chunk as usize + INDEX_POOL_CHUNK_ALIGN;
+            state.end = chunk as usize + INDEX_POOL_CHUNK;
+            start = state.cursor.next_multiple_of(layout.align());
+        }
+        state.cursor = start + layout.size();
+        // SAFETY: `start` lies inside the current chunk and is non-zero.
+        let ptr = unsafe { std::ptr::NonNull::new_unchecked(start as *mut u8) };
+        Ok(std::ptr::NonNull::slice_from_raw_parts(ptr, layout.size()))
+    }
+
+    unsafe fn deallocate(&self, ptr: std::ptr::NonNull<u8>, layout: std::alloc::Layout) {
+        // SAFETY: exclusive access per the pool's invariant.
+        let state = unsafe { &mut *self.0.state.get() };
+        let bin = state
+            .bins
+            .iter()
+            .position(|b| (b.0, b.1) == (layout.size(), layout.align()));
+        match bin {
+            Some(bin) => {
+                // SAFETY: the node is at least one word (checked at allocation).
+                unsafe { ptr.as_ptr().cast::<*mut u8>().write(state.bins[bin].2) };
+                state.bins[bin].2 = ptr.as_ptr();
+            }
+            // SAFETY: came from the raw block allocator with this layout.
+            None => unsafe { release_block(ptr.as_ptr() as usize, layout.size(), layout.align()) },
+        }
+    }
+}
+
 /// Number of shards for arena locks (power of 2).
 ///
 /// MUST equal `crate::tls_cache::NUM_TLS_CACHE_SHARDS`. The two constants
@@ -114,8 +280,8 @@ pub struct QuarantineEntry {
 /// A single shard of the arena.
 struct ArenaShard {
     slots: Vec<ArenaSlot>,
-    /// Map from user_base address to slot index.
-    addr_to_slot: std::collections::BTreeMap<usize, usize>,
+    /// Map from user_base address to slot index (nodes from `IndexNodePool`).
+    addr_to_slot: std::collections::BTreeMap<usize, usize, IndexNodeAlloc>,
     /// Free slot indices for reuse.
     free_list: Vec<usize>,
     /// Quarantine queue for freed allocations.
@@ -128,7 +294,7 @@ impl ArenaShard {
     fn new() -> Self {
         Self {
             slots: Vec::new(),
-            addr_to_slot: std::collections::BTreeMap::new(),
+            addr_to_slot: std::collections::BTreeMap::new_in(IndexNodeAlloc::new()),
             free_list: Vec::new(),
             quarantine: VecDeque::new(),
             quarantine_bytes: 0,

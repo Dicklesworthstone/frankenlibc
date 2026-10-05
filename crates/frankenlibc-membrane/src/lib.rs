@@ -21,6 +21,9 @@
 //! - **Metrics** (`metrics`): Atomic counters for observability
 
 #![deny(unsafe_code)]
+// The arena's address index allocates its nodes from a private pool instead of
+// re-entering the library's own malloc (arena.rs, `IndexNodePool`).
+#![feature(allocator_api, btreemap_alloc)]
 
 #[cfg(not(feature = "runtime-math-production"))]
 compile_error!(
