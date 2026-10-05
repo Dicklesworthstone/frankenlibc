@@ -282,6 +282,10 @@ FORK_MT_BIN="${BIN_DIR}/fixture_fork_mt"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_fork_mt.c" -o "${FORK_MT_BIN}"
 PTHREAD_ROBUST_BIN="${BIN_DIR}/fixture_pthread_robust"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_robust.c" -o "${PTHREAD_ROBUST_BIN}"
+PTHREAD_PSHARED_IPC_BIN="${BIN_DIR}/fixture_pthread_pshared_ipc"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_pshared_ipc.c" -o "${PTHREAD_PSHARED_IPC_BIN}"
+PTHREAD_MUTEX_DESTROYED_BIN="${BIN_DIR}/fixture_pthread_mutex_destroyed"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_mutex_destroyed.c" -o "${PTHREAD_MUTEX_DESTROYED_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -1050,6 +1054,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   # Process-shared, robust and PI mutexes; process-shared condvars
   # (bd-rc0923-epic-eeuy4f.15).
   run_corpus_case "${mode}" "pthread_robust_pshared_pi" "${PTHREAD_ROBUST_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
+  run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
   # fork/popen/system/posix_spawn while other threads are in malloc and stdio
   # (bd-rc0923-epic-eeuy4f.5).
   run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1

@@ -115,6 +115,12 @@ static FORCE_NATIVE_THREADING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 const MANAGED_MUTEX_MAGIC: u32 = 0x474d_5854; // "GMXT"
+/// Left in the magic word by `pthread_mutex_destroy`. Being neither zero nor
+/// `MANAGED_MUTEX_MAGIC`, it makes `ensure_managed_default_mutex` refuse the
+/// storage, so lock/trylock/timedlock/unlock/cond_wait return EINVAL until the
+/// next `pthread_mutex_init` -- glibc's behaviour (it marks `__kind` -1).
+/// Zeroing instead made the next lock adopt it as a fresh default mutex.
+const DESTROYED_MUTEX_MAGIC: u32 = 0x444d_5854; // "DMXT"
 
 // ---------------------------------------------------------------------------
 // Mutex type constants (POSIX values)
@@ -154,6 +160,16 @@ const MUTEX_FLAG_INCONSISTENT: i32 = 1 << 11;
 const MUTEX_FLAG_NOTRECOVERABLE: i32 = 1 << 12;
 /// Flags that route a mutex off the private 0/1/2 fast path.
 const MUTEX_EXTENDED_FLAGS: i32 = MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI;
+/// `PTHREAD_PRIO_PROTECT` mutex; its priority ceiling is kept in
+/// `MUTEX_PRIOCEILING_MASK`. Not an extended flag: locking does not (yet) raise
+/// the owner to the ceiling, so it stays on the ordinary lock path.
+const MUTEX_FLAG_PP: i32 = 1 << 13;
+const MUTEX_PRIOCEILING_SHIFT: u32 = 16;
+const MUTEX_PRIOCEILING_MASK: i32 = 0xff << MUTEX_PRIOCEILING_SHIFT;
+/// Linux SCHED_FIFO priority range (kernel MAX_RT_PRIO - 1), which glibc's
+/// `pthread_mutex_setprioceiling` validates against.
+const SCHED_FIFO_PRIO_MIN: c_int = 1;
+const SCHED_FIFO_PRIO_MAX: c_int = 99;
 
 struct ManagedThreadRecord {
     handle_raw: usize,
@@ -915,12 +931,20 @@ fn read_mutex_type_word(mutex: *mut libc::pthread_mutex_t) -> i32 {
     unsafe { &*type_ptr }.load(Ordering::Acquire)
 }
 
-fn clear_managed_mutex(mutex: *mut libc::pthread_mutex_t) {
+fn mark_destroyed_mutex(mutex: *mut libc::pthread_mutex_t) {
     if let Some(magic_ptr) = mutex_magic_ptr(mutex) {
         // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
         let magic = unsafe { &*magic_ptr };
-        magic.store(0, Ordering::Release);
+        magic.store(DESTROYED_MUTEX_MAGIC, Ordering::Release);
     }
+}
+
+fn is_destroyed_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
+    let Some(magic_ptr) = mutex_magic_ptr(mutex) else {
+        return false;
+    };
+    // SAFETY: alignment and non-null checked in `mutex_magic_ptr`.
+    unsafe { &*magic_ptr }.load(Ordering::Acquire) == DESTROYED_MUTEX_MAGIC
 }
 
 fn ensure_managed_default_mutex(mutex: *mut libc::pthread_mutex_t) -> bool {
@@ -3460,10 +3484,16 @@ pub unsafe extern "C" fn pthread_mutex_init(
         if decode_mutexattr_robust(word) == libc::PTHREAD_MUTEX_ROBUST {
             flags |= MUTEX_FLAG_ROBUST;
         }
-        // PTHREAD_PRIO_PROTECT is accepted and behaves like PRIO_NONE: fl does
-        // not raise the locking thread to the priority ceiling.
-        if decode_mutexattr_protocol(word) == libc::PTHREAD_PRIO_INHERIT {
-            flags |= MUTEX_FLAG_PI;
+        // PTHREAD_PRIO_PROTECT records its ceiling (pthread_mutex_getprioceiling/
+        // setprioceiling), but locking does not raise the thread to it.
+        match decode_mutexattr_protocol(word) {
+            libc::PTHREAD_PRIO_INHERIT => flags |= MUTEX_FLAG_PI,
+            libc::PTHREAD_PRIO_PROTECT => {
+                flags |= MUTEX_FLAG_PP
+                    | ((decode_mutexattr_prioceiling(word) << MUTEX_PRIOCEILING_SHIFT)
+                        & MUTEX_PRIOCEILING_MASK);
+            }
+            _ => {}
         }
         decode_mutexattr_type(word) | flags
     };
@@ -3508,6 +3538,10 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
     if mutex.is_null() {
         return libc::EINVAL;
     }
+    // Destroying an already-destroyed mutex succeeds, as in glibc.
+    if is_destroyed_mutex(mutex) {
+        return 0;
+    }
     if !ensure_managed_default_mutex(mutex) {
         return libc::EINVAL;
     }
@@ -3538,7 +3572,7 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut libc::pthread_mutex_t
         count.store(0, Ordering::Release);
     }
 
-    clear_managed_mutex(mutex);
+    mark_destroyed_mutex(mutex);
     0
 }
 
@@ -7190,6 +7224,71 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut libc::pthread_mute
     }
     // SAFETY: alignment checked in `mutex_type_ptr`.
     unsafe { &*type_ptr }.fetch_and(!MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
+    0
+}
+
+/// The type word of an initialised `PTHREAD_PRIO_PROTECT` mutex; `None` (EINVAL)
+/// for any other mutex, as glibc answers for them.
+fn prio_protect_type_word<'a>(mutex: *mut libc::pthread_mutex_t) -> Option<&'a AtomicI32> {
+    if !is_managed_mutex(mutex) {
+        return None;
+    }
+    // SAFETY: alignment checked in `mutex_type_ptr`; the storage is the caller's
+    // live mutex for the duration of the call.
+    let type_word = unsafe { &*mutex_type_ptr(mutex)? };
+    (type_word.load(Ordering::Acquire) & MUTEX_FLAG_PP != 0).then_some(type_word)
+}
+
+/// POSIX `pthread_mutex_getprioceiling`.
+///
+/// # Safety
+///
+/// `mutex` must point to mutex storage and `prioceiling` to writable memory.
+pub(crate) unsafe fn native_pthread_mutex_getprioceiling(
+    mutex: *mut libc::pthread_mutex_t,
+    prioceiling: *mut c_int,
+) -> c_int {
+    if mutex.is_null() || prioceiling.is_null() {
+        return libc::EINVAL;
+    }
+    let Some(type_word) = prio_protect_type_word(mutex) else {
+        return libc::EINVAL;
+    };
+    let ceiling =
+        (type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+    // SAFETY: caller-provided output pointer, checked non-null.
+    unsafe { *prioceiling = ceiling };
+    0
+}
+
+/// POSIX `pthread_mutex_setprioceiling`: replaces the ceiling and reports the
+/// previous one through `old_ceiling` (if non-null).
+///
+/// # Safety
+///
+/// `mutex` must point to mutex storage; `old_ceiling` is null or writable.
+pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
+    mutex: *mut libc::pthread_mutex_t,
+    prioceiling: c_int,
+    old_ceiling: *mut c_int,
+) -> c_int {
+    if mutex.is_null() || !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&prioceiling) {
+        return libc::EINVAL;
+    }
+    let Some(type_word) = prio_protect_type_word(mutex) else {
+        return libc::EINVAL;
+    };
+    let previous = type_word
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+            Some((word & !MUTEX_PRIOCEILING_MASK) | (prioceiling << MUTEX_PRIOCEILING_SHIFT))
+        })
+        .unwrap_or_else(|word| word);
+    if !old_ceiling.is_null() {
+        // SAFETY: caller-provided output pointer, checked non-null.
+        unsafe {
+            *old_ceiling = (previous & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+        }
+    }
     0
 }
 

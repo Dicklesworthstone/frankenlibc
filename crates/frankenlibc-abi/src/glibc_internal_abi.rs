@@ -318,22 +318,29 @@ pub unsafe extern "C" fn pthread_kill_other_threads_np() -> c_int {
 pub unsafe extern "C" fn pthread_mutex_consistent_np(mutex: *mut c_void) -> c_int {
     unsafe { super::pthread_abi::pthread_mutex_consistent(mutex.cast()) }
 }
-// pthread_mutex_getprioceiling: native regular-mutex contract.
+// pthread_mutex_getprioceiling: the ceiling of a PRIO_PROTECT mutex; EINVAL otherwise.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_getprioceiling(
-    _mutex: *const c_void,
-    _prioceiling: *mut c_int,
+    mutex: *const c_void,
+    prioceiling: *mut c_int,
 ) -> c_int {
-    libc::EINVAL
+    unsafe {
+        super::pthread_abi::native_pthread_mutex_getprioceiling(
+            mutex.cast_mut().cast(),
+            prioceiling,
+        )
+    }
 }
-// pthread_mutex_setprioceiling: native regular-mutex contract.
+// pthread_mutex_setprioceiling: replace a PRIO_PROTECT mutex's ceiling.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_mutex_setprioceiling(
-    _mutex: *mut c_void,
-    _prioceiling: c_int,
-    _old: *mut c_int,
+    mutex: *mut c_void,
+    prioceiling: c_int,
+    old: *mut c_int,
 ) -> c_int {
-    libc::EINVAL
+    unsafe {
+        super::pthread_abi::native_pthread_mutex_setprioceiling(mutex.cast(), prioceiling, old)
+    }
 }
 // pthread_mutexattr_getkind_np: GNU alias for pthread_mutexattr_gettype
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
