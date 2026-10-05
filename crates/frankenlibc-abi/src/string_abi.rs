@@ -89,12 +89,22 @@ impl Drop for StringMembraneGuard {
 }
 
 fn enter_string_membrane_guard() -> Option<StringMembraneGuard> {
-    if string_raw_passthrough_active() {
+    // `string_raw_passthrough_active()`, with the allocator-reentry test and
+    // the signal-handler test answered by one reentry-slot lookup.
+    if runtime_policy::bootstrap_passthrough_active()
+        || runtime_policy::runtime_policy_tls_access_active()
+        || crate::pthread_abi::pthread_tls_access_active()
+    {
         return None;
     }
+    let (in_allocator_reentry, in_signal_handler) =
+        crate::malloc_abi::allocator_reentry_and_signal_state();
     // A signal handler must not re-enter the membrane/policy state the frame
     // it interrupted on this thread may be in the middle of (bd-na6ede).
-    if crate::malloc_abi::in_signal_handler_now() {
+    if in_allocator_reentry
+        || in_signal_handler
+        || frankenlibc_membrane::ptr_validator::in_validation_context()
+    {
         return None;
     }
     if runtime_policy::is_runtime_ready() {

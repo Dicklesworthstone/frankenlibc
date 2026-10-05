@@ -4638,6 +4638,19 @@ pub(crate) fn in_allocator_reentry_context() -> bool {
         .unwrap_or(true)
 }
 
+/// `(in_allocator_reentry_context(), in_signal_handler_now())` from ONE slot
+/// lookup. Under multi-threading the lookup is a keyed table probe, and the
+/// hardened string entry guard asked both questions on every call.
+pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {
+    match current_allocator_reentry_slot() {
+        Some(slot) => (
+            slot.allocator_depth.load(Ordering::Acquire) > 0,
+            in_signal_handler(slot),
+        ),
+        None => (true, false),
+    }
+}
+
 struct AllocatorReentryGuard {
     slot: &'static AllocatorReentrySlot,
 }
@@ -5207,6 +5220,16 @@ fn record_allocator_stage_outcome(
 /// Returns `None` if the pipeline is not yet initialized.
 #[must_use]
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
+    validate_ptr_in_slot(addr, current_allocator_reentry_slot())
+}
+
+/// [`validate_ptr`] for a caller that already resolved this thread's reentry
+/// slot: under multi-threading the lookup is a keyed table probe, and the
+/// hardened string path paid it twice per call (bd-rc0923-epic-eeuy4f.9).
+fn validate_ptr_in_slot(
+    addr: usize,
+    slot: Option<&'static AllocatorReentrySlot>,
+) -> Option<PointerAbstraction> {
     if runtime_policy::proof_carried_pointer_validation_active() {
         return Some(PointerAbstraction::unknown(addr));
     }
@@ -5216,7 +5239,7 @@ pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     // retired blocks -- glibc then aborted in its tcache at thread exit;
     // bd-na6ede). The handler's string calls proceed unbounded, as for any
     // pointer the membrane does not know.
-    if in_signal_handler_now() {
+    if slot.is_some_and(in_signal_handler) {
         return Some(PointerAbstraction::unknown(addr));
     }
     let pipeline = crate::membrane_state::ready_pipeline()?;
@@ -5270,8 +5293,11 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
             .or_else(|| fallback_remaining(addr));
     }
 
+    // One slot lookup serves both the reentry test here and the signal-handler
+    // test in validate_ptr_in_slot.
+    let slot = current_allocator_reentry_slot();
     if runtime_policy::in_policy_reentry_context()
-        || in_allocator_reentry_context()
+        || slot.is_none_or(|slot| slot.allocator_depth.load(Ordering::Acquire) > 0)
         || crate::membrane_state::pipeline_initialization_active()
         || frankenlibc_membrane::ptr_validator::in_validation_context()
     {
@@ -5283,7 +5309,7 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     bump_mmap_remaining(addr)
         .or_else(|| segment_remaining(addr))
         .or_else(|| {
-            validate_ptr(addr)
+            validate_ptr_in_slot(addr, slot)
                 // Only a LIVE allocation's extent is a bound. A freed or
                 // quarantined record describes memory the host allocator may
                 // already have handed out again (hardened arena blocks come
