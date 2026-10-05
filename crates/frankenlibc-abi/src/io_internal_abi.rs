@@ -1890,6 +1890,11 @@ pub(crate) fn register_stdio_handle(
 /// Byte offset of `_IO_FILE::_mode` (stream orientation) in a handle.
 pub(crate) const IO_FILE_MODE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _mode);
 
+/// Byte offsets of the glibc read-window pointers in a handle.
+pub(crate) const IO_READ_PTR_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_ptr);
+pub(crate) const IO_READ_END_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_end);
+pub(crate) const IO_READ_BASE_OFFSET: usize = std::mem::offset_of!(_IO_FILE_Layout, _IO_read_base);
+
 /// Rewrite the caller-visible header of a registered handle after the stream
 /// behind it changed identity (`freopen`): new fd, open-mode bits, and a
 /// fresh (unoriented, no EOF/ERR) state. `fd` is stored verbatim in

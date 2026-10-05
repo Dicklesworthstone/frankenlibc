@@ -379,6 +379,10 @@ pub struct StdioStream {
     read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
+    /// Opaque token naming the C `FILE` this stream is published through
+    /// (0: none). The ABI layer uses it to find the handle whose glibc read
+    /// window mirrors [`read_window`](Self::read_window).
+    c_handle: usize,
 }
 
 impl StdioStream {
@@ -411,6 +415,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: None,
         }
     }
@@ -425,6 +430,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: None,
         }
     }
@@ -446,6 +452,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data,
                 pos,
@@ -475,6 +482,7 @@ impl StdioStream {
             offset: pos as i64,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Fixed {
                 data: Vec::new(),
                 pos,
@@ -527,6 +535,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -545,6 +554,7 @@ impl StdioStream {
             offset: 0,
             ungetc_byte: None,
             read_pushback: VecDeque::new(),
+            c_handle: 0,
             mem_backing: Some(MemBacking::Dynamic {
                 data: Vec::new(),
                 pos: 0,
@@ -815,6 +825,50 @@ impl StdioStream {
         } else {
             false
         }
+    }
+
+    /// The buffered, not yet consumed bytes a caller may read in place: what
+    /// glibc exposes as `[_IO_read_ptr, _IO_read_end)`, which the inline
+    /// `getc_unlocked` and gnulib's freadahead/freadptr/freadseek read and
+    /// advance directly. `None` unless the stream is a readable fd stream in a
+    /// clean read state (no pending write, no pushed-back bytes, which must be
+    /// returned first) with bytes buffered. The slice stays valid until the
+    /// stream is next modified.
+    pub fn read_window(&self) -> Option<&[u8]> {
+        if !self.open_flags.readable
+            || self.is_mem_backed()
+            || self.flags.last_write
+            || self.ungetc_byte.is_some()
+            || !self.read_pushback.is_empty()
+        {
+            return None;
+        }
+        let window = self.buffer.peek();
+        (!window.is_empty()).then_some(window)
+    }
+
+    /// The opaque C handle token set by [`set_c_handle`](Self::set_c_handle).
+    #[inline]
+    pub fn c_handle(&self) -> usize {
+        self.c_handle
+    }
+
+    /// Record the C `FILE` handle token this stream is published through.
+    pub fn set_c_handle(&mut self, handle: usize) {
+        self.c_handle = handle;
+    }
+
+    /// Account for the first `n` bytes of [`read_window`](Self::read_window)
+    /// having been consumed in place by the caller.
+    pub fn consume_window(&mut self, n: usize) {
+        let n = n.min(self.buffer.readable());
+        if n == 0 {
+            return;
+        }
+        self.buffer.consume(n);
+        self.flags.io_started = true;
+        self.flags.last_write = false;
+        self.advance_offset(n);
     }
 
     /// Fast bulk buffered read (bulk sibling of `fast_getc`): fills `dst` entirely iff all

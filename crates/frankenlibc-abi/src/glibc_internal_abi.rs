@@ -5438,7 +5438,12 @@ pub unsafe extern "C" fn __uflow(fp: *mut c_void) -> c_int {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    unsafe { crate::io_internal_abi::_IO_default_uflow(fp) }
+    // The inlined getc_unlocked calls this when its read window is empty:
+    // after the refill, publish the new window so the following bytes are
+    // read inline (bd-ygc3li).
+    let ch = unsafe { crate::io_internal_abi::_IO_default_uflow(fp) };
+    crate::stdio_abi::republish_read_window(fp);
+    ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
@@ -5446,7 +5451,9 @@ pub unsafe extern "C" fn __underflow(fp: *mut c_void) -> c_int {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return libc::EOF;
     }
-    unsafe { crate::io_internal_abi::_IO_file_underflow(fp) }
+    let ch = unsafe { crate::io_internal_abi::_IO_file_underflow(fp) };
+    crate::stdio_abi::republish_read_window(fp);
+    ch
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __woverflow(fp: *mut c_void, wc: WcharT) -> WcharT {

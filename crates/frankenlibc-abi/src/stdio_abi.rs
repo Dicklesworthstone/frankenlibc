@@ -1476,7 +1476,8 @@ fn new_stream_cell(stream: StdioStream) -> StreamCell {
 
 /// `handle` is the glibc-layout `FILE` whose `_flags` word mirrors this
 /// stream's EOF/ERR state (0 for streams without one).
-fn new_stream_cell_with_handle(stream: StdioStream, handle: usize) -> StreamCell {
+fn new_stream_cell_with_handle(mut stream: StdioStream, handle: usize) -> StreamCell {
+    stream.set_c_handle(handle);
     Arc::new(StreamCellInner {
         stream: parking_lot::Mutex::new(stream),
         flags_word: handle,
@@ -1498,19 +1499,26 @@ struct StreamCellInner {
 }
 
 impl StreamCellInner {
+    /// Lock the stream, first folding in what the program consumed through
+    /// the published read window.
     #[inline]
     fn lock(&self) -> StreamGuard<'_> {
+        let mut guard = self.stream.lock();
+        absorb_read_window(&mut guard);
         StreamGuard {
-            guard: self.stream.lock(),
+            guard,
             flags_word: self.flags_word,
         }
     }
 
     #[inline]
     fn try_lock(&self) -> Option<StreamGuard<'_>> {
-        self.stream.try_lock().map(|guard| StreamGuard {
-            guard,
-            flags_word: self.flags_word,
+        self.stream.try_lock().map(|mut guard| {
+            absorb_read_window(&mut guard);
+            StreamGuard {
+                guard,
+                flags_word: self.flags_word,
+            }
         })
     }
 }
@@ -1572,8 +1580,144 @@ fn mirror_raw_cached(stream: *mut c_void, p: *mut StdioStream) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// glibc read window (`_IO_read_ptr` .. `_IO_read_end`)
+// ---------------------------------------------------------------------------
+//
+// glibc's <stdio.h> inlines getc_unlocked as `ptr < end ? *ptr++ : __uflow(fp)`,
+// and gnulib's freadahead/freadptr/freadseek read and advance `_IO_read_ptr`
+// themselves. fl kept the window empty, so every inlined getc was a call into
+// __uflow (~9x glibc per byte) and those gnulib modules saw no buffer at all
+// (bd-ygc3li). The window now exposes `StdioStream::read_window`, with one
+// invariant:
+//
+// - Every fl operation first ABSORBS whatever the program consumed in place
+//   (the stream lock does it on acquire; the single-threaded raw cache does it
+//   on lookup, and also clears the window because its fast operation is about
+//   to change the buffer without republishing).
+// - The window is republished when the stream lock is released
+//   (`mirror_stream_flags`) and after `__uflow`, so it only ever describes
+//   bytes fl has not handed out.
+// - A stream leaving the registry (fclose, freopen) retires it: the handle can
+//   outlive the stream (the std FILEs), and must not point at a freed buffer.
+
+/// The header address a stream's window is published at, if any.
+#[inline]
+fn read_window_handle(stream: &StdioStream) -> usize {
+    match stream.c_handle() {
+        0 => 0,
+        token => resolve_flags_word(token),
+    }
+}
+
+/// The header's read-window word at `offset`.
+///
+/// # Safety
+/// `handle` must be a registered handle (a live `_IO_FILE`-layout object).
+#[inline]
+unsafe fn read_window_word(handle: usize, offset: usize) -> &'static AtomicUsize {
+    // SAFETY: the handle outlives its registry entry and the field is an
+    // aligned pointer-sized word; other threads may read it (unlocked macros).
+    unsafe { AtomicUsize::from_ptr((handle + offset) as *mut usize) }
+}
+
+/// Fold the bytes the program consumed through the published window into the
+/// stream (`_IO_read_ptr` advanced past where fl published it).
+#[inline]
+fn absorb_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle == 0 {
+        return;
+    }
+    // SAFETY: `handle` is this stream's registered header.
+    let ptr = unsafe { read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET) }
+        .load(Ordering::Relaxed);
+    if ptr == 0 {
+        return;
+    }
+    let Some(window) = stream.read_window() else {
+        return;
+    };
+    let start = window.as_ptr() as usize;
+    let end = start + window.len();
+    // SAFETY: as above.
+    let published_end = unsafe { read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET) }
+        .load(Ordering::Relaxed);
+    // Only a window that still describes this buffer counts.
+    if published_end == end && ptr > start && ptr <= end {
+        stream.consume_window(ptr - start);
+    }
+}
+
+/// Publish `window` (or an empty one) at `handle`.
+#[inline]
+fn store_read_window(handle: usize, window: Option<&[u8]>) {
+    let (start, end) = window.map_or((0, 0), |w| {
+        (w.as_ptr() as usize, w.as_ptr() as usize + w.len())
+    });
+    // SAFETY: `handle` is a registered header.
+    unsafe {
+        read_window_word(handle, io_internal_abi::IO_READ_BASE_OFFSET)
+            .store(start, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_READ_END_OFFSET).store(end, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET)
+            .store(start, Ordering::Relaxed);
+    }
+}
+
+#[inline]
+fn publish_read_window(stream: &StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle != 0 {
+        store_read_window(handle, stream.read_window());
+    }
+}
+
+/// Absorb, then empty the window: the caller is about to change the stream's
+/// buffer without republishing (single-threaded raw-cache fast paths).
+#[inline]
+fn absorb_and_clear_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle == 0 {
+        return;
+    }
+    // SAFETY: `handle` is this stream's registered header.
+    if unsafe { read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET) }
+        .load(Ordering::Relaxed)
+        == 0
+    {
+        return;
+    }
+    absorb_read_window(stream);
+    store_read_window(handle, None);
+}
+
+/// The stream is leaving the registry: absorb (the caller holds its lock, so
+/// that already happened), empty the window and stop publishing.
+fn retire_read_window(stream: &mut StdioStream) {
+    let handle = read_window_handle(stream);
+    if handle != 0 {
+        store_read_window(handle, None);
+    }
+    stream.set_c_handle(0);
+}
+
+/// `__uflow`/`__underflow` refilled the stream: publish the new window so the
+/// next inlined getc reads from it directly.
+pub(crate) fn republish_read_window(stream: *mut c_void) {
+    if stream.is_null() {
+        return;
+    }
+    let id = canonical_stream_id(stream);
+    if let Some(cell) = stream_cell(id) {
+        // Acquire absorbs, release publishes.
+        drop(cell.lock());
+    }
+}
+
 #[inline]
 fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
+    publish_read_window(stream);
     use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
     // SAFETY: `handle` is the address of a registered NativeFile, whose first
     // field is the 4-byte-aligned `_flags` int; it outlives the registry
@@ -1907,6 +2051,8 @@ fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
     WRITE_CACHE.with(|c| {
         for (cid, cgen, p) in c.get() {
             if cid == id && !p.is_null() && cgen == cur_gen {
+                // SAFETY: ST-gated, gen-valid cache hit (see the callers).
+                absorb_and_clear_read_window(unsafe { &mut *p });
                 return Some(p);
             }
         }
@@ -1935,6 +2081,8 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
     WRITE_CACHE.with(|c| {
         for (cid, cgen, p) in c.get() {
             if cid == key && !p.is_null() && cgen == cur_gen {
+                // SAFETY: ST-gated, gen-valid cache hit (see the callers).
+                absorb_and_clear_read_window(unsafe { &mut *p });
                 return Some(p);
             }
         }
@@ -3557,6 +3705,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
     // longer resolves this id, so no NEW op can begin. Teardown then proceeds exclusively.
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    retire_read_window(s);
 
     // Cookie-backed streams flush their ordinary stdio buffer before invoking
     // the close callback.  `fclose` still performs the close on a flush error,
@@ -11904,6 +12053,7 @@ pub unsafe extern "C-unwind" fn freopen(
     if let Some(old_cell) = reg.remove_stream(id) {
         let mut old_guard = old_cell.lock();
         let old = &mut *old_guard;
+        retire_read_window(old);
         if old.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, old);
             unsafe {
