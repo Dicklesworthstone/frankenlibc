@@ -76,6 +76,9 @@ fn initialize_global_pipeline() -> Option<&'static ValidationPipeline> {
         };
     }
 
+    // The lib's own unit-test build has no malloc_abi (see lib.rs): its arenas
+    // keep the default block allocator.
+    #[cfg(not(test))]
     crate::malloc_abi::install_arena_block_allocator();
     let pipeline = Box::new(ValidationPipeline::with_runtime_math(runtime_math_enabled));
     let ptr = Box::into_raw(pipeline);
