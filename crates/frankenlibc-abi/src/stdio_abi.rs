@@ -1710,8 +1710,12 @@ pub(crate) fn republish_read_window(stream: *mut c_void) {
     }
     let id = canonical_stream_id(stream);
     if let Some(cell) = stream_cell(id) {
-        // Acquire absorbs, release publishes.
-        drop(cell.lock());
+        // The bare stream lock: a StreamGuard would re-mirror EOF/ERR from
+        // the core stream on release, clobbering the flags of streams whose
+        // state lives elsewhere (fmemopen's fast cursor sets EOF itself).
+        let mut s = cell.stream.lock();
+        absorb_read_window(&mut s);
+        publish_read_window(&s);
     }
 }
 
