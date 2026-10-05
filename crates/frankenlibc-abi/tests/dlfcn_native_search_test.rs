@@ -162,3 +162,7 @@ fn native_origin_uses_the_loaded_name_not_the_symlink_target() {
     std::os::unix::fs::symlink(&root, &link).unwrap();
     check(&link, 22);
 }
+
+// Keep the new capability regressions in the native-loader CI target too.
+#[path = "native_loader_hwcaps_test.rs"]
+mod hwcaps_regressions;
