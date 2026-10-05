@@ -6330,8 +6330,17 @@ macro_rules! extract_va_args_registers {
 /// (C11 7.21.6.5 p2, POSIX.1-2024). Silently casting via `as c_int` truncates —
 /// callers that use the return to size buffers would then under-allocate
 /// (bd-5t6zo).
+///
+/// A render that had to fail (a conversion whose memory could not be
+/// reserved: ENOMEM, as glibc; a directive glibc rejects: EINVAL) fails the
+/// call with that errno, not a success count for truncated or literal output.
 #[inline]
 fn printf_result_to_c_int(total_len: usize) -> c_int {
+    let failure = frankenlibc_core::stdio::printf::take_render_failure();
+    if failure != 0 {
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
     match c_int::try_from(total_len) {
         Ok(n) => n,
         Err(_) => {
@@ -6519,7 +6528,15 @@ pub(crate) unsafe fn render_segments(
     max_args: usize,
     wide_output: bool,
 ) -> ScratchVec {
+    // A failure left by a render whose caller never converted a result
+    // (err/warn) must not fail this call.
+    let _ = frankenlibc_core::stdio::printf::take_render_failure();
     let mut buf = printf_out_pool::take();
+    // glibc rejects the whole call, printing nothing.
+    if segments.invalid_directive() {
+        frankenlibc_core::stdio::printf::note_render_failure(errno::EINVAL);
+        return ScratchVec::new(buf);
+    }
     // Field read, not a walk: `FormatSegments` records this during parsing, so
     // the common non-positional format no longer re-derives it on every render
     // (bd-ntb9fq).

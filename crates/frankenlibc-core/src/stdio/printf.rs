@@ -903,6 +903,12 @@ pub struct FormatSegments<'a> {
     /// Unlike those two, this one cannot even short-circuit on the common
     /// case: it returns false only after visiting every segment.
     has_long_double: bool,
+    /// A directive glibc rejects outright, failing the whole call with
+    /// -1/EINVAL instead of printing it literally: one cut off by the end of
+    /// the format (`"a%"`, `"%5"`, `"%l"`) or a C23 `wN` length with an
+    /// unsupported N (`%w7d`). An unknown conversion byte (`%y`) is still
+    /// printed literally, as glibc does.
+    invalid_directive: bool,
 }
 
 impl<'a> FormatSegments<'a> {
@@ -914,6 +920,7 @@ impl<'a> FormatSegments<'a> {
             any_positional: false,
             sequential_args: 0,
             has_long_double: false,
+            invalid_directive: false,
         }
     }
 
@@ -929,6 +936,12 @@ impl<'a> FormatSegments<'a> {
     /// Recorded during `push`, so this is a field read rather than a walk.
     pub fn any_positional(&self) -> bool {
         self.any_positional
+    }
+
+    /// Whether the format has a directive that fails the whole call with
+    /// EINVAL (see the field). Field read, recorded during parsing.
+    pub fn invalid_directive(&self) -> bool {
+        self.invalid_directive
     }
 
     /// Whether any spec consumes a `long double`. Field read, not a walk — see
@@ -1167,6 +1180,14 @@ fn reset_format_string_cache_for_tests() {
 /// `fmt` points to the first byte AFTER '%'. Returns `(spec, bytes_consumed)`
 /// where `bytes_consumed` counts from `fmt[0]`. Returns `None` if malformed.
 pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
+    parse_format_spec_checked(fmt, &mut false)
+}
+
+/// [`parse_format_spec`], also setting `invalid` for a malformed directive
+/// that glibc rejects with EINVAL rather than printing literally (cut off by
+/// the end of the format, or an unsupported C23 `wN`).
+#[inline]
+fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSpec, usize)> {
     // The common fused-logging case is a bare one-byte conversion (`%s`,
     // `%d`, `%u`, ...).  It has no positional index, flags, width, precision,
     // or length modifier, so parsing those empty grammars once per conversion
@@ -1327,7 +1348,10 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
                     (false, b"16") => LengthMod::H,
                     (false, b"32") => LengthMod::None,
                     (false, b"64") | (true, b"16" | b"32" | b"64") => LengthMod::L,
-                    _ => return None,
+                    _ => {
+                        *invalid = true;
+                        return None;
+                    }
                 }
             }
             _ => LengthMod::None,
@@ -1338,6 +1362,7 @@ pub fn parse_format_spec(fmt: &[u8]) -> Option<(FormatSpec, usize)> {
 
     // --- conversion specifier ---
     if pos >= len {
+        *invalid = true;
         return None;
     }
     let raw_conversion = fmt[pos];
@@ -1456,7 +1481,8 @@ pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
         // Skip the '%'.
         pos += 1;
         if pos >= len {
-            // Trailing '%' with nothing after — treat as literal.
+            // Trailing '%' with nothing after: glibc fails the call (EINVAL).
+            segments.invalid_directive = true;
             segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
             break;
         }
@@ -1465,11 +1491,14 @@ pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
             pos += 1;
             continue;
         }
-        if let Some((spec, consumed)) = parse_format_spec(&fmt[pos..]) {
+        if let Some((spec, consumed)) =
+            parse_format_spec_checked(&fmt[pos..], &mut segments.invalid_directive)
+        {
             pos += consumed;
             segments.push(FormatSegment::Spec(spec));
         } else {
-            // Malformed spec — emit the '%' as literal and continue.
+            // Unknown conversion: emit the '%' as literal and continue, as
+            // glibc does (an EINVAL directive was recorded above).
             segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
         }
     }
@@ -2044,9 +2073,11 @@ fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, 
                 .rposition(|b| marker.contains(b))
                 .unwrap_or(body.len()),
         };
-        // Degrade (fewer zeros) rather than abort when the memory is not there.
+        // Fail the call rather than abort when the memory is not there.
         if body.try_reserve(extra).is_ok() {
             body.splice(at..at, core::iter::repeat_n(b'0', extra));
+        } else {
+            note_render_alloc_failure();
         }
     }
     let pad_total = resolve_width(spec).saturating_sub(body.len());
@@ -2693,12 +2724,49 @@ fn render_digits(mut value: u64, base: u64, uppercase: bool, buf: &mut [u8; 64])
     64 - pos
 }
 
+// The errno with which this thread's current printf call must fail, or 0: a
+// conversion dropped output because the memory for it could not be reserved
+// (ENOMEM: a field too large for what the process may still map, e.g.
+// `%.10000000f` under RLIMIT_AS, where glibc fails too), or the format has a
+// directive glibc rejects (EINVAL, see `FormatSegments::invalid_directive`).
+// The printf-family entry points return -1 with it instead of a success count
+// for truncated or literal output. `ANY_RENDER_FAILURE` keeps the check to one
+// relaxed load until the first such failure in the process.
+std::thread_local! {
+    static RENDER_FAILURE: core::cell::Cell<i32> = const { core::cell::Cell::new(0) };
+}
+static ANY_RENDER_FAILURE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Fail this thread's current printf call with `errno`.
+#[cold]
+pub fn note_render_failure(errno: i32) {
+    ANY_RENDER_FAILURE.store(true, Ordering::Relaxed);
+    RENDER_FAILURE.with(|failure| failure.set(errno));
+}
+
+#[cold]
+fn note_render_alloc_failure() {
+    note_render_failure(crate::errno::ENOMEM);
+}
+
+/// The errno a printf call on this thread must fail with since the last
+/// call (0: none), clearing it.
+#[inline]
+pub fn take_render_failure() -> i32 {
+    if !ANY_RENDER_FAILURE.load(Ordering::Relaxed) {
+        return 0;
+    }
+    RENDER_FAILURE.with(|failure| failure.replace(0))
+}
+
 fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
     // A field as wide as C asks for: glibc prints `%2000000d` in full, and the
     // old 1 MiB cap silently cut such fields short (and the return count with
     // them). A field too large for the memory available is dropped rather than
-    // aborting the process on an infallible allocation.
+    // aborting the process on an infallible allocation, and the call fails.
     if count > 4096 && buf.try_reserve(count).is_err() {
+        note_render_alloc_failure();
         return;
     }
     buf.extend(std::iter::repeat_n(byte, count));
@@ -3530,6 +3598,60 @@ extern crate alloc;
 
 #[cfg(test)]
 mod tests {
+
+    /// A pad whose memory cannot be reserved is dropped AND reported, once:
+    /// the printf entry points turn the report into -1/ENOMEM instead of a
+    /// success count for truncated output.
+    #[test]
+    fn unreservable_pad_reports_alloc_failure_once() {
+        let _ = super::take_render_failure();
+        let mut buf = b"x".to_vec();
+        super::pad(&mut buf, b'0', 8);
+        assert_eq!(buf, b"x00000000");
+        assert_eq!(super::take_render_failure(), 0);
+        super::pad(&mut buf, b'0', usize::MAX);
+        assert_eq!(buf, b"x00000000", "the unreservable field is dropped");
+        assert_eq!(super::take_render_failure(), crate::errno::ENOMEM);
+        assert_eq!(super::take_render_failure(), 0, "taking clears it");
+    }
+
+    /// glibc fails the whole call (EINVAL) on a directive cut off by the end
+    /// of the format or an unsupported C23 `wN`, but prints an unknown
+    /// conversion literally.
+    #[test]
+    fn invalid_directives_are_flagged_unknown_conversions_are_not() {
+        for fmt in [
+            &b"a%"[..],
+            b"a%5",
+            b"a%l",
+            b"a%-",
+            b"a%.",
+            b"a%w7d",
+            b"a%w0d",
+            b"a%w128d",
+            b"a%wd",
+            b"a%wfd",
+        ] {
+            assert!(
+                super::parse_format_string(fmt).invalid_directive(),
+                "{:?} must be rejected",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+        for fmt in [
+            &b"a%yb"[..],
+            b"a%Hdb",
+            b"%w8d %w16d %w32d %w64d %wf8d %wf16d %wf32d %wf64d",
+            b"100%%",
+            b"%5.2f %-3s %lu",
+        ] {
+            assert!(
+                !super::parse_format_string(fmt).invalid_directive(),
+                "{:?} must not be rejected",
+                String::from_utf8_lossy(fmt)
+            );
+        }
+    }
 
     /// The accumulated `sequential_args` must equal the walk it replaced.
     ///
