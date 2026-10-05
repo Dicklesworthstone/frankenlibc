@@ -714,6 +714,25 @@ impl StdioStream {
         self.buffer.set_mode(mode, size)
     }
 
+    /// `setvbuf` on a stream already in use, which glibc accepts. With
+    /// `keep_buffer` (no caller buffer, Full or Line) the mode flips in place
+    /// and buffered bytes stay; otherwise the caller has synced the stream
+    /// (flushed staged output, given back unread input it could) and the
+    /// buffer is rebuilt. Returns false if output is still staged.
+    pub fn rebuffer(&mut self, mode: BufMode, size: usize, keep_buffer: bool) -> bool {
+        if keep_buffer && !matches!(mode, BufMode::None) {
+            self.buffer.switch_mode_in_place(mode, size);
+            return true;
+        }
+        if !self.buffer.pending_write_data().is_empty() {
+            return false;
+        }
+        let eof = self.flags.eof;
+        let _ = self.prepare_seek();
+        self.flags.eof = eof;
+        self.buffer.rebuild_after_sync(mode, size)
+    }
+
     // -----------------------------------------------------------------------
     // Write operations
     // -----------------------------------------------------------------------

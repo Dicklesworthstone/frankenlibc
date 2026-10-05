@@ -1668,8 +1668,7 @@ fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
     // SAFETY: as above.
     let (published_base, published_end) = unsafe {
         (
-            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
-                .load(Ordering::Relaxed),
+            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET).load(Ordering::Relaxed),
             read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).load(Ordering::Relaxed),
         )
     };
@@ -1695,9 +1694,11 @@ fn store_write_window(handle: usize, window: Option<(usize, usize, usize)>, line
             .store(base, Ordering::Relaxed);
         read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
             .store(write_end, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET).store(base, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+            .store(base, Ordering::Relaxed);
         read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).store(end, Ordering::Relaxed);
-        read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET).store(ptr, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+            .store(ptr, Ordering::Relaxed);
     }
 }
 
@@ -1730,7 +1731,11 @@ fn publish_read_window(stream: &StdioStream) {
         let line = matches!(stream.buf_mode(), BufMode::Line);
         store_write_window(
             handle,
-            if read.is_none() { stream.write_window() } else { None },
+            if read.is_none() {
+                stream.write_window()
+            } else {
+                None
+            },
             line,
         );
     }
@@ -5945,7 +5950,24 @@ pub unsafe extern "C-unwind" fn setvbuf(
             size
         };
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
-        if s.set_buffering(buf_mode, requested_size) {
+        //
+        // glibc also accepts setvbuf on a stream already in use (iosetvbuf.c):
+        // with no caller buffer, _IOFBF/_IOLBF only flip the mode; otherwise
+        // `_IO_SETBUF` syncs the stream (flushes staged output, seeks back
+        // over unread input) and replaces the buffer. Refusing left programs
+        // that unbuffer stdout mid-run fully buffered, their output reordered
+        // against stderr.
+        let accepted = s.set_buffering(buf_mode, requested_size)
+            || (!s.is_mem_backed() && {
+                let keep = _buf.is_null() && !matches!(buf_mode, BufMode::None);
+                let synced = keep || {
+                    let flushed = unsafe { flush_stream(&mut s) };
+                    sync_input_position(&mut s);
+                    flushed
+                };
+                synced && s.rebuffer(buf_mode, requested_size, keep)
+            });
+        if accepted {
             sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
             0
         } else {

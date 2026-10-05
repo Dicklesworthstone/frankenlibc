@@ -1410,12 +1410,19 @@ impl NativeStreamRegistry {
 
     /// Pre-register stdin (fd 0), stdout (fd 1), stderr (fd 2).
     fn install_std_streams(&mut self) {
+        // glibc's initial `_flags` for the std streams (0xfbad2088, 0xfbad2084,
+        // 0xfbad2086 before any I/O): only stderr reports itself unbuffered.
+        // Bare 0xfbad0002 told gnulib's freading/fbufmode and {fmt} that
+        // stdin and stdout were unbuffered and neither read- nor write-only.
+        const STD_STREAM_FLAGS: i32 =
+            GLIBC_IO_MAGIC | glibc_flag_bits::LINKED | glibc_flag_bits::IS_FILEBUF;
         let registry = self;
         registry.slots[0] = StreamSlot {
             state: SLOT_OCCUPIED,
             file: {
                 let mut file = NativeFile::new(0, file_flags::READ, NativeFileBufMode::Full);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_WRITES;
                 file
             },
         };
@@ -1424,6 +1431,7 @@ impl NativeStreamRegistry {
             file: {
                 let mut file = NativeFile::new(1, file_flags::WRITE, NativeFileBufMode::Line);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags = STD_STREAM_FLAGS | glibc_flag_bits::NO_READS;
                 file
             },
         };
@@ -1432,6 +1440,8 @@ impl NativeStreamRegistry {
             file: {
                 let mut file = NativeFile::new(2, file_flags::WRITE, NativeFileBufMode::None);
                 file.vtable = ptr::addr_of_mut!(_IO_file_jumps);
+                file._io_file._flags =
+                    STD_STREAM_FLAGS | glibc_flag_bits::NO_READS | glibc_flag_bits::UNBUFFERED;
                 file
             },
         };

@@ -402,7 +402,11 @@ struct CookieState {
     write_calls: usize,
 }
 
-unsafe extern "C-unwind" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_read(
+    cookie: *mut c_void,
+    buf: *mut c_char,
+    count: usize,
+) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -426,7 +430,11 @@ unsafe extern "C-unwind" fn cookie_read(cookie: *mut c_void, buf: *mut c_char, c
     n as isize
 }
 
-unsafe extern "C-unwind" fn cookie_write(cookie: *mut c_void, buf: *const c_char, count: usize) -> isize {
+unsafe extern "C-unwind" fn cookie_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    count: usize,
+) -> isize {
     if cookie.is_null() || buf.is_null() {
         return -1;
     }
@@ -456,7 +464,11 @@ unsafe extern "C-unwind" fn cookie_write(cookie: *mut c_void, buf: *const c_char
     to_write as isize
 }
 
-unsafe extern "C-unwind" fn cookie_seek(cookie: *mut c_void, offset: *mut i64, whence: c_int) -> c_int {
+unsafe extern "C-unwind" fn cookie_seek(
+    cookie: *mut c_void,
+    offset: *mut i64,
+    whence: c_int,
+) -> c_int {
     if cookie.is_null() || offset.is_null() {
         return -1;
     }
@@ -943,12 +955,30 @@ fn fileno_and_setvbuf_contracts_hold() {
     // SAFETY: `stream` remains valid after setvbuf.
     assert_eq!(unsafe { fputc(b'X' as i32, stream) }, b'X' as i32);
 
-    // After I/O, setvbuf should reject mode changes.
-    // SAFETY: call is valid even when expected to fail.
+    let on_disk = || fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    assert_eq!(on_disk(), 1, "unbuffered fputc reaches the file");
+
+    // glibc accepts setvbuf after I/O (iosetvbuf.c): with no caller buffer,
+    // _IOFBF just flips the mode, so later output is buffered.
+    // SAFETY: `stream` is valid and open.
     assert_eq!(
         unsafe { setvbuf(stream, std::ptr::null_mut(), IOFBF, 1024) },
-        -1
+        0
     );
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Y' as i32, stream) }, b'Y' as i32);
+    assert_eq!(on_disk(), 1, "fully buffered fputc stays staged");
+
+    // _IONBF syncs first: the staged byte is written, not dropped.
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(
+        unsafe { setvbuf(stream, std::ptr::null_mut(), IONBF, 0) },
+        0
+    );
+    assert_eq!(on_disk(), 2, "switching to _IONBF flushes staged output");
+    // SAFETY: `stream` is valid and open.
+    assert_eq!(unsafe { fputc(b'Z' as i32, stream) }, b'Z' as i32);
+    assert_eq!(on_disk(), 3, "unbuffered again");
 
     // setbuf should remain callable without crashing.
     // SAFETY: wrapper over setvbuf for this valid stream.
@@ -6501,7 +6531,11 @@ unsafe extern "C-unwind" fn funop_read(cookie: *mut c_void, buf: *mut c_char, n:
     take as c_int
 }
 
-unsafe extern "C-unwind" fn funop_write(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+unsafe extern "C-unwind" fn funop_write(
+    cookie: *mut c_void,
+    buf: *const c_char,
+    n: c_int,
+) -> c_int {
     let s = unsafe { &mut *(cookie as *mut FunopenState) };
     let bytes = unsafe { std::slice::from_raw_parts(buf as *const u8, n as usize) };
     s.data.extend_from_slice(bytes);
@@ -6724,7 +6758,11 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
         want as c_int
     }
 
-    unsafe extern "C-unwind" fn write_fn(cookie: *mut c_void, buf: *const c_char, n: c_int) -> c_int {
+    unsafe extern "C-unwind" fn write_fn(
+        cookie: *mut c_void,
+        buf: *const c_char,
+        n: c_int,
+    ) -> c_int {
         // SAFETY: as above.
         let state = unsafe { &mut *(cookie as *mut Cookie) };
         // SAFETY: buf holds `n` readable bytes per the BSD contract.
