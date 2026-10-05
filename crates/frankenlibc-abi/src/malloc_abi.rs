@@ -5291,13 +5291,21 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
                 // share its heap); clamping to the dead block's size silently
                 // dropped copies into the new owner — `env FOO=bar prog` lost
                 // FOO and GNU sed printed garbage (bd-rc0923-epic-eeuy4f.20).
-                .filter(|abs| {
-                    matches!(
-                        abs.state,
-                        SafetyState::Valid | SafetyState::Readable | SafetyState::Writable
-                    )
+                .and_then(|abs| match abs.state {
+                    SafetyState::Valid | SafetyState::Readable | SafetyState::Writable => {
+                        abs.remaining
+                    }
+                    // Freed but still in the arena's quarantine: the arena
+                    // still owns the block, so no new owner can be hurt by
+                    // denying access. Zero remaining makes every string and
+                    // memory entry heal (clamp/truncate) a use-after-free --
+                    // the deterministic in-quarantine UAF detection the
+                    // design promises; before, these fell through to the
+                    // fallback table, which still described the host block,
+                    // and the access went ahead.
+                    SafetyState::Quarantined => Some(0),
+                    _ => None,
                 })
-                .and_then(|abs| abs.remaining)
                 .or_else(|| fallback_remaining(addr))
         })
 }

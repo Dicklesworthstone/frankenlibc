@@ -195,6 +195,8 @@ EXIT_SEQUENCE_BIN="${BIN_DIR}/fixture_exit_sequence"
 cc -O2 "${ROOT}/tests/integration/fixture_exit_sequence.c" -o "${EXIT_SEQUENCE_BIN}"
 STRICT_STRING_OVERFLOW_BIN="${BIN_DIR}/fixture_strict_string_overflow"
 cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_strict_string_overflow.c" -o "${STRICT_STRING_OVERFLOW_BIN}"
+HARDENED_UAF_HEAL_BIN="${BIN_DIR}/fixture_hardened_uaf_heal"
+cc -O0 -fno-builtin -D_FORTIFY_SOURCE=0 "${ROOT}/tests/integration/fixture_hardened_uaf_heal.c" -o "${HARDENED_UAF_HEAL_BIN}" -ldl
 MALLOC_MISUSE_BIN="${BIN_DIR}/fixture_malloc_misuse"
 cc -O2 "${ROOT}/tests/integration/fixture_malloc_misuse.c" -o "${MALLOC_MISUSE_BIN}"
 SMALL_STACK_BIN="${BIN_DIR}/fixture_small_stack_threads"
@@ -933,6 +935,9 @@ EOF
   if [[ "${mode}" == "strict" ]]; then
     run_corpus_case "${mode}" "strict_malloc_misuse_aborts" "${MALLOC_MISUSE_BIN}" || mode_failed=1
     run_corpus_case "${mode}" "strict_string_overflow_parity" "${STRICT_STRING_OVERFLOW_BIN}" || mode_failed=1
+  else
+    # String/memory ops through a quarantined (freed) block heal to zero length.
+    run_corpus_case "${mode}" "hardened_uaf_heal" "${HARDENED_UAF_HEAL_BIN}" || mode_failed=1
   fi
   run_corpus_case "${mode}" "small_stack_threads" "${SMALL_STACK_BIN}" || mode_failed=1
   # pthread_getattr_np stack bounds and the RLIMIT_STACK default thread size.
