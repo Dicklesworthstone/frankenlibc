@@ -1062,6 +1062,20 @@ unsafe fn startup_phase0_impl(
         crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
     }
 
+    // Build the runtime-math kernel and, hardened, the validation pipeline
+    // before main rather than on first use. A program that caps RLIMIT_AS
+    // before its first decision or small malloc (gnulib's printf-posix2 tests,
+    // `ulimit -v`-style self limits) otherwise built them afterwards: strict
+    // faulted growing the stack for the kernel's ~158 KiB constructor frame,
+    // hardened aborted at exit (stdio flush) on the pipeline's ~8 MB.
+    if publish_environment {
+        crate::runtime_policy::prewarm_kernel();
+        if crate::runtime_policy::mode().heals_enabled() {
+            let _ = crate::membrane_state::try_global_pipeline();
+            crate::signal_abi::prewarm_hji_classifications();
+        }
+    }
+
     path.push(StartupCheckpoint::CallMain);
     scrub_stack_for_main();
     // SAFETY: callback pointer + argv/envp pointers are validated for phase-0 fixture usage.

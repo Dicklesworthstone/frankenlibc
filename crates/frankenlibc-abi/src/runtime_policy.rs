@@ -1821,6 +1821,14 @@ fn record_last_explainability(
     let _ = with_last_explainability(|slot| *slot = Some(explainability));
 }
 
+/// Build the runtime-math kernel now if no call has yet. Process startup does
+/// this before main: built lazily, the kernel's first use can come after the
+/// program has capped RLIMIT_AS, where its ~158 KiB construction frame cannot
+/// grow the stack and faults (gnulib test-dprintf-posix2 under strict).
+pub(crate) fn prewarm_kernel() {
+    let _ = kernel();
+}
+
 #[inline]
 fn kernel() -> Option<&'static RuntimeMathKernel> {
     if KERNEL_STATE.load(AtomicOrdering::Acquire) == STATE_READY {
