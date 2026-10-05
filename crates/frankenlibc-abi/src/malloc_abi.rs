@@ -3857,6 +3857,10 @@ const FALLBACK_TABLE_WRITER_WAITING: usize = 1 << (usize::BITS - 2);
 static FALLBACK_ALLOC_MIN_ADDR: AtomicUsize = AtomicUsize::new(usize::MAX);
 static FALLBACK_ALLOC_MAX_ADDR: AtomicUsize = AtomicUsize::new(0);
 
+/// Seqlock word for lock-free lookups: odd while an exclusive holder may be
+/// changing the table, bumped to the next even value when it is done.
+static FALLBACK_ALLOC_TABLE_SEQ: AtomicUsize = AtomicUsize::new(0);
+
 struct FallbackAllocTableGuard {
     slot: Option<&'static AllocatorReentrySlot>,
     shared: bool,
@@ -3867,6 +3871,7 @@ impl Drop for FallbackAllocTableGuard {
         if self.shared {
             FALLBACK_ALLOC_TABLE_LOCK.fetch_sub(1, Ordering::Release);
         } else {
+            FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Release);
             FALLBACK_ALLOC_TABLE_LOCK.store(0, Ordering::Release);
         }
         if let Some(slot) = self.slot {
@@ -3905,6 +3910,9 @@ fn lock_fallback_alloc_table() -> FallbackAllocTableGuard {
                 )
                 .is_ok()
             {
+                // Odd: lock-free readers retry until the release.
+                FALLBACK_ALLOC_TABLE_SEQ.fetch_add(1, Ordering::Relaxed);
+                core::sync::atomic::fence(Ordering::Release);
                 return FallbackAllocTableGuard {
                     slot,
                     shared: false,
@@ -4576,7 +4584,28 @@ fn fallback_remaining(addr: usize) -> Option<usize> {
         // table lock the interrupted frame may hold (bd-na6ede). No bound.
         return None;
     }
+    // Lock-free first (seqlock): this runs on every hardened string call, and
+    // any shared lock word bounces between threads that only read. A snapshot
+    // taken while no writer was active, and still current after the probe, is
+    // consistent; a writer in progress or in between means retry.
+    for _ in 0..4 {
+        let before = FALLBACK_ALLOC_TABLE_SEQ.load(Ordering::Acquire);
+        if before & 1 == 0 {
+            let found = fallback_remaining_probe(addr);
+            core::sync::atomic::fence(Ordering::Acquire);
+            if FALLBACK_ALLOC_TABLE_SEQ.load(Ordering::Relaxed) == before {
+                return found;
+            }
+        }
+        std::hint::spin_loop();
+    }
     let _guard = lock_fallback_alloc_table_shared();
+    fallback_remaining_probe(addr)
+}
+
+/// The bounded probe behind [`fallback_remaining`]; the caller provides
+/// consistency (a seqlock snapshot or the shared lock).
+fn fallback_remaining_probe(addr: usize) -> Option<usize> {
     let start = fallback_start_index(addr);
     for i in 0..64 {
         let idx = (start + i) % FALLBACK_ALLOC_TABLE_SLOTS;
