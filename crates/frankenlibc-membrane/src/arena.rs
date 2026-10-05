@@ -501,27 +501,37 @@ impl AllocationArena {
     /// @separation-frame: `F` (memory outside arena slot/quarantine metadata).
     /// @separation-alias: `quarantine_enter`.
     pub fn free(&self, user_ptr: *mut u8) -> (FreeResult, Vec<QuarantineEntry>) {
+        let (result, _, drained) = self.free_with_size(user_ptr);
+        (result, drained)
+    }
+
+    /// [`Self::free`] that also returns the user size of the block it freed
+    /// (0 unless the result is `Freed`/`FreedWithCanaryCorruption`), read from
+    /// the slot this call already locked -- callers that need the size for
+    /// accounting otherwise paid a second locked index search to learn it.
+    pub fn free_with_size(&self, user_ptr: *mut u8) -> (FreeResult, usize, Vec<QuarantineEntry>) {
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 
-        let (canary_ok, drained) = {
+        let (canary_ok, user_size, drained) = {
             let mut shard = self.shards[shard_idx].lock();
 
             let Some(&slot_idx) = shard.addr_to_slot.get(&user_base) else {
-                return (FreeResult::ForeignPointer, Vec::new());
+                return (FreeResult::ForeignPointer, 0, Vec::new());
             };
 
             let slot = &mut shard.slots[slot_idx];
 
             match slot.state {
                 SafetyState::Freed | SafetyState::Quarantined => {
-                    return (FreeResult::DoubleFree, Vec::new());
+                    return (FreeResult::DoubleFree, 0, Vec::new());
                 }
                 SafetyState::Invalid => {
-                    return (FreeResult::InvalidPointer, Vec::new());
+                    return (FreeResult::InvalidPointer, 0, Vec::new());
                 }
                 _ => {}
             }
+            let user_size = slot.user_size;
 
             // Verify canary before freeing
             let canary_ok = self.verify_canary_for_slot(slot);
@@ -557,13 +567,13 @@ impl AllocationArena {
             // Drain quarantine if over limit (returns entries without deallocating)
             let drained = self.drain_quarantine(&mut shard);
 
-            (canary_ok, drained)
+            (canary_ok, user_size, drained)
         }; // shard lock is released here!
 
         if canary_ok {
-            (FreeResult::Freed, drained)
+            (FreeResult::Freed, user_size, drained)
         } else {
-            (FreeResult::FreedWithCanaryCorruption, drained)
+            (FreeResult::FreedWithCanaryCorruption, user_size, drained)
         }
     }
 

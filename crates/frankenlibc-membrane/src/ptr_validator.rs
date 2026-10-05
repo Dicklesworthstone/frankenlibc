@@ -1936,7 +1936,14 @@ impl ValidationPipeline {
     /// This handles the actual freeing in the arena and updates the page oracle
     /// for any blocks that were fully deallocated (drained from quarantine).
     pub fn free(&self, ptr: *mut u8) -> FreeResult {
-        let (result, drained) = self.arena.free(ptr);
+        self.free_with_size(ptr).0
+    }
+
+    /// [`Self::free`] that also returns the freed block's user size (0 when
+    /// nothing was freed), so the allocator's accounting need not look the
+    /// pointer up in the arena a second time.
+    pub fn free_with_size(&self, ptr: *mut u8) -> (FreeResult, usize) {
+        let (result, user_size, drained) = self.arena.free_with_size(ptr);
         let retired_any = !drained.is_empty();
 
         for entry in drained {
@@ -1961,7 +1968,7 @@ impl ValidationPipeline {
             let _ = self.collector.try_advance();
         }
 
-        result
+        (result, user_size)
     }
 
     /// Deterministically corrupt the trailing canary for a user allocation.

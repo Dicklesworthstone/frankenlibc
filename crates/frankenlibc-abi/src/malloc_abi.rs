@@ -5632,14 +5632,13 @@ unsafe fn free_membrane_path(
         return None;
     };
 
-    let known_size = pipeline
-        .arena
-        .lookup(ptr as usize)
-        .and_then(|slot| (slot.user_base == ptr as usize).then_some(slot.user_size));
-
     let mut adverse = false;
     let mut heal = None;
-    let result = pipeline.free(ptr.cast());
+    // The size for the stats comes from the slot the free itself locked; a
+    // separate arena lookup beforehand cost a second locked index search on
+    // every hardened free.
+    let (result, freed_size) = pipeline.free_with_size(ptr.cast());
+    let known_size = (freed_size != 0).then_some(freed_size);
 
     match result {
         FreeResult::Freed => {
