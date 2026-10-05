@@ -21587,9 +21587,9 @@ pub unsafe extern "C" fn towctrans(wc: c_uint, desc: WctransT) -> c_uint {
 pub unsafe extern "C" fn strcoll_l(
     s1: *const c_char,
     s2: *const c_char,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { crate::string_abi::strcoll(s1, s2) }
+    crate::locale_abi::with_locale(locale, || unsafe { crate::string_abi::strcoll(s1, s2) })
 }
 
 /// `strxfrm_l` — locale-aware string transformation.
@@ -21598,9 +21598,11 @@ pub unsafe extern "C" fn strxfrm_l(
     dest: *mut c_char,
     src: *const c_char,
     n: usize,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { crate::string_abi::strxfrm(dest, src, n) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        crate::string_abi::strxfrm(dest, src, n)
+    })
 }
 
 /// `strftime_l` — locale-aware time formatting.
@@ -21610,9 +21612,11 @@ pub unsafe extern "C" fn strftime_l(
     max: usize,
     format: *const c_char,
     tm: *const c_void,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { crate::time_abi::strftime(s, max, format, tm as *const libc::tm) }
+    crate::locale_abi::with_locale(locale, || unsafe {
+        crate::time_abi::strftime(s, max, format, tm as *const libc::tm)
+    })
 }
 
 // ===========================================================================

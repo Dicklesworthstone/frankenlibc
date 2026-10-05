@@ -2402,6 +2402,27 @@ pub unsafe extern "C" fn newlocale(
     result
 }
 
+/// Run `f` with `locale` as this thread's locale: the `*_l` functions
+/// (strcoll_l, strftime_l, ...) read their locale argument where the plain
+/// ones read the thread's (uselocale) or the global locale. They used to
+/// ignore the argument, so `strftime_l(.., newlocale("en_US.UTF-8"))` gave C
+/// output. An invalid handle runs `f` under the current locale (uselocale
+/// has set EINVAL).
+pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
+    if locale.is_null() {
+        return f();
+    }
+    // SAFETY: uselocale validates the handle and only touches thread state.
+    let previous = unsafe { uselocale(locale) };
+    if previous.is_null() {
+        return f();
+    }
+    let result = f();
+    // SAFETY: `previous` is the handle uselocale reported for this thread.
+    unsafe { uselocale(previous) };
+    result
+}
+
 /// POSIX `uselocale`: null queries, LC_GLOBAL_LOCALE restores live global
 /// lookup, and an object selects an immutable view for this thread only.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

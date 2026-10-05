@@ -13737,9 +13737,11 @@ pub unsafe extern "C" fn __strncasecmp_l(
 pub unsafe extern "C" fn __strcoll_l(
     s1: *const c_char,
     s2: *const c_char,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> c_int {
-    unsafe { strcmp(s1, s2) }
+    // libstdc++'s std::collate calls this with its locale object: compare
+    // in that locale, not bytewise.
+    unsafe { crate::unistd_abi::strcoll_l(s1, s2, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -13747,9 +13749,9 @@ pub unsafe extern "C" fn __strxfrm_l(
     dst: *mut c_char,
     src: *const c_char,
     n: usize,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> usize {
-    unsafe { strxfrm(dst, src, n) }
+    unsafe { crate::unistd_abi::strxfrm_l(dst, src, n, l) }
 }
 
 // ── GCC constant-optimized string function variants ─────────────────────────

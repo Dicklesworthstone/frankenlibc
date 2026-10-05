@@ -7860,9 +7860,9 @@ pub unsafe extern "C" fn towlower_l(wc: u32, _locale: *mut std::ffi::c_void) -> 
 pub unsafe extern "C" fn wcscoll_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> c_int {
-    unsafe { wcscoll(s1, s2) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcscoll(s1, s2) })
 }
 
 /// `wcsxfrm_l` — locale-aware wide string transformation.
@@ -7871,9 +7871,9 @@ pub unsafe extern "C" fn wcsxfrm_l(
     dest: *mut libc::wchar_t,
     src: *const libc::wchar_t,
     n: usize,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { wcsxfrm(dest, src, n) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcsxfrm(dest, src, n) })
 }
 
 /// `wcsftime_l` — locale-aware wide string strftime.
@@ -7883,9 +7883,9 @@ pub unsafe extern "C" fn wcsftime_l(
     maxsize: usize,
     format: *const libc::wchar_t,
     tm: *const c_void,
-    _locale: *mut c_void,
+    locale: *mut c_void,
 ) -> usize {
-    unsafe { wcsftime(s, maxsize, format, tm) }
+    crate::locale_abi::with_locale(locale, || unsafe { wcsftime(s, maxsize, format, tm) })
 }
 
 /// `wcstol_l` — locale-aware wide string to long.
@@ -8966,9 +8966,10 @@ pub unsafe extern "C" fn __wcsncasecmp_l(
 pub unsafe extern "C" fn __wcscoll_l(
     s1: *const libc::wchar_t,
     s2: *const libc::wchar_t,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> c_int {
-    unsafe { wcscmp(s1 as *const u32, s2 as *const u32) }
+    // libstdc++'s std::collate<wchar_t>: collate in that locale.
+    unsafe { wcscoll_l(s1, s2, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8976,9 +8977,9 @@ pub unsafe extern "C" fn __wcsxfrm_l(
     dst: *mut libc::wchar_t,
     src: *const libc::wchar_t,
     n: usize,
-    _l: *mut c_void,
+    l: *mut c_void,
 ) -> usize {
-    unsafe { wcsxfrm(dst, src, n) }
+    unsafe { wcsxfrm_l(dst, src, n, l) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -9176,7 +9177,8 @@ pub unsafe extern "C" fn __wcsftime_l(
     // per call AND widened the multibyte output byte-by-byte (`b as wchar_t`), which is also
     // WRONG for any non-ASCII output (wcsftime decodes it with mbtowc). So this is both a
     // large speedup (it had the pre-fix wcsftime's ~5-32x-glibc overhead) and a correctness fix.
-    unsafe { wcsftime(s, max, format, tm) }
+    // Formats in the locale `_l`, as `wcsftime_l` does.
+    unsafe { wcsftime_l(s, max, format, tm, _l) }
 }
 
 // ===========================================================================
