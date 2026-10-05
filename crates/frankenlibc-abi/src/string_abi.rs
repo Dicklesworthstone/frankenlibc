@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::{known_remaining, known_remaining_strict};
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -5209,18 +5209,15 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
         return unsafe { scan_c_string(s, None).0 };
     }
 
-    // Strict-mode fast path (the DEFAULT deployed mode): an untracked string has the
-    // raw page-safe scan semantics, but an allocator-tracked span is still a known
-    // safety boundary. Retain that cheap bound so an unterminated tracked buffer does
-    // not make the strict fast path read into the next allocation. This preserves the
-    // untracked hot path while matching the bounded behavior of the full path below.
+    // Strict-mode fast path (the DEFAULT deployed mode): glibc's result for the same
+    // memory. Strict means "no repair rewrites"; it used to cap the scan at the
+    // allocation's tracked size, so a string overflowing its allocation measured as
+    // the allocation size (strcpy of 26 bytes into malloc(8): 8, glibc 26), a silent
+    // repair that belongs to hardened (bd-rc0923-epic-eeuy4f.8). The page-safe
+    // scanner never crosses into an unmapped page.
     if runtime_policy::strict_passthrough_active() {
-        // `known_remaining_strict`: the mode was just established one line above,
-        // so re-deriving it inside the probe is redundant work on this hot path.
-        let bound = known_remaining_strict(s as usize);
-        // SAFETY: `bound`, when present, is derived from allocator bookkeeping;
-        // otherwise the page-safe scanner preserves ordinary libc scan semantics.
-        return unsafe { scan_c_string(s, bound).0 };
+        // SAFETY: strlen's contract (a NUL-terminated string); page-safe scan.
+        return unsafe { scan_c_string(s, None).0 };
     }
 
     // NOT SPLIT, and this is load-bearing. `strlen`'s entry carries the largest
@@ -6883,14 +6880,10 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
             return haystack as *mut c_char;
         }
         return unsafe {
-            // `known_remaining_strict`, not `known_remaining`: the mode was established
-            // by the `strict_passthrough_active()` test that opens this block, and the
-            // general entry point re-tests it on entry -- twice here, once per operand.
-            // Same three sources probed in the same order, same answer; only the
-            // redundant mode check goes. This is the identical substitution `strlen`'s
-            // strict path already carries; this site was simply missed.
-            let needle_bound = known_remaining_strict(needle as usize);
-            let hay_bound = known_remaining_strict(haystack as usize);
+            // Strict: glibc's result for the same memory, so no allocation-size cap on
+            // either scan (that truncation is a hardened repair; see `strlen`).
+            let needle_bound = None;
+            let hay_bound = None;
             let (needle_len, _) = scan_c_string(needle, needle_bound);
             if needle_len == 0 {
                 haystack as *mut c_char
