@@ -63,3 +63,8 @@ strip = false
 inherits = "release"
 lto = "thin"
 codegen-units = 1
+
+# The versioned math entries and their .symver directives must share an ELF
+# object. Keep this confined to the ABI crate, not the workspace dependencies.
+[profile.release.package.frankenlibc-abi]
+codegen-units = 1

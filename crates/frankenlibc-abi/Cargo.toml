@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file = "../../LICENSE"
 description = "ABI-compatible extern C boundary for FrankenLibC (produces libc.so)"
-build = "build.rs"
+build = "build_elf.rs"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
