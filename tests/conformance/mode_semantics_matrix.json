@@ -20,7 +20,7 @@
       "family": "Allocator",
       "api_family_enum": "Allocator",
       "module": "malloc_abi",
-      "heals_call_sites": 4,
+      "heals_call_sites": 5,
       "symbols": [
         "malloc",
         "free",
@@ -52,7 +52,7 @@
       "family": "StringMemory",
       "api_family_enum": "StringMemory",
       "module": "string_abi",
-      "heals_call_sites": 37,
+      "heals_call_sites": 40,
       "symbols": [
         "memcpy",
         "memmove",
@@ -126,7 +126,7 @@
       "family": "Stdio",
       "api_family_enum": "Stdio",
       "module": "stdio_abi",
-      "heals_call_sites": 13,
+      "heals_call_sites": 14,
       "symbols": [
         "fopen",
         "fclose",
@@ -251,7 +251,7 @@
       "family": "Socket",
       "api_family_enum": "Socket",
       "module": "socket_abi",
-      "heals_call_sites": 5,
+      "heals_call_sites": 0,
       "symbols": [
         "socket",
         "bind",
@@ -267,14 +267,16 @@
         "shutdown"
       ],
       "strict_behavior": {
-        "invalid_domain": "Returns -1, sets EAFNOSUPPORT",
-        "invalid_type": "Returns -1, sets EINVAL",
-        "sendmsg_overflow": "Proceeds as-is"
+        "invalid_domain": "Passed to the kernel, which decides (EAFNOSUPPORT for an unsupported family)",
+        "invalid_type": "Passed to the kernel, which decides (EINVAL for an unknown type)",
+        "sendmsg_overflow": "Proceeds as-is; the kernel validates the buffers",
+        "invalid_shutdown_how": "Returns -1, sets EINVAL"
       },
       "hardened_behavior": {
-        "invalid_domain": "Heals: allows through with healing record",
-        "invalid_type": "Heals: allows through with healing record",
-        "sendmsg_overflow": "Bounds-checked, clamped"
+        "invalid_domain": "Same as strict (the domain/type heals were removed in 1ad05f618)",
+        "invalid_type": "Same as strict",
+        "sendmsg_overflow": "Same as strict",
+        "invalid_shutdown_how": "Returns -1, sets EINVAL (the old heal shut down both directions of the connection)"
       }
     },
     {
@@ -367,7 +369,7 @@
       "family": "Termios",
       "api_family_enum": "Termios",
       "module": "termios_abi",
-      "heals_call_sites": 3,
+      "heals_call_sites": 0,
       "symbols": [
         "tcgetattr",
         "tcsetattr",
@@ -386,9 +388,9 @@
         "invalid_flow": "Returns -1, sets EINVAL"
       },
       "hardened_behavior": {
-        "invalid_action": "Heals to TCSANOW",
-        "invalid_queue": "Heals to TCIFLUSH",
-        "invalid_flow": "Heals to TCION"
+        "invalid_action": "Returns -1, sets EINVAL (no memory-safety stake; guessing an action changed the call's effect)",
+        "invalid_queue": "Returns -1, sets EINVAL (the old heal flushed both queues, discarding data)",
+        "invalid_flow": "Returns -1, sets EINVAL (the old heal reported success for a no-op)"
       }
     },
     {
@@ -453,20 +455,20 @@
       "family": "Locale",
       "api_family_enum": "Locale",
       "module": "locale_abi",
-      "heals_call_sites": 2,
+      "heals_call_sites": 0,
       "symbols": ["setlocale", "localeconv"],
       "strict_behavior": {
         "invalid_category": "Returns NULL"
       },
       "hardened_behavior": {
-        "invalid_category": "Returns C locale as safe fallback"
+        "invalid_category": "Returns NULL, same as strict (6f9668dda: reporting a fallback locale as active misled callers)"
       }
     },
     {
       "family": "Resolver",
       "api_family_enum": "Resolver",
       "module": "resolv_abi",
-      "heals_call_sites": 4,
+      "heals_call_sites": 3,
       "symbols": ["getaddrinfo", "freeaddrinfo", "getnameinfo", "gai_strerror"],
       "strict_behavior": {
         "invalid_hints": "Returns EAI_BADFLAGS/EAI_FAMILY",
@@ -517,8 +519,8 @@
   ],
   "summary": {
     "total_families": 20,
-    "families_with_healing": 19,
-    "total_heals_call_sites": 139,
+    "families_with_healing": 16,
+    "total_heals_call_sites": 133,
     "healing_actions": [
       "ClampSize",
       "TruncateWithNull",

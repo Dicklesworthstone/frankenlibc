@@ -473,7 +473,7 @@ pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
         return -1;
     }
 
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -481,19 +481,16 @@ pub unsafe extern "C" fn shutdown(sockfd: c_int, how: c_int) -> c_int {
         return -1;
     }
 
-    let effective_how = if !socket_core::valid_shutdown_how(how) {
-        if mode.heals_enabled() {
-            socket_core::SHUT_RDWR // default to full shutdown in hardened mode
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-            return -1;
-        }
-    } else {
-        how
-    };
+    // EINVAL in both modes. Hardened used to "heal" an unknown `how` into
+    // SHUT_RDWR, tearing down both directions of a live connection the caller
+    // never asked to close; an out-of-range enum carries no memory-safety risk.
+    if !socket_core::valid_shutdown_how(how) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+        return -1;
+    }
 
-    let (rc, adverse) = match raw_syscall::sys_shutdown(sockfd, effective_how) {
+    let (rc, adverse) = match raw_syscall::sys_shutdown(sockfd, how) {
         Ok(()) => (0, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };

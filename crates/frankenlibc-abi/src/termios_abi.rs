@@ -877,7 +877,7 @@ pub unsafe extern "C" fn tcsetattr(
     optional_actions: c_int,
     termios_p: *const libc::termios,
 ) -> c_int {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -896,17 +896,15 @@ pub unsafe extern "C" fn tcsetattr(
         return -1;
     }
 
-    let act = if !termios_core::valid_optional_actions(optional_actions) {
-        if mode.heals_enabled() {
-            termios_core::TCSANOW // default to immediate in hardened mode
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
-            return -1;
-        }
-    } else {
-        optional_actions
-    };
+    // An unknown action is EINVAL in both modes: it carries no memory-safety
+    // risk, and guessing an action silently changes what the call does
+    // (CPython's test_termios checks EINVAL).
+    if !termios_core::valid_optional_actions(optional_actions) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+    let act = optional_actions;
 
     let request = tcsets2_request(act);
     let previous_snapshot = read_termios2(fd)
@@ -1104,7 +1102,7 @@ pub unsafe extern "C-unwind" fn tcdrain(fd: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tcflush(fd: c_int, queue_selector: c_int) -> c_int {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1112,17 +1110,14 @@ pub unsafe extern "C" fn tcflush(fd: c_int, queue_selector: c_int) -> c_int {
         return -1;
     }
 
-    let sel = if !termios_core::valid_queue_selector(queue_selector) {
-        if mode.heals_enabled() {
-            termios_core::TCIOFLUSH // flush both in hardened mode
-        } else {
-            unsafe { set_abi_errno(errno::EINVAL) };
-            runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
-            return -1;
-        }
-    } else {
-        queue_selector
-    };
+    // EINVAL in both modes: hardened used to flush BOTH queues for an unknown
+    // selector, discarding data the caller never asked to drop.
+    if !termios_core::valid_queue_selector(queue_selector) {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
+        return -1;
+    }
+    let sel = queue_selector;
 
     let rc = match unsafe { syscall::sys_ioctl(fd, libc::TCFLSH as usize, sel as usize) } {
         Ok(_) => 0,
@@ -1141,7 +1136,7 @@ pub unsafe extern "C" fn tcflush(fd: c_int, queue_selector: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Termios, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1149,11 +1144,8 @@ pub unsafe extern "C" fn tcflow(fd: c_int, action: c_int) -> c_int {
         return -1;
     }
 
+    // EINVAL in both modes (hardened used to report success for a no-op).
     if !termios_core::valid_flow_action(action) {
-        if mode.heals_enabled() {
-            runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
-            return 0; // no-op in hardened mode
-        }
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::observe(ApiFamily::Termios, decision.profile, 5, true);
         return -1;
