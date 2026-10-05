@@ -1722,19 +1722,29 @@ pub(crate) fn republish_read_window(stream: *mut c_void) {
 #[inline]
 fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     publish_read_window(stream);
-    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN};
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF};
     // SAFETY: `handle` is the address of a registered NativeFile, whose first
     // field is the 4-byte-aligned `_flags` int; it outlives the registry
     // entry holding this cell. Other threads may read it (unlocked macros),
     // hence the atomic view.
     let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
     let current = word.load(Ordering::Relaxed);
-    let mut next = current & !(EOF_SEEN | ERR_SEEN);
+    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF);
     if stream.is_eof() {
         next |= EOF_SEEN;
     }
     if stream.is_error() {
         next |= ERR_SEEN;
+    }
+    // Line buffering, which setvbuf can switch on after open: gnulib's
+    // fbufmode checks _IO_LINE_BUF first, so a line-buffered stream now reads
+    // as _IOLBF. _IO_UNBUFFERED is deliberately NOT mirrored: it stays set on
+    // every handle (io_internal_abi::NO_VISIBLE_BUFFER) because {fmt} writes
+    // through _IO_write_ptr when it is clear, and fl publishes no write
+    // window -- so a fully buffered stream still reads as _IONBF to code that
+    // inspects glibc's FILE.
+    if matches!(stream.buf_mode(), BufMode::Line) {
+        next |= LINE_BUF;
     }
     if next != current {
         word.store(next, Ordering::Relaxed);
