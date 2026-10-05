@@ -8,6 +8,7 @@
 //! - `R_X86_64_NONE` (0): No action
 //! - `R_X86_64_64` (1): S + A (64-bit absolute)
 //! - `R_X86_64_PC32` (2): S + A - P (32-bit PC-relative)
+//! - `R_X86_64_PC64` (24): S + A - P (64-bit PC-relative)
 //! - `R_X86_64_PLT32` (4): L + A - P (32-bit PLT-relative)
 //! - `R_X86_64_GLOB_DAT` (6): S (GOT entry)
 //! - `R_X86_64_JUMP_SLOT` (7): S (PLT entry)
@@ -18,6 +19,8 @@
 //! Handled by the loader rather than this pure computation helper:
 //! - `R_X86_64_IRELATIVE` (37): resolver-mediated IFUNC relocation
 //! - `DT_RELR`: compressed relative relocation targets
+//! - `R_X86_64_SIZE32` (32), `R_X86_64_SIZE64` (33): the native binding
+//!   pass supplies the selected definition's size to `compute_size_relocation`.
 //!
 //! Deferred/unsupported:
 //! - `R_X86_64_COPY` (5): Memory copy at runtime
@@ -70,6 +73,12 @@ pub enum RelocationType {
     TlsGd,
     /// TLS local-dynamic (deferred)
     TlsLd,
+    /// PC-relative 64-bit (S + A - P).
+    Pc64,
+    /// Selected symbol size plus addend, truncated to 32 bits.
+    Size32,
+    /// Selected symbol size plus addend, modulo 2^64.
+    Size64,
     /// Indirect function (deferred)
     IRelative,
     /// Unknown relocation type
@@ -100,6 +109,9 @@ impl From<u32> for RelocationType {
             18 => Self::TpOff64,
             19 => Self::TlsGd,
             20 => Self::TlsLd,
+            24 => Self::Pc64,
+            32 => Self::Size32,
+            33 => Self::Size64,
             37 => Self::IRelative,
             other => Self::Unknown(other),
         }
@@ -131,6 +143,9 @@ impl RelocationType {
             Self::TpOff64 => 18,
             Self::TlsGd => 19,
             Self::TlsLd => 20,
+            Self::Pc64 => 24,
+            Self::Size32 => 32,
+            Self::Size64 => 33,
             Self::IRelative => 37,
             Self::Unknown(v) => v,
         }
@@ -152,6 +167,9 @@ impl RelocationType {
             | Self::Pc16
             | Self::R8
             | Self::Pc8
+            | Self::Pc64
+            | Self::Size32
+            | Self::Size64
             | Self::IRelative => RelocationSupport::Implemented,
             Self::Copy => RelocationSupport::Stub,
             Self::DtpMod64 | Self::DtpOff64 | Self::TpOff64 | Self::TlsGd | Self::TlsLd => {
@@ -164,6 +182,11 @@ impl RelocationType {
     /// Check if this relocation type is supported in phase 1.
     pub fn is_supported(&self) -> bool {
         matches!(self.support(), RelocationSupport::Implemented)
+    }
+
+    /// This relocation consumes a definition's size (Z), not its address (S).
+    pub fn is_size(&self) -> bool {
+        matches!(self, Self::Size32 | Self::Size64)
     }
 
     /// Check if this is a TLS relocation.
@@ -303,6 +326,10 @@ pub fn compute_relocation(
             Ok((value, 4))
         }
 
+        // Unlike a narrow PC-relative field, PC64 stores the full machine
+        // word. No i32 narrowing and no intermediate unsigned underflow.
+        RelocationType::Pc64 => Ok((s.wrapping_add(a as u64).wrapping_sub(p), 8)),
+
         // L + A - P. In this core model the resolver supplies L as symbol_value.
         RelocationType::Plt32 => {
             let value = pc_relative_value(s, a, p, 32)?;
@@ -351,6 +378,14 @@ pub fn compute_relocation(
             Ok((value, 1))
         }
 
+        // This entry point receives only S. Guessing Z from that address (or
+        // the requesting object's undefined dynsym entry) corrupts SIZE fixups.
+        // The native binding pass uses compute_size_relocation and removes
+        // those entries before submitting the remaining batch to this helper.
+        RelocationType::Size32 | RelocationType::Size64 => {
+            Err(RelocationResult::Unsupported(rtype.to_u32()))
+        }
+
         RelocationType::Copy => Err(RelocationResult::Deferred),
 
         RelocationType::IRelative => Err(RelocationResult::Unsupported(rtype.to_u32())),
@@ -360,6 +395,24 @@ pub fn compute_relocation(
         RelocationType::Unknown(t) => Err(RelocationResult::Unsupported(t)),
 
         _ => Err(RelocationResult::Unsupported(rtype.to_u32())),
+    }
+}
+
+/// Compute Z + A from the selected provider's `st_size`, never its address.
+///
+/// Selection (including visibility, versioning and preemption) belongs to the
+/// caller. As for glibc's dynamic SIZE relocations, the result is stored in the
+/// destination width: 64-bit wrapping addition, then low 32 bits for SIZE32.
+/// No IFUNC resolver execution is needed to read the definition's size.
+pub fn compute_size_relocation(
+    reloc: &Elf64Rela,
+    symbol_size: u64,
+) -> Result<(u64, usize), RelocationResult> {
+    let value = symbol_size.wrapping_add(reloc.r_addend as u64);
+    match reloc.reloc_type() {
+        RelocationType::Size32 => Ok((u64::from(value as u32), 4)),
+        RelocationType::Size64 => Ok((value, 8)),
+        other => Err(RelocationResult::Unsupported(other.to_u32())),
     }
 }
 
