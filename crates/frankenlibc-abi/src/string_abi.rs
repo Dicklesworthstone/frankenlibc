@@ -10928,7 +10928,10 @@ pub unsafe extern "C" fn fnmatch(
     if crate::locale_abi::mb_cur_max() > 1
         && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
         && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
-        && let (Ok(p), Ok(s)) = (core::str::from_utf8(pat_bytes), core::str::from_utf8(str_bytes))
+        && let (Ok(p), Ok(s)) = (
+            core::str::from_utf8(pat_bytes),
+            core::str::from_utf8(str_bytes),
+        )
     {
         let p: Vec<u32> = p.chars().map(u32::from).collect();
         let s: Vec<u32> = s.chars().map(u32::from).collect();
