@@ -100,9 +100,14 @@ impl PointerBloomFilter {
         let (h1, h2) = (self.hash1(ptr), self.hash2(ptr));
         for i in 0..self.num_hashes {
             let bit_idx = self.bit_index(h1, h2, i);
-            let word_idx = bit_idx / 64;
-            let bit_pos = bit_idx % 64;
-            self.bits[word_idx].fetch_or(1u64 << bit_pos, Ordering::Relaxed);
+            let word = &self.bits[bit_idx / 64];
+            let mask = 1u64 << (bit_idx % 64);
+            // Plain load first: in a filled filter most bits are already set,
+            // and a locked RMW costs ~20 cycles and takes the line exclusive
+            // even when it changes nothing (every hardened malloc inserts).
+            if word.load(Ordering::Relaxed) & mask == 0 {
+                word.fetch_or(mask, Ordering::Relaxed);
+            }
         }
         self.insert_count.fetch_add(1, Ordering::Relaxed);
     }

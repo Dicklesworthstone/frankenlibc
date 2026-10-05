@@ -460,7 +460,11 @@ impl ValidationPipeline {
         ValidationTraceContext::enabled(decision_id, security_context)
     }
 
+    /// Inlined so the disabled case -- every call when the validation log is
+    /// off -- is one test at the call site instead of a 17-argument call that
+    /// returns immediately (~2% of a hardened allocation-heavy workload).
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     fn emit_validation_log(
         &self,
         trace: &ValidationTraceContext,
@@ -483,6 +487,47 @@ impl ValidationPipeline {
         if !trace.is_enabled() {
             return;
         }
+        self.emit_enabled_validation_log(
+            trace,
+            mode,
+            level,
+            event,
+            stage,
+            decision_path,
+            decision_action,
+            outcome,
+            latency_ns,
+            aligned,
+            recent_page,
+            bloom_negative,
+            cache_hit,
+            policy_id,
+            risk_upper_bound_ppm,
+            evidence_seqno,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    fn emit_enabled_validation_log(
+        &self,
+        trace: &ValidationTraceContext,
+        mode: crate::config::SafetyLevel,
+        level: &'static str,
+        event: &'static str,
+        stage: &'static str,
+        decision_path: &'static str,
+        decision_action: &'static str,
+        outcome: &'static str,
+        latency_ns: u64,
+        aligned: bool,
+        recent_page: bool,
+        bloom_negative: bool,
+        cache_hit: bool,
+        policy_id: u32,
+        risk_upper_bound_ppm: u32,
+        evidence_seqno: u64,
+    ) {
         debug_assert!(matches!(
             level,
             "trace" | "debug" | "info" | "warn" | "error"

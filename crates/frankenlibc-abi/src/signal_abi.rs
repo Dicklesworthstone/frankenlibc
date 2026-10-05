@@ -385,6 +385,7 @@ struct SignalTls {
     critical_depth: AtomicU32,
     classification: AtomicU8,
     deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
+    deferred_pending: AtomicU64,
 }
 
 #[cfg(feature = "owned-tls-cache")]
@@ -399,6 +400,7 @@ fn new_signal_tls() -> SignalTls {
         critical_depth: AtomicU32::new(0),
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
         deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
+        deferred_pending: AtomicU64::new(0),
     }
 }
 
@@ -413,6 +415,7 @@ thread_local! {
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
     static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
         const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
+    static DEFERRED_PENDING: AtomicU64 = const { AtomicU64::new(0) };
 }
 
 fn with_signal_critical_depth<R>(f: impl FnOnce(&AtomicU32) -> R) -> R {
@@ -447,6 +450,23 @@ fn with_deferred_signals<R>(
     #[cfg(not(feature = "owned-tls-cache"))]
     {
         DEFERRED_SIGNALS.with(f)
+    }
+}
+
+/// Per-thread summary of `DEFERRED_SIGNALS`: bit `signum - 1` is set after a
+/// deferral bumps that signal's count, and cleared (all at once) before the
+/// counts are read. Every critical-section exit -- every hardened malloc and
+/// free -- flushes, and nearly always nothing is pending; scanning all 64
+/// slots to learn that was ~460 instructions, 18% of a hardened malloc+free
+/// (bd-rc0923-epic-eeuy4f.9).
+fn with_deferred_pending<R>(f: impl FnOnce(&AtomicU64) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_pending))
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        DEFERRED_PENDING.with(f)
     }
 }
 
@@ -547,23 +567,33 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         let _ = context;
         slot.count.fetch_add(1, Ordering::Relaxed);
     });
+    // After the count: a flush that sees this bit is guaranteed to see the
+    // count; one that cleared the mask earlier leaves the bit for the next.
+    with_deferred_pending(|mask| mask.fetch_or(1u64 << (signum - 1), Ordering::Release));
     SIGNAL_DEFERRED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
 }
 
 fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
+    // Only this thread and its own signal handlers touch the mask and slots. A
+    // plain load first keeps the common nothing-pending exit free of a locked
+    // RMW; a handler that defers after the swap leaves its bit for the next
+    // flush, and one that ran before it is in `bits`.
+    let mut bits = with_deferred_pending(|mask| {
+        if mask.load(Ordering::Relaxed) == 0 {
+            0
+        } else {
+            mask.swap(0, Ordering::Acquire)
+        }
+    });
+    if bits == 0 {
+        return Vec::new();
+    }
     with_deferred_signals(|pending| {
         let mut out = Vec::new();
-        for signum in 1..=MAX_TRACKED_SIGNAL as c_int {
+        while bits != 0 {
+            let signum = bits.trailing_zeros() as c_int + 1;
+            bits &= bits - 1;
             let slot = &pending[signum as usize];
-            // A plain load first: every critical-section exit (every malloc
-            // and free) scans all slots, and 64 unconditional atomic swaps were
-            // the largest cost of hardened malloc+free once the HJI loop was
-            // gone (bd-rc0923-epic-eeuy4f.9). Only this thread and its own
-            // signal handlers touch these slots, and a handler that runs
-            // between the load and the swap is caught by the swap.
-            if slot.count.load(Ordering::Relaxed) == 0 {
-                continue;
-            }
             let count = slot.count.swap(0, Ordering::Relaxed);
             if count != 0 {
                 let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
