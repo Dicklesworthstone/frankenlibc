@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void};
 #[cfg(feature = "owned-tls-cache")]
 use std::hash::{BuildHasherDefault, Hasher};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
@@ -100,7 +101,10 @@ impl<T> AbiReentrantMutex<T> {
         let mut spins = 0u32;
         loop {
             if self.try_lock_for_tid(tid) {
-                return AbiReentrantMutexGuard { lock: self };
+                return AbiReentrantMutexGuard {
+                    lock: self,
+                    _not_send_sync: PhantomData,
+                };
             }
 
             spins = spins.wrapping_add(1);
@@ -121,8 +125,10 @@ impl<T> AbiReentrantMutex<T> {
     #[inline]
     pub(crate) fn try_lock(&self) -> Option<AbiReentrantMutexGuard<'_, T>> {
         let tid = current_tid();
-        self.try_lock_for_tid(tid)
-            .then_some(AbiReentrantMutexGuard { lock: self })
+        self.try_lock_for_tid(tid).then(|| AbiReentrantMutexGuard {
+            lock: self,
+            _not_send_sync: PhantomData,
+        })
     }
 
     #[inline]
@@ -212,8 +218,16 @@ fn current_tid() -> i32 {
     frankenlibc_core::syscall::sys_gettid().max(1)
 }
 
+/// An acquisition belongs to the current kernel thread, not just to the lock.
+///
+/// A bare `&AbiReentrantMutex<T>` would make this guard `Send + Sync` for any
+/// `T: Send`, including `Cell<T>`. Moving it would let another thread access
+/// the value while the owner recursively acquires it; sharing it would expose
+/// a non-`Sync` value concurrently. A foreign-thread drop also cannot release
+/// the owner's recursion level. Keep both auto traits disabled explicitly.
 pub(crate) struct AbiReentrantMutexGuard<'a, T> {
     lock: &'a AbiReentrantMutex<T>,
+    _not_send_sync: PhantomData<*mut ()>,
 }
 
 impl<T> Deref for AbiReentrantMutexGuard<'_, T> {
@@ -316,8 +330,9 @@ fn test_allocation_bound(addr: usize) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{AbiReentrantMutex, TEST_ALLOC_BOUNDS, scan_c_string};
+    use super::{AbiReentrantMutex, AbiReentrantMutexGuard, TEST_ALLOC_BOUNDS, scan_c_string};
     use std::cell::Cell;
+    use std::sync::Arc;
 
     struct TestBoundGuard {
         base: usize,
@@ -391,5 +406,88 @@ mod tests {
             .try_lock()
             .expect("same-thread recursive try_lock should succeed");
         assert_eq!(inner.get(), 7);
+    }
+
+    #[test]
+    fn abi_reentrant_mutex_guard_is_neither_send_nor_sync() {
+        // Inference is unambiguous only when the second impl does not apply.
+        // Restoring either auto trait makes this test fail to compile, before
+        // an unsound cross-thread access can execute. No extra dependency or
+        // doctest visibility workaround is needed for these private types.
+        macro_rules! assert_not_impl {
+            ($ty:ty, $bound:path) => {{
+                trait AmbiguousIfImpl<A> {
+                    fn check() {}
+                }
+                impl<T: ?Sized> AmbiguousIfImpl<()> for T {}
+                struct Implemented;
+                impl<T: ?Sized + $bound> AmbiguousIfImpl<Implemented> for T {}
+                let _ = <$ty as AmbiguousIfImpl<_>>::check;
+            }};
+        }
+
+        assert_not_impl!(AbiReentrantMutexGuard<'static, usize>, Send);
+        assert_not_impl!(AbiReentrantMutexGuard<'static, usize>, Sync);
+        assert_not_impl!(AbiReentrantMutexGuard<'static, Cell<usize>>, Send);
+        assert_not_impl!(AbiReentrantMutexGuard<'static, Cell<usize>>, Sync);
+
+        // Only the acquisition is thread-bound: sharing the lock itself must
+        // remain possible for Send-but-not-Sync protected values.
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AbiReentrantMutex<Cell<usize>>>();
+    }
+
+    #[test]
+    fn abi_reentrant_mutex_excludes_other_threads_until_final_guard_drop() {
+        let lock = Arc::new(AbiReentrantMutex::new(Cell::new(7usize)));
+        let outer = lock.lock();
+        let inner = lock.try_lock().expect("recursive acquisition");
+
+        let probe = Arc::clone(&lock);
+        assert!(
+            std::thread::spawn(move || probe.try_lock().is_none())
+                .join()
+                .expect("contending thread")
+        );
+        // Guards need not be dropped in acquisition order, but each one must
+        // release exactly one level on the owner thread.
+        drop(outer);
+        inner.set(11);
+        let probe = Arc::clone(&lock);
+        assert!(
+            std::thread::spawn(move || probe.try_lock().is_none())
+                .join()
+                .expect("contending thread")
+        );
+        drop(inner);
+
+        let probe = Arc::clone(&lock);
+        assert_eq!(
+            std::thread::spawn(move || {
+                let guard = probe.try_lock().expect("final drop releases lock");
+                guard.get()
+            })
+            .join()
+            .expect("next owner"),
+            11
+        );
+    }
+
+    #[test]
+    fn abi_reentrant_mutex_serializes_recursive_cell_updates() {
+        let lock = AbiReentrantMutex::new(Cell::new(0usize));
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                scope.spawn(|| {
+                    for _ in 0..250 {
+                        let outer = lock.lock();
+                        outer.set(outer.get() + 1);
+                        let inner = lock.lock();
+                        inner.set(inner.get() + 1);
+                    }
+                });
+            }
+        });
+        assert_eq!(lock.lock().get(), 2000);
     }
 }
