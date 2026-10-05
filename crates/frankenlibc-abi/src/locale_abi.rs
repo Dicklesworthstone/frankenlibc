@@ -2454,7 +2454,8 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
     if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
         let field = |item: libc::nl_item| {
             // SAFETY: resolved_langinfo returns a NUL-terminated static string.
-            unsafe { std::ffi::CStr::from_ptr(resolved_langinfo(item, categories[slot])) }.to_bytes()
+            unsafe { std::ffi::CStr::from_ptr(resolved_langinfo(item, categories[slot])) }
+                .to_bytes()
         };
         frankenlibc_core::stdio::printf::set_thread_numeric(
             field(libc::RADIXCHAR),
