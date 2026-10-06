@@ -121,11 +121,31 @@ pub fn send(query: &[u8], config: &Config) -> Result<Reply, QueryError> {
     send_with(query, config, start, exchange)
 }
 
+/// Higher-level query/search needs the last validated server rejection to
+/// distinguish SERVFAIL from a transport timeout. Keep raw res_send's existing
+/// error contract unchanged; never treat an unvalidated packet as a rejection.
+pub fn send_for_query(query: &[u8], config: &Config) -> Result<Reply, QueryError> {
+    static NEXT_SERVER: AtomicUsize = AtomicUsize::new(0);
+    let start = if config.rotate && !config.nameservers.is_empty() {
+        NEXT_SERVER.fetch_add(1, Ordering::Relaxed) % config.nameservers.len()
+    } else { 0 };
+    send_inner(query, config, start, exchange, true)
+}
+
 fn send_with<F>(
     query: &[u8],
     config: &Config,
     start: usize,
-    mut exchange: F,
+    exchange: F,
+) -> Result<Reply, QueryError>
+where
+    F: FnMut(SocketAddr, &[u8], Duration, bool, bool) -> Result<Reply, QueryError>,
+{
+    send_inner(query, config, start, exchange, false)
+}
+
+fn send_inner<F>(
+    query: &[u8], config: &Config, start: usize, mut exchange: F, retain_rejection: bool,
 ) -> Result<Reply, QueryError>
 where
     F: FnMut(SocketAddr, &[u8], Duration, bool, bool) -> Result<Reply, QueryError>,
@@ -136,6 +156,7 @@ where
     let count = config.nameservers.len();
     let mut refused = vec![false; count];
     let mut last_error = QueryError::Io(io::ErrorKind::TimedOut.into());
+    let mut last_rejection = None;
     for _ in 0..config.attempts.max(1) {
         for offset in 0..count {
             // `start` is bounded by `count` in production and by the tests.
@@ -162,6 +183,10 @@ where
                         // A malformed rejection must not influence failover.
                         DnsMessage::decode(&reply.packet).ok_or(QueryError::InvalidResponse)?;
                         last_error = QueryError::Io(io::ErrorKind::TimedOut.into());
+                        if retain_rejection {
+                            if !config.trust_ad { reply.packet[3] &= !0x20; }
+                            last_rejection = Some(reply);
+                        }
                         continue;
                     }
                     // AD is only meaningful when the application explicitly
@@ -183,7 +208,11 @@ where
             break;
         }
     }
-    Err(last_error)
+    if let Some(reply) = last_rejection {
+        Ok(reply)
+    } else {
+        Err(last_error)
+    }
 }
 
 #[cfg(test)]
@@ -336,4 +365,33 @@ mod tests {
         assert!(matches!(result, Err(QueryError::Io(error))
             if error.kind() == io::ErrorKind::ConnectionRefused));
     }
+    #[test]
+    fn query_rejections_remain_distinct_from_raw_send_and_transport_failure() {
+        let mut config = config();
+        config.attempts = 1;
+        let result = send_inner(&[], &config, 0, |_, _, _, _, _| {
+            Ok(reply(rcode::SERVFAIL, Transport::Udp))
+        }, true).unwrap();
+        assert_eq!(result.packet[3] & 15, rcode::SERVFAIL);
+        assert_eq!(result.packet[3] & 0x20, 0);
+        assert!(matches!(send_inner(&[], &config, 0, |_, _, _, _, _| {
+            Err(QueryError::Io(io::ErrorKind::TimedOut.into()))
+        }, true), Err(QueryError::Io(_))));
+        assert!(matches!(send_with(&[], &config, 0, |_, _, _, _, _| {
+            Ok(reply(rcode::SERVFAIL, Transport::Udp))
+        }), Err(QueryError::Io(_))));
+    }
+
+    #[test]
+    fn query_success_supersedes_an_earlier_server_rejection() {
+        let config = config();
+        let mut calls = 0;
+        let result = send_inner(&[], &config, 0, |_, _, _, _, _| {
+            calls += 1;
+            Ok(reply(if calls == 1 { rcode::SERVFAIL } else { rcode::NXDOMAIN }, Transport::Udp))
+        }, true).unwrap();
+        assert_eq!(calls, 2);
+        assert_eq!(result.packet[3] & 15, rcode::NXDOMAIN);
+    }
+
 }

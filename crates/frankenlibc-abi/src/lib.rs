@@ -255,6 +255,8 @@ pub mod pwd_abi;
 #[cfg(not(test))]
 pub mod resolv_abi;
 #[cfg(not(test))]
+pub mod resolv_state;
+#[cfg(not(test))]
 pub mod resource_abi;
 #[cfg(not(test))]
 pub mod search_abi;
