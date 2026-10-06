@@ -2122,6 +2122,13 @@ thread_local! {
     /// 2-way (most-recent-first) so a loop interleaving writes to TWO streams (stdout +
     /// a log file, app + access log — measured 1.58x thrash on the old single entry) keeps
     /// BOTH resolved lock-free instead of missing every alternating call.
+    ///
+    /// Per-thread on purpose (measured 2026-10-06: a process global saved the
+    /// `__tls_get_addr`, putc 7.0 -> 4.9 ns, but was NOT kept): fl's
+    /// `__libc_single_threaded` is cleared only by fl's own pthread_create, so in
+    /// a process whose threads come from elsewhere (fl's own test binaries, whose
+    /// Rust threads use glibc's pthread_create; raw clone) a global cache would
+    /// be shared and torn across threads, where this one stays per thread.
     static WRITE_CACHE: std::cell::Cell<[(usize, u64, *mut StdioStream); 2]> =
         const { std::cell::Cell::new([(usize::MAX, 0, std::ptr::null_mut()); 2]) };
 }
