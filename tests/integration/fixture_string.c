@@ -2,6 +2,7 @@
  * Part of frankenlibc C fixture suite (bd-3jh).
  * Exit 0 = PASS, nonzero = FAIL with diagnostic to stderr.
  */
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <malloc.h>
@@ -171,6 +172,97 @@ static int test_strlen_page_boundary(void) {
     return fails;
 }
 
+/* Byte-at-a-time span: the POSIX definition, independent of the library under test. */
+static size_t ref_span(const char *s, const char *set, int stop_in_set) {
+    size_t i = 0;
+    for (; s[i] != '\0'; i++) {
+        int member = 0;
+        for (const char *c = set; *c != '\0'; c++) {
+            if (*c == s[i]) { member = 1; break; }
+        }
+        if (member == stop_in_set) break;
+    }
+    return i;
+}
+
+/* strspn/strcspn/strpbrk/strtok/strtok_r/strsep over 5..64-byte sets
+ * (bd-rc0923-epic-eeuy4f.13).
+ *
+ * These sets take the SSE4.2 `pcmpistri` probe and the AVX2 PSHUFB classifier.
+ * A baseline x86-64 build must select those at run time: run on a CPU without
+ * them, an unguarded call is SIGILL. Spans long enough to outrun the probe
+ * (hundreds of bytes) and sets on both sides of the 16-byte needle boundary are
+ * covered, each checked against `ref_span`. */
+static int test_span_long_sets(void) {
+    static const char *const sets[] = {
+        "abcde",                                                  /* 5 */
+        "abcdefghijklmnop",                                       /* 16 */
+        "abcdefghijklmnopq",                                      /* 17 */
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN",               /* 40 */
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/", /* 64 */
+    };
+    static const size_t spans[] = {0, 3, 31, 100, 700};
+    char buf[1024];
+    int fails = 0;
+    for (size_t si = 0; si < sizeof sets / sizeof sets[0]; si++) {
+        const char *set = sets[si];
+        size_t set_len = strlen(set);
+        for (size_t pi = 0; pi < sizeof spans / sizeof spans[0]; pi++) {
+            size_t span = spans[pi];
+            /* `span` members (cycling through the set), one non-member, a tail. */
+            for (size_t i = 0; i < span; i++) buf[i] = set[i % set_len];
+            memcpy(buf + span, "!tail", 6);
+            size_t want = ref_span(buf, set, 0);
+            size_t got = strspn(buf, set);
+            if (got != want || want != span) {
+                fprintf(stderr, "FAIL: strspn set=%zu span=%zu -> %zu (want %zu)\n",
+                        set_len, span, got, want);
+                fails = 1;
+            }
+            /* The complement: `span` non-members, then a member. */
+            for (size_t i = 0; i < span; i++) buf[i] = '.';
+            buf[span] = set[set_len - 1];
+            buf[span + 1] = '\0';
+            want = ref_span(buf, set, 1);
+            got = strcspn(buf, set);
+            char *hit = strpbrk(buf, set);
+            if (got != want || want != span || hit != buf + span) {
+                fprintf(stderr, "FAIL: strcspn/strpbrk set=%zu span=%zu -> %zu/%td (want %zu)\n",
+                        set_len, span, got, hit ? hit - buf : (ptrdiff_t)-1, want);
+                fails = 1;
+            }
+            /* Tokenizers: delimiters around a `span`-byte token of non-members. */
+            if (span == 0) continue;
+            memcpy(buf, set, 3);
+            for (size_t i = 0; i < span; i++) buf[3 + i] = '.';
+            memcpy(buf + 3 + span, set, set_len);
+            buf[3 + span + set_len] = '\0';
+            char copy[1024];
+            memcpy(copy, buf, sizeof copy);
+            char *save = NULL;
+            char *tok = strtok_r(copy, set, &save);
+            if (tok != copy + 3 || strlen(tok) != span || strtok_r(NULL, set, &save) != NULL) {
+                fprintf(stderr, "FAIL: strtok_r set=%zu span=%zu\n", set_len, span);
+                fails = 1;
+            }
+            memcpy(copy, buf, sizeof copy);
+            tok = strtok(copy, set);
+            if (tok != copy + 3 || strlen(tok) != span || strtok(NULL, set) != NULL) {
+                fprintf(stderr, "FAIL: strtok set=%zu span=%zu\n", set_len, span);
+                fails = 1;
+            }
+            memcpy(copy, buf, sizeof copy);
+            char *cursor = copy + 3;
+            tok = strsep(&cursor, set);
+            if (tok != copy + 3 || strlen(tok) != span || cursor != copy + 4 + span) {
+                fprintf(stderr, "FAIL: strsep set=%zu span=%zu\n", set_len, span);
+                fails = 1;
+            }
+        }
+    }
+    return fails;
+}
+
 static int test_strcmp(void) {
     if (strcmp("abc", "abc") != 0) { fprintf(stderr, "FAIL: strcmp equal\n"); return 1; }
     if (strcmp("abc", "abd") >= 0) { fprintf(stderr, "FAIL: strcmp less\n"); return 1; }
@@ -190,11 +282,12 @@ int main(void) {
     fails += test_strlen_tracked_unterminated_bound();
     fails += test_strlen_page_boundary();
     fails += test_strcmp();
+    fails += test_span_long_sets();
 
     if (fails) {
         fprintf(stderr, "fixture_string: %d FAILED\n", fails);
         return 1;
     }
-    printf("fixture_string: PASS (9 tests)\n");
+    printf("fixture_string: PASS (10 tests)\n");
     return 0;
 }

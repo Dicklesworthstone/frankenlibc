@@ -2965,7 +2965,8 @@ unsafe fn all_bytes_ascii(p: *const u8, len: usize) -> bool {
 /// no page-crossing risk over the proven set4 loads.
 ///
 /// # Safety
-/// `ptr` must be a valid NUL-terminated C string; AVX2 is enabled crate-wide.
+/// `ptr` must be a valid NUL-terminated C string, and the CPU must have AVX2:
+/// callers check [`span_simd_available`].
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn scan_c_string_pshufb(
@@ -2975,7 +2976,8 @@ unsafe fn scan_c_string_pshufb(
     stop_in_set: bool,
 ) -> usize {
     use std::arch::x86_64::*;
-    // SAFETY of every intrinsic below: AVX2 enabled crate-wide; loads are page-safe
+    // SAFETY of every intrinsic below: AVX2 is enabled on this function and the
+    // caller checked the CPU has it (`span_simd_available`); loads are page-safe
     // per the doc comment (aligned-down first load + head-mask, 32-aligned after).
     unsafe {
         let lo_table = _mm256_broadcastsi128_si256(_mm_loadu_si128(lo16.as_ptr().cast()));
@@ -3160,8 +3162,8 @@ enum SpanProbe {
 /// LUT path refuses.
 ///
 /// # Safety
-/// `s` and `set` must be valid NUL-terminated C strings. SSE4.2 is implied by the
-/// crate-wide AVX2 mandate (`-Ctarget-feature=+avx2`).
+/// `s` and `set` must be valid NUL-terminated C strings, and the CPU must have
+/// SSE4.2: callers check [`span_simd_available`].
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "sse4.2")]
 unsafe fn span_probe_cmpistri(s: *const u8, set: *const u8, stop_in_set: bool) -> SpanProbe {
@@ -3432,14 +3434,27 @@ unsafe fn span_probe_scan_bank<const N: usize>(
     }
 }
 
+/// Whether this CPU may run the span kernels: the SSE4.2 `pcmpistri` probe
+/// ([`span_probe_cmpistri`]) and the AVX2 PSHUFB classifier
+/// ([`scan_c_string_pshufb`]). The shipped library is built for baseline x86-64,
+/// so nothing implies either; without them strspn/strcspn/strpbrk/strtok/
+/// strtok_r/strsep take their portable scans (bd-rc0923-epic-eeuy4f.13). A test
+/// of the CPUID bits `std` caches; constant `true` in a build targeting AVX2.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn span_simd_available() -> bool {
+    std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("sse4.2")
+}
+
 /// One COMPLETE span scan for a 5..=64-byte set: [`span_probe_cmpistri`] answers it
 /// outright when the span is short, and hands its proven prefix to the PSHUFB loop
 /// when the span outruns the probe budget. `None` means the probe declined (set
 /// outside 5..=64 bytes, a page-crossing set load, or a non-ASCII set that has no
-/// PSHUFB form) and the caller must use its existing path.
+/// PSHUFB form) or the CPU lacks the kernels' ISA, and the caller must use its
+/// existing path.
 ///
 /// # Safety
-/// `s` and `set` must be valid NUL-terminated C strings; AVX2/SSE4.2 crate-wide.
+/// `s` and `set` must be valid NUL-terminated C strings.
 #[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn span_scan_cmpistri(
@@ -3447,7 +3462,11 @@ unsafe fn span_scan_cmpistri(
     set: *const c_char,
     stop_in_set: bool,
 ) -> Option<usize> {
-    // SAFETY: forwarded from the caller's contract.
+    if !span_simd_available() {
+        return None;
+    }
+    // SAFETY: forwarded from the caller's contract; the CPU has SSE4.2 and AVX2,
+    // checked just above.
     unsafe {
         match span_probe_cmpistri(s.cast::<u8>(), set.cast::<u8>(), stop_in_set) {
             SpanProbe::Stop(idx) => Some(idx),
@@ -7186,7 +7205,10 @@ pub unsafe extern "C" fn strtok(s: *mut c_char, delim: *const c_char) -> *mut c_
                 return current.add(start) as *mut c_char;
             }
             #[cfg(target_arch = "x86_64")]
-            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
                 let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
                 if *current.add(start).cast::<u8>() == 0 {
@@ -7471,7 +7493,10 @@ pub unsafe extern "C" fn strtok_r(
                 return current.add(start) as *mut c_char;
             }
             #[cfg(target_arch = "x86_64")]
-            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
                 let start = scan_c_string_pshufb(current, &lo16, &hi16, false);
                 if *current.add(start).cast::<u8>() == 0 {
@@ -7920,7 +7945,7 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             // pass over `accept`, so the LUT path's fixed setup is skipped entirely
             // rather than merely shortened.
             #[cfg(target_arch = "x86_64")]
-            {
+            if span_simd_available() {
                 match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), false) {
                     SpanProbe::Stop(idx) => return idx,
                     // The probe consumes only for sets it accepted (5..=64 bytes), so
@@ -7959,7 +7984,10 @@ pub unsafe extern "C" fn strspn(s: *const c_char, accept: *const c_char) -> usiz
             // (strspn = stop on non-member OR NUL), no prescan. Byte-identical to
             // core::str::strspn. Non-ASCII sets fall through to the slice path.
             #[cfg(target_arch = "x86_64")]
-            if accept_len > 4 && all_bytes_ascii(accept.cast::<u8>(), accept_len) {
+            if accept_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(accept.cast::<u8>(), accept_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
                 return scan_c_string_pshufb(s, &lo16, &hi16, false);
             }
@@ -8109,7 +8137,7 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
             // this is the arm that lost worst to glibc (14.81x at span 4 with a
             // 16-byte set).
             #[cfg(target_arch = "x86_64")]
-            {
+            if span_simd_available() {
                 match span_probe_cmpistri(s.cast::<u8>(), reject.cast::<u8>(), true) {
                     SpanProbe::Stop(idx) => return idx,
                     SpanProbe::Resume {
@@ -8150,7 +8178,10 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, reject: *const c_char) -> usi
             // (strcspn = stop on member OR NUL), no prescan. Byte-identical to
             // core::str::strcspn. Non-ASCII sets fall through to the slice path.
             #[cfg(target_arch = "x86_64")]
-            if reject_len > 4 && all_bytes_ascii(reject.cast::<u8>(), reject_len) {
+            if reject_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(reject.cast::<u8>(), reject_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(reject.cast::<u8>(), reject_len);
                 return scan_c_string_pshufb(s, &lo16, &hi16, true);
             }
@@ -8288,7 +8319,7 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
             #[allow(unused_mut)]
             let mut known_accept_len: Option<usize> = None;
             #[cfg(target_arch = "x86_64")]
-            {
+            if span_simd_available() {
                 let hit = match span_probe_cmpistri(s.cast::<u8>(), accept.cast::<u8>(), true) {
                     SpanProbe::Stop(idx) => Some(idx),
                     SpanProbe::Resume {
@@ -8352,7 +8383,10 @@ pub unsafe extern "C" fn strpbrk(s: *const c_char, accept: *const c_char) -> *mu
             // Large ALL-ASCII accept set (>4): FUSED page-safe PSHUFB early-stop
             // (first member OR NUL); map member→pointer, NUL→null. No prescan.
             #[cfg(target_arch = "x86_64")]
-            if accept_len > 4 && all_bytes_ascii(accept.cast::<u8>(), accept_len) {
+            if accept_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(accept.cast::<u8>(), accept_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(accept.cast::<u8>(), accept_len);
                 let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
                 return if *s.add(idx).cast::<u8>() != 0 {
@@ -9739,7 +9773,10 @@ pub unsafe extern "C" fn strsep(stringp: *mut *mut c_char, delim: *const c_char)
                 return s;
             }
             #[cfg(target_arch = "x86_64")]
-            if delim_len > 4 && all_bytes_ascii(delim.cast::<u8>(), delim_len) {
+            if delim_len > 4
+                && span_simd_available()
+                && all_bytes_ascii(delim.cast::<u8>(), delim_len)
+            {
                 let (lo16, hi16) = build_pshufb_lut(delim.cast::<u8>(), delim_len);
                 let idx = scan_c_string_pshufb(s, &lo16, &hi16, true);
                 let stop = s.add(idx).cast::<u8>();
