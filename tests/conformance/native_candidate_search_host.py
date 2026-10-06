@@ -33,6 +33,11 @@ def main():
         output = bytearray(native)
         output[offset:offset + len(value)] = value
         return output
+    def edited(*fields):
+        output = bytearray(native)
+        for offset, value in fields:
+            output[offset:offset + len(value)] = value
+        return output
     cases = [
         ("wrong-class", changed(4, b"\x01"), True),
         ("wrong-machine", changed(18, foreign.to_bytes(2, "little")), True),
@@ -40,6 +45,17 @@ def main():
         ("bad-version", changed(20, (2).to_bytes(4, "little")), False),
         ("short-header", native[:63], False),
         ("native", native, True),
+        ("ident-zero", changed(6, bytes([0])), False),
+        ("ident-two", changed(6, bytes([2])), False),
+        ("ident-max", changed(6, bytes([255])), False),
+        ("file-zero", changed(20, (0).to_bytes(4, "little")), False),
+        ("file-max", changed(20, (2**32 - 1).to_bytes(4, "little")), False),
+        ("file-high-byte", changed(20, (257).to_bytes(4, "little")), False),
+        ("foreign-bad-version", edited(
+            (18, foreign.to_bytes(2, "little")), (20, (2).to_bytes(4, "little"))), False),
+        ("foreign-bad-ident", edited((18, foreign.to_bytes(2, "little")), (6, bytes([2]))), True),
+        ("class-bad-version", edited((4, bytes([1])), (20, (2).to_bytes(4, "little"))), True),
+        ("class-bad-ident", edited((4, bytes([1])), (6, bytes([2]))), True),
     ]
     invocations = 0
     for search in ["runpath", "rpath", "environment"]:
@@ -66,7 +82,7 @@ def main():
     result = execute([str(probe), str(root / "parent-runpath.so"), "success", "resident"], env=env)
     print(f"PASS resident-inode: {result.stdout.strip()}", flush=True)
     invocations += 1
-    assert invocations == 19
+    assert invocations == 49
     print(f"host-glibc candidate search: {invocations} passed; fixtures {root}")
 
 if __name__ == "__main__":
