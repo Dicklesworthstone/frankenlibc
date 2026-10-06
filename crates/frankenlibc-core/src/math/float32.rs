@@ -50,7 +50,9 @@ const F32_PIO2M: f64 = f64::from_bits(0x3c91a62633145c07);
 const F32_RED_LO: f32 = 7.0; // musl sinf small poly covers |x| <= 9π/4 ≈ 7.06
 const F32_RED_HI: f32 = 1.0e15; // f64 2-part split stays accurate; above -> libm
 
-#[inline]
+/// Always inlined: `sinf`/`cosf`'s AVX2+FMA twins must compile this fused
+/// reduction (and its `roundeven`) too.
+#[inline(always)]
 fn reduce_pio2_f32(x: f32) -> (i64, f32) {
     let xd = x as f64;
     let kd = (xd * F32_TWO_OVER_PI).round_ties_even();
@@ -59,8 +61,13 @@ fn reduce_pio2_f32(x: f32) -> (i64, f32) {
     (kd as i64, r as f32)
 }
 
-#[inline]
-pub fn sinf(x: f32) -> f32 {
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn sinf(x: f32) -> f32 => sinf_body;
+}
+
+#[inline(always)]
+fn sinf_body(x: f32) -> f32 {
     let ax = x.abs();
     if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
         return libm::sinf(x);
@@ -74,8 +81,13 @@ pub fn sinf(x: f32) -> f32 {
     }
 }
 
-#[inline]
-pub fn cosf(x: f32) -> f32 {
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn cosf(x: f32) -> f32 => cosf_body;
+}
+
+#[inline(always)]
+fn cosf_body(x: f32) -> f32 {
     let ax = x.abs();
     if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
         return libm::cosf(x);
@@ -842,8 +854,13 @@ const C3: f64 = f64::from_bits(0x3ebc6b19384ecd93);
 const INV_LN2_32: f64 = f64::from_bits(0x40471547652b82fe);
 const SHIFTER: f64 = f64::from_bits(0x4338000000000000); // 1.5 * 2^52
 
-#[inline]
-pub fn sinhf(x: f32) -> f32 {
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn sinhf(x: f32) -> f32 => sinhf_body;
+}
+
+#[inline(always)]
+fn sinhf_body(x: f32) -> f32 {
     let ix = x.to_bits();
     let ax_bits = ix & 0x7fff_ffff;
     if ax_bits >= 0x42b3_0000 {
@@ -896,8 +913,13 @@ pub fn sinhf(x: f32) -> f32 {
     if (ix >> 31) != 0 { -res } else { res }
 }
 
-#[inline]
-pub fn coshf(x: f32) -> f32 {
+super::avx2_fma_dispatch! {
+    #[inline]
+    pub fn coshf(x: f32) -> f32 => coshf_body;
+}
+
+#[inline(always)]
+fn coshf_body(x: f32) -> f32 {
     let ix = x.to_bits();
     let ax_bits = ix & 0x7fff_ffff;
     if ax_bits >= 0x42b3_0000 {
@@ -1415,15 +1437,20 @@ pub fn logbf(x: f32) -> f32 {
 
 // --- Special functions ---
 
-#[inline]
-/// Error function, single precision.
-///
-/// Verbatim port of the ARM optimized-routines `erff` (the algorithm glibc 2.42
-/// ships): a pure polynomial on |x| < 0.875 and `exp` of a polynomial on
-/// [0.875, 4); ±1 beyond. Worst-case error ~1.09 ULP. `libm::erff` (fdlibm) is
-/// ~2x slower. The rare tiny |x| < 2^-28 path defers to `libm::erff` so the
-/// underflow/subnormal flag semantics stay exact.
-pub fn erff(x: f32) -> f32 {
+super::avx2_fma_dispatch! {
+    /// Error function, single precision.
+    ///
+    /// Verbatim port of the ARM optimized-routines `erff` (the algorithm glibc 2.42
+    /// ships): a pure polynomial on |x| < 0.875 and `exp` of a polynomial on
+    /// [0.875, 4); ±1 beyond. Worst-case error ~1.09 ULP. `libm::erff` (fdlibm) is
+    /// ~2x slower. The rare tiny |x| < 2^-28 path defers to `libm::erff` so the
+    /// underflow/subnormal flag semantics stay exact.
+    #[inline]
+    pub fn erff(x: f32) -> f32 => erff_body;
+}
+
+#[inline(always)]
+fn erff_body(x: f32) -> f32 {
     const A: [f32; 6] = [
         f32::from_bits(0x3e0375d3),
         f32::from_bits(0xbec09370),
@@ -1851,6 +1878,29 @@ pub fn significandf(x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avx2_fma_twins_match_baseline_bodies() {
+        use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
+        // f32 inputs widened exactly to f64 and the results narrowed back.
+        let inputs = avx2_fma_dispatch_inputs(-100.0, 100.0)
+            .into_iter()
+            .map(|x| f64::from(x as f32))
+            .collect::<Vec<_>>();
+        let f32_case = |name: &str, dispatched: fn(f32) -> f32, body: fn(f32) -> f32| {
+            assert_dispatch_matches_body(
+                name,
+                &inputs,
+                |x| f64::from(dispatched(x as f32)),
+                |x| f64::from(body(x as f32)),
+            );
+        };
+        f32_case("sinf", sinf, sinf_body);
+        f32_case("cosf", cosf, cosf_body);
+        f32_case("sinhf", sinhf, sinhf_body);
+        f32_case("coshf", coshf, coshf_body);
+        f32_case("erff", erff, erff_body);
+    }
 
     #[test]
     fn acoshf_domain_and_j1f_sign_match_glibc() {

@@ -930,8 +930,13 @@ fn atanh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `atanh`.
-pub fn atanh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `atanh`.
+    pub fn atanh(x: f64) -> f64 => atanh_body;
+}
+
+#[inline(always)]
+fn atanh_body(x: f64) -> f64 {
     let ax = x.abs();
     let aix = ax.to_bits();
     if aix >= 0x3ff0_0000_0000_0000 {
@@ -1526,8 +1531,13 @@ fn asinh_refine(x: f64, zh: f64, zl: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `asinh`.
-pub fn asinh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `asinh`.
+    pub fn asinh(x: f64) -> f64 => asinh_body;
+}
+
+#[inline(always)]
+fn asinh_body(x: f64) -> f64 {
     let ax = x.abs();
     let u = ax.to_bits();
     if u < 0x3fbb_0000_0000_0000 {
@@ -1751,8 +1761,13 @@ fn acosh_refine(x: f64, a: f64) -> f64 {
     res
 }
 
-/// Correctly rounded `acosh`.
-pub fn acosh(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `acosh`.
+    pub fn acosh(x: f64) -> f64 => acosh_body;
+}
+
+#[inline(always)]
+fn acosh_body(x: f64) -> f64 {
     let ix = x.to_bits();
     if ix >= 0x7ff0_0000_0000_0000 {
         // x < 0 (sign bit set), +inf or NaN.
@@ -2079,8 +2094,13 @@ fn erf_accurate(z: f64) -> (f64, f64) {
     (h, l)
 }
 
-/// Correctly rounded `erf`.
-pub fn erf(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `erf`.
+    pub fn erf(x: f64) -> f64 => erf_body;
+}
+
+#[inline(always)]
+fn erf_body(x: f64) -> f64 {
     let z = x.abs();
     let ux = z.to_bits();
     if ux > 0x4017_afb4_8dc9_6626 {
@@ -2403,8 +2423,13 @@ fn erfc_accurate(x: f64) -> f64 {
     erfc_asympt_accurate(x)
 }
 
-/// Correctly rounded `erfc`.
-pub fn erfc(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `erfc`.
+    pub fn erfc(x: f64) -> f64 => erfc_body;
+}
+
+#[inline(always)]
+fn erfc_body(x: f64) -> f64 {
     let t = x.to_bits();
     let at = t & 0x7fff_ffff_ffff_ffff;
     if t >= 0x8000_0000_0000_0000 {
@@ -2770,8 +2795,13 @@ fn atan_refine2(x: f64, a: f64) -> f64 {
     v1 + v0
 }
 
-/// Correctly rounded `atan`.
-pub fn atan(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `atan`.
+    pub fn atan(x: f64) -> f64 => atan_body;
+}
+
+#[inline(always)]
+fn atan_body(x: f64) -> f64 {
     const CH: [f64; 4] = [
         hf!("0x1p+0"),
         hf!("-0x1.555555555552bp-2"),
@@ -3161,8 +3191,13 @@ fn sin_large(x: f64) -> f64 {
     sin_large_accurate(x)
 }
 
-/// Correctly rounded `sin`.
-pub fn sin(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `sin`.
+    pub fn sin(x: f64) -> f64 => sin_body;
+}
+
+#[inline(always)]
+fn sin_body(x: f64) -> f64 {
     let t = x.to_bits();
     let au = t << 1;
     if au <= 0x7cae_26e8_9224_7dec {
@@ -3821,8 +3856,13 @@ fn cos_accurate(x: f64) -> f64 {
     dint_tod(u)
 }
 
-/// Correctly rounded `cos`.
-pub fn cos(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `cos`.
+    pub fn cos(x: f64) -> f64 => cos_body;
+}
+
+#[inline(always)]
+fn cos_body(x: f64) -> f64 {
     let t = x.to_bits();
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
@@ -4066,8 +4106,13 @@ fn tan_accurate(x: f64) -> f64 {
     dint_tod(q)
 }
 
-/// Correctly rounded `tan`.
-pub fn tan(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `tan`.
+    pub fn tan(x: f64) -> f64 => tan_body;
+}
+
+#[inline(always)]
+fn tan_body(x: f64) -> f64 {
     let t = x.to_bits();
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
@@ -4500,8 +4545,13 @@ fn tgamma_domain_nan(x: f64) -> f64 {
     f64::from_bits(n.to_bits() & !(1u64 << 63))
 }
 
-/// Correctly rounded `tgamma`.
-pub fn tgamma(x: f64) -> f64 {
+avx2_fma_dispatch! {
+    /// Correctly rounded `tgamma`.
+    pub fn tgamma(x: f64) -> f64 => tgamma_body;
+}
+
+#[inline(always)]
+fn tgamma_body(x: f64) -> f64 {
     let t = x.to_bits();
     let ax = t << 1;
     if ax >= 0x7ffu64 << 53 {
@@ -5132,8 +5182,13 @@ fn lg_piece(j: usize, z: f64) -> (f64, f64) {
     polydddfst(z, &LG_CH[j], fl)
 }
 
-/// Correctly rounded `lgamma_r`: `(log|Gamma(x)|, sign of Gamma(x))`.
-pub fn lgamma_r(x: f64) -> (f64, i32) {
+avx2_fma_dispatch! {
+    /// Correctly rounded `lgamma_r`: `(log|Gamma(x)|, sign of Gamma(x))`.
+    pub fn lgamma_r(x: f64) -> (f64, i32) => lgamma_r_body;
+}
+
+#[inline(always)]
+fn lgamma_r_body(x: f64) -> (f64, i32) {
     let t = x.to_bits();
     let nx = t << 1;
     if nx >= 0xfeae_a9b2_4f16_a34c {
@@ -5881,5 +5936,34 @@ mod tests {
             );
         }
         assert!(lgamma_r(f64::NAN).0.is_nan());
+    }
+
+    #[test]
+    fn avx2_fma_twins_match_baseline_bodies() {
+        use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
+        // A band reaching past the fast reductions' range, plus the full range.
+        let inputs = avx2_fma_dispatch_inputs(-1.0e6, 1.0e6);
+        assert_dispatch_matches_body("sin", &inputs, sin, sin_body);
+        assert_dispatch_matches_body("cos", &inputs, cos, cos_body);
+        assert_dispatch_matches_body("tan", &inputs, tan, tan_body);
+        assert_dispatch_matches_body("atan", &inputs, atan, atan_body);
+        assert_dispatch_matches_body("asinh", &inputs, asinh, asinh_body);
+        let near_one = avx2_fma_dispatch_inputs(-1.5, 1.5);
+        assert_dispatch_matches_body("atanh", &near_one, atanh, atanh_body);
+        let above_one = avx2_fma_dispatch_inputs(1.0, 1.0e4);
+        assert_dispatch_matches_body("acosh", &above_one, acosh, acosh_body);
+        let special = avx2_fma_dispatch_inputs(-30.0, 30.0);
+        assert_dispatch_matches_body("erf", &special, erf, erf_body);
+        assert_dispatch_matches_body("erfc", &special, erfc, erfc_body);
+        assert_dispatch_matches_body("tgamma", &special, tgamma, tgamma_body);
+        assert_dispatch_matches_body(
+            "lgamma_r",
+            &special,
+            |x| lgamma_r(x).0,
+            |x| lgamma_r_body(x).0,
+        );
+        for &x in &special {
+            assert_eq!(lgamma_r(x).1, lgamma_r_body(x).1, "lgamma_r({x:e}) sign");
+        }
     }
 }

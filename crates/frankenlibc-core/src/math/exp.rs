@@ -1,16 +1,21 @@
 //! Exponential and logarithmic functions.
 
-/// `exp`: ARM optimized-routines' algorithm -- the one glibc 2.43 ships --
-/// over the shared `__exp_data` table, so results are bit-identical to glibc's
-/// (bd-otip6a: the previous `exp2(x·log2 e)` route, within a 4-ULP contract,
-/// was not correctly rounded on ~34% of inputs, a visible difference in any
-/// program that prints a float). On FMA hardware glibc runs a build of this
-/// kernel compiled with contraction, so the multiply-adds are fused exactly
-/// where its compiler fuses them: every product with a single use (measured:
-/// 0 differences from glibc on 3.7M interior and 3M large-|x| inputs; 1873
-/// with no fusion). |x| >= 1024, inf and nan keep the generic path.
-#[inline]
-pub fn exp(x: f64) -> f64 {
+super::avx2_fma_dispatch! {
+    /// `exp`: ARM optimized-routines' algorithm -- the one glibc 2.43 ships --
+    /// over the shared `__exp_data` table, so results are bit-identical to glibc's
+    /// (bd-otip6a: the previous `exp2(x·log2 e)` route, within a 4-ULP contract,
+    /// was not correctly rounded on ~34% of inputs, a visible difference in any
+    /// program that prints a float). On FMA hardware glibc runs a build of this
+    /// kernel compiled with contraction, so the multiply-adds are fused exactly
+    /// where its compiler fuses them: every product with a single use (measured:
+    /// 0 differences from glibc on 3.7M interior and 3M large-|x| inputs; 1873
+    /// with no fusion). |x| >= 1024, inf and nan keep the generic path.
+    #[inline]
+    pub fn exp(x: f64) -> f64 => exp_body;
+}
+
+#[inline(always)]
+fn exp_body(x: f64) -> f64 {
     let abstop = ((x.to_bits() >> 52) & 0x7ff) as u32;
     if abstop >= 0x409 {
         // |x| >= 1024, inf, nan: overflow/underflow/special values.
@@ -895,8 +900,9 @@ fn pow_math_invalid(x: f64) -> f64 {
 }
 
 /// log(x) in double-double — returns (y, tail). `ix` is the bit pattern of x,
-/// already normalized into the subnormal range by the caller.
-#[inline]
+/// already normalized into the subnormal range by the caller. Always inlined:
+/// `pow_fused`'s AVX2+FMA twin must compile this fused body too.
+#[inline(always)]
 fn pow_log_inline(ix: u64) -> (f64, f64) {
     let ln2hi = f64::from_bits(POW_LN2HI);
     let ln2lo = f64::from_bits(POW_LN2LO);
@@ -981,8 +987,9 @@ fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
     f64::from_bits(0x0010_0000_0000_0000) * y // 0x1p-1022
 }
 
-/// sign*exp(x+xtail); `sign_bias` is `POW_SIGN_BIAS` or 0.
-#[inline]
+/// sign*exp(x+xtail); `sign_bias` is `POW_SIGN_BIAS` or 0. Always inlined, as
+/// `pow_log_inline`.
+#[inline(always)]
 fn pow_exp_inline(x: f64, xtail: f64, sign_bias: u64) -> f64 {
     let invln2n = f64::from_bits(POW_EXP_INVLN2N);
     let negln2hin = f64::from_bits(POW_EXP_NEGLN2HIN);
@@ -1029,15 +1036,20 @@ fn pow_exp_inline(x: f64, xtail: f64, sign_bias: u64) -> f64 {
     scale.mul_add(tmp, scale)
 }
 
-/// Fused `x^y`. Faithful port of glibc `__pow`; handles the full IEEE domain
-/// (zeros/inf/nan/negative bases) bit-exactly. Value only — the ABI `pow`
-/// wrapper sets errno.
-///
-/// Kept out-of-line (like glibc's standalone `__pow`): inlining this large body
-/// into `pow()` alongside the integer/half-integer gauntlet bloated the merged
-/// function and spilled registers, slowing the hot path ~35% vs a clean call.
-#[inline(never)]
-pub fn pow_fused(x: f64, y: f64) -> f64 {
+super::avx2_fma_dispatch! {
+    /// Fused `x^y`. Faithful port of glibc `__pow`; handles the full IEEE domain
+    /// (zeros/inf/nan/negative bases) bit-exactly. Value only — the ABI `pow`
+    /// wrapper sets errno.
+    ///
+    /// Kept out-of-line (like glibc's standalone `__pow`): inlining this large body
+    /// into `pow()` alongside the integer/half-integer gauntlet bloated the merged
+    /// function and spilled registers, slowing the hot path ~35% vs a clean call.
+    #[inline(never)]
+    pub fn pow_fused(x: f64, y: f64) -> f64 => pow_fused_body;
+}
+
+#[inline(always)]
+fn pow_fused_body(x: f64, y: f64) -> f64 {
     let mut sign_bias: u64 = 0;
     let mut ix = x.to_bits();
     let iy = y.to_bits();
@@ -1131,10 +1143,15 @@ pub fn expm1(x: f64) -> f64 {
     libm::expm1(x)
 }
 
-/// Natural log: ARM optimized-routines' `log` (glibc's `__log`), bit-identical
-/// to glibc's results. Subnormal/zero/inf/nan defer to `libm::log`.
-#[inline]
-pub fn log(x: f64) -> f64 {
+super::avx2_fma_dispatch! {
+    /// Natural log: ARM optimized-routines' `log` (glibc's `__log`), bit-identical
+    /// to glibc's results. Subnormal/zero/inf/nan defer to `libm::log`.
+    #[inline]
+    pub fn log(x: f64) -> f64 => log_body;
+}
+
+#[inline(always)]
+fn log_body(x: f64) -> f64 {
     // Dedicated f64 natural-log kernel — a verbatim port of ARM optimized-routines
     // math/log.c (N=128, LOG_POLY_ORDER=6, LOG_POLY1_ORDER=12, HAVE_FAST_FMA path), the
     // kernel glibc adopted as __ieee754_log. Replaces the old `log2_kernel(x)*LN_2`
@@ -1210,17 +1227,22 @@ pub fn log(x: f64) -> f64 {
     libm::log(x)
 }
 
-/// `log2`: ARM optimized-routines' algorithm and tables (`log2_data`) -- the
-/// kernel glibc ships -- so results are bit-identical to glibc's (bd-otip6a;
-/// the previous in-house table kernel, within a 4-ULP contract, differed on
-/// 23.6% of inputs, and a profile grid returned precomputed bits for a
-/// benchmark's inputs). glibc's FMA build fuses a product into its users when
-/// every user is an add in the same block, including the twice-used `p` near
-/// 1; reproduced exactly (measured: 0 differences / 3M vs 1334 with
-/// single-use-only fusion). Zero, negatives, inf and nan keep the libm path
-/// and its FE/errno behavior.
-#[inline]
-pub fn log2(x: f64) -> f64 {
+super::avx2_fma_dispatch! {
+    /// `log2`: ARM optimized-routines' algorithm and tables (`log2_data`) -- the
+    /// kernel glibc ships -- so results are bit-identical to glibc's (bd-otip6a;
+    /// the previous in-house table kernel, within a 4-ULP contract, differed on
+    /// 23.6% of inputs, and a profile grid returned precomputed bits for a
+    /// benchmark's inputs). glibc's FMA build fuses a product into its users when
+    /// every user is an add in the same block, including the twice-used `p` near
+    /// 1; reproduced exactly (measured: 0 differences / 3M vs 1334 with
+    /// single-use-only fusion). Zero, negatives, inf and nan keep the libm path
+    /// and its FE/errno behavior.
+    #[inline]
+    pub fn log2(x: f64) -> f64 => log2_body;
+}
+
+#[inline(always)]
+fn log2_body(x: f64) -> f64 {
     use crate::math::log2_data::{LOG2_A, LOG2_B, LOG2_INVLN2HI, LOG2_INVLN2LO, LOG2_TAB};
     const OFF: u64 = 0x3fe6_0000_0000_0000;
     let ix = x.to_bits();
@@ -1800,6 +1822,28 @@ mod tests {
     fn approx_eq(lhs: f64, rhs: f64, abs_tol: f64, rel_tol: f64) -> bool {
         let diff = (lhs - rhs).abs();
         diff <= abs_tol.max(rel_tol * lhs.abs().max(rhs.abs()))
+    }
+
+    #[test]
+    fn avx2_fma_twins_match_baseline_bodies() {
+        use crate::math::{assert_dispatch_matches_body, avx2_fma_dispatch_inputs};
+        let wide = avx2_fma_dispatch_inputs(-750.0, 750.0);
+        assert_dispatch_matches_body("exp", &wide, exp, exp_body);
+        let positive = avx2_fma_dispatch_inputs(0.0, 4.0);
+        assert_dispatch_matches_body("log", &positive, log, log_body);
+        assert_dispatch_matches_body("log2", &positive, log2, log2_body);
+        // pow over (base, exponent) pairs drawn from the same streams.
+        let bases = avx2_fma_dispatch_inputs(0.0, 8.0);
+        let exponents = avx2_fma_dispatch_inputs(-40.0, 40.0);
+        for (i, &x) in bases.iter().enumerate() {
+            let y = exponents[(i * 7919) % exponents.len()];
+            assert_dispatch_matches_body(
+                "pow",
+                &[y],
+                |y| pow_fused(x, y),
+                |y| pow_fused_body(x, y),
+            );
+        }
     }
 
     /// 4-ULP comparison (the math conformance contract). `f64::powf` resolves
