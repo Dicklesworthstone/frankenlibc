@@ -41293,3 +41293,158 @@ ones that would notice a threading-policy depth counter behaving differently.
   the fast paths serve `%s`. Reopen only for a stream (`fscanf`) or wide (`swscanf`) shape that
   provably runs `skip_ws`/`ws_seq_len` per byte, with a same-invocation self-A/B
   (`--fl-so-b`).
+
+## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED, TRIMMED): the strict `strftime` exact-format dispatcher that merge `0be7b9dafe87` silently dropped measures 0.10-0.61x vs live glibc on 21 cases; the fused single-name path is REJECTED
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.1430` (headline `alias_D`, `%D`, which main runs at 6.33x);
+  `incumbent_bootstrap_median_ci=[0.1413,0.1451]`;
+  `null_bootstrap_median_ci=[0.9818,1.0013]`;
+  `bench_elf_sha256=dff8a95b6e6ef37b40811eefac4f414047ee757c923a179184bb5767d7e7ccbb`
+  (in-process self-report of the "final" arm below, a local build); `cv_used=false`.
+- **WHAT THIS IS.** The 18 ABI commits `adaecb653`..`9e0265c4f` (2026-07-31..08-02) compiled exact
+  C-locale formats ahead of the generic scan. They were in neither parent of merge `0be7b9dafe87`:
+  the local side predated them, and the replayed June commit `325855a09` had overwritten
+  `time_abi.rs` on the remote. Their core halves survived, and some `format_strftime_*` helpers had
+  no non-test caller. A three-way merge of `98321eb8a^` / `9cf2b52f2` / `258ff4e7d` restored the
+  series on a salvage branch, and this A/B trimmed it. The pre-push review squashed the restore and
+  the trim arms into one commit, "perf(time): restore the strict strftime exact-format dispatcher
+  lost in 0be7b9daf", so the arms below exist only as local builds. What stays:
+  - the page-safe SIMD pure-literal copy
+  - exact `%R %T %X %r %F %D %x %c`
+  - bare `%a`/`%h`
+  - `%Y-%m-%d`, `%m/%d/%Y`, `%m/%d/%y`, `%d/%m/%Y`
+  - `%H:%M`, `%H:%M:%S`, `%I:%M:%S %p`
+  - `%Y-%m-%d %H:%M:%S`, `%Y%m%d%H%M%S`
+
+  All of it is inline in the strict block, AFTER main's banked HTTP-date, RFC3164, `%A`, `%b`, `%B`
+  and `%j` leaves, and after the named-LC_TIME early return, so it is C-locale only.
+- **INSTRUMENT.** `strftime_litrun_ab` (FL/glibc effect plus a source-identical FL/FL null per case,
+  pair order alternating, 33 retained samples after 4 warmups, 150,000 calls per arm, bootstrap
+  median CIs, 2x null-half-width rule). Run on hz4 (2x16-core, 64 threads) with the
+  `--pin-quietest 2` option added in this series ("bench(time): strftime_litrun_ab --pin-quietest
+  N", same contract as `incumbent_coverage_ab`). The host-wide guard was clear at startup and before
+  and after every case (e.g. `allowed_cpus=8:9 observed_maximum_busy_fraction=0.020
+  cpu_mhz_median=3194.0`). Base arm: origin/main `258ff4e7d` plus this series' three harness-only
+  commits,
+  `bench_elf_sha256=649ab54f3befec7c605396316eb1d22762ce570b000740a9db6197e77131d8f3`, run on the same
+  worker and instrument, the same day. The base column is maintenance context; the campaign claim is
+  the final column's same-invocation ratio.
+- **BEHAVIOUR PROOF.** Each binary ran `verify: OK` over capacities 1..=128 against live glibc for
+  every measured case before timing. Debug gates on the pushed head (rch, 2026-10-06), each with a
+  non-zero passed count:
+  - the new `conformance_diff_strftime_exact_dispatch`, 2 tests: ~129k comparisons over every
+    restored format, near misses, malformed fields and every buffer size with a canary; and, for
+    the bare names and whole-format aliases, the whole destination on overflow (glibc writes
+    nothing there)
+  - `strftime_specifier_differential_fuzz` 1 (200k iterations)
+  - `conformance_diff_strftime_{oor_names,l,zone,gmtoff,eo_modifier}` 1/4/1/1/1
+  - `strftime_buffer_wide_year_differential_fuzz` 1
+  - `time_abi_test` 61
+  - `conformance_diff_wcsftime{,_l}` 11/3, `wcsftime_differential_fuzz` 1
+
+  The new gate reports the same 64 malformed-input divergences with and without the dispatcher:
+  they are pre-existing general-formatter behaviour, and the gate excludes those inputs.
+- **ONE CHANGE AFTER MEASUREMENT.** The pre-push review made the bare `%a`/`%h` leaf return 0 on
+  overflow before writing anything, as glibc does and as main's `%A`/`%b`/`%B` leaves do; the
+  measured build wrote a truncated name prefix first. The success path is unchanged. Re-measured on
+  the pushed code (rebased on origin/main `50fcb5e70`), same instrument, hz4, `--pin-quietest 2`,
+  `bench_elf_sha256=9ebadc46da2c321c14bafa6d0be649fa343f42638d7c49be0d6f650d3e1bc9fd`,
+  `verify: OK`, no guard block: `weekday_abbrev` 0.5863 [0.5832,0.5875] (10.4 ns, FL/FL null
+  0.9993), `month_alias_h` 0.5963 [0.5949,0.5987] (10.5 ns, null 1.0061 [0.9990,1.0081]); the
+  banked leaves `%A` 0.7413 (12.9 ns), `%b` 0.7969, `%B` 0.7646 (13.6 ns), `%j` 0.5148 (9.5 ns),
+  RFC3164 0.2206 and HTTP-date 0.2023 (21.7 ns) all stay FL_FASTER and clear 2x their nulls, in line
+  with the final arm below.
+- **FINAL ARM vs base, pinned hz4:**
+
+  | case | final FL/glibc | CI95 | FL/FL A/A [CI] | verdict | final fl ns | base FL/glibc | base fl ns |
+  |---|---:|---|---|---|---:|---:|---:|
+  | `literal_short` | 0.5570 | [0.5558,0.5574] | 1.0002 [0.9968,1.0015] | FL_FASTER | 15.5 | 0.9321 | 25.9 |
+  | `literal_long` | 0.2271 | [0.2261,0.2291] | 0.9949 [0.9842,1.0004] | FL_FASTER | 16.5 | 0.3969 | 28.8 |
+  | `mixed_general` | 13.1185 | [13.0201,13.2076] | 1.0008 [0.9988,1.0046] | FL_SLOWER | 427.2 | 13.0002 | 420.1 |
+  | `mixed_month_general` | 13.1456 | [12.9692,13.2236] | 0.9998 [0.9981,1.0007] | FL_SLOWER | 424.8 | 13.2293 | 425.9 |
+  | `yday_general` | 12.5720 | [12.4348,12.7118] | 1.0000 [0.9994,1.0004] | FL_SLOWER | 416.9 | 12.8168 | 419.9 |
+  | `bracket_numeric_general` | 1.9323 | [1.9101,1.9623] | 0.9966 [0.9947,1.0001] | FL_SLOWER | 178.4 | 1.9410 | 183.8 |
+  | `two_names_general` | 11.1235 | [11.0903,11.1554] | 0.9992 [0.9978,1.0003] | FL_SLOWER | 387.9 | 11.0028 | 386.8 |
+  | `alias_F` | 0.1494 | [0.1488,0.1511] | 1.0025 [0.9917,1.0086] | FL_FASTER | 14.2 | 0.4413 | 42.6 |
+  | `alias_D` | 0.1430 | [0.1413,0.1451] | 0.9943 [0.9818,1.0013] | FL_FASTER | 14.4 | 6.3325 | 671.6 |
+  | `alias_x` | 0.1424 | [0.1412,0.1432] | 1.0005 [0.9982,1.0037] | FL_FASTER | 14.2 | 6.4870 | 677.2 |
+  | `alias_T` | 0.1580 | [0.1558,0.1628] | 0.9844 [0.9526,0.9924] | FL_FASTER | 15.4 | 0.4095 | 39.4 |
+  | `alias_X` | 0.1593 | [0.1565,0.1626] | 1.0199 [0.9990,1.0495] | FL_FASTER | 15.5 | 3.4711 | 339.0 |
+  | `alias_R` | 0.1506 | [0.1497,0.1510] | 0.9985 [0.9939,1.0017] | FL_FASTER | 10.7 | 0.5192 | 36.3 |
+  | `alias_r` | 0.1273 | [0.1265,0.1280] | 0.9990 [0.9958,1.0046] | FL_FASTER | 15.5 | 5.5337 | 682.0 |
+  | `locale_datetime` | 0.1018 | [0.1013,0.1021] | 1.0001 [0.9999,1.0013] | FL_FASTER | 20.4 | 0.2314 | 45.9 |
+  | `hm_exact` | 0.3375 | [0.3368,0.3378] | 1.0011 [0.9958,1.0048] | FL_FASTER | 11.2 | 1.3794 | 74.5 |
+  | `hms_exact` | 0.3064 | [0.3025,0.3077] | 1.0007 [0.9883,1.0040] | FL_FASTER | 14.6 | 1.2721 | 60.8 |
+  | `hms_12_exact` | 0.2466 | [0.2454,0.2477] | 0.9955 [0.9914,0.9997] | FL_FASTER | 15.2 | 6.1087 | 647.6 |
+  | `numeric_19` | 0.2829 | [0.2817,0.2855] | 0.9981 [0.9969,1.0020] | FL_FASTER | 26.0 | 1.3338 | 123.4 |
+  | `date_iso` | 0.2952 | [0.2928,0.2972] | 0.9982 [0.9914,1.0010] | FL_FASTER | 14.5 | 1.2881 | 64.1 |
+  | `date_slash_dmy` | 0.3184 | [0.3168,0.3219] | 1.0003 [0.9968,1.0055] | FL_FASTER | 15.7 | 1.6892 | 81.5 |
+  | `date_slash_mdy` | 0.3244 | [0.3238,0.3254] | 0.9994 [0.9984,1.0010] | FL_FASTER | 15.4 | 1.4758 | 72.1 |
+  | `date_slash_mdy_short` | 0.3179 | [0.3143,0.3194] | 0.9982 [0.9921,1.0030] | FL_FASTER | 15.9 | 7.9364 | 411.9 |
+  | `compact_14` | 0.2419 | [0.2408,0.2423] | 1.0003 [0.9990,1.0014] | FL_FASTER | 21.2 | 0.9299 | 82.0 |
+  | `weekday_abbrev` | 0.5900 | [0.5874,0.5965] | 1.0036 [1.0016,1.0056] | FL_FASTER | 10.8 | 18.7994 | 332.3 |
+  | `weekday_full` | 0.7344 | [0.7334,0.7364] | 1.0002 [0.9992,1.0011] | FL_FASTER | 12.9 | 0.7036 | 12.3 |
+  | `month_abbrev` | 0.8004 | [0.7993,0.8021] | 1.0008 [0.9986,1.0027] | FL_FASTER | 14.2 | 0.7649 | 13.6 |
+  | `month_full` | 0.7605 | [0.7593,0.7630] | 1.0002 [0.9990,1.0020] | FL_FASTER | 13.6 | 0.6915 | 12.3 |
+  | `month_alias_h` | 0.6058 | [0.6040,0.6073] | 0.9955 [0.9935,0.9980] | FL_FASTER | 10.8 | 18.9781 | 335.8 |
+  | `yday_exact` | 0.5192 | [0.5187,0.5207] | 1.0029 [1.0008,1.0058] | FL_FASTER | 10.1 | 0.4466 | 9.2 |
+  | `syslog_ts` | 0.2223 | [0.2203,0.2237] | 0.9965 [0.9938,1.0034] | FL_FASTER | 17.0 | 0.2141 | 16.4 |
+  | `http_date` | 0.1983 | [0.1970,0.2006] | 1.0025 [0.9951,1.0079] | FL_FASTER | 22.2 | 0.1876 | 20.7 |
+
+  Every restored leaf clears twice its null and its CI excludes 1.0. `alias_X` has the widest
+  null (FL/FL 1.0199, CI [0.9990,1.0495]); its effect, 0.159 against a 1.0 boundary, is still far
+  outside 2x that half-width.
+- **THE RESIDUAL COST, recorded and not hidden.** With the dispatcher inline, main's banked leaves
+  still run first and stay campaign wins, but this build measured them 0.6-1.5 ns slower:
+  - `%A`: 12.9 vs 12.3 ns
+  - `%b`: 14.2 vs 13.6 ns
+  - `%B`: 13.6 vs 12.3 ns
+  - `%j`: 10.1 vs 9.2 ns
+  - RFC3164: 17.0 vs 16.4 ns
+  - HTTP-date: 22.2 vs 20.7 ns
+
+  The general-path controls stayed at base:
+  - `prefix %A suffix`: 427.2 vs 420.1 ns
+  - `prefix %B suffix`: 424.8 vs 425.9 ns
+  - `prefix %j suffix`: 416.9 vs 419.9 ns
+  - `[%Y-%m-%d %H:%M:%S]`: 178.4 vs 183.8 ns
+  - `on %a, %b`: 387.9 vs 386.8 ns
+
+  That leaf cost is a property of `strftime`'s size, not of any one lever. Two arms with identical
+  leaf code differed by 1.3 ns on `%A` (12.3 vs 13.6 ns). The out-of-line arm brought the
+  leaves back to base (`%A` 12.3, `%B` 12.3, `%j` 9.3 ns) but cost every general-path control about
+  100 ns (`prefix %A suffix` 519.1 ns, `on %a, %b` 492.4 ns), so it was rejected. No measured
+  arrangement had both. The 2026-10-06 pre-push review accepted the ~1 ns banked-leaf residual in
+  exchange for these wins.
+- **ARMS THAT DECIDED THE TRIM** (same instrument, pinned, hz4; fl ns):
+
+  | arm | `%A` | `%B` | `%j` | HTTP-date | `prefix %A suffix` | `[%Y-...%S]` | `on %a, %b` | `just text` |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | base | 12.4 | 12.3 | 9.1 | 20.6 | 421.0 | 180.9 | 396.1 | 27.1 |
+  | as restored (dispatcher ahead of the leaves, fused) | 14.5 | 14.5 | 11.4 | 24.3 | 25.3 | 201.1 | 435.3 | 18.0 |
+  | R: leaves first, fused | 12.3 | 12.6 | 9.8 | 21.9 | 24.2 | 192.3 | 402.3 | 15.8 |
+  | R without fused | 13.6 | 13.0 | 9.8 | 21.8 | 419.2 | 174.5 | 389.3 | 16.5 |
+  | R without fused or literal copy | 12.6 | 12.6 | 9.7 | 21.6 | 411.2 | 177.8 | 384.0 | 29.0 |
+  | out-of-line (`#[inline(never)]` dispatcher), no fused | 12.3 | 12.3 | 9.3 | 20.9 | 519.1 | 198.2 | 492.4 | 18.0 |
+  | final (= R without fused, as pushed) | 12.9 | 13.6 | 10.1 | 22.2 | 427.2 | 178.4 | 387.9 | 15.5 |
+
+- **REJECT: the fused single-name path (`47668eeed`).** It turns one name inside literals into a win
+  (`prefix %A suffix` 12.90x -> 0.757x, 421 -> 24 ns). On formats it declines, though, it writes the
+  literal prefix speculatively before giving up, and general formats pay for that (`[%Y-%m-%d
+  %H:%M:%S]` 192.3 ns with it vs 174.5 without; `on %a, %b` 402.3 vs 389.3). It is removed. Retry only
+  with a decline path that does no speculative work: validate the whole format before writing, and
+  show the general controls unchanged in the same harness.
+- **KEPT AT NEAR-ZERO DECLINE COST: the SIMD pure-literal copy (`d225aa099`).** `just text`:
+  0.9321x -> 0.5570x (25.9 -> 15.5 ns). Literal-led general formats measured the same with and
+  without it (174.5 vs 177.8 ns, 389.3 vs 384.0 ns), within cross-run noise.
+- **DISPOSITION / RETRY PREDICATE.** KEEP the exact leaves and the literal copy as class-2
+  generality-tax wins. Reopen if:
+  - a live-glibc repeat of any row stops clearing 2x its A/A half-width below 1.0;
+  - named LC_TIME support changes, since every member assumes the C locale's names, `%c`, `%x`,
+    `%X` and `%r`;
+  - the exact recognizers broaden;
+  - `conformance_diff_strftime_exact_dispatch` diverges.
+
+  The banked-leaf residual above is the first thing a follow-up should attack.
