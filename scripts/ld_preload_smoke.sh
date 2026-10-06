@@ -1098,6 +1098,13 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "sed_global_word_anchor" /bin/sh -c "printf 'aab bcb acb ca\n' | sed 's/\\<b/X/g; s/^a/Y/g'" || mode_failed=1
   run_corpus_case "${mode}" "getent_passwd_root" /usr/bin/env LC_ALL=C getent passwd root || mode_failed=1
   run_corpus_case "${mode}" "getent_services_ssh" /usr/bin/env LC_ALL=C getent -s files services ssh || mode_failed=1
+  # getent initgroups sizes its list through glibc's private
+  # __libc_dynarray_resize and the getgrouplist(user, g, NULL, &n) size query;
+  # both failed under fl ("Could not allocate group list").
+  run_corpus_case "${mode}" "getent_initgroups" bash -c 'LC_ALL=C getent initgroups root daemon nobody 2>&1; echo "rc=$?"' || mode_failed=1
+  # gencat creates, then merges into, a catalog through glibc's private
+  # __open_catalog and __libc_scratch_buffer_set_array_size.
+  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d) && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat; cd / && rm -r "$d"' || mode_failed=1
   # /etc/hosts semantics: every address of the family, aliases merged across
   # lines (bd-rc0923-epic-eeuy4f.21).
   run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1

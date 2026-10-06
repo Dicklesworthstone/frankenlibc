@@ -4,7 +4,7 @@
 //! directory navigation (getcwd/chdir), process identity (getpid/getppid/getuid/...),
 //! link operations (link/symlink/readlink/unlink/rmdir), and sync (fsync/fdatasync).
 
-use std::ffi::{CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
+use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 
 use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
@@ -13423,76 +13423,196 @@ pub unsafe extern "C" fn __nss_readline(
 
 // ---------------------------------------------------------------------------
 // __libc_alloc_buffer / __libc_dynarray / __libc_scratch_buffer / early_init +
-// nss_files_parse_spent + nss_netgroup_parseline (18 stubs)
+// nss_files_parse_spent + nss_netgroup_parseline
 // ---------------------------------------------------------------------------
 //
-// All GLIBC_PRIVATE-versioned. Stubs provide the safe failure path so
-// link-edit resolves cleanly and any caller falls into its existing
-// error handling.
+// GLIBC_PRIVATE helpers that glibc's own programs and NSS modules link against:
+// getent (__libc_dynarray_resize), gencat (__libc_scratch_buffer_set_array_size),
+// pldd and libnss_compat (__libc_scratch_buffer_grow). Under preload they bind
+// to these exports, so they must work: as always-fail stubs they made
+// `getent initgroups` print "Could not allocate group list" and fail.
+//
+// The layouts and contracts are glibc's internal ABI (include/scratch_buffer.h,
+// malloc/dynarray.h, include/alloc_buffer.h). Memory comes from fl's malloc,
+// which is what the callers' later free() reaches.
 
-// alloc_buffer is glibc's bounded sub-allocator over a caller buffer.
-// The minimum viable failure shape is: allocate returns NULL; copy
-// helpers do nothing; create_failure marks an alloc_buffer as
-// permanently failed (we no-op since we never produced a live one).
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_alloc_array(
-    _buf: *mut c_void,
-    _size: usize,
-    _align: usize,
-    _count: usize,
-) -> *mut c_void {
-    core::ptr::null_mut()
+/// `struct scratch_buffer`: a pointer/length pair over either the inline
+/// 1024-byte (max_align_t aligned) space or a heap block.
+#[repr(C)]
+struct ScratchBuffer {
+    data: *mut c_void,
+    length: usize,
+    space: ScratchSpace,
 }
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_allocate(
-    _size: usize,
-    _pptr: *mut *mut c_void,
-) -> *mut c_void {
-    core::ptr::null_mut()
+#[repr(C, align(16))]
+struct ScratchSpace([u8; 1024]);
+
+impl ScratchBuffer {
+    fn inline_space(&mut self) -> *mut c_void {
+        self.space.0.as_mut_ptr().cast()
+    }
+
+    /// Release a heap block, leaving the buffer pointing at its inline space.
+    unsafe fn reset(&mut self) {
+        if self.data != self.inline_space() {
+            // SAFETY: a non-inline data pointer came from fl's malloc/realloc.
+            unsafe { crate::malloc_abi::free(self.data) };
+        }
+        self.data = self.inline_space();
+        self.length = self.space.0.len();
+    }
 }
 
+/// `__libc_scratch_buffer_grow(buf)` — double the buffer, discarding its
+/// contents. On failure the buffer is reset to its inline space.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_copy_bytes(
-    _buf: *mut c_void,
-    _src: *const c_void,
-    _len: usize,
-) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __libc_scratch_buffer_grow(buf: *mut c_void) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let new_length = buffer.length.checked_mul(2);
+    unsafe { buffer.reset() };
+    let Some(new_length) = new_length else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(new_length) };
+    if block.is_null() {
+        return 0;
+    }
+    buffer.data = block;
+    buffer.length = new_length;
+    1
 }
 
+/// `__libc_scratch_buffer_grow_preserve(buf)` — double the buffer, keeping
+/// its contents. On failure the buffer is freed and reset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_copy_string(
-    _buf: *mut c_void,
-    _src: *const c_char,
-) -> *mut c_void {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __libc_scratch_buffer_grow_preserve(buf: *mut c_void) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let Some(new_length) = buffer.length.checked_mul(2) else {
+        unsafe { buffer.reset() };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    let block = if buffer.data == buffer.inline_space() {
+        // SAFETY: plain allocation; the inline space holds `length` bytes.
+        let block = unsafe { crate::malloc_abi::malloc(new_length) };
+        if block.is_null() {
+            return 0;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                buffer.data.cast::<u8>(),
+                block.cast::<u8>(),
+                buffer.length,
+            )
+        };
+        block
+    } else {
+        // SAFETY: heap data came from fl's malloc/realloc.
+        let block = unsafe { crate::malloc_abi::realloc(buffer.data, new_length) };
+        if block.is_null() {
+            unsafe { buffer.reset() };
+            return 0;
+        }
+        block
+    };
+    buffer.data = block;
+    buffer.length = new_length;
+    1
 }
 
-/// `__libc_alloc_buffer_create_failure(start, size) -> alloc_buffer` —
-/// glibc returns the failure-marked alloc_buffer struct by value. We
-/// model the return as void since our caller never inspects the
-/// failed buffer beyond knowing the allocation failed; the actual
-/// alloc_buffer struct is small enough that callers passing the
-/// return value through an alloc_buffer slot will see a partly-
-/// uninitialized struct, but glibc's check_alloc_buffer macro only
-/// looks at the failure bit which we never set (the caller's slot
-/// is treated as failed by the next allocate).
+/// `__libc_scratch_buffer_set_array_size(buf, nelem, size)` — make room for
+/// `nelem * size` bytes, discarding the contents if it has to grow.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(_start: *mut c_void, _size: usize) {}
+pub unsafe extern "C" fn __libc_scratch_buffer_set_array_size(
+    buf: *mut c_void,
+    nelem: usize,
+    size: usize,
+) -> c_int {
+    // SAFETY: caller passes an initialized struct scratch_buffer.
+    let buffer = unsafe { &mut *buf.cast::<ScratchBuffer>() };
+    let Some(new_length) = nelem.checked_mul(size) else {
+        unsafe { buffer.reset() };
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return 0;
+    };
+    if new_length <= buffer.length {
+        return 1;
+    }
+    unsafe { buffer.reset() };
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(new_length) };
+    if block.is_null() {
+        return 0;
+    }
+    buffer.data = block;
+    buffer.length = new_length;
+    1
+}
 
-// dynarray is glibc's growable Vec-equivalent. Stubs:
-//   - at_failure: glibc convention is to abort; we abort_message().
-//   - emplace_enlarge / resize / resize_clear: 0 (failure) so caller
-//     short-circuits without reading our (unmaintained) buffer.
-//   - finalize: 0 (false) — finalize-into-result not provided.
+/// `struct dynarray_header`; `allocated == usize::MAX` marks a list whose
+/// earlier growth failed.
+#[repr(C)]
+struct DynarrayHeader {
+    used: usize,
+    allocated: usize,
+    array: *mut c_void,
+}
 
-/// Glibc convention: __libc_dynarray_at_failure aborts (out-of-bounds
-/// access on a dynarray is a fatal usage bug). Mirror that behavior.
+/// `struct dynarray_finalize_result`.
+#[repr(C)]
+struct DynarrayFinalizeResult {
+    array: *mut c_void,
+    length: usize,
+}
+
+/// Move `list` to a heap block of `count` elements (copying the used ones
+/// out of the caller's scratch array the first time).
+unsafe fn dynarray_reallocate(
+    list: &mut DynarrayHeader,
+    scratch: *mut c_void,
+    element_size: usize,
+    count: usize,
+) -> bool {
+    let Some(bytes) = count.checked_mul(element_size) else {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return false;
+    };
+    let block = if list.array == scratch {
+        // SAFETY: plain allocation.
+        let block = unsafe { crate::malloc_abi::malloc(bytes) };
+        if !block.is_null() && !list.array.is_null() {
+            // SAFETY: the scratch array holds `used` initialized elements and
+            // the new block is at least that large (count > used here).
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    list.array.cast::<u8>(),
+                    block.cast::<u8>(),
+                    list.used * element_size,
+                )
+            };
+        }
+        block
+    } else {
+        // SAFETY: a non-scratch array came from fl's malloc/realloc.
+        unsafe { crate::malloc_abi::realloc(list.array, bytes) }
+    };
+    if block.is_null() {
+        return false;
+    }
+    list.array = block;
+    true
+}
+
+/// `__libc_dynarray_at_failure(size, index)` — out-of-bounds element access
+/// is a fatal usage error in glibc; report and abort the same way.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize) -> ! {
-    let msg: &[u8] = b"__libc_dynarray_at: index out of range\n";
+pub unsafe extern "C" fn __libc_dynarray_at_failure(size: usize, index: usize) -> ! {
+    let msg = format!("Fatal glibc error: array index {index} not less than array length {size}\n");
     // SAFETY: writing to fd 2 is always safe.
     unsafe {
         let _ = syscall::sys_write(2, msg.as_ptr(), msg.len());
@@ -13500,66 +13620,233 @@ pub unsafe extern "C" fn __libc_dynarray_at_failure(_size: usize, _index: usize)
     }
 }
 
+/// `__libc_dynarray_emplace_enlarge(list, scratch, element_size)` — grow the
+/// allocation (exponentially) so one more element fits.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_emplace_enlarge(
-    _list: *mut c_void,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    let new_allocated = if list.allocated == 0 {
+        match element_size {
+            0..4 => 16,
+            4..8 => 8,
+            _ => 4,
+        }
+    } else {
+        match list.allocated.checked_add(list.allocated / 2 + 1) {
+            Some(n) => n,
+            None => {
+                unsafe { set_abi_errno(libc::ENOMEM) };
+                return 0;
+            }
+        }
+    };
+    if !unsafe { dynarray_reallocate(list, scratch, element_size, new_allocated) } {
+        return 0;
+    }
+    list.allocated = new_allocated;
+    1
 }
 
+/// `__libc_dynarray_resize(list, size, scratch, element_size)` — set the
+/// element count, reallocating to exactly `size` when it does not fit. New
+/// elements are uninitialized.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_resize(
-    _list: *mut c_void,
-    _new_size: usize,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    new_size: usize,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    if new_size <= list.allocated {
+        list.used = new_size;
+        return 1;
+    }
+    if !unsafe { dynarray_reallocate(list, scratch, element_size, new_size) } {
+        return 0;
+    }
+    list.allocated = new_size;
+    list.used = new_size;
+    1
 }
 
+/// `__libc_dynarray_resize_clear(...)` — resize, zero-filling new elements.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_resize_clear(
-    _list: *mut c_void,
-    _new_size: usize,
-    _scratch: *mut c_void,
-    _element_size: usize,
+    list: *mut c_void,
+    new_size: usize,
+    scratch: *mut c_void,
+    element_size: usize,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header.
+    let old_size = unsafe { (*list.cast::<DynarrayHeader>()).used };
+    if unsafe { __libc_dynarray_resize(list, new_size, scratch, element_size) } == 0 {
+        return 0;
+    }
+    if new_size > old_size {
+        let header = unsafe { &*list.cast::<DynarrayHeader>() };
+        // SAFETY: resize succeeded, so the array holds `new_size` elements
+        // (size * element_size did not overflow).
+        unsafe {
+            std::ptr::write_bytes(
+                header.array.cast::<u8>().add(old_size * element_size),
+                0,
+                (new_size - old_size) * element_size,
+            )
+        };
+    }
+    1
 }
 
+/// `__libc_dynarray_finalize(list, scratch, element_size, result)` — hand
+/// the used elements over as an exactly sized heap array (NULL/0 for an
+/// empty list). False leaves freeing to the caller.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __libc_dynarray_finalize(
-    _list: *mut c_void,
-    _scratch: *mut c_void,
-    _element_size: usize,
-    _result: *mut c_void,
+    list: *mut c_void,
+    scratch: *mut c_void,
+    element_size: usize,
+    result: *mut c_void,
 ) -> c_int {
-    0
+    // SAFETY: caller passes its dynarray header and result slot.
+    let list = unsafe { &mut *list.cast::<DynarrayHeader>() };
+    let result = unsafe { &mut *result.cast::<DynarrayFinalizeResult>() };
+    if list.allocated == usize::MAX {
+        // An earlier failure the caller reports itself.
+        return 0;
+    }
+    if list.used == 0 {
+        if list.array != scratch {
+            // SAFETY: a non-scratch array came from fl's malloc/realloc.
+            unsafe { crate::malloc_abi::free(list.array) };
+        }
+        *result = DynarrayFinalizeResult {
+            array: std::ptr::null_mut(),
+            length: 0,
+        };
+        return 1;
+    }
+    let bytes = list.used * element_size;
+    // SAFETY: plain allocation.
+    let block = unsafe { crate::malloc_abi::malloc(bytes) };
+    if block.is_null() {
+        return 0;
+    }
+    if !list.array.is_null() {
+        // SAFETY: the list holds `used` initialized elements.
+        unsafe {
+            std::ptr::copy_nonoverlapping(list.array.cast::<u8>(), block.cast::<u8>(), bytes)
+        };
+    }
+    if list.array != scratch {
+        // SAFETY: a non-scratch array came from fl's malloc/realloc.
+        unsafe { crate::malloc_abi::free(list.array) };
+    }
+    *result = DynarrayFinalizeResult {
+        array: block,
+        length: list.used,
+    };
+    1
 }
 
-// scratch_buffer is glibc's stack-or-heap scratch space helper.
-// All grow/sizing entries return false (out of memory), forcing
-// callers to take the fail path.
-
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_grow(_buf: *mut c_void) -> c_int {
-    0
+/// `struct alloc_buffer`: a bump allocator over [current, end); both zero
+/// once an allocation has failed. Passed and returned by value.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct AllocBuffer {
+    current: usize,
+    end: usize,
 }
 
+const ALLOC_BUFFER_FAILED: AllocBuffer = AllocBuffer { current: 0, end: 0 };
+
+/// `__libc_alloc_buffer_alloc_array(buf, size, align, count)` — carve
+/// `size * count` bytes aligned to `align` (a power of two), or mark the
+/// buffer failed and return NULL.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_grow_preserve(_buf: *mut c_void) -> c_int {
-    0
+pub unsafe extern "C" fn __libc_alloc_buffer_alloc_array(
+    buf: *mut AllocBuffer,
+    size: usize,
+    align: usize,
+    count: usize,
+) -> *mut c_void {
+    // SAFETY: caller passes its alloc_buffer.
+    let buffer = unsafe { &mut *buf };
+    let current = buffer.current;
+    let aligned = current
+        .checked_add(align.wrapping_sub(1))
+        .map(|v| v & !align.wrapping_sub(1));
+    match (aligned, size.checked_mul(count)) {
+        (Some(aligned), Some(bytes)) if aligned <= buffer.end && bytes <= buffer.end - aligned => {
+            buffer.current = aligned + bytes;
+            aligned as *mut c_void
+        }
+        _ => {
+            *buffer = ALLOC_BUFFER_FAILED;
+            std::ptr::null_mut()
+        }
+    }
 }
 
+/// `__libc_alloc_buffer_allocate(size, pptr)` — a heap-backed alloc_buffer of
+/// `size` bytes; `*pptr` receives the block for the caller to free.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_scratch_buffer_set_array_size(
-    _buf: *mut c_void,
-    _nelem: usize,
+pub unsafe extern "C" fn __libc_alloc_buffer_allocate(
+    size: usize,
+    pptr: *mut *mut c_void,
+) -> AllocBuffer {
+    // SAFETY: plain allocation; pptr is the caller's out slot.
+    let block = unsafe { crate::malloc_abi::malloc(size) };
+    unsafe { *pptr = block };
+    if block.is_null() {
+        return ALLOC_BUFFER_FAILED;
+    }
+    AllocBuffer {
+        current: block as usize,
+        end: block as usize + size,
+    }
+}
+
+/// `__libc_alloc_buffer_copy_bytes(buf, src, len)` — append `len` bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_bytes(
+    mut buf: AllocBuffer,
+    src: *const c_void,
+    len: usize,
+) -> AllocBuffer {
+    // SAFETY: `buf` is a valid alloc_buffer value; src holds `len` bytes.
+    let dst = unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 1, 1, len) };
+    if !dst.is_null() {
+        unsafe { std::ptr::copy_nonoverlapping(src.cast::<u8>(), dst.cast::<u8>(), len) };
+    }
+    buf
+}
+
+/// `__libc_alloc_buffer_copy_string(buf, src)` — append `src` with its NUL.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_copy_string(
+    buf: AllocBuffer,
+    src: *const c_char,
+) -> AllocBuffer {
+    // SAFETY: src is a NUL-terminated string.
+    let len = unsafe { CStr::from_ptr(src) }.to_bytes_with_nul().len();
+    unsafe { __libc_alloc_buffer_copy_bytes(buf, src.cast(), len) }
+}
+
+/// `__libc_alloc_buffer_create_failure(start, size)` — the failed buffer
+/// alloc_buffer_create returns when [start, start+size) wraps around.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn __libc_alloc_buffer_create_failure(
+    _start: *mut c_void,
     _size: usize,
-) -> c_int {
-    0
+) -> AllocBuffer {
+    ALLOC_BUFFER_FAILED
 }
 
 /// `__libc_early_init(initial)` — early-init marker called by ld.so
@@ -13699,16 +13986,98 @@ pub unsafe extern "C" fn __libc_unwind_link_get() -> *mut c_void {
     core::ptr::null_mut()
 }
 
-/// `__open_catalog(name, *result) -> int` — locate and open a
-/// message catalog. Stub returns -1 (catopen failure).
+/// glibc's `struct catalog_info` (catgets/catgetsinfo.h), which
+/// `__open_catalog` fills: the loaded file plus pointers into its first hash
+/// plane and its strings.
+#[repr(C)]
+struct CatalogInfo {
+    /// 0 = mmapped, 1 = malloced (the caller frees `file_ptr` accordingly).
+    status: c_int,
+    plane_size: usize,
+    plane_depth: usize,
+    name_ptr: *mut u32,
+    strings: *const c_char,
+    file_ptr: *mut c_void,
+    file_size: usize,
+}
+
+/// `__open_catalog(name, nlspath, env_var, catalog) -> int` — load a GNU
+/// message catalog into glibc's `struct catalog_info` (GLIBC_PRIVATE; gencat
+/// uses it to merge into an existing catalog). A name with `/`, or a NULL
+/// `nlspath`, is opened as given; otherwise `nlspath` is searched with
+/// `env_var` as the locale. -1 with errno from the failing open (ENOENT when
+/// there is no catalog); a malformed catalog leaves errno alone.
+///
+/// The image is rebuilt in a malloc'd block (status malloced), header and
+/// first plane in native order, so the caller's `free(file_ptr)` releases it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __open_catalog(
-    _name: *const c_char,
-    _nlspath: *const c_char,
-    _env_var: *const c_char,
-    _result: *mut c_void,
+    name: *const c_char,
+    nlspath: *const c_char,
+    env_var: *const c_char,
+    result: *mut c_void,
 ) -> c_int {
-    -1
+    if name.is_null() || result.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: NUL-terminated C strings from the caller.
+    let mut name = unsafe { CStr::from_ptr(name) }.to_bytes().to_vec();
+    let nlspath = (!nlspath.is_null()).then(|| unsafe { CStr::from_ptr(nlspath) }.to_bytes());
+    let locale = if env_var.is_null() {
+        &[][..]
+    } else {
+        unsafe { CStr::from_ptr(env_var) }.to_bytes()
+    };
+    if nlspath.is_none() && !name.contains(&b'/') {
+        // Opened as given, relative to the working directory.
+        name.splice(0..0, *b"./");
+    }
+    let catalog = match crate::locale_catalog::open(&name, locale, nlspath, false) {
+        Ok(catalog) => catalog,
+        Err(errno) => {
+            if errno != 0 {
+                unsafe { set_abi_errno(errno) };
+            }
+            return -1;
+        }
+    };
+    let words = [
+        frankenlibc_core::locale::catgets::CATGETS_MAGIC,
+        catalog.plane_size as u32,
+        catalog.plane_depth as u32,
+    ];
+    let header = std::mem::size_of_val(&words);
+    let plane = std::mem::size_of_val(&*catalog.table);
+    let total = header + 2 * plane + catalog.strings.len();
+    // SAFETY: plain allocation; filled below before anyone reads it.
+    let block = unsafe { crate::malloc_abi::malloc(total) }.cast::<u8>();
+    if block.is_null() {
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
+    }
+    // SAFETY: `block` holds `total` bytes; the four copies tile it exactly.
+    unsafe {
+        std::ptr::copy_nonoverlapping(words.as_ptr().cast::<u8>(), block, header);
+        let table = catalog.table.as_ptr().cast::<u8>();
+        std::ptr::copy_nonoverlapping(table, block.add(header), plane);
+        std::ptr::copy_nonoverlapping(table, block.add(header + plane), plane);
+        std::ptr::copy_nonoverlapping(
+            catalog.strings.as_ptr(),
+            block.add(header + 2 * plane),
+            catalog.strings.len(),
+        );
+        *result.cast::<CatalogInfo>() = CatalogInfo {
+            status: 1,
+            plane_size: catalog.plane_size,
+            plane_depth: catalog.plane_depth,
+            name_ptr: block.add(header).cast::<u32>(),
+            strings: block.add(header + 2 * plane).cast::<c_char>(),
+            file_ptr: block.cast::<c_void>(),
+            file_size: total,
+        };
+    }
+    0
 }
 
 /// `__res_context_hostalias(*ctx, name, *buf, buflen) ->
