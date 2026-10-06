@@ -1694,8 +1694,8 @@ pub unsafe extern "C" fn __res_search(
 ) -> c_int {
     unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
 }
-// __res_send: send a pre-formatted DNS query and return the raw response.
-// Uses our global resolver config (nameservers from /etc/resolv.conf).
+// __res_send: raw messages use the same peer/question-bound UDP/TCP engine
+// as native host lookup. Do not maintain a second, ID-only UDP receiver here.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_send(
     msg: *const c_void,
@@ -1703,70 +1703,61 @@ pub unsafe extern "C" fn __res_send(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    use frankenlibc_core::resolv::dns::DNS_MAX_UDP_SIZE;
-    use std::net::UdpSocket;
+    use frankenlibc_core::dns_transport::{QueryError, raw};
+    use frankenlibc_core::resolv::dns::DNS_HEADER_SIZE;
+    use std::io::ErrorKind;
 
-    if msg.is_null() || answer.is_null() || msglen < 12 || anslen <= 0 {
-        return -1;
+    let fail = |error: QueryError| {
+        let code = match error {
+            QueryError::InvalidQuery => libc::EINVAL,
+            QueryError::InvalidResponse => libc::EMSGSIZE,
+            QueryError::ResponseCode(_) | QueryError::RetryableResponse(_) => libc::EAGAIN,
+            QueryError::Io(error) => error.raw_os_error().unwrap_or_else(|| match error.kind() {
+                ErrorKind::TimedOut | ErrorKind::WouldBlock => libc::ETIMEDOUT,
+                ErrorKind::ConnectionRefused => libc::ECONNREFUSED,
+                ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof => libc::ECONNRESET,
+                ErrorKind::Interrupted => libc::EINTR,
+                ErrorKind::PermissionDenied => libc::EACCES,
+                ErrorKind::InvalidInput => libc::EINVAL,
+                _ => libc::EIO,
+            }),
+        };
+        // SAFETY: errno storage belongs to this thread.
+        unsafe { set_abi_errno(code) };
+        -1
+    };
+    if msg.is_null()
+        || answer.is_null()
+        || msglen < DNS_HEADER_SIZE as c_int
+        || msglen > u16::MAX as c_int
+        || anslen < DNS_HEADER_SIZE as c_int
+    {
+        return fail(QueryError::InvalidQuery);
     }
     if tracked_region_too_short_addr(msg as usize, msglen as usize)
         || tracked_output_too_short(answer, anslen as usize)
     {
-        return -1;
+        return fail(QueryError::InvalidQuery);
     }
 
-    let query = unsafe { std::slice::from_raw_parts(msg as *const u8, msglen as usize) };
-    let tx_id = u16::from_be_bytes([query[0], query[1]]);
-
-    // Use our cached resolver config.
-    let config = &*super::unistd_abi::RESOLV_CONFIG;
-    let timeout = config.query_timeout();
-    let mut recv_buf = vec![0u8; DNS_MAX_UDP_SIZE.max(anslen as usize)];
-
-    for _attempt in 0..config.attempts {
-        for ns in &config.nameservers {
-            let dest = std::net::SocketAddr::new(*ns, frankenlibc_core::resolv::config::DNS_PORT);
-            let bind_addr = if ns.is_ipv4() { "0.0.0.0:0" } else { "[::]:0" };
-            let sock = match UdpSocket::bind(bind_addr) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-            let _ = sock.set_read_timeout(Some(timeout));
-            let _ = sock.set_write_timeout(Some(timeout));
-
-            if sock.send_to(query, dest).is_err() {
-                continue;
-            }
-
-            match sock.recv_from(&mut recv_buf) {
-                Ok((n, _)) => {
-                    if n < 12 {
-                        continue;
-                    }
-                    // Verify transaction ID.
-                    let resp_id = u16::from_be_bytes([recv_buf[0], recv_buf[1]]);
-                    if resp_id != tx_id {
-                        continue;
-                    }
-                    // Check QR bit (response).
-                    if (recv_buf[2] & 0x80) == 0 {
-                        continue;
-                    }
-                    let copy_len = n.min(anslen as usize);
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            recv_buf.as_ptr(),
-                            answer as *mut u8,
-                            copy_len,
-                        );
-                    }
-                    return copy_len as c_int;
-                }
-                Err(_) => continue,
-            }
-        }
+    // SAFETY: caller owns a readable message; signed lengths, null pointers
+    // and tracked allocation extents have been checked before socket I/O.
+    let query = unsafe { std::slice::from_raw_parts(msg.cast::<u8>(), msglen as usize) };
+    let config = raw::Config::from(&*super::unistd_abi::RESOLV_CONFIG);
+    let reply = match raw::send(query, &config) {
+        Ok(reply) => reply,
+        Err(error) => return fail(error),
+    };
+    // Construct the mutable output only AFTER the transport no longer borrows
+    // the query. Callers may reuse their message buffer as the answer buffer.
+    // SAFETY: writable caller storage with the checked advertised extent.
+    let out = unsafe { std::slice::from_raw_parts_mut(answer.cast::<u8>(), anslen as usize) };
+    match reply.copy_answer(out) {
+        // TCP may report more bytes than fit in out, with TC marked there.
+        // The wire limit bounds this conversion even for a huge caller buffer.
+        Ok(length) => length as c_int,
+        Err(error) => fail(error),
     }
-    -1
 }
 
 // __res_state: return a pointer to the per-thread resolver state.
