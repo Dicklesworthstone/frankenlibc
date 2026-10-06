@@ -6433,8 +6433,24 @@ impl Drop for ScratchVec {
 
 ///
 /// Narrow entry point: `%ls` precision/width are BYTE counts (C99 §7.19.6.1).
+///
+/// For callers with no printf-style result (err/warn, syslog, argp,
+/// setproctitle): a render failure is dropped here, since leaving it armed would
+/// fail the next fast-path printf on this thread, which never renders.
 pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
-    unsafe { render_printf_impl(fmt, args, max_args, false) }
+    let out = unsafe { render_printf_impl(fmt, args, max_args, false) };
+    let _ = take_render_failure();
+    out
+}
+
+/// The errno a render just done on this thread must fail its call with, if
+/// any, clearing it. `printf_result_to_c_int` consumes it for the narrow
+/// family; every other caller of the renderer must take it too (the wide
+/// family fails with it), or it would fail the next unrelated printf on the
+/// thread whose fast path never renders.
+pub(crate) fn take_render_failure() -> Option<c_int> {
+    let errno = frankenlibc_core::stdio::printf::take_render_failure();
+    (errno != 0).then_some(errno)
 }
 
 /// Wide entry point for the `wprintf`/`swprintf` family. The returned bytes are
@@ -9942,6 +9958,7 @@ pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> S
     }
     // Reuse the segments parsed above instead of re-parsing in render_printf.
     let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract, false) };
+    let _ = take_render_failure(); // no printf-style result to fail (error()).
     String::from_utf8_lossy(&rendered).into_owned()
 }
 

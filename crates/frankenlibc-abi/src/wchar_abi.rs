@@ -6235,6 +6235,10 @@ pub unsafe extern "C" fn swprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
 
     if unsafe { wide_format_has_only_wide_origin(format) }
         && let Some(result) = finish_swprintf_wide_origin(&rendered, s, n)
@@ -6263,6 +6267,10 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // C: wprintf returns the number of WIDE CHARACTERS transmitted, not the byte
     // length of the (UTF-8) rendering — they differ for any multibyte output.
     // The COUNT is the wide-character count, so an unconvertible byte is an
@@ -6298,6 +6306,10 @@ pub unsafe extern "C" fn fwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // fwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // Convert BEFORE writing: an unconvertible byte must not be emitted and
     // then reported as an error, which would leave partial output behind.
@@ -6334,6 +6346,10 @@ pub unsafe extern "C" fn vswprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
 
     // On truncation glibc writes the truncated prefix + NUL (not just an empty
     // buffer) and returns -1; mirror swprintf.
@@ -6357,6 +6373,10 @@ pub unsafe extern "C" fn vwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // vwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // The COUNT is the wide-character count, so an unconvertible byte is an
     // EILSEQ even on the stdout path, where the bytes themselves are written
@@ -6391,6 +6411,10 @@ pub unsafe extern "C" fn vfwprintf(
 
     let rendered =
         unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    if let Some(errno) = super::stdio_abi::take_render_failure() {
+        unsafe { set_abi_errno(errno) };
+        return -1;
+    }
     // vfwprintf returns the number of WIDE CHARACTERS written, not bytes.
     // Convert BEFORE writing, as in `fwprintf`.
     let Some(wide_count) = narrow_to_wide_count(&rendered) else {

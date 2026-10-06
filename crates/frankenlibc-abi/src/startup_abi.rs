@@ -1807,7 +1807,7 @@ fn own_image_range() -> Option<(usize, usize)> {
         let phoff = core::ptr::read_unaligned(base.add(32).cast::<u64>()) as usize;
         let phentsize = core::ptr::read_unaligned(base.add(54).cast::<u16>()) as usize;
         let phnum = core::ptr::read_unaligned(base.add(56).cast::<u16>()) as usize;
-        let mut end = 0usize;
+        let (mut low, mut high) = (usize::MAX, 0usize);
         for i in 0..phnum {
             let ph = base.add(phoff + i * phentsize);
             if core::ptr::read_unaligned(ph.cast::<u32>()) != 1 {
@@ -1815,10 +1815,12 @@ fn own_image_range() -> Option<(usize, usize)> {
             }
             let vaddr = core::ptr::read_unaligned(ph.add(16).cast::<u64>()) as usize;
             let memsz = core::ptr::read_unaligned(ph.add(40).cast::<u64>()) as usize;
-            end = end.max(vaddr.saturating_add(memsz));
+            low = low.min(vaddr);
+            high = high.max(vaddr.saturating_add(memsz));
         }
-        // The shared object is linked at vaddr 0, so its header's address is
-        // the load bias.
-        (end != 0).then(|| (base as usize, base as usize + end))
+        // The header sits at the start of the lowest PT_LOAD (file offset 0),
+        // so it is mapped at `low` plus the load bias: 0 for the shared
+        // object, the link address for a non-PIE link.
+        (high > low).then(|| (base as usize, base as usize + (high - low)))
     }
 }

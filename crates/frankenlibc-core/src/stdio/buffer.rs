@@ -300,9 +300,10 @@ impl StreamBuffer {
     /// published with `_IO_write_end == _IO_write_ptr`, as glibc does, so
     /// every inline `putc` still reaches `__overflow` and its newline flush).
     /// `None` in None mode and before the first buffered write materialises
-    /// the storage. The storage
-    /// is allocated once at full capacity and only replaced by `set_mode`
-    /// before any I/O, so the address stays valid while the stream is in use.
+    /// the storage. The storage is allocated once at full capacity and is
+    /// only replaced by `set_mode` (before any I/O) or `rebuild_after_sync`
+    /// (setvbuf after I/O); both run under the stream lock, whose release
+    /// republishes the window, so a published address is never stale.
     pub fn write_window(&self) -> Option<(usize, usize, usize)> {
         if matches!(self.mode, BufMode::None)
             || self.capacity == 0

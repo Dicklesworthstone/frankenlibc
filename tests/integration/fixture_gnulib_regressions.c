@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <err.h>
 #include <errno.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
@@ -97,6 +98,22 @@ int main(void) {
         printf("printf_invalid %s: %d %d\n", bad[i], r, r < 0 ? errno : 0);
     }
     printf("printf_literal: %d %d\n", snprintf(sbuf, sizeof sbuf, "a%yb"), snprintf(sbuf, sizeof sbuf, "%w32d", 5));
+
+    /* A render failure in a caller with no printf result (warnx, syslog, ...)
+     * must not leak into the next printf, whose "%s\n" fast path never
+     * renders: it returned -1. stderr is silenced (warnx's own output). */
+    fflush(stdout);
+    fflush(stderr);
+    int saved_err = dup(2);
+    int devnull = open("/dev/null", O_WRONLY);
+    dup2(devnull, 2);
+    warnx("bad %");
+    fflush(stderr);
+    dup2(saved_err, 2);
+    close(saved_err);
+    close(devnull);
+    int after = printf("%s\n", "after_warnx");
+    printf("printf_after_failed_warnx: %d\n", after);
 
     /* Last: cap the address space (as gnulib's printf-posix2 does), then a
      * float too wide for the memory left fails with ENOMEM, and the process
