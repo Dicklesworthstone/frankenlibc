@@ -103,10 +103,13 @@ struct AllocatorReentrySlot {
     allocator_depth: AtomicU32,
     fallback_cache_index: AtomicUsize,
     segment_local: UnsafeCell<SegmentLocalState>,
-    /// Multi-threaded stats accumulator, merged into the global every
-    /// `MT_STATS_MERGE_EVENTS` events; see `record_slot_mt_stats`.
-    mt_stats_lock: AtomicBool,
-    mt_stats: UnsafeCell<MallocStatsState>,
+    /// Multi-threaded stats: cumulative counters only this slot's thread
+    /// writes, and the values already folded into the global stats (touched
+    /// only under the global combiner lock); see `record_slot_mt_stats`.
+    mt_counts: SlotMtCounters,
+    mt_folded: UnsafeCell<MallocStatsState>,
+    /// Events this slot's thread recorded since it last tried to fold.
+    mt_unfolded_events: AtomicU32,
     /// Set (by this thread only) from just before it takes the native-fallback
     /// table lock until just after it releases it; see
     /// `fallback_table_entered_on_this_thread`.
@@ -134,8 +137,9 @@ impl AllocatorReentrySlot {
             allocator_depth: AtomicU32::new(0),
             fallback_cache_index: AtomicUsize::new(usize::MAX),
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
-            mt_stats_lock: AtomicBool::new(false),
-            mt_stats: UnsafeCell::new(MallocStatsState::new()),
+            mt_counts: SlotMtCounters::new(),
+            mt_folded: UnsafeCell::new(MallocStatsState::new()),
+            mt_unfolded_events: AtomicU32::new(0),
             in_fallback_table: AtomicBool::new(false),
             signal_handler_sp: AtomicUsize::new(0),
         }
@@ -3122,20 +3126,17 @@ impl FlatCombiningStats {
         self.combiner_lock.store(false, Ordering::Release);
     }
 
-    /// `merge_and_reset` for a `record_slot_mt_stats` delta, whose net fields are
-    /// two's-complement and may be negative.
-    fn merge_signed_and_reset(&self, delta: &mut MallocStatsState) {
-        while !self.try_merge_signed_and_reset(delta) {
-            std::hint::spin_loop();
-        }
-    }
-
-    /// `merge_signed_and_reset` unless another thread holds the combiner lock;
-    /// `false` leaves `delta` untouched for a later merge.
-    fn try_merge_signed_and_reset(&self, delta: &mut MallocStatsState) -> bool {
-        if delta.allocation_events == 0 && delta.free_events == 0 {
-            return true;
-        }
+    /// Fold `slot`'s multi-threaded counters into the global state: whatever
+    /// changed since the last fold, which moves its watermark. The net fields
+    /// (`active_allocations`, `live_bytes`, `per_size_class`) can go down -- a
+    /// thread frees blocks other threads allocated -- so their changes are
+    /// applied as two's-complement deltas.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds `combiner_lock` (it guards `state` and every slot's
+    /// `mt_folded`).
+    unsafe fn fold_slot_locked(&self, slot: &AllocatorReentrySlot) {
         fn add_signed(total: usize, delta: usize) -> usize {
             if (delta as isize) < 0 {
                 total.saturating_sub(delta.wrapping_neg())
@@ -3143,6 +3144,40 @@ impl FlatCombiningStats {
                 total.saturating_add(delta)
             }
         }
+        fn take(counter: &AtomicUsize, folded: &mut usize) -> usize {
+            let now = counter.load(Ordering::Relaxed);
+            let delta = now.wrapping_sub(*folded);
+            *folded = now;
+            delta
+        }
+        let c = &slot.mt_counts;
+        // SAFETY: the caller holds `combiner_lock`.
+        let (s, f) = unsafe { (&mut *self.state.get(), &mut *slot.mt_folded.get()) };
+        s.allocation_events = s
+            .allocation_events
+            .saturating_add(take(&c.allocation_events, &mut f.allocation_events));
+        s.free_events = s.free_events.saturating_add(take(&c.free_events, &mut f.free_events));
+        s.total_allocated = s
+            .total_allocated
+            .saturating_add(take(&c.total_allocated, &mut f.total_allocated));
+        s.total_freed = s.total_freed.saturating_add(take(&c.total_freed, &mut f.total_freed));
+        s.active_allocations = add_signed(
+            s.active_allocations,
+            take(&c.active_allocations, &mut f.active_allocations),
+        );
+        s.live_bytes = add_signed(s.live_bytes, take(&c.live_bytes, &mut f.live_bytes));
+        s.peak_usage = s.peak_usage.max(s.live_bytes);
+        for i in 0..MALLOC_STATS_BIN_COUNT {
+            s.per_size_class[i] = add_signed(
+                s.per_size_class[i],
+                take(&c.per_size_class[i], &mut f.per_size_class[i]),
+            );
+        }
+    }
+
+    /// [`fold_slot_locked`](Self::fold_slot_locked) unless another thread holds
+    /// the combiner lock (the slot keeps counting; a later fold catches up).
+    fn try_fold_slot(&self, slot: &AllocatorReentrySlot) -> bool {
         if self
             .combiner_lock
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -3150,23 +3185,24 @@ impl FlatCombiningStats {
         {
             return false;
         }
-        // SAFETY: `combiner_lock` is held exclusively for this merge.
-        unsafe {
-            let s = &mut *self.state.get();
-            s.allocation_events = s.allocation_events.saturating_add(delta.allocation_events);
-            s.free_events = s.free_events.saturating_add(delta.free_events);
-            s.total_allocated = s.total_allocated.saturating_add(delta.total_allocated);
-            s.total_freed = s.total_freed.saturating_add(delta.total_freed);
-            s.active_allocations = add_signed(s.active_allocations, delta.active_allocations);
-            s.live_bytes = add_signed(s.live_bytes, delta.live_bytes);
-            s.peak_usage = s.peak_usage.max(s.live_bytes);
-            for i in 0..MALLOC_STATS_BIN_COUNT {
-                s.per_size_class[i] = add_signed(s.per_size_class[i], delta.per_size_class[i]);
-            }
-        }
-        *delta = MallocStatsState::new();
+        // SAFETY: `combiner_lock` is held.
+        unsafe { self.fold_slot_locked(slot) };
         self.combiner_lock.store(false, Ordering::Release);
         true
+    }
+
+    /// Fold every slot that ever recorded multi-threaded stats.
+    fn fold_all_slots(&self) {
+        while self
+            .combiner_lock
+            .compare_exchange_weak(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::hint::spin_loop();
+        }
+        // SAFETY: `combiner_lock` is held.
+        for_each_claimed_slot(|slot| unsafe { self.fold_slot_locked(slot) });
+        self.combiner_lock.store(false, Ordering::Release);
     }
 
     fn apply_locked(state: &mut MallocStatsState, op: usize, size: usize, bin: usize) {
@@ -3360,19 +3396,6 @@ impl Drop for MallocForkGuard {
     }
 }
 
-/// In a freshly forked child: release every thread slot's stats lock. Only the
-/// forking thread survives the clone, so a slot lock another thread held then
-/// has no owner left, and a stats sweep over all slots would spin on it.
-pub(crate) fn malloc_fork_child_release_slot_locks() {
-    // Only claimed slots can hold the lock; touching the rest would dirty the
-    // whole table in every child.
-    for_each_claimed_slot(|slot| {
-        if slot.mt_stats_lock.load(Ordering::Relaxed) {
-            slot.mt_stats_lock.store(false, Ordering::Release);
-        }
-    });
-}
-
 fn global_alloc_stats() -> Option<&'static FlatCombiningStats> {
     // Use get() not get_or_init() — OnceLock futex deadlocks during early init.
     // Stats are populated after prewarm. Before that, returns None (stats skipped).
@@ -3391,20 +3414,52 @@ fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
     a_bin < frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES && a_bin == b_bin
 }
 
-/// Events a thread accumulates in its slot before merging into the global stats.
-const MT_STATS_MERGE_EVENTS: usize = 256;
+
+/// Per-slot multi-threaded stats counters (see [`record_slot_mt_stats`]).
+struct SlotMtCounters {
+    allocation_events: AtomicUsize,
+    free_events: AtomicUsize,
+    total_allocated: AtomicUsize,
+    total_freed: AtomicUsize,
+    active_allocations: AtomicUsize,
+    live_bytes: AtomicUsize,
+    per_size_class: [AtomicUsize; MALLOC_STATS_BIN_COUNT],
+}
+
+impl SlotMtCounters {
+    const fn new() -> Self {
+        Self {
+            allocation_events: AtomicUsize::new(0),
+            free_events: AtomicUsize::new(0),
+            total_allocated: AtomicUsize::new(0),
+            total_freed: AtomicUsize::new(0),
+            active_allocations: AtomicUsize::new(0),
+            live_bytes: AtomicUsize::new(0),
+            per_size_class: [const { AtomicUsize::new(0) }; MALLOC_STATS_BIN_COUNT],
+        }
+    }
+}
+
+/// Events a thread records before it tries to fold its counters into the
+/// global stats (which is when `peak_usage` is sampled).
+const MT_STATS_MERGE_EVENTS: u32 = 256;
 
 /// Multi-threaded stats recording (bd-rc0923-epic-eeuy4f.26).
 ///
 /// Taking the one global combiner lock on every malloc and free serialized all
-/// allocating threads (55% of cycles at 4 workers). Each thread instead adds a
-/// signed delta to its own slot, under a per-slot lock that only a stats reader
-/// ever contends, and merges it every `MT_STATS_MERGE_EVENTS` events, or later if
-/// another thread holds the combiner then. A free
-/// may be of another thread's allocation, so the net fields (`active_allocations`,
-/// `live_bytes`, `per_size_class`) are two's-complement deltas. Readers merge
-/// every slot first (`merge_all_slot_mt_stats`), so counts stay exact;
-/// `peak_usage` is sampled at merges and can miss a peak shorter than one batch.
+/// allocating threads (55% of cycles at 4 workers). Each thread instead keeps
+/// cumulative counters in its own slot that ONLY it writes -- a plain load and
+/// store per field, no locked instruction -- and whoever folds them into the
+/// global stats (a reader, or the thread itself every `MT_STATS_MERGE_EVENTS`
+/// events if the combiner is free) takes the change since the slot's last
+/// fold under the combiner lock. The per-op slot lock this replaced was a
+/// `lock cmpxchg` on every malloc and free: removing the whole MT stats
+/// update took 4 workers 46-58 -> 34-50 ns and 8 workers 69-73 -> 41-52 ns
+/// per malloc+free (2026-10-06). A free may be of another thread's
+/// allocation, so the net counters are two's-complement and folded as signed
+/// deltas. Readers fold every slot first (`merge_all_slot_mt_stats`), so the
+/// counts of threads that are not mid-operation are exact; `peak_usage` is
+/// sampled at folds and can miss a peak shorter than one batch.
 fn record_slot_mt_stats(
     slot: &AllocatorReentrySlot,
     global: &FlatCombiningStats,
@@ -3412,68 +3467,43 @@ fn record_slot_mt_stats(
     size: usize,
     bin: usize,
 ) {
-    lock_slot_mt_stats(slot);
-    // SAFETY: `mt_stats_lock` is held.
-    let pending = unsafe { &mut *slot.mt_stats.get() };
+    // Only this slot's thread writes these, so a load + store cannot lose an
+    // update; Relaxed suffices because the fold reads them under the combiner
+    // lock and tolerates a moment's skew between fields.
+    #[inline(always)]
+    fn add(counter: &AtomicUsize, delta: usize) {
+        counter.store(counter.load(Ordering::Relaxed).wrapping_add(delta), Ordering::Relaxed);
+    }
+    let c = &slot.mt_counts;
     match op {
         FC_OP_ALLOC => {
-            pending.allocation_events = pending.allocation_events.saturating_add(1);
-            pending.total_allocated = pending.total_allocated.saturating_add(size);
-            pending.active_allocations = pending.active_allocations.wrapping_add(1);
-            pending.live_bytes = pending.live_bytes.wrapping_add(size);
-            pending.per_size_class[bin] = pending.per_size_class[bin].wrapping_add(1);
+            add(&c.allocation_events, 1);
+            add(&c.total_allocated, size);
+            add(&c.active_allocations, 1);
+            add(&c.live_bytes, size);
+            add(&c.per_size_class[bin], 1);
         }
         FC_OP_FREE => {
-            pending.free_events = pending.free_events.saturating_add(1);
-            pending.total_freed = pending.total_freed.saturating_add(size);
-            pending.active_allocations = pending.active_allocations.wrapping_sub(1);
-            pending.live_bytes = pending.live_bytes.wrapping_sub(size);
-            pending.per_size_class[bin] = pending.per_size_class[bin].wrapping_sub(1);
+            add(&c.free_events, 1);
+            add(&c.total_freed, size);
+            add(&c.active_allocations, 1usize.wrapping_neg());
+            add(&c.live_bytes, size.wrapping_neg());
+            add(&c.per_size_class[bin], 1usize.wrapping_neg());
         }
-        _ => {}
+        _ => return,
     }
-    // Never wait for the combiner here: while another thread merges, keep batching.
-    if pending.allocation_events + pending.free_events >= MT_STATS_MERGE_EVENTS {
-        let _ = global.try_merge_signed_and_reset(pending);
-    }
-    slot.mt_stats_lock.store(false, Ordering::Release);
-}
-
-#[inline]
-fn lock_slot_mt_stats(slot: &AllocatorReentrySlot) {
-    while slot
-        .mt_stats_lock
-        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-        .is_err()
-    {
-        std::hint::spin_loop();
+    let unfolded = slot.mt_unfolded_events.load(Ordering::Relaxed) + 1;
+    // Never wait for the combiner here: while another thread folds, keep counting.
+    if unfolded >= MT_STATS_MERGE_EVENTS && global.try_fold_slot(slot) {
+        slot.mt_unfolded_events.store(0, Ordering::Relaxed);
+    } else {
+        slot.mt_unfolded_events.store(unfolded, Ordering::Relaxed);
     }
 }
 
-/// Merge every thread's pending multi-threaded delta into `global`. A slot whose
-/// lock stays held is skipped: in a fork child it belongs to a thread that no
-/// longer exists.
+/// Fold every thread's multi-threaded counters into `global`.
 fn merge_all_slot_mt_stats(global: &FlatCombiningStats) {
-    for_each_claimed_slot(|slot| {
-        let mut spins = 0u32;
-        while slot
-            .mt_stats_lock
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            spins += 1;
-            if spins > 1 << 20 {
-                break;
-            }
-            std::hint::spin_loop();
-        }
-        if spins > 1 << 20 {
-            return;
-        }
-        // SAFETY: `mt_stats_lock` is held.
-        global.merge_signed_and_reset(unsafe { &mut *slot.mt_stats.get() });
-        slot.mt_stats_lock.store(false, Ordering::Release);
-    });
+    global.fold_all_slots();
 }
 
 /// Publish a thread's single-threaded-era stats accumulator into the global combiner.

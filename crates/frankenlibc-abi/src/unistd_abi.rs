@@ -5427,7 +5427,6 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -9842,7 +9841,6 @@ pub unsafe extern "C" fn forkpty(
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
