@@ -1499,19 +1499,21 @@ pub unsafe extern "C" fn __res_mkquery(
     pos as c_int
 }
 
-// __res_nclose: close resolver state. We use global config, so this is a no-op.
+// __res_nclose: release only native allocations owned by this resolver state.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nclose(_statp: *mut c_void) {
-    // Our native resolver uses a global LazyLock config — nothing to close.
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::close(_statp) }
 }
 
-// __res_ninit: initialize resolver state. We forward to res_init.
+// __res_ninit: initialize independent caller-owned resolver configuration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_ninit(_statp: *mut c_void) -> c_int {
-    unsafe { super::unistd_abi::res_init() }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::init(_statp) }
 }
 
-// __res_nmkquery: per-state mkquery — forward to __res_mkquery (ignoring state).
+// __res_nmkquery: build from the caller state, including RD and AD options.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nmkquery(
     _statp: *mut c_void,
@@ -1525,10 +1527,11 @@ pub unsafe extern "C" fn __res_nmkquery(
     buf: *mut c_void,
     buflen: c_int,
 ) -> c_int {
-    unsafe { __res_mkquery(op, dname, class, typ, data, datalen, newrr, buf, buflen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::mkquery(_statp, op, dname, class, typ, data, datalen, newrr, buf, buflen) }
 }
 
-// __res_nquery: per-state query — forward to __res_query (ignoring state).
+// __res_nquery: query through the caller endpoints and update its error slot.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nquery(
     _statp: *mut c_void,
@@ -1538,10 +1541,11 @@ pub unsafe extern "C" fn __res_nquery(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::query(_statp, dname, class, typ, answer, anslen) }
 }
 
-// __res_nquerydomain: per-state querydomain — forward to __res_querydomain.
+// __res_nquerydomain: use the caller state for an exact combined name.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nquerydomain(
     _statp: *mut c_void,
@@ -1552,10 +1556,11 @@ pub unsafe extern "C" fn __res_nquerydomain(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { __res_querydomain(name, domain, class, typ, answer, anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::querydomain(_statp, name, domain, class, typ, answer, anslen) }
 }
 
-// __res_nsearch: per-state search — forward to __res_search.
+// __res_nsearch: apply the caller search list, ndots and search option flags.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nsearch(
     _statp: *mut c_void,
@@ -1565,10 +1570,11 @@ pub unsafe extern "C" fn __res_nsearch(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::search(_statp, dname, class, typ, answer, anslen) }
 }
 
-// __res_nsend: per-state send — forward to __res_send.
+// __res_nsend: send through a snapshot of the caller endpoints and options.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __res_nsend(
     _statp: *mut c_void,
@@ -1577,7 +1583,8 @@ pub unsafe extern "C" fn __res_nsend(
     answer: *mut c_void,
     anslen: c_int,
 ) -> c_int {
-    unsafe { __res_send(msg, msglen, answer, anslen) }
+    // SAFETY: the native boundary validates the caller-owned state and buffers.
+    unsafe { crate::resolv_state::send(_statp, msg, msglen, answer, anslen) }
 }
 // __res_ownok: check if owner name is valid (like dnok)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

@@ -8,7 +8,8 @@ on:
       - 'crates/frankenlibc-abi/src/resolv_state.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/stateful_resolver_test.rs'
-      - 'crates/frankenlibc-core/src/dns_transport/raw.rs'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
       - 'tests/conformance/stateful_resolver_abi.c'
   workflow_dispatch:
 
@@ -29,90 +30,22 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Assemble the exact seven reviewed forwarding edits without moving a branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Record the committed implementation being tested
         run: |
           set -euo pipefail
           mkdir -p artifacts/stateful-resolver
           git rev-parse HEAD > artifacts/stateful-resolver/base-commit.txt
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib, json, os, subprocess, urllib.request
-          path = Path('crates/frankenlibc-abi/src/glibc_internal_abi.rs')
-          original = path.read_bytes()
-          def digest(data):
-              return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-          text = original.decode()
-          edits = {
-              '__res_nclose': ('// Our native resolver uses a global LazyLock config — nothing to close.', 'close(_statp)'),
-              '__res_ninit': ('unsafe { super::unistd_abi::res_init() }', 'init(_statp)'),
-              '__res_nmkquery': ('unsafe { __res_mkquery(op, dname, class, typ, data, datalen, newrr, buf, buflen) }', 'mkquery(_statp, op, dname, class, typ, data, datalen, newrr, buf, buflen)'),
-              '__res_nquery': ('unsafe { super::unistd_abi::res_query(dname, class, typ, answer.cast(), anslen) }', 'query(_statp, dname, class, typ, answer, anslen)'),
-              '__res_nquerydomain': ('unsafe { __res_querydomain(name, domain, class, typ, answer, anslen) }', 'querydomain(_statp, name, domain, class, typ, answer, anslen)'),
-              '__res_nsearch': ('unsafe { super::unistd_abi::res_search(dname, class, typ, answer.cast(), anslen) }', 'search(_statp, dname, class, typ, answer, anslen)'),
-              '__res_nsend': ('unsafe { __res_send(msg, msglen, answer, anslen) }', 'send(_statp, msg, msglen, answer, anslen)'),
-          }
-          integrated = all('crate::resolv_state::' + target in text for _, target in edits.values())
-          if not integrated:
-              assert digest(original) == '7ba3b14a0c4bdb079a3143f4bdbb4d5b04eb5ec3', 'concurrent ABI change: review before assembly'
-              for symbol, (old, target) in edits.items():
-                  marker = 'pub unsafe extern "C" fn ' + symbol + '('
-                  assert text.count(marker) == 1, symbol
-                  start = text.index('{', text.index(marker))
-                  end = start + 1
-                  depth = 1
-                  while depth:
-                      if text[end] == '{': depth += 1
-                      elif text[end] == '}': depth -= 1
-                      end += 1
-                  assert text[start + 1:end - 1].strip() == old, symbol
-                  body = '\n    // SAFETY: the native boundary validates the caller-owned state and buffers.\n    unsafe { crate::resolv_state::' + target + ' }\n'
-                  text = text[:start + 1] + body + text[end - 1:]
-              comments = {
-                  '// __res_nclose: close resolver state. We use global config, so this is a no-op.': '// __res_nclose: release only native allocations owned by this resolver state.',
-                  '// __res_ninit: initialize resolver state. We forward to res_init.': '// __res_ninit: initialize independent caller-owned resolver configuration.',
-                  '// __res_nmkquery: per-state mkquery — forward to __res_mkquery (ignoring state).': '// __res_nmkquery: build from the caller state, including RD and AD options.',
-                  '// __res_nquery: per-state query — forward to __res_query (ignoring state).': '// __res_nquery: query through the caller endpoints and update its error slot.',
-                  '// __res_nquerydomain: per-state querydomain — forward to __res_querydomain.': '// __res_nquerydomain: use the caller state for an exact combined name.',
-                  '// __res_nsearch: per-state search — forward to __res_search.': '// __res_nsearch: apply the caller search list, ndots and search option flags.',
-                  '// __res_nsend: per-state send — forward to __res_send.': '// __res_nsend: send through a snapshot of the caller endpoints and options.',
-              }
-              for old, new in comments.items():
-                  assert text.count(old) == 1, old
-                  text = text.replace(old, new, 1)
-              path.write_text(text)
-          subprocess.run(['git', 'diff', '--check'], check=True)
-          diff = subprocess.check_output(['git', 'diff', '--', str(path)])
-          Path('artifacts/stateful-resolver/wrapper-integration.diff').write_bytes(diff)
-          data = path.read_bytes()
-          sha = digest(data)
-          if not integrated:
-              # Create an immutable source blob ONLY. Never create/update refs,
-              # commits, branches or pull requests from this assembly job.
-              request = urllib.request.Request(
-                  'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs',
-                  data=json.dumps({'content': data.decode(), 'encoding': 'utf-8'}).encode(),
-                  headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'},
-                  method='POST')
-              with urllib.request.urlopen(request, timeout=60) as response:
-                  assert json.load(response)['sha'] == sha
-          print('STATEFUL_ABI_BLOB', sha, flush=True)
-          Path('artifacts/stateful-resolver/wrapper-blob.txt').write_text(sha + '\n')
-          Path('artifacts/stateful-resolver/proof-scope.txt').write_text(
-              'Committed source' if integrated else 'Committed native modules plus the exact seven-wrapper candidate diff; branch is unchanged')
-          PY
+          git hash-object crates/frankenlibc-abi/src/glibc_internal_abi.rs > artifacts/stateful-resolver/wrapper-blob.txt
+          printf 'Committed source without overlays\n' > artifacts/stateful-resolver/proof-scope.txt
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
       - uses: Swatinem/rust-cache@v2
-      - name: Execute real native state implementation and retained DNS engine tests
+      - name: Execute real exported state entry bodies and retained DNS engine tests
         run: |
           set -euo pipefail
           if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
@@ -135,6 +68,8 @@ jobs:
             FRANKENLIBC_MODE="$mode" timeout 40 "$RUNNER_TEMP/stateful-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/stateful-resolver/candidate-$mode.log"
             grep -Fq '20 candidate stateful resolver cases passed' "artifacts/stateful-resolver/candidate-$mode.log"
           done
+      - name: Verify validation did not alter tracked source
+        run: git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()
         with:

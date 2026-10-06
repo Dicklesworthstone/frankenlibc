@@ -5,8 +5,16 @@ use std::net::{Ipv6Addr, SocketAddr, TcpListener, UdpSocket};
 use std::thread;
 use std::time::Duration;
 
-use frankenlibc_abi::resolv_state::{self as state, State, Extension, RES_INIT, RES_USEVC,
+use frankenlibc_abi::resolv_state::{State, Extension, RES_INIT, RES_USEVC,
     RES_IGNTC, RES_RECURSE, RES_DEFNAMES, RES_DNSRCH, RES_TRUSTAD};
+// Exercise the real exported entry bodies, not only their native delegates.
+mod state {
+    pub use frankenlibc_abi::glibc_internal_abi::{
+        __res_nclose as close, __res_ninit as init, __res_nmkquery as mkquery,
+        __res_nquery as query, __res_nquerydomain as querydomain,
+        __res_nsearch as search, __res_nsend as send,
+    };
+}
 use frankenlibc_core::resolv::dns::DnsMessage;
 
 fn pointer(state: &mut State) -> *mut c_void { (state as *mut State).cast() }
@@ -169,9 +177,14 @@ fn state_ignore_truncation_does_not_attempt_tcp() {
         let mut reply = answer(&b[..n], 0, 0); reply[2] |= 2;
         socket.send_to(&reply, peer).unwrap();
     });
-    let query = wire(); let mut out = [0; 512];
+    let query = wire(); let mut out = [0u8; 512];
     let n = unsafe { state::send(pointer(&mut state), query.as_ptr().cast(), query.len() as _, out.as_mut_ptr().cast(), 512) };
     assert_eq!(n, query.len() as i32); assert_ne!(out[2] & 2, 0);
+    let mut expected = answer(&query, 0, 0);
+    expected[2] |= 2;
+    expected[3] &= !0x20;
+    assert_eq!(&out[..n as usize], expected.as_slice());
+    assert!(out[n as usize..].iter().all(|&byte| byte == 0));
     worker.join().unwrap();
 }
 
@@ -201,7 +214,7 @@ fn querydomain_uses_exact_combined_name_without_searching() {
         assert_eq!(DnsMessage::decode(&b[..n]).unwrap().questions[0].qname, b"host.suffix.test");
         socket.send_to(&answer(&b[..n], 0, 7), peer).unwrap();
     });
-    let mut output = [0; 512];
+    let mut output = [0u8; 512];
     assert!(unsafe { state::querydomain(pointer(&mut state), c"host".as_ptr(), c"suffix.test".as_ptr(), 1, 1, output.as_mut_ptr().cast(), 512) } > 0);
     worker.join().unwrap();
 }
@@ -220,7 +233,7 @@ fn search_uses_caller_suffix_order_and_continues_after_servfail() {
                 socket.send_to(&answer(&b[..n], code, marker), peer).unwrap();
             }
         });
-        let mut output = [0; 512];
+        let mut output = [0u8; 512];
         assert!(unsafe { state::search(pointer(&mut state), c"host".as_ptr(), 1, 1, output.as_mut_ptr().cast(), 512) } > 0);
         assert_eq!(state.res_h_errno, if rejection == 2 { 2 } else { 1 }); worker.join().unwrap();
     }
@@ -238,7 +251,7 @@ fn absolute_search_and_disabled_search_flags_use_only_bare_name() {
             assert_eq!(DnsMessage::decode(&b[..n]).unwrap().questions[0].qname, expected);
             socket.send_to(&answer(&b[..n], 0, 7), peer).unwrap();
         });
-        let mut output = [0; 512];
+        let mut output = [0u8; 512];
         assert!(unsafe { state::search(pointer(&mut state), name.as_ptr(), 1, 1, output.as_mut_ptr().cast(), 512) } > 0);
         worker.join().unwrap();
     }
@@ -267,11 +280,11 @@ fn invalid_state_and_short_outputs_fail_without_writes_or_socket_io() {
     let socket = udp(); socket.set_nonblocking(true).unwrap();
     let mut state = v4_state(socket.local_addr().unwrap()); let query = wire();
     for capacity in 0..12 {
-        let mut output = [0xa5; 64];
+        let mut output = [0xa5u8; 64];
         assert_eq!(unsafe { state::send(pointer(&mut state), query.as_ptr().cast(), query.len() as _, output.as_mut_ptr().cast(), capacity) }, -1);
         assert_eq!(output, [0xa5; 64]);
     }
-    state.nscount = 4; let mut output = [0xa5; 64];
+    state.nscount = 4; let mut output = [0xa5u8; 64];
     assert_eq!(unsafe { state::send(pointer(&mut state), query.as_ptr().cast(), query.len() as _, output.as_mut_ptr().cast(), 64) }, -1);
     assert_eq!(output, [0xa5; 64]);
     let mut packet = [0; 512];
