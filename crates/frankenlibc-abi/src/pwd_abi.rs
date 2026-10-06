@@ -469,6 +469,13 @@ pub(crate) fn fill_passwd_from_entry(entry: &frankenlibc_core::pwd::Passwd) -> *
     with_pwd_storage(|storage| storage.fill_from(entry))
 }
 
+pub(crate) fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
+    match passwd_answer(PwKey::Name(name), None) {
+        Answer::Found(entry) => Some(entry),
+        _ => None,
+    }
+}
+
 pub(crate) fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
     match passwd_answer(PwKey::Uid(uid), None) {
         Answer::Found(entry) => Some(entry),

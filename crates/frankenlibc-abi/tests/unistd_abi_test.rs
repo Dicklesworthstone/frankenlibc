@@ -14565,59 +14565,102 @@ fn nss_parse_line_result_returns_zero_and_readline_returns_minus_one() {
 // __libc_early_init / nss_files_parse_spent / nss_netgroup_parseline
 // ---------------------------------------------------------------------------
 
+// These were always-fail stubs, so getent/gencat/pldd failed under preload;
+// they now implement glibc's contracts. glibc_private_helpers_test compares
+// them operation by operation with host glibc's own GLIBC_PRIVATE copies.
+
 #[test]
-fn libc_alloc_buffer_helpers_return_null_or_noop_safely() {
+fn libc_alloc_buffer_helpers_carve_copy_and_latch_failure() {
     use frankenlibc_abi::unistd_abi::{
         __libc_alloc_buffer_alloc_array, __libc_alloc_buffer_allocate,
         __libc_alloc_buffer_copy_bytes, __libc_alloc_buffer_copy_string,
         __libc_alloc_buffer_create_failure,
     };
-    let mut sink: *mut c_void = std::ptr::null_mut();
-    assert!(unsafe { __libc_alloc_buffer_alloc_array(std::ptr::null_mut(), 8, 8, 4) }.is_null());
-    assert!(unsafe { __libc_alloc_buffer_allocate(64, &mut sink) }.is_null());
+    let mut block: *mut c_void = std::ptr::null_mut();
+    let mut buf = unsafe { __libc_alloc_buffer_allocate(32, &mut block) };
+    assert!(!block.is_null());
+    assert_eq!((buf.current, buf.end - buf.current), (block as usize, 32));
+    let words = unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 8, 8, 2) };
+    assert_eq!(words as usize, block as usize);
     let src = b"hello";
-    assert!(
-        unsafe {
-            __libc_alloc_buffer_copy_bytes(
-                std::ptr::null_mut(),
-                src.as_ptr() as *const c_void,
-                src.len(),
-            )
-        }
-        .is_null()
-    );
-    let cs = CString::new("hello").unwrap();
-    assert!(
-        unsafe { __libc_alloc_buffer_copy_string(std::ptr::null_mut(), cs.as_ptr()) }.is_null()
-    );
-    unsafe { __libc_alloc_buffer_create_failure(std::ptr::null_mut(), 0) };
+    buf = unsafe { __libc_alloc_buffer_copy_bytes(buf, src.as_ptr() as *const c_void, src.len()) };
+    let cs = CString::new("xy").unwrap();
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!(buf.current - block as usize, 16 + 5 + 3);
+    let copied = unsafe { std::slice::from_raw_parts(block.cast::<u8>().add(16), 8) };
+    assert_eq!(copied, b"helloxy\0");
+    // 9 more bytes do not fit in the 8 left: the buffer latches failed.
+    assert!(unsafe { __libc_alloc_buffer_alloc_array(&mut buf, 1, 1, 9) }.is_null());
+    assert_eq!((buf.current, buf.end), (0, 0));
+    buf = unsafe { __libc_alloc_buffer_copy_string(buf, cs.as_ptr()) };
+    assert_eq!((buf.current, buf.end), (0, 0));
+    let failed = unsafe { __libc_alloc_buffer_create_failure(block, 32) };
+    assert_eq!((failed.current, failed.end), (0, 0));
+    unsafe { frankenlibc_abi::malloc_abi::free(block) };
+}
+
+#[repr(C)]
+struct TestDynarray {
+    used: usize,
+    allocated: usize,
+    array: *mut c_void,
 }
 
 #[test]
-fn libc_dynarray_helpers_return_zero() {
+fn libc_dynarray_helpers_grow_resize_and_finalize() {
     use frankenlibc_abi::unistd_abi::{
         __libc_dynarray_emplace_enlarge, __libc_dynarray_finalize, __libc_dynarray_resize,
         __libc_dynarray_resize_clear,
     };
+    let mut scratch = [7u64; 2];
+    let scratch_ptr = scratch.as_mut_ptr().cast::<c_void>();
+    let mut list = TestDynarray {
+        used: 2,
+        allocated: 2,
+        array: scratch_ptr,
+    };
+    let l = (&mut list as *mut TestDynarray).cast::<c_void>();
     assert_eq!(
-        unsafe { __libc_dynarray_emplace_enlarge(std::ptr::null_mut(), std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_emplace_enlarge(l, scratch_ptr, 8) },
+        1
     );
+    assert_ne!(list.array, scratch_ptr, "growth leaves the scratch array");
+    assert_eq!(list.allocated, 2 + 2 / 2 + 1);
+    assert_eq!(unsafe { *list.array.cast::<u64>().add(1) }, 7);
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 10, scratch_ptr, 8) }, 1);
+    assert_eq!((list.used, list.allocated), (10, 10));
+    assert_eq!(unsafe { __libc_dynarray_resize(l, 3, scratch_ptr, 8) }, 1);
     assert_eq!(
-        unsafe { __libc_dynarray_resize(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_resize_clear(l, 12, scratch_ptr, 8) },
+        1
     );
+    assert!((3..12).all(|i| unsafe { *list.array.cast::<u64>().add(i) } == 0));
     assert_eq!(
-        unsafe { __libc_dynarray_resize_clear(std::ptr::null_mut(), 4, std::ptr::null_mut(), 8) },
-        0
+        unsafe { __libc_dynarray_resize(l, usize::MAX / 4, scratch_ptr, 8) },
+        0,
+        "size * element_size overflow"
     );
+    let mut result = [0usize; 2];
+    assert_eq!(
+        unsafe { __libc_dynarray_finalize(l, scratch_ptr, 8, result.as_mut_ptr().cast()) },
+        1
+    );
+    assert_eq!(result[1], 12);
+    assert_eq!(unsafe { *(result[0] as *const u64) }, 7);
+    unsafe { frankenlibc_abi::malloc_abi::free(result[0] as *mut c_void) };
+    // A list whose growth failed earlier (allocated == SIZE_MAX) does not finalize.
+    let mut failed = TestDynarray {
+        used: 0,
+        allocated: usize::MAX,
+        array: std::ptr::null_mut(),
+    };
     assert_eq!(
         unsafe {
             __libc_dynarray_finalize(
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
+                (&mut failed as *mut TestDynarray).cast(),
+                scratch_ptr,
                 8,
-                std::ptr::null_mut(),
+                result.as_mut_ptr().cast(),
             )
         },
         0
@@ -14642,24 +14685,54 @@ fn libc_dynarray_at_failure_aborts_child_process() {
     assert_eq!(libc::WTERMSIG(status), libc::SIGABRT);
 }
 
+#[repr(C)]
+struct TestScratchBuffer {
+    data: *mut c_void,
+    length: usize,
+    space: TestScratchSpace,
+}
+
+#[repr(C, align(16))]
+struct TestScratchSpace([u8; 1024]);
+
 #[test]
-fn libc_scratch_buffer_helpers_return_zero() {
+fn libc_scratch_buffer_helpers_grow_on_the_heap() {
     use frankenlibc_abi::unistd_abi::{
         __libc_scratch_buffer_grow, __libc_scratch_buffer_grow_preserve,
         __libc_scratch_buffer_set_array_size,
     };
+    let mut b = Box::new(TestScratchBuffer {
+        data: std::ptr::null_mut(),
+        length: 1024,
+        space: TestScratchSpace([0; 1024]),
+    });
+    b.data = b.space.0.as_mut_ptr().cast();
+    b.space.0[..3].copy_from_slice(b"abc");
+    let p = (&mut *b as *mut TestScratchBuffer).cast::<c_void>();
+    assert_eq!(unsafe { __libc_scratch_buffer_grow_preserve(p) }, 1);
+    assert_eq!(b.length, 2048);
     assert_eq!(
-        unsafe { __libc_scratch_buffer_grow(std::ptr::null_mut()) },
+        unsafe { std::slice::from_raw_parts(b.data.cast::<u8>(), 3) },
+        b"abc"
+    );
+    assert_eq!(unsafe { __libc_scratch_buffer_grow(p) }, 1);
+    assert_eq!(b.length, 4096);
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 100, 8) },
+        1
+    );
+    assert_eq!(b.length, 4096, "already large enough");
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, 1000, 8) },
+        1
+    );
+    assert_eq!(b.length, 8000);
+    // Overflow fails and falls back to the inline space.
+    assert_eq!(
+        unsafe { __libc_scratch_buffer_set_array_size(p, usize::MAX / 2, 4) },
         0
     );
-    assert_eq!(
-        unsafe { __libc_scratch_buffer_grow_preserve(std::ptr::null_mut()) },
-        0
-    );
-    assert_eq!(
-        unsafe { __libc_scratch_buffer_set_array_size(std::ptr::null_mut(), 4, 8) },
-        0
-    );
+    assert_eq!((b.data, b.length), (b.space.0.as_mut_ptr().cast(), 1024));
 }
 
 #[test]

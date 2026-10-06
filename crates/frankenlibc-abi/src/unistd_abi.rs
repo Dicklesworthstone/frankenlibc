@@ -8484,28 +8484,22 @@ pub unsafe extern "C" fn sched_get_priority_max(policy: c_int) -> c_int {
 // wordexp / wordfree — Implemented (native POSIX word expansion)
 // ---------------------------------------------------------------------------
 //
-// Supports: tilde expansion (~user), environment variable expansion ($VAR, ${VAR}),
-// arithmetic expansion ($((...))), pathname expansion (glob), field splitting on
-// IFS, and WRDE_NOCMD safety.
+// The expansion itself is `frankenlibc_core::stdlib::wordexp::
+// expand_input_fields`: one left-to-right pass doing tilde, parameter
+// (including the program's positional parameters and `$$`), arithmetic and
+// command substitution with quote removal, recording for every character
+// whether an unquoted expansion produced it (IFS splits only those) and
+// whether it was typed literally and unquoted (only those glob). This layer
+// supplies the environment, the NSS-aware home directory lookup, the
+// `/bin/sh -c` runner and pathname expansion through fl's glob, then builds
+// the wordexp_t.
 //
-// Command substitution ($(...) and `...`) is rejected with WRDE_CMDSUB when
-// WRDE_NOCMD is set, and executed through /bin/sh otherwise — both matching live
-// glibc, verified rather than assumed: an LD_PRELOADed C program gets the same rc
-// and the same words from fl as from glibc for $(echo hi) with and without
-// WRDE_NOCMD, for a backtick substitution, and for $((1+2)).
-//
-// ARITHMETIC IS NOT COMMAND SUBSTITUTION and is NOT gated by WRDE_NOCMD:
-// $((1+2)) expands to 3 even under WRDE_NOCMD, again matching glibc. Only an
-// arithmetic body that itself contains a command substitution is rejected, which
-// is what `arithmetic_contains_command_substitution` below exists to detect.
-//
-// HOW THE SHELL IS INVOKED, spelled out because the previous wording here
-// described the DANGEROUS shape rather than the implemented one. It is not
-// `sh -c "echo <word>"` with the caller's word interpolated into the script text;
-// that would be a command-injection hazard. The script is a FIXED string and the
-// caller's word is passed as a separate ARGUMENT, so the shell parses it only at
-// the one explicit evaluation point, and the results come back NUL-framed so
-// empty words survive without any whitespace decoding. See the call site below.
+// Command substitution runs each `$(...)`/backquote body as `/bin/sh -c BODY`
+// -- the body is the command, exactly as in a shell, never spliced into a
+// larger script -- with stdout captured and trailing newlines removed. Its
+// stderr goes to /dev/null unless WRDE_SHOWERR. Under WRDE_NOCMD any command
+// substitution, including one inside `$((...))` or `${...}`, is WRDE_CMDSUB
+// and nothing runs; `$((1+2))` alone still expands.
 
 // POSIX wordexp_t layout (matches glibc x86_64):
 // struct wordexp_t { size_t we_wordc; char **we_wordv; size_t we_offs; };
@@ -8513,7 +8507,6 @@ const WRDE_DOOFFS: c_int = 1 << 0;
 const WRDE_APPEND: c_int = 1 << 1;
 const WRDE_NOCMD: c_int = 1 << 2;
 const WRDE_REUSE: c_int = 1 << 3;
-#[allow(dead_code)]
 const WRDE_SHOWERR: c_int = 1 << 4;
 const WRDE_UNDEF: c_int = 1 << 5;
 
@@ -8530,625 +8523,118 @@ struct WordexpT {
     we_offs: usize,
 }
 
-struct WordexpSyntaxScan {
-    has_bad_char: bool,
-    has_command_substitution: bool,
-    has_syntax_error: bool,
-}
+// The program's argv, for wordexp's positional parameters ($0, $1, "$@"),
+// which glibc takes from the process arguments. Captured by an ELF
+// initializer (glibc's ld.so passes argc/argv/envp to init_array entries);
+// only integers are stored here.
+static WORDEXP_ARGC: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static WORDEXP_ARGV: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-fn scan_braced_parameter_end(s: &[u8], open_brace: usize) -> Option<usize> {
-    let name_start = open_brace + 1;
-    let mut i = name_start;
-    while i < s.len() {
-        if s[i] == b'}' {
-            return (i > name_start).then_some(i + 1);
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Arithmetic expansion can itself contain command substitution.  It must be
-/// recognized separately because `scan_arith_end` otherwise skips the whole
-/// arithmetic body while the outer scanner is deciding whether WRDE_NOCMD
-/// applies.
-fn arithmetic_contains_command_substitution(s: &[u8]) -> bool {
-    let mut i = 0;
-    let mut escaped = false;
-    let mut in_single_quote = false;
-
-    while i < s.len() {
-        let byte = s[i];
-        if escaped {
-            escaped = false;
-            i += 1;
-            continue;
-        }
-        if byte == b'\\' && !in_single_quote {
-            escaped = true;
-            i += 1;
-            continue;
-        }
-        if byte == b'\'' {
-            in_single_quote = !in_single_quote;
-            i += 1;
-            continue;
-        }
-        if !in_single_quote && (byte == b'`' || (byte == b'$' && s.get(i + 1) == Some(&b'('))) {
-            return true;
-        }
-        i += 1;
-    }
-
-    false
-}
-
-/// Scan `wordexp` input while honoring shell quoting and escaping context.
-fn scan_wordexp_syntax(s: &[u8]) -> WordexpSyntaxScan {
-    let mut scan = WordexpSyntaxScan {
-        has_bad_char: false,
-        has_command_substitution: false,
-        has_syntax_error: false,
-    };
-    let mut i = 0;
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-
-    while i < s.len() {
-        let byte = s[i];
-        if escaped {
-            escaped = false;
-            i += 1;
-            continue;
-        }
-        if in_single_quote {
-            if byte == b'\'' {
-                in_single_quote = false;
-            }
-            i += 1;
-            continue;
-        }
-        if byte == b'\\' {
-            escaped = true;
-            i += 1;
-            continue;
-        }
-        if byte == b'\'' && !in_double_quote {
-            in_single_quote = true;
-            i += 1;
-            continue;
-        }
-        if in_double_quote {
-            if byte == b'"' {
-                in_double_quote = false;
-                i += 1;
-                continue;
-            }
-            if byte == b'`' {
-                scan.has_command_substitution = true;
-                return scan;
-            }
-            if byte == b'$' && i + 1 < s.len() {
-                match s[i + 1] {
-                    b'(' => {
-                        // `$((` is ARITHMETIC, not command substitution. glibc
-                        // permits arithmetic under WRDE_NOCMD and rejects only
-                        // `$(cmd)` and backticks, so classifying `$((1+2))` as
-                        // command substitution made fl return WRDE_CMDSUB for a
-                        // word glibc expands to "3". bd-yb9f9r.
-                        if s.get(i + 2) == Some(&b'(') {
-                            match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                                Some((expr, next)) => {
-                                    if arithmetic_contains_command_substitution(expr) {
-                                        scan.has_command_substitution = true;
-                                        return scan;
-                                    }
-                                    i = next;
-                                    continue;
-                                }
-                                None => {
-                                    scan.has_syntax_error = true;
-                                    return scan;
-                                }
-                            }
-                        }
-                        scan.has_command_substitution = true;
-                        return scan;
-                    }
-                    b'{' => match scan_braced_parameter_end(s, i + 1) {
-                        Some(next) => {
-                            i = next;
-                            continue;
-                        }
-                        None => {
-                            scan.has_syntax_error = true;
-                            return scan;
-                        }
-                    },
-                    _ => {}
-                }
-            }
-            i += 1;
-            continue;
-        }
-        if byte == b'"' {
-            in_double_quote = !in_double_quote;
-            i += 1;
-            continue;
-        }
-        if byte == b'`' {
-            scan.has_command_substitution = true;
-            return scan;
-        }
-        if byte == b'$' && i + 1 < s.len() {
-            match s[i + 1] {
-                b'(' => {
-                    // Same arithmetic-vs-command-substitution split as the
-                    // double-quoted branch above (bd-yb9f9r).
-                    if s.get(i + 2) == Some(&b'(') {
-                        match frankenlibc_core::stdlib::wordexp::scan_arith_end(s, i + 3) {
-                            Some((expr, next)) => {
-                                if arithmetic_contains_command_substitution(expr) {
-                                    scan.has_command_substitution = true;
-                                    return scan;
-                                }
-                                i = next;
-                                continue;
-                            }
-                            None => {
-                                scan.has_syntax_error = true;
-                                return scan;
-                            }
-                        }
-                    }
-                    scan.has_command_substitution = true;
-                    return scan;
-                }
-                b'{' => match scan_braced_parameter_end(s, i + 1) {
-                    Some(next) => {
-                        i = next;
-                        continue;
-                    }
-                    None => {
-                        scan.has_syntax_error = true;
-                        return scan;
-                    }
-                },
-                _ => {}
-            }
-        }
-        if matches!(
-            byte,
-            b'|' | b'&' | b';' | b'<' | b'>' | b'\n' | b'(' | b')' | b'{' | b'}'
-        ) {
-            scan.has_bad_char = true;
-            return scan;
-        }
-        i += 1;
-    }
-
-    if escaped {
-        scan.has_syntax_error = true;
-    }
-
-    scan
-}
-
-/// Perform tilde expansion on a word.
-fn expand_tilde(word: &str) -> String {
-    if !word.starts_with('~') {
-        return word.to_string();
-    }
-    let rest = &word[1..];
-    let (user, suffix) = match rest.find('/') {
-        Some(pos) => (&rest[..pos], &rest[pos..]),
-        None => (rest, ""),
-    };
-    if user.is_empty() {
-        // ~ alone → $HOME
-        if let Ok(home) = std::env::var("HOME") {
-            return format!("{home}{suffix}");
-        }
-        return word.to_string();
-    }
-    // `~user` → that user's home directory from the passwd backend. This was
-    // previously a TODO that returned the word unchanged, so `~root` stayed
-    // literal where glibc gives "/root". Measured against live glibc:
-    //   ~root  -> /root      ~root/sub -> /root/sub     ~bin -> /bin
-    //   ~nosuchuser -> ~nosuchuser     (unknown user stays LITERAL, rc=0)
-    //   a~root -> a~root                (tilde only applies at word start)
-    // bd-xyjzl0.
-    if let Ok(content) = std::fs::read("/etc/passwd")
-        && let Some(entry) = frankenlibc_core::pwd::lookup_by_name(&content, user.as_bytes())
-        && let Ok(dir) = core::str::from_utf8(&entry.pw_dir)
-    {
-        return format!("{dir}{suffix}");
-    }
-    // Unknown user (or an unreadable / non-UTF-8 backend): leave the word alone,
-    // which is what glibc does rather than erroring.
-    word.to_string()
-}
-
-/// Perform environment variable expansion on a word.
-///
-/// Thin shim over `frankenlibc_core::stdlib::wordexp::expand_vars` —
-/// supplies the env-lookup closure (using `std::env::var`) and maps
-/// the typed `ExpandError::UndefinedVariable` to the `WRDE_BADVAL`
-/// integer return code at the boundary.
-fn expand_vars(word: &str, flags: c_int) -> Result<String, c_int> {
-    let undef_is_error = (flags & WRDE_UNDEF) != 0;
-    frankenlibc_core::stdlib::wordexp::expand_vars(word, undef_is_error, |name| {
-        std::env::var(name).ok()
-    })
-    .or_else(|e| match e {
-        frankenlibc_core::stdlib::wordexp::ExpandError::UndefinedVariable(_) => Err(WRDE_BADVAL),
-        // glibc reports a malformed `$((...))` as WRDE_SYNTAX — measured for
-        // `$((1+))`, `$(( ))`, `$((abc))`, `$((1/0))`, `$((~5))`, `$((!0))`
-        // and `$((SETVAR+1))`. bd-yb9f9r.
-        frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax
-        | frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution => Err(WRDE_SYNTAX),
-        // See the split-mask expander: a fired `?` is a diagnostic plus an empty
-        // expansion, not an error return. bd-xyjzl0.
-        frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset { name, message } => {
-            eprintln!("{name}: {message}");
-            Ok(String::new())
-        }
-    })
-}
-
-fn push_masked_char(result: &mut String, split_mask: &mut Vec<bool>, ch: char, splittable: bool) {
-    result.push(ch);
-    split_mask.push(splittable);
-}
-
-fn expand_vars_with_split_mask(word: &str, flags: c_int) -> Result<(String, Vec<bool>), c_int> {
-    let undef_is_error = (flags & WRDE_UNDEF) != 0;
-    expand_vars_with_split_mask_dyn(word, undef_is_error, true)
-}
-
-fn expand_vars_with_split_mask_dyn(
-    word: &str,
-    undef_is_error: bool,
-    split_unquoted_expansions: bool,
-) -> Result<(String, Vec<bool>), c_int> {
-    let mut result = String::with_capacity(word.len());
-    let mut split_mask = Vec::with_capacity(word.len());
-    let bytes = word.as_bytes();
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            push_masked_char(&mut result, &mut split_mask, bytes[i + 1] as char, false);
-            i += 2;
-            continue;
-        }
-        if bytes[i] == b'\'' {
-            i += 1;
-            while i < bytes.len() && bytes[i] != b'\'' {
-                push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            continue;
-        }
-        // `$((expr))` arithmetic, checked before the generic `$` handling so it
-        // is never mistaken for `$(command)`. This expander is reached whenever
-        // the word contains an unquoted `$`, which includes every arithmetic
-        // word, so the core expander's copy of this rule is not enough on its
-        // own. bd-yb9f9r.
-        if bytes[i] == b'$' && bytes.get(i + 1) == Some(&b'(') && bytes.get(i + 2) == Some(&b'(') {
-            let Some((expr, next)) =
-                frankenlibc_core::stdlib::wordexp::scan_arith_end(bytes, i + 3)
-            else {
-                return Err(WRDE_SYNTAX);
-            };
-            // The BODY is expanded before it is parsed as arithmetic. glibc's
-            // arithmetic engine itself has no variables at all — `$((FLARITH+1))`
-            // is WRDE_SYNTAX even with FLARITH exported — but `$(($FLARITH+1))`
-            // is 42, because the expansion layer substitutes the parameter and
-            // the parser only ever sees digits. Measured against live glibc 2.42
-            // (bd-6a9tuc): `$(($UNSET+1))` -> "1" and `$(($UNSET))` -> "0" (the
-            // empty body is zero, unlike `$(( ))` which is a syntax error),
-            // `$((${#FLARITH}))` -> "2", `$((${UNSET:-7}+1))` -> "8",
-            // `$((0x$FLARITH))` -> "65" (textual splice, then parse), and
-            // `$(($FLARITH$FLARITH))` -> "4141". Recursing through this same
-            // expander is also what keeps `\$FLARITH` and `'$FLARITH'` syntax
-            // errors: neither reaches the parser as a number.
-            let expr_text = core::str::from_utf8(expr).map_err(|_| WRDE_SYNTAX)?;
-            let (expanded, _) = expand_vars_with_split_mask_dyn(expr_text, undef_is_error, false)?;
-            let value = match frankenlibc_core::stdlib::wordexp::eval_arith(expanded.as_bytes()) {
-                Ok(v) => v,
-                Err(_) => return Err(WRDE_SYNTAX),
-            };
-            // POSIX groups arithmetic with parameter expansion for field
-            // splitting, so the digits are marked splittable; in practice a
-            // decimal integer contains no IFS character, so this is not
-            // observable against glibc either way.
-            for ch in value.to_string().chars() {
-                push_masked_char(&mut result, &mut split_mask, ch, split_unquoted_expansions);
-            }
-            i = next;
-            continue;
-        }
-        if bytes[i] == b'$' {
-            i += 1;
-            if i >= bytes.len() {
-                push_masked_char(&mut result, &mut split_mask, '$', false);
-                continue;
-            }
-            if bytes[i] == b'{' {
-                // `${...}` — full parameter expansion (default/alt/length forms),
-                // shared with the core expander.
-                i += 1;
-                let start = i;
-                while i < bytes.len() && bytes[i] != b'}' {
-                    i += 1;
-                }
-                let content = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-                if i < bytes.len() {
-                    i += 1;
-                }
-                if content.is_empty() {
-                    push_masked_char(&mut result, &mut split_mask, '$', false);
-                    continue;
-                }
-                let lookup = |name: &str| std::env::var(name).ok();
-                match frankenlibc_core::stdlib::wordexp::expand_braced_param(
-                    content,
-                    undef_is_error,
-                    &lookup,
-                ) {
-                    Ok(value) => {
-                        for ch in value.chars() {
-                            push_masked_char(
-                                &mut result,
-                                &mut split_mask,
-                                ch,
-                                split_unquoted_expansions,
-                            );
-                        }
-                    }
-                    // `${VAR?word}` / `${VAR:?word}` firing is NOT an error
-                    // return: glibc writes the diagnostic to stderr and expands
-                    // to nothing, with wordexp still reporting success
-                    // (measured: `${UNSET:?}` -> rc=0, zero words). bd-xyjzl0.
-                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::NullOrUnset {
-                        name,
-                        message,
-                    }) => {
-                        eprintln!("{name}: {message}");
-                    }
-                    Err(frankenlibc_core::stdlib::wordexp::ExpandError::ArithSyntax)
-                    | Err(frankenlibc_core::stdlib::wordexp::ExpandError::BadSubstitution) => {
-                        return Err(WRDE_SYNTAX);
-                    }
-                    Err(_) => return Err(WRDE_BADVAL),
-                }
-                continue;
-            }
-            // Bare `$VAR`.
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            let var_name = core::str::from_utf8(&bytes[start..i]).unwrap_or("");
-            if var_name.is_empty() {
-                push_masked_char(&mut result, &mut split_mask, '$', false);
-                continue;
-            }
-            match std::env::var(var_name) {
-                Ok(value) => {
-                    for ch in value.chars() {
-                        push_masked_char(
-                            &mut result,
-                            &mut split_mask,
-                            ch,
-                            split_unquoted_expansions,
-                        );
-                    }
-                }
-                Err(_) => {
-                    if undef_is_error {
-                        return Err(WRDE_BADVAL);
-                    }
-                }
-            }
-            continue;
-        }
-        if bytes[i] == b'"' {
-            i += 1;
-            let mut inner = String::new();
-            while i < bytes.len() && bytes[i] != b'"' {
-                inner.push(bytes[i] as char);
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1;
-            }
-            let (expanded, inner_mask) =
-                expand_vars_with_split_mask_dyn(&inner, undef_is_error, false)?;
-            result.push_str(&expanded);
-            split_mask.extend(inner_mask);
-            continue;
-        }
-        push_masked_char(&mut result, &mut split_mask, bytes[i] as char, false);
-        i += 1;
-    }
-
-    Ok((result, split_mask))
-}
-
-fn has_unquoted_parameter_expansion(word: &str) -> bool {
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-
-    for &b in word.as_bytes() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if b == b'\\' && !in_single_quote {
-            escaped = true;
-            continue;
-        }
-        if b == b'\'' && !in_double_quote {
-            in_single_quote = !in_single_quote;
-            continue;
-        }
-        if b == b'"' && !in_single_quote {
-            in_double_quote = !in_double_quote;
-            continue;
-        }
-        if b == b'$' && !in_single_quote && !in_double_quote {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn push_wordexp_word(final_words: &mut Vec<CString>, expanded: &str) {
-    if expanded.contains('*') || expanded.contains('?') || expanded.contains('[') {
-        // Use our glob infrastructure.
-        let pattern = std::path::Path::new(expanded);
-        match std::fs::read_dir(pattern.parent().unwrap_or(std::path::Path::new("."))) {
-            Ok(entries) => {
-                let pat_name = pattern
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                let mut matched = false;
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if simple_glob_match(&pat_name, &name) {
-                        let full = if let Some(parent) = pattern.parent() {
-                            if parent == std::path::Path::new("") {
-                                name
-                            } else {
-                                format!("{}/{name}", parent.display())
-                            }
-                        } else {
-                            name
-                        };
-                        if let Ok(cs) = CString::new(full) {
-                            final_words.push(cs);
-                            matched = true;
-                        }
-                    }
-                }
-                if !matched && let Ok(cs) = CString::new(expanded) {
-                    final_words.push(cs);
-                }
-            }
-            Err(_) => {
-                if let Ok(cs) = CString::new(expanded) {
-                    final_words.push(cs);
-                }
-            }
-        }
-    } else if let Ok(cs) = CString::new(expanded) {
-        final_words.push(cs);
-    }
-}
-
-fn push_wordexp_masked_fields(
-    final_words: &mut Vec<CString>,
-    expanded: &str,
-    split_mask: &[bool],
-    ifs: &str,
+unsafe extern "C" fn capture_wordexp_arguments(
+    argc: c_int,
+    argv: *mut *mut c_char,
+    _envp: *mut *mut c_char,
 ) {
-    if ifs.is_empty() {
-        push_wordexp_word(final_words, expanded);
-        return;
-    }
-
-    let mut current = String::new();
-    let mut emitted_any = false;
-    let mut last_separator_was_nonwhitespace = false;
-
-    for (ch, splittable) in expanded.chars().zip(split_mask.iter().copied()) {
-        let is_ifs = splittable && ifs.contains(ch);
-        let is_ifs_whitespace = is_ifs && matches!(ch, ' ' | '\t' | '\n');
-        if is_ifs_whitespace {
-            if !current.is_empty() {
-                push_wordexp_word(final_words, &current);
-                current.clear();
-                emitted_any = true;
-                last_separator_was_nonwhitespace = false;
-            }
-            continue;
-        }
-
-        if is_ifs {
-            if !current.is_empty() {
-                push_wordexp_word(final_words, &current);
-                current.clear();
-                emitted_any = true;
-            } else if !emitted_any || last_separator_was_nonwhitespace {
-                push_wordexp_word(final_words, "");
-                emitted_any = true;
-            }
-            last_separator_was_nonwhitespace = true;
-            continue;
-        }
-
-        current.push(ch);
-        last_separator_was_nonwhitespace = false;
-    }
-
-    if !current.is_empty() {
-        push_wordexp_word(final_words, &current);
-    }
+    use std::sync::atomic::Ordering;
+    WORDEXP_ARGC.store(usize::try_from(argc).unwrap_or(0), Ordering::Relaxed);
+    WORDEXP_ARGV.store(argv as usize, Ordering::Release);
 }
 
-/// Execute the POSIX shell expansion for command-substitution input and return
-/// its resulting words.  The full input remains runtime-selected: this does
-/// not recognize or special-case any benchmark command.
-fn expand_command_substitution_with_shell(input: &str) -> Result<Vec<CString>, c_int> {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Process, input.len(), 0, true, false, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_CMDSUB);
+#[used]
+#[unsafe(link_section = ".init_array")]
+static CAPTURE_WORDEXP_ARGUMENTS: unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) =
+    capture_wordexp_arguments;
+
+fn wordexp_positional_parameters() -> Vec<Vec<u8>> {
+    use std::sync::atomic::Ordering;
+    let argv = WORDEXP_ARGV.load(Ordering::Acquire) as *const *const c_char;
+    if argv.is_null() {
+        return Vec::new();
     }
-
-    // `$1` is passed as one argument, so the shell only parses it at the
-    // explicit `eval` point, exactly where wordexp must perform shell syntax.
-    // NUL framing preserves empty words and avoids whitespace-based decoding.
-    let output = std::process::Command::new("/bin/sh")
-        .arg("-c")
-        .arg(r#"eval "set -- $1" || exit $?; printf '%s\0' "$@""#)
-        .arg("wordexp")
-        .arg(input)
-        .output();
-
-    let Ok(output) = output else {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_NOSPACE);
-    };
-    if !output.status.success() || (!output.stdout.is_empty() && output.stdout.last() != Some(&0)) {
-        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
-        return Err(WRDE_SYNTAX);
-    }
-
-    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, false);
-    if output.stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    output.stdout[..output.stdout.len() - 1]
-        .split(|byte| *byte == 0)
-        .map(|word| CString::new(word).map_err(|_| WRDE_SYNTAX))
+    let argc = WORDEXP_ARGC.load(Ordering::Relaxed);
+    (0..argc)
+        .map_while(|i| {
+            // SAFETY: argv holds argc entries for the life of the process.
+            let arg = unsafe { *argv.add(i) };
+            (!arg.is_null()).then(|| unsafe { CStr::from_ptr(arg) }.to_bytes().to_vec())
+        })
         .collect()
 }
 
+/// Run one command substitution body with `/bin/sh -c`, returning its stdout.
+fn wordexp_run_command(body: &[u8], flags: c_int) -> Result<Vec<u8>, WordexpFailure> {
+    use std::os::unix::ffi::OsStrExt;
+    if flags & WRDE_NOCMD != 0 {
+        return Err(WordexpFailure::CmdSub);
+    }
+    let (_, decision) = runtime_policy::decide(ApiFamily::Process, body.len(), 0, true, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Process, decision.profile, 40, true);
+        return Err(WordexpFailure::CmdSub);
+    }
+    let stderr = if flags & WRDE_SHOWERR != 0 {
+        std::process::Stdio::inherit()
+    } else {
+        std::process::Stdio::null()
+    };
+    let output = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(std::ffi::OsStr::from_bytes(body))
+        .stdin(std::process::Stdio::inherit())
+        .stderr(stderr)
+        .output();
+    runtime_policy::observe(ApiFamily::Process, decision.profile, 40, output.is_err());
+    // The command's exit status does not matter, as in glibc: only its output.
+    output
+        .map(|o| o.stdout)
+        .map_err(|_| WordexpFailure::NoSpace)
+}
+
+/// Home directory for `~` (empty name: the invoking user) or `~name`,
+/// through the passwd sources nsswitch.conf configures.
+fn wordexp_home_dir(user: &[u8]) -> Option<Vec<u8>> {
+    let entry = if user.is_empty() {
+        // SAFETY: getuid has no preconditions.
+        crate::pwd_abi::lookup_passwd_by_uid(unsafe { libc::getuid() })
+    } else {
+        crate::pwd_abi::lookup_passwd_by_name(user)
+    };
+    entry.map(|entry| entry.pw_dir)
+}
+
+/// Pathname expansion of one field through fl's glob: the sorted matches, or
+/// `None` when nothing matches (the field is then kept as written).
+fn wordexp_glob(pattern: &[u8]) -> Option<Vec<CString>> {
+    let pattern = CString::new(pattern).ok()?;
+    // SAFETY: glob_t is plain data; glob fills it and globfree releases it.
+    let mut g: libc::glob_t = unsafe { std::mem::zeroed() };
+    let rc = unsafe {
+        crate::string_abi::glob(
+            pattern.as_ptr(),
+            0,
+            None,
+            (&mut g as *mut libc::glob_t).cast(),
+        )
+    };
+    let matches = (rc == 0).then(|| {
+        (0..g.gl_pathc)
+            .filter_map(|i| {
+                // SAFETY: glob returned gl_pathc valid C strings.
+                let p = unsafe { *g.gl_pathv.add(i) };
+                (!p.is_null()).then(|| unsafe { CStr::from_ptr(p) }.to_owned())
+            })
+            .collect::<Vec<_>>()
+    });
+    // SAFETY: g was filled by glob above.
+    unsafe { crate::string_abi::globfree((&mut g as *mut libc::glob_t).cast()) };
+    matches.filter(|m| !m.is_empty())
+}
+
+use frankenlibc_core::stdlib::wordexp::{
+    WordexpContext, WordexpFailure, expand_input_fields, field_glob_pattern, field_text,
+};
+
 /// POSIX `wordexp` — perform shell-like word expansion.
-///
-/// Native implementation supporting tilde, variable, and pathname (glob) expansion.
-/// Command substitution requires WRDE_NOCMD to be unset and uses /bin/sh.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn wordexp(
     words: *const c_char,
@@ -9159,141 +8645,53 @@ pub unsafe extern "C" fn wordexp(
         return WRDE_NOSPACE;
     }
 
-    let Some(input_vec) = (unsafe { read_c_string_bytes(words) }) else {
+    let Some(input) = (unsafe { read_c_string_bytes(words) }) else {
         return WRDE_SYNTAX;
     };
-    let input = match std::str::from_utf8(&input_vec) {
-        Ok(s) => s,
-        Err(_) => return WRDE_SYNTAX,
+
+    let ifs = std::env::var_os("IFS")
+        .map(|v| {
+            use std::os::unix::ffi::OsStrExt;
+            v.as_bytes().to_vec()
+        })
+        .unwrap_or_else(|| b" \t\n".to_vec());
+    let positional = wordexp_positional_parameters();
+    let lookup = |name: &str| std::env::var(name).ok();
+    let mut run = |body: &[u8]| wordexp_run_command(body, flags);
+    let mut diagnostic = |message: &str| eprintln!("{message}");
+    let mut ctx = WordexpContext {
+        lookup_env: &lookup,
+        home_dir: &wordexp_home_dir,
+        run_command: &mut run,
+        positional: &positional,
+        pid: std::process::id(),
+        undef_is_error: flags & WRDE_UNDEF != 0,
+        diagnostic: &mut diagnostic,
+    };
+    let fields = match expand_input_fields(&input, &ifs, &mut ctx) {
+        Ok(fields) => fields,
+        Err(failure) => {
+            return match failure {
+                WordexpFailure::BadChar => WRDE_BADCHAR,
+                WordexpFailure::BadVal => WRDE_BADVAL,
+                WordexpFailure::CmdSub => WRDE_CMDSUB,
+                WordexpFailure::Syntax => WRDE_SYNTAX,
+                WordexpFailure::NoSpace => WRDE_NOSPACE,
+            };
+        }
     };
 
-    let input_bytes = input.as_bytes();
-
-    let syntax_scan = scan_wordexp_syntax(input_bytes);
-
-    // Check for bad characters
-    if syntax_scan.has_bad_char {
-        return WRDE_BADCHAR;
-    }
-    if syntax_scan.has_syntax_error {
-        return WRDE_SYNTAX;
-    }
-
-    let command_words = if syntax_scan.has_command_substitution {
-        if (flags & WRDE_NOCMD) != 0 {
-            return WRDE_CMDSUB;
-        }
-        match expand_command_substitution_with_shell(input) {
-            Ok(words) => Some(words),
-            Err(rc) => return rc,
-        }
-    } else {
-        None
-    };
-
-    // Split on IFS (whitespace by default)
-    let ifs = std::env::var("IFS").unwrap_or_else(|_| " \t\n".to_string());
-
-    // Process each word
-    let mut result_words: Vec<String> = Vec::new();
-
-    // Tokenize on unquoted shell blanks. IFS is applied later during
-    // post-expansion field splitting, not while reading literal input.
-    let mut current_word = String::new();
-    let mut in_single_quote = false;
-    let mut in_double_quote = false;
-    let mut escaped = false;
-    // Parenthesis depth inside a `$((...))` arithmetic expansion. While this is
-    // non-zero the input is copied verbatim: no word splitting and no quote
-    // toggling, so `$(( 1 + 2 ))` survives tokenisation as ONE word. Without
-    // this the spaces split it into `$((`, `1`, `+`, `2`, `))` and the
-    // expression never reaches the evaluator. bd-yb9f9r.
-    let mut arith_depth = 0usize;
-
-    for &b in input_bytes {
-        if arith_depth > 0 {
-            current_word.push(b as char);
-            match b {
-                b'(' => arith_depth += 1,
-                b')' => arith_depth -= 1,
-                _ => {}
-            }
+    let mut final_words: Vec<CString> = Vec::with_capacity(fields.len());
+    for field in &fields {
+        if let Some(pattern) = field_glob_pattern(field)
+            && let Some(matches) = wordexp_glob(&pattern)
+        {
+            final_words.extend(matches);
             continue;
         }
-        if escaped {
-            // Preserve the backslash through tokenisation: it is only consumed
-            // here for word-splitting/quote decisions, but the expansion phase
-            // still needs it so an escaped `\$`/`` \` `` stays literal rather than
-            // triggering parameter/command expansion (bd-2g7oyh: glibc keeps the
-            // escape; fl previously dropped `\` and then expanded the bare `$`).
-            current_word.push('\\');
-            current_word.push(b as char);
-            escaped = false;
-            continue;
-        }
-        if b == b'\\' && !in_single_quote {
-            escaped = true;
-            continue;
-        }
-        if b == b'\'' && !in_double_quote {
-            in_single_quote = !in_single_quote;
-            current_word.push(b as char);
-            continue;
-        }
-        if b == b'"' && !in_single_quote {
-            in_double_quote = !in_double_quote;
-            current_word.push(b as char);
-            continue;
-        }
-        if !in_single_quote && !in_double_quote && matches!(b, b' ' | b'\t' | b'\n') {
-            if !current_word.is_empty() {
-                result_words.push(std::mem::take(&mut current_word));
-            }
-            continue;
-        }
-        current_word.push(b as char);
-        // Entering arithmetic. Detected on the trailing `$((` just pushed, since
-        // this loop has no lookahead. Single quotes make it literal; double
-        // quotes do not, so `"$((1+2))"` still expands.
-        if !in_single_quote && current_word.as_bytes().ends_with(b"$((") {
-            arith_depth = 2;
-        }
-    }
-    if !current_word.is_empty() {
-        result_words.push(current_word);
-    }
-
-    // Unclosed quotes
-    if command_words.is_none() && (in_single_quote || in_double_quote) {
-        return WRDE_SYNTAX;
-    }
-    // An unterminated `$((` is a syntax error, as it is for an unclosed quote.
-    if command_words.is_none() && arith_depth > 0 {
-        return WRDE_SYNTAX;
-    }
-
-    // Expand each word: tilde → variables → glob
-    let mut final_words = command_words.unwrap_or_default();
-
-    if !syntax_scan.has_command_substitution {
-        for word in &result_words {
-            let split_fields = has_unquoted_parameter_expansion(word);
-            // Tilde expansion
-            let expanded = expand_tilde(word);
-            if split_fields {
-                let (expanded, split_mask) = match expand_vars_with_split_mask(&expanded, flags) {
-                    Ok(s) => s,
-                    Err(e) => return e,
-                };
-                push_wordexp_masked_fields(&mut final_words, &expanded, &split_mask, &ifs);
-            } else {
-                // Variable expansion
-                let expanded = match expand_vars(&expanded, flags) {
-                    Ok(s) => s,
-                    Err(e) => return e,
-                };
-                push_wordexp_word(&mut final_words, &expanded);
-            }
+        match CString::new(field_text(field)) {
+            Ok(word) => final_words.push(word),
+            Err(_) => return WRDE_SYNTAX,
         }
     }
 
@@ -9392,18 +8790,6 @@ unsafe fn wordexp_free_wordv(we: &mut WordexpT) {
     we.we_wordv = std::ptr::null_mut();
     we.we_wordc = 0;
 }
-
-/// Simple glob pattern matching for wordexp pathname expansion.
-fn simple_glob_match(pattern: &str, name: &str) -> bool {
-    // Skip hidden files unless pattern starts with '.'
-    if name.starts_with('.') && !pattern.starts_with('.') {
-        return false;
-    }
-    glob_match_bytes(pattern.as_bytes(), name.as_bytes())
-}
-
-// glob_match_bytes moved to frankenlibc_core::string::wildcard::wildcard_match.
-use frankenlibc_core::string::wildcard::wildcard_match as glob_match_bytes;
 
 /// POSIX `wordfree` — free memory allocated by `wordexp`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -13760,8 +13146,8 @@ pub unsafe extern "C" fn __libc_dynarray_finalize(
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct AllocBuffer {
-    current: usize,
-    end: usize,
+    pub current: usize,
+    pub end: usize,
 }
 
 const ALLOC_BUFFER_FAILED: AllocBuffer = AllocBuffer { current: 0, end: 0 };

@@ -205,3 +205,134 @@ fn wordexp_diff_coverage_report() {
         "{{\"family\":\"libc wordexp\",\"reference\":\"glibc\",\"functions\":2,\"corpus_cases\":19,\"divergences\":0}}",
     );
 }
+
+/// Field splitting and pathname expansion follow where each character came
+/// from, as in glibc: only glob characters typed literally and unquoted
+/// glob, and IFS only splits what an unquoted expansion produced. fl used to
+/// never glob a bare pattern (`*.msg` stayed literal: the parent of a bare
+/// name is "", which read_dir rejects), to glob command-substitution output,
+/// to keep an empty field for `$(echo)`, to misparse `${U:-$(cmd)}`, and to
+/// ignore positional parameters, `$$` and tilde after `=`.
+#[test]
+fn wordexp_expansion_provenance_matches_live_glibc() {
+    let dir = std::env::temp_dir().join(format!("fl-wordexp-glob-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["a.msg", "b.msg", "c.txt", ".hidden.msg"] {
+        std::fs::write(dir.join(name), b"").unwrap();
+    }
+    let d = dir.to_str().unwrap();
+    // SAFETY: test-unique variable names, set once before any expansion.
+    unsafe {
+        std::env::set_var("FLWE_SP", "a b");
+        std::env::set_var("FLWE_G", format!("{d}/*.msg"));
+        std::env::set_var("FLWE_C", "a::b:");
+    }
+    let cases: Vec<(String, c_int)> = [
+        format!("{d}/*.msg"),
+        format!("{d}/*.\"msg\""),
+        format!("\"{d}/*.msg\""),
+        format!("'{d}/*.msg'"),
+        format!("{d}/\\*.msg"),
+        format!("{d}/[ab].msg"),
+        format!("{d}/nomatch*"),
+        format!("{d}/.*.msg"),
+        "$FLWE_G".to_string(),
+        "\"$FLWE_G\"".to_string(),
+        "${FLWE_UNSET:-$FLWE_G}".to_string(),
+        format!("$(printf '%s' '{d}/*.msg')"),
+        format!("$(printf a){d}/*.msg"),
+        format!("{d}/$(printf a)*"),
+        "$(echo)".to_string(),
+        "$(echo)$(echo)".to_string(),
+        "\"$(echo)\"".to_string(),
+        "p$(echo)q".to_string(),
+        "$(printf 'a\\n\\n')".to_string(),
+        "$(echo \"  a   b  \")".to_string(),
+        "\"$(echo \"  a   b  \")\"".to_string(),
+        "${FLWE_UNSET:-$(echo dflt v)}".to_string(),
+        "${FLWE_UNSET:-\"a b\"}".to_string(),
+        "${FLWE_SP:+z $FLWE_SP}".to_string(),
+        "$FLWE_SP$FLWE_SP".to_string(),
+        "\"$FLWE_SP\"x$FLWE_SP".to_string(),
+        "$0".to_string(),
+        "$#".to_string(),
+        "${#1}".to_string(),
+        "\"$@\"".to_string(),
+        "\"$*\"".to_string(),
+        "$$x".to_string(),
+        "$? $! $-".to_string(),
+        "a=~".to_string(),
+        "a=b=~".to_string(),
+        "a:~".to_string(),
+        "~:".to_string(),
+        "\"~\"".to_string(),
+        "${#}".to_string(),
+        "$(true".to_string(),
+    ]
+    .into_iter()
+    .flat_map(|input| [(input.clone(), 0), (input, WRDE_NOCMD)])
+    .collect();
+
+    let mut divs = Vec::new();
+    for (input, flags) in &cases {
+        let c_input = CString::new(input.as_str()).unwrap();
+        let mut fl_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
+        let mut lc_we = WordexpT {
+            we_wordc: 0,
+            we_wordv: std::ptr::null_mut(),
+            we_offs: 0,
+        };
+        let fl_r = unsafe {
+            fl::wordexp(
+                c_input.as_ptr(),
+                (&mut fl_we as *mut WordexpT).cast(),
+                *flags,
+            )
+        };
+        let lc_r = unsafe {
+            wordexp(
+                c_input.as_ptr(),
+                (&mut lc_we as *mut WordexpT).cast(),
+                *flags,
+            )
+        };
+        let case = format!("({input:?}, flags={flags:#x})");
+        if fl_r != lc_r {
+            divs.push(Divergence {
+                case: case.clone(),
+                field: "return",
+                frankenlibc: format!("{fl_r}"),
+                glibc: format!("{lc_r}"),
+            });
+        }
+        if fl_r == 0 && lc_r == 0 {
+            let fl_words = unsafe { collect_words(&fl_we) };
+            let lc_words = unsafe { collect_words(&lc_we) };
+            if fl_words != lc_words {
+                divs.push(Divergence {
+                    case,
+                    field: "words",
+                    frankenlibc: format!("{:?}", fl_words),
+                    glibc: format!("{:?}", lc_words),
+                });
+            }
+        }
+        if fl_r == 0 {
+            unsafe { fl::wordfree((&mut fl_we as *mut WordexpT).cast()) };
+        }
+        if lc_r == 0 {
+            unsafe { wordfree((&mut lc_we as *mut WordexpT).cast()) };
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        divs.is_empty(),
+        "wordexp provenance divergences ({} cases):\n{}",
+        cases.len(),
+        render_divs(&divs)
+    );
+}
