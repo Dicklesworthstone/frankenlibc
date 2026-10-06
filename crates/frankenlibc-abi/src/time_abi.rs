@@ -1685,6 +1685,114 @@ pub unsafe extern "C" fn ctime_r(
 // strftime
 // ---------------------------------------------------------------------------
 
+/// Copy the first `count` bytes of a C-locale name without re-entering
+/// FrankenLibC's exported `memcpy` symbol. These names are at most nine bytes,
+/// so decomposing the copy into 8/4/2/1-byte scalar stores is both bounded and
+/// cheaper than another ABI dispatch through the general memory routine.
+#[inline(always)]
+unsafe fn copy_strftime_small_name(dst: *mut u8, src: &[u8], count: usize) {
+    debug_assert!(count <= src.len());
+    debug_assert!(count <= 9);
+
+    let mut offset = 0usize;
+    if count & 8 != 0 {
+        // SAFETY: `count >= 8`, the caller proves `src` and `dst` each contain
+        // `count` bytes, and unaligned accesses are used deliberately.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().cast::<u64>()) };
+        // SAFETY: the same bound proves the destination has eight writable bytes.
+        unsafe { std::ptr::write_unaligned(dst.cast::<u64>(), word) };
+        offset = 8;
+    }
+    if count & 4 != 0 {
+        // SAFETY: the bit decomposition leaves four readable/writable bytes at
+        // `offset`; unaligned accesses impose no alignment precondition.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u32>()) };
+        // SAFETY: see the preceding bound argument.
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u32>(), word) };
+        offset += 4;
+    }
+    if count & 2 != 0 {
+        // SAFETY: the bit decomposition leaves two readable/writable bytes at
+        // `offset`; unaligned accesses impose no alignment precondition.
+        let word = unsafe { std::ptr::read_unaligned(src.as_ptr().add(offset).cast::<u16>()) };
+        // SAFETY: see the preceding bound argument.
+        unsafe { std::ptr::write_unaligned(dst.add(offset).cast::<u16>(), word) };
+        offset += 2;
+    }
+    if count & 1 != 0 {
+        // SAFETY: the final bit proves one readable/writable byte remains.
+        unsafe { *dst.add(offset) = src[offset] };
+    }
+}
+
+/// Copy a pure-literal format with a page-safe portable-SIMD sentinel scan.
+///
+/// Returns `None` at the first `%`, leaving directive-bearing formats to the
+/// existing formatter. A 32-byte-aligned load cannot cross a Linux page
+/// boundary, so aligning the first load down and advancing by 32 never faults
+/// beyond the page containing the terminating NUL. This is the same guard-page
+/// discipline used by the string family's unbounded scanners.
+#[inline(never)]
+unsafe fn try_strftime_strict_literal_copy(
+    s: *mut std::ffi::c_char,
+    maxsize: usize,
+    format: *const std::ffi::c_char,
+) -> Option<usize> {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+
+    let src = format.cast::<u8>();
+    let dst = s.cast::<u8>();
+    let zero = Simd::<u8, 32>::splat(0);
+    let percent = Simd::<u8, 32>::splat(b'%');
+    let align = (src as usize) & 31;
+    // SAFETY: `base` precedes `src` by at most 31 bytes in the same mapped page;
+    // its 32-byte-aligned window cannot cross that page boundary.
+    let base = unsafe { src.sub(align) };
+    let first = Simd::<u8, 32>::from_slice(unsafe { core::slice::from_raw_parts(base, 32) });
+    let mut mask = (first.simd_eq(zero).to_bitmask() | first.simd_eq(percent).to_bitmask())
+        & !((1u64 << align) - 1);
+
+    let literal_len = if mask != 0 {
+        let index = mask.trailing_zeros() as usize - align;
+        // SAFETY: the sentinel mask proves `index` addresses either `%` or NUL.
+        if unsafe { *src.add(index) } == b'%' {
+            return None;
+        }
+        index
+    } else {
+        let mut offset = 32 - align;
+        loop {
+            // SAFETY: `src + offset` is 32-byte aligned. Each full vector stays
+            // in one mapped page; the loop stops in the page containing `%`/NUL.
+            let panel = Simd::<u8, 32>::from_slice(unsafe {
+                core::slice::from_raw_parts(src.add(offset), 32)
+            });
+            mask = panel.simd_eq(zero).to_bitmask() | panel.simd_eq(percent).to_bitmask();
+            if mask != 0 {
+                let index = offset + mask.trailing_zeros() as usize;
+                // SAFETY: the sentinel mask proves `index` addresses `%` or NUL.
+                if unsafe { *src.add(index) } == b'%' {
+                    return None;
+                }
+                break index;
+            }
+            offset += 32;
+        }
+    };
+
+    if literal_len >= maxsize {
+        return Some(0);
+    }
+    // SAFETY: POSIX declares `s` and `format` restricted; `literal_len` readable
+    // source bytes and `maxsize` writable destination bytes are caller-owned.
+    unsafe {
+        std::ptr::copy_nonoverlapping(src, dst, literal_len);
+        *dst.add(literal_len) = 0;
+    }
+    Some(literal_len)
+}
+
 /// POSIX `strftime` — format broken-down time into a string.
 ///
 /// Writes at most `maxsize` bytes (including the NUL terminator) into `s`.
@@ -1884,6 +1992,353 @@ pub unsafe extern "C" fn strftime(
                 return n;
             }
         }
+        // The exact-format dispatcher below (restored from merge
+        // `0be7b9dafe87`'s casualties) runs AFTER the ledger-banked HTTP-date,
+        // RFC3164, %A, %b, %B and %j leaves above. Placed ahead of them it cost
+        // %A/%B/%j 2-2.5 ns. Pure literals are the worst remaining whole-job
+        // ratio and cannot match any exact `%...` transducer. A page-safe
+        // portable-SIMD scan recognizes and copies them; formats containing a
+        // directive decline without writing and keep the general behavior.
+        // SAFETY: strict mode trusts the non-overlapping valid C arguments.
+        if unsafe { *format.cast::<u8>() != b'%' }
+            && let Some(n) = unsafe { try_strftime_strict_literal_copy(s, maxsize, format) }
+        {
+            return n;
+        }
+        // Exact clock/date aliases, their defining spellings, and bare
+        // C-locale names share a finite, locale-independent dispatcher.
+        // Compile the families before the generic C-string scan, full `tm`
+        // projection, alias expansion, and directive interpreter, reading only
+        // the fields each member can observe. Non-normalized fields fall through
+        // so the established extended behavior remains unchanged.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe { *format.cast::<u8>() == b'%' } {
+            // SAFETY: the leading non-NUL byte proves byte one is readable.
+            let head = unsafe { *format.cast::<u8>().add(1) };
+            // SAFETY: `head` is checked before byte two, so an earlier NUL stops
+            // the short-circuit expression.
+            let exact_alias = matches!(head, b'R' | b'T' | b'X' | b'r' | b'F' | b'D' | b'x')
+                && unsafe { *format.cast::<u8>().add(2) == 0 };
+            if exact_alias {
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                let result = match head {
+                    b'R' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                        time_core::format_strftime_hm_time(hour, minute, buf)
+                    }
+                    b'T' | b'X' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute, second) =
+                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                        time_core::format_strftime_hms_time(hour, minute, second, buf)
+                    }
+                    b'r' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (hour, minute, second) =
+                            unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                        time_core::format_strftime_hms_12_time(hour, minute, second, buf)
+                    }
+                    b'F' => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (year, month, day) =
+                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                        time_core::format_strftime_ymd_date(year, month, day, buf)
+                    }
+                    _ => {
+                        // SAFETY: strict mode trusts the caller's valid `tm` object.
+                        let (year, month, day) =
+                            unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                        time_core::format_strftime_mdy_short_date(year, month, day, buf)
+                    }
+                };
+                if let Some(n) = result {
+                    return n;
+                }
+            } else if matches!(head, b'a' | b'h')
+                // SAFETY: a recognized non-NUL conversion makes byte two readable.
+                && unsafe { *format.cast::<u8>().add(2) == 0 }
+            {
+                // Bare `%A`, `%b` and `%B` were already served by their
+                // ledger-banked exact leaves above; only the names without a
+                // dedicated leaf are compiled here.
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let field = unsafe {
+                    if head == b'a' {
+                        (*tm).tm_wday
+                    } else {
+                        (*tm).tm_mon
+                    }
+                };
+                let name = time_core::strftime_c_locale_name(head, field)
+                    .expect("exact C-locale name conversion");
+                // glibc emits a conversion only once it fits with the
+                // terminator, so on overflow it returns 0 and leaves the
+                // destination untouched, like the exact %A/%b/%B leaves above.
+                if name.len() >= maxsize {
+                    return 0;
+                }
+                // SAFETY: `name.len() < maxsize`, so the caller's writable
+                // region holds the whole name plus its terminator.
+                unsafe {
+                    copy_strftime_small_name(s.cast(), name, name.len());
+                    *s.cast::<u8>().add(name.len()) = 0;
+                }
+                return name.len();
+            } else if head == b'Y'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(2) == b'-'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'm'
+                        && *format.cast::<u8>().add(5) == b'-'
+                        && *format.cast::<u8>().add(6) == b'%'
+                        && *format.cast::<u8>().add(7) == b'd'
+                        && *format.cast::<u8>().add(8) == 0
+                }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_ymd_date(year, month, day, buf) {
+                    return n;
+                }
+            } else if head == b'H'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(2) == b':'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'M'
+                }
+            {
+                // SAFETY: the matched five-byte prefix proves byte five is readable.
+                let suffix = unsafe { *format.cast::<u8>().add(5) };
+                if suffix == 0 {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute) = unsafe { ((*tm).tm_hour, (*tm).tm_min) };
+                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                    if let Some(n) = time_core::format_strftime_hm_time(hour, minute, buf) {
+                        return n;
+                    }
+                } else if suffix == b':'
+                    // SAFETY: each read is guarded by the prior non-NUL byte.
+                    && unsafe {
+                        *format.cast::<u8>().add(6) == b'%'
+                            && *format.cast::<u8>().add(7) == b'S'
+                            && *format.cast::<u8>().add(8) == 0
+                    }
+                {
+                    // SAFETY: strict mode trusts the caller's valid `tm` object.
+                    let (hour, minute, second) =
+                        unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                    // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                    let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                    if let Some(n) = time_core::format_strftime_hms_time(hour, minute, second, buf)
+                    {
+                        return n;
+                    }
+                }
+            } else if head == b'I'
+                // SAFETY: every read is guarded by the preceding non-NUL byte.
+                && unsafe {
+                    *format.cast::<u8>().add(2) == b':'
+                        && *format.cast::<u8>().add(3) == b'%'
+                        && *format.cast::<u8>().add(4) == b'M'
+                        && *format.cast::<u8>().add(5) == b':'
+                        && *format.cast::<u8>().add(6) == b'%'
+                        && *format.cast::<u8>().add(7) == b'S'
+                        && *format.cast::<u8>().add(8) == b' '
+                        && *format.cast::<u8>().add(9) == b'%'
+                        && *format.cast::<u8>().add(10) == b'p'
+                        && *format.cast::<u8>().add(11) == 0
+                }
+            {
+                // SAFETY: strict mode trusts the caller's valid `tm` object.
+                let (hour, minute, second) = unsafe { ((*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec) };
+                // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+                let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+                if let Some(n) = time_core::format_strftime_hms_12_time(hour, minute, second, buf) {
+                    return n;
+                }
+            }
+        }
+        // `%Y-%m-%d %H:%M:%S\0` is a closed, locale-independent language.
+        // Compile it at the ABI boundary so the dominant timestamp form avoids
+        // the generic C-string scan, allocation-registry probes, full `tm`
+        // projection, slice searches, and directive dispatch. The left-to-right
+        // chain never reads beyond an earlier NUL. Non-normalized fields fall
+        // through to the general formatter, preserving its extended behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'Y'
+                && *format.cast::<u8>().add(2) == b'-'
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'm'
+                && *format.cast::<u8>().add(5) == b'-'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'd'
+                && *format.cast::<u8>().add(8) == b' '
+                && *format.cast::<u8>().add(9) == b'%'
+                && *format.cast::<u8>().add(10) == b'H'
+                && *format.cast::<u8>().add(11) == b':'
+                && *format.cast::<u8>().add(12) == b'%'
+                && *format.cast::<u8>().add(13) == b'M'
+                && *format.cast::<u8>().add(14) == b':'
+                && *format.cast::<u8>().add(15) == b'%'
+                && *format.cast::<u8>().add(16) == b'S'
+                && *format.cast::<u8>().add(17) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_year,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_numeric_datetime(
+                year, month, day, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
+        // `%Y%m%d%H%M%S\0` is the compact member of the same normalized
+        // numeric timestamp family. Its six directives otherwise enter the
+        // two-pass numeric interpreter, the largest candidate-only self-time
+        // in the whole-job profile. Match the full C string before projecting
+        // only the six fields this transducer consumes.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
+        // short-circuit chain never reads past an earlier NUL.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'Y'
+                && *format.cast::<u8>().add(2) == b'%'
+                && *format.cast::<u8>().add(3) == b'm'
+                && *format.cast::<u8>().add(4) == b'%'
+                && *format.cast::<u8>().add(5) == b'd'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'H'
+                && *format.cast::<u8>().add(8) == b'%'
+                && *format.cast::<u8>().add(9) == b'M'
+                && *format.cast::<u8>().add(10) == b'%'
+                && *format.cast::<u8>().add(11) == b'S'
+                && *format.cast::<u8>().add(12) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_year,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_compact_datetime(
+                year, month, day, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
+        // `%m/%d/%Y\0` and `%m/%d/%y\0` are the normalized month-first
+        // members of the fixed numeric date family. Select them before the
+        // format scan and two-pass interpreter, reading only their three fields.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
+        // short-circuit chain never reads past an earlier NUL.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'm'
+                && *format.cast::<u8>().add(2) == b'/'
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'd'
+                && *format.cast::<u8>().add(5) == b'/'
+                && *format.cast::<u8>().add(6) == b'%'
+                && matches!(*format.cast::<u8>().add(7), b'Y' | b'y')
+                && *format.cast::<u8>().add(8) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            // SAFETY: the complete format match proves byte seven is readable.
+            let four_digit_year = unsafe { *format.cast::<u8>().add(7) == b'Y' };
+            let result = if four_digit_year {
+                time_core::format_strftime_mdy_date(year, month, day, buf)
+            } else {
+                time_core::format_strftime_mdy_short_date(year, month, day, buf)
+            };
+            if let Some(n) = result {
+                return n;
+            }
+        }
+        // `%d/%m/%Y\0` is the normalized day-first date member of the fixed
+        // numeric family. Select it before the format scan and two-pass
+        // interpreter, reading only the three `tm` fields it can observe.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string; the
+        // short-circuit chain never reads past an earlier NUL.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'd'
+                && *format.cast::<u8>().add(2) == b'/'
+                && *format.cast::<u8>().add(3) == b'%'
+                && *format.cast::<u8>().add(4) == b'm'
+                && *format.cast::<u8>().add(5) == b'/'
+                && *format.cast::<u8>().add(6) == b'%'
+                && *format.cast::<u8>().add(7) == b'Y'
+                && *format.cast::<u8>().add(8) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (year, month, day) = unsafe { ((*tm).tm_year, (*tm).tm_mon, (*tm).tm_mday) };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_dmy_date(year, month, day, buf) {
+                return n;
+            }
+        }
+        // Exact `%c\0` in FrankenLibC's C locale is the closed representation
+        // `%a %b %e %H:%M:%S %Y`. Compile that nested locale format into one
+        // fixed emitter before the generic C-string scan, full `tm` projection,
+        // and recursive directive interpreter. Non-normalized fields and short
+        // buffers deliberately fall through to preserve the general behavior.
+        // SAFETY: strict mode trusts the caller's NUL-terminated C string.
+        if unsafe {
+            *format.cast::<u8>() == b'%'
+                && *format.cast::<u8>().add(1) == b'c'
+                && *format.cast::<u8>().add(2) == 0
+        } {
+            // SAFETY: strict mode trusts the caller's valid `tm` object.
+            let (weekday, month, day, year, hour, minute, second) = unsafe {
+                (
+                    (*tm).tm_wday,
+                    (*tm).tm_mon,
+                    (*tm).tm_mday,
+                    (*tm).tm_year,
+                    (*tm).tm_hour,
+                    (*tm).tm_min,
+                    (*tm).tm_sec,
+                )
+            };
+            // SAFETY: caller guarantees `s` writable for `maxsize` bytes.
+            let buf = unsafe { std::slice::from_raw_parts_mut(s as *mut u8, maxsize) };
+            if let Some(n) = time_core::format_strftime_c_locale_datetime(
+                weekday, month, day, year, hour, minute, second, buf,
+            ) {
+                return n;
+            }
+        }
+
         // SAFETY: strict trusts the caller's NUL-terminated `format` (C contract).
         let (fmt_len, terminated) = unsafe { scan_c_string(format, None) };
         if !terminated {
