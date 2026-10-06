@@ -219,6 +219,18 @@ pub enum SignalCriticalSectionKind {
 
 impl SignalCriticalSectionKind {
     const COUNT: usize = Self::StdioRegistryFlush as usize + 1;
+    const ALL: [Self; Self::COUNT] = [
+        Self::MallocArenaLockAcquire,
+        Self::MallocFastbinMutation,
+        Self::MallocLargebinLink,
+        Self::PtrValidatorTlsCache,
+        Self::PtrValidatorArenaLookup,
+        Self::PtrValidatorFingerprint,
+        Self::PtrValidatorCanaryCheck,
+        Self::RuntimePolicyDecision,
+        Self::SetjmpContextTransfer,
+        Self::StdioRegistryFlush,
+    ];
 
     const fn risk_ppm(self) -> u32 {
         match self {
@@ -517,7 +529,21 @@ static HJI_CLASSIFICATIONS: [[AtomicU8; 2]; SignalCriticalSectionKind::COUNT] =
 /// now computed once per input and reused; racing first computations agree.
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
     let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
-    let adverse = depth > 1;
+    hji_classification(kind, depth > 1)
+}
+
+/// Compute every (kind, nested) verdict now. Process startup does this in
+/// hardened mode: computed lazily, the first entry of a kind could come after
+/// the program capped RLIMIT_AS, and the controller's allocation then aborted
+/// the process (gnulib test-printf-posix2, inside realloc).
+pub(crate) fn prewarm_hji_classifications() {
+    for kind in SignalCriticalSectionKind::ALL {
+        let _ = hji_classification(kind, false);
+        let _ = hji_classification(kind, true);
+    }
+}
+
+fn hji_classification(kind: SignalCriticalSectionKind, adverse: bool) -> SignalSafetyClassification {
     let slot = &HJI_CLASSIFICATIONS[kind as usize][usize::from(adverse)];
     let cached = slot.load(Ordering::Relaxed);
     if cached != u8::MAX {

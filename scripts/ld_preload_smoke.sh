@@ -291,7 +291,9 @@ DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
 cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
 cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
 GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
-cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
+cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
+RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_rlimit_as_first.c" -o "${RLIMIT_AS_FIRST_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -1064,8 +1066,11 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
   # strncpy guard page, fstatat NULL, popen with stdio closed, glob slash
-  # runs, UTF-8 fnmatch, huge printf fields (found by a gnulib testdir).
+  # runs, UTF-8 fnmatch, huge printf fields, printf EINVAL/ENOMEM (found by
+  # a gnulib testdir).
   run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
+  # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
+  run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
   # fork/popen/system/posix_spawn while other threads are in malloc and stdio
   # (bd-rc0923-epic-eeuy4f.5).
   run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1

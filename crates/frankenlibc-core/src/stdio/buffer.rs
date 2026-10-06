@@ -132,6 +132,36 @@ impl StreamBuffer {
         true
     }
 
+    /// `setvbuf(f, NULL, _IOFBF|_IOLBF, ..)` on a stream already in use: glibc
+    /// only flips the mode, keeping the buffer and whatever it holds, so do
+    /// the same (an unbuffered stream gains `size` bytes of storage, allocated
+    /// by the next buffered operation).
+    pub fn switch_mode_in_place(&mut self, mode: BufMode, size: usize) {
+        if matches!(mode, BufMode::None) {
+            return;
+        }
+        if self.capacity == 0 {
+            self.capacity = size.max(1);
+        }
+        self.mode = mode;
+    }
+
+    /// [`set_mode`](Self::set_mode) for a stream already in use, after the
+    /// caller synced it (glibc's `_IO_SETBUF`): staged output must have been
+    /// written, and unread input still buffered is discarded, as glibc's
+    /// `_IO_setb` does when the descriptor could not seek back over it.
+    /// Returns false if output is still staged.
+    pub fn rebuild_after_sync(&mut self, mode: BufMode, size: usize) -> bool {
+        if self.write_len != 0 {
+            return false;
+        }
+        let started = self.io_started;
+        self.io_started = false;
+        let ok = self.set_mode(mode, size);
+        self.io_started = started;
+        ok
+    }
+
     // -----------------------------------------------------------------------
     // Write-side operations
     // -----------------------------------------------------------------------
@@ -261,6 +291,39 @@ impl StreamBuffer {
     /// Mark write buffer as flushed (reset position).
     pub fn mark_flushed(&mut self) {
         self.write_len = 0;
+    }
+
+    /// The write buffer as `(base address, bytes staged, capacity)` for a
+    /// Full-buffered buffer whose storage exists: what glibc exposes as
+    /// `_IO_write_base`, `_IO_write_ptr - _IO_write_base` and
+    /// `_IO_buf_end - _IO_buf_base`, in Full or Line mode (a Line window is
+    /// published with `_IO_write_end == _IO_write_ptr`, as glibc does, so
+    /// every inline `putc` still reaches `__overflow` and its newline flush).
+    /// `None` in None mode and before the first buffered write materialises
+    /// the storage. The storage
+    /// is allocated once at full capacity and only replaced by `set_mode`
+    /// before any I/O, so the address stays valid while the stream is in use.
+    pub fn write_window(&self) -> Option<(usize, usize, usize)> {
+        if matches!(self.mode, BufMode::None)
+            || self.capacity == 0
+            || self.data.len() < self.capacity
+        {
+            return None;
+        }
+        Some((self.data.as_ptr() as usize, self.write_len, self.capacity))
+    }
+
+    /// Account for bytes the caller stored in place through
+    /// [`write_window`](Self::write_window): the staged length becomes `used`
+    /// if that only grows it within capacity. Returns the bytes added.
+    pub fn commit_write(&mut self, used: usize) -> usize {
+        if used <= self.write_len || used > self.capacity {
+            return 0;
+        }
+        let added = used - self.write_len;
+        self.write_len = used;
+        self.io_started = true;
+        added
     }
 
     // -----------------------------------------------------------------------
@@ -413,6 +476,11 @@ impl StreamBuffer {
     }
 
     fn write_line<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {
+        // Materialise the storage on the first line-buffered write even when
+        // nothing stays staged, so the stream can publish its (glibc-style,
+        // `_IO_write_end == _IO_write_ptr`) write window right after the
+        // `__overflow` that {fmt} uses to force the buffer into existence.
+        self.ensure_storage();
         if self.write_len == 0 && data.last().copied() == Some(b'\n') {
             return WriteResult {
                 buffered: 0,
@@ -645,6 +713,54 @@ mod tests {
         let mut buf = StreamBuffer::new(BufMode::Full, 64);
         let _ = buf.write(b"x");
         assert!(!buf.set_mode(BufMode::Line, 128));
+    }
+
+    #[test]
+    fn test_switch_mode_in_place_keeps_staged_bytes() {
+        let mut buf = StreamBuffer::new(BufMode::Full, 64);
+        let _ = buf.write(b"abc");
+        buf.switch_mode_in_place(BufMode::Line, 4096);
+        assert_eq!(buf.mode(), BufMode::Line);
+        assert_eq!(buf.capacity(), 64);
+        assert_eq!(buf.pending_write_data(), b"abc");
+        // None is not an in-place switch: the stream must be synced first.
+        buf.switch_mode_in_place(BufMode::None, 0);
+        assert_eq!(buf.mode(), BufMode::Line);
+    }
+
+    #[test]
+    fn test_switch_mode_in_place_gives_unbuffered_stream_storage() {
+        let mut buf = StreamBuffer::new(BufMode::None, 0);
+        let _ = buf.write(b"x");
+        buf.switch_mode_in_place(BufMode::Full, 512);
+        assert_eq!(buf.mode(), BufMode::Full);
+        assert_eq!(buf.capacity(), 512);
+        assert!(!buf.write(b"yz").flush_needed);
+        assert_eq!(buf.pending_write_data(), b"yz");
+    }
+
+    #[test]
+    fn test_rebuild_after_sync_requires_drained_output() {
+        let mut buf = StreamBuffer::new(BufMode::Full, 64);
+        let _ = buf.write(b"abc");
+        assert!(!buf.rebuild_after_sync(BufMode::None, 0));
+        assert_eq!(buf.pending_write_data(), b"abc");
+        buf.mark_flushed();
+        assert!(buf.rebuild_after_sync(BufMode::None, 0));
+        assert_eq!(buf.mode(), BufMode::None);
+        assert_eq!(buf.capacity(), 0);
+        // Still a stream in use: a later set_mode is refused as before.
+        assert!(!buf.set_mode(BufMode::Full, 64));
+    }
+
+    #[test]
+    fn test_rebuild_after_sync_discards_unread_input() {
+        let mut buf = StreamBuffer::new(BufMode::Full, 64);
+        buf.fill(b"unread input");
+        let _ = buf.read(2);
+        assert!(buf.rebuild_after_sync(BufMode::Full, 128));
+        assert_eq!(buf.readable(), 0);
+        assert_eq!(buf.capacity(), 128);
     }
 
     #[test]

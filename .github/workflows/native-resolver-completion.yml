@@ -1,0 +1,90 @@
+name: Native resolver completion
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/src/resolv_abi/**'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/tests/native_resolver_completion_test.rs'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/resolv/**'
+      - 'crates/frankenlibc-core/tests/dns_nameserver_failover.rs'
+      - 'tests/conformance/native_reverse_ipv6.c'
+      - 'tests/conformance/native_dns_cursor.c'
+      - 'scripts/test_native_resolver.sh'
+      - '.github/workflows/native-resolver-completion.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute native DNS transport and failover regressions
+        run: |
+          mkdir -p artifacts/resolver
+          cargo test --locked -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/resolver/transport.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/transport.log
+          cargo test --locked -p frankenlibc-core --test dns_nameserver_failover -- --nocapture 2>&1 | tee artifacts/resolver/failover.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/failover.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-resolver-core-results
+          path: artifacts/resolver/**
+
+  abi:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute the actual Rust ABI parser
+        run: |
+          mkdir -p artifacts/resolver
+          cargo test --locked -p frankenlibc-abi --test native_resolver_completion_test -- --nocapture 2>&1 | tee artifacts/resolver/parser.log
+          grep -Eq 'test result: ok\. 8 passed;' artifacts/resolver/parser.log
+      - name: Execute existing resolver ABI regressions
+        run: |
+          cargo test --locked -p frankenlibc-abi --test resolv_abi_test -- --nocapture 2>&1 | tee artifacts/resolver/existing-abi.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/resolver/existing-abi.log
+      - name: Build the release candidate with its real exports
+        run: |
+          cargo build --locked --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/resolver/release-build.log
+      - name: Run C probes against host oracle and owner-pinned candidate
+        run: |
+          timeout 120 bash scripts/test_native_resolver.sh --host 2>&1 | tee artifacts/resolver/host.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 120 bash scripts/test_native_resolver.sh "$PWD/target/release/libfrankenlibc_abi.so" 2>&1 | tee "artifacts/resolver/candidate-$mode.log"
+            grep -Eq 'PASS: [1-9][0-9]* .*\(candidate\)' "artifacts/resolver/candidate-$mode.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-resolver-abi-results
+          path: artifacts/resolver/**

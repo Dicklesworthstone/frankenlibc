@@ -1629,6 +1629,8 @@ fn absorb_read_window(stream: &mut StdioStream) {
     if handle == 0 {
         return;
     }
+    // At most one window is published at a time; absorb whichever moved.
+    absorb_write_window(stream, handle);
     // SAFETY: `handle` is this stream's registered header.
     let ptr = unsafe { read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET) }
         .load(Ordering::Relaxed);
@@ -1649,6 +1651,57 @@ fn absorb_read_window(stream: &mut StdioStream) {
     }
 }
 
+/// Fold the bytes the program stored in place through the published write
+/// window (`_IO_write_ptr` advanced past where fl published it) into the
+/// stream's staged output.
+#[inline]
+fn absorb_write_window(stream: &mut StdioStream, handle: usize) {
+    // SAFETY: `handle` is this stream's registered header.
+    let ptr = unsafe { read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET) }
+        .load(Ordering::Relaxed);
+    if ptr == 0 {
+        return;
+    }
+    let Some((base, _, capacity)) = stream.write_window() else {
+        return;
+    };
+    // SAFETY: as above.
+    let (published_base, published_end) = unsafe {
+        (
+            read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET).load(Ordering::Relaxed),
+            read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).load(Ordering::Relaxed),
+        )
+    };
+    // Only a window that still describes this buffer counts. `_IO_buf_end`,
+    // not `_IO_write_end`: a line-buffered window publishes the latter at the
+    // staged end, and {fmt} fills up to the former.
+    if published_base == base && published_end == base + capacity && ptr > base {
+        stream.commit_write_window(ptr - base);
+    }
+}
+
+/// Publish a write window `(base, staged, capacity)` (or an empty one) at
+/// `handle`, together with the buffer bounds {fmt} sizes its writes by. A
+/// line-buffered window ends `_IO_write_end` at the staged bytes, as glibc
+/// does, so every inline `putc` reaches `__overflow` and its newline flush.
+#[inline]
+fn store_write_window(handle: usize, window: Option<(usize, usize, usize)>, line: bool) {
+    let (base, ptr, end) = window.map_or((0, 0, 0), |(b, used, cap)| (b, b + used, b + cap));
+    let write_end = if line { ptr } else { end };
+    // SAFETY: `handle` is a registered header.
+    unsafe {
+        read_window_word(handle, io_internal_abi::IO_WRITE_BASE_OFFSET)
+            .store(base, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_WRITE_END_OFFSET)
+            .store(write_end, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_BUF_BASE_OFFSET)
+            .store(base, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_BUF_END_OFFSET).store(end, Ordering::Relaxed);
+        read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET)
+            .store(ptr, Ordering::Relaxed);
+    }
+}
+
 /// Publish `window` (or an empty one) at `handle`.
 #[inline]
 fn store_read_window(handle: usize, window: Option<&[u8]>) {
@@ -1665,16 +1718,31 @@ fn store_read_window(handle: usize, window: Option<&[u8]>) {
     }
 }
 
+/// Publish the stream's window: its read window when it has buffered input,
+/// otherwise its write window (the inline `putc_unlocked` then stores into
+/// fl's buffer directly, and gnulib's `__fpending` arithmetic sees the staged
+/// bytes), never both.
 #[inline]
 fn publish_read_window(stream: &StdioStream) {
     let handle = read_window_handle(stream);
     if handle != 0 {
-        store_read_window(handle, stream.read_window());
+        let read = stream.read_window();
+        store_read_window(handle, read);
+        let line = matches!(stream.buf_mode(), BufMode::Line);
+        store_write_window(
+            handle,
+            if read.is_none() {
+                stream.write_window()
+            } else {
+                None
+            },
+            line,
+        );
     }
 }
 
-/// Absorb, then empty the window: the caller is about to change the stream's
-/// buffer without republishing (single-threaded raw-cache fast paths).
+/// Absorb, then empty both windows: the caller is about to change the
+/// stream's buffer without republishing (single-threaded raw-cache fast paths).
 #[inline]
 fn absorb_and_clear_read_window(stream: &mut StdioStream) {
     let handle = read_window_handle(stream);
@@ -1682,14 +1750,18 @@ fn absorb_and_clear_read_window(stream: &mut StdioStream) {
         return;
     }
     // SAFETY: `handle` is this stream's registered header.
-    if unsafe { read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET) }
-        .load(Ordering::Relaxed)
-        == 0
-    {
+    let (read_ptr, write_ptr) = unsafe {
+        (
+            read_window_word(handle, io_internal_abi::IO_READ_PTR_OFFSET).load(Ordering::Relaxed),
+            read_window_word(handle, io_internal_abi::IO_WRITE_PTR_OFFSET).load(Ordering::Relaxed),
+        )
+    };
+    if read_ptr == 0 && write_ptr == 0 {
         return;
     }
     absorb_read_window(stream);
     store_read_window(handle, None);
+    store_write_window(handle, None, false);
 }
 
 /// The stream is leaving the registry: absorb (the caller holds its lock, so
@@ -1698,6 +1770,7 @@ fn retire_read_window(stream: &mut StdioStream) {
     let handle = read_window_handle(stream);
     if handle != 0 {
         store_read_window(handle, None);
+        store_write_window(handle, None, false);
     }
     stream.set_c_handle(0);
 }
@@ -1722,29 +1795,29 @@ pub(crate) fn republish_read_window(stream: *mut c_void) {
 #[inline]
 fn mirror_stream_flags(handle: usize, stream: &StdioStream) {
     publish_read_window(stream);
-    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF};
+    use io_internal_abi::glibc_flag_bits::{EOF_SEEN, ERR_SEEN, LINE_BUF, UNBUFFERED};
     // SAFETY: `handle` is the address of a registered NativeFile, whose first
     // field is the 4-byte-aligned `_flags` int; it outlives the registry
     // entry holding this cell. Other threads may read it (unlocked macros),
     // hence the atomic view.
     let word = unsafe { std::sync::atomic::AtomicI32::from_ptr(handle as *mut i32) };
     let current = word.load(Ordering::Relaxed);
-    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF);
+    let mut next = current & !(EOF_SEEN | ERR_SEEN | LINE_BUF | UNBUFFERED);
     if stream.is_eof() {
         next |= EOF_SEEN;
     }
     if stream.is_error() {
         next |= ERR_SEEN;
     }
-    // Line buffering, which setvbuf can switch on after open: gnulib's
-    // fbufmode checks _IO_LINE_BUF first, so a line-buffered stream now reads
-    // as _IOLBF. _IO_UNBUFFERED is deliberately NOT mirrored: it stays set on
-    // every handle (io_internal_abi::NO_VISIBLE_BUFFER) because {fmt} writes
-    // through _IO_write_ptr when it is clear, and fl publishes no write
-    // window -- so a fully buffered stream still reads as _IONBF to code that
-    // inspects glibc's FILE.
+    // The buffering mode, which setvbuf can change after open (gnulib's
+    // fbufmode reads these bits). _IO_UNBUFFERED is also what {fmt} checks
+    // before writing through _IO_write_ptr, so it stays set on memory-backed
+    // streams, which never publish a write window.
     if matches!(stream.buf_mode(), BufMode::Line) {
         next |= LINE_BUF;
+    }
+    if !stream.reports_buffered() {
+        next |= UNBUFFERED;
     }
     if next != current {
         word.store(next, Ordering::Relaxed);
@@ -5877,7 +5950,24 @@ pub unsafe extern "C-unwind" fn setvbuf(
             size
         };
         // Note: we ignore the caller's buffer pointer; we always use internal allocation.
-        if s.set_buffering(buf_mode, requested_size) {
+        //
+        // glibc also accepts setvbuf on a stream already in use (iosetvbuf.c):
+        // with no caller buffer, _IOFBF/_IOLBF only flip the mode; otherwise
+        // `_IO_SETBUF` syncs the stream (flushes staged output, seeks back
+        // over unread input) and replaces the buffer. Refusing left programs
+        // that unbuffer stdout mid-run fully buffered, their output reordered
+        // against stderr.
+        let accepted = s.set_buffering(buf_mode, requested_size)
+            || (!s.is_mem_backed() && {
+                let keep = _buf.is_null() && !matches!(buf_mode, BufMode::None);
+                let synced = keep || {
+                    let flushed = unsafe { flush_stream(&mut s) };
+                    sync_input_position(&mut s);
+                    flushed
+                };
+                synced && s.rebuffer(buf_mode, requested_size, keep)
+            });
+        if accepted {
             sync_native_stdio_buffering(stream, buf_mode, _buf, requested_size);
             0
         } else {
@@ -6240,8 +6330,17 @@ macro_rules! extract_va_args_registers {
 /// (C11 7.21.6.5 p2, POSIX.1-2024). Silently casting via `as c_int` truncates —
 /// callers that use the return to size buffers would then under-allocate
 /// (bd-5t6zo).
+///
+/// A render that had to fail (a conversion whose memory could not be
+/// reserved: ENOMEM, as glibc; a directive glibc rejects: EINVAL) fails the
+/// call with that errno, not a success count for truncated or literal output.
 #[inline]
 fn printf_result_to_c_int(total_len: usize) -> c_int {
+    let failure = frankenlibc_core::stdio::printf::take_render_failure();
+    if failure != 0 {
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
     match c_int::try_from(total_len) {
         Ok(n) => n,
         Err(_) => {
@@ -6429,7 +6528,15 @@ pub(crate) unsafe fn render_segments(
     max_args: usize,
     wide_output: bool,
 ) -> ScratchVec {
+    // A failure left by a render whose caller never converted a result
+    // (err/warn) must not fail this call.
+    let _ = frankenlibc_core::stdio::printf::take_render_failure();
     let mut buf = printf_out_pool::take();
+    // glibc rejects the whole call, printing nothing.
+    if segments.invalid_directive() {
+        frankenlibc_core::stdio::printf::note_render_failure(errno::EINVAL);
+        return ScratchVec::new(buf);
+    }
     // Field read, not a walk: `FormatSegments` records this during parsing, so
     // the common non-positional format no longer re-derives it on every render
     // (bd-ntb9fq).

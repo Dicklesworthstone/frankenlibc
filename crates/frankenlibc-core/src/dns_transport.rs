@@ -538,7 +538,8 @@ where
     //   fallback answer; any other search-domain error (a timeout, a
     //   malformed reply) stops the search, though an as-is name still
     //   pending is tried;
-    // - a refused connection means no server: TRY_AGAIN at once;
+    // - only after every configured server refuses is there no server:
+    //   TRY_AGAIN then stops the search, without discarding a positive family;
     // - otherwise the last name tried decides.
     // Before this, a timeout on ANY name made the whole lookup TRY_AGAIN, so
     // a missing name whose search-suffixed form timed out was "try again"
@@ -561,12 +562,17 @@ where
         let mut done = [!want_v4, !want_v6];
         let mut failures = [None, None];
         let mut servfail = [false, false];
+        // A refused endpoint is unavailable for this candidate, not proof
+        // that every configured nameserver is unavailable. Skip it for the
+        // remaining family and retry rounds, but reset for the next name.
+        let mut refused_servers = vec![false; config.nameservers.len()];
         for _ in 0..config.attempts.max(1) {
             for offset in 0..config.nameservers.len() {
-                let server = SocketAddr::new(
-                    config.nameservers[(start + offset) % config.nameservers.len()],
-                    DNS_PORT,
-                );
+                let server_index = (start + offset) % config.nameservers.len();
+                if refused_servers[server_index] {
+                    continue;
+                }
+                let server = SocketAddr::new(config.nameservers[server_index], DNS_PORT);
                 for (index, record_type) in [qtype::A, qtype::AAAA].into_iter().enumerate() {
                     if done[index] {
                         continue;
@@ -605,7 +611,10 @@ where
                         Err(QueryError::Io(error))
                             if error.kind() == std::io::ErrorKind::ConnectionRefused =>
                         {
-                            return Err(ResolveError::Temporary);
+                            refused_servers[server_index] = true;
+                            failures[index] = Some(ResolveError::Temporary);
+                            servfail[index] = false;
+                            break;
                         }
                         Err(QueryError::Io(_)) => {
                             failures[index] = Some(ResolveError::Temporary);
@@ -632,7 +641,7 @@ where
                     break;
                 }
             }
-            if done.iter().all(|&value| value) {
+            if done.iter().all(|&value| value) || refused_servers.iter().all(|&value| value) {
                 break;
             }
         }
@@ -641,6 +650,9 @@ where
                 addresses: result,
                 canonical_name: canonical_name.unwrap_or(name),
             });
+        }
+        if refused_servers.iter().all(|&value| value) {
+            return Err(ResolveError::Temporary);
         }
         // A successful definitive reply supersedes errors from earlier
         // attempts of that family. Only unresolved failures affect the result.

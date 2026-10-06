@@ -1962,6 +1962,9 @@ struct HostentTlsStorage {
     aliases: Vec<*mut c_char>,
     addr_list: Vec<*mut c_char>,
     addresses: Vec<[u8; 4]>,
+    // Reverse lookups return one address. Keep its IPv6 bytes in the same
+    // stable per-thread allocation as the IPv4 hostent and pointer tables.
+    reverse_ipv6_address: libc::in6_addr,
     hostent: libc::hostent,
 }
 
@@ -1973,6 +1976,7 @@ impl HostentTlsStorage {
             aliases: Vec::new(),
             addr_list: Vec::new(),
             addresses: Vec::new(),
+            reverse_ipv6_address: libc::in6_addr { s6_addr: [0; 16] },
             hostent: libc::hostent {
                 h_name: ptr::null_mut(),
                 h_aliases: ptr::null_mut(),
@@ -4441,6 +4445,139 @@ pub(crate) unsafe fn gethostbyname_r_impl(
     }
 }
 
+/// Copy a legacy reverse-lookup address without imposing alignment on the
+/// caller's byte buffer. Errors are h_errno values, not errno values.
+unsafe fn read_reverse_host_address(
+    addr: *const c_void,
+    len: libc::socklen_t,
+    af: c_int,
+) -> Result<std::net::IpAddr, c_int> {
+    if addr.is_null() {
+        return Err(NO_RECOVERY_ERRNO);
+    }
+    let width = match af {
+        libc::AF_INET => 4,
+        libc::AF_INET6 => 16,
+        _ => return Err(HOST_NOT_FOUND_ERRNO),
+    };
+    if (len as usize) < width {
+        return Err(HOST_NOT_FOUND_ERRNO);
+    }
+    if !tracked_region_fits(addr, width) {
+        return Err(NO_RECOVERY_ERRNO);
+    }
+    let mut octets = [0u8; 16];
+    // SAFETY: the caller supplies len readable bytes; the null, family, length,
+    // and tracked-allocation checks above establish the required byte range.
+    // Copy before touching output storage, and do not require address alignment.
+    unsafe { ptr::copy_nonoverlapping(addr.cast::<u8>(), octets.as_mut_ptr(), width) };
+    Ok(match af {
+        libc::AF_INET => std::net::IpAddr::V4(Ipv4Addr::new(
+            octets[0], octets[1], octets[2], octets[3],
+        )),
+        _ => std::net::IpAddr::V6(Ipv6Addr::from(octets)),
+    })
+}
+
+/// Use the existing NSS/files/native-DNS pipeline for both address families.
+/// A mapped IPv6 address is looked up as IPv4, but the caller still returns the
+/// original AF_INET6 address and its sixteen bytes in the hostent.
+fn lookup_reverse_host<T>(
+    address: std::net::IpAddr,
+    files_only: bool,
+    write: impl Fn(&[u8]) -> T,
+) -> Result<T, c_int> {
+    let lookup_address = match address {
+        std::net::IpAddr::V6(ip) => ip
+            .to_ipv4_mapped()
+            .map(std::net::IpAddr::V4)
+            .unwrap_or(address),
+        _ => address,
+    };
+    match lookup_address {
+        std::net::IpAddr::V4(ip) => {
+            // Preserve the allocation-free formatting of the IPv4 fast path.
+            let mut text = [0u8; 15];
+            let text = write_ipv4_text(ip, &mut text);
+            reverse_hosts_lookup(lookup_address, text, files_only, write)
+        }
+        std::net::IpAddr::V6(ip) => {
+            let text = ip.to_string();
+            reverse_hosts_lookup(lookup_address, text.as_bytes(), files_only, write)
+        }
+    }
+}
+
+unsafe fn populate_tls_reverse_hostent(
+    name: &[u8],
+    address: std::net::IpAddr,
+) -> *mut c_void {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            // SAFETY: the existing IPv4 writer copies into stable TLS storage.
+            unsafe { populate_tls_hostent(name, ip) }
+        }
+        std::net::IpAddr::V6(ip) => with_tls_hostent(|storage| {
+            storage.name = cchar_string(name);
+            storage.alias_names.clear();
+            storage.aliases.clear();
+            storage.aliases.push(ptr::null_mut());
+            storage.reverse_ipv6_address.s6_addr = ip.octets();
+            storage.addr_list.clear();
+            storage.addr_list.push(
+                storage
+                    .reverse_ipv6_address
+                    .s6_addr
+                    .as_mut_ptr()
+                    .cast::<c_char>(),
+            );
+            storage.addr_list.push(ptr::null_mut());
+            storage.hostent = libc::hostent {
+                h_name: storage.name.as_mut_ptr(),
+                h_aliases: storage.aliases.as_mut_ptr(),
+                h_addrtype: libc::AF_INET6,
+                h_length: 16,
+                h_addr_list: storage.addr_list.as_mut_ptr(),
+            };
+            (&mut storage.hostent as *mut libc::hostent).cast::<c_void>()
+        }),
+    }
+}
+
+unsafe fn write_reentrant_reverse_hostent(
+    name: &[u8],
+    address: std::net::IpAddr,
+    result_buf: *mut c_void,
+    buf: *mut c_char,
+    buflen: usize,
+    result: *mut *mut c_void,
+) -> Result<(), c_int> {
+    match address {
+        std::net::IpAddr::V4(ip) => {
+            // SAFETY: the existing writer validates output bounds/alignment.
+            unsafe { write_reentrant_hostent(name, ip, result_buf, buf, buflen, result) }
+        }
+        std::net::IpAddr::V6(ip) => {
+            let octets = ip.octets();
+            let addresses: [&[u8]; 1] = [&octets];
+            // SAFETY: this is an AF_INET6 address of exactly sixteen bytes;
+            // the family writer validates output bounds and pointer alignment.
+            unsafe {
+                write_reentrant_hostent_family(
+                    name,
+                    &[],
+                    &addresses,
+                    libc::AF_INET6,
+                    result_buf,
+                    buf,
+                    buflen,
+                    result,
+                )
+            }
+        }
+    }
+}
+
 /// Reentrant reverse lookup implementation for `gethostbyaddr_r`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) unsafe fn gethostbyaddr_r_impl(
@@ -4471,37 +4608,31 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
         return libc::EACCES;
     }
 
-    if addr.is_null() || af != libc::AF_INET || (len as usize) < 4 || !tracked_region_fits(addr, 4)
-    {
-        unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
-        return libc::EINVAL;
-    }
+    // SAFETY: the reader checks the family, byte count, and tracked extent.
+    let address = match unsafe { read_reverse_host_address(addr, len, af) } {
+        Ok(address) => address,
+        Err(_) => {
+            unsafe { set_h_errnop(h_errnop, NO_RECOVERY_ERRNO) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return libc::EINVAL;
+        }
+    };
 
-    let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
-    let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-    let mut ip_buf = [0u8; 15];
-    let ip_str = write_ipv4_text(ip, &mut ip_buf);
-
-    // Borrowed + allocation-free reverse walk: `read_hosts_backend()` cloned the whole file per
-    // call and `reverse_lookup_hosts` ran `parse_hosts_line` (address `Vec` + `Vec<Vec<u8>>`
-    // hostnames) on every line, then built an owned result vector — of which only `[0]` was used.
-    // First-matching-line-wins and address validation are unchanged.
-    // Files misses and read errors now fall through to native PTR lookup.
-    let written =
-        match reverse_hosts_lookup(std::net::IpAddr::V4(ip), ip_str, files_only, |hostname| {
-            // SAFETY: caller-provided output buffers; the writer checks their bounds.
-            unsafe { write_reentrant_hostent(hostname, ip, result_buf, buf, buflen, result) }
-        }) {
-            Ok(written) => written,
-            Err(error) => {
-                let (_, host_error) = legacy_host_lookup_error(error);
-                unsafe { set_h_errnop(h_errnop, host_error) };
-
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-                return 0;
+    let written = match lookup_reverse_host(address, files_only, |hostname| {
+        // SAFETY: caller-provided output buffers; the writer checks their bounds.
+        unsafe { write_reentrant_reverse_hostent(hostname, address, result_buf, buf, buflen, result) }
+    }) {
+        Ok(written) => written,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(h_errnop, host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
             }
-        };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
+            return code;
+        }
+    };
 
     match written {
         Ok(()) => {
@@ -4521,7 +4652,7 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
     }
 }
 
-/// POSIX `gethostbyaddr` — IPv4 reverse lookup through files, then native PTR.
+/// POSIX `gethostbyaddr` — IPv4/IPv6 lookup through files, then native PTR.
 ///
 /// Internal `_gethtbyaddr` remains a files-only operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4544,47 +4675,32 @@ pub unsafe extern "C" fn gethostbyaddr(
         return ptr::null_mut();
     }
 
-    if addr.is_null() {
-        unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
-        runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
-        return ptr::null_mut();
-    }
+    // SAFETY: the reader checks the family, byte count, and tracked extent.
+    let address = match unsafe { read_reverse_host_address(addr, len, af) } {
+        Ok(address) => address,
+        Err(host_error) => {
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 5, true);
+            return ptr::null_mut();
+        }
+    };
 
-    // Only support AF_INET for reverse lookup.
-    if af != libc::AF_INET || (len as usize) < 4 {
-        unsafe { set_h_errnop(ptr::null_mut(), HOST_NOT_FOUND_ERRNO) };
-        return ptr::null_mut();
-    }
-    if !tracked_region_fits(addr, 4) {
-        unsafe { set_h_errnop(ptr::null_mut(), NO_RECOVERY_ERRNO) };
-        return ptr::null_mut();
-    }
-
-    // Read the IPv4 address
-    let octets = unsafe { std::slice::from_raw_parts(addr as *const u8, 4) };
-    let ip = std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]);
-    let mut ip_buf = [0u8; 15];
-    let ip_str = write_ipv4_text(ip, &mut ip_buf);
-
-    // Look up in /etc/hosts
-    // Borrowed + allocation-free reverse walk; see `gethostbyaddr_r` above. Populate thread-local
-    // hostent storage with the first matching hostname, inside the backend borrow (a different
-    // thread-local, so the two borrows do not conflict).
-    let hostent_ptr =
-        match reverse_hosts_lookup(std::net::IpAddr::V4(ip), ip_str, false, |hostname| {
-            // SAFETY: copies the name into TLS hostent storage (a different
-            // thread-local from the hosts backend) and retains the address.
-            unsafe { populate_tls_hostent(hostname, ip) }
-        }) {
-            Ok(hostent_ptr) => hostent_ptr,
-            Err(error) => {
-                let (_, host_error) = legacy_host_lookup_error(error);
-                unsafe { set_h_errnop(ptr::null_mut(), host_error) };
-
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
-                return ptr::null_mut();
+    let hostent_ptr = match lookup_reverse_host(address, false, |hostname| {
+        // SAFETY: copy the name/address into TLS storage distinct from the
+        // borrowed hosts backend. No returned pointer refers to stack storage.
+        unsafe { populate_tls_reverse_hostent(hostname, address) }
+    }) {
+        Ok(hostent_ptr) => hostent_ptr,
+        Err(error) => {
+            let (code, host_error) = legacy_host_lookup_error(error);
+            unsafe { set_h_errnop(ptr::null_mut(), host_error) };
+            if code != 0 {
+                unsafe { set_abi_errno(code) };
             }
-        };
+            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, true);
+            return ptr::null_mut();
+        }
+    };
     unsafe { set_h_errnop(ptr::null_mut(), 0) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 18, false);
     hostent_ptr
@@ -6114,17 +6230,19 @@ unsafe fn read_query_question(
 /// must point to writable [`CNsMsg`] storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mut CNsMsg) -> c_int {
+    let malformed = || {
+        // SAFETY: errno is owned by the current thread.
+        unsafe { set_abi_errno(libc::EMSGSIZE) };
+        -1
+    };
     if msg.is_null() || !tracked_object_fits(handle) || msglen < 0 {
-        return -1;
+        return malformed();
     }
     let msglen = msglen as usize;
-    if msglen < NS_HFIXEDSZ {
-        return -1;
+    if msglen < NS_HFIXEDSZ || !tracked_region_fits(msg.cast(), msglen) {
+        return malformed();
     }
-    if !tracked_region_fits(msg.cast(), msglen) {
-        return -1;
-    }
-    // SAFETY: caller-supplied buffer of msglen bytes.
+    // SAFETY: caller-supplied buffer of msglen bytes, validated above.
     let buf = unsafe { core::slice::from_raw_parts(msg, msglen) };
     let id = u16::from_be_bytes([buf[0], buf[1]]);
     let flags = u16::from_be_bytes([buf[2], buf[3]]);
@@ -6135,23 +6253,36 @@ pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mu
         u16::from_be_bytes([buf[10], buf[11]]),
     ];
 
-    // Walk each section to find boundaries.
+    // Empty sections have no start pointer. Each nonempty section is walked
+    // exactly once to establish record boundaries before publishing the handle.
     let eom = unsafe { msg.add(msglen) };
     let mut sections: [*const u8; NS_S_MAX] = [core::ptr::null(); NS_S_MAX];
     let mut pos = NS_HFIXEDSZ;
     for section in 0..NS_S_MAX {
-        // SAFETY: msg + pos is within [msg, eom] by construction below.
+        if counts[section] == 0 {
+            continue;
+        }
+        // SAFETY: the previous section walk bounded pos by msglen.
         sections[section] = unsafe { msg.add(pos) };
         for _ in 0..counts[section] {
-            let new_pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section as c_int) } {
-                Some(p) => p,
-                None => return -1,
+            if pos >= msglen {
+                return malformed();
+            }
+            // SAFETY: pos is within the message and the skipper checks the RR.
+            pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section as c_int) } {
+                Some(pos) => pos,
+                None => return malformed(),
             };
-            pos = new_pos;
         }
     }
+    // A DNS message is exactly its header and declared records, not a valid
+    // prefix followed by unaccounted-for bytes.
+    if pos != msglen {
+        return malformed();
+    }
 
-    // SAFETY: caller-supplied writable handle.
+    // SAFETY: caller-supplied writable handle. Cursor means "next record";
+    // NS_S_MAX marks that no section has been selected yet.
     unsafe {
         (*handle)._msg = msg;
         (*handle)._eom = eom;
@@ -6159,9 +6290,9 @@ pub unsafe extern "C" fn ns_initparse(msg: *const u8, msglen: c_int, handle: *mu
         (*handle)._flags = flags;
         (*handle)._counts = counts;
         (*handle)._sections = sections;
-        (*handle)._sect = 0;
-        (*handle)._rrnum = 0;
-        (*handle)._msg_ptr = sections[0];
+        (*handle)._sect = NS_S_MAX as c_int;
+        (*handle)._rrnum = -1;
+        (*handle)._msg_ptr = core::ptr::null();
     }
     0
 }
@@ -6200,12 +6331,13 @@ pub unsafe extern "C" fn ns_skiprr(
 }
 
 /// libresolv `ns_parserr(*handle, section, rrnum, *rr) -> int` —
-/// fetch the `rrnum`-th resource record in the given `section` and
-/// fill the caller's [`CNsRr`].
+/// fetch the `rrnum`-th resource record, or the next record when `rrnum == -1`.
+/// Selecting another section starts its iteration at record zero. An explicit
+/// backward index rewinds; forward and sequential reads reuse the next-record
+/// cursor, so iterating a section does not repeatedly rescan its prefix.
 ///
-/// Walks from the section start each call (no incremental cursor
-/// caching). Returns 0 on success, -1 on bounds error or malformed
-/// message.
+/// Returns 0 on success. Returns -1 with ENODEV for an invalid section/index or
+/// exhausted section, and EMSGSIZE for a malformed or out-of-bounds message.
 ///
 /// # Safety
 ///
@@ -6218,107 +6350,137 @@ pub unsafe extern "C" fn ns_parserr(
     rrnum: c_int,
     rr: *mut CNsRr,
 ) -> c_int {
-    if !tracked_object_fits(handle) || !tracked_object_fits(rr) || rrnum < 0 {
-        return -1;
-    }
-    if !(0..NS_S_MAX as c_int).contains(&section) {
-        return -1;
-    }
-    // SAFETY: caller-supplied initialized handle.
-    let msg_ptr = unsafe { (*handle)._msg };
-    let eom = unsafe { (*handle)._eom };
-    let count = unsafe { (*handle)._counts[section as usize] };
-    let section_start = unsafe { (*handle)._sections[section as usize] };
-    if (rrnum as u16) >= count {
-        return -1;
-    }
-    if msg_ptr.is_null() || eom.is_null() || section_start.is_null() {
-        return -1;
-    }
-    // SAFETY: handle message bounds are revalidated before a slice is built.
-    let Some(buf) = (unsafe { dns_message_slice(msg_ptr.cast(), eom.cast()) }) else {
-        return -1;
+    let failure = |code| {
+        // SAFETY: errno is owned by the current thread.
+        unsafe { set_abi_errno(code) };
+        -1
     };
-    let msg_len = buf.len();
-    let msg_addr = msg_ptr as usize;
-    let section_addr = section_start as usize;
-    if section_addr < msg_addr || section_addr > (eom as usize) {
-        return -1;
+    if !tracked_object_fits(handle) || !tracked_object_fits(rr) {
+        return failure(libc::EMSGSIZE);
     }
-    let mut pos = section_addr - msg_addr;
-    for _ in 0..rrnum {
-        match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
-            Some(p) => pos = p,
-            None => return -1,
-        }
+    if !(0..NS_S_MAX as c_int).contains(&section) || rrnum < -1 {
+        return failure(libc::ENODEV);
     }
-
-    // Expand the name into the rr.name field.
-    let comp = unsafe { msg_ptr.add(pos) };
-    let name_buf = unsafe { (*rr).name.as_mut_ptr() };
-    let name_len =
-        unsafe { crate::unistd_abi::dn_expand(msg_ptr, eom, comp, name_buf, NS_MAXDNAME as c_int) };
-    if name_len < 0 {
-        return -1;
-    }
-    pos = pos.saturating_add(name_len as usize);
-
-    if section == 0 {
-        // Question: just type + class.
-        let qtype = match read_be_u16_at(buf, pos) {
-            Some(v) => v,
-            None => return -1,
-        };
-        let qclass = match read_be_u16_at(buf, pos + 2) {
-            Some(v) => v,
-            None => return -1,
-        };
-        // SAFETY: writable caller-supplied CNsRr.
-        unsafe {
-            (*rr)._type = qtype;
-            (*rr).rr_class = qclass;
-            (*rr).ttl = 0;
-            (*rr).rdlength = 0;
-            (*rr).rdata = core::ptr::null();
+    // SAFETY: readable initialized handle, with the section index checked above.
+    let (msg_ptr, eom, count, section_start, current_section, next_index, next_ptr) = unsafe {
+        (
+            (*handle)._msg,
+            (*handle)._eom,
+            c_int::from((*handle)._counts[section as usize]),
+            (*handle)._sections[section as usize],
+            (*handle)._sect,
+            (*handle)._rrnum,
+            (*handle)._msg_ptr,
+        )
+    };
+    let target = if rrnum == -1 {
+        if current_section == section {
+            next_index
+        } else {
+            0
         }
     } else {
-        // Resource record: type, class, ttl, rdlength, rdata.
-        let rtype = match read_be_u16_at(buf, pos) {
-            Some(v) => v,
-            None => return -1,
-        };
-        let rclass = match read_be_u16_at(buf, pos + 2) {
-            Some(v) => v,
-            None => return -1,
-        };
-        let ttl = match read_be_u32_at(buf, pos + 4) {
-            Some(v) => v,
-            None => return -1,
-        };
-        let rdlen = match read_be_u16_at(buf, pos + 8) {
-            Some(v) => v,
-            None => return -1,
-        };
-        let rdata_off = pos + NS_RRFIXEDSZ;
-        if rdata_off + (rdlen as usize) > msg_len {
-            return -1;
-        }
-        let rdata = unsafe { msg_ptr.add(rdata_off) };
-        // SAFETY: writable caller-supplied CNsRr.
-        unsafe {
-            (*rr)._type = rtype;
-            (*rr).rr_class = rclass;
-            (*rr).ttl = ttl;
-            (*rr).rdlength = rdlen;
-            (*rr).rdata = rdata;
-        }
+        rrnum
+    };
+    // Do not narrow the index to u16: values such as 65536 must not wrap and
+    // pass the count check, then drive an unbounded record walk.
+    if target < 0 || target >= count {
+        return failure(libc::ENODEV);
+    }
+    // SAFETY: revalidate message bounds before constructing a slice.
+    let Some(buf) = (unsafe { dns_message_slice(msg_ptr.cast(), eom.cast()) }) else {
+        return failure(libc::EMSGSIZE);
+    };
+    let msg_addr = msg_ptr as usize;
+    let section_addr = section_start as usize;
+    if section_start.is_null() || section_addr < msg_addr || section_addr >= eom as usize {
+        return failure(libc::EMSGSIZE);
     }
 
-    // Update the handle's "last accessed" cursor (mirrors glibc).
-    // SAFETY: writable caller-supplied handle.
+    let (mut pos, start_index) = if current_section == section
+        && next_index >= 0
+        && next_index <= target
+    {
+        let next_addr = next_ptr as usize;
+        if next_ptr.is_null() || next_addr < section_addr || next_addr >= eom as usize {
+            return failure(libc::EMSGSIZE);
+        }
+        (next_addr - msg_addr, next_index)
+    } else {
+        (section_addr - msg_addr, 0)
+    };
+    for _ in start_index..target {
+        if pos >= buf.len() {
+            return failure(libc::EMSGSIZE);
+        }
+        // SAFETY: pos is within the bounded message; the skipper checks the RR.
+        pos = match unsafe { ns_skip_one_rr(buf, eom, pos, section) } {
+            Some(pos) => pos,
+            None => return failure(libc::EMSGSIZE),
+        };
+    }
+    if pos >= buf.len() {
+        return failure(libc::EMSGSIZE);
+    }
+
+    // Parse into local storage. A malformed record does not publish a partial
+    // result or advance the next-record cursor.
+    let mut name = [0 as c_char; NS_MAXDNAME];
+    // SAFETY: pos is in the message and name is a full writable name buffer.
+    let name_len = unsafe {
+        crate::unistd_abi::dn_expand(
+            msg_ptr,
+            eom,
+            msg_ptr.add(pos),
+            name.as_mut_ptr(),
+            NS_MAXDNAME as c_int,
+        )
+    };
+    if name_len < 0 {
+        return failure(libc::EMSGSIZE);
+    }
+    let Some(fields_pos) = pos.checked_add(name_len as usize) else {
+        return failure(libc::EMSGSIZE);
+    };
+    let fields = (|| {
+        let record_type = read_be_u16_at(buf, fields_pos)?;
+        let record_class = read_be_u16_at(buf, fields_pos.checked_add(2)?)?;
+        if section == 0 {
+            let end = fields_pos.checked_add(NS_QFIXEDSZ)?;
+            (end <= buf.len()).then_some((record_type, record_class, 0, 0, None, end))
+        } else {
+            let ttl = read_be_u32_at(buf, fields_pos.checked_add(4)?)?;
+            let rdlength = read_be_u16_at(buf, fields_pos.checked_add(8)?)?;
+            let rdata_offset = fields_pos.checked_add(NS_RRFIXEDSZ)?;
+            let end = rdata_offset.checked_add(usize::from(rdlength))?;
+            (end <= buf.len()).then_some((
+                record_type,
+                record_class,
+                ttl,
+                rdlength,
+                Some(rdata_offset),
+                end,
+            ))
+        }
+    })();
+    let Some((record_type, record_class, ttl, rdlength, rdata_offset, end)) = fields else {
+        return failure(libc::EMSGSIZE);
+    };
+    // SAFETY: rr and handle are writable; all source offsets are bounded by
+    // the original message. rdata borrows the caller's message, not local data.
     unsafe {
+        (*rr).name = name;
+        (*rr)._type = record_type;
+        (*rr).rr_class = record_class;
+        (*rr).ttl = ttl;
+        (*rr).rdlength = rdlength;
+        (*rr).rdata = match rdata_offset {
+            Some(offset) => msg_ptr.add(offset),
+            None => core::ptr::null(),
+        };
         (*handle)._sect = section;
-        (*handle)._rrnum = rrnum;
+        (*handle)._rrnum = target + 1;
+        (*handle)._msg_ptr = msg_ptr.add(end);
     }
     0
 }
