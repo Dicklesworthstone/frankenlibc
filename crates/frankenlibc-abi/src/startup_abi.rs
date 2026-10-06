@@ -1072,7 +1072,6 @@ unsafe fn startup_phase0_impl(
         crate::runtime_policy::prewarm_kernel();
         if crate::runtime_policy::mode().heals_enabled() {
             let _ = crate::membrane_state::try_global_pipeline();
-            crate::signal_abi::prewarm_hji_classifications();
         }
     }
 

@@ -513,55 +513,78 @@ fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
 
-/// Classification per (kind, nested), computed once. `u8::MAX` = not yet.
-static HJI_CLASSIFICATIONS: [[AtomicU8; 2]; SignalCriticalSectionKind::COUNT] =
-    [const { [const { AtomicU8::new(u8::MAX) }; 2] }; SignalCriticalSectionKind::COUNT];
-
-/// The HJI reachability verdict for entering a `kind` critical section,
-/// nested (`depth > 1`) or not.
+/// The HJI reachability verdict for entering a `kind` critical section, not
+/// nested and nested (`depth > 1`): the state a freshly built
+/// `HjiReachabilityController` settles on after `HJI_WARMUP_OBSERVATIONS`
+/// observations of the kind's constant (risk, latency, adverse) inputs.
 ///
-/// Every entry ran HJI_WARMUP_OBSERVATIONS (64) controller updates of the same
-/// constant (risk, latency, adverse) input into a per-thread controller, so
-/// the verdict was that input's fixed point up to a ~4% (0.95^64) trace of the
-/// previous entry's kind. Every malloc and every free enter a critical section:
-/// 128 updates per malloc+free, ~64% of hardened malloc+free's 4.3us
-/// (bd-rc0923-epic-eeuy4f.9). The verdict of a freshly warmed controller is
-/// now computed once per input and reused; racing first computations agree.
+/// Those inputs are compile-time constants, so the verdicts are too; this
+/// table is pinned against the live controller by the signal_abi_test gate
+/// `hji_classification_table_matches_the_controller`, which fails if the
+/// controller or a kind's inputs change. Computing them at run time had two
+/// costs: every malloc and free ran 128 controller updates (~64% of hardened
+/// malloc+free's 4.3 us, bd-rc0923-epic-eeuy4f.9), and once cached per
+/// process, the first computation of a kind could come after the program
+/// capped RLIMIT_AS, where the controller's allocation aborted the process
+/// (gnulib test-printf-posix2, inside realloc); building all 20 before main
+/// instead cost every hardened process ~1.7M instructions.
+const HJI_CLASSIFICATION_TABLE: [[SignalSafetyClassification; 2];
+    SignalCriticalSectionKind::COUNT] = {
+    use SignalSafetyClassification::{MaskRequired as M, Safe as S};
+    // [not nested, nested], in SignalCriticalSectionKind order.
+    [
+        [M, M], // MallocArenaLockAcquire
+        [M, M], // MallocFastbinMutation
+        [M, M], // MallocLargebinLink
+        [S, S], // PtrValidatorTlsCache
+        [S, S], // PtrValidatorArenaLookup
+        [S, S], // PtrValidatorFingerprint
+        [S, S], // PtrValidatorCanaryCheck
+        [S, S], // RuntimePolicyDecision
+        [M, M], // SetjmpContextTransfer
+        [S, S], // StdioRegistryFlush
+    ]
+};
+
 fn handler_dispatch_classification(kind: SignalCriticalSectionKind) -> SignalSafetyClassification {
     let depth = with_signal_critical_depth(|value| value.load(Ordering::Relaxed));
-    hji_classification(kind, depth > 1)
+    HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(depth > 1)]
 }
 
-/// Compute every (kind, nested) verdict now. Process startup does this in
-/// hardened mode: computed lazily, the first entry of a kind could come after
-/// the program capped RLIMIT_AS, and the controller's allocation then aborted
-/// the process (gnulib test-printf-posix2, inside realloc).
-pub(crate) fn prewarm_hji_classifications() {
-    for kind in SignalCriticalSectionKind::ALL {
-        let _ = hji_classification(kind, false);
-        let _ = hji_classification(kind, true);
-    }
-}
-
-fn hji_classification(kind: SignalCriticalSectionKind, adverse: bool) -> SignalSafetyClassification {
-    let slot = &HJI_CLASSIFICATIONS[kind as usize][usize::from(adverse)];
-    let cached = slot.load(Ordering::Relaxed);
-    if cached != u8::MAX {
-        return SignalSafetyClassification::from_u8(cached);
-    }
+/// What the table pins: the live controller's verdict.
+fn compute_hji_classification(
+    kind: SignalCriticalSectionKind,
+    adverse: bool,
+) -> SignalSafetyClassification {
     let mut controller = HjiReachabilityController::new();
     for _ in 0..HJI_WARMUP_OBSERVATIONS {
         controller.observe(kind.risk_ppm(), kind.latency_ns(), adverse);
     }
-    let classification = match controller.state() {
+    match controller.state() {
         ReachState::Safe => SignalSafetyClassification::Safe,
         ReachState::Approaching | ReachState::Calibrating => {
             SignalSafetyClassification::DeferSignal
         }
         ReachState::Breached => SignalSafetyClassification::MaskRequired,
-    };
-    slot.store(classification.as_u8(), Ordering::Relaxed);
-    classification
+    }
+}
+
+/// Every (kind, nested) entry where [`HJI_CLASSIFICATION_TABLE`] disagrees
+/// with the live controller, as `kind:nested table=.. live=..` (empty when
+/// the table is current). For the signal_abi_test gate.
+#[doc(hidden)]
+pub fn hji_classification_table_mismatches_for_tests() -> Vec<String> {
+    let mut mismatches = Vec::new();
+    for kind in SignalCriticalSectionKind::ALL {
+        for adverse in [false, true] {
+            let table = HJI_CLASSIFICATION_TABLE[kind as usize][usize::from(adverse)];
+            let live = compute_hji_classification(kind, adverse);
+            if table != live {
+                mismatches.push(format!("{kind:?}:{adverse} table={table:?} live={live:?}"));
+            }
+        }
+    }
+    mismatches
 }
 
 fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
