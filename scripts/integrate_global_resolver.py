@@ -45,6 +45,15 @@ def body_span(text, name):
                 return match[0].start(), start, item.end()
     raise ValueError('unclosed function: ' + name)
 
+def arguments(text, name, expected):
+    start, brace, _ = body_span(text, name)
+    signature = text[start:brace]
+    params = signature[signature.index('(') + 1:signature.rindex(')')]
+    result = re.findall(r'(?:^|,)\s*([A-Za-z_]\w*)\s*:', params)
+    if len(result) != expected:
+        raise ValueError('unexpected ABI signature: ' + name)
+    return result
+
 def replace_body(text, name, target):
     _, start, end = body_span(text, name)
     return text[:start + 1] + '\n    // SAFETY: the shared native boundary validates this thread\'s state and caller buffers.\n    unsafe { ' + target + ' }\n' + text[end - 1:]
@@ -105,11 +114,13 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {''')
         state.options
     } else { RES_DEFAULT };''')
     abi = originals[abi_path].decode()
-    for name, target in {
-        '__res_mkquery': 'crate::resolv_state::global::mkquery(op, dname, class, typ, _data, _datalen, _newrr, buf, buflen)',
-        '__res_querydomain': 'crate::resolv_state::global::querydomain(name, domain, class, typ, answer, anslen)',
-        '__res_send': 'crate::resolv_state::global::send(msg, msglen, answer, anslen)',
-    }.items():
+    for name, count, destination in [
+        ('__res_mkquery', 10, 'mkquery'),
+        ('__res_querydomain', 6, 'querydomain'),
+        ('__res_send', 4, 'send'),
+    ]:
+        params = arguments(abi, name, count)
+        target = 'crate::resolv_state::global::' + destination + '(' + ', '.join(params) + ')'
         abi = replace_body(abi, name, target)
     abi = once(abi, '// Only QUERY (op=0) is supported; all other opcodes return -1.',
         '// Uses the calling thread\'s state; QUERY and NOTIFY follow the native builder.')
@@ -131,11 +142,11 @@ impl Drop for ResStateBuf {
     start, brace, end = body_span(abi, '__res_state')
     abi = abi[:brace + 1] + '\n    res_state_ptr()\n' + abi[end - 1:]
     unistd = originals[unistd_path].decode()
-    for name, target in {
-        'res_init': 'crate::resolv_state::global::init()',
-        'res_query': 'crate::resolv_state::global::query(dname, class, rr_type, answer.cast(), anslen)',
-        'res_search': 'crate::resolv_state::global::search(dname, class, rr_type, answer.cast(), anslen)',
-    }.items():
+    for name, count, destination in [('res_init', 0, 'init'), ('res_query', 5, 'query'), ('res_search', 5, 'search')]:
+        params = arguments(unistd, name, count)
+        if count:
+            params[3] += '.cast()'
+        target = 'crate::resolv_state::global::' + destination + '(' + ', '.join(params) + ')'
         unistd = replace_body(unistd, name, target)
     # Remove the now-unreachable duplicate receiver, not any source file.
     start, _, end = body_span(unistd, 'dns_query_raw')
