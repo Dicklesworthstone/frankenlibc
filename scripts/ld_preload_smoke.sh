@@ -909,6 +909,15 @@ EOF
 
   run_optional_case "busybox" "${mode}" "busybox_help" busybox --help || mode_failed=1
   run_optional_case "sqlite3" "${mode}" "sqlite_memory_select" sqlite3 :memory: "select 41 + 1;" || mode_failed=1
+  # rustc statically links jemalloc, which calls readlink("/etc/malloc.conf")
+  # while holding its init lock; fl's post-op telemetry built the runtime
+  # kernel there, allocating through jemalloc's malloc: deadlock.
+  # Hardened still deadlocks: the membrane's per-thread validation cache is
+  # created lazily through the process calloc from inside jemalloc's
+  # memset callers.
+  if [[ "${mode}" == "strict" ]]; then
+    run_optional_case "rustc" "${mode}" "rustc_version_static_jemalloc" rustc --version || mode_failed=1
+  fi
   run_optional_case "redis-cli" "${mode}" "redis_cli_version" redis-cli --version || mode_failed=1
   run_optional_case "nginx" "${mode}" "nginx_version" nginx -v || mode_failed=1
   # Its getopt_long table lacks the NULL terminator: works only if main's

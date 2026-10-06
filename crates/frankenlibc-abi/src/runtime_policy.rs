@@ -2749,16 +2749,17 @@ pub(crate) fn observe(
         return;
     }
 
-    // Allocators call mmap/munmap/madvise/mremap from inside their own
-    // critical sections. Building the kernel here allocates through the
-    // `malloc` symbol, which a program may define itself (Bun/mimalloc
-    // export malloc): mimalloc's first mmap re-entered mimalloc mid-init,
-    // got NULL, and fl aborted with "memory allocation of 408 bytes failed"
-    // (the Claude Code binary, `--version`). Observe into an existing kernel
-    // only.
-    if family == ApiFamily::VirtualMemory
-        && KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY
-    {
+    // Observation is telemetry into an existing kernel; it never builds one.
+    // Building it allocates through the `malloc` symbol, which a program may
+    // define itself, and allocators call libc from inside their own
+    // initialization: mimalloc's first mmap re-entered mimalloc mid-init, got
+    // NULL, and fl aborted with "memory allocation of 408 bytes failed" (the
+    // Claude Code binary, `--version`); rustc's statically linked jemalloc
+    // calls readlink("/etc/malloc.conf") while holding its init lock, and the
+    // kernel build re-entered jemalloc's malloc and deadlocked (`rustc
+    // --version` hung). The kernel is prewarmed before main; observations made
+    // before it exists are dropped.
+    if KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
         return;
     }
 
