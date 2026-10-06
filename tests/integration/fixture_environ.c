@@ -2,7 +2,8 @@
  * putenv aliasing, setenv overwrite rules and EINVAL, a program-supplied
  * environ array (duplicate keys, setenv into it must COPY not realloc it,
  * exec'd children see the result), in-place entry mutation, and clearenv
- * setting environ to NULL. Byte-identical to glibc, strict and hardened.
+ * setting environ to NULL, and env -i's assign-then-putenv-then-exec.
+ * Byte-identical to glibc, strict and hardened.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -80,5 +81,23 @@ int main(void) {
     setenv("FLP_Z", "z", 1);
     show("setenv after clearenv", "FLP_Z");
     printf("secure_getenv(FLP_Z)=%s\n", secure_getenv("FLP_Z") ? secure_getenv("FLP_Z") : "(null)");
+
+    /* coreutils `env -i NAME=VALUE cmd`: point environ at an empty array,
+     * putenv into it (an inherited name and a new one), exec. fl kept
+     * environ and __environ as separate variables, so the child got the old
+     * environment plus the new names instead of exactly these two. */
+    static char *empty_env[] = {NULL};
+    environ = empty_env;
+    putenv((char *)"PATH=/usr/bin:/bin");
+    putenv((char *)"FLP_N=1");
+    printf("after env -i pattern: %d entries\n", count_env(""));
+    fflush(stdout);
+    c = fork();
+    if (c == 0) {
+        char *argv[] = {"env", NULL};
+        execvp("env", argv);
+        _exit(127);
+    }
+    waitpid(c, NULL, 0);
     return 0;
 }

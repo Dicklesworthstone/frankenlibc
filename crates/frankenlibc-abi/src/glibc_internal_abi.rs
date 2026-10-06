@@ -5275,12 +5275,52 @@ pub static mut sys_errlist: *const *const c_char = std::ptr::null();
 // ==========================================================================
 // environ / timezone globals (8 symbols)
 // ==========================================================================
+//
+// glibc's `environ`, `_environ` and `__environ` are ONE variable under three
+// names, and programs write it: coreutils `env -i` assigns `environ =
+// dummy_environ` and then calls putenv. As three separate statics, that write
+// landed in `environ` while fl's environment functions kept reading
+// `__environ`, so `env -i A=1 cmd` handed cmd the whole inherited environment
+// and `env -i PATH=/usr/bin cmd` handed it nothing. The deployed library
+// therefore defines the storage once, as `__environ`, and exports the other
+// two names as versioned aliases of the same address (glibc's GLIBC_2.2.5;
+// the node is in version_scripts/fromfp.map). Test binaries keep three Rust
+// statics, whose names are not exported and cannot shadow the host's.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut __environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+)))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut _environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+)))]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut environ: *mut *mut c_char = std::ptr::null_mut();
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+))]
+pub use self::{__environ as _environ, __environ as environ};
+#[cfg(all(
+    target_os = "linux",
+    target_arch = "x86_64",
+    not(debug_assertions),
+    not(feature = "standalone")
+))]
+core::arch::global_asm!(
+    ".symver __environ, environ@@GLIBC_2.2.5",
+    ".symver __environ, _environ@@GLIBC_2.2.5",
+);
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub static mut __timezone: c_long = 0;
