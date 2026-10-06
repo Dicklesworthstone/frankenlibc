@@ -8,9 +8,11 @@ on:
       - 'crates/frankenlibc-abi/src/resolv_state.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/tests/stateful_resolver_test.rs'
+      - 'crates/frankenlibc-abi/tests/stateful_resolver_edns_test.rs'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/dns_transport/**'
       - 'tests/conformance/stateful_resolver_abi.c'
+      - 'tests/conformance/edns_resolver_abi.c'
   workflow_dispatch:
 
 permissions:
@@ -52,6 +54,8 @@ jobs:
           cp Cargo.lock artifacts/stateful-resolver/Cargo.lock
           cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-state.log
           grep -Eq 'test result: ok\. 13 passed;' artifacts/stateful-resolver/native-state.log
+          cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-edns.log
+          grep -Eq 'test result: ok\. 6 passed;' artifacts/stateful-resolver/native-edns.log
           cargo test --locked -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/stateful-resolver/native-core.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/stateful-resolver/native-core.log
       - name: Build the real exported library
@@ -67,6 +71,16 @@ jobs:
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" timeout 40 "$RUNNER_TEMP/stateful-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/stateful-resolver/candidate-$mode.log"
             grep -Fq '20 candidate stateful resolver cases passed' "artifacts/stateful-resolver/candidate-$mode.log"
+          done
+      - name: Exercise EDNS payload, DNSSEC request and fallback contracts
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/edns_resolver_abi.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/edns-resolver"
+          timeout 60 "$RUNNER_TEMP/edns-resolver" --host | tee artifacts/stateful-resolver/edns-host.log
+          grep -Fq '28 host-glibc EDNS resolver cases passed' artifacts/stateful-resolver/edns-host.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 60 "$RUNNER_TEMP/edns-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/stateful-resolver/edns-candidate-$mode.log"
+            grep -Fq '28 candidate EDNS resolver cases passed' "artifacts/stateful-resolver/edns-candidate-$mode.log"
           done
       - name: Verify validation did not alter tracked source
         run: git diff --exit-code

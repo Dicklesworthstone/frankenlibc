@@ -29,6 +29,8 @@ pub const RES_RECURSE: c_ulong = 0x40;
 pub const RES_DEFNAMES: c_ulong = 0x80;
 pub const RES_DNSRCH: c_ulong = 0x200;
 pub const RES_ROTATE: c_ulong = 0x4000;
+pub const RES_USE_EDNS0: c_ulong = 0x0010_0000;
+pub const RES_USE_DNSSEC: c_ulong = 0x0080_0000;
 pub const RES_NOTLDQUERY: c_ulong = 0x0100_0000;
 pub const RES_TRUSTAD: c_ulong = 0x0400_0000;
 const RES_DEFAULT: c_ulong = RES_RECURSE | RES_DEFNAMES | RES_DNSRCH;
@@ -191,13 +193,21 @@ fn random_id() -> Result<u16, c_int> {
     Ok(u16::from_ne_bytes(bytes))
 }
 
-fn initial_config() -> ResolverConfig {
+fn initial_config() -> (ResolverConfig, c_ulong) {
     let mut content = std::fs::read("/etc/resolv.conf").unwrap_or_default();
     if let Some(options) = std::env::var_os("RES_OPTIONS") {
         content.extend_from_slice(b"\noptions ");
         content.extend_from_slice(options.as_bytes());
         content.push(b'\n');
     }
+    // EDNS is a public res_state option, not part of the address-only
+    // ResolverConfig. Read it from the same fresh file/environment snapshot.
+    // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
+    let edns0 = content.split(|&byte| byte == b'\n').any(|line| {
+        let mut words = line.split(u8::is_ascii_whitespace).filter(|word| !word.is_empty());
+        words.next() == Some(b"options".as_slice())
+            && words.any(|word| word.starts_with(b"edns0"))
+    });
     let mut config = ResolverConfig::parse(&content);
     if let Some(domain) = std::env::var_os("LOCALDOMAIN") {
         config.search = domain
@@ -208,7 +218,7 @@ fn initial_config() -> ResolverConfig {
             .collect();
         config.domain = config.search.first().cloned();
     }
-    config
+    (config, if edns0 { RES_USE_EDNS0 } else { 0 })
 }
 
 /// Initialize a caller-owned state from a fresh configuration read. Never
@@ -219,7 +229,7 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
         Ok(state) => state,
         Err(error) => return fail(error),
     };
-    let config = initial_config();
+    let (config, extended_options) = initial_config();
     let id = if state.id == 0 {
         match random_id() {
             Ok(id) => id,
@@ -232,7 +242,7 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
     next.retrans = config.timeout as c_int;
     next.retry = config.attempts as c_int;
     next.id = id;
-    next.options = RES_INIT | RES_DEFAULT;
+    next.options = RES_INIT | RES_DEFAULT | extended_options;
     if config.use_vc { next.options |= RES_USEVC; }
     if config.rotate { next.options |= RES_ROTATE; }
     if config.trust_ad { next.options |= RES_TRUSTAD; }
@@ -502,9 +512,28 @@ unsafe fn record_host_error(pointer: *mut c_void, code: c_int) {
     }
 }
 
-unsafe fn lookup(pointer: *mut c_void, name: &[u8], class: c_int, kind: c_int, options: c_ulong, config: &raw::Config) -> Result<raw::Reply, LookupFailure> {
-    let wire = make_query(name, 0, class, kind, options)
+unsafe fn lookup(pointer: *mut c_void, name: &[u8], class: c_int, kind: c_int, options: c_ulong, config: &raw::Config, capacity: c_int) -> Result<raw::Reply, LookupFailure> {
+    let mut wire = make_query(name, 0, class, kind, options)
         .map_err(|os| LookupFailure { host: NO_RECOVERY, os, servfail: false })?;
+    if options & (RES_USE_EDNS0 | RES_USE_DNSSEC) != 0 {
+        // RFC 6891 OPT: root owner, TYPE=41, CLASS=UDP payload, extended
+        // RCODE/version zero, flags, empty option data. make_query produced
+        // one question and no additional records, so exactly one OPT follows.
+        // Match the live glibc query contract: at least 512, at most 1200;
+        // capacity is already validated and is NOT used to allocate memory.
+        let payload = capacity.clamp(512, 1200) as u16;
+        let flags: u16 = if options & RES_USE_DNSSEC != 0 { 0x8000 } else { 0 };
+        wire[11] = 1;
+        wire.extend_from_slice(&[0, 0, 41]);
+        wire.extend_from_slice(&payload.to_be_bytes());
+        wire.extend_from_slice(&[0, 0]); // Extended RCODE=0, EDNS version=0.
+        wire.extend_from_slice(&flags.to_be_bytes());
+        wire.extend_from_slice(&[0, 0]); // RDLENGTH=0.
+    }
+    // Only query/querydomain/search synthesize EDNS. mkquery and raw send
+    // retain their packet contract. In particular, retries never remove DO
+    // or downgrade a caller's explicit DNSSEC request. DO requests records;
+    // it does not authenticate them or relax the existing RES_TRUSTAD policy.
     // SAFETY: each public entry validated the caller state before lookup.
     unsafe { (*pointer.cast::<State>()).id = u16::from_ne_bytes([wire[0], wire[1]]) };
     raw::send_for_query(&wire, config).map_err(|error| LookupFailure {
@@ -565,7 +594,7 @@ pub unsafe fn query(pointer: *mut c_void, name: *const c_char, class: c_int, kin
         Ok(inputs) => inputs, Err(error) => return fail(error),
     };
     let result = match unsafe { text(name) } {
-        Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config) },
+        Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config, capacity) },
         Err(os) => Err(LookupFailure { host: NO_RECOVERY, os, servfail: false }),
     };
     // SAFETY: spans were checked by lookup_inputs, with no retained input borrow.
@@ -590,7 +619,7 @@ pub unsafe fn querydomain(pointer: *mut c_void, name: *const c_char, domain: *co
         Ok::<_, c_int>(name)
     })();
     let result = match combined {
-        Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config) },
+        Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config, capacity) },
         Err(os) => Err(LookupFailure { host: NO_RECOVERY, os, servfail: false }),
     };
     // SAFETY: checked writable output and caller state; strings no longer borrowed.
@@ -652,7 +681,7 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
         if byte == b'.' { dots += 1; absolute = true; }
     }
     if absolute {
-        return unsafe { finish_lookup(pointer, lookup(pointer, &name, class, kind, options, &config), answer, capacity) };
+        return unsafe { finish_lookup(pointer, lookup(pointer, &name, class, kind, options, &config, capacity), answer, capacity) };
     }
     let first_bare = dots >= ndots;
     let use_search = if dots == 0 { options & RES_DEFNAMES != 0 } else { options & RES_DNSRCH != 0 };
@@ -680,7 +709,7 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
     let mut last_failure = LookupFailure { host: HOST_NOT_FOUND, os: 0, servfail: false };
     for (candidate, bare) in candidates {
         if stop_search && !bare { continue; }
-        let result = unsafe { lookup(pointer, &candidate, class, kind, options, &config) };
+        let result = unsafe { lookup(pointer, &candidate, class, kind, options, &config, capacity) };
         let failure = match result {
             Ok(reply) => match reply_status(&reply) {
                 Ok(()) => return unsafe { finish_lookup(pointer, Ok(reply), answer, capacity) },
