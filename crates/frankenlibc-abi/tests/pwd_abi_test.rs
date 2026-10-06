@@ -1089,30 +1089,68 @@ fn getspnam_r_rejects_unterminated_name() {
     }
 }
 
-#[test]
-fn getspent_returns_null_without_cache() {
-    use frankenlibc_abi::pwd_abi::getspent;
-    let sp = unsafe { getspent() };
-    assert!(sp.is_null(), "getspent should return null without cache");
+/// First `getspent_r` of a fresh enumeration, from fl or from host glibc:
+/// (return code, first login name). No `setspent` first -- glibc starts an
+/// enumeration implicitly (bd-nss-modules: fl used to return NULL/ENOENT
+/// here whenever setspent had not been called, readable /etc/shadow or not).
+fn first_shadow_entry(host: bool) -> (i32, Option<Vec<u8>>) {
+    let mut storage = AlignedShadowStorage::zeroed();
+    let mut buf = vec![0u8; 4096];
+    let mut result: *mut c_void = ptr::null_mut();
+    let rc = unsafe {
+        if host {
+            libc::getspent_r(
+                storage.as_mut_void().cast(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                (&mut result as *mut *mut c_void).cast(),
+            )
+        } else {
+            frankenlibc_abi::pwd_abi::getspent_r(
+                storage.as_mut_void(),
+                buf.as_mut_ptr() as *mut c_char,
+                buf.len(),
+                &mut result,
+            )
+        }
+    };
+    let name = (!result.is_null()).then(|| {
+        // SAFETY: on success the first field is the login-name C string.
+        let name_ptr = unsafe { *(result as *const *const c_char) };
+        unsafe { CStr::from_ptr(name_ptr) }.to_bytes().to_vec()
+    });
+    unsafe {
+        if host {
+            libc::endspent();
+        } else {
+            frankenlibc_abi::pwd_abi::endspent();
+        }
+    }
+    (rc, name)
 }
 
 #[test]
-fn getspent_r_returns_enoent_without_cache() {
-    use frankenlibc_abi::pwd_abi::getspent_r;
-    let mut spwd_storage = AlignedShadowStorage::zeroed();
-    let mut buf = vec![0u8; 1024];
-    let mut result: *mut c_void = ptr::null_mut();
+fn getspent_r_without_setspent_matches_host_glibc() {
+    assert_eq!(first_shadow_entry(false), first_shadow_entry(true));
+}
 
-    let rc = unsafe {
-        getspent_r(
-            spwd_storage.as_mut_void(),
-            buf.as_mut_ptr() as *mut c_char,
-            buf.len(),
-            &mut result,
-        )
-    };
-    assert!(result.is_null(), "getspent_r result should be null");
-    assert!(rc == 0 || rc == libc::ENOENT, "unexpected rc: {rc}");
+#[test]
+fn getspent_without_setspent_matches_host_glibc() {
+    use frankenlibc_abi::pwd_abi::{endspent, getspent};
+    let fl = unsafe { getspent() };
+    let fl_name = (!fl.is_null()).then(|| {
+        let name_ptr = unsafe { *(fl as *const *const c_char) };
+        unsafe { CStr::from_ptr(name_ptr) }.to_bytes().to_vec()
+    });
+    unsafe { endspent() };
+    let host = unsafe { libc::getspent() };
+    let host_name = (!host.is_null()).then(|| {
+        unsafe { CStr::from_ptr((*host).sp_namp) }
+            .to_bytes()
+            .to_vec()
+    });
+    unsafe { libc::endspent() };
+    assert_eq!(fl_name, host_name);
 }
 
 #[test]

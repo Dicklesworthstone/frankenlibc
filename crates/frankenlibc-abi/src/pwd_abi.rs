@@ -6,8 +6,7 @@
 //! Returns pointers to thread-local static storage, matching glibc behavior
 //! where each call overwrites the previous result.
 
-#[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
@@ -16,10 +15,12 @@ use std::ptr;
 use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::errno;
+use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
+use crate::nss_module::{self, EntCursor, EntDb, EntStep};
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -468,15 +469,189 @@ pub(crate) fn fill_passwd_from_entry(entry: &frankenlibc_core::pwd::Passwd) -> *
     with_pwd_storage(|storage| storage.fill_from(entry))
 }
 
-pub(crate) fn lookup_passwd_by_name(name: &[u8]) -> Option<frankenlibc_core::pwd::Passwd> {
+pub(crate) fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
+    match passwd_answer(PwKey::Uid(uid), None) {
+        Answer::Found(entry) => Some(entry),
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Name Service Switch dispatch
+// ---------------------------------------------------------------------------
+//
+// nsswitch.conf's `passwd:` line picks the sources. `files` (and `compat`)
+// run the native backend above; any other source is a `libnss_<name>.so.2`
+// module (sss, systemd, ldap, winbind, ...). The default single `files`
+// source keeps the cached fast paths.
+
+#[derive(Clone, Copy)]
+enum PwKey<'a> {
+    Name(&'a [u8]),
+    Uid(u32),
+}
+
+/// The files source. `buffer` is the caller's buffer length for the `_r`
+/// entry points, whose files lookups glibc runs inside that buffer.
+fn files_passwd_answer(
+    key: PwKey<'_>,
+    buffer: Option<usize>,
+) -> Answer<frankenlibc_core::pwd::Passwd> {
     with_pwd_storage(|storage| {
-        storage.refresh_cache();
-        frankenlibc_core::pwd::lookup_by_name(storage.current_content(), name)
+        let found = match key {
+            PwKey::Name(name) => {
+                storage.refresh_cache();
+                frankenlibc_core::pwd::lookup_by_name(storage.current_content(), name)
+            }
+            PwKey::Uid(uid) => storage.lookup_by_uid_cached(uid),
+        };
+        // Same snapshot the lookup just used.
+        if buffer.is_some_and(|buflen| {
+            frankenlibc_core::pwd::files_lookup_exceeds_buffer(
+                storage.current_content(),
+                buflen,
+                |entry| match key {
+                    PwKey::Name(name) => entry.pw_name == name,
+                    PwKey::Uid(uid) => entry.pw_uid == uid,
+                },
+            )
+        }) {
+            return Answer::BufferTooSmall;
+        }
+        match found {
+            Some(entry) => Answer::Found(entry),
+            None => match storage.backend_io_error() {
+                Some(err) => Answer::Unavailable(err),
+                None => Answer::NotFound,
+            },
+        }
     })
 }
 
-pub(crate) fn lookup_passwd_by_uid(uid: u32) -> Option<frankenlibc_core::pwd::Passwd> {
-    with_pwd_storage(|storage| storage.lookup_by_uid_cached(uid))
+fn passwd_switch(
+    services: &[Service],
+    key: PwKey<'_>,
+    buffer: Option<usize>,
+) -> Answer<frankenlibc_core::pwd::Passwd> {
+    if nss_module::is_files_only(services) {
+        return files_passwd_answer(key, buffer);
+    }
+    frankenlibc_core::nss::lookup(
+        services,
+        |service| match service.kind() {
+            SourceKind::Files => files_passwd_answer(key, buffer),
+            SourceKind::Module => match key {
+                PwKey::Name(name) => nss_module::getpwnam(service.name(), name),
+                PwKey::Uid(uid) => nss_module::getpwuid(service.name(), uid),
+            },
+        },
+        None,
+    )
+}
+
+fn passwd_answer(key: PwKey<'_>, buffer: Option<usize>) -> Answer<frankenlibc_core::pwd::Passwd> {
+    passwd_switch(&nss_module::services(Database::Passwd), key, buffer)
+}
+
+/// A non-reentrant lookup's result in thread-local storage, or NULL with the
+/// errno to report (`None` leaves errno alone, as a plain miss does).
+fn static_passwd(
+    answer: Answer<frankenlibc_core::pwd::Passwd>,
+) -> (*mut libc::passwd, Option<c_int>) {
+    match answer {
+        Answer::Found(entry) => (fill_passwd_from_entry(&entry), None),
+        Answer::NotFound => (ptr::null_mut(), None),
+        Answer::Unavailable(err) | Answer::TryAgain(err) => (ptr::null_mut(), Some(err)),
+        Answer::BufferTooSmall => (ptr::null_mut(), Some(libc::ERANGE)),
+    }
+}
+
+/// A reentrant lookup's return code: fill the caller's buffers on success.
+///
+/// # Safety
+/// As for [`fill_passwd_r`].
+unsafe fn reentrant_passwd(
+    answer: Answer<frankenlibc_core::pwd::Passwd>,
+    pwd: *mut libc::passwd,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::passwd,
+) -> c_int {
+    match answer {
+        // SAFETY: forwarded caller contract.
+        Answer::Found(entry) => unsafe {
+            fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result)
+        },
+        Answer::NotFound => 0,
+        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
+        Answer::BufferTooSmall => libc::ERANGE,
+    }
+}
+
+impl PwdStorage {
+    /// The next entry of a files source being enumerated as one source among
+    /// several; `restart` begins a fresh snapshot.
+    fn next_files_entry(&mut self, restart: bool) -> Answer<frankenlibc_core::pwd::Passwd> {
+        self.refresh_cache();
+        if restart || self.entries_generation != self.cache_generation {
+            self.rebuild_entries();
+        }
+        if let Some(entry) = self.entries.get(self.iter_idx).cloned() {
+            self.iter_idx += 1;
+            return Answer::Found(entry);
+        }
+        match self.backend_io_error() {
+            Some(err) => Answer::Unavailable(err),
+            None => Answer::NotFound,
+        }
+    }
+}
+
+thread_local! {
+    /// Multi-source `getpwent` position, and an entry `getpwent_r` could not
+    /// fit into the caller's buffer (returned again on the next call).
+    static PW_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
+    static PW_PENDING: RefCell<Option<frankenlibc_core::pwd::Passwd>> = const { RefCell::new(None) };
+}
+
+/// Next entry of a multi-source enumeration: `Err(None)` at the end,
+/// `Err(Some(errno))` when a source failed and its action ends the walk.
+fn next_passwd_entry() -> Result<frankenlibc_core::pwd::Passwd, Option<c_int>> {
+    if let Some(entry) = PW_PENDING.with(|p| p.borrow_mut().take()) {
+        return Ok(entry);
+    }
+    loop {
+        let mut cursor = PW_ENT.with(Cell::get);
+        let (step, service) =
+            nss_module::ent_step(EntDb::Passwd, &mut cursor, nss_module::getpwent);
+        PW_ENT.with(|c| c.set(cursor));
+        let answer = match step {
+            EntStep::Done => return Err(None),
+            EntStep::Files { restart } => with_pwd_storage(|s| s.next_files_entry(restart)),
+            EntStep::Module(answer) => answer,
+        };
+        let (status, err) = match answer {
+            Answer::Found(entry) => return Ok(entry),
+            Answer::NotFound => (Status::NotFound, None),
+            Answer::TryAgain(err) => (Status::TryAgain, Some(err)),
+            Answer::Unavailable(err) => (Status::Unavailable, Some(err)),
+            Answer::BufferTooSmall => (Status::Unavailable, Some(libc::ERANGE)),
+        };
+        let Some(service) = service else {
+            return Err(None);
+        };
+        let mut cursor = PW_ENT.with(Cell::get);
+        let advanced = nss_module::ent_advance(&mut cursor, &service, status);
+        PW_ENT.with(|c| c.set(cursor));
+        if !advanced {
+            return Err(err);
+        }
+    }
+}
+
+fn reset_passwd_enumeration() {
+    PW_ENT.with(|c| c.set(EntCursor::default()));
+    PW_PENDING.with(|p| *p.borrow_mut() = None);
 }
 
 fn passwd_backend_io_error() -> Option<c_int> {
@@ -518,10 +693,17 @@ pub unsafe extern "C" fn getpwnam(name: *const c_char) -> *mut libc::passwd {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return ptr::null_mut();
     };
-    let result = do_getpwnam(name_bytes);
-    if result.is_null()
-        && let Some(err) = passwd_backend_io_error()
-    {
+    let services = nss_module::services(Database::Passwd);
+    let (result, err) = if nss_module::is_files_only(&services) {
+        let result = do_getpwnam(name_bytes);
+        (
+            result,
+            result.is_null().then(passwd_backend_io_error).flatten(),
+        )
+    } else {
+        static_passwd(passwd_switch(&services, PwKey::Name(name_bytes), None))
+    };
+    if let Some(err) = err {
         unsafe { set_abi_errno(err) };
     }
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, result.is_null());
@@ -538,10 +720,17 @@ pub unsafe extern "C" fn getpwuid(uid: libc::uid_t) -> *mut libc::passwd {
         return ptr::null_mut();
     }
 
-    let result = do_getpwuid(uid);
-    if result.is_null()
-        && let Some(err) = passwd_backend_io_error()
-    {
+    let services = nss_module::services(Database::Passwd);
+    let (result, err) = if nss_module::is_files_only(&services) {
+        let result = do_getpwuid(uid);
+        (
+            result,
+            result.is_null().then(passwd_backend_io_error).flatten(),
+        )
+    } else {
+        static_passwd(passwd_switch(&services, PwKey::Uid(uid), None))
+    };
+    if let Some(err) = err {
         unsafe { set_abi_errno(err) };
     }
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, result.is_null());
@@ -551,6 +740,7 @@ pub unsafe extern "C" fn getpwuid(uid: libc::uid_t) -> *mut libc::passwd {
 /// POSIX `setpwent` — rewind the passwd iteration cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setpwent() {
+    reset_passwd_enumeration();
     with_pwd_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
@@ -560,6 +750,10 @@ pub unsafe extern "C" fn setpwent() {
 /// POSIX `endpwent` — close the passwd enumeration and free cached data.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endpwent() {
+    reset_passwd_enumeration();
+    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
+        nss_module::ent_end(EntDb::Passwd);
+    }
     with_pwd_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
@@ -577,6 +771,17 @@ pub unsafe extern "C" fn endpwent() {
 /// POSIX `getpwent` — return the next passwd entry in iteration order.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getpwent() -> *mut libc::passwd {
+    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
+        return match next_passwd_entry() {
+            Ok(entry) => fill_passwd_from_entry(&entry),
+            Err(err) => {
+                if let Some(err) = err {
+                    unsafe { set_abi_errno(err) };
+                }
+                ptr::null_mut()
+            }
+        };
+    }
     with_pwd_storage(|storage| {
         storage.refresh_cache();
 
@@ -637,19 +842,12 @@ pub unsafe extern "C" fn getpwnam_r(
         return libc::EINVAL;
     };
 
-    let entry = match lookup_passwd_by_name(name_bytes) {
-        Some(e) => e,
-        None => {
-            if let Some(err) = passwd_backend_io_error() {
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
-                return err;
-            }
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
-            return 0; // Not found, *result remains NULL
-        }
-    };
-
-    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result) };
+    // A miss leaves *result NULL and returns 0.
+    let answer = passwd_answer(
+        PwKey::Name(name_bytes),
+        Some(effective_buffer_len(buf, buflen)),
+    );
+    let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -682,19 +880,8 @@ pub unsafe extern "C" fn getpwuid_r(
         return libc::EACCES;
     }
 
-    let entry = match lookup_passwd_by_uid(uid) {
-        Some(e) => e,
-        None => {
-            if let Some(err) = passwd_backend_io_error() {
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
-                return err;
-            }
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
-            return 0;
-        }
-    };
-
-    let rc = unsafe { fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result) };
+    let answer = passwd_answer(PwKey::Uid(uid), Some(effective_buffer_len(buf, buflen)));
+    let rc = unsafe { reentrant_passwd(answer, pwd, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -814,6 +1001,22 @@ pub unsafe extern "C" fn getpwent_r(
         return libc::EINVAL;
     }
 
+    if !nss_module::is_files_only(&nss_module::services(Database::Passwd)) {
+        return match next_passwd_entry() {
+            Ok(entry) => {
+                let rc = unsafe {
+                    fill_passwd_r(&entry, pwd, buf, effective_buffer_len(buf, buflen), result)
+                };
+                if rc == libc::ERANGE {
+                    // Hand the same entry back once the caller grows its buffer.
+                    PW_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+                }
+                rc
+            }
+            Err(err) => err.unwrap_or(libc::ENOENT),
+        };
+    }
+
     with_pwd_storage(|storage| {
         storage.refresh_cache();
 
@@ -929,13 +1132,12 @@ fn with_shadow_storage<R>(callback: impl FnOnce(&mut ShadowTlsStorage) -> R) -> 
 
 /// Pack the name+passwd from a parsed [`ShadowEntry`] into the
 /// thread-local TLS buffer and copy the seven numeric fields into
-/// the layout-stable SpwdEntry. Returns false if the line was
-/// malformed (parser returned None).
-fn fill_shadow_entry(line: &str, buf: &mut Vec<u8>, entry: &mut SpwdEntry) -> bool {
-    let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) else {
-        return false;
-    };
-
+/// the layout-stable SpwdEntry.
+fn fill_shadow_parsed(
+    parsed: &frankenlibc_core::pwd::shadow::ShadowEntry,
+    buf: &mut Vec<u8>,
+    entry: &mut SpwdEntry,
+) {
     buf.clear();
     buf.extend_from_slice(&parsed.name);
     buf.push(0);
@@ -952,30 +1154,20 @@ fn fill_shadow_entry(line: &str, buf: &mut Vec<u8>, entry: &mut SpwdEntry) -> bo
     entry.sp_inact = parsed.inact;
     entry.sp_expire = parsed.expire;
     entry.sp_flag = parsed.flag;
-    true
-}
-
-fn pack_shadow_into_static_storage(storage: &mut ShadowTlsStorage, line: &str) -> *mut c_void {
-    if fill_shadow_entry(line, &mut storage.buf, &mut storage.entry) {
-        &mut storage.entry as *mut SpwdEntry as *mut c_void
-    } else {
-        ptr::null_mut()
-    }
 }
 
 /// Pack the name+passwd from a parsed [`ShadowEntry`] into a
 /// caller-supplied buffer and write the seven numeric fields into
-/// `*sp`. Returns 0 on success, ERANGE if the buffer is too small,
-/// or ENOENT if the line was malformed.
-unsafe fn fill_shadow_entry_caller(
-    line: &str,
+/// `*sp`. Returns 0 on success, ERANGE if the buffer is too small.
+///
+/// # Safety
+/// `sp` must be writable `SpwdEntry` storage and `buf` writable for `buflen` bytes.
+unsafe fn fill_shadow_parsed_caller(
+    parsed: &frankenlibc_core::pwd::shadow::ShadowEntry,
     sp: *mut SpwdEntry,
     buf: *mut c_char,
     buflen: usize,
 ) -> c_int {
-    let Some(parsed) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) else {
-        return libc::ENOENT;
-    };
     let needed = parsed.name.len() + 1 + parsed.passwd.len() + 1;
     if needed > buflen {
         return libc::ERANGE;
@@ -1010,30 +1202,46 @@ pub unsafe extern "C" fn getspnam(name: *const c_char) -> *mut c_void {
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
         return ptr::null_mut();
     };
-    let name_str = match std::str::from_utf8(name_bytes) {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-
-    let content = match std::fs::read_to_string(SHADOW_PATH) {
-        Ok(c) => c,
-        Err(_) => {
-            unsafe { set_abi_errno(libc::EACCES) };
-            return ptr::null_mut();
+    match shadow_answer(name_bytes) {
+        Answer::Found(entry) => with_shadow_storage(|storage| {
+            fill_shadow_parsed(&entry, &mut storage.buf, &mut storage.entry);
+            &mut storage.entry as *mut SpwdEntry as *mut c_void
+        }),
+        Answer::NotFound => ptr::null_mut(),
+        Answer::Unavailable(err) | Answer::TryAgain(err) => {
+            unsafe { set_abi_errno(err) };
+            ptr::null_mut()
         }
-    };
-
-    for line in content.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        if let Some(colon) = line.find(':')
-            && &line[..colon] == name_str
-        {
-            return with_shadow_storage(|storage| pack_shadow_into_static_storage(storage, line));
+        Answer::BufferTooSmall => {
+            unsafe { set_abi_errno(libc::ERANGE) };
+            ptr::null_mut()
         }
     }
-    ptr::null_mut()
+}
+
+/// The files source of the shadow database: an unreadable /etc/shadow (the
+/// usual case for unprivileged callers) is an unavailable source.
+fn files_shadow_answer(name: &[u8]) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
+    match std::fs::read(SHADOW_PATH) {
+        Ok(content) => match frankenlibc_core::pwd::shadow::lookup_shadow_by_name(&content, name) {
+            Some(entry) => Answer::Found(entry),
+            None => Answer::NotFound,
+        },
+        Err(err) => Answer::Unavailable(err.raw_os_error().unwrap_or(libc::EACCES)),
+    }
+}
+
+/// The shadow entry for `name` from the sources nsswitch.conf's `shadow:`
+/// line configures.
+fn shadow_answer(name: &[u8]) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
+    frankenlibc_core::nss::lookup(
+        &nss_module::services(Database::Shadow),
+        |service| match service.kind() {
+            SourceKind::Files => files_shadow_answer(name),
+            SourceKind::Module => nss_module::getspnam(service.name(), name),
+        },
+        None,
+    )
 }
 
 /// `getspnam_r` — reentrant shadow lookup by name.
@@ -1060,26 +1268,12 @@ pub unsafe extern "C" fn getspnam_r(
     let Some(name_bytes) = (unsafe { bounded_cstr_bytes(name) }) else {
         return libc::EINVAL;
     };
-    let name_str = match std::str::from_utf8(name_bytes) {
-        Ok(s) => s,
-        Err(_) => return libc::EINVAL,
-    };
 
-    let content = match std::fs::read_to_string(SHADOW_PATH) {
-        Ok(c) => c,
-        Err(_) => return libc::EACCES,
-    };
-
-    for line in content.lines() {
-        if line.starts_with('#') || line.trim().is_empty() {
-            continue;
-        }
-        if let Some(colon) = line.find(':')
-            && &line[..colon] == name_str
-        {
+    match shadow_answer(name_bytes) {
+        Answer::Found(entry) => {
             let rc = unsafe {
-                fill_shadow_entry_caller(
-                    line,
+                fill_shadow_parsed_caller(
+                    &entry,
                     spbuf as *mut SpwdEntry,
                     buf,
                     effective_buffer_len(buf, buflen),
@@ -1088,48 +1282,123 @@ pub unsafe extern "C" fn getspnam_r(
             if rc == 0 {
                 unsafe { *result = spbuf };
             }
-            return rc;
+            rc
         }
+        // glibc: a miss is 0 with *result NULL, not ENOENT.
+        Answer::NotFound => 0,
+        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
+        Answer::BufferTooSmall => libc::ERANGE,
     }
-    libc::ENOENT
 }
 
 /// `setspent` — rewind the shadow database iterator.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn setspent() {
-    with_shadow_storage(|storage| {
-        storage.iter_idx = 0;
-        storage.cache.clear();
-        if let Ok(content) = std::fs::read_to_string(SHADOW_PATH) {
-            for line in content.lines() {
-                if !line.starts_with('#') && !line.trim().is_empty() && line.contains(':') {
-                    storage.cache.push(line.to_string());
-                }
-            }
-        }
-    });
+    reset_shadow_enumeration();
 }
 
 /// `endspent` — close the shadow database.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub extern "C" fn endspent() {
+    reset_shadow_enumeration();
+    if !nss_module::is_files_only(&nss_module::services(Database::Shadow)) {
+        nss_module::ent_end(EntDb::Shadow);
+    }
     with_shadow_storage(|storage| {
         storage.iter_idx = 0;
         storage.cache.clear();
     });
 }
 
+impl ShadowTlsStorage {
+    /// The next well-formed entry of the files source; `restart` takes a
+    /// fresh snapshot of /etc/shadow. Malformed lines are skipped.
+    fn next_files_entry(
+        &mut self,
+        restart: bool,
+    ) -> Answer<frankenlibc_core::pwd::shadow::ShadowEntry> {
+        if restart {
+            self.iter_idx = 0;
+            self.cache.clear();
+            match std::fs::read_to_string(SHADOW_PATH) {
+                Ok(content) => self.cache.extend(content.lines().map(str::to_owned)),
+                Err(err) => return Answer::Unavailable(err.raw_os_error().unwrap_or(libc::EACCES)),
+            }
+        }
+        while let Some(line) = self.cache.get(self.iter_idx) {
+            self.iter_idx += 1;
+            if let Some(entry) = frankenlibc_core::pwd::shadow::parse_shadow_line(line.as_bytes()) {
+                return Answer::Found(entry);
+            }
+        }
+        Answer::NotFound
+    }
+}
+
+thread_local! {
+    /// `getspent` position across the configured shadow sources, and an entry
+    /// `getspent_r` could not fit into the caller's buffer.
+    static SP_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
+    static SP_PENDING: RefCell<Option<frankenlibc_core::pwd::shadow::ShadowEntry>> =
+        const { RefCell::new(None) };
+}
+
+/// Next shadow entry: `Err(None)` at the end, `Err(Some(errno))` when a
+/// source failed and its action ends the walk. An enumeration starts
+/// implicitly on the first call, as with glibc (no `setspent` required).
+fn next_shadow_entry() -> Result<frankenlibc_core::pwd::shadow::ShadowEntry, Option<c_int>> {
+    if let Some(entry) = SP_PENDING.with(|p| p.borrow_mut().take()) {
+        return Ok(entry);
+    }
+    loop {
+        let mut cursor = SP_ENT.with(Cell::get);
+        let (step, service) =
+            nss_module::ent_step(EntDb::Shadow, &mut cursor, nss_module::getspent);
+        SP_ENT.with(|c| c.set(cursor));
+        let answer = match step {
+            EntStep::Done => return Err(None),
+            EntStep::Files { restart } => with_shadow_storage(|s| s.next_files_entry(restart)),
+            EntStep::Module(answer) => answer,
+        };
+        let (status, err) = match answer {
+            Answer::Found(entry) => return Ok(entry),
+            Answer::NotFound => (Status::NotFound, None),
+            Answer::TryAgain(err) => (Status::TryAgain, Some(err)),
+            Answer::Unavailable(err) => (Status::Unavailable, Some(err)),
+            Answer::BufferTooSmall => (Status::Unavailable, Some(libc::ERANGE)),
+        };
+        let Some(service) = service else {
+            return Err(None);
+        };
+        let mut cursor = SP_ENT.with(Cell::get);
+        let advanced = nss_module::ent_advance(&mut cursor, &service, status);
+        SP_ENT.with(|c| c.set(cursor));
+        if !advanced {
+            return Err(err);
+        }
+    }
+}
+
+fn reset_shadow_enumeration() {
+    SP_ENT.with(|c| c.set(EntCursor::default()));
+    SP_PENDING.with(|p| *p.borrow_mut() = None);
+}
+
 /// `getspent` — read the next shadow entry.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getspent() -> *mut c_void {
-    with_shadow_storage(|storage| {
-        if storage.iter_idx >= storage.cache.len() {
-            return ptr::null_mut();
+    match next_shadow_entry() {
+        Ok(entry) => with_shadow_storage(|storage| {
+            fill_shadow_parsed(&entry, &mut storage.buf, &mut storage.entry);
+            &mut storage.entry as *mut SpwdEntry as *mut c_void
+        }),
+        Err(err) => {
+            if let Some(err) = err {
+                unsafe { set_abi_errno(err) };
+            }
+            ptr::null_mut()
         }
-        let line = storage.cache[storage.iter_idx].clone();
-        storage.iter_idx += 1;
-        pack_shadow_into_static_storage(storage, &line)
-    })
+    }
 }
 
 /// `getspent_r` — reentrant version of getspent.
@@ -1152,29 +1421,26 @@ pub unsafe extern "C" fn getspent_r(
         return libc::EINVAL;
     }
 
-    with_shadow_storage(|storage| {
-        if storage.iter_idx >= storage.cache.len() {
-            return libc::ENOENT;
+    match next_shadow_entry() {
+        Ok(entry) => {
+            let rc = unsafe {
+                fill_shadow_parsed_caller(
+                    &entry,
+                    spbuf as *mut SpwdEntry,
+                    buf,
+                    effective_buffer_len(buf, buflen),
+                )
+            };
+            if rc == libc::ERANGE {
+                // Hand the same entry back once the caller grows its buffer.
+                SP_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+            } else if rc == 0 {
+                unsafe { *result = spbuf };
+            }
+            rc
         }
-        let line = storage.cache[storage.iter_idx].clone();
-        storage.iter_idx += 1;
-
-        let rc = unsafe {
-            fill_shadow_entry_caller(
-                &line,
-                spbuf as *mut SpwdEntry,
-                buf,
-                effective_buffer_len(buf, buflen),
-            )
-        };
-        if rc == libc::ERANGE {
-            // Rewind so caller can retry with a larger buffer.
-            storage.iter_idx -= 1;
-        } else if rc == 0 {
-            unsafe { *result = spbuf };
-        }
-        rc
-    })
+        Err(err) => err.unwrap_or(libc::ENOENT),
+    }
 }
 
 // ===========================================================================

@@ -6,8 +6,7 @@
 //! Returns pointers to thread-local static storage, matching glibc behavior
 //! where each call overwrites the previous result.
 
-#[cfg(not(feature = "owned-tls-cache"))]
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::{CString, c_char, c_int};
 use std::mem::MaybeUninit;
 use std::os::unix::ffi::OsStrExt;
@@ -16,10 +15,12 @@ use std::ptr;
 use std::time::UNIX_EPOCH;
 
 use frankenlibc_core::errno;
+use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
+use crate::nss_module::{self, EntCursor, EntDb, EntStep};
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
@@ -486,15 +487,243 @@ pub(crate) fn fill_group_from_entry(entry: &frankenlibc_core::grp::Group) -> *mu
     with_grp_storage(|storage| storage.fill_from(entry))
 }
 
-fn lookup_group_by_name(name: &[u8]) -> Option<frankenlibc_core::grp::Group> {
+// ---------------------------------------------------------------------------
+// Name Service Switch dispatch
+// ---------------------------------------------------------------------------
+//
+// nsswitch.conf's `group:` line picks the sources: `files`/`compat` run the
+// native backend, anything else a `libnss_<name>.so.2` module. `[SUCCESS=merge]`
+// folds the members of same-named, same-gid groups from later sources in.
+
+#[derive(Clone, Copy)]
+enum GrKey<'a> {
+    Name(&'a [u8]),
+    Gid(u32),
+}
+
+/// The files source. `buffer` is the caller's (address, length) for the `_r`
+/// entry points, whose files lookups glibc runs inside that buffer.
+fn files_group_answer(
+    key: GrKey<'_>,
+    buffer: Option<(usize, usize)>,
+) -> Answer<frankenlibc_core::grp::Group> {
     with_grp_storage(|storage| {
-        storage.refresh_cache();
-        frankenlibc_core::grp::lookup_by_name(storage.current_content(), name)
+        let found = match key {
+            GrKey::Name(name) => {
+                storage.refresh_cache();
+                frankenlibc_core::grp::lookup_by_name(storage.current_content(), name)
+            }
+            GrKey::Gid(gid) => storage.lookup_by_gid_cached(gid),
+        };
+        // Same snapshot the lookup just used.
+        if buffer.is_some_and(|(addr, buflen)| {
+            frankenlibc_core::grp::files_lookup_exceeds_buffer(
+                storage.current_content(),
+                addr,
+                buflen,
+                |entry| match key {
+                    GrKey::Name(name) => entry.gr_name == name,
+                    GrKey::Gid(gid) => entry.gr_gid == gid,
+                },
+            )
+        }) {
+            return Answer::BufferTooSmall;
+        }
+        match found {
+            Some(entry) => Answer::Found(entry),
+            None => match storage.backend_io_error() {
+                Some(err) => Answer::Unavailable(err),
+                None => Answer::NotFound,
+            },
+        }
     })
 }
 
-fn lookup_group_by_gid(gid: u32) -> Option<frankenlibc_core::grp::Group> {
-    with_grp_storage(|storage| storage.lookup_by_gid_cached(gid))
+fn group_switch(
+    services: &[Service],
+    key: GrKey<'_>,
+    buffer: Option<(usize, usize)>,
+) -> Answer<frankenlibc_core::grp::Group> {
+    if nss_module::is_files_only(services) {
+        return files_group_answer(key, buffer);
+    }
+    let mut merge = nss_module::merge_group;
+    frankenlibc_core::nss::lookup(
+        services,
+        |service| match service.kind() {
+            SourceKind::Files => files_group_answer(key, buffer),
+            SourceKind::Module => match key {
+                GrKey::Name(name) => nss_module::getgrnam(service.name(), name),
+                GrKey::Gid(gid) => nss_module::getgrgid(service.name(), gid),
+            },
+        },
+        Some(&mut merge),
+    )
+}
+
+fn group_answer(
+    key: GrKey<'_>,
+    buffer: Option<(usize, usize)>,
+) -> Answer<frankenlibc_core::grp::Group> {
+    group_switch(&nss_module::services(Database::Group), key, buffer)
+}
+
+/// A non-reentrant lookup's result in thread-local storage, or NULL with the
+/// errno to report (`None` leaves errno alone, as a plain miss does).
+fn static_group(answer: Answer<frankenlibc_core::grp::Group>) -> (*mut libc::group, Option<c_int>) {
+    match answer {
+        Answer::Found(entry) => (fill_group_from_entry(&entry), None),
+        Answer::NotFound => (ptr::null_mut(), None),
+        Answer::Unavailable(err) | Answer::TryAgain(err) => (ptr::null_mut(), Some(err)),
+        Answer::BufferTooSmall => (ptr::null_mut(), Some(libc::ERANGE)),
+    }
+}
+
+/// A reentrant lookup's return code: fill the caller's buffers on success.
+///
+/// # Safety
+/// As for [`fill_group_r`].
+unsafe fn reentrant_group(
+    answer: Answer<frankenlibc_core::grp::Group>,
+    grp: *mut libc::group,
+    buf: *mut c_char,
+    buflen: libc::size_t,
+    result: *mut *mut libc::group,
+) -> c_int {
+    match answer {
+        // SAFETY: forwarded caller contract.
+        Answer::Found(entry) => unsafe {
+            fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result)
+        },
+        Answer::NotFound => 0,
+        Answer::Unavailable(err) | Answer::TryAgain(err) => err,
+        Answer::BufferTooSmall => libc::ERANGE,
+    }
+}
+
+impl GrpStorage {
+    /// The next entry of a files source being enumerated as one source among
+    /// several; `restart` begins a fresh snapshot.
+    fn next_files_entry(&mut self, restart: bool) -> Answer<frankenlibc_core::grp::Group> {
+        self.refresh_cache();
+        if restart || self.entries_generation != self.cache_generation {
+            self.rebuild_entries();
+        }
+        if let Some(entry) = self.entries.get(self.iter_idx).cloned() {
+            self.iter_idx += 1;
+            return Answer::Found(entry);
+        }
+        match self.backend_io_error() {
+            Some(err) => Answer::Unavailable(err),
+            None => Answer::NotFound,
+        }
+    }
+}
+
+thread_local! {
+    /// Multi-source `getgrent` position, and an entry `getgrent_r` could not
+    /// fit into the caller's buffer (returned again on the next call).
+    static GR_ENT: Cell<EntCursor> = const { Cell::new(EntCursor { source: 0, started: false }) };
+    static GR_PENDING: RefCell<Option<frankenlibc_core::grp::Group>> = const { RefCell::new(None) };
+}
+
+/// Next entry of a multi-source enumeration: `Err(None)` at the end,
+/// `Err(Some(errno))` when a source failed and its action ends the walk.
+fn next_group_entry() -> Result<frankenlibc_core::grp::Group, Option<c_int>> {
+    if let Some(entry) = GR_PENDING.with(|p| p.borrow_mut().take()) {
+        return Ok(entry);
+    }
+    loop {
+        let mut cursor = GR_ENT.with(Cell::get);
+        let (step, service) = nss_module::ent_step(EntDb::Group, &mut cursor, nss_module::getgrent);
+        GR_ENT.with(|c| c.set(cursor));
+        let answer = match step {
+            EntStep::Done => return Err(None),
+            EntStep::Files { restart } => with_grp_storage(|s| s.next_files_entry(restart)),
+            EntStep::Module(answer) => answer,
+        };
+        let (status, err) = match answer {
+            Answer::Found(entry) => return Ok(entry),
+            Answer::NotFound => (Status::NotFound, None),
+            Answer::TryAgain(err) => (Status::TryAgain, Some(err)),
+            Answer::Unavailable(err) => (Status::Unavailable, Some(err)),
+            Answer::BufferTooSmall => (Status::Unavailable, Some(libc::ERANGE)),
+        };
+        let Some(service) = service else {
+            return Err(None);
+        };
+        let mut cursor = GR_ENT.with(Cell::get);
+        let advanced = nss_module::ent_advance(&mut cursor, &service, status);
+        GR_ENT.with(|c| c.set(cursor));
+        if !advanced {
+            return Err(err);
+        }
+    }
+}
+
+fn reset_group_enumeration() {
+    GR_ENT.with(|c| c.set(EntCursor::default()));
+    GR_PENDING.with(|p| *p.borrow_mut() = None);
+}
+
+/// The files source's contribution to `user`'s supplementary groups: every
+/// group listing `user` as a member, except `base`, in file order.
+fn files_initgroups_segment(user: &[u8], base: u32) -> (Status, Vec<u32>) {
+    let content = match with_grp_storage(|storage| {
+        storage.refresh_cache();
+        storage
+            .file_cache
+            .clone()
+            .ok_or_else(|| storage.backend_io_error().unwrap_or(libc::ENOENT))
+    }) {
+        Ok(content) => content,
+        Err(_) => return (Status::Unavailable, Vec::new()),
+    };
+    let mut segment = Vec::new();
+    for line in content.split(|&b| b == b'\n') {
+        let Some(group) = frankenlibc_core::grp::parse_group_line(line) else {
+            continue;
+        };
+        if group.gr_gid != base
+            && group.gr_mem.iter().any(|m| m.as_slice() == user)
+            && !segment.contains(&group.gr_gid)
+        {
+            segment.push(group.gr_gid);
+        }
+    }
+    let status = if segment.is_empty() {
+        Status::NotFound
+    } else {
+        Status::Success
+    };
+    (status, segment)
+}
+
+/// `user`'s group list as `getgrouplist`/`initgroups` compute it: `base`
+/// first, then each initgroups source's groups (nsswitch.conf `initgroups:`,
+/// else `group:`), de-duplicated against earlier sources. `limit` is passed
+/// to modules (`-1` for none).
+pub(crate) fn initgroups_list(user: &[u8], base: u32, limit: i64) -> Vec<u32> {
+    let services = nss_module::services(Database::Initgroups);
+    let explicit_line = nss_module::initgroups_line_explicit();
+    let mut groups = vec![base];
+    for service in services.iter() {
+        let (status, segment) = match service.kind() {
+            SourceKind::Files => files_initgroups_segment(user, base),
+            SourceKind::Module => nss_module::initgroups_segment(
+                service.name(),
+                user,
+                base,
+                &groups,
+                limit as std::ffi::c_long,
+            ),
+        };
+        frankenlibc_core::nss::append_initgroups_segment(&mut groups, &segment);
+        if frankenlibc_core::nss::initgroups_stops(service, status, explicit_line) {
+            break;
+        }
+    }
+    groups
 }
 
 fn group_backend_io_error() -> Option<c_int> {
@@ -534,10 +763,17 @@ pub unsafe extern "C" fn getgrnam(name: *const c_char) -> *mut libc::group {
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return ptr::null_mut();
     };
-    let result = do_getgrnam(name_bytes);
-    if result.is_null()
-        && let Some(err) = group_backend_io_error()
-    {
+    let services = nss_module::services(Database::Group);
+    let (result, err) = if nss_module::is_files_only(&services) {
+        let result = do_getgrnam(name_bytes);
+        (
+            result,
+            result.is_null().then(group_backend_io_error).flatten(),
+        )
+    } else {
+        static_group(group_switch(&services, GrKey::Name(name_bytes), None))
+    };
+    if let Some(err) = err {
         unsafe { set_abi_errno(err) };
     }
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, result.is_null());
@@ -554,10 +790,17 @@ pub unsafe extern "C" fn getgrgid(gid: libc::gid_t) -> *mut libc::group {
         return ptr::null_mut();
     }
 
-    let result = do_getgrgid(gid);
-    if result.is_null()
-        && let Some(err) = group_backend_io_error()
-    {
+    let services = nss_module::services(Database::Group);
+    let (result, err) = if nss_module::is_files_only(&services) {
+        let result = do_getgrgid(gid);
+        (
+            result,
+            result.is_null().then(group_backend_io_error).flatten(),
+        )
+    } else {
+        static_group(group_switch(&services, GrKey::Gid(gid), None))
+    };
+    if let Some(err) = err {
         unsafe { set_abi_errno(err) };
     }
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, result.is_null());
@@ -567,6 +810,7 @@ pub unsafe extern "C" fn getgrgid(gid: libc::gid_t) -> *mut libc::group {
 /// POSIX `setgrent` — rewind the group iteration cursor.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setgrent() {
+    reset_group_enumeration();
     with_grp_storage(|storage| {
         storage.refresh_cache();
         storage.rebuild_entries();
@@ -576,6 +820,10 @@ pub unsafe extern "C" fn setgrent() {
 /// POSIX `endgrent` — close group enumeration and free cached data.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn endgrent() {
+    reset_group_enumeration();
+    if !nss_module::is_files_only(&nss_module::services(Database::Group)) {
+        nss_module::ent_end(EntDb::Group);
+    }
     with_grp_storage(|storage| {
         if storage.file_cache.is_some() || !storage.entries.is_empty() {
             storage.cache_metrics.invalidations += 1;
@@ -593,6 +841,17 @@ pub unsafe extern "C" fn endgrent() {
 /// POSIX `getgrent` — return the next group entry in iteration order.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getgrent() -> *mut libc::group {
+    if !nss_module::is_files_only(&nss_module::services(Database::Group)) {
+        return match next_group_entry() {
+            Ok(entry) => fill_group_from_entry(&entry),
+            Err(err) => {
+                if let Some(err) = err {
+                    unsafe { set_abi_errno(err) };
+                }
+                ptr::null_mut()
+            }
+        };
+    }
     with_grp_storage(|storage| {
         storage.refresh_cache();
 
@@ -648,19 +907,10 @@ pub unsafe extern "C" fn getgrnam_r(
         runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
         return libc::EINVAL;
     };
-    let entry = match lookup_group_by_name(name_bytes) {
-        Some(e) => e,
-        None => {
-            if let Some(err) = group_backend_io_error() {
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
-                return err;
-            }
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
-            return 0;
-        }
-    };
-
-    let rc = unsafe { fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result) };
+    // A miss leaves *result NULL and returns 0.
+    let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
+    let answer = group_answer(GrKey::Name(name_bytes), buffer);
+    let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -693,19 +943,9 @@ pub unsafe extern "C" fn getgrgid_r(
         return libc::EACCES;
     }
 
-    let entry = match lookup_group_by_gid(gid) {
-        Some(e) => e,
-        None => {
-            if let Some(err) = group_backend_io_error() {
-                runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, true);
-                return err;
-            }
-            runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, false);
-            return 0;
-        }
-    };
-
-    let rc = unsafe { fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result) };
+    let buffer = Some((buf as usize, effective_buffer_len(buf, buflen)));
+    let answer = group_answer(GrKey::Gid(gid), buffer);
+    let rc = unsafe { reentrant_group(answer, grp, buf, buflen, result) };
     runtime_policy::observe(ApiFamily::Resolver, decision.profile, 15, rc != 0);
     rc
 }
@@ -825,6 +1065,22 @@ pub unsafe extern "C" fn getgrent_r(
     unsafe { *result = ptr::null_mut() };
     if !tracked_object_fits(grp as *const libc::group) {
         return libc::EINVAL;
+    }
+
+    if !nss_module::is_files_only(&nss_module::services(Database::Group)) {
+        return match next_group_entry() {
+            Ok(entry) => {
+                let rc = unsafe {
+                    fill_group_r(&entry, grp, buf, effective_buffer_len(buf, buflen), result)
+                };
+                if rc == libc::ERANGE {
+                    // Hand the same entry back once the caller grows its buffer.
+                    GR_PENDING.with(|p| *p.borrow_mut() = Some(entry));
+                }
+                rc
+            }
+            Err(err) => err.unwrap_or(libc::ENOENT),
+        };
     }
 
     with_grp_storage(|storage| {

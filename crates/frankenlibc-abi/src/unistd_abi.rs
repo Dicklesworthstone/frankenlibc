@@ -17016,43 +17016,24 @@ pub unsafe extern "C" fn getgrouplist(
     groups: *mut libc::gid_t,
     ngroups: *mut c_int,
 ) -> c_int {
-    if user.is_null() || groups.is_null() || ngroups.is_null() {
+    if user.is_null() || ngroups.is_null() {
         return -1;
     }
     let Some(user_name) = (unsafe { read_c_string_bytes(user) }) else {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     };
-    let max_groups = unsafe { *ngroups } as usize;
+    // `getgrouplist(user, g, NULL, &n)` with n == 0 is the size query
+    // (getent initgroups uses it): glibc stores the count and returns -1.
+    // A NULL buffer claiming room is never written through.
+    let max_groups = if groups.is_null() {
+        0
+    } else {
+        usize::try_from(unsafe { *ngroups }).unwrap_or(0)
+    };
 
-    let mut result: Vec<libc::gid_t> = Vec::with_capacity(32);
-    result.push(group);
-
-    if let Ok(content) = std::fs::read("/etc/group") {
-        for line in content.split(|&b| b == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
-                continue;
-            }
-            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
-            if fields.len() < 4 {
-                continue;
-            }
-            let gid: libc::gid_t = match std::str::from_utf8(fields[2]).unwrap_or("").parse() {
-                Ok(g) => g,
-                Err(_) => continue,
-            };
-            if gid == group {
-                continue;
-            }
-            for member in fields[3].split(|&b| b == b',') {
-                let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name.as_slice() && !result.contains(&gid) {
-                    result.push(gid);
-                    break;
-                }
-            }
-        }
-    }
+    // Every initgroups source nsswitch.conf names (files, sss, systemd, ...).
+    let result = super::grp_abi::initgroups_list(&user_name, group, -1);
 
     unsafe { *ngroups = result.len() as c_int };
     // glibc copies MIN(found, *ngroups) group IDs into the caller's buffer
@@ -17088,38 +17069,10 @@ pub unsafe extern "C" fn initgroups(user: *const c_char, group: libc::gid_t) -> 
         return -1;
     };
 
-    let mut groups: Vec<libc::gid_t> = Vec::with_capacity(32);
-    groups.push(group);
-
-    // Parse /etc/group for supplementary memberships
-    if let Ok(content) = std::fs::read("/etc/group") {
-        for line in content.split(|&b| b == b'\n') {
-            if line.is_empty() || line[0] == b'#' {
-                continue;
-            }
-            // Format: name:password:gid:member1,member2,...
-            let fields: Vec<&[u8]> = line.splitn(4, |&b| b == b':').collect();
-            if fields.len() < 4 {
-                continue;
-            }
-            let gid_str = std::str::from_utf8(fields[2]).unwrap_or("");
-            let gid: libc::gid_t = match gid_str.parse() {
-                Ok(g) => g,
-                Err(_) => continue,
-            };
-            if gid == group {
-                continue; // Already in list
-            }
-            // Check if user is in the member list
-            for member in fields[3].split(|&b| b == b',') {
-                let member = member.strip_suffix(b"\r").unwrap_or(member);
-                if member == user_name.as_slice() && !groups.contains(&gid) {
-                    groups.push(gid);
-                    break;
-                }
-            }
-        }
-    }
+    // The kernel's NGROUPS_MAX bounds what setgroups accepts; modules are told.
+    const NGROUPS_MAX: usize = 65536;
+    let mut groups = super::grp_abi::initgroups_list(&user_name, group, NGROUPS_MAX as i64);
+    groups.truncate(NGROUPS_MAX);
 
     match unsafe { syscall::sys_setgroups(groups.len(), groups.as_ptr()) } {
         Ok(()) => 0,

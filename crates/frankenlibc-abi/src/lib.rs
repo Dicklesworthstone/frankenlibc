@@ -283,5 +283,9 @@ pub mod glibc_internal_abi;
 pub mod io_internal_abi;
 #[cfg(not(test))]
 pub mod rpc_abi;
+// NSS service modules (libnss_<service>.so.2) for the passwd/group/shadow
+// and initgroups databases.
+#[cfg(not(test))]
+pub(crate) mod nss_module;
 
 pub mod util;

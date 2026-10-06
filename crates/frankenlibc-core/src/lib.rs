@@ -95,6 +95,7 @@ pub mod math;
 pub mod mmap;
 pub mod mntent;
 pub mod netgroup;
+pub mod nss;
 pub mod poll;
 pub mod proc_maps;
 pub mod process;
