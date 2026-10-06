@@ -305,8 +305,12 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // forks; stacks captured 2026-09-28).
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
+    // `ready_pipeline`, not `try_global_pipeline`: only a pipeline that exists
+    // has locks to hold across the fork, and building one here gave every
+    // strict process that forks the whole hardened pipeline (8 MB bloom
+    // filter, 16 arena shards) to lock and COW-fault on every later fork.
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Taken last and released first: nothing between here and the drop below
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
