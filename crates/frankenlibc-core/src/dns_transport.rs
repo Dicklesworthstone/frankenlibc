@@ -5,7 +5,6 @@
 //! following TC to TCP (RFC 5452, RFC 7766). One monotonic deadline covers UDP,
 //! TCP connection establishment, partial frame I/O, and discarded packets.
 
-use std::fs::File;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,6 +16,8 @@ use crate::resolv::dns::{
     build_search_names, qclass, qtype, rcode,
 };
 use crate::resolv::dns_name::{NS_MAXCDNAME, name_unpack};
+
+mod entropy;
 
 /// DNS-over-TCP's unsigned 16-bit message length, excluding the length prefix.
 const MAX_MESSAGE: usize = u16::MAX as usize;
@@ -439,7 +440,7 @@ fn address_answer(
 
 /// Query addresses or PTR names at a server, following at most 16 CNAME links
 /// across packets under one deadline. No host resolver call-through is used.
-/// Linux's entropy device supplies IDs; clock/hash fallback is forbidden.
+/// Kernel entropy supplies IDs without /dev; predictable fallback is forbidden.
 pub fn query(
     hostname: &[u8],
     record_type: u16,
@@ -480,12 +481,9 @@ where
     initial[..message.questions[0].qname.len()].copy_from_slice(&message.questions[0].qname);
     let mut visited = vec![initial];
     let mut ttl_limit = u32::MAX;
-    let mut random = File::open("/dev/urandom")?;
     loop {
         remaining(deadline)?;
-        let mut entropy = [0; 2];
-        random.read_exact(&mut entropy)?;
-        message.header.id = u16::from_ne_bytes(entropy);
+        message.header.id = entropy::query_id(deadline)?;
         let mut wire = [0; DNS_MAX_UDP_SIZE];
         let length = message.encode(&mut wire).ok_or(QueryError::InvalidQuery)?;
         let sent = &wire[..length];
