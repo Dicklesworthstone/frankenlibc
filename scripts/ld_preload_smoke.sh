@@ -294,6 +294,8 @@ GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
 cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
 RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
 cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_rlimit_as_first.c" -o "${RLIMIT_AS_FIRST_BIN}"
+FLOCKFILE_THREADS_BIN="${BIN_DIR}/fixture_flockfile_threads"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_flockfile_threads.c" -o "${FLOCKFILE_THREADS_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
@@ -1071,6 +1073,9 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
   # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
   run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  # flockfile(stdout) + putc from several threads: flockfile held the stream
+  # registry lock while blocking on the stream lock (deadlock).
+  run_corpus_case "${mode}" "flockfile_threads" "${FLOCKFILE_THREADS_BIN}" || mode_failed=1
   # fork/popen/system/posix_spawn while other threads are in malloc and stdio
   # (bd-rc0923-epic-eeuy4f.5).
   run_corpus_case "${mode}" "fork_multithreaded_parent" "${FORK_MT_BIN}" || mode_failed=1

@@ -13554,6 +13554,23 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
     StreamType::Foreign
 }
 
+/// The `NativeFile` in registry `slot`, with the registry lock RELEASED.
+///
+/// flockfile used to block on the stream lock while holding the registry lock.
+/// A thread already holding that stream lock (an earlier flockfile) then
+/// deadlocked in its next putc, whose stream resolution
+/// (`canonical_stream_id` -> `native_stdio_fd_for_ptr`) takes the registry
+/// lock: threads doing flockfile; putc; funlockfile on stdout hung forever.
+/// Registry slots live inside a static and never move, so the address stays
+/// valid while the stream is open -- the caller's contract for the `FILE *`.
+fn native_file_unlocked_registry(slot: usize) -> Option<&'static io_internal_abi::NativeFile> {
+    let reg = io_internal_abi::native_stream_registry();
+    let file: *const io_internal_abi::NativeFile = reg.get(slot)?;
+    drop(reg);
+    // SAFETY: points into the static registry (see above).
+    Some(unsafe { &*file })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     if stream.is_null() {
@@ -13561,8 +13578,7 @@ pub unsafe extern "C" fn flockfile(stream: *mut c_void) {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
-            let reg = io_internal_abi::native_stream_registry();
-            if let Some(native_file) = reg.get(slot) {
+            if let Some(native_file) = native_file_unlocked_registry(slot) {
                 native_file.explicit_lock();
             }
         }
@@ -13587,8 +13603,7 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut c_void) -> c_int {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
-            let reg = io_internal_abi::native_stream_registry();
-            if let Some(native_file) = reg.get(slot) {
+            if let Some(native_file) = native_file_unlocked_registry(slot) {
                 return if native_file.try_explicit_lock() {
                     0
                 } else {
@@ -13619,8 +13634,7 @@ pub unsafe extern "C" fn funlockfile(stream: *mut c_void) {
     }
     match classify_stream_for_locking(stream) {
         StreamType::NativeFile(slot) => {
-            let reg = io_internal_abi::native_stream_registry();
-            if let Some(native_file) = reg.get(slot) {
+            if let Some(native_file) = native_file_unlocked_registry(slot) {
                 // SAFETY: Caller is responsible for having called flockfile/ftrylockfile first.
                 // This is the POSIX contract - funlockfile behavior is undefined if the caller
                 // doesn't hold the lock.
