@@ -3,7 +3,7 @@ name: Native raw resolver
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/native-raw-resolver.yml']
+    paths: ['.github/workflows/native-raw-resolver.yml', 'tests/conformance/raw_res_send_host.c']
   workflow_dispatch:
 
 permissions:
@@ -12,7 +12,11 @@ permissions:
 jobs:
   source:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     permissions:
       contents: write
@@ -77,8 +81,8 @@ jobs:
               print('SOURCE_BLOB', sha, path, flush=True)
           Path('artifacts/raw-resolver/source-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
           Path('artifacts/raw-resolver/integration.diff').write_bytes(subprocess.check_output(['git', 'diff']))
-          # Compile the real source files via path attributes. No implementation
-          # is copied, replaced by a fake, or removed from its own source tests.
+          # Direct path attributes compile the real files and their original
+          # tests. This isolated diagnostic does not replace workspace gates.
           harness = Path(os.environ['RUNNER_TEMP']) / 'raw-resolver-source'
           harness.mkdir()
           modules = 'pub mod resolv {\n'
@@ -103,8 +107,18 @@ jobs:
           cd "$RUNNER_TEMP/raw-resolver-source"
           cargo +nightly-2026-08-31 test --offline -- --nocapture 2>&1 | tee "$log"
           test "$(grep -Ec 'test result: ok\. [1-9][0-9]* passed;' "$log")" -eq 3
+      - name: Check the independent host wire-length oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-host"
+          timeout 30 "$RUNNER_TEMP/raw-res-send-host" | tee artifacts/raw-resolver/host.log
+          grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host.log
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-ubsan"
+          timeout 30 "$RUNNER_TEMP/raw-res-send-ubsan" | tee artifacts/raw-resolver/host-ubsan.log
+          grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host-ubsan.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: native-raw-resolver-source-results
+          name: native-raw-resolver-source-${{ matrix.runner }}
           path: artifacts/raw-resolver/**
