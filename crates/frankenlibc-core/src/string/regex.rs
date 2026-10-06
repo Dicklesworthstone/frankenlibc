@@ -73,6 +73,11 @@ pub const REG_PLUS_QM_OPS: i32 = 1 << 17;
 /// `\w`/`\s` then match one whole character (1..=4 bytes) and never an invalid
 /// byte; named classes, ICASE and word boundaries classify wide characters.
 pub const REG_UTF8: i32 = 1 << 16;
+/// fl-internal cflag: `[:` inside a bracket expression is two literal
+/// characters, not the start of a named class (GNU syntax without
+/// RE_CHAR_CLASSES, e.g. the Emacs syntax m4 uses: glibc compiles m4's
+/// `[^][:]` as "not `]`, `[` or `:`").
+pub const REG_NO_CHAR_CLASSES: i32 = 1 << 15;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -1232,6 +1237,8 @@ struct Parser<'a> {
     plus_qm_ops: bool,
     /// UTF-8 locale (REG_UTF8): multibyte characters are single atoms.
     utf8: bool,
+    /// `[:name:]` classes are recognised in brackets (not REG_NO_CHAR_CLASSES).
+    char_classes: bool,
     // What an `MbClass` bakes in at parse time: ICASE, `.` excluding `\n`
     // (REG_NEWLINE / REG_DOT_NOT_NEWLINE), nonmatching lists excluding `\n`
     // (REG_NEWLINE / REG_LIST_NOT_NEWLINE), `.` matching NUL (REG_DOT_NUL).
@@ -1266,6 +1273,7 @@ impl<'a> Parser<'a> {
             },
             plus_qm_ops: cflags & REG_PLUS_QM_OPS != 0,
             utf8: cflags & REG_UTF8 != 0,
+            char_classes: cflags & REG_NO_CHAR_CLASSES == 0,
             icase: cflags & REG_ICASE != 0,
             dot_newline: cflags & (REG_NEWLINE | REG_DOT_NOT_NEWLINE) != 0,
             list_newline: cflags & (REG_NEWLINE | REG_LIST_NOT_NEWLINE) != 0,
@@ -1972,7 +1980,7 @@ impl<'a> Parser<'a> {
                 // POSIX character class `[:alpha:]`. Like an equivalence class it
                 // may not be a range endpoint — a following `-` (not closing the
                 // bracket) is REG_ERANGE, matching glibc.
-                Some(b'[') if self.pat.get(self.pos + 1) == Some(&b':') => {
+                Some(b'[') if self.char_classes && self.pat.get(self.pos + 1) == Some(&b':') => {
                     self.advance(); // [
                     self.advance(); // :
                     let (class_ranges, class_bit) = self.parse_posix_class()?;
@@ -2093,13 +2101,14 @@ impl<'a> Parser<'a> {
     /// A named class `[:name:]` (opening `[:` consumed): its ASCII members
     /// and its `MB_*` bit for the non-ASCII members of a UTF-8 pattern.
     fn parse_posix_class(&mut self) -> Result<(Vec<(u8, u8)>, u16), i32> {
+        // The name runs to the first `:]`, as in glibc: with none before the
+        // end of the pattern the bracket is unmatched (REG_EBRACK, e.g.
+        // `[^][:]*`); a terminated but unknown name is REG_ECTYPE.
         let start = self.pos;
-        while self.pos < self.pat.len() && self.pat[self.pos] != b':' {
-            self.pos += 1;
-        }
-        if self.pos + 1 >= self.pat.len() || self.pat[self.pos + 1] != b']' {
-            return Err(REG_ECTYPE);
-        }
+        let Some(len) = self.pat[start..].windows(2).position(|w| w == b":]") else {
+            return Err(REG_EBRACK);
+        };
+        self.pos = start + len;
         let class_name = &self.pat[start..self.pos];
         self.pos += 2; // skip :]
 
@@ -5921,6 +5930,26 @@ mod tests {
         assert_eq!(first(b"zz\na", REG_NEWLINE_ALT, s), Some(1));
         // grep BRE: `a**` stacks.
         assert!(regex_compile_bytes(b"a**", REG_DUP_STACKS).is_ok());
+    }
+
+    /// Without RE_CHAR_CLASSES (m4's Emacs syntax) `[:` in a bracket is two
+    /// literal characters; with classes, a `[:` never closed by `:]` is an
+    /// unmatched bracket. Expected values measured on glibc 2.43
+    /// (re_compile_pattern + re_search over "ab:c x:y abc]d").
+    #[test]
+    fn char_classes_follow_the_gnu_syntax() {
+        let subject = b"ab:c x:y abc]d";
+        let re = regex_compile_bytes(b"[^][:]*", REG_NO_CHAR_CLASSES).unwrap();
+        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 2)));
+        let re = regex_compile_bytes(br"^\(.\)[ \t]*\(::\)\?\([^][:]\|:[^:]\)*", REG_NO_CHAR_CLASSES)
+            .unwrap();
+        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 12)));
+        assert_eq!(regex_compile_bytes(b"[^][:]*", 0).err(), Some(REG_EBRACK));
+        assert_eq!(regex_compile_bytes(b"[^][:]*", REG_EXTENDED).err(), Some(REG_EBRACK));
+        assert_eq!(regex_compile_bytes(br"\([^][:]\|:[^:]\)*", 0).err(), Some(REG_ECTYPE));
+        // Classes still work where the syntax has them.
+        let re = regex_compile_bytes(b"[[:alpha:]]*", 0).unwrap();
+        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 2)));
     }
 
     #[test]

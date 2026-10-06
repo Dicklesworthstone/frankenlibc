@@ -10319,6 +10319,7 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
 const RE_BK_PLUS_QM: u64 = 1 << 1;
+const RE_CHAR_CLASSES: u64 = 1 << 2;
 const RE_CONTEXT_INDEP_OPS: u64 = 1 << 4;
 const RE_CONTEXT_INVALID_OPS: u64 = 1 << 5;
 const RE_INVALID_INTERVAL_ORD: u64 = 1 << 21;
@@ -10465,6 +10466,11 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
     }
     if syntax & RE_NEWLINE_ALT != 0 {
         cflags |= regex::REG_NEWLINE_ALT;
+    }
+    // Without RE_CHAR_CLASSES (the Emacs syntax m4 uses), `[:` in a bracket
+    // is literal: m4 compiles bison's skeleton regex `[^][:]` with it.
+    if syntax & RE_CHAR_CLASSES == 0 {
+        cflags |= regex::REG_NO_CHAR_CLASSES;
     }
     cflags
 }
