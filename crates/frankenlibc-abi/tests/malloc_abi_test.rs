@@ -1812,6 +1812,9 @@ fn multithreaded_stats_readers_see_unmerged_per_thread_batches() {
 /// does not relax what is asserted afterwards.
 #[test]
 fn the_size_class_ceiling_is_the_segment_boundary() {
+    // Serialized with the stats tests: an allocation here between their
+    // reset and snapshot made them flaky (bd-v8751w).
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     use frankenlibc_core::malloc::size_class::MAX_SMALL_SIZE;
 
     signal_runtime_ready_for_tests();
@@ -1977,6 +1980,9 @@ fn campaign_measured_sizes_take_the_address_derived_segment_path() {
 /// the recycled half is the one that fails if the skip ever widens.
 #[test]
 fn calloc_returns_zeroed_memory_fresh_and_recycled() {
+    // Serialized with the stats tests: an allocation here between their
+    // reset and snapshot made them flaky (bd-v8751w).
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     signal_runtime_ready_for_tests();
 
     for size in [16usize, 48, 256, 1024] {
@@ -2072,6 +2078,9 @@ fn calloc_zeroes_recycled_and_growth_slots_across_magazine_boundary() {
 /// on "was this slot ever handed out", this is where it would break.
 #[test]
 fn calloc_after_realloc_shrink_and_free_is_zeroed() {
+    // Serialized with the stats tests: an allocation here between their
+    // reset and snapshot made them flaky (bd-v8751w).
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
     signal_runtime_ready_for_tests();
 
     // SAFETY: plain allocation, then dirty every byte.

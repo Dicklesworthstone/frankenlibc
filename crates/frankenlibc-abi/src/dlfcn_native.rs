@@ -23,6 +23,9 @@ use frankenlibc_core::elf::{
 };
 use frankenlibc_core::syscall as raw_syscall;
 
+#[path = "dlfcn_candidate.rs"]
+mod candidate;
+
 #[path = "dlfcn_search.rs"]
 mod search;
 use search::{SearchContext, SearchPaths};
@@ -232,7 +235,19 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
         .open(path)
         .ok()?;
     let metadata = file.metadata().ok()?;
-    metadata.is_file().then_some((file, metadata.dev(), metadata.ino()))
+    if !metadata.is_file() { return None; }
+    if candidate::incompatible(&file) {
+        // Continue search only for an unowned, incompatible object. A resident
+        // image remains authoritative even if its backing inode was modified;
+        // the ordinary reopen/pin paths below still enforce its lifetime state.
+        // The positional header read above holds neither loader lock.
+        let _operation = OPERATIONS.lock();
+        let dsos = registry().lock().ok()?;
+        if !dsos.iter().any(|dso| dso.device == metadata.dev() && dso.inode == metadata.ino()) {
+            return None;
+        }
+    }
+    Some((file, metadata.dev(), metadata.ino()))
 }
 
 // Read runtime metadata rather than section headers: stripped objects retain
@@ -268,6 +283,8 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
 fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, context: &SearchContext) -> Option<PreparedDso> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
+    // The metadata reader alone does not reject unsupported ELF versions.
+    if !candidate::versions_supported(&bytes) { return None; }
     let loader = ElfLoader::new(0);
     let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.

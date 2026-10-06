@@ -412,10 +412,19 @@ impl StreamBuffer {
     // Internal
     // -----------------------------------------------------------------------
 
+    // Inlined: the per-byte fast paths (fast_putc, fast_write) call it on
+    // every byte, and out of line it was 11% of a putc loop for one compare.
+    #[inline]
     fn ensure_storage(&mut self) {
         if self.data.len() < self.capacity {
-            self.data.resize(self.capacity, 0);
+            self.grow_storage();
         }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn grow_storage(&mut self) {
+        self.data.resize(self.capacity, 0);
     }
 
     fn write_full<'a>(&mut self, data: &'a [u8]) -> WriteResult<'a> {

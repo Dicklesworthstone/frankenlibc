@@ -309,6 +309,33 @@ fn process_global_stdio_child_invocation() {
 /// fail. (bd-el0v8)
 static STREAM_REGISTRY_PROBE_LOCK: Mutex<()> = Mutex::new(());
 
+/// For a test whose assertions probe a process-global resource after fclose
+/// (a registry slot by address, an fd number): in the normal (parallel) run, re-run this binary with only `test`
+/// and require it to pass, returning `true` (the caller returns); in that
+/// child, return `false` so the caller runs its assertions with no other test
+/// thread able to reuse the freed slot. STREAM_REGISTRY_PROBE_LOCK alone was
+/// not enough -- any stream-opening test can take the slot -- and the
+/// assertions still failed 1 run in 15-60 (2026-10-06).
+fn run_alone_in_child(test: &str) -> bool {
+    if std::env::var_os("FRANKENLIBC_REGISTRY_PROBE_CHILD").is_some() {
+        return false;
+    }
+    let output = std::process::Command::new(
+        std::env::current_exe().expect("current test binary path"),
+    )
+    .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+    .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
+    .output()
+    .expect("re-run the test alone");
+    let child_out = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && child_out.contains("1 passed"),
+        "isolated {test} failed:\nstdout={child_out}\nstderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 fn temp_path(tag: &str) -> PathBuf {
     let id = NEXT_TMP_ID.fetch_add(1, Ordering::Relaxed);
     let mut path = std::env::temp_dir();
@@ -2663,10 +2690,10 @@ fn fmemopen_writable_close_still_syncs_caller_buffer() {
 
 #[test]
 fn fmemopen_write_creates_stream() {
-    // bd-el0v8: serialize against other parallel tests that allocate
-    // streams. Address reuse by glibc malloc would otherwise let
-    // another in-flight stream land at the just-freed address and
-    // make the "not in registry after fclose" assertion racy.
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("fmemopen_write_creates_stream") {
+        return;
+    }
     let _registry_probe = STREAM_REGISTRY_PROBE_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -2978,6 +3005,10 @@ fn fmemopen_append_flush_writes_nul_after_appended_content() {
 
 #[test]
 fn open_memstream_returns_stream_or_null() {
+    // Probes the registry by address after fclose: see run_alone_in_child.
+    if run_alone_in_child("open_memstream_returns_stream_or_null") {
+        return;
+    }
     let mut ptr: *mut c_char = std::ptr::null_mut();
     let mut size: usize = 0;
     let stream = unsafe { open_memstream(&mut ptr, &mut size) };
@@ -4016,6 +4047,11 @@ fn fopen_returns_fresh_fd() {
 
 #[test]
 fn fclose_closes_fd() {
+    // The closed fd number can be reused at once by any parallel test that
+    // opens a file (1 run in 150, 2026-10-06): see run_alone_in_child.
+    if run_alone_in_child("fclose_closes_fd") {
+        return;
+    }
     let path = temp_path("fclose_closes_fd");
     let _ = fs::remove_file(&path);
     let path_c = path_cstring(&path);
