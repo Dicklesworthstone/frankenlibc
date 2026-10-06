@@ -899,7 +899,7 @@ LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so /bin/echo hello
 
 ### Requirements
 
-- Linux (x86_64 primary; aarch64 supported and cross-compile-tested)
+- Linux (x86_64 primary; aarch64 supported and cross-compile-tested). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
 - Rust nightly with `rustfmt` and `clippy` (pinned via `rust-toolchain.toml`)
 - A normal Cargo workspace; no mixed package-manager build system
 
@@ -2161,7 +2161,7 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. Every crate is compiled with `-Ctarget-feature=+avx2,+fma` (`.cargo/config.toml`), so the default artifact requires an x86-64-v3 CPU; on older CPUs an IFUNC-time check exits with a clear message instead of SIGILL (bd-rc0923-epic-eeuy4f.13).
+The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. The release artifact is built for **baseline x86-64** (`.cargo/config.toml` adds no target features) and runs on any x86_64 CPU; its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and the AVX2+FMA twins of the hot math kernels are selected per call from the CPUID bits `std` caches (bd-rc0923-epic-eeuy4f.13). `scripts/check_baseline_isa.sh` keeps it that way: an objdump allow-list of the dispatch-guarded functions, plus the C fixture suite and a few real programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) compiles everything with `+avx2,+fma` for A/B benchmarking; that build refuses to start on a CPU without the extensions it was compiled for, with a message naming them and exit 127, instead of dying of SIGILL.
 
 `Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 

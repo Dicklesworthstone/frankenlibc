@@ -1752,10 +1752,10 @@ unsafe fn copy_unaligned_32(dst: *mut u8, src: *const u8) {
     // EIGHT of them to move sixty-four bytes, using half of each register. glibc moves
     // the same 64 bytes in four.
     //
-    // Unconditionally legal here: the crate builds with `-Ctarget-feature=+avx2,+fma`
-    // (`.cargo/config.toml`), which is also why the halves were already VEX-encoded
-    // `vmovups` rather than SSE `movups` — the 256-bit form needs no wider guarantee
-    // than the 128-bit one already being emitted.
+    // Legal on every x86_64 CPU: portable SIMD lowers to the widest vector the build
+    // targets. That is one `ymm` move in an AVX build and two SSE `movups` in the
+    // shipped baseline x86-64 build (bd-rc0923-epic-eeuy4f.13), never an instruction
+    // the build did not enable.
     //
     // `Simd<u8, 32>` rather than a `[u8; 32]` aggregate: an aggregate copy is what LLVM
     // lowers back to `@llvm.memcpy`, which in this cdylib resolves to our own interposed

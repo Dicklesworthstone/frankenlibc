@@ -281,8 +281,9 @@ fn main() {
     //
     // Note this forces a full rebuild: RUSTFLAGS is part of cargo's fingerprint.
     // The flags from .cargo/config.toml are repeated here because setting the
-    // RUSTFLAGS env var REPLACES them rather than appending, and dropping
-    // +avx2,+fma would silently change the codegen under test.
+    // RUSTFLAGS env var REPLACES them rather than appending. They are baseline
+    // x86-64 (bd-rc0923-epic-eeuy4f.13); adding target features here would
+    // silently change the codegen under test.
     // `--rustflags=...` rebuilds the cdylib with extra flags before disassembling
     // it, which is how a CODEGEN question gets asked directly -- e.g. does
     // -Zdefault-visibility=protected turn the GOT-indirect abi->core calls into
@@ -335,9 +336,9 @@ fn main() {
         .env("CARGO_TARGET_DIR", target_dir());
     if let Some(extra) = extra_rustflags {
         // The flags from .cargo/config.toml are repeated because setting the
-        // RUSTFLAGS env var REPLACES them rather than appending, and silently
-        // dropping +avx2,+fma would change the codegen under test.
-        let flags = format!("-Z threads=4 -Ctarget-feature=+avx2,+fma {extra}");
+        // RUSTFLAGS env var REPLACES them rather than appending; keep the two in
+        // step or the probe disassembles a build nobody ships.
+        let flags = format!("-Z threads=4 {extra}");
         println!("DISASM_RUSTFLAGS value={flags:?}");
         command.env("RUSTFLAGS", flags);
     }

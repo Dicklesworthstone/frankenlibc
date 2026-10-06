@@ -107,29 +107,244 @@ pub mod startup_helpers;
 pub mod stdbit_abi;
 mod trig_tables;
 
-/// A build compiled for x86-64-v3 (`+avx2,+fma` in `.cargo/config.toml`)
-/// executes AVX2 instructions throughout, so on an older CPU the process
-/// died of SIGILL inside memcpy, before main and even before this library's
-/// constructors: another library's constructor (libselinux's) calls our
-/// `sysconf` first. Refuse with a message instead (bd-rc0923-epic-eeuy4f.13).
+/// The default build is baseline x86-64 and runs on every x86_64 CPU; its
+/// AVX2/FMA kernels are chosen at run time (bd-rc0923-epic-eeuy4f.13). A build
+/// compiled for more -- the labelled `release-x86-64-v3` profile, or any
+/// `-Ctarget-cpu`/`-Ctarget-feature` override -- executes those instructions
+/// from the first memcpy on, before main and even before this library's
+/// constructors (libselinux's constructor calls our `sysconf` first), so on a
+/// CPU without them every process died of SIGILL. Such a build refuses to run
+/// instead, naming the extensions it was compiled for.
 ///
 /// The check runs as the resolver of a hidden IFUNC that a `#[used]` static
 /// points at: the loader resolves that IRELATIVE relocation while relocating
-/// this object, before any constructor anywhere. The resolver is
-/// integer-only (`cpuid`, `xgetbv`, raw syscalls).
+/// this object, before any constructor anywhere. The resolver is hand-written
+/// assembly, because Rust compiled for this build may itself use the very
+/// instructions it checks for (BMI in a bit test, a VEX move for a buffer).
 #[cfg(all(
     not(test),
     target_os = "linux",
     target_arch = "x86_64",
-    any(target_feature = "avx2", target_feature = "fma")
+    any(
+        target_feature = "sse3",
+        target_feature = "ssse3",
+        target_feature = "sse4.1",
+        target_feature = "sse4.2",
+        target_feature = "popcnt",
+        target_feature = "cmpxchg16b",
+        target_feature = "lahfsahf",
+        target_feature = "movbe",
+        target_feature = "xsave",
+        target_feature = "avx",
+        target_feature = "avx2",
+        target_feature = "fma",
+        target_feature = "f16c",
+        target_feature = "bmi1",
+        target_feature = "bmi2",
+        target_feature = "lzcnt",
+        target_feature = "avx512f"
+    )
 ))]
 mod cpu_guard {
+    /// Every extension a build can be compiled to require, as
+    /// (compiled in, CPUID word, bit, name). Words: 0 = leaf 1 ECX,
+    /// 1 = leaf 7 EBX, 2 = leaf 0x8000_0001 ECX.
+    const FEATURES: [(bool, u32, u32, &[u8]); 21] = [
+        (cfg!(target_feature = "sse3"), 0, 0, b"sse3"),
+        (cfg!(target_feature = "ssse3"), 0, 9, b"ssse3"),
+        (cfg!(target_feature = "fma"), 0, 12, b"fma"),
+        (cfg!(target_feature = "cmpxchg16b"), 0, 13, b"cmpxchg16b"),
+        (cfg!(target_feature = "sse4.1"), 0, 19, b"sse4.1"),
+        (cfg!(target_feature = "sse4.2"), 0, 20, b"sse4.2"),
+        (cfg!(target_feature = "movbe"), 0, 22, b"movbe"),
+        (cfg!(target_feature = "popcnt"), 0, 23, b"popcnt"),
+        (cfg!(target_feature = "xsave"), 0, 26, b"xsave"),
+        (cfg!(target_feature = "avx"), 0, 28, b"avx"),
+        (cfg!(target_feature = "f16c"), 0, 29, b"f16c"),
+        (cfg!(target_feature = "bmi1"), 1, 3, b"bmi1"),
+        (cfg!(target_feature = "avx2"), 1, 5, b"avx2"),
+        (cfg!(target_feature = "bmi2"), 1, 8, b"bmi2"),
+        (cfg!(target_feature = "avx512f"), 1, 16, b"avx512f"),
+        (cfg!(target_feature = "avx512dq"), 1, 17, b"avx512dq"),
+        (cfg!(target_feature = "avx512cd"), 1, 28, b"avx512cd"),
+        (cfg!(target_feature = "avx512bw"), 1, 30, b"avx512bw"),
+        (cfg!(target_feature = "avx512vl"), 1, 31, b"avx512vl"),
+        (cfg!(target_feature = "lahfsahf"), 2, 0, b"lahfsahf"),
+        (cfg!(target_feature = "lzcnt"), 2, 5, b"lzcnt"),
+    ];
+
+    const fn required(word: u32) -> u32 {
+        let mut mask = 0;
+        let mut i = 0;
+        while i < FEATURES.len() {
+            if FEATURES[i].0 && FEATURES[i].1 == word {
+                mask |= 1 << FEATURES[i].2;
+            }
+            i += 1;
+        }
+        mask
+    }
+
+    const LEAF1_ECX: u32 = required(0);
+    const LEAF7_EBX: u32 = required(1);
+    const EXT_ECX: u32 = required(2);
+    /// Register state the OS must save (XCR0) before VEX/EVEX code may run:
+    /// SSE+AVX, plus opmask and ZMM for AVX-512. BMI and LZCNT are VEX- or
+    /// legacy-encoded integer instructions and need none.
+    const XCR0: u32 = if cfg!(target_feature = "avx512f") {
+        0xe6
+    } else if cfg!(target_feature = "avx") {
+        0x6
+    } else {
+        0
+    };
+
+    const PREFIX: &[u8] =
+        b"frankenlibc: this libfrankenlibc_abi.so was compiled for x86-64 extensions this CPU \
+or OS does not provide (needs:";
+    const SUFFIX: &[u8] = b"); use the default baseline x86-64 build \
+(cargo build -p frankenlibc-abi --release)\n";
+
+    const fn message_len() -> usize {
+        let mut len = PREFIX.len() + SUFFIX.len();
+        let mut i = 0;
+        while i < FEATURES.len() {
+            if FEATURES[i].0 {
+                len += 1 + FEATURES[i].3.len();
+            }
+            i += 1;
+        }
+        len
+    }
+
+    const MESSAGE_LEN: usize = message_len();
+
+    const fn message() -> [u8; MESSAGE_LEN] {
+        let mut out = [0u8; MESSAGE_LEN];
+        let mut at = 0;
+        let mut j = 0;
+        while j < PREFIX.len() {
+            out[at] = PREFIX[j];
+            at += 1;
+            j += 1;
+        }
+        let mut i = 0;
+        while i < FEATURES.len() {
+            if FEATURES[i].0 {
+                out[at] = b' ';
+                at += 1;
+                let name = FEATURES[i].3;
+                let mut k = 0;
+                while k < name.len() {
+                    out[at] = name[k];
+                    at += 1;
+                    k += 1;
+                }
+            }
+            i += 1;
+        }
+        let mut j = 0;
+        while j < SUFFIX.len() {
+            out[at] = SUFFIX[j];
+            at += 1;
+            j += 1;
+        }
+        out
+    }
+
+    /// Plain bytes, no pointers: nothing here needs a relocation, so the
+    /// resolver may read it before this object's relocations are done.
+    static MESSAGE: [u8; MESSAGE_LEN] = message();
+
+    // Callee-saved rbx is clobbered by cpuid; r8-r11 are scratch. Absent
+    // CPUID leaves read as zero. Numeric labels avoid 0 and 1, which LLVM's
+    // Intel-syntax parser can take for binary literals.
     core::arch::global_asm!(
+        ".pushsection .text.__frankenlibc_cpu_guard_resolve,\"ax\",@progbits",
+        ".p2align 4",
+        ".type __frankenlibc_cpu_guard_resolve, @function",
+        "__frankenlibc_cpu_guard_resolve:",
+        "push rbx",
+        "xor eax, eax",
+        "xor ecx, ecx",
+        "cpuid",
+        "mov r8d, eax",
+        "mov eax, 1",
+        "xor ecx, ecx",
+        "cpuid",
+        "mov r9d, ecx",
+        "xor r10d, r10d",
+        "cmp r8d, 7",
+        "jb 2f",
+        "mov eax, 7",
+        "xor ecx, ecx",
+        "cpuid",
+        "mov r10d, ebx",
+        "2:",
+        "mov eax, 0x80000000",
+        "xor ecx, ecx",
+        "cpuid",
+        "mov r8d, eax",
+        "xor r11d, r11d",
+        "cmp r8d, 0x80000001",
+        "jb 3f",
+        "mov eax, 0x80000001",
+        "xor ecx, ecx",
+        "cpuid",
+        "mov r11d, ecx",
+        "3:",
+        "pop rbx",
+        "and r9d, {leaf1}",
+        "cmp r9d, {leaf1}",
+        "jne 5f",
+        "and r10d, {leaf7}",
+        "cmp r10d, {leaf7}",
+        "jne 5f",
+        "and r11d, {ext}",
+        "cmp r11d, {ext}",
+        "jne 5f",
+        "mov edx, {xcr0}",
+        "test edx, edx",
+        "jz 4f",
+        // xgetbv faults unless the OS enabled XSAVE (CPUID.1:ECX.OSXSAVE).
+        "mov eax, 1",
+        "xor ecx, ecx",
+        "push rbx",
+        "cpuid",
+        "pop rbx",
+        "bt ecx, 27",
+        "jnc 5f",
+        "xor ecx, ecx",
+        "xgetbv",
+        "and eax, {xcr0}",
+        "cmp eax, {xcr0}",
+        "jne 5f",
+        "4:",
+        "lea rax, [rip + {noop}]",
+        "ret",
+        "5:",
+        "mov eax, 1",
+        "mov edi, 2",
+        "lea rsi, [rip + {message}]",
+        "mov edx, {len}",
+        "syscall",
+        "mov eax, 231",
+        "mov edi, 127",
+        "syscall",
+        "ud2",
+        ".size __frankenlibc_cpu_guard_resolve, . - __frankenlibc_cpu_guard_resolve",
+        ".popsection",
         ".globl __frankenlibc_cpu_guard",
         ".hidden __frankenlibc_cpu_guard",
         ".type __frankenlibc_cpu_guard, @gnu_indirect_function",
-        ".set __frankenlibc_cpu_guard, {resolver}",
-        resolver = sym resolve,
+        ".set __frankenlibc_cpu_guard, __frankenlibc_cpu_guard_resolve",
+        leaf1 = const LEAF1_ECX,
+        leaf7 = const LEAF7_EBX,
+        ext = const EXT_ECX,
+        xcr0 = const XCR0,
+        len = const MESSAGE_LEN,
+        message = sym MESSAGE,
+        noop = sym noop,
     );
 
     unsafe extern "C" {
@@ -140,58 +355,6 @@ mod cpu_guard {
     static FORCE_IRELATIVE: unsafe extern "C" fn() = __frankenlibc_cpu_guard;
 
     extern "C" fn noop() {}
-
-    #[inline(never)]
-    extern "C" fn resolve() -> usize {
-        const MESSAGE: &[u8] = b"frankenlibc: this libfrankenlibc_abi.so was built for x86-64-v3 \
-(AVX2 + FMA), which this CPU does not support; use a build without \
--Ctarget-feature=+avx2,+fma\n";
-        // SAFETY: cpuid is available on every x86_64 CPU.
-        let leaf1 = unsafe { core::arch::x86_64::__cpuid_count(1, 0) };
-        // SAFETY: as above.
-        let leaf7 = unsafe { core::arch::x86_64::__cpuid_count(7, 0) };
-        let fma = leaf1.ecx & (1 << 12) != 0;
-        let osxsave = leaf1.ecx & (1 << 27) != 0;
-        let avx = leaf1.ecx & (1 << 28) != 0;
-        let avx2 = leaf7.ebx & (1 << 5) != 0;
-        // The OS must also save the YMM state (XCR0 bits 1 and 2).
-        let ymm_state = osxsave && {
-            let low: u32;
-            // SAFETY: xgetbv(0) is valid when OSXSAVE is set, checked above.
-            unsafe {
-                core::arch::asm!(
-                    "xgetbv",
-                    in("ecx") 0u32,
-                    out("eax") low,
-                    out("edx") _,
-                    options(nomem, nostack, preserves_flags),
-                );
-            }
-            low & 0b110 == 0b110
-        };
-        if !(fma && avx && avx2 && ymm_state) {
-            // SAFETY: write(2) of a static buffer, then exit_group.
-            unsafe {
-                core::arch::asm!(
-                    "syscall",
-                    inlateout("rax") 1usize => _,
-                    in("rdi") 2usize,
-                    in("rsi") MESSAGE.as_ptr(),
-                    in("rdx") MESSAGE.len(),
-                    lateout("rcx") _,
-                    lateout("r11") _,
-                    options(nostack),
-                );
-                core::arch::asm!(
-                    "syscall",
-                    in("rax") 231usize,
-                    in("rdi") 127usize,
-                    options(noreturn, nostack),
-                );
-            }
-        }
-        noop as usize
-    }
 }
 
 #[cfg(all(not(test), target_os = "linux"))]

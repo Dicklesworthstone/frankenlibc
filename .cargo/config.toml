@@ -1,4 +1,9 @@
 [build]
+# Baseline x86-64: the shipped libfrankenlibc_abi.so must run on every x86_64
+# CPU. AVX2/FMA kernels are selected at run time (bd-rc0923-epic-eeuy4f.13).
+# The x86-64-v3 build used for A/B benchmarking is the `release-x86-64-v3`
+# profile in Cargo.toml; it refuses to start on CPUs without AVX2/FMA.
+#
 # -enable-tlsdesc: thread-locals use TLS descriptors (GNU2 dialect) instead of
 # __tls_get_addr. Preloaded, fl's TLS is static and each access is a fixed
 # offset with no DTV generation check; dlopened, it still works through the
@@ -7,4 +12,4 @@
 # was cleared, so the same TLS block was freed twice (PHP aborted at exit
 # after unloading extensions). glibc's own malloc avoids dynamic TLS for the
 # same reason.
-rustflags = ["-Z", "threads=4", "-Ctarget-feature=+avx2,+fma", "-Cllvm-args=-enable-tlsdesc"]
+rustflags = ["-Z", "threads=4", "-Cllvm-args=-enable-tlsdesc"]
