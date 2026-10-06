@@ -41203,3 +41203,93 @@ ones that would notice a threading-policy depth counter behaving differently.
   - thrd_current DECIDABLE **2.278 FL_SLOWER.** NOT a falsification: the 2026-07-15 force-inline row is a self-speedup (3.289 -> 2.509 ns fl-vs-fl) and never claimed glibc parity. This is the first COMPETITIVE receipt for the family: fl identity-cache cost ~5-6 ns vs glibc direct-TLS ~2.5 ns. The residual is the membrane identity-cache contract, not the removed wrapper call.
   - malloc_free DECIDABLE **5.644 FL_SLOWER** small_64 — improved from the 6.87x load-qualified headline (2026-08-17), consistent with intervening allocator work, still the largest certified family loss.
 - **NO WIN/LOSS CLAIM CHANGED.** This receipt refreshes the frontier; it files no retraction (all rows checked for class: thrd_current/mtx_trylock are self-speedup rows and say so inline).
+
+## 2026-10-06 (salvage/junk-review-old) — CAMPAIGN WIN (RESTORED): the C-locale `strfmon` fast paths that merge `0be7b9dafe87` silently dropped measure 0.250-0.307x vs live glibc; main measures 1.776-2.590x
+
+- **RESULT CLASS:** `result_class=campaign-win`; `legacy_incumbent=host-glibc`;
+  `incumbent_provenance=dlmopen-lmid-newlm`; `same_invocation=true`;
+  `incumbent_ratio=0.307375` (headline `national`, `%n`);
+  `incumbent_bootstrap_median_ci=[0.306321,0.308299]`;
+  `null_bootstrap_median_ci=[0.997949,1.001534]` (FL/FL; glibc/glibc `[0.995204,1.000866]`);
+  `bench_elf_sha256=486c7b102d2b439463d980fc6ec0016e41899ac0b6747556b1981e66a92524eb`
+  (in-process self-report); `cv_used=false`.
+- **WHAT THIS IS.** `22595833b` (strfmon half), `cb1f46f8b`, `e25f441c6` (2026-07-31) added a closed
+  C-locale `strfmon` path: single `%n`/`%i`, the identity flags `^ ! +`, `(` and `-`, field width,
+  `.2`, and literal-separated sequences such as `%n %n`, rendered straight into the caller buffer via
+  `locale::strfmon::strfmon_c_default_into` with no heap. Merge `0be7b9dafe87` (2026-08-03) took the
+  replayed June `unistd_abi.rs` (`e634aff2a`) and dropped the ABI wiring. The core helper and
+  `strfmon_ab.rs` survived, so the helper had no ABI caller. Restored by the commit "perf(locale):
+  restore the C-locale strfmon fast paths lost in 0be7b9daf" (three-way merge: base `22595833b^`,
+  theirs `e25f441c6`, ours `258ff4e7d`). It re-opens the 2026-07-30 strfmon REJECT row under that
+  row's retry predicate ("Re-open `strfmon` only as a SELF-speedup targeting fixed per-call
+  overhead"): the lever deletes the general parser and its heap allocations, not digit conversion.
+  The predicate also asks for a profile naming such a frame first. None was taken; the
+  same-invocation A/B below is the evidence instead. The row makes no generality-tax claim, so it
+  does not contradict the 2026-07-30 row.
+- **SAME-INVOCATION A/A AND EFFECT, host hz4 (64 logical CPUs), 33 retained samples x 100,000 calls
+  per arm, alternating pair order, both arms pinned to `LC_ALL=C` in their own namespace,
+  `FL_OBJECT` inside the executable, `INCUMBENT_OBJECT /usr/lib/x86_64-linux-gnu/libc.so.6`.**
+  The candidate was a local salvage build, never pushed: origin/main `258ff4e7d` plus this
+  restoration, the strftime dispatcher restoration, the scanf restoration rejected in the next row,
+  and harness-only commits. Its `strfmon` code is the pushed code; the pre-push review added only
+  `// SAFETY:` comments.
+
+  | case | FL/glibc | CI95 | FL/FL A/A | glibc/glibc A/A | verdict | main (base) FL/glibc |
+  |---|---:|---|---|---|---|---:|
+  | `national` `%n` | 0.307375 | [0.306321,0.308299] | 0.999701 [0.997949,1.001534] | 0.998598 [0.995204,1.000866] | FL_FASTER | 1.841725 |
+  | `international` `%i` | 0.303519 | [0.301691,0.304045] | 1.000674 [0.999578,1.002445] | 0.998819 [0.994345,1.002765] | FL_FASTER | 1.778293 |
+  | `precision_2` `%.2n` | 0.270171 | [0.269366,0.272781] | 1.001575 [1.000247,1.003905] | 0.998056 [0.994921,0.999603] | FL_FASTER | 2.511036 |
+  | `width_16` `%16n` | 0.249702 | [0.247951,0.250456] | 1.000161 [0.998979,1.001315] | 1.000298 [0.996473,1.002468] | FL_FASTER | 2.589888 |
+  | `no_grouping` `%^n` | 0.302906 | [0.301704,0.303815] | 0.999126 [0.997096,1.002387] | 1.000380 [0.997066,1.003602] | FL_FASTER | 1.802988 |
+  | `paren_negative` `%(n` | 0.286343 | [0.283915,0.287592] | 1.001081 [0.997393,1.005697] | 0.996855 [0.992862,0.999318] | FL_FASTER | 2.002643 |
+  | `two_values` `%n %n` | 0.287591 | [0.286575,0.288687] | 0.998672 [0.997058,1.000700] | 0.999928 [0.995279,1.001925] | FL_FASTER | 1.776019 |
+
+  All 14 A/A medians are within 0.4% of 1.0. Every effect clears twice the wider null half-width,
+  and every CI excludes 1.0.
+- **BASELINE SHAPE, maintenance evidence only.** Same worker and harness, base = origin/main
+  `258ff4e7d` plus this series' first two harness-only commits (`strftime_litrun_ab` decline-path
+  controls and `--case` lists), `bench_elf_sha256=fec5dcdac97d579dd2302a04871174b7729ea580e43e086dce904412934d4431`.
+  All 7 cases measured FL_SLOWER at 1.776-2.590x with all nulls holding. That is the standing loss
+  the 2026-07-30 row recorded (2.12-3.87x on another host). The fl-over-fl self ratio is 0.094-0.168.
+- **BEHAVIOUR PROOF.** In the same binary before timing: `verify: OK (7 cases byte-identical to host
+  glibc, plus truncation caps 1..=24)`. Debug ABI gates on the pushed head (rch, 2026-10-06), each
+  with a non-zero passed count: `conformance_diff_strfmon_format` 2 (including
+  `strfmon_sequences_and_capacity_boundaries_match_glibc`, added with this row: 14 fast-path
+  formats x 12 value pairs at every capacity, plus 6 declined shapes), `conformance_diff_strfmon_l`
+  1, `conformance_diff_strfmon_nan_flags` 1, `conformance_diff_strfmon_negzero` 1,
+  `strfmon_differential_fuzz` 2 (curated battery plus randomized directives vs host glibc),
+  `unistd_abi_test` filtered to `strfmon` 2.
+- **DISPOSITION / RETRY PREDICATE.** KEEP. Reopen if a live-glibc repeat's FL/glibc CI no longer
+  lies below 1.0 by more than twice the wider A/A half-width, if `strfmon`/`strfmon_l` gain a named
+  LC_MONETARY (the fast path assumes the C locale's empty currency and grouping tables), or if a
+  strfmon differential gate diverges.
+
+## 2026-10-06 (salvage/junk-review-old) — REJECT (no measured win): the restored scanf narrow-whitespace inline (`baf79327b`) moves the sscanf family both ways by 2-9%, inside this instrument's between-build band
+
+- **RESULT CLASS:** `result_class=self-speedup` (comparison of two fl builds, each against live glibc);
+  verdict REJECT. No campaign claim.
+- **WHAT WAS TESTED.** `baf79327b` (2026-07-31) moved `ws_seq_len`'s Unicode arm out of line, gave
+  `skip_ws` a narrow byte loop, and specialised narrow `%s`. Merge `0be7b9dafe87` took the replayed
+  `scanf.rs` (`73c8da5cd`) and dropped it. The salvage branch restored it on main's `scanf.rs`,
+  moving the narrow-`%s` hunk from the 2026-07-31 engine's `scan_string_extent` (which main does not
+  have) into main's `scan_string`, measured it, and reverted it. The pre-push review squashed that
+  restore/revert pair out, so neither commit is in history; `baf79327b` is the lever.
+- **MEASURED.** `incumbent_coverage_ab --family sscanf --fl-deepbind --pin-quietest 2`, hz4, 36
+  samples x 600,000 reps per arm, host-wide guard clear pre and post, every FL/FL and glibc/glibc
+  A/A median within 2%. Base fl object sha256 `7197dca3983a50890eed034c1b06a902af5a13e2b12b55b637316320c01ac699`
+  (origin/main `258ff4e7d` plus harness-only commits); candidate
+  `2677d36aad53060a56374cf71548e62b23845a2b1987120afe09e794bddb9cb9` (the same local build as the
+  strfmon row above, which carried this restoration). FL/glibc base -> candidate:
+  `key_value` 0.2832 -> 0.2664, `scanset_only` 0.2371 -> 0.2204, `string_then_int` 0.2775 -> 0.2703
+  (better); `dotted_quad` 0.2007 -> 0.2186, `mixed_record` 0.3734 -> 0.3915, `long_string`
+  0.3754 -> 0.3892, `two_ints` 0.2414 -> 0.2471, `long_hex` 1.2022 -> 1.2259 (worse); `single_int`,
+  `string_token`, `two_strings` and `float_only` overlap.
+- **WHY IT IS NOT A WIN.** Cases the change cannot reach (the `%d` fast paths `dotted_quad` and
+  `two_ints`) moved as much as cases it can. That is the build-to-build shift the 2026-08-16 rows
+  document for this family. The two cases that still run the engine path the change touches
+  (`float_only`, `long_hex`) did not improve. Its original target, `%s` on the engine, has been
+  served by the August fast paths since 2026-08-17.
+- **DISPOSITION.** Not landed. Do not retry it as a sscanf lever while
+  the fast paths serve `%s`. Reopen only for a stream (`fscanf`) or wide (`swscanf`) shape that
+  provably runs `skip_ws`/`ws_seq_len` per byte, with a same-invocation self-A/B
+  (`--fl-so-b`).
