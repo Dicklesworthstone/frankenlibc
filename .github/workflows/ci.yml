@@ -130,6 +130,20 @@ jobs:
         run: |
           cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/ci/release-abi.log
 
+      # The release artifact targets baseline x86-64 (bd-rc0923-epic-eeuy4f.13):
+      # non-baseline instructions only in dispatch-guarded functions, and the C
+      # fixture suite plus real programs run on emulated CPUs without AVX
+      # (Nehalem) and without SSE4 (qemu64). The x86-64-v3 benchmarking build
+      # must refuse such a CPU with a message, not SIGILL.
+      - name: Check baseline x86-64 ISA (objdump allow-list + qemu-user)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-user-static || sudo apt-get install -y -qq qemu-user
+          cargo build -p frankenlibc-abi --profile release-x86-64-v3 2>&1 | tail -n 3
+          QEMU="$(command -v qemu-x86_64-static || command -v qemu-x86_64)" \
+          V3_LIB=target/release-x86-64-v3/libfrankenlibc_abi.so \
+            bash scripts/check_baseline_isa.sh 2>&1 | tee artifacts/ci/release-baseline-isa.log
+
       # Structural export checks (scripts/audit_abi_exports.py, core gates) prove
       # a symbol is in .dynsym. This proves a loader RESOLVES it and that the
       # code behind it is FrankenLibC's -- dladdr places each address inside the

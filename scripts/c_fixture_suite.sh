@@ -24,8 +24,22 @@ ARTIFACT_INDEX="${RUN_DIR}/artifact_index.json"
 TRACE_SEQ=0
 FIXTURE_FILTER="${FIXTURE_FILTER:-fixture_*.c}"
 SPEC="${ROOT}/tests/conformance/c_fixture_spec.json"
+# Optional command prefix for each fixture run, e.g. "qemu-x86_64 -cpu Nehalem"
+# to run the suite on an emulated CPU without AVX (bd-rc0923-epic-eeuy4f.13).
+# The emulator must be statically linked: LD_PRELOAD is set for the whole
+# command and has to reach the guest, not the emulator.
+FIXTURE_RUNNER="${FIXTURE_RUNNER:-}"
+read -r -a RUNNER_ARGV <<< "${FIXTURE_RUNNER}"
 
 LIB_CANDIDATES=()
+# An explicit library wins (scripts/check_baseline_isa.sh runs a given artifact).
+if [[ -n "${FRANKENLIBC_LIB:-}" ]]; then
+  if [[ ! -f "${FRANKENLIBC_LIB}" ]]; then
+    echo "c_fixture_suite: FRANKENLIBC_LIB=${FRANKENLIBC_LIB} does not exist" >&2
+    exit 2
+  fi
+  LIB_CANDIDATES+=("${FRANKENLIBC_LIB}")
+fi
 # Honour caller-supplied CARGO_TARGET_DIR (bd-gilq3).
 if [[ -n "${CARGO_TARGET_DIR:-}" ]]; then
   LIB_CANDIDATES+=(
@@ -116,6 +130,7 @@ echo "lib=${LIB_PATH}"
 echo "timeout=${TIMEOUT_SECONDS}s"
 echo "bead_id=${BEAD_ID}"
 echo "fixture_filter=${FIXTURE_FILTER}"
+echo "fixture_runner=${FIXTURE_RUNNER:-native}"
 echo ""
 
 # Compile all fixtures
@@ -197,7 +212,7 @@ run_fixture() {
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
-    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${bin}" \
+    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${RUNNER_ARGV[@]}" "${bin}" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e
