@@ -2663,10 +2663,33 @@ fn fmemopen_writable_close_still_syncs_caller_buffer() {
 
 #[test]
 fn fmemopen_write_creates_stream() {
-    // bd-el0v8: serialize against other parallel tests that allocate
-    // streams. Address reuse by glibc malloc would otherwise let
-    // another in-flight stream land at the just-freed address and
-    // make the "not in registry after fclose" assertion racy.
+    // The "not in the registry after fclose" assertion probes by address, and
+    // any parallel test that opens a stream can land in the just-freed slot
+    // (STREAM_REGISTRY_PROBE_LOCK only serializes the tests that take it; the
+    // assertion still failed ~1 run in 15-60, 2026-10-06). So the assertions
+    // run in a re-exec of this binary that runs only this test.
+    if std::env::var_os("FRANKENLIBC_FMEMOPEN_REGISTRY_CHILD").is_none() {
+        let output = std::process::Command::new(
+            std::env::current_exe().expect("current test binary path"),
+        )
+        .args([
+            "--exact",
+            "fmemopen_write_creates_stream",
+            "--nocapture",
+            "--test-threads",
+            "1",
+        ])
+        .env("FRANKENLIBC_FMEMOPEN_REGISTRY_CHILD", "1")
+        .output()
+        .expect("re-run fmemopen_write_creates_stream alone");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed"),
+            "isolated fmemopen_write_creates_stream failed:\nstdout={stdout}\nstderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let _registry_probe = STREAM_REGISTRY_PROBE_LOCK
         .lock()
         .unwrap_or_else(|e| e.into_inner());
