@@ -4434,9 +4434,14 @@ fn tg_logd(x: f64) -> (f64, f64) {
     (lh, ll)
 }
 
-/// sin(pi x) as a double-double for 0 <= x < 1 (tgamma.c `as_sinpid`).
-#[inline(never)]
-fn tg_sinpid(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// sin(pi x) as a double-double for 0 <= x < 1 (tgamma.c `as_sinpid`).
+    #[inline(never)]
+    fn tg_sinpid(x: f64) -> (f64, f64) => tg_sinpid_body;
+}
+
+#[inline(always)]
+fn tg_sinpid_body(x: f64) -> (f64, f64) {
     let x = (x - 0.5).abs() * 128.0;
     let ix = x.round_ties_even();
     let d = ix - x;
@@ -4473,9 +4478,18 @@ fn tg_sinpid(x: f64) -> (f64, f64) {
     fastsum_dd(sh, sl, ch, cl)
 }
 
-/// exp(x + l) as `2^e * (h + l)` (tgamma.c `as_expd`).
-#[inline(never)]
-fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) {
+// The out-of-line tgamma/lgamma fast-path helpers (tg_sinpid above, this one,
+// tg_lgamma_asym, lg_logd and lg_sinpipid) stay out of line as upstream keeps
+// them, so they are not compiled into their callers' AVX2+FMA twins: each
+// gets its own (bd-rc0923-epic-eeuy4f.13).
+avx2_fma_dispatch! {
+    /// exp(x + l) as `2^e * (h + l)` (tgamma.c `as_expd`).
+    #[inline(never)]
+    fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) => tg_expd_body;
+}
+
+#[inline(always)]
+fn tg_expd_body(x: f64, l: f64) -> (f64, f64, i32) {
     const LN2H: f64 = hf!("0x1.71547652b82fep+10");
     const LN2L: f64 = hf!("0x1.777d0ffda0d24p-46");
     let (xh, xl) = muldd_sin(x, l, LN2H, LN2L);
@@ -4497,9 +4511,14 @@ fn tg_expd(x: f64, l: f64) -> (f64, f64, i32) {
     (rh, rl, e)
 }
 
-/// log(Gamma(x)) by Stirling's series, for x > 3 (tgamma.c `as_lgamma_asym`).
-#[inline(never)]
-fn tg_lgamma_asym(xh: f64, xl: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// log(Gamma(x)) by Stirling's series, for x > 3 (tgamma.c `as_lgamma_asym`).
+    #[inline(never)]
+    fn tg_lgamma_asym(xh: f64, xl: f64) -> (f64, f64) => tg_lgamma_asym_body;
+}
+
+#[inline(always)]
+fn tg_lgamma_asym_body(xh: f64, xl: f64) -> (f64, f64) {
     let zh = 1.0 / xh;
     let dz = xl * zh;
     let zl = (zh.mul_add(-xh, 1.0) - dz) * zh;
@@ -4773,10 +4792,15 @@ fn lg_split(x: f64) -> (u64, i32) {
     (t & MASK52, ex - 0x3ff)
 }
 
-/// log(x) as a double-double for x > 0, subnormals included (lgamma.c
-/// `as_logd`; its tables are tgamma.c's).
-#[inline(never)]
-fn lg_logd(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// log(x) as a double-double for x > 0, subnormals included (lgamma.c
+    /// `as_logd`; its tables are tgamma.c's).
+    #[inline(never)]
+    fn lg_logd(x: f64) -> (f64, f64) => lg_logd_body;
+}
+
+#[inline(always)]
+fn lg_logd_body(x: f64) -> (f64, f64) {
     let (t, e) = lg_split(x);
     let ed = f64::from(e);
     let (i1, i2) = log_table_index(t);
@@ -4848,9 +4872,14 @@ const LG_SIN_S: [f64; 4] = [
     hf!("-0x1.32d26e446373ap-50"),
 ];
 
-/// sin(pi x)/pi as a double-double for 0 <= x < 1 (lgamma.c `as_sinpipid`).
-#[inline(never)]
-fn lg_sinpipid(x: f64) -> (f64, f64) {
+avx2_fma_dispatch! {
+    /// sin(pi x)/pi as a double-double for 0 <= x < 1 (lgamma.c `as_sinpipid`).
+    #[inline(never)]
+    fn lg_sinpipid(x: f64) -> (f64, f64) => lg_sinpipid_body;
+}
+
+#[inline(always)]
+fn lg_sinpipid_body(x: f64) -> (f64, f64) {
     let x = x - 0.5;
     let ax = x.abs();
     let sx = ax * 128.0;
@@ -5964,6 +5993,70 @@ mod tests {
         );
         for &x in &special {
             assert_eq!(lgamma_r(x).1, lgamma_r_body(x).1, "lgamma_r({x:e}) sign");
+        }
+        // The out-of-line gamma helpers have twins of their own, so the bodies
+        // above call them through their dispatchers: check them directly, over
+        // the domains their callers use.
+        let unit = avx2_fma_dispatch_inputs(0.0, 1.0)
+            .into_iter()
+            .filter(|x| (0.0..1.0).contains(x))
+            .collect::<Vec<_>>();
+        fn part(v: (f64, f64)) -> f64 {
+            v.0
+        }
+        fn tail(v: (f64, f64)) -> f64 {
+            v.1
+        }
+        let picks: [fn((f64, f64)) -> f64; 2] = [part, tail];
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "tg_sinpid",
+                &unit,
+                |x| pick(tg_sinpid(x)),
+                |x| pick(tg_sinpid_body(x)),
+            );
+            assert_dispatch_matches_body(
+                "lg_sinpipid",
+                &unit,
+                |x| pick(lg_sinpipid(x)),
+                |x| pick(lg_sinpipid_body(x)),
+            );
+        }
+        let positive = avx2_fma_dispatch_inputs(f64::MIN_POSITIVE, 1.0e300)
+            .into_iter()
+            .filter(|&x| x > 0.0 && x.is_finite())
+            .collect::<Vec<_>>();
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "lg_logd",
+                &positive,
+                |x| pick(lg_logd(x)),
+                |x| pick(lg_logd_body(x)),
+            );
+        }
+        let above_three = avx2_fma_dispatch_inputs(3.0, 170.0)
+            .into_iter()
+            .filter(|&x| (3.0..=171.0).contains(&x))
+            .collect::<Vec<_>>();
+        for pick in picks {
+            assert_dispatch_matches_body(
+                "tg_lgamma_asym",
+                &above_three,
+                |x| pick(tg_lgamma_asym(x, x * hf!("0x1p-60"))),
+                |x| pick(tg_lgamma_asym_body(x, x * hf!("0x1p-60"))),
+            );
+        }
+        let exponents = avx2_fma_dispatch_inputs(-700.0, 700.0)
+            .into_iter()
+            .filter(|&x| (-700.0..=700.0).contains(&x))
+            .collect::<Vec<_>>();
+        for &x in &exponents {
+            assert_eq!(
+                tg_expd(x, x * hf!("0x1p-60")),
+                tg_expd_body(x, x * hf!("0x1p-60")),
+                "tg_expd({x:e}) (twins active: {})",
+                crate::math::avx2_fma_twins_active()
+            );
         }
     }
 }
