@@ -441,3 +441,40 @@ fn wordexp_nocmd_allows_arithmetic_and_rejects_command_substitution() {
         );
     }
 }
+
+/// Command substitution inside arithmetic (bd-uu1wvp): without WRDE_NOCMD the
+/// substitution runs and its output is the operand (glibc: "42"); with it, the
+/// whole word is WRDE_CMDSUB and nothing runs. fl used to refuse both.
+#[test]
+fn wordexp_command_substitution_inside_arithmetic_matches_glibc() {
+    let _serial = serial();
+    let words = [
+        "$(($(echo 41)+1))",
+        "$((`echo 41`+1))",
+        "$(($(echo 6)*$(echo 7)))",
+        "x$((1+$(printf 2)))y",
+        "\"$(($(echo 2)+2))\"",
+    ];
+    let mut expanded = 0;
+    for w in words {
+        for flags in [0, WRDE_NOCMD] {
+            let h = host(w, flags);
+            let f = fl(w, flags);
+            assert_eq!(
+                f, h,
+                "wordexp({w:?}, flags={flags}): fl=(rc={}, {:?}) glibc=(rc={}, {:?})",
+                f.0, f.1, h.0, h.1
+            );
+            if flags == WRDE_NOCMD {
+                assert_eq!(h.0, WRDE_CMDSUB, "oracle: NOCMD must refuse {w:?}");
+            } else if h.0 == 0 {
+                expanded += 1;
+            }
+        }
+    }
+    assert_eq!(
+        expanded,
+        words.len(),
+        "every word must expand without NOCMD"
+    );
+}

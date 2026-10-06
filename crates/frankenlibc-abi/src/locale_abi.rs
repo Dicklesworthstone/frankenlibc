@@ -1279,22 +1279,6 @@ const _: () = assert!(libc::THOUSEP - (1 << 16) == 1);
 const _: () = assert!(libc::YESEXPR - (5 << 16) == 0);
 const _: () = assert!(libc::NOEXPR - (5 << 16) == 1);
 
-static LC_NUMERIC_TABLE: PtrTable<2> = PtrTable([c".".as_ptr(), c"".as_ptr()]);
-
-static LC_MONETARY_TABLE: PtrTable<9> = PtrTable([
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"\xff".as_ptr(),
-    c"-".as_ptr(),
-]);
-
-static LC_MESSAGES_TABLE: PtrTable<2> = PtrTable([c"^[yY]".as_ptr(), c"^[nN]".as_ptr()]);
-
 #[inline(always)]
 fn codeset_ptr(charset: Charset) -> *const c_char {
     match charset {
@@ -1303,15 +1287,224 @@ fn codeset_ptr(charset: Charset) -> *const c_char {
     }
 }
 
-/// The C locale's LC_PAPER..LC_IDENTIFICATION items (categories 7..=12), as
-/// glibc defines them. `Codeset` marks each category's CODESET item, which
-/// follows the active charset; `Int` items are returned as the pointer value
-/// itself, as glibc does (paper height/width, country number).
+/// The C locale's items outside LC_TIME, as glibc defines them. `Codeset`
+/// marks each category's CODESET item, which follows the active charset;
+/// `Int` items are glibc's word-valued items, returned as the pointer value
+/// itself (paper height/width, country number, MB_CUR_MAX, ...). `List` is a
+/// run of NUL-terminated strings ended by an empty one, `Wide` a `wchar_t`
+/// string or word array, and `ByCharset` an item whose C and C.UTF-8 values
+/// differ.
 enum CItem {
     Str(&'static CStr),
+    List(&'static [u8]),
+    Wide(&'static [u32]),
     Int(usize),
     Codeset,
+    ByCharset(&'static CItem, &'static CItem),
 }
+
+/// LC_CTYPE (category 0). The class/case/width/transliteration tables are not
+/// served for the built-in locales (`""`), so `_NL_CTYPE_TRANSLIT_TAB_SIZE`
+/// reports 0 entries rather than glibc's table size, keeping a caller that
+/// walks the table inside it.
+const LC_CTYPE_C: &[CItem] = &[
+    // 0..=9 class/case tables and gaps
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 10 _NL_CTYPE_CLASS_NAMES, 11 _NL_CTYPE_MAP_NAMES
+    CItem::ByCharset(
+        &CItem::List(b"upper\0lower\0alpha\0digit\0xdigit\0space\0print\0graph\0blank\0cntrl\0punct\0alnum\0\0"),
+        &CItem::List(b"upper\0lower\0alpha\0digit\0xdigit\0space\0print\0graph\0blank\0cntrl\0punct\0alnum\0combining\0combining_level3\0\0"),
+    ),
+    CItem::ByCharset(
+        &CItem::List(b"toupper\0tolower\0\0"),
+        &CItem::List(b"toupper\0tolower\0totitle\0\0"),
+    ),
+    // 12 _NL_CTYPE_WIDTH table
+    CItem::Str(c""),
+    // 13 _NL_CTYPE_MB_CUR_MAX, 14 CODESET
+    CItem::ByCharset(&CItem::Int(1), &CItem::Int(6)),
+    CItem::Codeset,
+    // 15, 16 _NL_CTYPE_TOUPPER32/_NL_CTYPE_TOLOWER32
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 17 _NL_CTYPE_CLASS_OFFSET, 18 _NL_CTYPE_MAP_OFFSET
+    CItem::Int(72),
+    CItem::ByCharset(&CItem::Int(84), &CItem::Int(86)),
+    // 19 _NL_CTYPE_INDIGITS_MB_LEN, 20..=29 _NL_CTYPE_INDIGITS0_MB..9
+    CItem::Int(1),
+    CItem::Str(c"0"),
+    CItem::Str(c"1"),
+    CItem::Str(c"2"),
+    CItem::Str(c"3"),
+    CItem::Str(c"4"),
+    CItem::Str(c"5"),
+    CItem::Str(c"6"),
+    CItem::Str(c"7"),
+    CItem::Str(c"8"),
+    CItem::Str(c"9"),
+    // 30 _NL_CTYPE_INDIGITS_WC_LEN, 31..=40 _NL_CTYPE_INDIGITS0_WC..9
+    CItem::Int(1),
+    CItem::Wide(&[0x30, 0]),
+    CItem::Wide(&[0x31, 0]),
+    CItem::Wide(&[0x32, 0]),
+    CItem::Wide(&[0x33, 0]),
+    CItem::Wide(&[0x34, 0]),
+    CItem::Wide(&[0x35, 0]),
+    CItem::Wide(&[0x36, 0]),
+    CItem::Wide(&[0x37, 0]),
+    CItem::Wide(&[0x38, 0]),
+    CItem::Wide(&[0x39, 0]),
+    // 41..=50 _NL_CTYPE_OUTDIGIT0_MB..9
+    CItem::Str(c"0"),
+    CItem::Str(c"1"),
+    CItem::Str(c"2"),
+    CItem::Str(c"3"),
+    CItem::Str(c"4"),
+    CItem::Str(c"5"),
+    CItem::Str(c"6"),
+    CItem::Str(c"7"),
+    CItem::Str(c"8"),
+    CItem::Str(c"9"),
+    // 51..=60 _NL_CTYPE_OUTDIGIT0_WC..9
+    CItem::Int(0x30),
+    CItem::Int(0x31),
+    CItem::Int(0x32),
+    CItem::Int(0x33),
+    CItem::Int(0x34),
+    CItem::Int(0x35),
+    CItem::Int(0x36),
+    CItem::Int(0x37),
+    CItem::Int(0x38),
+    CItem::Int(0x39),
+    // 61 _NL_CTYPE_TRANSLIT_TAB_SIZE, 62..=65 the table itself
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 66 _NL_CTYPE_TRANSLIT_DEFAULT_MISSING_LEN, 67 ..._DEFAULT_MISSING
+    CItem::Int(1),
+    CItem::Wide(&[b'?' as u32, 0]),
+    // 68 _NL_CTYPE_TRANSLIT_IGNORE_LEN, 69 _NL_CTYPE_TRANSLIT_IGNORE
+    CItem::Int(0),
+    CItem::Str(c""),
+    // 70 _NL_CTYPE_MAP_TO_NONASCII, 71 _NL_CTYPE_NONASCII_CASE
+    CItem::Int(0),
+    CItem::Int(0),
+];
+
+/// LC_NUMERIC (category 1): RADIXCHAR, THOUSEP, grouping, the wide radix and
+/// separator, CODESET.
+const LC_NUMERIC_C: &[CItem] = &[
+    CItem::Str(c"."),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Int(b'.' as usize),
+    CItem::Int(0),
+    CItem::Codeset,
+];
+
+/// LC_COLLATE (category 3): no rules, no tables.
+const LC_COLLATE_C: &[CItem] = &[
+    // 0 _NL_COLLATE_NRULES
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 13 _NL_COLLATE_SYMB_HASH_SIZEMB
+    CItem::Int(0),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
+
+/// LC_MONETARY (category 4). Every `char`-valued field is CHAR_MAX ("not
+/// available"), as POSIX specifies for the C locale.
+const LC_MONETARY_C: &[CItem] = &[
+    // 0..=6 int_curr_symbol .. negative_sign
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 7..=14 int_frac_digits .. n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 15 CRNCYSTR
+    CItem::Str(c"-"),
+    // 16..=21 int_p_cs_precedes .. int_n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 22, 23 duo_int_curr_symbol, duo_currency_symbol
+    CItem::Str(c""),
+    CItem::Str(c""),
+    // 24..=37 duo_int_frac_digits .. duo_int_n_sign_posn
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    CItem::Str(c"\xff"),
+    // 38..=41 uno_valid_from/to, duo_valid_from/to
+    CItem::Int(10101),
+    CItem::Int(99991231),
+    CItem::Int(10101),
+    CItem::Int(99991231),
+    // 42 conversion_rate (two words), 43, 44 wide decimal point/separator
+    CItem::Wide(&[1, 1]),
+    CItem::Int(0),
+    CItem::Int(0),
+    CItem::Codeset,
+];
+
+/// LC_MESSAGES (category 5): YESEXPR, NOEXPR, YESSTR, NOSTR, CODESET.
+const LC_MESSAGES_C: &[CItem] = &[
+    CItem::Str(c"^[yY]"),
+    CItem::Str(c"^[nN]"),
+    CItem::Str(c""),
+    CItem::Str(c""),
+    CItem::Codeset,
+];
 
 const LC_PAPER_C: &[CItem] = &[CItem::Int(297), CItem::Int(210), CItem::Codeset];
 const LC_NAME_C: &[CItem] = &[
@@ -1347,24 +1540,70 @@ const LC_TELEPHONE_C: &[CItem] = &[
 ];
 // _NL_MEASUREMENT_MEASUREMENT is the byte 1 (metric), not a C string of text.
 const LC_MEASUREMENT_C: &[CItem] = &[CItem::Str(c"\x01"), CItem::Codeset];
+/// LC_IDENTIFICATION (category 12). glibc's C.UTF-8 is a compiled locale with
+/// its own identification block; C keeps the ISO 14652 FDCC-set one.
 const LC_IDENTIFICATION_C: &[CItem] = &[
-    CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
-    CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
-    CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
-    CItem::Str(c"Keld Simonsen"),
-    CItem::Str(c"keld@dkuug.dk"),
-    CItem::Str(c"+45 3122-6543"),
-    CItem::Str(c"+45 3325-6543"),
+    CItem::ByCharset(
+        &CItem::Str(c"ISO/IEC 14652 i18n FDCC-set"),
+        &CItem::Str(c"C locale"),
+    ),
+    CItem::ByCharset(
+        &CItem::Str(c"ISO/IEC JTC1/SC22/WG20 - internationalization"),
+        &CItem::Str(c""),
+    ),
+    CItem::ByCharset(
+        &CItem::Str(c"C/o Keld Simonsen, Skt. Jorgens Alle 8, DK-1615 Kobenhavn V"),
+        &CItem::Str(c""),
+    ),
+    CItem::ByCharset(&CItem::Str(c"Keld Simonsen"), &CItem::Str(c"")),
+    CItem::ByCharset(
+        &CItem::Str(c"keld@dkuug.dk"),
+        &CItem::Str(c"bug-glibc-locales@gnu.org"),
+    ),
+    CItem::ByCharset(&CItem::Str(c"+45 3122-6543"), &CItem::Str(c"")),
+    CItem::ByCharset(&CItem::Str(c"+45 3325-6543"), &CItem::Str(c"")),
     CItem::Str(c""),
-    CItem::Str(c"ISO"),
+    CItem::ByCharset(&CItem::Str(c"ISO"), &CItem::Str(c"")),
     CItem::Str(c""),
     CItem::Str(c""),
     CItem::Str(c""),
-    CItem::Str(c"1.0"),
-    CItem::Str(c"1997-12-20"),
-    CItem::Str(c"i18n:1999"),
+    CItem::ByCharset(&CItem::Str(c"1.0"), &CItem::Str(c"2.1")),
+    CItem::ByCharset(&CItem::Str(c"1997-12-20"), &CItem::Str(c"2022-01-30")),
+    CItem::ByCharset(&CItem::Str(c"i18n:1999"), &CItem::Str(c"i18n:2012")),
     CItem::Codeset,
 ];
+
+/// The pointer `nl_langinfo` returns for one built-in item; `codeset` is only
+/// consulted for the items that depend on it.
+#[inline]
+fn citem_ptr(item: &CItem, codeset: impl FnOnce() -> *const c_char) -> *const c_char {
+    let codeset = match item {
+        CItem::Codeset | CItem::ByCharset(..) => codeset(),
+        _ => std::ptr::null(),
+    };
+    citem_ptr_with_codeset(item, codeset)
+}
+
+fn citem_ptr_with_codeset(item: &CItem, codeset: *const c_char) -> *const c_char {
+    match item {
+        CItem::Str(s) => s.as_ptr(),
+        CItem::List(bytes) => bytes.as_ptr().cast(),
+        CItem::Wide(words) => words.as_ptr().cast(),
+        CItem::Int(v) => std::ptr::without_provenance(*v),
+        CItem::Codeset => codeset,
+        // A built-in category's codeset pointer is one of the two static
+        // names (an LC_CTYPE item is served here only while LC_CTYPE is
+        // built in).
+        CItem::ByCharset(ascii, utf8) => citem_ptr_with_codeset(
+            if codeset == codeset_ptr(Charset::Utf8) {
+                utf8
+            } else {
+                ascii
+            },
+            codeset,
+        ),
+    }
+}
 
 #[inline(always)]
 fn langinfo_non_time_non_codeset(
@@ -1373,48 +1612,25 @@ fn langinfo_non_time_non_codeset(
 ) -> *const c_char {
     let category = (item as u32) >> 16;
     let index = ((item as u32) & 0xffff) as usize;
-    let extended = match category {
-        7 => Some(LC_PAPER_C),
-        8 => Some(LC_NAME_C),
-        9 => Some(LC_ADDRESS_C),
-        10 => Some(LC_TELEPHONE_C),
-        11 => Some(LC_MEASUREMENT_C),
-        12 => Some(LC_IDENTIFICATION_C),
-        _ => None,
+    let table = match category {
+        0 => LC_CTYPE_C,
+        1 => LC_NUMERIC_C,
+        3 => LC_COLLATE_C,
+        4 => LC_MONETARY_C,
+        5 => LC_MESSAGES_C,
+        7 => LC_PAPER_C,
+        8 => LC_NAME_C,
+        9 => LC_ADDRESS_C,
+        10 => LC_TELEPHONE_C,
+        11 => LC_MEASUREMENT_C,
+        12 => LC_IDENTIFICATION_C,
+        _ => return c"".as_ptr(),
     };
-    if let Some(table) = extended {
-        // These categories were all "" here; perl's Langinfo.t and
-        // XS-APItest locale.t check _NL_IDENTIFICATION_TERRITORY == "ISO".
-        return match table.get(index) {
-            Some(CItem::Str(s)) => s.as_ptr(),
-            Some(CItem::Int(v)) => *v as *const c_char,
-            Some(CItem::Codeset) => codeset(),
-            None => c"".as_ptr(),
-        };
-    }
-    match category {
-        1 => {
-            if index < 2 {
-                // SAFETY: index is bounds-checked < 2.
-                return unsafe { *LC_NUMERIC_TABLE.0.get_unchecked(index) };
-            }
-        }
-        4 => {
-            let offset = index.wrapping_sub(7);
-            if offset < 9 {
-                // SAFETY: offset is bounds-checked < 9.
-                return unsafe { *LC_MONETARY_TABLE.0.get_unchecked(offset) };
-            }
-        }
-        5 => {
-            if index < 2 {
-                // SAFETY: index is bounds-checked < 2.
-                return unsafe { *LC_MESSAGES_TABLE.0.get_unchecked(index) };
-            }
-        }
-        _ => {}
-    }
-    c"".as_ptr()
+    // perl's Langinfo.t and XS-APItest locale.t check
+    // _NL_IDENTIFICATION_TERRITORY == "ISO"; `locale -k` prints them all.
+    table
+        .get(index)
+        .map_or(c"".as_ptr(), |entry| citem_ptr(entry, codeset))
 }
 
 #[inline(always)]
@@ -1433,13 +1649,6 @@ fn langinfo_c_fast(item: libc::nl_item, charset: Charset) -> *const c_char {
     langinfo_non_time_non_codeset(item, || codeset_ptr(charset))
 }
 
-#[inline]
-fn langinfo_value_for(charset: Charset, item: libc::nl_item) -> &'static [u8] {
-    let ptr = langinfo_c_fast(item, charset);
-    // SAFETY: every pointer returned by langinfo_c_fast is a static NUL-terminated C string literal.
-    unsafe { std::ffi::CStr::from_ptr(ptr).to_bytes_with_nul() }
-}
-
 #[cold]
 #[inline(never)]
 fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
@@ -1454,16 +1663,54 @@ fn nl_langinfo_with_policy(item: libc::nl_item) -> *const c_char {
     value
 }
 
+/// Whether item `index` of `category` is one of glibc's word-valued items,
+/// which `nl_langinfo` returns as the number itself cast to a pointer (as the
+/// built-in tables' `CItem::Int` entries are), not a pointer to the number.
+/// `locale -k`, util-linux `cal` (`_NL_TIME_WEEK_1STDAY`) and paper/measurement
+/// queries read them through a `{ char *string; unsigned int word; }` union.
+#[inline]
+fn is_word_item(category: u32, index: usize) -> bool {
+    match category {
+        // MB_CUR_MAX, CLASS_OFFSET, MAP_OFFSET, INDIGITS_MB_LEN,
+        // INDIGITS_WC_LEN, OUTDIGIT0..9_WC, TRANSLIT_TAB_SIZE,
+        // TRANSLIT_DEFAULT_MISSING_LEN, TRANSLIT_IGNORE_LEN, MAP_TO_NONASCII,
+        // NONASCII_CASE
+        0 => matches!(index, 13 | 17 | 18 | 19 | 30 | 51..=61 | 66 | 68 | 70 | 71),
+        // DECIMAL_POINT_WC, THOUSANDS_SEP_WC
+        1 => matches!(index, 3 | 4),
+        // ERA_NUM_ENTRIES, WEEK_1STDAY
+        2 => matches!(index, 50 | 102),
+        // NRULES, SYMB_HASH_SIZEMB
+        3 => matches!(index, 0 | 13),
+        // UNO/DUO_VALID_FROM/TO, DECIMAL_POINT_WC, THOUSANDS_SEP_WC
+        4 => matches!(index, 38..=41 | 43 | 44),
+        // PAPER_HEIGHT, PAPER_WIDTH
+        7 => matches!(index, 0 | 1),
+        // ADDRESS_COUNTRY_NUM
+        9 => index == 6,
+        _ => false,
+    }
+}
+
+/// Item `index` of a compiled category blob (`""` for an index it lacks).
+#[inline]
+fn blob_langinfo(n: &NamedCategory, index: usize) -> *const c_char {
+    if is_word_item(n.category as u32, index) {
+        return n.blob.word(index).map_or(c"".as_ptr(), |word| {
+            std::ptr::without_provenance(word as usize)
+        });
+    }
+    n.blob
+        .offset(index)
+        .map_or(c"".as_ptr(), |off| n.blob.bytes()[off..].as_ptr().cast())
+}
+
 /// `nl_langinfo` for a category on a named locale: the item straight from
-/// the compiled blob (`""` for an index the blob does not have).
+/// the compiled blob.
 #[inline(always)]
 fn named_langinfo(item: libc::nl_item) -> Option<*const c_char> {
     let n = named(((item as u32) >> 16) as c_int)?;
-    let index = ((item as u32) & 0xffff) as usize;
-    Some(match n.blob.offset(index) {
-        Some(off) => n.blob.bytes()[off..].as_ptr().cast::<c_char>(),
-        None => c"".as_ptr(),
-    })
+    Some(blob_langinfo(n, ((item as u32) & 0xffff) as usize))
 }
 
 #[inline]
@@ -1473,12 +1720,7 @@ fn resolved_langinfo(item: libc::nl_item, category: Resolved) -> *const c_char {
     }
     match category {
         Resolved::Builtin(charset) => langinfo_c_fast(item, charset),
-        Resolved::Named(n) => {
-            let index = (item as u32 & 0xffff) as usize;
-            n.blob
-                .offset(index)
-                .map_or(c"".as_ptr(), |off| n.blob.bytes()[off..].as_ptr().cast())
-        }
+        Resolved::Named(n) => blob_langinfo(n, (item as u32 & 0xffff) as usize),
     }
 }
 
