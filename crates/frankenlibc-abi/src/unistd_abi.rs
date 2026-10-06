@@ -30495,6 +30495,214 @@ pub unsafe extern "C" fn getservent_r(
 // Misc string/format extras
 // ===========================================================================
 
+/// A monetary format whose C-locale semantics reduce to fixed-two rendering
+/// plus optional field-width padding.
+#[derive(Clone, Copy)]
+struct SimpleCMonetaryFormat {
+    field_width: usize,
+    left_justify: bool,
+    use_parens: bool,
+}
+
+/// Partially evaluate one simple C-locale monetary directive.
+///
+/// In the C locale, `^` (disable grouping), `!` (suppress the absent currency
+/// symbol), and `+` (select the already-default sign convention) are semantic
+/// identities. A decimal field width and `-` reduce to space padding around the
+/// same fixed-two numeric leaf used by `%n`/`%i`; `(` replaces a strict negative
+/// value's leading minus with enclosing parentheses. Everything else declines
+/// to the general parser.
+///
+/// # Safety
+///
+/// `bytes.add(start)` must point within a valid C string at a `%` byte.
+#[inline]
+unsafe fn simple_c_locale_monetary_directive(
+    bytes: *const u8,
+    start: usize,
+) -> Option<(SimpleCMonetaryFormat, usize)> {
+    // SAFETY: the caller contract says `bytes` addresses a valid C string. Each next
+    // byte is read only after the preceding byte proved non-NUL, so no read goes
+    // beyond the string's terminating byte.
+    unsafe {
+        if *bytes.add(start) != b'%' {
+            return None;
+        }
+
+        let mut i = start + 1;
+        let mut left_justify = false;
+        let mut saw_plus = false;
+        let mut use_parens = false;
+        loop {
+            match *bytes.add(i) {
+                b'^' | b'!' => i += 1,
+                b'-' => {
+                    left_justify = true;
+                    i += 1;
+                }
+                b'+' => {
+                    // The general parser rejects a duplicate `+` and the
+                    // mutually-exclusive `+`/`(` pair. Decline so it remains
+                    // the single source of malformed-format behavior.
+                    if saw_plus || use_parens {
+                        return None;
+                    }
+                    saw_plus = true;
+                    i += 1;
+                }
+                b'(' => {
+                    if use_parens || saw_plus {
+                        return None;
+                    }
+                    use_parens = true;
+                    i += 1;
+                }
+                _ => break,
+            }
+        }
+
+        let mut field_width = 0usize;
+        while (*bytes.add(i)).is_ascii_digit() {
+            field_width = field_width
+                .saturating_mul(10)
+                .saturating_add((*bytes.add(i) - b'0') as usize);
+            i += 1;
+        }
+
+        if *bytes.add(i) == b'.' {
+            if *bytes.add(i + 1) != b'2' {
+                return None;
+            }
+            i += 2;
+        }
+
+        if !matches!(*bytes.add(i), b'n' | b'i') {
+            return None;
+        }
+
+        Some((
+            SimpleCMonetaryFormat {
+                field_width,
+                left_justify,
+                use_parens,
+            },
+            i + 1,
+        ))
+    }
+}
+
+/// Recognize the overwhelmingly common whole-format single directive without
+/// paying a separate validation pass.
+///
+/// # Safety
+///
+/// `format` must be a valid, non-null, NUL-terminated C string.
+#[inline]
+unsafe fn simple_c_locale_monetary_format(format: *const c_char) -> Option<SimpleCMonetaryFormat> {
+    let bytes = format.cast::<u8>();
+    // SAFETY: the caller passes a valid C string; the helper declines unless
+    // byte 0 is `%`, and reads each later byte only after an earlier non-NUL one.
+    let (simple, next) = unsafe { simple_c_locale_monetary_directive(bytes, 0)? };
+    // SAFETY: `next` is one past the accepted conversion byte, which was
+    // non-NUL, so it is at most the index of the string's terminator.
+    if unsafe { *bytes.add(next) } == 0 {
+        Some(simple)
+    } else {
+        None
+    }
+}
+
+/// Validate that a complete C string consists only of literal bytes, `%%`, and
+/// simple fixed-two monetary directives. This pass deliberately happens before
+/// any variadic argument is consumed, so a declined format can still enter the
+/// general parser with its argument cursor untouched.
+///
+/// # Safety
+///
+/// `format` must be a valid, non-null, NUL-terminated C string.
+#[inline]
+unsafe fn simple_c_locale_monetary_sequence(format: *const c_char) -> bool {
+    let bytes = format.cast::<u8>();
+    let mut i = 0usize;
+    let mut saw_conversion = false;
+    loop {
+        // SAFETY: `i` only advances past bytes already proved non-NUL (a
+        // literal, `%%`, or an accepted directive), so it never passes the
+        // terminator of the caller's C string.
+        match unsafe { *bytes.add(i) } {
+            0 => return saw_conversion,
+            b'%' => {
+                // SAFETY: byte `i` is `%`, not NUL, so byte `i + 1` is readable.
+                if unsafe { *bytes.add(i + 1) } == b'%' {
+                    i += 2;
+                } else if let Some((_, next)) =
+                    // SAFETY: byte `i` of the caller's C string is `%`.
+                    unsafe { simple_c_locale_monetary_directive(bytes, i) }
+                {
+                    saw_conversion = true;
+                    i = next;
+                } else {
+                    return false;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+}
+
+/// Render and append one validated simple directive. Returns the new output
+/// offset, or `None` when the fixed rendering plus its terminating NUL would not
+/// fit the caller's buffer.
+///
+/// # Safety
+///
+/// `out` must be valid for writes of `maxsize` bytes.
+#[inline]
+unsafe fn append_simple_c_locale_monetary(
+    out: *mut u8,
+    maxsize: usize,
+    offset: usize,
+    simple: SimpleCMonetaryFormat,
+    value: f64,
+) -> Option<usize> {
+    // IEEE-754 binary64 has at most 309 integral decimal digits. Sign,
+    // decimal point, two fractional digits, and optional parentheses keep the
+    // fixed rendering below 384 bytes; non-finite spellings are shorter still.
+    let mut scratch = [0u8; 384];
+    let mut len = frankenlibc_core::locale::strfmon::strfmon_c_default_into(&mut scratch, value)?;
+    if simple.use_parens && value < 0.0 {
+        // The fixed-two leaf begins every strict negative with `-`. Reuse that
+        // byte for `(` and append `)`, avoiding a second formatting pass or a
+        // magnitude conversion. The binary64 bound above leaves ample room for
+        // the one extra byte.
+        debug_assert_eq!(scratch[0], b'-');
+        scratch[0] = b'(';
+        scratch[len] = b')';
+        len += 1;
+    }
+
+    let field_len = len.max(simple.field_width);
+    let end = offset.checked_add(field_len)?;
+    if end >= maxsize {
+        return None;
+    }
+    let padding = field_len - len;
+    // SAFETY: `end < maxsize` and the caller guarantees `out` is writable for
+    // `maxsize` bytes. Scratch contains `len` initialized bytes and cannot
+    // overlap the caller's output region.
+    unsafe {
+        let field = out.add(offset);
+        if simple.left_justify {
+            std::ptr::copy_nonoverlapping(scratch.as_ptr(), field, len);
+            std::ptr::write_bytes(field.add(len), b' ', padding);
+        } else {
+            std::ptr::write_bytes(field, b' ', padding);
+            std::ptr::copy_nonoverlapping(scratch.as_ptr(), field.add(padding), len);
+        }
+    }
+    Some(end)
+}
+
 /// Shared backend for `strfmon`/`strfmon_l`/`__strfmon_l`: format `format`
 /// (pulling one `f64` per conversion from `pull`) into `s`/`maxsize` using the
 /// C/POSIX-locale monetary conventions implemented in
@@ -30510,12 +30718,123 @@ pub(crate) unsafe fn strfmon_emit(
     s: *mut c_char,
     maxsize: usize,
     format: *const c_char,
-    pull: impl FnMut() -> f64,
+    mut pull: impl FnMut() -> f64,
 ) -> isize {
     if s.is_null() || format.is_null() || maxsize == 0 {
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
+
+    // Closed C-locale specialization. `%n` and `%i` are identical when the
+    // currency symbol/grouping tables are empty, their implicit precision is
+    // two, and simple flags/width reduce to padding. Partial evaluation deletes
+    // the generic grammar walk and all three heap allocations from the whole
+    // exported call.
+    // SAFETY: `format` is non-null and, per this function's contract, a valid
+    // C string.
+    if let Some(simple) = unsafe { simple_c_locale_monetary_format(format) } {
+        let value = pull();
+        // SAFETY: `s` is non-null and writable for `maxsize` bytes per this
+        // function's contract.
+        let Some(len) =
+            (unsafe { append_simple_c_locale_monetary(s.cast::<u8>(), maxsize, 0, simple, value) })
+        else {
+            // SAFETY: sets thread-local errno.
+            unsafe { set_abi_errno(libc::E2BIG) };
+            return -1;
+        };
+        unsafe {
+            // SAFETY: the append helper reserved this byte inside `maxsize`.
+            *s.cast::<u8>().add(len) = 0;
+        }
+        return len as isize;
+    }
+
+    // Multiple fixed-two directives and their literal separators are still a
+    // closed C-locale language. Validate the whole format before pulling any
+    // variadic arguments, then stream it directly into the caller's buffer.
+    // This deletes the general parser plus its per-output, per-field, and
+    // floating-point heap allocations for formats such as `%n %n`.
+    // SAFETY: `format` is non-null and, per this function's contract, a valid
+    // C string.
+    if unsafe { simple_c_locale_monetary_sequence(format) } {
+        let bytes = format.cast::<u8>();
+        let out = s.cast::<u8>();
+        let mut i = 0usize;
+        let mut written = 0usize;
+        loop {
+            // SAFETY: this walk takes the same steps as the validation pass,
+            // which proved every visited byte up to the terminator readable.
+            match unsafe { *bytes.add(i) } {
+                0 => {
+                    unsafe {
+                        // SAFETY: every append reserved the terminator byte.
+                        *out.add(written) = 0;
+                    }
+                    return written as isize;
+                }
+                // SAFETY: byte `i` is `%`, not NUL, so byte `i + 1` is readable.
+                b'%' if unsafe { *bytes.add(i + 1) } == b'%' => {
+                    let Some(end) = written.checked_add(1) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    if end >= maxsize {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    }
+                    unsafe {
+                        // SAFETY: `end < maxsize` leaves room for this byte and
+                        // the eventual terminating NUL.
+                        *out.add(written) = b'%';
+                    }
+                    written = end;
+                    i += 2;
+                }
+                b'%' => {
+                    let (simple, next) = unsafe {
+                        // SAFETY: the validation pass accepted this directive.
+                        simple_c_locale_monetary_directive(bytes, i)
+                            .expect("prevalidated simple strfmon directive")
+                    };
+                    let value = pull();
+                    // SAFETY: `out` is writable for `maxsize` bytes per this
+                    // function's contract; the helper bounds-checks `written`.
+                    let Some(end) = (unsafe {
+                        append_simple_c_locale_monetary(out, maxsize, written, simple, value)
+                    }) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    written = end;
+                    i = next;
+                }
+                byte => {
+                    let Some(end) = written.checked_add(1) else {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    };
+                    if end >= maxsize {
+                        // SAFETY: sets thread-local errno.
+                        unsafe { set_abi_errno(libc::E2BIG) };
+                        return -1;
+                    }
+                    unsafe {
+                        // SAFETY: `end < maxsize` reserves both this literal
+                        // byte and the eventual terminating NUL.
+                        *out.add(written) = byte;
+                    }
+                    written = end;
+                    i += 1;
+                }
+            }
+        }
+    }
+
     let fmt_bytes = unsafe { std::ffi::CStr::from_ptr(format) }.to_bytes();
     let Some(out) = frankenlibc_core::locale::strfmon::strfmon_c(fmt_bytes, pull) else {
         unsafe { set_abi_errno(libc::EINVAL) };
