@@ -283,6 +283,8 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
 fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, context: &SearchContext) -> Option<PreparedDso> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
+    // The metadata reader alone does not reject unsupported ELF versions.
+    if !candidate::versions_supported(&bytes) { return None; }
     let loader = ElfLoader::new(0);
     let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.

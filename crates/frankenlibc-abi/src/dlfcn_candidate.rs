@@ -34,6 +34,16 @@ pub(super) fn incompatible(file: &File) -> bool {
     incompatible_header(&header, NATIVE_MACHINE)
 }
 
+/// Load admission is stricter than candidate classification. The general ELF
+/// reader exposes version fields as metadata, so the native execution path
+/// must explicitly reject formats it does not implement. Incompatible files
+/// are skipped before this gate; resident images reopen without reparsing.
+pub(super) fn versions_supported(header: &[u8]) -> bool {
+    header.len() >= ELF64_HEADER_SIZE
+        && header[6] == 1 // EI_VERSION == EV_CURRENT
+        && header[20..24] == [1, 0, 0, 0] // e_version, full little-endian word
+}
+
 fn incompatible_header(header: &[u8], machine: u16) -> bool {
     if machine == 0 || header.len() < ELF64_HEADER_SIZE || &header[..4] != b"\x7fELF" {
         return false;
@@ -114,6 +124,36 @@ mod tests {
         for length in 0..ELF64_HEADER_SIZE {
             assert!(!incompatible_header(&bytes[..length], 62));
         }
+    }
+
+    #[test]
+    fn admission_checks_both_version_fields_without_narrowing() {
+        for machine in [62, 183] {
+            let native = header(machine);
+            assert!(versions_supported(&native));
+            for ident_version in 0u8..=255 {
+                let mut bytes = native;
+                bytes[6] = ident_version;
+                assert_eq!(versions_supported(&bytes), ident_version == 1);
+            }
+            for file_version in [0u32, 1, 2, 255, 256, 257, 1 << 24, u32::MAX] {
+                let mut bytes = native;
+                bytes[20..24].copy_from_slice(&file_version.to_le_bytes());
+                assert_eq!(versions_supported(&bytes), file_version == 1);
+            }
+        }
+    }
+
+    #[test]
+    fn admission_requires_a_complete_header_but_leaves_body_validation_to_loader() {
+        let mut bytes = header(62).to_vec();
+        for length in 0..ELF64_HEADER_SIZE {
+            assert!(!versions_supported(&bytes[..length]));
+        }
+        bytes.extend_from_slice(&[0xa5; 128]);
+        assert!(versions_supported(&bytes));
+        bytes[6] = 0;
+        assert!(!versions_supported(&bytes));
     }
 
     #[test]

@@ -91,6 +91,13 @@ fn native_candidate_search() {
     broken_magic[0] = 0;
     let mut broken_version = native.clone();
     broken_version[20..24].copy_from_slice(&2u32.to_le_bytes());
+    let modified = |edits: &[(usize, &[u8])]| {
+        let mut bytes = native.clone();
+        for &(offset, value) in edits {
+            bytes[offset..offset + value.len()].copy_from_slice(value);
+        }
+        bytes
+    };
     let cases = [
         ("wrong-class", wrong_class, true),
         ("wrong-machine", wrong_machine, true),
@@ -98,6 +105,18 @@ fn native_candidate_search() {
         ("bad-version", broken_version, false),
         ("short-header", native[..63].to_vec(), false),
         ("native", native.clone(), true),
+        ("ident-zero", modified(&[(6, &[0])]), false),
+        ("ident-two", modified(&[(6, &[2])]), false),
+        ("ident-max", modified(&[(6, &[255])]), false),
+        ("file-zero", modified(&[(20, &0u32.to_le_bytes())]), false),
+        ("file-max", modified(&[(20, &u32::MAX.to_le_bytes())]), false),
+        ("file-high-byte", modified(&[(20, &257u32.to_le_bytes())]), false),
+        ("foreign-bad-version", modified(&[
+            (18, &foreign.to_le_bytes()), (20, &2u32.to_le_bytes()),
+        ]), false),
+        ("foreign-bad-ident", modified(&[(18, &foreign.to_le_bytes()), (6, &[2])]), true),
+        ("class-bad-version", modified(&[(4, &[1]), (20, &2u32.to_le_bytes())]), true),
+        ("class-bad-ident", modified(&[(4, &[1]), (6, &[2])]), true),
     ];
     let exe = std::env::current_exe().unwrap();
     let environment = std::env::join_paths([&bad, &good]).unwrap();
@@ -145,6 +164,6 @@ fn native_candidate_search() {
         String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
     assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed;"));
     invocations += 1;
-    assert_eq!(invocations, 19);
+    assert_eq!(invocations, 49);
     eprintln!("native candidate search: {invocations} isolated cases; fixtures {}", root.display());
 }
