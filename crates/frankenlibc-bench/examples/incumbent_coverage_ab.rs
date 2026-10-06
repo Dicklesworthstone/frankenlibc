@@ -36,7 +36,13 @@
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
 //!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
-//!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs`
+//!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs|\
+//!  isa_kernels`
+//!
+//! `isa_kernels` (and `sscanf`) also take `--fl-so-b PATH`: a SECOND FrankenLibC
+//! object as the comparison arm, for a same-invocation self-A/B of two builds --
+//! e.g. the baseline x86-64 artifact against a `release-x86-64-v3` one
+//! (bd-rc0923-epic-eeuy4f.13).
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -632,6 +638,7 @@ enum Family {
     Sscanf,
     Wcsnrtombs,
     Strcasestr,
+    IsaKernels,
 }
 
 struct Case {
@@ -1129,10 +1136,11 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("sscanf") => Family::Sscanf,
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 Some(value) if value == OsStr::new("strcasestr") => Family::Strcasestr,
+                Some(value) if value == OsStr::new("isa_kernels") => Family::IsaKernels,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
-                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, or strcasestr"
+                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, strcasestr, or isa_kernels"
                 ),
             };
         } else {
@@ -1144,7 +1152,7 @@ fn parse_args() -> Config {
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
-                  wcsnrtombs|strcasestr]"
+                  wcsnrtombs|strcasestr|isa_kernels]"
             );
         }
     }
@@ -8205,6 +8213,654 @@ fn run_tanhf(config: &Config) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// isa_kernels: the kernels a baseline x86-64 build runs through AVX2(+FMA)
+// twins (bd-rc0923-epic-eeuy4f.13) -- f64/f32 math and the string scans --
+// plus `sqrt`, `exp2` and short `memchr` (no twin on their path) as controls.
+//
+// Incumbent mode times host libm/libc. With `--fl-so-b` the comparison arm is a
+// second FrankenLibC object (SELF-A/B): the ratio is CANDIDATE/BASE, both
+// objects must agree exactly on every input before anything is timed, and the
+// controls are expected to sit inside their nulls.
+// ---------------------------------------------------------------------------
+
+type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
+type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+type StrcmpFn = unsafe extern "C" fn(*const c_char, *const c_char) -> c_int;
+type StrchrFn = unsafe extern "C" fn(*const c_char, c_int) -> *mut c_char;
+type MemcmpFn = unsafe extern "C" fn(*const c_void, *const c_void, usize) -> c_int;
+
+/// Math sweep inputs per case, cycled.
+const ISA_SWEEP: usize = 256;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum IsaKind {
+    Unary,
+    Binary,
+    UnaryF32,
+    Strcmp,
+    Memchr,
+    Strlen,
+    Strchr,
+    Memcmp,
+}
+
+#[derive(Clone, Copy)]
+enum IsaArm {
+    Unary(F64UnaryFn),
+    Binary(F64BinaryFn),
+    UnaryF32(F32UnaryFn),
+    Strcmp(StrcmpFn),
+    Memchr(MemrchrFn),
+    Strlen(StrlenFn),
+    Strchr(StrchrFn),
+    Memcmp(MemcmpFn),
+}
+
+struct IsaCase {
+    symbol: &'static str,
+    label: &'static str,
+    kind: IsaKind,
+    /// Math: uniform input band for x (and y for binary symbols).
+    x: (f64, f64),
+    y: (f64, f64),
+    /// Strings: bytes scanned/compared (equal strings, absent needle).
+    len: usize,
+    /// Calls per arm per sample.
+    reps: usize,
+    note: &'static str,
+}
+
+const fn math_case(
+    symbol: &'static str,
+    kind: IsaKind,
+    x: (f64, f64),
+    y: (f64, f64),
+    note: &'static str,
+) -> IsaCase {
+    IsaCase {
+        symbol,
+        label: symbol,
+        kind,
+        x,
+        y,
+        len: 0,
+        reps: 262_144,
+        note,
+    }
+}
+
+const fn string_case(
+    symbol: &'static str,
+    label: &'static str,
+    kind: IsaKind,
+    len: usize,
+    reps: usize,
+    note: &'static str,
+) -> IsaCase {
+    IsaCase {
+        symbol,
+        label,
+        kind,
+        x: (0.0, 0.0),
+        y: (0.0, 0.0),
+        len,
+        reps,
+        note,
+    }
+}
+
+const NO_Y: (f64, f64) = (0.0, 0.0);
+const ISA_CASES: [IsaCase; 19] = [
+    math_case(
+        "sin",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH sin; twin",
+    ),
+    math_case(
+        "cos",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH cos; twin",
+    ),
+    math_case(
+        "tan",
+        IsaKind::Unary,
+        (-1.5, 1.5),
+        NO_Y,
+        "CORE-MATH tan; twin",
+    ),
+    math_case(
+        "atan",
+        IsaKind::Unary,
+        (-10.0, 10.0),
+        NO_Y,
+        "CORE-MATH atan; twin",
+    ),
+    math_case("exp", IsaKind::Unary, (-20.0, 20.0), NO_Y, "ARM exp; twin"),
+    math_case(
+        "exp2",
+        IsaKind::Unary,
+        (-20.0, 20.0),
+        NO_Y,
+        "control: ARM exp2 has no FMA, no twin",
+    ),
+    math_case("log", IsaKind::Unary, (0.01, 1000.0), NO_Y, "ARM log; twin"),
+    math_case(
+        "log2",
+        IsaKind::Unary,
+        (0.01, 1000.0),
+        NO_Y,
+        "ARM log2; twin",
+    ),
+    math_case(
+        "pow",
+        IsaKind::Binary,
+        (0.1, 10.0),
+        (-5.0, 5.0),
+        "ARM pow; twin",
+    ),
+    math_case(
+        "sinf",
+        IsaKind::UnaryF32,
+        (-10.0, 10.0),
+        NO_Y,
+        "f64 pi/2 reduction twin + musl kernel",
+    ),
+    math_case(
+        "sqrt",
+        IsaKind::Unary,
+        (0.0, 100.0),
+        NO_Y,
+        "control: no twin, no FMA",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_16",
+        IsaKind::Strcmp,
+        16,
+        262_144,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_256",
+        IsaKind::Strcmp,
+        256,
+        131_072,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "strcmp",
+        "strcmp_4096",
+        IsaKind::Strcmp,
+        4096,
+        16_384,
+        "equal strings; scan_strcmp twin",
+    ),
+    string_case(
+        "memchr",
+        "memchr_16",
+        IsaKind::Memchr,
+        16,
+        262_144,
+        "control: absent, SWAR path below 32 B",
+    ),
+    string_case(
+        "memchr",
+        "memchr_4096",
+        IsaKind::Memchr,
+        4096,
+        32_768,
+        "absent; core memchr twin",
+    ),
+    string_case(
+        "strlen",
+        "strlen_4096",
+        IsaKind::Strlen,
+        4096,
+        32_768,
+        "scan_c_string twin",
+    ),
+    string_case(
+        "strchr",
+        "strchr_4096",
+        IsaKind::Strchr,
+        4096,
+        32_768,
+        "absent; explicit AVX2 kernel",
+    ),
+    string_case(
+        "memcmp",
+        "memcmp_256",
+        IsaKind::Memcmp,
+        256,
+        262_144,
+        "equal; explicit AVX2 kernel",
+    ),
+];
+
+struct IsaInputs {
+    xs: Vec<f64>,
+    ys: Vec<f64>,
+    /// `len` bytes of 'x' then NUL, twice (equal strings in distinct buffers).
+    a: Vec<u8>,
+    b: Vec<u8>,
+}
+
+fn isa_inputs(case: &IsaCase) -> IsaInputs {
+    let mut state = 0x2545_f491_4f6c_dd1du64 ^ case.label.len() as u64;
+    let mut next = |(lo, hi): (f64, f64)| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        lo + (hi - lo) * ((state >> 11) as f64 / (1u64 << 53) as f64)
+    };
+    let xs = (0..ISA_SWEEP).map(|_| next(case.x)).collect::<Vec<_>>();
+    let ys = (0..ISA_SWEEP).map(|_| next(case.y)).collect::<Vec<_>>();
+    let mut a = vec![b'x'; case.len + 1];
+    a[case.len] = 0;
+    let b = a.clone();
+    IsaInputs { xs, ys, a, b }
+}
+
+/// One call; the result as bits, or as an offset from the buffer for the
+/// pointer-returning scans (both arms scan the same buffer).
+fn isa_call(arm: IsaArm, inputs: &IsaInputs, len: usize, index: usize) -> u64 {
+    let (x, y) = (inputs.xs[index], inputs.ys[index]);
+    let (a, b) = (inputs.a.as_ptr(), inputs.b.as_ptr());
+    let offset = |p: *const u8| {
+        if p.is_null() {
+            u64::MAX
+        } else {
+            p as u64 - a as u64
+        }
+    };
+    // SAFETY: each arm is the matching libm/libc/FrankenLibC entry point, and
+    // the buffers are NUL-terminated with `len` readable bytes before the NUL.
+    unsafe {
+        match arm {
+            IsaArm::Unary(f) => f(x).to_bits(),
+            IsaArm::Binary(f) => f(x, y).to_bits(),
+            IsaArm::UnaryF32(f) => u64::from(f(x as f32).to_bits()),
+            IsaArm::Strcmp(f) => f(a.cast(), b.cast()) as u64,
+            IsaArm::Memchr(f) => offset(f(a.cast(), c_int::from(b'Q'), len).cast::<u8>()),
+            IsaArm::Strlen(f) => f(a.cast()) as u64,
+            IsaArm::Strchr(f) => offset(f(a.cast(), c_int::from(b'Q')).cast::<u8>()),
+            IsaArm::Memcmp(f) => f(a.cast(), b.cast(), len) as u64,
+        }
+    }
+}
+
+#[inline(never)]
+fn run_isa_batch(arm: IsaArm, inputs: &IsaInputs, len: usize, reps: usize) -> u64 {
+    let mask = inputs.xs.len() - 1;
+    let mut accumulator = 0u64;
+    for index in 0..reps {
+        accumulator ^= black_box(isa_call(black_box(arm), inputs, len, index & mask));
+        accumulator = accumulator.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    black_box(accumulator)
+}
+
+fn time_isa_batch(arm: IsaArm, inputs: &IsaInputs, len: usize, reps: usize) -> f64 {
+    let started = Instant::now();
+    black_box(run_isa_batch(arm, inputs, len, reps));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / reps as f64
+}
+
+fn measure_isa_case(case: &IsaCase, host: IsaArm, fl: IsaArm) -> CaseResult {
+    let inputs = isa_inputs(case);
+    let (len, reps) = (case.len, case.reps);
+    let time = |arm: IsaArm| time_isa_batch(arm, &inputs, len, reps);
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+    for sample in 0..SAMPLES {
+        let (mut effect_fl, mut effect_glibc) = (0.0, 0.0);
+        let (mut fa, mut fb, mut ga, mut gb) = (0.0, 0.0, 0.0, 0.0);
+        // Same six-cell phase/order rotation as the other families.
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time(fl);
+                    fb = time(fl);
+                }
+                0 => {
+                    fb = time(fl);
+                    fa = time(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time(host);
+                    gb = time(host);
+                }
+                1 => {
+                    gb = time(host);
+                    ga = time(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time(fl);
+                    effect_glibc = time(host);
+                }
+                2 => {
+                    effect_glibc = time(host);
+                    effect_fl = time(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+    summarize_case(
+        case.label,
+        case.note,
+        reps,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+fn f64_ulp_distance(left: f64, right: f64) -> u64 {
+    if left.to_bits() == right.to_bits() || (left.is_nan() && right.is_nan()) {
+        return 0;
+    }
+    if left.is_nan() || right.is_nan() || left.is_sign_negative() != right.is_sign_negative() {
+        return u64::MAX;
+    }
+    (left.to_bits() as i64 - right.to_bits() as i64).unsigned_abs()
+}
+
+fn isa_kind_is_math(kind: IsaKind) -> bool {
+    matches!(kind, IsaKind::Unary | IsaKind::Binary | IsaKind::UnaryF32)
+}
+
+fn run_isa_kernels(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "isa_kernels");
+    // The comparison arms: host libm (math) and libc (strings), or (SELF-A/B) a
+    // second FrankenLibC object for both.
+    let (comparison_handles, supplied_b) = match &config.fl_so_b {
+        Some(path_b) => {
+            let supplied_b = sha256_file(path_b).expect("hash second FrankenLibC SO");
+            assert_ne!(
+                supplied_b.sha256, supplied_fl.sha256,
+                "--fl-so and --fl-so-b are the SAME object; a self-A/B against an \
+                 identical build measures nothing"
+            );
+            let path_b_c = CString::new(supplied_b.path.as_os_str().as_bytes())
+                .expect("second FrankenLibC path has NUL");
+            let handle_b =
+                dlopen_fl_so_with_plain_model(config, &path_b_c, "isa_kernels_b", "plain_dlopen");
+            ((handle_b, handle_b), Some(supplied_b))
+        }
+        None => {
+            // SAFETY: NUL-terminated sonames of objects this process already
+            // maps; RTLD_LOCAL keeps them private.
+            let libm =
+                unsafe { libc::dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(!libm.is_null(), "{}", dl_error("dlopen host libm.so.6"));
+            // SAFETY: as above.
+            let libc_handle =
+                unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(
+                !libc_handle.is_null(),
+                "{}",
+                dl_error("dlopen host libc.so.6")
+            );
+            ((libm, libc_handle), None)
+        }
+    };
+    let resolve = |handle: *mut c_void, symbol: &str| {
+        let name = CString::new(symbol).expect("symbol has NUL");
+        // SAFETY: `handle` came from dlopen and the name is NUL-terminated.
+        let address = unsafe { libc::dlsym(handle, name.as_ptr()) };
+        assert!(
+            !address.is_null(),
+            "{}",
+            dl_error(&format!("dlsym {symbol}"))
+        );
+        address
+    };
+    let arm = |address: *mut c_void, case: &IsaCase| -> IsaArm {
+        // SAFETY: the resolved symbol has the C signature its name implies.
+        unsafe {
+            match case.kind {
+                IsaKind::Unary => {
+                    IsaArm::Unary(std::mem::transmute::<*mut c_void, F64UnaryFn>(address))
+                }
+                IsaKind::Binary => {
+                    IsaArm::Binary(std::mem::transmute::<*mut c_void, F64BinaryFn>(address))
+                }
+                IsaKind::UnaryF32 => {
+                    IsaArm::UnaryF32(std::mem::transmute::<*mut c_void, F32UnaryFn>(address))
+                }
+                IsaKind::Strcmp => {
+                    IsaArm::Strcmp(std::mem::transmute::<*mut c_void, StrcmpFn>(address))
+                }
+                IsaKind::Memchr => {
+                    IsaArm::Memchr(std::mem::transmute::<*mut c_void, MemrchrFn>(address))
+                }
+                IsaKind::Strlen => {
+                    IsaArm::Strlen(std::mem::transmute::<*mut c_void, StrlenFn>(address))
+                }
+                IsaKind::Strchr => {
+                    IsaArm::Strchr(std::mem::transmute::<*mut c_void, StrchrFn>(address))
+                }
+                IsaKind::Memcmp => {
+                    IsaArm::Memcmp(std::mem::transmute::<*mut c_void, MemcmpFn>(address))
+                }
+            }
+        }
+    };
+
+    let mut arms = Vec::with_capacity(ISA_CASES.len());
+    let mut incumbent_identities: Vec<ObjectIdentity> = Vec::new();
+    for case in &ISA_CASES {
+        let is_math = isa_kind_is_math(case.kind);
+        let comparison_handle = if is_math {
+            comparison_handles.0
+        } else {
+            comparison_handles.1
+        };
+        let fl_address = resolve(handle, case.symbol);
+        let host_address = resolve(comparison_handle, case.symbol);
+        assert_ne!(
+            fl_address, host_address,
+            "both {} arms resolve to the same address",
+            case.symbol
+        );
+        let fl_identity = symbol_object(fl_address.cast_const()).expect("identify FL object");
+        let host_identity =
+            symbol_object(host_address.cast_const()).expect("identify comparison object");
+        assert_eq!(
+            fl_identity.sha256, supplied_fl.sha256,
+            "{} resolved outside the supplied FrankenLibC object",
+            case.symbol
+        );
+        match &supplied_b {
+            Some(supplied_b) => assert_eq!(
+                host_identity.sha256, supplied_b.sha256,
+                "{} comparison arm resolved outside --fl-so-b",
+                case.symbol
+            ),
+            None => {
+                let want: &[u8] = if is_math { b"libm.so" } else { b"libc.so" };
+                assert!(
+                    host_identity
+                        .path
+                        .file_name()
+                        .is_some_and(|name| name.as_bytes().starts_with(want)),
+                    "{} incumbent resolved to {}, not host {}",
+                    case.symbol,
+                    host_identity.path.display(),
+                    String::from_utf8_lossy(want)
+                );
+            }
+        }
+        println!(
+            "ARM_DISTINCT symbol={} case={} incumbent_address={host_address:p} \
+             fl_address={fl_address:p}",
+            case.symbol, case.label
+        );
+        arms.push((arm(host_address, case), arm(fl_address, case)));
+        if !incumbent_identities
+            .iter()
+            .any(|known| known.sha256 == host_identity.sha256)
+        {
+            incumbent_identities.push(host_identity);
+        }
+    }
+    for identity in &incumbent_identities {
+        print_identity("INCUMBENT", identity);
+    }
+    print_identity("FL", &supplied_fl);
+    match &supplied_b {
+        Some(supplied_b) => println!(
+            "SELF_AB_MODE comparison_arm=frankenlibc base_sha256={} candidate_sha256={} \
+             note=\"ratio is CANDIDATE/BASE, not fl/glibc; no incumbent was measured\"",
+            supplied_b.sha256, supplied_fl.sha256
+        ),
+        None => println!("INCUMBENT_LINKAGE explicit_dlopen_local objects=libm.so.6,libc.so.6"),
+    }
+    println!("FL_LINKAGE explicit_dlopen_local family=isa_kernels");
+
+    // Conformance: math within the 4-ULP math contract against host libm,
+    // string results exact; in SELF-A/B mode the two FrankenLibC builds must
+    // agree exactly everywhere.
+    let ulp_limit = if supplied_b.is_some() { 0 } else { 4 };
+    let mut comparisons = 0usize;
+    for (case, &(host, fl)) in ISA_CASES.iter().zip(&arms) {
+        let inputs = isa_inputs(case);
+        let mut worst = 0u64;
+        for index in 0..ISA_SWEEP {
+            let (want, got) = (
+                isa_call(host, &inputs, case.len, index),
+                isa_call(fl, &inputs, case.len, index),
+            );
+            let distance = match case.kind {
+                IsaKind::Unary | IsaKind::Binary => {
+                    f64_ulp_distance(f64::from_bits(got), f64::from_bits(want))
+                }
+                IsaKind::UnaryF32 => u64::from(f32_ulp_distance(
+                    f32::from_bits(got as u32),
+                    f32::from_bits(want as u32),
+                )),
+                _ => u64::from(got != want) * u64::MAX,
+            };
+            let limit = if isa_kind_is_math(case.kind) {
+                ulp_limit
+            } else {
+                0
+            };
+            assert!(
+                distance <= limit,
+                "{} input #{index}: fl={got:#x} comparison={want:#x} distance={distance} \
+                 limit={limit}",
+                case.label
+            );
+            worst = worst.max(distance);
+            comparisons += 1;
+            if !isa_kind_is_math(case.kind) {
+                break; // one fixed input; the sweep varies only math arguments
+            }
+        }
+        println!(
+            "INCUMBENT_COVERAGE_CONFORMANCE symbol={} case={} ulp_limit={ulp_limit} \
+             worst_distance={worst} verdict=pass",
+            case.symbol, case.label
+        );
+    }
+    let threads_pre_guard = observed_threads();
+    println!(
+        "THREADS_OBSERVED family=isa_kernels phase=pre_guard count={threads_pre_guard} \
+         comparisons={comparisons}"
+    );
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY family=isa_kernels verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "isa_kernels observed thread count changed between conformance and measurement"
+    );
+    let results = ISA_CASES
+        .iter()
+        .zip(&arms)
+        .map(|(case, &(host, fl))| measure_isa_case(case, host, fl))
+        .collect::<Vec<_>>();
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "isa_kernels observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    for (case, result) in ISA_CASES.iter().zip(&results) {
+        let incumbent = &incumbent_identities[usize::from(
+            supplied_b.is_none() && !isa_kind_is_math(case.kind) && incumbent_identities.len() > 1,
+        )];
+        result.print(case.symbol, &incumbent.path, threads_pre, threads_post);
+    }
+    let wins = results
+        .iter()
+        .filter(|r| r.comparison == "FL_FASTER")
+        .count();
+    let losses = results
+        .iter()
+        .filter(|r| r.comparison == "FL_SLOWER")
+        .count();
+    let verdict = if results.iter().all(CaseResult::decidable) {
+        "DECIDABLE"
+    } else {
+        "INCOMPLETE"
+    };
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT family=isa_kernels verdict={verdict} cases={} \
+         wins={wins} losses={losses} undecidable={} self_ab={} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        results.len(),
+        results.len() - wins - losses,
+        supplied_b.is_some(),
+    );
+    if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
 fn first_non_edge_offset(address: usize, element_size: usize) -> usize {
     let to_next_page = (4096 - (address & 4095)) & 4095;
     (to_next_page + 64) / element_size
@@ -10922,6 +11578,7 @@ fn main() {
         // real runner rather than building on it.
         Family::Wcsnrtombs => run_wcsnrtombs(&config),
         Family::Strcasestr => run_strcasestr(&config),
+        Family::IsaKernels => run_isa_kernels(&config),
     }
 }
 
