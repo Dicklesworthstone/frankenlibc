@@ -502,6 +502,67 @@ fn conformance_getopt_long_only_single_dash_long_options() {
     );
 }
 
+/// GNU make re-parses MAKEFLAGS through getopt_long with a NULL spacer in
+/// argv[0] and `optind = 0`. getopt only reads argv[0] to name the program in
+/// diagnostics, so glibc parses normally (values measured on glibc 2.39); fl
+/// returned -1 leaving optind at 0, and make dereferenced argv[0]
+/// (`make -n`, `make -p` segfaulted).
+#[test]
+fn conformance_getopt_null_argv0_spacer() {
+    let _g = OPT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let n = CString::new("-n").unwrap();
+    let p = CString::new("-p").unwrap();
+    let argv = [
+        std::ptr::null_mut(),
+        n.as_ptr() as *mut c_char,
+        p.as_ptr() as *mut c_char,
+        std::ptr::null_mut(),
+    ];
+    let name = CString::new("file").unwrap();
+    let opts = [
+        LongOpt {
+            name: name.as_ptr(),
+            has_arg: REQUIRED_ARGUMENT,
+            flag: std::ptr::null_mut(),
+            val: b'f' as c_int,
+        },
+        LongOpt {
+            name: std::ptr::null(),
+            has_arg: 0,
+            flag: std::ptr::null_mut(),
+            val: 0,
+        },
+    ];
+    let optstr = CString::new("-nf:p").unwrap();
+    let mut seen = Vec::new();
+    unsafe {
+        optind = 0;
+        opterr = 0;
+    }
+    while unsafe { optind } < 3 {
+        let r = unsafe {
+            fl::getopt_long(
+                3,
+                argv.as_ptr(),
+                optstr.as_ptr(),
+                opts.as_ptr() as *const _,
+                std::ptr::null_mut(),
+            )
+        };
+        seen.push((r, unsafe { optind }));
+        if r == -1 || seen.len() > 8 {
+            break;
+        }
+    }
+    assert_eq!(seen, vec![(b'n' as c_int, 2), (b'p' as c_int, 3)]);
+
+    let short = CString::new("n").unwrap();
+    unsafe { optind = 0 };
+    let r = unsafe { fl::getopt(2, argv.as_ptr(), short.as_ptr()) };
+    assert_eq!((r, unsafe { optind }), (b'n' as c_int, 2));
+    unsafe { optind = 1 };
+}
+
 #[test]
 fn getopt_diff_coverage_report() {
     // Takes OPT_LOCK like every other test here, because this one WRITES TO

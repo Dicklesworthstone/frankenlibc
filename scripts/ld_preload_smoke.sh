@@ -290,6 +290,10 @@ DLOPEN_CTOR_THREADS_BIN="${BIN_DIR}/fixture_dlopen_ctor_threads"
 DLOPEN_CTOR_THREADS_LIB="${BIN_DIR}/libfixture_dlopen_ctor_threads.so"
 cc -O1 -fPIC -shared -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads_lib.c" -o "${DLOPEN_CTOR_THREADS_LIB}"
 cc -O1 -pthread "${ROOT}/tests/integration/fixture_dlopen_ctor_threads.c" -o "${DLOPEN_CTOR_THREADS_BIN}" -ldl
+DLCLOSE_TLS_SLOT_FREE_BIN="${BIN_DIR}/fixture_dlclose_tls_slot_free"
+DLCLOSE_TLS_SLOT_FREE_LIB="${BIN_DIR}/libfixture_dlclose_tls_slot_free.so"
+cc -O1 -fPIC -shared "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free_lib.c" -o "${DLCLOSE_TLS_SLOT_FREE_LIB}" -lm
+cc -O1 "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free.c" -o "${DLCLOSE_TLS_SLOT_FREE_BIN}" -ldl
 GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
 cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
 RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
@@ -1067,6 +1071,7 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "pthread_pshared_ipc" "${PTHREAD_PSHARED_IPC_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "pthread_mutex_destroyed" "${PTHREAD_MUTEX_DESTROYED_BIN}" || mode_failed=1
   run_corpus_case "${mode}" "dlopen_ctor_threads" "${DLOPEN_CTOR_THREADS_BIN}" "${DLOPEN_CTOR_THREADS_LIB}" || mode_failed=1
+  run_corpus_case "${mode}" "dlclose_tls_slot_free" "${DLCLOSE_TLS_SLOT_FREE_BIN}" "${DLCLOSE_TLS_SLOT_FREE_LIB}" || mode_failed=1
   # strncpy guard page, fstatat NULL, popen with stdio closed, glob slash
   # runs, UTF-8 fnmatch, huge printf fields, printf EINVAL/ENOMEM (found by
   # a gnulib testdir).

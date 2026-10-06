@@ -1,2 +1,10 @@
 [build]
-rustflags = ["-Z", "threads=4", "-Ctarget-feature=+avx2,+fma"]
+# -enable-tlsdesc: thread-locals use TLS descriptors (GNU2 dialect) instead of
+# __tls_get_addr. Preloaded, fl's TLS is static and each access is a fixed
+# offset with no DTV generation check; dlopened, it still works through the
+# dynamic descriptor. With __tls_get_addr, ld.so's _dl_update_slotinfo called
+# fl's free, whose TLS access re-entered _dl_update_slotinfo before the slot
+# was cleared, so the same TLS block was freed twice (PHP aborted at exit
+# after unloading extensions). glibc's own malloc avoids dynamic TLS for the
+# same reason.
+rustflags = ["-Z", "threads=4", "-Ctarget-feature=+avx2,+fma", "-Cllvm-args=-enable-tlsdesc"]

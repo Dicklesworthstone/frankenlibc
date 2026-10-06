@@ -3418,6 +3418,14 @@ unsafe fn argv_byte_slices(argc: c_int, argv: *const *mut c_char) -> Option<Vec<
     let mut out = Vec::with_capacity(argc);
     for i in 0..argc {
         let p = unsafe { *argv.add(i) };
+        // getopt reads argv[0] only to name the program in diagnostics, so a
+        // NULL there is a valid spacer: GNU make parses MAKEFLAGS with
+        // `argv[0] = 0`, and refusing it left optind at 0, which make then
+        // dereferenced (`make -n`/`make -p` segfaulted).
+        if p.is_null() && i == 0 {
+            out.push(Vec::new());
+            continue;
+        }
         if p.is_null() {
             return None;
         }

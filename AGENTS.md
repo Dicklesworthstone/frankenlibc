@@ -227,7 +227,7 @@ This project leverages companion crates for build/test tooling roles only. These
 
 ### Release Profile
 
-`Cargo.toml` defines NO `[profile.release]`, so release builds use Cargo's defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). All crates are built with `-Ctarget-feature=+avx2,+fma` from `.cargo/config.toml` (x86-64-v3; see bd-rc0923-epic-eeuy4f.13). LTO / single codegen unit / strip for the shipped `libc.so` are untried tuning, not current settings.
+`Cargo.toml` defines NO `[profile.release]`, so release builds use Cargo's defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, no strip). Two derived profiles exist: `release-perf` (release + `debug = "line-tables-only"`, `strip = false`, for profiling) and `bench` (release + `lto = "thin"`, `codegen-units = 1`). All crates are built with `-Ctarget-feature=+avx2,+fma` from `.cargo/config.toml` (x86-64-v3; see bd-rc0923-epic-eeuy4f.13) and with `-Cllvm-args=-enable-tlsdesc` (TLS descriptors: an interposed malloc must not reach `__tls_get_addr`, which ld.so's DTV update re-enters through `free`; see the comment there). LTO / single codegen unit / strip for the shipped `libc.so` are untried tuning, not current settings.
 
 ---
 

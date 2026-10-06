@@ -87,6 +87,15 @@ unsafe fn host_dlopen_with_error(filename: *const c_char, flags: c_int) -> *mut 
         return std::ptr::null_mut();
     };
     let host_dlopen: DlopenFn = unsafe { core::mem::transmute(addr) }; // ubs:ignore — host symbol ABI resolved, pointer cast is deliberate
+    // RTLD_DEEPBIND puts the object's own dependencies -- libc.so.6 among
+    // them -- ahead of the global scope that holds fl, so the host loader
+    // would bind its malloc/free/stdio to glibc's while the rest of the
+    // process uses fl's: two C runtimes sharing pointers, and the first
+    // cross-heap free aborts (PHP loads every extension this way:
+    // `php -r 'echo 1;'` died in munmap_chunk). One libc per process wins
+    // over deep binding's precedence for clashing names, as with every
+    // interposed allocator.
+    let flags = flags & !dlfcn_core::RTLD_DEEPBIND;
     let handle = unsafe { host_dlopen(filename, flags) };
     if !handle.is_null() {
         clear_dlerror();
