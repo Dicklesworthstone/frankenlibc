@@ -3,7 +3,16 @@ name: Native raw resolver
 on:
   push:
     branches: [main]
-    paths: ['.github/workflows/native-raw-resolver.yml', 'tests/conformance/raw_res_send_host.c']
+    paths:
+      - '.github/workflows/native-raw-resolver.yml'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'crates/frankenlibc-core/src/resolv/config.rs'
+      - 'crates/frankenlibc-core/src/resolv/dns.rs'
+      - 'crates/frankenlibc-core/src/resolv/dns_name.rs'
+      - 'crates/frankenlibc-core/tests/raw_dns_transport.rs'
+      - 'crates/frankenlibc-core/tests/dns_nameserver_failover.rs'
+      - 'tests/conformance/raw_res_send_host.c'
   workflow_dispatch:
 
 permissions:
@@ -18,82 +27,47 @@ jobs:
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Assemble immutable reviewed sources without changing a branch
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Prepare a diagnostic harness pointing to the committed DNS sources
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/raw-resolver
+          git rev-parse HEAD > artifacts/raw-resolver/source-commit.txt
           python3 - <<'PY'
           from pathlib import Path
-          import base64, hashlib, json, os, subprocess, urllib.request
+          import json, os, subprocess
           root = Path.cwd()
-          api = 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY']
-          headers = {'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'}
-          def request(path, data=None):
-              body = None if data is None else json.dumps(data).encode()
-              req = urllib.request.Request(api + path, data=body, headers=headers)
-              with urllib.request.urlopen(req, timeout=60) as response:
-                  return json.load(response)
-          def digest(data):
-              return hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
-          def blob(sha):
-              data = base64.b64decode(request('/git/blobs/' + sha)['content'])
-              assert digest(data) == sha, 'blob hash mismatch'
-              return data
-          baseline = {
-              'crates/frankenlibc-core/src/dns_transport.rs': 'a7080f53c97ca8e3e0c3f3779672917716cde4c7',
-              'crates/frankenlibc-abi/src/glibc_internal_abi.rs': '6e84583de137a88c356e47f8ca99d010046a9937',
-          }
-          additions = {
-              'crates/frankenlibc-core/src/dns_transport/raw.rs': '907668981d717ed87f1f3977e62f610008a5e673',
-              'crates/frankenlibc-core/tests/raw_dns_transport.rs': 'ef366cc58747acd298e641d13029a538856c90f7',
-              'crates/frankenlibc-abi/tests/raw_resolver_send_test.rs': 'b0339f0cba16445e287ae5201c8b60e8cc8856ea',
-          }
-          for path, sha in baseline.items():
-              assert digest(Path(path).read_bytes()) == sha, 'concurrent source change: ' + path
-          for path in additions:
-              assert not Path(path).exists(), 'concurrent addition: ' + path
-          patch = Path(os.environ['RUNNER_TEMP']) / 'raw-resolver-integration.patch'
-          patch.write_bytes(blob('e5b056f800a6dc7963759b62cbdca4569be192cf'))
-          subprocess.run(['git', 'apply', '--check', str(patch)], check=True)
-          subprocess.run(['git', 'apply', str(patch)], check=True)
-          for path, sha in additions.items():
-              target = Path(path)
-              target.parent.mkdir(parents=True, exist_ok=True)
-              target.write_bytes(blob(sha))
-          subprocess.run(['git', 'diff', '--check'], check=True)
-          changed = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
-          assert set(changed) == set(baseline), changed
-          result = {}
-          for path in [*baseline, *additions]:
-              data = Path(path).read_bytes()
-              sha = request('/git/blobs', {'content': data.decode(), 'encoding': 'utf-8'})['sha']
-              assert sha == digest(data)
-              result[path] = sha
-              print('SOURCE_BLOB', sha, path, flush=True)
-          Path('artifacts/raw-resolver/source-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
-          Path('artifacts/raw-resolver/integration.diff').write_bytes(subprocess.check_output(['git', 'diff']))
-          # Direct path attributes compile the real files and their original
-          # tests. This isolated diagnostic does not replace workspace gates.
+          paths = [
+              'crates/frankenlibc-core/src/dns_transport.rs',
+              'crates/frankenlibc-core/src/dns_transport/raw.rs',
+              'crates/frankenlibc-core/src/resolv/config.rs',
+              'crates/frankenlibc-core/src/resolv/dns.rs',
+              'crates/frankenlibc-core/src/resolv/dns_name.rs',
+              'crates/frankenlibc-core/tests/raw_dns_transport.rs',
+              'crates/frankenlibc-core/tests/dns_nameserver_failover.rs',
+          ]
+          hashes = {path: subprocess.check_output(['git', 'hash-object', path], text=True).strip() for path in paths}
+          Path('artifacts/raw-resolver/source-blobs.json').write_text(json.dumps(hashes, indent=2) + '\n')
+          # Direct path attributes compile the committed implementation and its
+          # original tests. No source overlays or substitutes are applied.
+          # This diagnostic is not full-workspace or release-ABI validation.
           harness = Path(os.environ['RUNNER_TEMP']) / 'raw-resolver-source'
           harness.mkdir()
           modules = 'pub mod resolv {\n'
           for module in ('config', 'dns_name', 'dns'):
-              modules += '#[path = ' + json.dumps(str(root / ('crates/frankenlibc-core/src/resolv/' + module + '.rs'))) + '] pub mod ' + module + ';\n'
+              path = root / ('crates/frankenlibc-core/src/resolv/' + module + '.rs')
+              modules += '#[path = ' + json.dumps(str(path)) + '] pub mod ' + module + ';\n'
           modules += 'pub use config::ResolverConfig;\n}\n'
           modules += '#[path = ' + json.dumps(str(root / 'crates/frankenlibc-core/src/dns_transport.rs')) + '] pub mod dns_transport;\n'
           (harness / 'src.rs').write_text(modules)
           manifest = '[package]\nname = "frankenlibc-core"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n[lib]\npath = "src.rs"\n'
           for name in ('raw_dns_transport', 'dns_nameserver_failover'):
-              manifest += '\n[[test]]\nname = ' + json.dumps(name) + '\npath = ' + json.dumps(str(root / ('crates/frankenlibc-core/tests/' + name + '.rs'))) + '\n'
+              path = root / ('crates/frankenlibc-core/tests/' + name + '.rs')
+              manifest += '\n[[test]]\nname = ' + json.dumps(name) + '\npath = ' + json.dumps(str(path)) + '\n'
           (harness / 'Cargo.toml').write_text(manifest)
           PY
       - uses: dtolnay/rust-toolchain@stable
@@ -117,6 +91,9 @@ jobs:
           cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-ubsan"
           timeout 30 "$RUNNER_TEMP/raw-res-send-ubsan" | tee artifacts/raw-resolver/host-ubsan.log
           grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host-ubsan.log
+      - name: Verify validation did not alter tracked source
+        shell: bash
+        run: git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()
         with:
