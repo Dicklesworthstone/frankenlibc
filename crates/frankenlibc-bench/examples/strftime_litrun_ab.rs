@@ -749,6 +749,9 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            // One label, or a comma-separated list. A full 32-case run outlives
+            // a remote job budget once the quiet guard's waits are added, so a
+            // run is split into family batches that share one built ELF.
             "--case" => {
                 selected_case = Some(args.next().expect("--case requires a label"));
             }
@@ -775,7 +778,7 @@ fn main() {
         .filter(|case| {
             selected_case
                 .as_deref()
-                .is_none_or(|label| case.label == label)
+                .is_none_or(|labels| labels.split(',').any(|label| case.label == label))
         })
         .collect::<Vec<_>>();
     assert!(
