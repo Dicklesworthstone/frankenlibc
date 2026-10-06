@@ -1481,7 +1481,10 @@ pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
             raw_syscall::sys_exit_group(128 + libc::SIGSEGV)
         }
     }
-    #[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
+    #[cfg(all(
+        not(debug_assertions),
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     if unsafe { longjmp_target_is_uninitialized_frame(env) } {
         unsafe { __fortify_fail(c"longjmp causes uninitialized stack frame".as_ptr()) }
     }
@@ -1506,7 +1509,8 @@ pub unsafe extern "C" fn __longjmp_chk(env: *mut c_void, val: c_int) -> ! {
 #[cfg(all(not(debug_assertions), target_arch = "x86_64"))]
 unsafe fn longjmp_target_is_uninitialized_frame(env: *mut c_void) -> bool {
     // SAFETY: the caller passes a jmp_buf filled by our `__sigsetjmp`; word 6
-    // holds the saved rsp mangled with the TCB pointer guard at %fs:0x30.
+    // holds the saved rsp mangled with the TCB pointer guard at %fs:0x30
+    // (`rol(value ^ guard, 17)`), so demangle with the inverse.
     let target_sp = unsafe {
         let mangled = *env.cast::<u64>().add(6);
         let guard: u64;
@@ -1516,6 +1520,40 @@ unsafe fn longjmp_target_is_uninitialized_frame(env: *mut c_void) -> bool {
     let current_sp: u64;
     // SAFETY: reading rsp has no side effects.
     unsafe { core::arch::asm!("mov {}, rsp", out(reg) current_sp, options(nomem, nostack)) };
+    // SAFETY: the stack-direction rule only reads the alternate-stack state.
+    unsafe { stack_direction_is_uninitialized_frame(target_sp, current_sp) }
+}
+
+#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
+unsafe fn longjmp_target_is_uninitialized_frame(env: *mut c_void) -> bool {
+    // FrankenLibC's own AT_RANDOM-seeded pointer guard; our aarch64 `__sigsetjmp`
+    // mangles sp with `eor` against this same word.
+    let guard = crate::unistd_abi::__frankenlibc_pointer_guard
+        .load(std::sync::atomic::Ordering::Relaxed) as u64;
+    // SAFETY: the caller passes a jmp_buf filled by our `__sigsetjmp`; word 12
+    // (byte 96) holds the saved sp mangled with `eor __frankenlibc_pointer_guard`.
+    let target_sp = unsafe {
+        let mangled = *env.cast::<u64>().add(12);
+        mangled ^ guard
+    };
+    let current_sp: u64;
+    // SAFETY: reading sp has no side effects.
+    unsafe { core::arch::asm!("mov {}, sp", out(reg) current_sp, options(nomem, nostack)) };
+    // SAFETY: the stack-direction rule only reads the alternate-stack state.
+    unsafe { stack_direction_is_uninitialized_frame(target_sp, current_sp) }
+}
+
+/// Shared tail of glibc's `__longjmp_chk` stack-direction rule, parameterized by
+/// the demangled target stack pointer and the caller's current stack pointer.
+/// A jump toward a higher address is always allowed; a jump toward a lower
+/// address is rejected unless the caller is on the alternate signal stack and
+/// the target lies outside it. If `sigaltstack` cannot be queried the check is
+/// skipped, exactly as glibc does.
+#[cfg(all(
+    not(debug_assertions),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+unsafe fn stack_direction_is_uninitialized_frame(target_sp: u64, current_sp: u64) -> bool {
     if target_sp >= current_sp {
         return false;
     }

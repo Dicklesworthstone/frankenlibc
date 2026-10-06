@@ -1,0 +1,79 @@
+name: Native global resolver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-global-resolver.yml'
+      - 'crates/frankenlibc-abi/src/resolv_state.rs'
+      - 'crates/frankenlibc-abi/src/resolv_state/**'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/tests/global_resolver_test.rs'
+      - 'scripts/integrate_global_resolver.py'
+      - 'tests/conformance/global_resolver_abi.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  native:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Assemble only exact reviewed source blobs, never commits or refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/global-resolver
+          git rev-parse HEAD > artifacts/global-resolver/base-commit.txt
+          python3 scripts/integrate_global_resolver.py --apply --publish-blobs
+          git diff --check
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Run exported global entries and retain stateful regressions
+        run: |
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock artifacts/global-resolver/Cargo.lock
+          cargo test --locked -p frankenlibc-abi --test global_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/global.log
+          grep -Eq 'test result: ok\. 6 passed;' artifacts/global-resolver/global.log
+          cargo test --locked -p frankenlibc-abi --test stateful_resolver_test -- --nocapture 2>&1 | tee artifacts/global-resolver/state.log
+          grep -Eq 'test result: ok\. 13 passed;' artifacts/global-resolver/state.log
+          cargo test --locked -p frankenlibc-abi --test stateful_resolver_edns_test -- --nocapture 2>&1 | tee artifacts/global-resolver/edns.log
+          grep -Eq 'test result: ok\. 6 passed;' artifacts/global-resolver/edns.log
+          cargo test --locked -p frankenlibc-abi --test raw_resolver_send_test -- --nocapture 2>&1 | tee artifacts/global-resolver/raw-guards.log
+          grep -Eq 'test result: ok\. 3 passed;' artifacts/global-resolver/raw-guards.log
+      - name: Build the complete release library
+        run: cargo build --locked --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/global-resolver/release.log
+      - name: Exercise actual owner-pinned exports against live host and both modes
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/global_resolver_abi.c -pthread -ldl -lresolv -o "$RUNNER_TEMP/global-resolver"
+          timeout 90 "$RUNNER_TEMP/global-resolver" --host | tee artifacts/global-resolver/host.log
+          grep -Fq '23 host-glibc global resolver cases passed' artifacts/global-resolver/host.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" timeout 90 "$RUNNER_TEMP/global-resolver" "$PWD/target/release/libfrankenlibc_abi.so" | tee "artifacts/global-resolver/candidate-$mode.log"
+            grep -Fq '23 candidate global resolver cases passed' "artifacts/global-resolver/candidate-$mode.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-global-resolver-results
+          path: artifacts/global-resolver/**
