@@ -29,15 +29,17 @@ env:
 jobs:
   assemble:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5
+    # This is architecture-independent source assembly, not native validation.
+    # Linux validation below retains the full test and release-library gates.
+    runs-on: macos-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Prepare exact integration independently of the x86 build queue
+      - name: Prepare exact integration independently of the Linux build queue
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
