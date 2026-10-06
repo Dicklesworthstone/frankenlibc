@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/native-raw-resolver.yml'
+      - 'scripts/test_native_dns_source.py'
+      - 'crates/frankenlibc-core/Cargo.toml'
+      - 'rust-toolchain.toml'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/dns_transport/**'
       - 'crates/frankenlibc-core/src/resolv/config.rs'
@@ -13,6 +16,7 @@ on:
       - 'crates/frankenlibc-core/tests/raw_dns_transport.rs'
       - 'crates/frankenlibc-core/tests/dns_nameserver_failover.rs'
       - 'tests/conformance/raw_res_send_host.c'
+      - 'tests/conformance/raw_res_send_abi.c'
   workflow_dispatch:
 
 permissions:
@@ -31,56 +35,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Prepare a diagnostic harness pointing to the committed DNS sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/raw-resolver
-          git rev-parse HEAD > artifacts/raw-resolver/source-commit.txt
-          python3 - <<'PY'
-          from pathlib import Path
-          import json, os, subprocess
-          root = Path.cwd()
-          paths = [
-              'crates/frankenlibc-core/src/dns_transport.rs',
-              'crates/frankenlibc-core/src/dns_transport/raw.rs',
-              'crates/frankenlibc-core/src/resolv/config.rs',
-              'crates/frankenlibc-core/src/resolv/dns.rs',
-              'crates/frankenlibc-core/src/resolv/dns_name.rs',
-              'crates/frankenlibc-core/tests/raw_dns_transport.rs',
-              'crates/frankenlibc-core/tests/dns_nameserver_failover.rs',
-          ]
-          hashes = {path: subprocess.check_output(['git', 'hash-object', path], text=True).strip() for path in paths}
-          Path('artifacts/raw-resolver/source-blobs.json').write_text(json.dumps(hashes, indent=2) + '\n')
-          # Direct path attributes compile the committed implementation and its
-          # original tests. No source overlays or substitutes are applied.
-          # This diagnostic is not full-workspace or release-ABI validation.
-          harness = Path(os.environ['RUNNER_TEMP']) / 'raw-resolver-source'
-          harness.mkdir()
-          modules = 'pub mod resolv {\n'
-          for module in ('config', 'dns_name', 'dns'):
-              path = root / ('crates/frankenlibc-core/src/resolv/' + module + '.rs')
-              modules += '#[path = ' + json.dumps(str(path)) + '] pub mod ' + module + ';\n'
-          modules += 'pub use config::ResolverConfig;\n}\n'
-          modules += '#[path = ' + json.dumps(str(root / 'crates/frankenlibc-core/src/dns_transport.rs')) + '] pub mod dns_transport;\n'
-          (harness / 'src.rs').write_text(modules)
-          manifest = '[package]\nname = "frankenlibc-core"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n[lib]\npath = "src.rs"\n'
-          for name in ('raw_dns_transport', 'dns_nameserver_failover'):
-              path = root / ('crates/frankenlibc-core/tests/' + name + '.rs')
-              manifest += '\n[[test]]\nname = ' + json.dumps(name) + '\npath = ' + json.dumps(str(path)) + '\n'
-          (harness / 'Cargo.toml').write_text(manifest)
-          PY
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
-      - name: Compile and execute actual DNS source and socket tests
+      - name: Compile and execute byte-identical DNS sources and original tests
         shell: bash
-        run: |
-          set -euo pipefail
-          log="$GITHUB_WORKSPACE/artifacts/raw-resolver/source-tests.log"
-          cd "$RUNNER_TEMP/raw-resolver-source"
-          cargo +nightly-2026-08-31 test --offline -- --nocapture 2>&1 | tee "$log"
-          test "$(grep -Ec 'test result: ok\. [1-9][0-9]* passed;' "$log")" -eq 3
+        run: python3 scripts/test_native_dns_source.py
       - name: Check the independent host wire-length oracle
         shell: bash
         run: |
@@ -91,6 +51,13 @@ jobs:
           cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=undefined -fno-sanitize-recover=all tests/conformance/raw_res_send_host.c -pthread -lresolv -ldl -o "$RUNNER_TEMP/raw-res-send-ubsan"
           timeout 30 "$RUNNER_TEMP/raw-res-send-ubsan" | tee artifacts/raw-resolver/host-ubsan.log
           grep -Fq '18 host-glibc raw-send cases passed' artifacts/raw-resolver/host-ubsan.log
+      - name: Check exported host entry point in an isolated resolver namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/raw_res_send_abi.c -pthread -ldl -o "$RUNNER_TEMP/raw-res-send-abi"
+          sudo timeout 30 unshare -n sh -c 'ip link set lo up; exec "$@"' sh "$RUNNER_TEMP/raw-res-send-abi" --host | tee artifacts/raw-resolver/exported-host.log
+          grep -Fq '13 exported raw-send cases passed (host)' artifacts/raw-resolver/exported-host.log
       - name: Verify validation did not alter tracked source
         shell: bash
         run: git diff --exit-code
