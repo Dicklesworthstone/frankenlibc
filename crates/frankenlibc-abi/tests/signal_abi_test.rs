@@ -1410,3 +1410,11 @@ fn under_sigaltstack_query_only_succeeds() {
     let rc = unsafe { __sigaltstack(std::ptr::null(), &mut old) };
     assert_eq!(rc, 0);
 }
+
+/// The HJI critical-section verdicts ship as a constant table; it must equal
+/// what the live HjiReachabilityController computes from each kind's inputs.
+#[test]
+fn hji_classification_table_matches_the_controller() {
+    let mismatches = frankenlibc_abi::signal_abi::hji_classification_table_mismatches_for_tests();
+    assert!(mismatches.is_empty(), "stale HJI_CLASSIFICATION_TABLE: {mismatches:#?}");
+}

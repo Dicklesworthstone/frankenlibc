@@ -5418,7 +5418,7 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     let parent_tid = crate::util::AbiReentrantMutex::<()>::current_owner_tid();
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
     // SAFETY: fork via raw syscall
@@ -5427,7 +5427,6 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -9828,7 +9827,7 @@ pub unsafe extern "C" fn forkpty(
     // allocates, and in hardened mode the registry's first use allocates.
     let stdio_guard = crate::stdio_abi::stdio_fork_prepare();
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     // Mirror fork()'s ENVIRON_LOCK acquisition: the forkpty child does not exec,
     // so any held environ lock from another parent thread becomes a stuck lock
     // in the child address space. Acquiring here forces serialization with any
@@ -9842,7 +9841,6 @@ pub unsafe extern "C" fn forkpty(
     if pid == Ok(0) {
         // Membrane locks held by other parent threads are orphaned now.
         frankenlibc_membrane::util::note_fork_child();
-        crate::malloc_abi::malloc_fork_child_release_slot_locks();
     }
     let pid = match pid {
         Ok(p) => p,
@@ -29784,7 +29782,7 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 pub unsafe extern "C" fn _Fork() -> c_int {
     // _Fork is async-signal-safe fork (C23), no atfork handlers
     let _pipeline_guard =
-        crate::membrane_state::try_global_pipeline().map(|pipeline| pipeline.atfork_prepare());
+        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
 
     let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
     if ret == Ok(0) {
