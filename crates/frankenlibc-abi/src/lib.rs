@@ -206,6 +206,13 @@ extern "C" fn frankenlibc_abi_stdio_init_entry() {
     // publishes the stdio globals/aliases onto stable NativeFile storage while
     // patching host libio exit handling for the exported _IO symbols.
     stdio_abi::init_host_stdio_streams();
+    // aarch64: seed the pointer guard the native setjmp/longjmp asm reads (and
+    // the stack canary) from AT_RANDOM here. The loader runs this constructor
+    // before main whichever startup path runs, and owned startup does not seed
+    // them, so this randomizes the guard before main captures any jmp_buf.
+    // x86_64 needs no seeding: its asm reads glibc's TCB guard at %fs:0x30.
+    #[cfg(target_arch = "aarch64")]
+    unistd_abi::init_stack_canary();
     runtime_policy::signal_runtime_ready();
     // Hardened mode: build the ~79 KB validation pipeline now, on the main
     // thread's stack, instead of lazily inside whichever thread first

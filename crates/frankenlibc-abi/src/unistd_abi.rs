@@ -20578,13 +20578,36 @@ pub unsafe extern "C" fn __cxa_get_globals_fast() -> *mut CxaEhGlobals {
 pub static __stack_chk_guard: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
-/// Initialize __stack_chk_guard from AT_RANDOM.
-/// Called during startup before main().
+/// Per-process pointer guard for mangling saved code/stack pointers on
+/// aarch64, the FrankenLibC analogue of glibc's `pointer_guard`. It is seeded
+/// from the second 8 bytes of `AT_RANDOM` (the bytes glibc's loader also uses
+/// for its pointer guard, independent of the stack canary) and is the guard
+/// the aarch64 `setjmp`/`longjmp`/`__longjmp_chk` code XORs into the saved
+/// frame pointer, return address and stack pointer.
+///
+/// x86_64 does not use it: that path reads glibc's own guard from the TCB at
+/// `%fs:0x30`. aarch64 has no fixed TCB slot, and glibc's `__pointer_chk_guard`
+/// is a `GLIBC_PRIVATE` symbol that is not reliably resolvable from an
+/// interposing library, so FrankenLibC owns this word itself. It is seeded
+/// before `main` by the library's `.init_array` constructor (and re-seeded with
+/// the same bytes by the host-delegated startup path). The non-zero initial
+/// value means mangling is never a no-op in the window before seeding, though
+/// that value is a public constant, not a secret. Unlike glibc's RELRO copy,
+/// this word stays writable after startup.
+#[cfg(target_arch = "aarch64")]
+#[allow(non_upper_case_globals)]
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub static __frankenlibc_pointer_guard: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0x9e3779b97f4a7c15u64 as usize);
+
+/// Initialize __stack_chk_guard (and, on aarch64, __frankenlibc_pointer_guard)
+/// from AT_RANDOM. Called during startup before main().
 pub(crate) fn init_stack_canary() {
     use std::sync::atomic::Ordering;
     // Read AT_RANDOM (type 25) from auxv — it points to 16 random bytes
     // provided by the kernel.
-    let canary = auxv_entry(libc::AT_RANDOM)
+    let random = auxv_entry(libc::AT_RANDOM);
+    let canary = random
         .map(|random| {
             // AT_RANDOM points to 16 random bytes the kernel placed in memory.
             let mut bytes = [0u8; 8];
@@ -20596,6 +20619,22 @@ pub(crate) fn init_stack_canary() {
         })
         .unwrap_or(0x00000aff0a0d0000); // Fallback: static canary with sentinel bytes
     __stack_chk_guard.store(canary, Ordering::Release);
+
+    // Pointer guard: the SECOND 8 random bytes, kept distinct from the canary so
+    // leaking one does not reveal the other. Full 64-bit entropy (no NUL byte).
+    #[cfg(target_arch = "aarch64")]
+    if let Some(random) = random {
+        let mut bytes = [0u8; 8];
+        // SAFETY: AT_RANDOM provides 16 readable bytes; we read bytes 8..16.
+        unsafe {
+            std::ptr::copy_nonoverlapping((random as *const u8).add(8), bytes.as_mut_ptr(), 8)
+        };
+        let guard = usize::from_ne_bytes(bytes);
+        // Never install a zero guard (that would mangle to plaintext).
+        if guard != 0 {
+            __frankenlibc_pointer_guard.store(guard, Ordering::Release);
+        }
+    }
 }
 // ===========================================================================
 // Batch: Network database iterators — Implemented (parse /etc/ files)

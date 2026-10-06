@@ -403,8 +403,8 @@ pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
 //   [32]:  x23/x24     (16 bytes)
 //   [48]:  x25/x26     (16 bytes)
 //   [64]:  x27/x28     (16 bytes)
-//   [80]:  x29/x30     (16 bytes)
-//   [96]:  sp          (8 bytes)
+//   [80]:  x29/x30     (16 bytes, both mangled)
+//   [96]:  sp          (8 bytes, mangled)
 //   [104]: d8/d9       (16 bytes)
 //   [120]: d10/d11     (16 bytes)
 //   [136]: d12/d13     (16 bytes)
@@ -415,6 +415,22 @@ pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
 // The no-mask path writes through byte 171, which fits the glibc aarch64
 // jmp_buf footprint. sigsetjmp callers provide sigjmp_buf storage, so the
 // optional signal-mask slot is also in-bounds.
+//
+// The frame pointer (x29), the return address (x30) and the stack pointer
+// (sp) are stored mangled with the same strength as glibc's aarch64
+// PTR_MANGLE: `value ^ pointer_guard` (eor, no rotate — glibc rotates only on
+// x86_64; glibc leaves x29 in plaintext, this path mangles it too). Without
+// the guard an attacker who overwrites a jmp_buf controls x30 (the `br`
+// target) and sp directly.
+//
+// The guard is FrankenLibC's own per-process word, `__frankenlibc_pointer_guard`
+// (unistd_abi.rs), seeded from AT_RANDOM by the library's `.init_array`
+// constructor. aarch64 has no fixed TCB slot for it the way x86_64 has
+// `%fs:0x30`, and glibc's `__pointer_chk_guard` is a `GLIBC_PRIVATE` symbol
+// that an interposing library cannot rely on resolving, so FrankenLibC owns the
+// word itself. It is read through the GOT; the extra indirection is a few
+// instructions on a cold non-local-jump path, and the linked cdylib binds the
+// GOT slot to this object's own definition (an R_AARCH64_RELATIVE relocation).
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
 core::arch::global_asm!(
     ".global __sigsetjmp",
@@ -438,9 +454,19 @@ core::arch::global_asm!(
     "  stp x23, x24, [x0, #32]",
     "  stp x25, x26, [x0, #48]",
     "  stp x27, x28, [x0, #64]",
-    "  stp x29, x30, [x0, #80]",
-    "  mov x2, sp",
-    "  str x2, [x0, #96]",
+    // Load the per-process pointer guard (__frankenlibc_pointer_guard) via the
+    // GOT. x9..x12 are caller-saved scratch the ABI lets setjmp clobber.
+    "  adrp x9, :got:__frankenlibc_pointer_guard",
+    "  ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
+    "  ldr  x9, [x9]",
+    // Store the frame pointer (x29) and return address (x30) mangled.
+    "  eor x10, x29, x9",
+    "  eor x11, x30, x9",
+    "  stp x10, x11, [x0, #80]",
+    // Store the caller's stack pointer mangled.
+    "  mov x12, sp",
+    "  eor x12, x12, x9",
+    "  str x12, [x0, #96]",
     "  stp d8, d9, [x0, #104]",
     "  stp d10, d11, [x0, #120]",
     "  stp d12, d13, [x0, #136]",
@@ -484,18 +510,27 @@ core::arch::global_asm!(
     "  mov x0, x4",
     "  mov w2, w5",
     "3:",
+    // Reload the same pointer guard used at capture to demangle x29/x30/sp.
+    "  adrp x9, :got:__frankenlibc_pointer_guard",
+    "  ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
+    "  ldr  x9, [x9]",
     "  ldp x19, x20, [x0, #0]",
     "  ldp x21, x22, [x0, #16]",
     "  ldp x23, x24, [x0, #32]",
     "  ldp x25, x26, [x0, #48]",
     "  ldp x27, x28, [x0, #64]",
-    "  ldp x29, x30, [x0, #80]",
-    "  ldr x3, [x0, #96]",
+    // Demangle the frame pointer (x29) and return address (x30).
+    "  ldp x10, x11, [x0, #80]",
+    "  eor x29, x10, x9",
+    "  eor x30, x11, x9",
+    // Demangle the stack pointer into scratch before switching stacks.
+    "  ldr x12, [x0, #96]",
+    "  eor x12, x12, x9",
     "  ldp d8, d9, [x0, #104]",
     "  ldp d10, d11, [x0, #120]",
     "  ldp d12, d13, [x0, #136]",
     "  ldp d14, d15, [x0, #152]",
-    "  mov sp, x3",
+    "  mov sp, x12",
     "  mov w0, w2",
     "  br x30",
 );
