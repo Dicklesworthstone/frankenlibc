@@ -27,6 +27,29 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  assemble:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare exact integration independently of the x86 build queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifacts/global-resolver
+          git rev-parse HEAD > artifacts/global-resolver/base-commit.txt
+          python3 scripts/integrate_global_resolver.py --apply --publish-blobs
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-global-resolver-integration
+          path: artifacts/global-resolver/**
   native:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest

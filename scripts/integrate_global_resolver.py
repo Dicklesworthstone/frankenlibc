@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Apply the reviewed global resolver integration to exactly pinned sources.
+"""Apply reviewed, hash-pinned global resolver edits without losing concurrent work.
 
 Default is a dry-run unified diff. --apply writes these three source files;
 --publish-blobs additionally publishes immutable blobs ONLY, never commits or
 refs. Used temporarily to carry small edits into oversized connector files.
 """
 import argparse
+import base64
 import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import urllib.request
 
 BASELINES = {
@@ -166,9 +168,28 @@ def main():
     if all(b'crate::resolv_state::global::' in originals[path] for path in list(BASELINES)[1:]):
         print('Global entry points already integrated; no source overlays applied.')
         return
+    current = originals
+    originals = {}
     for path, sha in BASELINES.items():
-        if digest(originals[path]) != sha:
-            raise ValueError('concurrent source change: ' + path)
+        if digest(current[path]) == sha:
+            data = current[path]
+        else:
+            # Preserve unrelated concurrent work. Recover the immutable review
+            # baseline, then let git apply reject overlapping source edits.
+            try:
+                data = subprocess.check_output(['git', 'cat-file', 'blob', sha], stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                request = urllib.request.Request(
+                    'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha,
+                    headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    blob = json.load(response)
+                if blob.get('encoding') != 'base64':
+                    raise ValueError('unexpected blob encoding: ' + path)
+                data = base64.b64decode(blob['content'])
+        if digest(data) != sha:
+            raise ValueError('immutable baseline hash mismatch: ' + path)
+        originals[path] = data
     updated = changes(originals)
     artifact = Path('artifacts/global-resolver')
     artifact.mkdir(parents=True, exist_ok=True)
@@ -176,11 +197,20 @@ def main():
         data.decode().splitlines(True), fromfile='a/' + path, tofile='b/' + path))
         for path, data in updated.items())
     (artifact / 'integration.diff').write_text(diff)
+    # Complete old function bodies and changed initialization lines form the
+    # checked hunks. No 3-way conflict resolution, whitespace ignoring, staging,
+    # checkout/reset, or unreviewed whole-file replacement is performed.
+    subprocess.run(['git', 'apply', '--check', '-'], input=diff.encode(), check=True)
+    if args.apply:
+        subprocess.run(['git', 'apply', '-'], input=diff.encode(), check=True)
+        updated = {path: Path(path).read_bytes() for path in BASELINES}
+        actual = ''.join(''.join(difflib.unified_diff(current[path].decode().splitlines(True),
+            data.decode().splitlines(True), fromfile='a/' + path, tofile='b/' + path))
+            for path, data in updated.items())
+        (artifact / 'applied-integration.diff').write_text(actual)
     hashes = {}
     for path, data in updated.items():
         hashes[path] = digest(data)
-        if args.apply:
-            Path(path).write_bytes(data)
         if args.publish_blobs:
             request = urllib.request.Request(
                 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs',
