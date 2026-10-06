@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
-"""Apply the reviewed global resolver integration to exactly pinned sources.
+"""Apply reviewed, hash-pinned global resolver edits without losing concurrent work.
 
 Default is a dry-run unified diff. --apply writes these three source files;
 --publish-blobs additionally publishes immutable blobs ONLY, never commits or
 refs. Used temporarily to carry small edits into oversized connector files.
 """
 import argparse
+import base64
 import difflib
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import urllib.request
 
 BASELINES = {
@@ -44,6 +46,15 @@ def body_span(text, name):
             if depth == 0:
                 return match[0].start(), start, item.end()
     raise ValueError('unclosed function: ' + name)
+
+def arguments(text, name, expected):
+    start, brace, _ = body_span(text, name)
+    signature = text[start:brace]
+    params = signature[signature.index('(') + 1:signature.rindex(')')]
+    result = re.findall(r'(?:^|,)\s*([A-Za-z_]\w*)\s*:', params)
+    if len(result) != expected:
+        raise ValueError('unexpected ABI signature: ' + name)
+    return result
 
 def replace_body(text, name, target):
     _, start, end = body_span(text, name)
@@ -105,11 +116,13 @@ unsafe fn init_impl(pointer: *mut c_void, legacy_global: bool) -> c_int {''')
         state.options
     } else { RES_DEFAULT };''')
     abi = originals[abi_path].decode()
-    for name, target in {
-        '__res_mkquery': 'crate::resolv_state::global::mkquery(op, dname, class, typ, _data, _datalen, _newrr, buf, buflen)',
-        '__res_querydomain': 'crate::resolv_state::global::querydomain(name, domain, class, typ, answer, anslen)',
-        '__res_send': 'crate::resolv_state::global::send(msg, msglen, answer, anslen)',
-    }.items():
+    for name, count, destination in [
+        ('__res_mkquery', 10, 'mkquery'),
+        ('__res_querydomain', 6, 'querydomain'),
+        ('__res_send', 4, 'send'),
+    ]:
+        params = arguments(abi, name, count)
+        target = 'crate::resolv_state::global::' + destination + '(' + ', '.join(params) + ')'
         abi = replace_body(abi, name, target)
     abi = once(abi, '// Only QUERY (op=0) is supported; all other opcodes return -1.',
         '// Uses the calling thread\'s state; QUERY and NOTIFY follow the native builder.')
@@ -131,11 +144,11 @@ impl Drop for ResStateBuf {
     start, brace, end = body_span(abi, '__res_state')
     abi = abi[:brace + 1] + '\n    res_state_ptr()\n' + abi[end - 1:]
     unistd = originals[unistd_path].decode()
-    for name, target in {
-        'res_init': 'crate::resolv_state::global::init()',
-        'res_query': 'crate::resolv_state::global::query(dname, class, rr_type, answer.cast(), anslen)',
-        'res_search': 'crate::resolv_state::global::search(dname, class, rr_type, answer.cast(), anslen)',
-    }.items():
+    for name, count, destination in [('res_init', 0, 'init'), ('res_query', 5, 'query'), ('res_search', 5, 'search')]:
+        params = arguments(unistd, name, count)
+        if count:
+            params[3] += '.cast()'
+        target = 'crate::resolv_state::global::' + destination + '(' + ', '.join(params) + ')'
         unistd = replace_body(unistd, name, target)
     # Remove the now-unreachable duplicate receiver, not any source file.
     start, _, end = body_span(unistd, 'dns_query_raw')
@@ -155,9 +168,28 @@ def main():
     if all(b'crate::resolv_state::global::' in originals[path] for path in list(BASELINES)[1:]):
         print('Global entry points already integrated; no source overlays applied.')
         return
+    current = originals
+    originals = {}
     for path, sha in BASELINES.items():
-        if digest(originals[path]) != sha:
-            raise ValueError('concurrent source change: ' + path)
+        if digest(current[path]) == sha:
+            data = current[path]
+        else:
+            # Preserve unrelated concurrent work. Recover the immutable review
+            # baseline, then let git apply reject overlapping source edits.
+            try:
+                data = subprocess.check_output(['git', 'cat-file', 'blob', sha], stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                request = urllib.request.Request(
+                    'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs/' + sha,
+                    headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'], 'Accept': 'application/vnd.github+json'})
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    blob = json.load(response)
+                if blob.get('encoding') != 'base64':
+                    raise ValueError('unexpected blob encoding: ' + path)
+                data = base64.b64decode(blob['content'])
+        if digest(data) != sha:
+            raise ValueError('immutable baseline hash mismatch: ' + path)
+        originals[path] = data
     updated = changes(originals)
     artifact = Path('artifacts/global-resolver')
     artifact.mkdir(parents=True, exist_ok=True)
@@ -165,11 +197,20 @@ def main():
         data.decode().splitlines(True), fromfile='a/' + path, tofile='b/' + path))
         for path, data in updated.items())
     (artifact / 'integration.diff').write_text(diff)
+    # Complete old function bodies and changed initialization lines form the
+    # checked hunks. No 3-way conflict resolution, whitespace ignoring, staging,
+    # checkout/reset, or unreviewed whole-file replacement is performed.
+    subprocess.run(['git', 'apply', '--check', '-'], input=diff.encode(), check=True)
+    if args.apply:
+        subprocess.run(['git', 'apply', '-'], input=diff.encode(), check=True)
+        updated = {path: Path(path).read_bytes() for path in BASELINES}
+        actual = ''.join(''.join(difflib.unified_diff(current[path].decode().splitlines(True),
+            data.decode().splitlines(True), fromfile='a/' + path, tofile='b/' + path))
+            for path, data in updated.items())
+        (artifact / 'applied-integration.diff').write_text(actual)
     hashes = {}
     for path, data in updated.items():
         hashes[path] = digest(data)
-        if args.apply:
-            Path(path).write_bytes(data)
         if args.publish_blobs:
             request = urllib.request.Request(
                 'https://api.github.com/repos/' + os.environ['GITHUB_REPOSITORY'] + '/git/blobs',
