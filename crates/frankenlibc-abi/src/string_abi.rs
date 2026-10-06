@@ -153,6 +153,41 @@ fn string_raw_passthrough_active() -> bool {
         || frankenlibc_membrane::ptr_validator::in_validation_context()
 }
 
+/// Declares a string kernel whose portable-SIMD body is compiled twice and
+/// chosen per call (bd-rc0923-epic-eeuy4f.13).
+///
+/// The shipped library is built for baseline x86-64, where a 32-lane
+/// `Simd<u8, 32>` is two SSE2 halves and LLVM spills its masks to the stack and
+/// reads them back a byte at a time: `strcmp` measured 4-17x slower than the
+/// x86-64-v3 build. `unsafe fn name(..) -> ret => body;` emits `name`, which runs
+/// a twin of `body` compiled with AVX2 -- the code the v3 build gave it -- when
+/// the CPU has AVX2, and the baseline `body` otherwise. `body` must be
+/// `#[inline(always)]`. Same results either way: the twin is the same source.
+/// The check is a test of the CPUID bits `std` caches; a build that already
+/// targets AVX2 compiles the twin out.
+macro_rules! avx2_dispatch {
+    ($(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
+        $(#[$attr])*
+        $vis unsafe fn $name($($arg: $ty),*) -> $ret {
+            #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+            {
+                #[target_feature(enable = "avx2")]
+                unsafe fn avx2_twin($($arg: $ty),*) -> $ret {
+                    // SAFETY: forwarded from the caller's contract.
+                    unsafe { $body($($arg),*) }
+                }
+                if std::is_x86_feature_detected!("avx2") {
+                    // SAFETY: the CPU has AVX2, checked just above; the rest is
+                    // the caller's contract.
+                    return unsafe { avx2_twin($($arg),*) };
+                }
+            }
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { $body($($arg),*) }
+        }
+    };
+}
+
 fn active_string_simd_feature_mask() -> u32 {
     let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);
     if override_mask != SIMD_FEATURE_OVERRIDE_DISABLED {
@@ -2274,8 +2309,24 @@ fn swar_word_has_zero(w: u64) -> bool {
 /// a cap imports that one, and this function is only ever called FULLY QUALIFIED
 /// (see `tests/capped_scans_use_the_scalar_scanner.rs`). For a caller-supplied
 /// ceiling that must still be fast, use [`scan_c_string_nul_or_bound`].
+///
+/// Runs an AVX2 build of [`scan_c_string_body`] on CPUs that have it
+/// (`avx2_dispatch!`): its 32/64-lane portable-SIMD tiers are SSE2 halves in
+/// the baseline x86-64 build.
 #[inline(always)]
 pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
+    avx2_dispatch! {
+        #[inline(always)]
+        unsafe fn dispatch(ptr: *const c_char, bound: Option<usize>) -> (usize, bool)
+            => scan_c_string_body;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { dispatch(ptr, bound) }
+}
+
+/// The scanner behind [`scan_c_string`]; see there.
+#[inline(always)]
+unsafe fn scan_c_string_body(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
     let p = ptr.cast::<u8>();
     match bound {
         Some(limit) => {
@@ -3850,8 +3901,41 @@ fn wide_read_within_page(addr: usize) -> bool {
 /// instantiation's 83 Ir to this signature line -- the pushes plus the guard
 /// arithmetic the compiler hoists to entry. Inlining lets each caller keep only
 /// the registers its own instantiation actually needs.
+///
+/// Runs an AVX2 build of [`scan_strcmp_body`] on CPUs that have it (as
+/// `avx2_dispatch!`, written out for the const generic): in the baseline x86-64
+/// build its 32-lane masks are spilled and re-read a byte at a time, and strcmp
+/// measured 4-17x slower than the x86-64-v3 build (bd-rc0923-epic-eeuy4f.13).
 #[inline(always)]
 unsafe fn scan_strcmp<const BOUNDED: bool>(
+    s1: *const c_char,
+    s2: *const c_char,
+    bound: usize,
+) -> (usize, bool) {
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        #[target_feature(enable = "avx2")]
+        unsafe fn avx2_twin<const B: bool>(
+            s1: *const c_char,
+            s2: *const c_char,
+            bound: usize,
+        ) -> (usize, bool) {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_strcmp_body::<B>(s1, s2, bound) }
+        }
+        if std::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU has AVX2, checked just above; the rest is the
+            // caller's contract.
+            return unsafe { avx2_twin::<BOUNDED>(s1, s2, bound) };
+        }
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { scan_strcmp_body::<BOUNDED>(s1, s2, bound) }
+}
+
+/// The comparator behind [`scan_strcmp`]; see there.
+#[inline(always)]
+unsafe fn scan_strcmp_body<const BOUNDED: bool>(
     s1: *const c_char,
     s2: *const c_char,
     bound: usize,
@@ -4899,8 +4983,8 @@ pub unsafe extern "C" fn memchr(s: *const c_void, c: c_int, n: usize) -> *mut c_
         }
         // One-page range (the common case): no later page to protect.
         let found = if (s as usize & (MEMCHR_PAGE - 1)) + n <= MEMCHR_PAGE {
-            let bytes = unsafe { std::slice::from_raw_parts(s.cast::<u8>(), n) };
-            frankenlibc_core::string::mem::memchr(bytes, needle, n)
+            // SAFETY: memchr's contract: `n` readable bytes at `s`.
+            unsafe { core_memchr(s.cast::<u8>(), needle, n) }
         } else {
             unsafe { memchr_page_bounded(s.cast::<u8>(), needle, n) }
         };
@@ -4937,13 +5021,28 @@ unsafe fn memchr_page_bounded(s: *const u8, needle: u8, n: usize) -> Option<usiz
         let seg = (MEMCHR_PAGE - (addr & (MEMCHR_PAGE - 1))).min(n - off);
         // SAFETY: `[s + off, s + off + seg)` lies in one page, which holds an
         // unexamined byte the caller vouches for, so the whole page is mapped.
-        let bytes = unsafe { std::slice::from_raw_parts(s.add(off), seg) };
-        if let Some(idx) = frankenlibc_core::string::mem::memchr(bytes, needle, seg) {
+        if let Some(idx) = unsafe { core_memchr(s.add(off), needle, seg) } {
             return Some(off + idx);
         }
         off += seg;
     }
     None
+}
+
+avx2_dispatch! {
+    /// `frankenlibc_core::string::mem::memchr` over `n` readable bytes at `s`,
+    /// as an AVX2 build on CPUs that have it: its 256-byte fold and 32-lane
+    /// panels are SSE2 halves in the baseline x86-64 build, which measured 2x
+    /// slower than the x86-64-v3 build at 4 KiB (bd-rc0923-epic-eeuy4f.13).
+    #[inline(always)]
+    unsafe fn core_memchr(s: *const u8, needle: u8, n: usize) -> Option<usize> => core_memchr_body;
+}
+
+#[inline(always)]
+unsafe fn core_memchr_body(s: *const u8, needle: u8, n: usize) -> Option<usize> {
+    // SAFETY: the caller guarantees `n` readable bytes at `s`.
+    let bytes = unsafe { std::slice::from_raw_parts(s, n) };
+    frankenlibc_core::string::mem::memchr(bytes, needle, n)
 }
 
 /// `memccpy` that reads `src` only up to the first `c`, like glibc: `n` may run
