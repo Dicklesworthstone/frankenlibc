@@ -6,7 +6,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::os::unix::ffi::OsStrExt;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use frankenlibc_core::locale as locale_core;
@@ -292,6 +292,77 @@ struct NamedCategory {
     blob: CategoryBlob<'static>,
     /// For LC_CTYPE: the wide-character class/case/width tables.
     ctype: Option<frankenlibc_core::locale::data::CtypeTables<'static>>,
+    /// For LC_CTYPE: the single-byte tables, when they differ from C's.
+    bytes: Option<&'static ByteCtype>,
+}
+
+/// A named LC_CTYPE's single-byte tables, glibc's `_NL_CTYPE_CLASS`,
+/// `_NL_CTYPE_TOUPPER` and `_NL_CTYPE_TOLOWER`: 384 entries each, for
+/// `c` in -128..=255, in `<ctype.h>`'s bit layout. Kept only when they differ
+/// from the C tables -- in UTF-8 locales that is the Turkic dotless i
+/// (tr_TR: `toupper('i') == 'i'`, `tolower('I') == 'I'`, because their case
+/// partners are multibyte), in single-byte locales the upper half.
+pub(crate) struct ByteCtype {
+    pub(crate) class: [u16; 384],
+    pub(crate) toupper: [i32; 384],
+    pub(crate) tolower: [i32; 384],
+}
+
+/// Set once any loaded LC_CTYPE has [`ByteCtype`] tables; until then every
+/// byte classification is the C table's, with no locale lookup.
+static NON_C_BYTE_CTYPE: AtomicBool = AtomicBool::new(false);
+
+fn byte_ctype_from_blob(blob: &CategoryBlob<'static>) -> Option<&'static ByteCtype> {
+    let table = |index: usize, width: usize| -> Option<&[u8]> {
+        let off = blob.offset(index)?;
+        blob.bytes().get(off..off.checked_add(384 * width)?)
+    };
+    let (class, upper, lower) = (table(0, 2)?, table(1, 4)?, table(3, 4)?);
+    let mut tables = ByteCtype {
+        class: [0; 384],
+        toupper: [0; 384],
+        tolower: [0; 384],
+    };
+    for i in 0..384 {
+        tables.class[i] = u16::from_ne_bytes([class[2 * i], class[2 * i + 1]]);
+        let word =
+            |t: &[u8]| i32::from_ne_bytes([t[4 * i], t[4 * i + 1], t[4 * i + 2], t[4 * i + 3]]);
+        tables.toupper[i] = word(upper);
+        tables.tolower[i] = word(lower);
+    }
+    if tables.class == crate::ctype_abi::CTYPE_B_TABLE
+        && tables.toupper == crate::ctype_abi::TOUPPER_TABLE
+        && tables.tolower == crate::ctype_abi::TOLOWER_TABLE
+    {
+        return None;
+    }
+    NON_C_BYTE_CTYPE.store(true, Ordering::Release);
+    Some(Box::leak(Box::new(tables)))
+}
+
+fn category_byte_ctype(category: Resolved) -> Option<&'static ByteCtype> {
+    match category {
+        Resolved::Named(n) => n.bytes,
+        Resolved::Builtin(_) => None,
+    }
+}
+
+/// The calling thread's LC_CTYPE byte tables (`None`: the C tables).
+#[inline]
+pub(crate) fn thread_byte_ctype() -> Option<&'static ByteCtype> {
+    if !NON_C_BYTE_CTYPE.load(Ordering::Acquire) {
+        return None;
+    }
+    named(locale_core::LC_CTYPE).and_then(|n| n.bytes)
+}
+
+/// The byte tables of a `locale_t`'s LC_CTYPE (`None`: the C tables).
+pub(crate) fn handle_byte_ctype(handle: LocaleT) -> Option<&'static ByteCtype> {
+    if !NON_C_BYTE_CTYPE.load(Ordering::Acquire) {
+        return None;
+    }
+    let slot = locale_core::category_slot(locale_core::LC_CTYPE)?;
+    categories_for_handle(handle).and_then(|categories| category_byte_ctype(categories[slot]))
 }
 
 /// The wide-character tables of the active LC_CTYPE (null: see
@@ -494,16 +565,20 @@ fn load_category(category: c_int, name: &[u8]) -> Option<&'static NamedCategory>
     let mut stored = name.to_vec();
     stored.push(0);
     let blob = blob?;
-    let ctype = if category == locale_core::LC_CTYPE {
-        frankenlibc_core::locale::data::CtypeTables::from_blob(&blob)
+    let (ctype, bytes) = if category == locale_core::LC_CTYPE {
+        (
+            frankenlibc_core::locale::data::CtypeTables::from_blob(&blob),
+            byte_ctype_from_blob(&blob),
+        )
     } else {
-        None
+        (None, None)
     };
     let entry: &'static NamedCategory = Box::leak(Box::new(NamedCategory {
         category,
         name: stored.into_boxed_slice(),
         blob,
         ctype,
+        bytes,
     }));
     loaded.push(entry);
     Some(entry)
@@ -605,6 +680,9 @@ fn apply_category(category: c_int, resolved: Resolved) {
                 );
             }
         }
+    }
+    if category == locale_core::LC_CTYPE {
+        crate::ctype_abi::refresh_thread_ctype_slots();
     }
 }
 
@@ -2509,6 +2587,14 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
             abi.names[category as usize] = resolved_name(categories[slot]).as_ptr().cast();
         }
     }
+    // isalpha_l-style macros and libstdc++'s ctype<char> index these directly.
+    if let Some(slot) = locale_core::category_slot(locale_core::LC_CTYPE)
+        && let Some(tables) = category_byte_ctype(categories[slot])
+    {
+        abi.ctype_b = tables.class.as_ptr().wrapping_add(128);
+        abi.ctype_toupper = tables.toupper.as_ptr().wrapping_add(128);
+        abi.ctype_tolower = tables.tolower.as_ptr().wrapping_add(128);
+    }
     let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
     objects.try_reserve(1).map_err(|_| libc::ENOMEM)?;
     let layout = std::alloc::Layout::new::<LocaleObject>();
@@ -2680,6 +2766,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
     if newloc == GLOBAL_LOCALE_HANDLE {
         THREAD_LOCALE.with(|selected| selected.set(None));
         frankenlibc_core::stdio::printf::clear_thread_numeric();
+        crate::ctype_abi::refresh_thread_ctype_slots();
         return previous;
     }
     let Some(categories) = categories_for_handle(newloc) else {
@@ -2692,6 +2779,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
             categories,
         }));
     });
+    crate::ctype_abi::refresh_thread_ctype_slots();
     // printf's radix and `'` grouping follow the thread's LC_NUMERIC.
     if let Some(slot) = locale_core::category_slot(locale_core::LC_NUMERIC) {
         let field = |item: libc::nl_item| {

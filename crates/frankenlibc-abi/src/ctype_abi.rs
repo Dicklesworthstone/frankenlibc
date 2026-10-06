@@ -101,6 +101,13 @@ const fn build_ctype_b_table() -> [u16; 384] {
     t
 }
 
+/// The value glibc's case tables hold for a byte with no case partner: the
+/// byte itself, read as unsigned for the signed-char indices -128..=-2 (so
+/// `toupper((char)0xE9) == 0xE9`), and EOF for -1.
+const fn caseless(c: i32) -> i32 {
+    if c < -1 { c + 256 } else { c }
+}
+
 const fn build_toupper_table() -> [i32; 384] {
     let mut t = [0i32; 384];
     let mut i: usize = 0;
@@ -109,7 +116,7 @@ const fn build_toupper_table() -> [i32; 384] {
         t[i] = if c >= b'a' as i32 && c <= b'z' as i32 {
             c - 32 // a→A
         } else {
-            c
+            caseless(c)
         };
         i += 1;
     }
@@ -124,7 +131,7 @@ const fn build_tolower_table() -> [i32; 384] {
         t[i] = if c >= b'A' as i32 && c <= b'Z' as i32 {
             c + 32 // A→a
         } else {
-            c
+            caseless(c)
         };
         i += 1;
     }
@@ -195,57 +202,90 @@ std::thread_local! {
     };
 }
 
+/// The calling thread's LC_CTYPE byte tables, at their -128 origin.
+#[inline]
+fn thread_class_table() -> &'static [u16; 384] {
+    crate::locale_abi::thread_byte_ctype().map_or(&CTYPE_B_TABLE, |t| &t.class)
+}
+
+#[inline]
+fn thread_toupper_table() -> &'static [i32; 384] {
+    crate::locale_abi::thread_byte_ctype().map_or(&TOUPPER_TABLE, |t| &t.toupper)
+}
+
+#[inline]
+fn thread_tolower_table() -> &'static [i32; 384] {
+    crate::locale_abi::thread_byte_ctype().map_or(&TOLOWER_TABLE, |t| &t.tolower)
+}
+
+/// Re-point the calling thread's `__ctype_*_loc` slots at its current
+/// LC_CTYPE tables. glibc declares the accessors `__attribute__((const))`, so
+/// compiled code calls them once and keeps reading the slot: `uselocale` and
+/// `setlocale` must update it, as glibc's do for the calling thread.
+pub(crate) fn refresh_thread_ctype_slots() {
+    with_ctype_b_slot(|_| ());
+    with_ctype_toupper_slot(|_| ());
+    with_ctype_tolower_slot(|_| ());
+}
+
+// Each accessor also re-points its slot at the thread's current LC_CTYPE
+// tables, which covers threads started after a setlocale; until a locale with
+// non-C byte tables is loaded that is the C table the slot already holds.
 fn with_ctype_b_slot<R>(callback: impl FnOnce(*const *const u16) -> R) -> R {
+    // SAFETY: the table has 384 entries and index 128 is the glibc-compatible
+    // zero point for signed-char/EOF indexing.
+    let current = unsafe { thread_class_table().as_ptr().add(128) };
     #[cfg(feature = "owned-tls-cache")]
     {
         CTYPE_LOC_OWNED_TLS.with(|state| {
-            if state.ctype_b.is_null() {
-                // SAFETY: the ctype table has 384 entries and index 128 is the
-                // glibc-compatible zero point for signed-char/EOF indexing.
-                state.ctype_b = unsafe { CTYPE_B_TABLE.as_ptr().add(128) };
-            }
+            state.ctype_b = current;
             callback(&state.ctype_b as *const *const u16)
         })
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        CTYPE_B_PTR.with(|cell| callback(cell.as_ptr() as *const *const u16))
+        CTYPE_B_PTR.with(|cell| {
+            cell.set(current);
+            callback(cell.as_ptr() as *const *const u16)
+        })
     }
 }
 
 fn with_ctype_toupper_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> R {
+    // SAFETY: as above, for the 384-entry conversion table.
+    let current = unsafe { thread_toupper_table().as_ptr().add(128) };
     #[cfg(feature = "owned-tls-cache")]
     {
         CTYPE_LOC_OWNED_TLS.with(|state| {
-            if state.toupper.is_null() {
-                // SAFETY: the conversion table has 384 entries and index 128 is
-                // the glibc-compatible zero point for signed-char/EOF indexing.
-                state.toupper = unsafe { TOUPPER_TABLE.as_ptr().add(128) };
-            }
+            state.toupper = current;
             callback(&state.toupper as *const *const i32)
         })
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        TOUPPER_PTR.with(|cell| callback(cell.as_ptr() as *const *const i32))
+        TOUPPER_PTR.with(|cell| {
+            cell.set(current);
+            callback(cell.as_ptr() as *const *const i32)
+        })
     }
 }
 
 fn with_ctype_tolower_slot<R>(callback: impl FnOnce(*const *const i32) -> R) -> R {
+    // SAFETY: as above, for the 384-entry conversion table.
+    let current = unsafe { thread_tolower_table().as_ptr().add(128) };
     #[cfg(feature = "owned-tls-cache")]
     {
         CTYPE_LOC_OWNED_TLS.with(|state| {
-            if state.tolower.is_null() {
-                // SAFETY: the conversion table has 384 entries and index 128 is
-                // the glibc-compatible zero point for signed-char/EOF indexing.
-                state.tolower = unsafe { TOLOWER_TABLE.as_ptr().add(128) };
-            }
+            state.tolower = current;
             callback(&state.tolower as *const *const i32)
         })
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        TOLOWER_PTR.with(|cell| callback(cell.as_ptr() as *const *const i32))
+        TOLOWER_PTR.with(|cell| {
+            cell.set(current);
+            callback(cell.as_ptr() as *const *const i32)
+        })
     }
 }
 
@@ -273,7 +313,14 @@ pub unsafe extern "C" fn __ctype_tolower_loc() -> *const *const i32 {
 
 #[inline]
 fn classify_with_mask(c: c_int, mask: u16) -> c_int {
-    if !(0..=255).contains(&c) {
+    classify_in(c, mask, thread_class_table())
+}
+
+/// glibc's `(*__ctype_b_loc())[c] & mask` for `c` in -128..=255 (the
+/// negative half mirrors bytes 128..=255 for signed-char callers); 0 outside.
+#[inline]
+fn classify_in(c: c_int, mask: u16, table: &[u16; 384]) -> c_int {
+    if !(-128..=255).contains(&c) {
         return 0;
     }
     let byte = c as u8;
@@ -290,13 +337,14 @@ fn classify_with_mask(c: c_int, mask: u16) -> c_int {
         }
         runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
     }
-    let flags = CTYPE_B_TABLE[usize::from(byte) + 128];
+    let flags = table[(c + 128) as usize];
     c_int::from((flags & mask) != 0)
 }
 
+/// glibc's `c >= -128 && c < 256 ? table[c] : c`.
 #[inline]
 fn convert_with_table(c: c_int, table: &[i32; 384]) -> c_int {
-    if !(0..=255).contains(&c) {
+    if !(-128..=255).contains(&c) {
         return c;
     }
     let byte = c as u8;
@@ -310,7 +358,7 @@ fn convert_with_table(c: c_int, table: &[i32; 384]) -> c_int {
         }
         runtime_policy::observe(ApiFamily::Ctype, decision.profile, 3, false);
     }
-    table[usize::from(byte) + 128]
+    table[(c + 128) as usize]
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -360,12 +408,12 @@ pub unsafe extern "C" fn isxdigit(c: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn toupper(c: c_int) -> c_int {
-    convert_with_table(c, &TOUPPER_TABLE)
+    convert_with_table(c, thread_toupper_table())
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tolower(c: c_int) -> c_int {
-    convert_with_table(c, &TOLOWER_TABLE)
+    convert_with_table(c, thread_tolower_table())
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -397,77 +445,89 @@ pub unsafe extern "C" fn toascii(c: c_int) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
-// Locale-aware _l variants — Implemented (C locale passthrough)
+// Locale-aware _l variants: the tables of the object's LC_CTYPE
 // ---------------------------------------------------------------------------
 
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isalpha_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISALPHA)
+fn locale_class_table(locale: *mut c_void) -> &'static [u16; 384] {
+    crate::locale_abi::handle_byte_ctype(locale).map_or(&CTYPE_B_TABLE, |t| &t.class)
+}
+
+fn locale_toupper_table(locale: *mut c_void) -> &'static [i32; 384] {
+    crate::locale_abi::handle_byte_ctype(locale).map_or(&TOUPPER_TABLE, |t| &t.toupper)
+}
+
+fn locale_tolower_table(locale: *mut c_void) -> &'static [i32; 384] {
+    crate::locale_abi::handle_byte_ctype(locale).map_or(&TOLOWER_TABLE, |t| &t.tolower)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISDIGIT)
+pub unsafe extern "C" fn isalpha_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISALPHA, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isalnum_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISALNUM)
+pub unsafe extern "C" fn isdigit_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISDIGIT, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isspace_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISSPACE)
+pub unsafe extern "C" fn isalnum_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISALNUM, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isupper_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISUPPER)
+pub unsafe extern "C" fn isspace_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISSPACE, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn islower_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISLOWER)
+pub unsafe extern "C" fn isupper_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISUPPER, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isprint_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISPRINT)
+pub unsafe extern "C" fn islower_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISLOWER, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn ispunct_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISPUNCT)
+pub unsafe extern "C" fn isprint_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISPRINT, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isxdigit_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISXDIGIT)
+pub unsafe extern "C" fn ispunct_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISPUNCT, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isblank_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISBLANK)
+pub unsafe extern "C" fn isxdigit_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISXDIGIT, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn iscntrl_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISCNTRL)
+pub unsafe extern "C" fn isblank_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISBLANK, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn isgraph_l(c: c_int, _locale: *mut c_void) -> c_int {
-    classify_with_mask(c, _ISGRAPH)
+pub unsafe extern "C" fn iscntrl_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISCNTRL, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn toupper_l(c: c_int, _locale: *mut c_void) -> c_int {
-    convert_with_table(c, &TOUPPER_TABLE)
+pub unsafe extern "C" fn isgraph_l(c: c_int, locale: *mut c_void) -> c_int {
+    classify_in(c, _ISGRAPH, locale_class_table(locale))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tolower_l(c: c_int, _locale: *mut c_void) -> c_int {
-    convert_with_table(c, &TOLOWER_TABLE)
+pub unsafe extern "C" fn toupper_l(c: c_int, locale: *mut c_void) -> c_int {
+    convert_with_table(c, locale_toupper_table(locale))
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn tolower_l(c: c_int, locale: *mut c_void) -> c_int {
+    convert_with_table(c, locale_tolower_table(locale))
 }
 
 // ===========================================================================

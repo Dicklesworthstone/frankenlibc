@@ -466,6 +466,121 @@ fn diff_locale_transformers_full_range() {
     );
 }
 
+/// The byte tables follow the locale's LC_CTYPE, through the `_l` functions
+/// and through the `locale_t` struct that `isalpha_l`-style macros and
+/// libstdc++'s `ctype<char>` index directly, over glibc's whole -128..=255
+/// domain (the negative half is the signed-char view of bytes 128..=255:
+/// `toupper(-100) == 156`). fl used the C tables for every locale, so under
+/// tr_TR.UTF-8 `toupper('i')` was 'I' where glibc keeps 'i' (its case partner
+/// is the multibyte U+0130) -- mawk's toupper diverged.
+#[test]
+fn diff_named_locale_byte_tables() {
+    #[repr(C)]
+    struct LocaleStruct {
+        locales: [*const c_void; 13],
+        ctype_b: *const u16,
+        ctype_tolower: *const i32,
+        ctype_toupper: *const i32,
+    }
+    let classifiers: &[(&str, LocaleFn, LocaleFn)] = &[
+        ("isalpha_l", fl::isalpha_l, isalpha_l),
+        ("isdigit_l", fl::isdigit_l, isdigit_l),
+        ("isalnum_l", fl::isalnum_l, isalnum_l),
+        ("isspace_l", fl::isspace_l, isspace_l),
+        ("isupper_l", fl::isupper_l, isupper_l),
+        ("islower_l", fl::islower_l, islower_l),
+        ("isprint_l", fl::isprint_l, isprint_l),
+        ("ispunct_l", fl::ispunct_l, ispunct_l),
+        ("isxdigit_l", fl::isxdigit_l, isxdigit_l),
+        ("isblank_l", fl::isblank_l, isblank_l),
+        ("iscntrl_l", fl::iscntrl_l, iscntrl_l),
+        ("isgraph_l", fl::isgraph_l, isgraph_l),
+    ];
+    let mut divs = Vec::new();
+    let mut compared = Vec::new();
+    for name in [
+        "C",
+        "C.UTF-8",
+        "en_US.UTF-8",
+        "de_DE.UTF-8",
+        "ru_RU.UTF-8",
+        "ja_JP.UTF-8",
+        "tr_TR.UTF-8",
+    ] {
+        let cname = CString::new(name).unwrap();
+        let lc = unsafe { newlocale(LC_ALL_MASK, cname.as_ptr(), std::ptr::null_mut()) };
+        if lc.is_null() {
+            continue;
+        }
+        let fl_loc =
+            unsafe { fl_locale::newlocale(LC_ALL_MASK, cname.as_ptr(), std::ptr::null_mut()) };
+        assert!(
+            !fl_loc.is_null(),
+            "fl newlocale({name}) failed where glibc's succeeded"
+        );
+        let (fs, ls) = unsafe { (&*fl_loc.cast::<LocaleStruct>(), &*lc.cast::<LocaleStruct>()) };
+        for c in -128..=255 {
+            for (label, f, l) in [
+                ("toupper_l", unsafe { fl::toupper_l(c, fl_loc) }, unsafe {
+                    toupper_l(c, lc)
+                }),
+                ("tolower_l", unsafe { fl::tolower_l(c, fl_loc) }, unsafe {
+                    tolower_l(c, lc)
+                }),
+                // SAFETY: both structs' tables span -128..=255.
+                (
+                    "__ctype_toupper",
+                    unsafe { *fs.ctype_toupper.offset(c as isize) },
+                    unsafe { *ls.ctype_toupper.offset(c as isize) },
+                ),
+                (
+                    "__ctype_tolower",
+                    unsafe { *fs.ctype_tolower.offset(c as isize) },
+                    unsafe { *ls.ctype_tolower.offset(c as isize) },
+                ),
+                (
+                    "__ctype_b",
+                    c_int::from(unsafe { *fs.ctype_b.offset(c as isize) }),
+                    { c_int::from(unsafe { *ls.ctype_b.offset(c as isize) }) },
+                ),
+            ] {
+                if f != l {
+                    divs.push(Divergence {
+                        function: label,
+                        input: c,
+                        frankenlibc: f,
+                        glibc: l,
+                    });
+                }
+            }
+            for (label, f, l) in classifiers {
+                let (fv, lv) = unsafe { (f(c, fl_loc), l(c, lc)) };
+                if truthy(fv) != truthy(lv) {
+                    divs.push(Divergence {
+                        function: label,
+                        input: c,
+                        frankenlibc: fv,
+                        glibc: lv,
+                    });
+                }
+            }
+        }
+        unsafe {
+            fl_locale::freelocale(fl_loc);
+            freelocale(lc);
+        }
+        compared.push(name);
+    }
+    eprintln!("compared byte tables for {compared:?}");
+    assert!(compared.len() >= 2, "only {compared:?} available");
+    assert!(
+        divs.is_empty(),
+        "named-locale byte table divergences ({} total):\n{}",
+        divs.len(),
+        render_divergences(&divs[..divs.len().min(40)])
+    );
+}
+
 // ===========================================================================
 // Coverage report — emit a structured summary line for CI parsing.
 // ===========================================================================
