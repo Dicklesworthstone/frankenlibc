@@ -2381,14 +2381,6 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
 static REGISTRY_PTR: std::sync::atomic::AtomicPtr<FastRegistryMutex<StreamRegistry>> =
     std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
 
-/// Build the stream registry now (process startup, hardened, before main).
-/// Nearly every program builds it on its first stdio call anyway; in hardened
-/// mode that first allocation needs fresh heap from the host allocator, which
-/// a program that capped RLIMIT_AS before its first printf no longer has.
-pub(crate) fn prewarm_registry() {
-    let _ = registry();
-}
-
 fn registry() -> &'static FastRegistryMutex<StreamRegistry> {
     ensure_host_libio_exit_safe();
 

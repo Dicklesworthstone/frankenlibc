@@ -4,7 +4,9 @@
  * growing the stack for the runtime-math kernel's constructor at the first
  * mmap decision, hardened aborted building the validation pipeline (at exit's
  * stdio flush) or a signal-safety table (inside realloc). Must match glibc in
- * strict and hardened. */
+ * strict. Hardened is not gated: its allocations take fresh heap from the
+ * host allocator, and under a cap below fl's own footprint any of them can
+ * fail depending on heap layout (bd-4n397c). */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

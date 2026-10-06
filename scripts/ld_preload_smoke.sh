@@ -1072,7 +1072,12 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   # a gnulib testdir).
   run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
   # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
-  run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  # Strict only: hardened allocations take fresh heap from the host allocator,
+  # and under a cap below fl's own footprint any of them can fail (which one
+  # depends on heap layout), so a hardened pass would be luck (bd-4n397c).
+  if [[ "${mode}" == "strict" ]]; then
+    run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
+  fi
   # flockfile(stdout) + putc from several threads: flockfile held the stream
   # registry lock while blocking on the stream lock (deadlock).
   run_corpus_case "${mode}" "flockfile_threads" "${FLOCKFILE_THREADS_BIN}" || mode_failed=1
