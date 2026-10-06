@@ -131,3 +131,70 @@ fn utf7_decode_byte_at_a_time_matches_glibc() {
         fails.join("\n")
     );
 }
+
+/// One whole-buffer call plus a NULL-input flush, reported exactly: the call's
+/// return value and errno, bytes consumed and produced, then the flush's return
+/// value and errno.
+fn exact(host: bool, src: &[u8]) -> String {
+    let to = CString::new("UTF-8").unwrap();
+    let from = CString::new("UTF-7").unwrap();
+    let cd = if host {
+        unsafe { iconv_open(to.as_ptr(), from.as_ptr()) }
+    } else {
+        unsafe { fl::iconv_open(to.as_ptr(), from.as_ptr()) }
+    };
+    assert!(cd as isize != -1, "iconv_open UTF-7 (host={host})");
+    let call = |ip: *mut *mut c_char, il: *mut usize, op: *mut *mut c_char, ol: *mut usize| {
+        let r = if host {
+            unsafe { iconv(cd, ip, il, op, ol) }
+        } else {
+            unsafe { fl::iconv(cd, ip, il, op, ol) }
+        };
+        let e = if r == usize::MAX {
+            std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
+        } else {
+            0
+        };
+        (r as isize, e)
+    };
+    let mut buf = src.to_vec();
+    let mut out = [0u8; 64];
+    let mut ip = buf.as_mut_ptr() as *mut c_char;
+    let mut il = buf.len();
+    let mut op = out.as_mut_ptr() as *mut c_char;
+    let mut ol = out.len();
+    let (r, e) = call(&mut ip, &mut il, &mut op, &mut ol);
+    let consumed = buf.len() - il;
+    let produced = out.len() - ol;
+    let (fr, fe) = call(&mut std::ptr::null_mut(), &mut 0usize, &mut op, &mut ol);
+    if host {
+        unsafe { iconv_close(cd) };
+    } else {
+        unsafe { fl::iconv_close(cd) };
+    }
+    format!(
+        "r={r} errno={e} consumed={consumed} out={:02x?} | flush r={fr} errno={fe}",
+        &out[..produced]
+    )
+}
+
+/// Every prefix of inputs that end mid-shift: a lone trailing `+` (glibc:
+/// EINVAL, not consumed), a run ending with leftover bits or a pending high
+/// surrogate (glibc's flush still succeeds), and a high surrogate followed by
+/// bits that cannot start a low surrogate (glibc rejects the byte that shows
+/// it, not the one that completes the unit). libunistring's test-striconveh
+/// failed on "+VDLYP9" under strict.
+#[test]
+fn utf7_truncated_inputs_match_glibc_exactly() {
+    let mut fails = Vec::new();
+    for full in [&b"+VDLYP9hA"[..], b"a+2D3YgA-b", b"+AOk-+", b"x+", b"+AOkA"] {
+        for n in 0..=full.len() {
+            let s = &full[..n];
+            let (g, f) = (exact(true, s), exact(false, s));
+            if g != f {
+                fails.push(format!("{:?}: glibc {g}\n{:>w$}  fl    {f}", String::from_utf8_lossy(s), "", w = n + 2));
+            }
+        }
+    }
+    assert!(fails.is_empty(), "UTF-7 truncation divergences:\n{}", fails.join("\n"));
+}

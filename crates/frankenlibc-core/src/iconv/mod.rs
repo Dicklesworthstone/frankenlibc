@@ -42486,6 +42486,18 @@ fn utf7_decode_streaming(
         let c = input[in_pos];
         if active {
             if let Some(v) = (cfg.b64_val)(c) {
+                // A pending high surrogate must be followed by a low one
+                // (0b110111...): once this byte shows the next unit cannot
+                // start that way, reject THIS byte, unconsumed, as glibc does
+                // (rather than waiting for the unit to complete).
+                if hi.is_some() && nbits + 6 < 16 {
+                    let n = (nbits + 6).min(6);
+                    let lead = (((bits << 6) | v) >> (nbits + 6 - n)) & ((1 << n) - 1);
+                    if lead != 0b11_0111 >> (6 - n) {
+                        save_state!();
+                        return Err(eilseq(in_pos, out_pos));
+                    }
+                }
                 shift_empty = false;
                 bits = (bits << 6) | v;
                 nbits += 6;
@@ -42548,6 +42560,17 @@ fn utf7_decode_streaming(
                 // Otherwise leave `c` for the next iteration as a direct byte.
             }
         } else if c == cfg.shift_in {
+            // A shift char that ends the input is incomplete (a following `-`
+            // would make it the literal shift char): EINVAL, unconsumed, as
+            // glibc reports it.
+            if in_pos + 1 == input.len() {
+                save_state!();
+                return Err(IconvError {
+                    code: ICONV_EINVAL,
+                    in_consumed: in_pos,
+                    out_written: out_pos,
+                });
+            }
             // Open a shift sequence; a following `-` makes it the literal shift char.
             active = true;
             bits = 0;
@@ -42572,8 +42595,9 @@ fn utf7_decode_streaming(
 }
 
 /// Finalize UTF-7 SOURCE decode state on a NULL-inbuf flush: deliver any held
-/// scalar, validate the trailing shift state (no dangling high surrogate, and
-/// any leftover Modified-Base64 bits must be zero padding), and reset it.
+/// scalar and reset the shift state. Like glibc, the flush never fails: a
+/// dangling high surrogate or non-zero leftover base64 bits are discarded
+/// (glibc 2.43 returns 0 for every truncation of "+VDLYP9hA").
 fn utf7_decode_flush(
     cd: &mut IconvDescriptor,
     outbuf: &mut [u8],
@@ -42595,12 +42619,7 @@ fn utf7_decode_flush(
             }
         }
     }
-    if cd.utf7_hi >= 0 {
-        return Err(eilseq(0, out_pos));
-    }
-    if cd.utf7_active && cd.utf7_nbits > 0 && (cd.utf7_bits & ((1u32 << cd.utf7_nbits) - 1)) != 0 {
-        return Err(eilseq(0, out_pos));
-    }
+    cd.utf7_hi = -1;
     cd.utf7_active = false;
     cd.utf7_bits = 0;
     cd.utf7_nbits = 0;

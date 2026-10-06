@@ -148,11 +148,17 @@ fn utf7imap_split_buffer_streaming() {
         let mut op = out.as_mut_ptr() as *mut c_char;
         let mut ol = out.len();
         let mut got = Vec::new();
+        // The iconv chunking contract: bytes a call leaves unconsumed (an
+        // incomplete sequence, EINVAL -- e.g. a lone trailing `&`, which glibc
+        // also leaves) are presented again at the front of the next chunk.
+        let mut carry: Vec<u8> = Vec::new();
         for chunk in [&full[..split], &full[split..]] {
-            let mut s = chunk.to_vec();
+            let mut s = carry.clone();
+            s.extend_from_slice(chunk);
             let mut ip = s.as_mut_ptr() as *mut c_char;
             let mut il = s.len();
             let _ = unsafe { fl::iconv(cd, &mut ip, &mut il, &mut op, &mut ol) };
+            carry = s[s.len() - il..].to_vec();
         }
         let mut np: *mut c_char = std::ptr::null_mut();
         let _ = unsafe { fl::iconv(cd, &mut np, &mut 0usize, &mut op, &mut ol) };
