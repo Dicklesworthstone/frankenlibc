@@ -1,0 +1,72 @@
+name: Native kernel DNS entropy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-kernel-dns-entropy.yml'
+      - 'crates/frankenlibc-core/src/dns_transport.rs'
+      - 'crates/frankenlibc-core/src/dns_transport/**'
+      - 'crates/frankenlibc-core/src/syscall/**'
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'tests/conformance/kernel_dns_entropy.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_BUILD_JOBS: 2
+  RUST_BACKTRACE: 1
+
+jobs:
+  native:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Compile and validate the isolated reference fixture
+        run: |
+          mkdir -p artifacts/kernel-dns-entropy
+          git rev-parse HEAD > artifacts/kernel-dns-entropy/commit.txt
+          cc -std=c11 -O2 -Wall -Wextra -Werror tests/conformance/kernel_dns_entropy.c -ldl -o "$RUNNER_TEMP/kernel-dns"
+          sudo timeout 120 "$RUNNER_TEMP/kernel-dns" --host 2>&1 | tee artifacts/kernel-dns-entropy/host.log
+          grep -Fxq '12 host-glibc kernel-entropy DNS cases passed' artifacts/kernel-dns-entropy/host.log
+          cc -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer tests/conformance/kernel_dns_entropy.c -ldl -o "$RUNNER_TEMP/kernel-dns-sanitized"
+          sudo env ASAN_OPTIONS=detect_leaks=1 timeout 120 "$RUNNER_TEMP/kernel-dns-sanitized" --host 2>&1 | tee artifacts/kernel-dns-entropy/host-sanitized.log
+          grep -Fxq '12 host-glibc kernel-entropy DNS cases passed' artifacts/kernel-dns-entropy/host-sanitized.log
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Exercise the committed entropy implementation and existing DNS regressions
+        run: |
+          if [[ ! -f Cargo.lock ]]; then cargo generate-lockfile; fi
+          cp Cargo.lock artifacts/kernel-dns-entropy/Cargo.lock
+          cargo test --locked -p frankenlibc-core --lib kernel_entropy_ -- --nocapture 2>&1 | tee artifacts/kernel-dns-entropy/entropy.log
+          grep -Eq 'test result: ok\. 10 passed; 0 failed; 0 ignored;' artifacts/kernel-dns-entropy/entropy.log
+          cargo test --locked -p frankenlibc-core --lib dns_transport:: -- --nocapture 2>&1 | tee artifacts/kernel-dns-entropy/transport.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' artifacts/kernel-dns-entropy/transport.log
+      - name: Build the actual committed release library without generated source changes
+        run: |
+          cargo build --locked --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/kernel-dns-entropy/release.log
+          git diff --exit-code -- crates/frankenlibc-core/src crates/frankenlibc-abi/src
+      - name: Validate owner-pinned native exports in both modes without a device filesystem
+        run: |
+          for mode in strict hardened; do
+            sudo env FRANKENLIBC_MODE="$mode" timeout 120 "$RUNNER_TEMP/kernel-dns" "$PWD/target/release/libfrankenlibc_abi.so" 2>&1 | tee "artifacts/kernel-dns-entropy/candidate-$mode.log"
+            grep -Fxq '12 candidate kernel-entropy DNS cases passed' "artifacts/kernel-dns-entropy/candidate-$mode.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-kernel-dns-entropy-results
+          path: artifacts/kernel-dns-entropy/**
