@@ -125,9 +125,28 @@ static void min_max(void) {
     }
 }
 
+/* _LIB_VERSION: glibc's compat data symbol is 2 (_POSIX_) and writable;
+ * legacy programs assign _LIB_VERSION = _IEEE_ (-1). fl exported a read-only
+ * 0, so the assignment faulted. */
+static void lib_version(void) {
+    int *p = (int *)dlsym(RTLD_DEFAULT, "_LIB_VERSION");
+    if (!p) {
+        p = (int *)dlvsym(dlopen("libm.so.6", RTLD_NOW), "_LIB_VERSION", "GLIBC_2.2.5");
+    }
+    if (!p) {
+        printf("_LIB_VERSION missing\n");
+        return;
+    }
+    printf("_LIB_VERSION %d", *p);
+    *p = -1;
+    printf(" -> %d\n", *p);
+    *p = 2;
+}
+
 int main(void) {
     doubles();
     floats();
     min_max();
+    lib_version();
     return 0;
 }

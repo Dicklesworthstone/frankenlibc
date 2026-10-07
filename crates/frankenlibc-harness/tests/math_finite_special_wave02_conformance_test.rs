@@ -161,8 +161,8 @@ fn execute_case_via_harness(
 }
 
 fn skips_host_oracle(symbol: &str) -> bool {
-    symbol == "_LIB_VERSION"
-        || symbol.contains("f128")
+    // _LIB_VERSION has a host oracle: glibc's compat symbol via dlvsym.
+    symbol.contains("f128")
         || matches!(symbol, "__acosl_finite" | "__acoshl_finite")
 }
 
@@ -268,7 +268,7 @@ fn math_finite_special_wave02_logs_expected_classes_without_ambient_leaks() -> R
                     | "FINITE_NEGATIVE"
                     | "FINITE_POSITIVE"
                     | "FINITE_POSITIVE_ZERO"
-                    | "LIB_VERSION_0"
+                    | "LIB_VERSION_2"
             ),
             "case {} uses unsupported output class {}",
             case.name,

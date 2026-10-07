@@ -14471,15 +14471,27 @@ fn execute_math_lib_version_case(
     mode: &str,
 ) -> Result<DifferentialExecution, String> {
     ensure_supported_mode(mode)?;
-    let impl_output = math_lib_version_label(frankenlibc_abi::math_abi::_LIB_VERSION);
+    // SAFETY: a plain read of fl's exported int; nothing writes it here.
+    let ours = unsafe { *std::ptr::addr_of!(frankenlibc_abi::math_abi::_LIB_VERSION) };
+    let impl_output = math_lib_version_label(ours);
+    // The host value is glibc's compat data symbol _LIB_VERSION@GLIBC_2.2.5
+    // (new binaries cannot link it, so look it up by version).
+    // SAFETY: dlopen/dlvsym with NUL-terminated names; the symbol is an int.
+    let host = unsafe {
+        let h = libc::dlopen(c"libm.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+        let p = if h.is_null() {
+            std::ptr::null()
+        } else {
+            libc::dlvsym(h, c"_LIB_VERSION".as_ptr(), c"GLIBC_2.2.5".as_ptr()) as *const c_int
+        };
+        (!p.is_null()).then(|| *p)
+    };
+    let host_output = host.map_or_else(|| "SKIP".to_string(), math_lib_version_label);
     Ok(DifferentialExecution {
-        host_output: "SKIP".to_string(),
+        host_parity: host.is_none_or(|h| h == ours),
+        host_output,
         impl_output,
-        host_parity: true,
-        note: Some(
-            "_LIB_VERSION is a versioned libm data symbol; fixture records FrankenLibC value only"
-                .to_string(),
-        ),
+        note: None,
     })
 }
 

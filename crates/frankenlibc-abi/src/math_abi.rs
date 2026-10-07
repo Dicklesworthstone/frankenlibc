@@ -9021,9 +9021,14 @@ pub unsafe extern "C" fn matherr(_exc: *mut std::ffi::c_void) -> c_int {
     0
 }
 
+/// SVID error-handling mode, `_POSIX_` (2) as in glibc. It was 0 (`_SVID_`),
+/// which made glibc's own libm wrappers -- reachable when libm.so.6 is loaded
+/// next to fl -- print "asin: DOMAIN error" to stderr on every domain error.
+/// It must be writable (`static mut`, `.data`): legacy programs assign
+/// `_LIB_VERSION = _IEEE_;`, which faulted on the former `.rodata` constant.
 #[allow(non_upper_case_globals)]
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub static _LIB_VERSION: c_int = 0;
+pub static mut _LIB_VERSION: c_int = 2;
 
 // =========================================================================
 // TS 18661 / C23 type-generic math width aliases
