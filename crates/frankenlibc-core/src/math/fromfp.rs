@@ -14,7 +14,8 @@ pub enum Format {
     Extended80,
 }
 
-/// An integral floating representation, or a quiet NaN on a domain error.
+/// An integral floating representation, or on a domain error the x86 default
+/// NaN (quiet, sign bit set: what glibc 2.43 returns in every format).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rounded {
     pub bits: u128,
@@ -25,8 +26,8 @@ pub struct Rounded {
 
 /// Round to the signed/unsigned integer range of `width` bits, retaining the
 /// input floating format. Directions are FP_INT_UPWARD=0, DOWNWARD=1,
-/// TOWARDZERO=2, TONEARESTFROMZERO=3 and TONEAREST=4.
-/// Invalid direction arguments are rejected rather than silently using fenv.
+/// TOWARDZERO=2, TONEARESTFROMZERO=3 and TONEAREST=4; any other direction
+/// rounds toward zero, as glibc 2.43 does (it never consults the fenv).
 pub fn round_to_width(
     bits: u128,
     format: Format,
@@ -44,7 +45,7 @@ pub fn round_to_width(
             if exponent != 0 && integer_bit == 0 {
                 // x87 unnormal/pseudo-special encodings are not numbers.
                 return Rounded {
-                    bits: (0x7fffu128 << 64) | (3u128 << 62),
+                    bits: (0xffffu128 << 64) | (3u128 << 62),
                     invalid: true,
                     inexact: false,
                 };
@@ -63,7 +64,14 @@ pub fn round_to_width(
             return result;
         }
     };
-    round_binary(bits, fraction_bits, exponent_bits, direction, width, unsigned)
+    round_binary(
+        bits,
+        fraction_bits,
+        exponent_bits,
+        direction,
+        width,
+        unsigned,
+    )
 }
 
 fn round_binary(
@@ -81,17 +89,32 @@ fn round_binary(
     let exponent = (magnitude >> fraction_bits) & exponent_mask;
     let bias = (1i32 << (exponent_bits - 1)) - 1;
     let invalid = || Rounded {
-        bits: (exponent_mask << fraction_bits) | (1u128 << (fraction_bits - 1)),
+        bits: (1u128 << (fraction_bits + exponent_bits))
+            | (exponent_mask << fraction_bits)
+            | (1u128 << (fraction_bits - 1)),
         invalid: true,
         inexact: false,
     };
-    if exponent == exponent_mask || width == 0 || !(0..=4).contains(&direction) {
+    let direction = if (0..=4).contains(&direction) {
+        direction
+    } else {
+        2
+    };
+    if exponent == exponent_mask || width == 0 {
         return invalid();
     }
     if magnitude == 0 {
-        return Rounded { bits, invalid: false, inexact: false };
+        return Rounded {
+            bits,
+            invalid: false,
+            inexact: false,
+        };
     }
-    let power = if exponent == 0 { 1 - bias } else { exponent as i32 - bias };
+    let power = if exponent == 0 {
+        1 - bias
+    } else {
+        exponent as i32 - bias
+    };
     let rounded;
     let inexact;
     if power < 0 {
@@ -103,7 +126,11 @@ fn round_binary(
             4 => power == -1 && (magnitude & fraction_mask) != 0,
             _ => unreachable!(),
         };
-        rounded = if away { (bias as u128) << fraction_bits } else { 0 };
+        rounded = if away {
+            (bias as u128) << fraction_bits
+        } else {
+            0
+        };
         inexact = true;
     } else if power < fraction_bits as i32 {
         let shift = fraction_bits - power as u32;
@@ -111,17 +138,19 @@ fn round_binary(
         let fraction = magnitude & (unit - 1);
         let truncated = magnitude & !(unit - 1);
         let half = unit >> 1;
-        let away = fraction != 0 && match direction {
-            0 => sign == 0,
-            1 => sign != 0,
-            2 => false,
-            3 => fraction >= half,
-            // At power=0 the unit bit is the implicit leading 1, not
-            // necessarily bit 0 of the biased exponent field.
-            4 => fraction > half || (fraction == half
-                && (power == 0 || (truncated & unit) != 0)),
-            _ => unreachable!(),
-        };
+        let away = fraction != 0
+            && match direction {
+                0 => sign == 0,
+                1 => sign != 0,
+                2 => false,
+                3 => fraction >= half,
+                // At power=0 the unit bit is the implicit leading 1, not
+                // necessarily bit 0 of the biased exponent field.
+                4 => {
+                    fraction > half || (fraction == half && (power == 0 || (truncated & unit) != 0))
+                }
+                _ => unreachable!(),
+            };
         rounded = truncated + if away { unit } else { 0 };
         inexact = fraction != 0;
     } else {
@@ -133,13 +162,16 @@ fn round_binary(
         let limit = if unsigned { width } else { width - 1 };
         if (unsigned && sign != 0)
             || power as u32 > limit
-            || (power as u32 == limit
-                && (unsigned || sign == 0 || rounded & fraction_mask != 0))
+            || (power as u32 == limit && (unsigned || sign == 0 || rounded & fraction_mask != 0))
         {
             return invalid();
         }
     }
-    Rounded { bits: rounded | sign, invalid: false, inexact }
+    Rounded {
+        bits: rounded | sign,
+        invalid: false,
+        inexact,
+    }
 }
 
 #[cfg(test)]
@@ -147,7 +179,13 @@ mod tests {
     use super::{Format, Rounded, round_to_width};
 
     fn round(x: f64, dir: i32, width: u32, unsigned: bool) -> Rounded {
-        round_to_width(u128::from(x.to_bits()), Format::Binary64, dir, width, unsigned)
+        round_to_width(
+            u128::from(x.to_bits()),
+            Format::Binary64,
+            dir,
+            width,
+            unsigned,
+        )
     }
 
     #[test]
@@ -195,7 +233,14 @@ mod tests {
         assert!(!round(f64::MAX, 4, u32::MAX, false).invalid);
         let big128 = (16383u128 + 16000) << 112 | 123;
         let result = round_to_width(big128, Format::Binary128, 4, 16002, false);
-        assert_eq!(result, Rounded { bits: big128, invalid: false, inexact: false });
+        assert_eq!(
+            result,
+            Rounded {
+                bits: big128,
+                invalid: false,
+                inexact: false
+            }
+        );
     }
 
     #[test]
@@ -203,13 +248,23 @@ mod tests {
         for x in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
             let r = round(x, 2, 64, false);
             assert!(r.invalid && !r.inexact);
-            assert!(f64::from_bits(r.bits as u64).is_nan());
+            // glibc returns the default NaN: quiet, sign bit set.
+            assert_eq!(r.bits as u64, 0xfff8_0000_0000_0000);
         }
         assert!(round(0.0, 2, 0, false).invalid);
-        assert!(round(1.25, 5, 8, false).invalid);
+        // An unknown direction rounds toward zero (glibc 2.43, measured:
+        // fromfp(-2.5, 7, 16) == -2, ufromfp(-1.5, 7, 16) is a domain error).
+        for dir in [-1, 5, 7, 100] {
+            assert_eq!(round(1.25, dir, 8, false), round(1.25, 2, 8, false));
+            assert_eq!(round(-2.5, dir, 16, false), round(-2.5, 2, 16, false));
+            assert!(round(-1.5, dir, 16, true).invalid);
+        }
         assert!(!round(2.0, 2, 8, false).inexact);
         assert!(!round(127.5, 4, 8, false).inexact);
-        assert_eq!(round(-0.0, 4, 8, true).bits, u128::from((-0.0f64).to_bits()));
+        assert_eq!(
+            round(-0.0, 4, 8, true).bits,
+            u128::from((-0.0f64).to_bits())
+        );
     }
 
     #[test]
@@ -220,7 +275,10 @@ mod tests {
             (Format::Binary128, 1u128 << 127, 16383u128 << 112),
         ] {
             assert_eq!(round_to_width(1, format, 0, 2, false).bits, one);
-            assert_eq!(round_to_width(1 | sign, format, 1, 2, false).bits, one | sign);
+            assert_eq!(
+                round_to_width(1 | sign, format, 1, 2, false).bits,
+                one | sign
+            );
             assert_eq!(round_to_width(1, format, 4, 2, false).bits, 0);
         }
     }
@@ -230,13 +288,25 @@ mod tests {
         let one = (16383u128 << 64) | (1u128 << 63);
         let one_and_half = one | (1u128 << 62);
         let two = (16384u128 << 64) | (1u128 << 63);
-        assert_eq!(round_to_width(one_and_half, Format::Extended80, 4, 3, false).bits, two);
-        assert_eq!(round_to_width(one, Format::Extended80, 4, 3, false).bits, one);
+        assert_eq!(
+            round_to_width(one_and_half, Format::Extended80, 4, 3, false).bits,
+            two
+        );
+        assert_eq!(
+            round_to_width(one, Format::Extended80, 4, 3, false).bits,
+            one
+        );
         assert!(round_to_width(16383u128 << 64, Format::Extended80, 4, 3, false).invalid);
         // The least pseudo-denormal and its canonical encoding denote the
         // same tiny positive value, and upward rounding must produce one.
-        assert_eq!(round_to_width(1u128 << 63, Format::Extended80, 0, 3, false).bits, one);
+        assert_eq!(
+            round_to_width(1u128 << 63, Format::Extended80, 0, 3, false).bits,
+            one
+        );
         let big = ((16383u128 + 63) << 64) | (1u128 << 63) | 1;
-        assert_eq!(round_to_width(big, Format::Extended80, 4, 65, false).bits, big);
+        assert_eq!(
+            round_to_width(big, Format::Extended80, 4, 65, false).bits,
+            big
+        );
     }
 }
