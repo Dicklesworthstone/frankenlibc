@@ -296,6 +296,8 @@ cc -O1 -fPIC -shared "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free_li
 cc -O1 "${ROOT}/tests/integration/fixture_dlclose_tls_slot_free.c" -o "${DLCLOSE_TLS_SLOT_FREE_BIN}" -ldl
 LIBM_SPECIAL_VALUES_BIN="${BIN_DIR}/fixture_libm_special_values"
 cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_special_values.c" -o "${LIBM_SPECIAL_VALUES_BIN}" -lm -ldl
+LIBM_F32_SAMPLE_BIN="${BIN_DIR}/fixture_libm_f32_sample"
+cc -O0 -fno-builtin "${ROOT}/tests/integration/fixture_libm_f32_sample.c" -o "${LIBM_F32_SAMPLE_BIN}" -lm -ldl
 GNULIB_REGRESSIONS_BIN="${BIN_DIR}/fixture_gnulib_regressions"
 cc -O0 -fno-builtin -Wno-format -Wno-format-extra-args "${ROOT}/tests/integration/fixture_gnulib_regressions.c" -o "${GNULIB_REGRESSIONS_BIN}"
 RLIMIT_AS_FIRST_BIN="${BIN_DIR}/fixture_rlimit_as_first"
@@ -1089,6 +1091,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "gnulib_regressions" "${GNULIB_REGRESSIONS_BIN}" || mode_failed=1
   # libm NaN/inf/domain-error results and FE_INVALID, double and float.
   run_corpus_case "${mode}" "libm_special_values" "${LIBM_SPECIAL_VALUES_BIN}" || mode_failed=1
+  # Float libm results vs glibc's correctly rounded f32 functions (bd-li7fb3).
+  run_corpus_case "${mode}" "libm_f32_sample" "${LIBM_F32_SAMPLE_BIN}" || mode_failed=1
   # RLIMIT_AS capped before fl's runtime state was built (gnulib printf-posix2).
   run_corpus_case "${mode}" "rlimit_as_first" "${RLIMIT_AS_FIRST_BIN}" || mode_failed=1
   # flockfile(stdout) + putc from several threads: flockfile held the stream

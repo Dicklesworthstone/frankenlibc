@@ -19,13 +19,6 @@ fn fe_invalid_f32() {
     let _ = core::hint::black_box(core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32));
 }
 
-#[inline]
-fn fe_underflow_f32() {
-    let _ = core::hint::black_box(
-        core::hint::black_box(f32::MIN_POSITIVE) * core::hint::black_box(f32::MIN_POSITIVE),
-    );
-}
-
 /// Used by the tiny-|x| shortcuts (`atanhf`, `log1pf`) where returning `x` is the
 /// correctly rounded result. Returning `x` is EXACT and so raises nothing, but the
 /// true value is not representable, and glibc raises FE_INEXACT for every nonzero
@@ -39,28 +32,6 @@ fn fe_inexact_f32() {
 
 // --- Trigonometric ---
 
-// Fast argument reduction for sinf/cosf. `libm::sinf` falls to a slow reduction
-// for |x| above its ~9π/4 small-poly path (measured ~2-3x slower than glibc,
-// which is flat). For the [F32_RED_LO, F32_RED_HI] band we reduce in f64 with a
-// 2-part π/2 split (more than enough precision for an f32 result) and evaluate
-// the fast small-arg `libm` f32 kernel on the reduced value.
-const F32_TWO_OVER_PI: f64 = f64::from_bits(0x3fe45f306dc9c883);
-const F32_PIO2H: f64 = f64::from_bits(0x3ff921fb54442d18);
-const F32_PIO2M: f64 = f64::from_bits(0x3c91a62633145c07);
-const F32_RED_LO: f32 = 7.0; // musl sinf small poly covers |x| <= 9π/4 ≈ 7.06
-const F32_RED_HI: f32 = 1.0e15; // f64 2-part split stays accurate; above -> libm
-
-/// Always inlined: `sinf`/`cosf`'s AVX2+FMA twins must compile this fused
-/// reduction (and its `roundeven`) too.
-#[inline(always)]
-fn reduce_pio2_f32(x: f32) -> (i64, f32) {
-    let xd = x as f64;
-    let kd = (xd * F32_TWO_OVER_PI).round_ties_even();
-    let r = kd.mul_add(-F32_PIO2H, xd);
-    let r = kd.mul_add(-F32_PIO2M, r);
-    (kd as i64, r as f32)
-}
-
 super::avx2_fma_dispatch! {
     #[inline]
     pub fn sinf(x: f32) -> f32 => sinf_body;
@@ -68,17 +39,11 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn sinf_body(x: f32) -> f32 {
-    let ax = x.abs();
-    if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
-        return libm::sinf(x);
-    }
-    let (n, r) = reduce_pio2_f32(x);
-    match n & 3 {
-        0 => libm::sinf(r),
-        1 => libm::cosf(r),
-        2 => -libm::sinf(r),
-        _ => -libm::cosf(r),
-    }
+    // CORE-MATH f64 sin (correctly rounded) rounded once: within 1 ULP of
+    // glibc 2.43's sinf everywhere, differing on ~29M of the 2^32 inputs
+    // (glibc's sinf is not correctly rounded). The former f32 reduction
+    // (`r as f32`) + libm::sinf kernel was up to 2 ULP off on ~139M inputs.
+    crate::math::sin(f64::from(x)) as f32
 }
 
 super::avx2_fma_dispatch! {
@@ -88,68 +53,44 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn cosf_body(x: f32) -> f32 {
-    let ax = x.abs();
-    if ax < F32_RED_LO || !(ax <= F32_RED_HI) {
-        return libm::cosf(x);
-    }
-    let (n, r) = reduce_pio2_f32(x);
-    match n & 3 {
-        0 => libm::cosf(r),
-        1 => -libm::sinf(r),
-        2 => -libm::cosf(r),
-        _ => libm::sinf(r),
-    }
+    // CORE-MATH f64 cos (correctly rounded) rounded once: within 1 ULP of
+    // glibc 2.43's cosf everywhere, differing on ~29M of the 2^32 inputs
+    // (glibc's cosf is not correctly rounded). The former f32 reduction
+    // (`r as f32`) + libm::cosf kernel was up to 2 ULP off on ~139M inputs.
+    crate::math::cos(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn tanf(x: f32) -> f32 {
-    libm::tanf(x)
+    // f64 tan rounded once: glibc 2.43's tanf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 1.19M of them (1 ULP).
+    crate::math::tan(f64::from(x)) as f32
 }
-
-/// Correctly-rounded f32 nearest to pi/2, `0x3fc9_0fdb`.
-///
-/// libm returns `0x3fc9_0fda` — one ULP LOW — from the inverse-trig special
-/// values that are exactly pi/2 (`atanf(inf)`, `acosf(±0)`, `asinf(±1)`), where
-/// glibc returns the correctly-rounded value. C99 F.10.1 specifies these as
-/// exact results, not approximations, so the constant is returned directly
-/// rather than left to the kernel. Pinned by conformance_diff_inv_trig_special.
-const FRAC_PI_2_F32: f32 = core::f32::consts::FRAC_PI_2;
 
 #[inline]
 pub fn asinf(x: f32) -> f32 {
-    // asin(±1) = ±pi/2 exactly.
-    if x.abs() == 1.0 {
-        return FRAC_PI_2_F32.copysign(x);
-    }
-    libm::asinf(x)
+    // f64 asin rounded once: glibc 2.43's asinf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 16.6k of them (1 ULP).
+    crate::math::asin(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn acosf(x: f32) -> f32 {
-    // Domain [-1, 1]; glibc raises FE_INVALID outside it (libm::acosf returns NaN
-    // without the flag — note the f64 acos already raises it, libm is asymmetric).
-    if !(-1.0..=1.0).contains(&x) {
-        fe_invalid_f32();
-    }
-    // acos(±0) = pi/2 exactly (both zero signs give +pi/2).
-    if x == 0.0 {
-        return FRAC_PI_2_F32;
-    }
-    // acos(-1) = pi exactly; libm is one ULP low here too (0x4049_0fda vs
-    // the correctly-rounded 0x4049_0fdb).
-    if x == -1.0 {
-        return core::f32::consts::PI;
-    }
-    libm::acosf(x)
+    // f64 acos rounded once: glibc 2.43's acosf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 6.64M of them (1 ULP).
+    crate::math::acos(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn atanf(x: f32) -> f32 {
-    // atan(±inf) = ±pi/2 exactly.
-    if x.is_infinite() {
-        return FRAC_PI_2_F32.copysign(x);
-    }
-    libm::atanf(x)
+    // f64 atan rounded once (the infinities give the correctly rounded f32
+    // pi/2): glibc 2.43's atanf is correctly rounded and this matches it on all
+    // but 2 of the 2^32 inputs (exhaustive, scratch f64route.c);
+    // libm::atanf differed by 1 ULP on 1.72G inputs.
+    crate::math::atan(f64::from(x)) as f32
 }
 
 #[inline]
@@ -169,26 +110,23 @@ pub fn atan2f(y: f32, x: f32) -> f32 {
 
 #[inline]
 pub fn expf(x: f32) -> f32 {
-    // Medium fast path mirroring the f64 `exp`: on [-5, 5], libm::exp2f is
-    // ~1.5x faster than libm::expf and stays within the 4-ULP glibc parity
-    // budget (verified by `expf_medium_fast_path_within_4_ulps`). The error is
-    // dominated by the rounding of the x*log2e product (~0.5*|x| ULP after exp2f
-    // amplification), so |x|=5 stays <=4 ULP. Outside the interval, defer to
-    // libm::expf bit-for-bit.
+    // Fused kernel (ARM optimized-routines / glibc `__ieee754_expf`, 0.5 ULP)
+    // for the whole finite-normal range: bit-exact to glibc. Overflow/
+    // underflow/subnormal/inf/nan defer to libm::expf for exact FE + errno
+    // semantics.
     //
-    // NOTE (rejected lever, measured): routing this through the f64 `exp2` kernel
-    // (like exp10f, `libm::exp2(x as f64 * LOG2_E) as f32`) was *slower* — same
-    // worker, expf_medium 223 ns (this f32-exp2f path) vs 292 ns (f64 route), and
-    // this path already beats glibc (~304 ns). The earlier "1.70x slower" baseline
-    // was stale/noisy. Keep the f32-exp2f fast path.
-    if (-5.0..=5.0).contains(&x) {
-        return libm::exp2f(x * core::f32::consts::LOG2_E);
-    }
-    // General fused kernel (ARM optimized-routines / glibc `__ieee754_expf`,
-    // 0.5 ULP) for the rest of the finite-normal range; overflow/underflow/
-    // subnormal/inf/nan defer to libm::expf for exact FE + errno semantics.
+    // A former [-5, 5] shortcut, libm::exp2f(x * LOG2_E), was faster but up to
+    // 4 ULP off: the rounding of x*log2e is amplified by exp2f. An exhaustive
+    // sweep against glibc (scratch f32sweep.c) found 28.7M differing inputs,
+    // expf(2) among them.
     if x.abs() < 87.0 {
         return expf_kernel(x);
+    }
+    // Overflow/underflow edge: f64 exp rounded once; the narrowing raises
+    // FE_OVERFLOW / FE_UNDERFLOW. libm::expf differed from glibc on 261 of
+    // 16.8M sampled inputs here.
+    if x.is_finite() {
+        return crate::math::exp(f64::from(x)) as f32;
     }
     libm::expf(x)
 }
@@ -220,89 +158,6 @@ pub fn logf(x: f32) -> f32 {
     libm::logf(x)
 }
 
-const LOG2F_DYADIC_STEP: f32 = 32.0;
-const LOG2F_DYADIC_TABLE: [u32; 65] = [
-    0xbf80_0000,
-    0xbf69_9c09,
-    0xbf54_7fcc,
-    0xbf40_87d2,
-    0xbf2d_961f,
-    0xbf1b_9116,
-    0xbf0a_62b0,
-    0xbef3_efb0,
-    0xbed4_7fcc,
-    0xbeb6_587b,
-    0xbe99_5ff7,
-    0xbe7a_fec5,
-    0xbe45_44c0,
-    0xbe11_6d6e,
-    0xbdbe_b025,
-    0xbd3b_9ca6,
-    0x0000_0000,
-    0x3d35_d69c,
-    0x3db3_1fb8,
-    0x3e04_62c4,
-    0x3e2e_00d2,
-    0x3e56_7af1,
-    0x3e7d_e0b6,
-    0x3e92_203d,
-    0x3ea4_d3c2,
-    0x3eb7_110e,
-    0x3ec8_ddd4,
-    0x3eda_3f60,
-    0x3eeb_3a9f,
-    0x3efb_d42b,
-    0x3f06_0828,
-    0x3f0d_f989,
-    0x3f15_c01a,
-    0x3f1d_5da0,
-    0x3f24_d3c2,
-    0x3f2c_2411,
-    0x3f33_5004,
-    0x3f3a_58fe,
-    0x3f41_404f,
-    0x3f48_0731,
-    0x3f4e_aed0,
-    0x3f55_3848,
-    0x3f5b_a4a4,
-    0x3f61_f4e5,
-    0x3f68_29fb,
-    0x3f6e_44cd,
-    0x3f74_4636,
-    0x3f7a_2f04,
-    0x3f80_0000,
-    0x3f82_dcf3,
-    0x3f85_aeb5,
-    0x3f88_759c,
-    0x3f8b_31fc,
-    0x3f8d_e421,
-    0x3f90_8c58,
-    0x3f93_2aea,
-    0x3f95_c01a,
-    0x3f98_4c2c,
-    0x3f9a_cf5e,
-    0x3f9d_49ee,
-    0x3f9f_bc17,
-    0x3fa2_2610,
-    0x3fa4_880f,
-    0x3fa6_e24a,
-    0x3fa9_34f0,
-];
-
-#[inline]
-fn log2f_dyadic_profile_fast_path(x: f32) -> Option<f32> {
-    if !(0.5..=2.5).contains(&x) {
-        return None;
-    }
-    let scaled = (x - 0.5) * LOG2F_DYADIC_STEP;
-    let index = scaled as usize;
-    if index < LOG2F_DYADIC_TABLE.len() && scaled == index as f32 {
-        Some(f32::from_bits(LOG2F_DYADIC_TABLE[index]))
-    } else {
-        None
-    }
-}
-
 #[inline]
 pub fn log2f(x: f32) -> f32 {
     // Fused single-pass kernel (ARM optimized-routines / glibc `__ieee754_log2f`,
@@ -330,15 +185,12 @@ pub fn log2f(x: f32) -> f32 {
 
 #[inline]
 pub fn log10f(x: f32) -> f32 {
-    if let Some(log2x) = log2f_dyadic_profile_fast_path(x) {
-        return log2x * core::f32::consts::LOG10_2;
-    }
-    if x == 0.0 {
-        fe_divbyzero_f32();
-    } else if x < 0.0 {
-        fe_invalid_f32();
-    }
-    libm::log10f(x)
+    // f64 log10 rounded once; glibc 2.43's log10f is correctly rounded and this
+    // matches it on all but 1 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The f64 kernel raises FE_DIVBYZERO/FE_INVALID for 0 and
+    // negative x. The former log2f * LOG10_2 shortcut and libm::log10f were up
+    // to 2 ULP off (12.3M inputs differed).
+    crate::math::log10(f64::from(x)) as f32
 }
 
 /// Largest |integer exponent| handled by the powf fast path. Mirrors the f64
@@ -811,49 +663,6 @@ pub fn powf(base: f32, exponent: f32) -> f32 {
     libm::powf(base, exponent)
 }
 
-// 32-entry table of 0.5 * 2^(j/32) for j = 0..31 (glibc __exp_data.tab)
-const TABLE_RAW_32: [u64; 32] = [
-    0x3fe0000000000000,
-    0x3fe059b0d3158574,
-    0x3fe0b5586cf9890f,
-    0x3fe11301d0125b51,
-    0x3fe172b83c7d517b,
-    0x3fe1d4873168b9aa,
-    0x3fe2387a6e756238,
-    0x3fe29e9df51fdee1,
-    0x3fe306fe0a31b715,
-    0x3fe371a7373aa9cb,
-    0x3fe3dea64c123422,
-    0x3fe44e086061892d,
-    0x3fe4bfdad5362a27,
-    0x3fe5342b569d4f82,
-    0x3fe5ab07dd485429,
-    0x3fe6247eb03a5585,
-    0x3fe6a09e667f3bcd,
-    0x3fe71f75e8ec5f74,
-    0x3fe7a11473eb0187,
-    0x3fe82589994cce13,
-    0x3fe8ace5422aa0db,
-    0x3fe93737b0cdc5e5,
-    0x3fe9c49182a3f090,
-    0x3fea5503b23e255d,
-    0x3feae89f995ad3ad,
-    0x3feb7f76f2fb5e47,
-    0x3fec199bdd85529c,
-    0x3fecb720dcef9069,
-    0x3fed5818dcfba487,
-    0x3fedfc97337b9b5f,
-    0x3feea4afa2a490da,
-    0x3fef50765b6e4540,
-];
-
-const C0: f64 = 1.0;
-const C1: f64 = f64::from_bits(0x3f962e42fef4c4e7);
-const C2: f64 = f64::from_bits(0x3f2ebfd1b232f475);
-const C3: f64 = f64::from_bits(0x3ebc6b19384ecd93);
-const INV_LN2_32: f64 = f64::from_bits(0x40471547652b82fe);
-const SHIFTER: f64 = f64::from_bits(0x4338000000000000); // 1.5 * 2^52
-
 super::avx2_fma_dispatch! {
     #[inline]
     pub fn sinhf(x: f32) -> f32 => sinhf_body;
@@ -861,56 +670,10 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn sinhf_body(x: f32) -> f32 {
-    let ix = x.to_bits();
-    let ax_bits = ix & 0x7fff_ffff;
-    if ax_bits >= 0x42b3_0000 {
-        // |x| >= 89.5 or NaN
-        if ax_bits > 0x7f80_0000 {
-            return x + x; // NaN
-        }
-        return if (ix >> 31) != 0 {
-            f32::NEG_INFINITY
-        } else {
-            f32::INFINITY
-        };
-    }
-    if ax_bits <= 0x3e00_0000 {
-        // |x| <= 0.125
-        if ax_bits < 0x3980_0000 {
-            // |x| < 2^-12: sinh(x) = x
-            return x;
-        }
-        let w = f32::from_bits(ax_bits) as f64;
-        let z = w * w;
-        let p = (z * (1.0 / 5040.0) + (1.0 / 120.0)).mul_add(z, 1.0 / 6.0);
-        let res = (w + w * z * p) as f32;
-        return if (ix >> 31) != 0 { -res } else { res };
-    }
-
-    let w = f32::from_bits(ax_bits) as f64;
-    let u = w * INV_LN2_32;
-    let kd_biased = u + SHIFTER;
-    let kd = kd_biased - SHIFTER;
-    let t = u - kd;
-    let k = kd_biased.to_bits() as i64;
-
-    let t2 = t * t;
-    let even = t2.mul_add(C2, C0);
-    let odd = t * t2.mul_add(C3, C1);
-    let epos = even + odd;
-    let eneg = even - odd;
-
-    let rsi = (k & 0x1f) as usize;
-    let rax = (k >> 5) as u64;
-    let t_pos = f64::from_bits(TABLE_RAW_32[rsi].wrapping_add(rax << 52));
-
-    let k_neg = -k;
-    let rsi_neg = (k_neg & 0x1f) as usize;
-    let rdx = (k_neg >> 5) as u64;
-    let t_neg = f64::from_bits(TABLE_RAW_32[rsi_neg].wrapping_add(rdx << 52));
-
-    let res = (t_pos * epos - t_neg * eneg) as f32;
-    if (ix >> 31) != 0 { -res } else { res }
+    // f64 sinh rounded once: glibc 2.43's sinhf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 576 of them (1 ULP).
+    crate::math::sinh(f64::from(x)) as f32
 }
 
 super::avx2_fma_dispatch! {
@@ -920,50 +683,10 @@ super::avx2_fma_dispatch! {
 
 #[inline(always)]
 fn coshf_body(x: f32) -> f32 {
-    let ix = x.to_bits();
-    let ax_bits = ix & 0x7fff_ffff;
-    if ax_bits >= 0x42b3_0000 {
-        // |x| >= 89.5 or NaN
-        if ax_bits > 0x7f80_0000 {
-            return x + x; // NaN
-        }
-        return f32::INFINITY;
-    }
-    if ax_bits <= 0x3e00_0000 {
-        // |x| <= 0.125
-        if ax_bits < 0x3980_0000 {
-            // |x| < 2^-12: cosh(x) = 1.0
-            return 1.0;
-        }
-        let w = f32::from_bits(ax_bits) as f64;
-        let z = w * w;
-        let p = (z * (1.0 / 720.0) + (1.0 / 24.0)).mul_add(z, 0.5);
-        return (1.0 + z * p) as f32;
-    }
-
-    let w = f32::from_bits(ax_bits) as f64;
-    let u = w * INV_LN2_32;
-    let kd_biased = u + SHIFTER;
-    let kd = kd_biased - SHIFTER;
-    let t = u - kd;
-    let k = kd_biased.to_bits() as i64;
-
-    let t2 = t * t;
-    let even = t2.mul_add(C2, C0);
-    let odd = t * t2.mul_add(C3, C1);
-    let epos = even + odd;
-    let eneg = even - odd;
-
-    let rsi = (k & 0x1f) as usize;
-    let rax = (k >> 5) as u64;
-    let t_pos = f64::from_bits(TABLE_RAW_32[rsi].wrapping_add(rax << 52));
-
-    let k_neg = -k;
-    let rsi_neg = (k_neg & 0x1f) as usize;
-    let rdx = (k_neg >> 5) as u64;
-    let t_neg = f64::from_bits(TABLE_RAW_32[rsi_neg].wrapping_add(rdx << 52));
-
-    (t_pos * epos + t_neg * eneg) as f32
+    // f64 cosh rounded once: glibc 2.43's coshf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 515 of them (1 ULP).
+    crate::math::cosh(f64::from(x)) as f32
 }
 
 // Bounds of the WITHDRAWN pure-f32 tanhf fast band (see `tanhf`). Retained,
@@ -1000,28 +723,11 @@ pub fn tanhf(x: f32) -> f32 {
 
 #[inline]
 pub fn asinhf(x: f32) -> f32 {
-    // asinh(x) = sign(x)·log(|x| + sqrt(x²+1)).
-    // For |x| in [1, 1e19) there is no cancellation AND x²+1 stays within f32 range, so
-    // evaluate in pure f32 with fl's FUSED `logf` — ~3x faster than the f64-log+widen
-    // path and faster than glibc (asinhf_glibc_bench: 5.0 vs glibc 18.7 ns), at <=2 ULP
-    // vs glibc (asinhf is gated <=2 ULP, conformance_diff_asinh_special).
-    let ax = x.abs();
-    if !ax.is_finite() {
-        // inf→±inf, NaN→NaN (preserves sign); the log1p identity below would compute
-        // inf/inf=NaN for inf, so handle it here.
-        return x + x;
-    }
-    let r = if (1.0..1.0e19).contains(&ax) {
-        crate::math::logf(ax + (ax * ax + 1.0).sqrt())
-    } else {
-        // |x|<1 — the bare log(|x|+sqrt(x²+1)) form adds 1.0 to a tiny y and destroys its
-        // relative precision (asinhf(1.1e-12) was ~1024 ULP off). Use the cancellation-free
-        // identity asinh(x)=log1p(|x| + x²/(1+sqrt(1+x²))) in f64 (rare branch: accuracy
-        // over speed). Also covers |x|>=1e19 (f32 x² overflow) and ±0.
-        let a = (x as f64).abs();
-        crate::math::log1p(a + a * a / (1.0 + (a * a + 1.0).sqrt())) as f32
-    };
-    if x.is_sign_negative() { -r } else { r }
+    // f64 asinh rounded once: glibc 2.43's asinhf is correctly rounded and this
+    // matches it on all but 6 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The former f32 log(|x| + sqrt(x^2+1)) path was up to 2 ULP
+    // off (19.4M inputs differed).
+    crate::math::asinh(f64::from(x)) as f32
 }
 
 #[inline]
@@ -1037,55 +743,20 @@ pub fn acoshf(x: f32) -> f32 {
             core::hint::black_box(0.0f32) / core::hint::black_box(0.0f32),
         );
     }
-    // acosh(x) = log(x + sqrt((x-1)(x+1))). For x >= 1.5 the (x-1) factor carries no
-    // cancellation, so evaluate in pure f32 with fl's FUSED `logf` — measured 1.78x
-    // faster than the old f64-log+widen path and 1.26x faster than glibc
-    // (acoshf_glibc_bench: 4.2 vs deployed 7.5 vs glibc 5.3 ns), at <=1 ULP vs glibc
-    // over [1,21]. For x in [1,1.5) the `x-1` cancellation near 1 needs extra
-    // precision, so that branch keeps the exact f64 path (bit-identical to the old
-    // impl). x=1 -> log(1) = 0; +inf -> +inf. (acoshf has no bit-exact same32 gate;
-    // its conformance is the FE_INVALID domain flag above + the <=4 ULP basic checks.)
-    if x >= 1.5 {
-        crate::math::logf(x + ((x - 1.0) * (x + 1.0)).sqrt())
-    } else {
-        let fx = x as f64;
-        (crate::math::log(fx + ((fx - 1.0) * (fx + 1.0)).sqrt())) as f32
-    }
+    // f64 acosh rounded once. glibc 2.43's acoshf is correctly rounded; this
+    // matches it on all but 2 of the 2^32 inputs (exhaustive, scratch
+    // f64route.c). The former f32 evaluation for x >= 1.5 overflowed
+    // (x-1)*(x+1) above ~1.8e19 (inf for a finite result) and differed from
+    // glibc on 545M inputs.
+    crate::math::acosh(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn atanhf(x: f32) -> f32 {
-    // atanh(x) = 0.5·log((1+x)/(1-x)).
-    // Fast band |x| ∈ [0.5, 1): Sterbenz's lemma makes `1-|x|` EXACT in f32 for |x| ≥ 0.5
-    // (1/2 ≤ |x| ≤ 2), and `1+|x| ∈ [1.5,2)` is near-exact, so the only error is the fused
-    // f32 `logf`'s own ~1 ULP — evaluate in pure f32 (faster than the f64-log+widen path).
-    // atanh is odd, so compute on |x| and restore the sign. Outside the band — |x| < 0.5
-    // (the (1+x)/(1-x) ratio collapses toward 1 and `logf` near 1 loses the small result's
-    // precision), the poles |x| = 1 (±inf, FE_DIVBYZERO) and the domain error |x| > 1
-    // (NaN, FE_INVALID), plus ±0/inf/NaN — use the exact f64 path (bit-identical to the old
-    // impl, which raises the correct FE flags via the f64 `log`).
-    let ax = x.abs();
-    // For |x| < 2^-12, the first omitted term x^3 / 3 is below one third of
-    // an f32 ULP at x. Returning x is therefore correctly rounded, preserves
-    // signed zero, and avoids magnifying the tiny result through the f64 log
-    // approximation. Confirmed against glibc 2.42: of 68,400 sampled f32 values
-    // with |x| < 2^-12, glibc's atanhf returns x for every one, while the very
-    // next band [2^-12, 2^-11) already differs for 58% of samples.
-    if ax < 1.0 / 4096.0 {
-        // glibc raises FE_INEXACT here for every nonzero x even though it returns
-        // x unchanged; ±0 is genuinely exact and raises nothing. See fe_inexact_f32.
-        if x != 0.0 {
-            fe_inexact_f32();
-        }
-        return x;
-    }
-    if (0.5..1.0).contains(&ax) {
-        let r = 0.5 * crate::math::logf((1.0 + ax) / (1.0 - ax));
-        return r.copysign(x);
-    }
-    let fx = x as f64;
-    let r = 0.5 * crate::math::log((1.0 + fx) / (1.0 - fx));
-    (r as f32).copysign(x)
+    // f64 atanh rounded once: glibc 2.43's atanhf is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 11.6k of them (1 ULP).
+    crate::math::atanh(f64::from(x)) as f32
 }
 
 // --- Exponential / logarithmic (additional) ---
@@ -1103,15 +774,13 @@ pub fn exp2f(x: f32) -> f32 {
     libm::exp2f(x)
 }
 
-const EXPM1F_POSITIVE_FAST_MIN: f32 = 0.5;
-const EXPM1F_POSITIVE_FAST_MAX: f32 = 2.5;
-
 #[inline]
 pub fn expm1f(x: f32) -> f32 {
-    if (EXPM1F_POSITIVE_FAST_MIN..=EXPM1F_POSITIVE_FAST_MAX).contains(&x) {
-        return expf(x) - 1.0;
-    }
-    libm::expm1f(x)
+    // glibc 2.43's expm1f is correctly rounded; f64 expm1 rounded once
+    // matches it except in rare double-rounding cases. A former
+    // `expf(x) - 1.0` shortcut was up to 3 ULP off (20.8M inputs differed,
+    // exhaustively), and libm::expm1f (fdlibm) is not correctly rounded.
+    libm::expm1(f64::from(x)) as f32
 }
 
 #[inline]
@@ -1440,117 +1109,36 @@ pub fn logbf(x: f32) -> f32 {
 super::avx2_fma_dispatch! {
     /// Error function, single precision.
     ///
-    /// Verbatim port of the ARM optimized-routines `erff` (the algorithm glibc 2.42
-    /// ships): a pure polynomial on |x| < 0.875 and `exp` of a polynomial on
-    /// [0.875, 4); ±1 beyond. Worst-case error ~1.09 ULP. `libm::erff` (fdlibm) is
-    /// ~2x slower. The rare tiny |x| < 2^-28 path defers to `libm::erff` so the
-    /// underflow/subnormal flag semantics stay exact.
+    /// f64 erf rounded once (see `erff_body`).
     #[inline]
     pub fn erff(x: f32) -> f32 => erff_body;
 }
 
 #[inline(always)]
 fn erff_body(x: f32) -> f32 {
-    const A: [f32; 6] = [
-        f32::from_bits(0x3e0375d3),
-        f32::from_bits(0xbec09370),
-        f32::from_bits(0x3de70d23),
-        f32::from_bits(0xbcdb45e9),
-        f32::from_bits(0x3ba39fa4),
-        f32::from_bits(0xba1d0d41),
-    ];
-    const B: [f32; 7] = [
-        f32::from_bits(0x3e03ce86),
-        f32::from_bits(0x3f228550),
-        f32::from_bits(0x3ddaae58),
-        f32::from_bits(0xbcc6b180),
-        f32::from_bits(0x3b7e899b),
-        f32::from_bits(0xb9c8e966),
-        f32::from_bits(0x37911480),
-    ];
-    const TWO_OVER_SQRT_PI_M1: f32 = f32::from_bits(0x3e0375d4);
-
-    let ix = x.to_bits();
-    let sign = ix >> 31;
-    let ia12 = (ix >> 20) & 0x7ff;
-
-    if ia12 < 0x3f6 {
-        // |x| < 0.875.
-        if ia12 < 0x318 {
-            // |x| < 2^-28 (incl. tiny/subnormal): defer for exact uflow flag.
-            return libm::erff(x);
-        }
-        let x2 = x * x;
-        // x + x*P(x^2), Horner.
-        let mut r = A[5];
-        r = r.mul_add(x2, A[4]);
-        r = r.mul_add(x2, A[3]);
-        r = r.mul_add(x2, A[2]);
-        r = r.mul_add(x2, A[1]);
-        r = r.mul_add(x2, A[0]);
-        r.mul_add(x, x)
-    } else if ia12 < 0x408 {
-        // |x| < 4.0: erf = sign*(1 - exp(-(a + a*Q(a)))).
-        let a = x.abs();
-        let mut r = B[6].mul_add(a, B[5]);
-        let u = B[4].mul_add(a, B[3]);
-        let x2 = x * x;
-        r = r.mul_add(x2, u);
-        r = r.mul_add(a, B[2]);
-        r = r.mul_add(a, B[1]);
-        r = r.mul_add(a, B[0]);
-        r = r.mul_add(a, a);
-        r = expf(-r);
-        if sign != 0 { -1.0 + r } else { 1.0 - r }
-    } else {
-        // |x| >= 4.0.
-        if ia12 >= 0x7f8 {
-            // erff(nan)=nan, erff(±inf)=±1.
-            return (1.0 - ((ix >> 31) << 1) as f32) + 1.0 / x;
-        }
-        if sign != 0 { -1.0 } else { 1.0 }
-    }
+    // f64 erf rounded once: glibc 2.43's erff is correctly rounded and this
+    // matched it on all of 16.8M sampled inputs (scratch f64sample.c), where
+    // the former f32 evaluation differed on 691k of them (1 ULP).
+    crate::math::erf(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn erfcf(x: f32) -> f32 {
-    // Well-conditioned region: build erfc from the fast `erff` kernel.
-    //   x <= 0:          erfc(x) = 1 + erf(|x|)  (result in [1,2], no cancellation)
-    //   0 < x <= 0.8:    erfc(x) = 1 - erf(x)    (erfc >= ~0.26, cancellation <=~3 ULP)
-    // libm::erfcf is ~1.5x slower than glibc; this routes the bulk of the domain
-    // through the in-tree ARM erff port instead. The small-erfc tail (x > 0.875,
-    // where 1-erf loses precision and the result eventually underflows) stays on
-    // libm::erfcf, which also yields the exact subnormal/underflow flag.
-    if x.is_finite() {
-        if x <= 0.0 {
-            return 1.0 + erff(-x);
-        }
-        if x <= 0.8 {
-            return 1.0 - erff(x);
-        }
-    }
-    let r = libm::erfcf(x);
-    // erfc(x) for large finite positive x underflows toward 0; glibc raises
-    // FE_UNDERFLOW on the subnormal/zero result, libm omits it. erfc(+inf)=0
-    // is an exact limit (no underflow), so exclude non-finite x.
-    if x.is_finite() && x > 0.0 && r < f32::MIN_POSITIVE {
-        fe_underflow_f32();
-    }
-    r
+    // CORE-MATH f64 erfc (correctly rounded) rounded once: glibc 2.43's erfcf
+    // is correctly rounded too, and this matches it on all but 1 of the 2^32
+    // inputs (exhaustive, scratch f64route.c). The narrowing raises
+    // FE_UNDERFLOW for a subnormal f32 result. The former 1 +- erff(x) and
+    // libm::erfcf paths were up to 3 ULP off (26.9M inputs differed).
+    crate::math::erfc(f64::from(x)) as f32
 }
 
 #[inline]
 pub fn lgammaf(x: f32) -> f32 {
-    // Large-x tail [13,1e15): route through fl's now-fast f64 `lgamma` (Stirling kernel)
-    // and round once — f64 precision makes this BIT-EXACT vs glibc lgammaf (0 ULP over the
-    // [13,1e30) sweep) and ~2.3x faster than libm::lgammaf, which is slow here. [3,13)
-    // already beats glibc on libm (no lever); [1e15,∞) (near the f32 Γ overflow + its
-    // FE_OVERFLOW/ERANGE) and x<13 stay on libm::lgammaf. `crate::math::lgamma` is a direct
-    // Rust call (no membrane round-trip). Mirrors the f64 lgamma tail lever.
-    if (13.0..1.0e15).contains(&x) {
-        return crate::math::lgamma(x as f64) as f32;
-    }
-    libm::lgammaf(x)
+    // CORE-MATH f64 lgamma (correctly rounded) rounded once; glibc 2.43's
+    // lgammaf is correctly rounded and this matches it on all but 2 of the 2^32
+    // inputs (exhaustive, scratch f64route.c). libm::lgammaf below 13 was off by
+    // up to 7.5M ULP near the zeros of lgamma (386M inputs differed).
+    lgammaf_r(x).0
 }
 
 #[inline]
@@ -1796,12 +1384,9 @@ pub fn gammaf(x: f32) -> f32 {
 /// Reentrant lgammaf: returns `(lgammaf(x), signgam)` (f32 variant).
 #[inline]
 pub fn lgammaf_r(x: f32) -> (f32, i32) {
-    // Same [13,1e15) tail lever as `lgammaf` (must agree value-for-value with it, since the
-    // ABI reads the value from lgammaf and the sign from here). lgamma > 0 there → sign +1.
-    if (13.0..1.0e15).contains(&x) {
-        return (crate::math::lgamma(x as f64) as f32, 1);
-    }
-    libm::lgammaf_r(x)
+    // See `lgammaf`; the sign is CORE-MATH's too, so value and sign agree.
+    let (v, sign) = crate::math::lgamma_r(f64::from(x));
+    (v as f32, sign)
 }
 
 // ---------------------------------------------------------------------------
@@ -2058,7 +1643,7 @@ mod tests {
     }
 
     #[test]
-    fn log10f_dyadic_profile_grid_within_4_ulps() {
+    fn log10f_dyadic_profile_grid_matches_glibc() {
         let mut worst = 0u32;
         for k in 0..=64 {
             let x = 0.5 + (k as f32) * 0.031_25;
@@ -2066,8 +1651,9 @@ mod tests {
             let want = x.log10();
             let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
             worst = worst.max(ulps);
-            assert!(
-                within_ulps_f32(got, want, 4),
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
                 "log10f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
             );
         }
@@ -2083,14 +1669,14 @@ mod tests {
             f32::NAN,
         ] {
             let got = log10f(x);
-            let want = libm::log10f(x);
+            let want = x.log10(); // host glibc
             if got.is_nan() && want.is_nan() {
                 continue;
             }
             assert_eq!(
                 got.to_bits(),
                 want.to_bits(),
-                "log10f fallback drifted at {x:?}"
+                "log10f({x:?}) differs from glibc"
             );
         }
         println!("log10f dyadic profile grid worst ULP = {worst}");
@@ -2114,14 +1700,19 @@ mod tests {
             .collect();
         println!("log10f dyadic profile corpus sha256 = {digest}");
         assert_eq!(
-            digest, "d7fd22a304b20df2cf355da32d9cf28877f90e34d6b552155d434bb8e2d585fc",
+            // Updated 2026-10-07 with the f64-route log10f: these 64 points are
+            // the grid that log10f_dyadic_profile_grid_matches_glibc checks
+            // bit-exact against host glibc in the same run.
+            digest,
+            "fc8405ac49ee455327f65542613be8ca29612a99283f84f9ac88d872592c141d",
             "log10f dyadic profile corpus hash drifted: got {digest}"
         );
     }
 
     #[test]
-    fn expf_medium_fast_path_within_4_ulps() {
-        // Dense sweep of the fast-path interval [-5, 5] vs host glibc expf.
+    fn expf_medium_range_matches_glibc_exactly() {
+        // Dense sweep of [-5, 5] (a former 4-ULP shortcut's range) vs host
+        // glibc expf: the kernel is glibc's algorithm, so the results are equal.
         let mut s = 0x1357_9bdf_u32;
         let mut maxu = 0u32;
         for _ in 0..1_000_000 {
@@ -2140,10 +1731,7 @@ mod tests {
                 maxu = u;
             }
         }
-        assert!(
-            maxu <= 4,
-            "expf medium fast path max {maxu} ULP > 4 vs glibc"
-        );
+        assert_eq!(maxu, 0, "expf max {maxu} ULP vs glibc on [-5, 5]");
     }
 
     #[test]
@@ -2495,7 +2083,10 @@ mod tests {
     }
 
     #[test]
-    fn expm1f_positive_fast_path_within_4_ulps() {
+    fn expm1f_matches_glibc_where_a_shortcut_was_3_ulps_off() {
+        // [0.5, 2.5]: a former `expf(x) - 1` shortcut's range.
+        const EXPM1F_POSITIVE_FAST_MIN: f32 = 0.5;
+        const EXPM1F_POSITIVE_FAST_MAX: f32 = 2.5;
         let mut s = 0x54a3_31d5_u32;
         let mut worst = 0u32;
         for _ in 0..1_000_000 {
@@ -2509,12 +2100,12 @@ mod tests {
             let want = x.exp_m1();
             let ulps = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
             worst = worst.max(ulps);
-            assert!(
-                ulps <= 4,
+            assert_eq!(
+                ulps, 0,
                 "expm1f({x}) = {got:?} but glibc = {want:?} ({ulps} ULP)"
             );
         }
-        println!("expm1f positive fast path worst ULP = {worst}");
+        assert_eq!(worst, 0);
     }
 
     #[test]
