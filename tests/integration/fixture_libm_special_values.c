@@ -12,6 +12,7 @@
  * subject. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <math.h>
 #include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -83,8 +84,50 @@ static void floats(void) {
     }
 }
 
+/* fmax/fmin family with quiet and signaling NaN arguments: a quiet NaN gives
+ * the other operand silently, a signaling one poisons the result (fmax...) or
+ * raises FE_INVALID (fmaximum_num...), fmaximum/fminimum propagate. fl raised
+ * FE_INVALID for quiet NaNs and returned the number for signaling ones. */
+static void min_max(void) {
+    static const char *dnames[] = {"fmax", "fmin", "fmaxmag", "fminmag", "fmaximum_num",
+                                   "fminimum_num", "fmaximum", "fminimum", 0};
+    double q = __builtin_nan(""), sn = __builtin_nans("");
+    float qf = __builtin_nanf(""), snf = __builtin_nansf("");
+    for (const char **n = dnames; *n; n++) {
+        double (*d)(double, double) = (double (*)(double, double))dlsym(RTLD_DEFAULT, *n);
+        char fname[32];
+        snprintf(fname, sizeof fname, "%sf", *n);
+        float (*f)(float, float) = (float (*)(float, float))dlsym(RTLD_DEFAULT, fname);
+        if (!d || !f) {
+            continue;
+        }
+        double din[][2] = {{q, 1}, {1, q}, {sn, 1}, {1, sn}, {sn, q}, {-0.0, 0.0}};
+        float fin[][2] = {{qf, 1}, {1, qf}, {snf, 1}, {1, snf}, {snf, qf}, {-0.0f, 0.0f}};
+        printf("%-13s", *n);
+        for (unsigned k = 0; k < 6; k++) {
+            uint64_t b;
+            feclearexcept(FE_ALL_EXCEPT);
+            double r = d(din[k][0], din[k][1]);
+            int inv = fetestexcept(FE_INVALID) != 0;
+            memcpy(&b, &r, sizeof b);
+            printf(" %016llx%s", (unsigned long long)b, inv ? "!" : " ");
+        }
+        printf(" |");
+        for (unsigned k = 0; k < 6; k++) {
+            uint32_t b;
+            feclearexcept(FE_ALL_EXCEPT);
+            float r = f(fin[k][0], fin[k][1]);
+            int inv = fetestexcept(FE_INVALID) != 0;
+            memcpy(&b, &r, sizeof b);
+            printf(" %08x%s", (unsigned)b, inv ? "!" : " ");
+        }
+        printf("\n");
+    }
+}
+
 int main(void) {
     doubles();
     floats();
+    min_max();
     return 0;
 }
