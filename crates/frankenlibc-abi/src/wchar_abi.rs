@@ -3986,12 +3986,26 @@ unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
         /// baseline x86-64 build, where wcsnlen at a 4096 bound measured 3.0x
         /// the x86-64-v3 build against live glibc (bd-rc0923-epic-eeuy4f.13).
         #[inline(always)]
-        unsafe fn core_wcsnlen(s: *const u32, n: usize) -> usize => core_wcsnlen_body;
+        unsafe fn core_wcsnlen_avx2(s: *const u32, n: usize) -> usize => core_wcsnlen_body;
     }
     #[inline(always)]
     unsafe fn core_wcsnlen_body(s: *const u32, n: usize) -> usize {
         // SAFETY: the caller guarantees `n` readable elements at `s`.
         unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, n), n) }
+    }
+    /// Only spans of 256+ elements -- where the 64-lane fold runs -- go to the
+    /// twin. Below that the check and the call cost more than SSE2 loses: with
+    /// every bound dispatched, bounds 4..128 measured 1.35-1.63x the v3 build,
+    /// against 0.93-1.30x for the inline baseline scan.
+    #[inline(always)]
+    unsafe fn core_wcsnlen(s: *const u32, n: usize) -> usize {
+        if n >= 256 {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { core_wcsnlen_avx2(s, n) }
+        } else {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { core_wcsnlen_body(s, n) }
+        }
     }
 
     const ELEM: usize = size_of::<u32>();
