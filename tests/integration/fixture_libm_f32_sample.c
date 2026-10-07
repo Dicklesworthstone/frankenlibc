@@ -6,8 +6,8 @@
  * fl's former f32 evaluations differing from glibc on up to 1.7G of the 2^32
  * inputs (acoshf: inf for finite results above ~1.8e19; lgammaf: 7.5M ULP).
  * NaN results are canonicalised: payloads are the special-values gate's job.
- * sinf/cosf/exp10f are omitted: glibc's are not correctly rounded and fl's
- * differ by 1 ULP on ~0.7% / 0.004% of inputs. */
+ * sinf/cosf are omitted: glibc's are not correctly rounded and fl's
+ * differ by 1 ULP on ~0.7% of inputs. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <stdint.h>
@@ -16,7 +16,7 @@
 
 static const char *names[] = {"expf",  "expm1f", "acoshf", "lgammaf", "erfcf", "log10f",
                               "asinhf", "atanf",  "tanf",   "asinf",   "acosf", "erff",
-                              "atanhf", "sinhf",  "coshf",  "tgammaf", 0};
+                              "atanhf", "sinhf",  "coshf",  "tgammaf", "exp10f", 0};
 
 int main(void) {
     /* Nothing references libm directly (--as-needed would drop it); load it

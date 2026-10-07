@@ -865,34 +865,23 @@ pub fn exp10(x: f64) -> f64 {
     if x.is_finite() && x == x.trunc() && (-22.0..=22.0).contains(&x) {
         return 10.0_f64.powi(x as i32);
     }
-    // Non-integer / out-of-fast-range exponents: 10^x = 2^(x·log2 10) via the
-    // fast exp2 kernel. exp2 is ~0.6x glibc's cost, vs the slow libm::exp this
-    // replaced (~1.7x). A single f64 log2(10) leaves ~8 ULP after exp2 amplifies
-    // the reduction error, so carry the product in extended precision: fma
-    // recovers the rounding error of `x·LOG2_10_HI`, `LOG2_10_LO` adds the
-    // constant's residual, and the small `e·ln2` term corrects exp2. This holds
-    // within 4 ULP of glibc on [-50, 50] (verified by the sweep in
-    // `exp10_exp2_fast_path` and the live glibc diff in conformance_diff_math);
-    // |x| > 50 (10^50 is already astronomically large) defers to libm::exp10.
-    if (-50.0..=50.0).contains(&x) {
-        let hi = core::f64::consts::LOG2_10;
-        let p = x * hi;
-        let e = x.mul_add(hi, -p) + x * LOG2_10_LO;
-        // Use fl's fused exp2 kernel (ARM/__ieee754_exp2, 0.507 ULP, ~0.6x glibc) — the
-        // comment above already intended it, but the code called the slow generic
-        // `libm::exp2`. Same accuracy structure, faster.
-        return crate::math::exp2(p) * (1.0 + e * core::f64::consts::LN_2);
+    // 10^x = exp(x*ln10) with x*ln10 carried as a double-double into exp's
+    // kernel (glibc's exp/pow kernel, the tail added before its polynomial):
+    // one rounding, ~0.52 ULP. The former 2^(x*log2 10) * (1 + e*ln2) form
+    // rounded twice and was wrong (vs a long-double reference) on 44k of 2M
+    // sampled inputs where glibc was wrong on 329, differing from glibc on 13%.
+    // inf/NaN keep libm's special cases; overflow/underflow are the kernel's.
+    if !x.is_finite() {
+        return libm::exp10(x);
     }
-    // libm::exp10 is correctly rounded here; the previous `exp(x * ln10)` form
-    // double-rounded (product + exp each round) and ran ~168 ULP off glibc on
-    // the rare |x| > 50 tail (bd-mrnzim).
-    libm::exp10(x)
+    let hi = x * core::f64::consts::LN_10;
+    let lo = x.mul_add(core::f64::consts::LN_10, -hi) + x * LN_10_LO;
+    super::exp::exp_with_tail(hi, lo)
 }
 
-/// Residual of the `f64` `log2(10)` (`core::f64::consts::LOG2_10`): true
-/// `log2(10) = LOG2_10 + LOG2_10_LO`. Carries extra precision through the
-/// `exp10` argument reduction so `exp2` amplification stays within 4 ULP.
-const LOG2_10_LO: f64 = 1.661_675_584_242_046_5e-16;
+/// Residual of the `f64` `ln(10)` (`core::f64::consts::LN_10`): true
+/// `ln(10) = LN_10 + LN_10_LO` (0xbcaf48ad494ea3e9).
+const LN_10_LO: f64 = f64::from_bits(0xbcaf_48ad_494e_a3e9);
 
 // ---------------------------------------------------------------------------
 // IEEE 754 classification helpers (glibc __fpclassify, __signbit, etc.)

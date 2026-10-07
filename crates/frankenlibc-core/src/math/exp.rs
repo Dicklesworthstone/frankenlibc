@@ -987,6 +987,14 @@ fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
     f64::from_bits(0x0010_0000_0000_0000) * y // 0x1p-1022
 }
 
+/// `exp(x + xtail)` rounded once, for an argument carried as a double-double
+/// (`exp10` passes x*ln10 this way). Overflow, underflow and subnormal results
+/// get pow's exact handling and FE flags.
+#[inline]
+pub(crate) fn exp_with_tail(x: f64, xtail: f64) -> f64 {
+    pow_exp_inline(x, xtail, 0)
+}
+
 /// sign*exp(x+xtail); `sign_bias` is `POW_SIGN_BIAS` or 0. Always inlined, as
 /// `pow_log_inline`.
 #[inline(always)]
@@ -1262,8 +1270,14 @@ fn log2_body(x: f64) -> f64 {
         let q = r.mul_add(LOG2_B[1], LOG2_B[0]);
         let mut y = r2.mul_add(q, hi);
         lo += r2.mul_add(q, hi - y);
-        let inner1 = r2.mul_add(r.mul_add(LOG2_B[5], LOG2_B[4]), r.mul_add(LOG2_B[3], LOG2_B[2]));
-        let inner2 = r2.mul_add(r.mul_add(LOG2_B[9], LOG2_B[8]), r.mul_add(LOG2_B[7], LOG2_B[6]));
+        let inner1 = r2.mul_add(
+            r.mul_add(LOG2_B[5], LOG2_B[4]),
+            r.mul_add(LOG2_B[3], LOG2_B[2]),
+        );
+        let inner2 = r2.mul_add(
+            r.mul_add(LOG2_B[9], LOG2_B[8]),
+            r.mul_add(LOG2_B[7], LOG2_B[6]),
+        );
         lo = r4.mul_add(r4.mul_add(inner2, inner1), lo);
         y += lo;
         return y;
@@ -1301,7 +1315,10 @@ fn log2_body(x: f64) -> f64 {
     let r4 = r2 * r2;
     let p = r4.mul_add(
         r.mul_add(LOG2_A[5], LOG2_A[4]),
-        r2.mul_add(r.mul_add(LOG2_A[3], LOG2_A[2]), r.mul_add(LOG2_A[1], LOG2_A[0])),
+        r2.mul_add(
+            r.mul_add(LOG2_A[3], LOG2_A[2]),
+            r.mul_add(LOG2_A[1], LOG2_A[0]),
+        ),
     );
     r2.mul_add(p, lo) + hi
 }
@@ -1792,9 +1809,8 @@ pub fn pow(base: f64, exponent: f64) -> f64 {
     // pow(±0, y) for finite y < 0 is a pole: glibc raises FE_DIVBYZERO --
     // except y == -1.0, which it leaves flag-free (verified vs host glibc).
     if base == 0.0 && exponent.is_finite() && exponent < 0.0 && exponent != -1.0 {
-        let _ = core::hint::black_box(
-            core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64),
-        );
+        let _ =
+            core::hint::black_box(core::hint::black_box(-1.0_f64) / core::hint::black_box(0.0_f64));
     }
     pow_fused(base, exponent)
 }
