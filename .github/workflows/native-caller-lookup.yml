@@ -1,0 +1,57 @@
+name: Native caller-relative lookup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-caller-lookup.yml'
+  pull_request:
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-caller-lookup.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-caller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute native and host caller-scope regressions
+        run: |
+          mkdir -p artifacts/native-caller
+          cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_caller_test -- --nocapture \
+            2>&1 | tee "artifacts/native-caller/${FRANKENLIBC_MODE}.log"
+          grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
+            "artifacts/native-caller/${FRANKENLIBC_MODE}.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-caller-${{ matrix.mode }}
+          path: artifacts/native-caller/

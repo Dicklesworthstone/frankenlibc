@@ -48,6 +48,9 @@ mod ifunc;
 #[path = "dlfcn_binding.rs"]
 mod binding;
 
+#[path = "dlfcn_lookup.rs"]
+mod lookup;
+
 #[path = "dlfcn_unique.rs"]
 mod unique;
 
@@ -129,6 +132,8 @@ struct NativeDso {
     // Global visibility is ordered by promotion, not original mapping time.
     global_rank: usize,
     symbolic: bool,
+    // Caller-relative lookup memberships, not owning lifetime edges.
+    lookup_scopes: Vec<lookup::LocalScope>,
     // DT_NEEDED order is the lookup scope; relocation-only providers are
     // lifetime edges, not additional members of a handle's lookup scope.
     needed: Vec<usize>,
@@ -469,6 +474,9 @@ fn reopen(dsos: &mut [NativeDso], index: usize, flags: c_int) -> Option<*mut c_v
     let id = dsos[index].id;
     dsos[index].references = references;
     dsos[index].nodelete |= flags & dlfcn_core::RTLD_NODELETE != 0;
+    // Reopening a dependency gives it an independent local scope if its
+    // original load-group root later retires. DEEPBIND cannot be added by reopen.
+    lookup::attach_scope(dsos, id, false);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
         promote_global(dsos, id);
     }
@@ -511,6 +519,7 @@ fn map_object(
         global: false,
         global_rank: 0,
         symbolic,
+        lookup_scopes: Vec::new(),
         dependencies: needed.clone(),
         needed,
         needed_by_name,
@@ -597,6 +606,9 @@ impl SymbolLookup for Resolver<'_> {
         }
         if version.is_some_and(|name| !super::version_supported(name.as_bytes())) {
             return None;
+        }
+        if matches!(name, "dlsym" | "dlvsym") {
+            return lookup::resolver_address(name, version);
         }
         let address = super::resolve_exported_symbol(name.as_bytes());
         (!address.is_null()).then_some(address as u64)
@@ -780,6 +792,9 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     initialization::select(&mut pending);
     phdr::published(pending.len());
     dsos.extend(pending);
+    // Publish lookup membership only for a fully bound group. Neither failed
+    // staging nor membership itself acquires a provider lifetime dependency.
+    lookup::attach_scope(&mut dsos, root, flags & dlfcn_core::RTLD_DEEPBIND != 0);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
         promote_global(&mut dsos, root);
     }
@@ -1090,6 +1105,9 @@ fn collect_unreachable() -> Option<()> {
         cxa::finalize_owners(&ids)?;
         let mut dsos = registry().lock().ok()?;
         dsos.retain(|dso| !ids.contains(&dso.id));
+        for dso in dsos.iter_mut() {
+            dso.lookup_scopes.retain(|scope| !ids.contains(&scope.root));
+        }
         phdr::retired(ids.len());
         // Nested closes can make an external provider unreachable. Recompute
         // after dropping this batch's edges instead of leaking that provider.
