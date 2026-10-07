@@ -17,10 +17,15 @@
 /// twin contracts nothing the source does not spell out. The check is a test
 /// of the CPUID bits `std` caches after the first call; a build that already
 /// targets AVX2 and FMA compiles the twin out and calls `body` directly.
+///
+/// The baseline copy is out of line too, so the dispatcher itself is only the
+/// test and a tail call: with `body` inlined into it, every call -- the AVX2
+/// ones included -- paid the baseline body's frame (`pow_fused`: six pushes
+/// and a 136-byte stack adjustment) before the test.
 macro_rules! avx2_fma_dispatch {
     ($(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
         $(#[$attr])*
-        #[allow(unsafe_code)]
+        #[allow(unsafe_code, unreachable_code)]
         $vis fn $name($($arg: $ty),*) -> $ret {
             #[cfg(all(
                 target_arch = "x86_64",
@@ -31,12 +36,17 @@ macro_rules! avx2_fma_dispatch {
                 fn avx2_fma_twin($($arg: $ty),*) -> $ret {
                     $body($($arg),*)
                 }
+                #[inline(never)]
+                fn baseline($($arg: $ty),*) -> $ret {
+                    $body($($arg),*)
+                }
                 if std::arch::is_x86_feature_detected!("avx2")
                     && std::arch::is_x86_feature_detected!("fma")
                 {
                     // SAFETY: the CPU supports AVX2 and FMA, checked just above.
                     return unsafe { avx2_fma_twin($($arg),*) };
                 }
+                return baseline($($arg),*);
             }
             $body($($arg),*)
         }

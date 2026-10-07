@@ -164,10 +164,13 @@ fn string_raw_passthrough_active() -> bool {
 /// the CPU has AVX2, and the baseline `body` otherwise. `body` must be
 /// `#[inline(always)]`. Same results either way: the twin is the same source.
 /// The check is a test of the CPUID bits `std` caches; a build that already
-/// targets AVX2 compiles the twin out.
+/// targets AVX2 compiles the twin out. The baseline copy is out of line as
+/// well, so the dispatcher inlined at a call site is just the test and a call,
+/// not the baseline body's register and stack setup paid on every call.
 macro_rules! avx2_dispatch {
     ($(#[$attr:meta])* $vis:vis unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
         $(#[$attr])*
+        #[allow(unreachable_code)]
         $vis unsafe fn $name($($arg: $ty),*) -> $ret {
             #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
             {
@@ -176,11 +179,18 @@ macro_rules! avx2_dispatch {
                     // SAFETY: forwarded from the caller's contract.
                     unsafe { $body($($arg),*) }
                 }
+                #[inline(never)]
+                unsafe fn baseline($($arg: $ty),*) -> $ret {
+                    // SAFETY: forwarded from the caller's contract.
+                    unsafe { $body($($arg),*) }
+                }
                 if std::is_x86_feature_detected!("avx2") {
                     // SAFETY: the CPU has AVX2, checked just above; the rest is
                     // the caller's contract.
                     return unsafe { avx2_twin($($arg),*) };
                 }
+                // SAFETY: forwarded from the caller's contract.
+                return unsafe { baseline($($arg),*) };
             }
             // SAFETY: forwarded from the caller's contract.
             unsafe { $body($($arg),*) }
@@ -3907,6 +3917,7 @@ fn wide_read_within_page(addr: usize) -> bool {
 /// build its 32-lane masks are spilled and re-read a byte at a time, and strcmp
 /// measured 4-17x slower than the x86-64-v3 build (bd-rc0923-epic-eeuy4f.13).
 #[inline(always)]
+#[allow(unreachable_code)]
 unsafe fn scan_strcmp<const BOUNDED: bool>(
     s1: *const c_char,
     s2: *const c_char,
@@ -3923,11 +3934,22 @@ unsafe fn scan_strcmp<const BOUNDED: bool>(
             // SAFETY: forwarded from the caller's contract.
             unsafe { scan_strcmp_body::<B>(s1, s2, bound) }
         }
+        #[inline(never)]
+        unsafe fn baseline<const B: bool>(
+            s1: *const c_char,
+            s2: *const c_char,
+            bound: usize,
+        ) -> (usize, bool) {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_strcmp_body::<B>(s1, s2, bound) }
+        }
         if std::is_x86_feature_detected!("avx2") {
             // SAFETY: the CPU has AVX2, checked just above; the rest is the
             // caller's contract.
             return unsafe { avx2_twin::<BOUNDED>(s1, s2, bound) };
         }
+        // SAFETY: forwarded from the caller's contract.
+        return unsafe { baseline::<BOUNDED>(s1, s2, bound) };
     }
     // SAFETY: forwarded from the caller's contract.
     unsafe { scan_strcmp_body::<BOUNDED>(s1, s2, bound) }
