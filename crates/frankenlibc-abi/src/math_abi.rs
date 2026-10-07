@@ -1768,6 +1768,10 @@ pub unsafe extern "C" fn atanhf(x: f32) -> f32 {
             set_range_errno();
         }
     }
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -1832,11 +1836,24 @@ pub unsafe extern "C" fn tgammaf(x: f32) -> f32 {
             set_range_errno(); // zero or overflow/underflow: range error
         }
     }
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
+    // A NaN is returned quieted with signgam 1, FE_INVALID only for a
+    // signaling one (glibc); lgammaf_r's arithmetic raised it for quiet NaNs.
+    if x.is_nan() {
+        unsafe {
+            signgam = 1;
+            __signgam = 1;
+        }
+        return std::hint::black_box(x) + 0.0;
+    }
     // Compute via reentrant version to get sign, then update global signgam.
     let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
     unsafe {
@@ -3234,6 +3251,10 @@ pub unsafe extern "C" fn jnf(n: c_int, x: f32) -> f32 {
 pub unsafe extern "C" fn y0f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y0f);
     bessel_y_errno(x.into());
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -3241,6 +3262,10 @@ pub unsafe extern "C" fn y0f(x: f32) -> f32 {
 pub unsafe extern "C" fn y1f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 12, frankenlibc_core::math::y1f);
     bessel_y_errno(x.into());
+    // glibc's f32 domain-error NaN is the x86 default NaN, sign set.
+    if out.is_nan() && !x.is_nan() {
+        return f32::from_bits(0xffc0_0000);
+    }
     out
 }
 
@@ -5382,7 +5407,11 @@ pub unsafe extern "C" fn cospif(x: f32) -> f32 {
     // arg-reduction in f32 loses enormous ULP near cospi's zeros (x = k+0.5),
     // where cosf amplifies the f32 `r*pi` rounding error (up to ~28000 ULP).
     // Routing through the f64 cospi is byte-exact vs glibc (0 ULP over a
-    // 400k-point sweep), and the f64 path handles NaN/inf/large-x identically.
+    // 400k-point sweep), and the f64 path handles inf/large-x identically. A
+    // NaN is only quieted: glibc's cospif does not set its sign as cospi does.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     unsafe { cospi(x as f64) as f32 }
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -5629,8 +5658,12 @@ fn roundevenf_impl(x: f32) -> f32 {
     let bits = x.to_bits();
     let sign = bits & 0x8000_0000;
     let e = ((bits >> 23) & 0xff) as i32;
-    // |x| >= 2^23 (and inf/NaN): already integral.
+    // |x| >= 2^23 and inf: already integral; a NaN is quieted (FE_INVALID
+    // for a signaling one), as glibc.
     if e >= 127 + 23 {
+        if x.is_nan() {
+            return std::hint::black_box(x) + 0.0;
+        }
         return x;
     }
     // |x| < 1: ±0 or ±1.
