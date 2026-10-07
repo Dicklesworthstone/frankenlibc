@@ -943,7 +943,18 @@ pub fn cbrtf(x: f32) -> f32 {
 
 #[inline]
 pub fn hypotf(x: f32, y: f32) -> f32 {
-    libm::hypotf(x, y)
+    // In f64: the squares of f32 values are exact and their sum nearly always
+    // is, so one f64 sqrt rounded to f32 is what glibc 2.43 returns (libm's
+    // f32 algorithm differed by 1 ULP on ~10% of sampled inputs). An infinity
+    // wins over a NaN (C F.10.4.3); the narrowing raises FE_OVERFLOW.
+    if x.is_infinite() || y.is_infinite() {
+        return f32::INFINITY;
+    }
+    if x.is_nan() || y.is_nan() {
+        return core::hint::black_box(x) + y;
+    }
+    let (dx, dy) = (f64::from(x), f64::from(y));
+    (dx * dx + dy * dy).sqrt() as f32
 }
 
 // --- Min / max / dim / fma ---
@@ -1652,6 +1663,25 @@ mod tests {
             digest, "6ca9ff9314c15c49d761f9686434e351789ff0815c083abdbf45991cb2a6ba2f",
             "log2f dyadic profile corpus hash drifted: got {digest}"
         );
+    }
+
+    #[test]
+    fn hypotf_matches_glibc() {
+        // `f32::hypot` is the host glibc's hypotf in this test binary.
+        let mut st = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200_000 {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            let x = f32::from_bits(st as u32);
+            let y = f32::from_bits((st >> 32) as u32);
+            let (got, want) = (hypotf(x, y), x.hypot(y));
+            if got.is_nan() && want.is_nan() {
+                continue;
+            }
+            assert_eq!(got.to_bits(), want.to_bits(), "hypotf({x:e}, {y:e})");
+        }
+        assert_eq!(hypotf(f32::INFINITY, f32::NAN), f32::INFINITY);
     }
 
     #[test]
