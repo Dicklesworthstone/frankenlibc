@@ -494,6 +494,14 @@ fn is_integral_f64(x: f64) -> bool {
 
 #[inline]
 fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    // A NaN argument is the result, quieted -- FE_INVALID for a signaling NaN
+    // only, sign and payload kept -- in every function routed here (glibc
+    // 2.43, scratch nansweep.c). The kernels did not agree: exp/log/floor
+    // returned an sNaN unquieted and silent, exp2/exp10 raised FE_INVALID for
+    // a quiet NaN, tan/y0/y1 returned the canonical NaN.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
     // membrane is provably always-Allow for MathFenv and can never heal a math
     // result, so `decide()`+`observe()` cannot change the output. Skip them for
@@ -832,7 +840,9 @@ pub unsafe extern "C" fn copysign(x: f64, y: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabs(x: f64) -> f64 {
-    unary_entry(x, 4, frankenlibc_core::math::fabs)
+    // A sign-bit clear, as in glibc: a NaN keeps its payload and stays
+    // signaling, and no exception is raised.
+    f64::from_bits(x.to_bits() & !(1 << 63))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -1218,6 +1228,10 @@ pub unsafe extern "C" fn logb(x: f64) -> f64 {
     // FE_DIVBYZERO alone and leaves errno untouched — C99 logb has no SVID
     // errno wrapper. The flag itself is raised in core, so dropping the errno
     // here does not weaken the pole signal.
+    if x.is_nan() {
+        // Quieted, FE_INVALID only for a signaling NaN (glibc).
+        return std::hint::black_box(x) + 0.0;
+    }
     frankenlibc_core::math::logb(x)
 }
 
@@ -1401,6 +1415,9 @@ pub unsafe extern "C" fn significand(x: f64) -> f64 {
     if x == 0.0 || !x.is_finite() {
         pi_fn_raise_invalid_f64();
     }
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     out
 }
 
@@ -1426,6 +1443,10 @@ pub unsafe extern "C" fn pow10(x: f64) -> f64 {
 
 #[inline(always)]
 fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
+    // NaN in, quieted NaN out; see `unary_entry`.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
         let raw = f(x);
@@ -1649,7 +1670,8 @@ pub unsafe extern "C" fn sqrtf(x: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fabsf(x: f32) -> f32 {
-    unary_entry_f32(x, 2, frankenlibc_core::math::fabsf)
+    // A sign-bit clear; see `fabs`.
+    f32::from_bits(x.to_bits() & !(1 << 31))
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5306,12 +5328,14 @@ fn pi_fn_raise_invalid_f32() {
 // precision. |x|>=2^53 is always an even integer: sinpi=±0, cospi=1, tanpi=±0.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cospi(x: f64) -> f64 {
+    // glibc 2.43 returns every NaN with the sign bit SET (quieted; FE_INVALID
+    // for a signaling one) and +-inf the default NaN, FE_INVALID.
     if x.is_nan() {
-        return x;
+        return -(std::hint::black_box(x).abs()) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     if x.abs() >= 9007199254740992.0 {
         return 1.0; // even integer → cos(pi*even)=+1
@@ -5381,12 +5405,13 @@ pub unsafe extern "C" fn cospif128(x: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
+    // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return x;
+        return std::hint::black_box(x) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     if x.abs() >= 9007199254740992.0 {
         // even integer → sin(pi*even)=±0 with sign of x
@@ -5458,12 +5483,13 @@ pub unsafe extern "C" fn sinpif128(x: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tanpi(x: f64) -> f64 {
+    // glibc: a NaN quieted; +-inf the x86 default NaN (sign set), FE_INVALID.
     if x.is_nan() {
-        return x;
+        return std::hint::black_box(x) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();
-        return f64::NAN;
+        return f64::from_bits(0xfff8_0000_0000_0000);
     }
     // tanpi = sinpi/cospi: the (-1)^n factors cancel, the half-integer pole
     // becomes ±1/±0 (auto-raising FE_DIVBYZERO → ±inf), and the integer zero
@@ -5545,8 +5571,12 @@ fn roundeven_impl(x: f64) -> f64 {
     let bits = x.to_bits();
     let sign = bits & 0x8000_0000_0000_0000;
     let e = ((bits >> 52) & 0x7ff) as i32;
-    // |x| >= 2^52 (and inf/NaN): already integral, return unchanged.
+    // |x| >= 2^52 and inf: already integral, returned unchanged; a NaN is
+    // quieted (FE_INVALID for a signaling one), as glibc.
     if e >= 1023 + 52 {
+        if x.is_nan() {
+            return std::hint::black_box(x) + 0.0;
+        }
         return x;
     }
     // |x| < 1: result is ±0 (|x| <= 0.5, ties-to-even rounds 0.5 to 0) or ±1.
