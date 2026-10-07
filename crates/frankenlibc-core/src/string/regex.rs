@@ -311,7 +311,10 @@ struct MbClass {
     /// classes' keys (non-ASCII characters are members iff their key is
     /// one of these; ASCII members are already in `ascii`) ...
     equiv: Vec<(u32, &'static [u8])>,
-    /// ... and the tables that key a character.
+    /// ... ranges of collation-sequence values (`[a-z]` under collation
+    /// rules) ...
+    coll_ranges: Vec<(u32, u32)>,
+    /// ... and the tables that key and order a character.
     collate: Option<CollateTables<'static>>,
 }
 
@@ -360,6 +363,7 @@ impl MbClass {
             icase,
             folded,
             equiv: Vec::new(),
+            coll_ranges: Vec::new(),
             collate: None,
         }
     }
@@ -396,6 +400,21 @@ impl MbClass {
         self.ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp))
             || self.class_contains(cp)
             || self.equiv_contains(cp)
+            || self.coll_range_contains(cp)
+    }
+
+    /// Whether `cp`'s collation-sequence value is in one of the bracket's
+    /// collation ranges.
+    fn coll_range_contains(&self, cp: u32) -> bool {
+        if self.coll_ranges.is_empty() {
+            return false;
+        }
+        let seq = self.collate.as_ref().and_then(|t| t.collation_seq(cp));
+        seq.is_some_and(|v| {
+            self.coll_ranges
+                .iter()
+                .any(|&(lo, hi)| (lo..=hi).contains(&v))
+        })
     }
 
     /// Whether `cp` is in one of the bracket's equivalence classes: its
@@ -447,7 +466,12 @@ impl MbClass {
                 set.insert(b);
             }
         }
-        if self.negated || self.classes != 0 || !self.ranges.is_empty() || !self.equiv.is_empty() {
+        if self.negated
+            || self.classes != 0
+            || !self.ranges.is_empty()
+            || !self.equiv.is_empty()
+            || !self.coll_ranges.is_empty()
+        {
             set = set.union(FirstByteSet::range(0xC2, 0xF4));
         }
         set
@@ -789,6 +813,7 @@ fn is_any_char(ast: &Ast) -> bool {
                 && class.ranges.is_empty()
                 && class.classes == 0
                 && class.equiv.is_empty()
+                && class.coll_ranges.is_empty()
                 && class.ascii[0] | 1 == u64::MAX
                 && class.ascii[1] == u64::MAX
         }
@@ -2015,6 +2040,8 @@ impl<'a> Parser<'a> {
         // ... and, in a UTF-8 pattern of a collating locale, the equivalence
         // classes' keys.
         let mut equiv: Vec<(u32, &'static [u8])> = Vec::new();
+        // ... and its collation-sequence ranges.
+        let mut coll_ranges: Vec<(u32, u32)> = Vec::new();
         // Add the members `lo..=hi` (codepoints; bytes outside UTF-8 mode). A
         // UTF-8 pattern keeps every member as a codepoint range too, for the
         // ICASE uppercase comparison of non-ASCII input.
@@ -2096,19 +2123,61 @@ impl<'a> Parser<'a> {
                     }
                 }
                 // A literal character or a collating symbol `[.c.]`; either may
-                // be a range endpoint (`[[.a.]-z]` == `[a-z]`). In a UTF-8
-                // pattern a range spans codepoints.
+                // be a range endpoint (`[[.a.]-z]` == `[a-z]` in the C locale).
                 _ => {
+                    let start_sym = self.at_collating_symbol();
                     let start = self.read_bracket_element()?;
                     if self.peek() == Some(b'-')
                         && self.pat.get(self.pos + 1).is_some_and(|&b| b != b']')
                     {
                         self.advance(); // skip -
+                        let end_sym = self.at_collating_symbol();
                         let end = self.read_bracket_element()?;
-                        if end >= start {
-                            add(self.utf8, start, end, &mut ranges, &mut mb_ranges);
-                        } else if !self.empty_ranges {
-                            return Err(REG_ERANGE);
+                        match (self.utf8, self.collate) {
+                            // Collation rules order a UTF-8 range by collation
+                            // sequence (en_US `[a-z]` holds à, é and ß, not B):
+                            // ASCII members now, the rest at match time.
+                            (true, Some(tables)) => {
+                                // A collating-symbol endpoint takes the byte
+                                // table's value, as in glibc.
+                                let seq = |ch: u32, sym: bool| {
+                                    if sym {
+                                        tables.collation_seq_byte(u8::try_from(ch).ok()?)
+                                    } else {
+                                        tables.collation_seq(ch)
+                                    }
+                                };
+                                let (Some(lo), Some(hi)) =
+                                    (seq(start, start_sym), seq(end, end_sym))
+                                else {
+                                    return Err(REG_ECOLLATE);
+                                };
+                                if lo <= hi {
+                                    for b in 0..0x80u32 {
+                                        if tables
+                                            .collation_seq(b)
+                                            .is_some_and(|v| (lo..=hi).contains(&v))
+                                        {
+                                            add(true, b, b, &mut ranges, &mut mb_ranges);
+                                        }
+                                    }
+                                    coll_ranges.push((lo, hi));
+                                } else if !self.empty_ranges {
+                                    return Err(REG_ERANGE);
+                                }
+                            }
+                            // Without rules (C.UTF-8) glibc has no sequence
+                            // value for a multibyte endpoint.
+                            (true, None) if start >= 0x80 || end >= 0x80 => {
+                                return Err(REG_ECOLLATE);
+                            }
+                            _ => {
+                                if end >= start {
+                                    add(self.utf8, start, end, &mut ranges, &mut mb_ranges);
+                                } else if !self.empty_ranges {
+                                    return Err(REG_ERANGE);
+                                }
+                            }
                         }
                     } else {
                         add(self.utf8, start, start, &mut ranges, &mut mb_ranges);
@@ -2126,15 +2195,17 @@ impl<'a> Parser<'a> {
                 || mb_ranges.iter().any(|&(_, hi)| hi >= 0x80)
                 || classes & !(MB_DIGIT | MB_XDIGIT) != 0
                 || !equiv.is_empty()
+                || !coll_ranges.is_empty()
                 || ranges
                     .iter()
                     .any(|&(lo, hi)| (lo..=hi).any(|b| self.icase_ascii_needs_mb(b))))
         {
             let mut class = self.mb_class(&ranges, mb_ranges, classes, negated);
             if let Ast::MbChar(mb) = &mut class
-                && !equiv.is_empty()
+                && (!equiv.is_empty() || !coll_ranges.is_empty())
             {
                 mb.equiv = equiv;
+                mb.coll_ranges = coll_ranges;
                 mb.collate = self.collate;
             }
             return Ok(class);
@@ -2157,6 +2228,10 @@ impl<'a> Parser<'a> {
     /// Read one range-eligible bracket element: a collating symbol `[.c.]`
     /// (yielding its single collating character) or a plain literal character
     /// (one byte, or in a UTF-8 pattern one whole character).
+    fn at_collating_symbol(&self) -> bool {
+        self.peek() == Some(b'[') && self.pat.get(self.pos + 1) == Some(&b'.')
+    }
+
     fn read_bracket_element(&mut self) -> Result<u32, i32> {
         if self.peek() == Some(b'[') && self.pat.get(self.pos + 1) == Some(&b'.') {
             self.advance(); // [
@@ -2206,7 +2281,12 @@ impl<'a> Parser<'a> {
         if buf.len() == 1 {
             return Ok(u32::from(buf[0]));
         }
+        // A multibyte character is an equivalence-class name only under
+        // collation rules; glibc rejects it as a collating symbol (it is in
+        // no locale's symbol table) and, without rules (C.UTF-8), as a class.
         if self.utf8
+            && marker == b'='
+            && self.collate.is_some()
             && let Some((cp, len)) = decode_utf8(&buf)
             && len == buf.len()
         {

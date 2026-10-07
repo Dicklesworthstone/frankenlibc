@@ -135,27 +135,43 @@ fn regex_collating_equivalence_matches_glibc() {
         check(pat, CORPUS);
     }
 
-    // The locale is process-global, so the en_US.UTF-8 half runs after the
+    // The locale is process-global, so the UTF-8 locales run after the
     // C-locale half in this one test.
-    // SAFETY: setlocale with NUL-terminated names; no other thread of this
-    // binary uses either locale concurrently (single test).
-    let host = !unsafe { setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()) }.is_null();
-    if !host {
-        println!("SKIP: host has no en_US.UTF-8 locale");
-        return;
+    for locale in [c"en_US.UTF-8", c"C.UTF-8"] {
+        // SAFETY: setlocale with NUL-terminated names; no other thread of this
+        // binary uses the locale concurrently (single test).
+        if unsafe { setlocale(libc::LC_ALL, locale.as_ptr()) }.is_null() {
+            println!("SKIP: host has no {locale:?} locale");
+            continue;
+        }
+        let ours =
+            !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, locale.as_ptr()) }
+                .is_null();
+        assert!(
+            ours,
+            "fl setlocale({locale:?}) failed where glibc's succeeded"
+        );
+        utf8_locale_checks(locale == c"en_US.UTF-8");
     }
-    let ours =
-        !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()) }
-            .is_null();
-    assert!(
-        ours,
-        "fl setlocale(en_US.UTF-8) failed where glibc's succeeded"
-    );
+    // SAFETY: as above.
+    unsafe {
+        setlocale(libc::LC_ALL, c"C".as_ptr());
+        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr());
+    }
+}
+
+/// Collation-dependent brackets in the current UTF-8 locale. With collation
+/// rules (en_US) `[=c=]` is every character of c's primary weight and a range
+/// spans collation-sequence values (`[a-z]` holds à, é and ß but not B);
+/// without (C.UTF-8) classes are exact and a multibyte range endpoint or
+/// equivalence-class name is REG_ECOLLATE. A multibyte collating symbol
+/// `[.à.]` is REG_ECOLLATE in both.
+fn utf8_locale_checks(collation_rules: bool) {
     let corpus: &[&str] = &[
         "a", "A", "à", "Å", "ā", "ǻ", "ⓐ", "ａ", "b", "e", "é", "Ê", "ß", "ẞ", "ı", "i", "æ", "Æ",
-        "ø", "o", "1", "¹", "١", "!", ",", "\u{300}", "€", "中", "xày", "zz",
+        "ø", "o", "1", "¹", "١", "!", ",", "\u{300}", "€", "中", "xày", "zz", "B", "Z", "z",
     ];
-    let utf8_patterns = [
+    let patterns = [
         "[[=a=]]",
         "^[[=a=]]$",
         "[^[=a=]]",
@@ -171,21 +187,52 @@ fn regex_collating_equivalence_matches_glibc() {
         "x[[=a=]]y",
         "[[=ı=]]",
         "[[=a=]-z]",
+        "^[a-z]$",
+        "^[A-Z]$",
+        "^[^a-z]$",
+        "^[a-z]+$",
+        "^[0-9]$",
+        "^[à-é]$",
+        "^[a-ö]$",
+        "^[[.a.]-z]$",
+        "[[.à.]]",
+        "[z-a]",
+        "^[a-z[=ø=]]$",
     ];
-    for pat in utf8_patterns {
+    for pat in patterns {
         check(pat, corpus);
     }
-    // Not vacuous: the class compiles and spans accented letters.
-    let (rc, res) = run(0, "^[[=a=]]$", corpus);
-    assert_eq!(rc, 0);
-    assert_eq!(
-        (res[2], res[8]),
-        (0, libc::REG_NOMATCH),
-        "à in [[=a=]], b not"
-    );
-    // SAFETY: as above.
-    unsafe {
-        setlocale(libc::LC_ALL, c"C".as_ptr());
-        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr());
+    // Every character below U+3000, one at a time.
+    let all: Vec<String> = (1u32..0x3000)
+        .filter_map(char::from_u32)
+        .map(String::from)
+        .collect();
+    let all: Vec<&str> = all.iter().map(String::as_str).collect();
+    for pat in [
+        "^[[=a=]]$",
+        "^[[=o=]]$",
+        "^[a-z]$",
+        "^[A-Z]$",
+        "^[0-9]$",
+        "^[^a-z]$",
+    ] {
+        check(pat, &all);
+    }
+    if collation_rules {
+        // Not vacuous: the class and the range span accented letters.
+        let (rc, res) = run(0, "^[[=a=]]$", corpus);
+        assert_eq!(rc, 0);
+        assert_eq!(
+            (res[2], res[8]),
+            (0, libc::REG_NOMATCH),
+            "à in [[=a=]], b not"
+        );
+        let (rc, res) = run(0, "^[a-z]$", corpus);
+        assert_eq!(rc, 0);
+        assert_eq!(
+            (res[10], res[30]),
+            (0, libc::REG_NOMATCH),
+            "é in [a-z], B not"
+        );
     }
 }

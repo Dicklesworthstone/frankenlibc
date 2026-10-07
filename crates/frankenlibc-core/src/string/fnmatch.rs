@@ -787,6 +787,27 @@ pub trait WideCtype {
     fn in_class(&self, name: &[u8], c: u32) -> Option<bool>;
     /// Lower-case mapping used by `FNM_CASEFOLD`.
     fn fold(&self, c: u32) -> u32;
+    /// Whether the locale has collation rules, which define equivalence
+    /// classes and order ranges. Without them a class `[=x=]` is just `x` and
+    /// ranges compare code points.
+    fn has_collation(&self) -> bool {
+        false
+    }
+    /// Whether `a` and `b` share an equivalence class (collation rules only).
+    fn equivalent(&self, a: u32, b: u32) -> bool {
+        a == b
+    }
+    /// Whether `text[ti]` is in the equivalence class of `class`. A reading
+    /// whose collating elements span several of its units (glibc's byte
+    /// reading of UTF-8) looks past `ti`.
+    fn equivalent_at(&self, class: u32, text: &[u32], ti: usize) -> bool {
+        self.equivalent(class, text[ti])
+    }
+    /// The collation-sequence value ordering ranges (collation rules only);
+    /// `None` for a character the locale gives no value.
+    fn collation_seq(&self, _c: u32) -> Option<u32> {
+        None
+    }
 }
 
 /// fnmatch over characters rather than bytes, for a multibyte locale: `?` and
@@ -841,7 +862,7 @@ pub fn fnmatch_wide(
                     }
                 } else if pc == b'[' as u32
                     && let Some((end, matched)) =
-                        wide_bracket(pattern, pi, text[ti], noescape, casefold, ctype)
+                        wide_bracket(pattern, pi, text, ti, noescape, casefold, ctype)
                 {
                     if matched && wildcard_ok(ti) {
                         pi = end;
@@ -889,11 +910,13 @@ pub fn fnmatch_wide(
 fn wide_bracket(
     pattern: &[u32],
     open: usize,
-    c: u32,
+    text: &[u32],
+    ti: usize,
     noescape: bool,
     casefold: bool,
     ctype: &dyn WideCtype,
 ) -> Option<(usize, bool)> {
+    let c = text[ti];
     let at = |i: usize| pattern.get(i).copied();
     let is = |i: usize, b: u8| at(i) == Some(b as u32);
     let mut i = open + 1;
@@ -902,6 +925,31 @@ fn wide_bracket(
         i += 1;
     }
     let fold = |x: u32| if casefold { ctype.fold(x) } else { x };
+    // Range membership: by collation sequence under collation rules (en_US
+    // `[a-z]` holds é and ß but not B), else by code point. Under
+    // FNM_CASEFOLD only the folded character is tried, against the folded
+    // endpoints (glibc, C.UTF-8: `[a-é]` does not match "Ê" although U+00CA
+    // lies in the range, because its lowercase ê, U+00EA, does not).
+    let in_range = |lo: u32, hi: u32, c: u32| {
+        let test = |lo: u32, hi: u32, c: u32| {
+            if !ctype.has_collation() {
+                return lo <= c && c <= hi;
+            }
+            match (
+                ctype.collation_seq(lo),
+                ctype.collation_seq(hi),
+                ctype.collation_seq(c),
+            ) {
+                (Some(lo), Some(hi), Some(c)) => lo <= c && c <= hi,
+                _ => false,
+            }
+        };
+        if casefold {
+            test(fold(lo), fold(hi), fold(c))
+        } else {
+            test(lo, hi, c)
+        }
+    };
     let mut matched = false;
     let mut first = true;
     loop {
@@ -936,13 +984,18 @@ fn wide_bracket(
             // `[.x.]` may start a range; `[=x=]` may not.
             if content.len() == 1 && kind == b'.' as u32 && is(next, b'-') && !is(next + 1, b']') {
                 let lo = content[0];
-                let (hi, after) = wide_range_end(pattern, next + 1, noescape)?;
-                matched |= (lo <= c && c <= hi)
-                    || (casefold && fold(lo) <= fold(c) && fold(c) <= fold(hi));
+                let (hi, after) =
+                    wide_range_end(pattern, next + 1, noescape, ctype.has_collation())?;
+                matched |= in_range(lo, hi, c);
                 i = after;
                 continue;
             }
-            matched |= content.len() == 1 && content[0] == c;
+            matched |= content.len() == 1
+                && if kind == b'=' as u32 {
+                    ctype.equivalent_at(content[0], text, ti)
+                } else {
+                    content[0] == c
+                };
             i = next;
             continue;
         }
@@ -952,9 +1005,9 @@ fn wide_bracket(
             (cur, i + 1)
         };
         if is(after_lo, b'-') && at(after_lo + 1).is_some() && !is(after_lo + 1, b']') {
-            let (hi, after) = wide_range_end(pattern, after_lo + 1, noescape)?;
-            matched |=
-                (lo <= c && c <= hi) || (casefold && fold(lo) <= fold(c) && fold(c) <= fold(hi));
+            let (hi, after) =
+                wide_range_end(pattern, after_lo + 1, noescape, ctype.has_collation())?;
+            matched |= in_range(lo, hi, c);
             i = after;
         } else {
             matched |= lo == c || (casefold && fold(lo) == fold(c));
@@ -964,13 +1017,23 @@ fn wide_bracket(
 }
 
 /// The high endpoint of a range at `pattern[i]`: a character, an escaped
-/// character, or a single-character `[.x.]`.
-fn wide_range_end(pattern: &[u32], i: usize, noescape: bool) -> Option<(u32, usize)> {
+/// character, or a single-character `[.x.]`. Under collation rules a `[.x.]`
+/// end makes the bracket invalid (`None`: its `[` is literal), as in glibc's
+/// en_US.UTF-8, where `[a-[.z.]]` matches the text "[a-z]".
+fn wide_range_end(
+    pattern: &[u32],
+    i: usize,
+    noescape: bool,
+    collation: bool,
+) -> Option<(u32, usize)> {
     let cur = *pattern.get(i)?;
     if cur == b'\\' as u32 && !noescape {
         return Some((*pattern.get(i + 1)?, i + 2));
     }
     if cur == b'[' as u32 && pattern.get(i + 1) == Some(&(b'.' as u32)) {
+        if collation {
+            return None;
+        }
         let x = *pattern.get(i + 2)?;
         if pattern.get(i + 3) == Some(&(b'.' as u32)) && pattern.get(i + 4) == Some(&(b']' as u32))
         {

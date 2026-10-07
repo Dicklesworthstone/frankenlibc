@@ -10737,13 +10737,14 @@ unsafe fn legacy_regex_write_regs(
 }
 /// The engine flags the current locale implies: like glibc's regcomp, a
 /// pattern compiled under a UTF-8 LC_CTYPE matches whole characters.
-/// The locale's collation rules when `pattern` has an equivalence class
-/// `[=c=]`, which they define (glibc regcomp reads LC_COLLATE at compile
-/// time: in en_US.UTF-8 `[[=a=]]` matches à, grep's equiv-classes test).
+/// The locale's collation rules when `pattern` has a bracket expression,
+/// whose equivalence classes and ranges they define (glibc regcomp reads
+/// LC_COLLATE at compile time: in en_US.UTF-8 `[[=a=]]` matches à -- grep's
+/// equiv-classes test -- and `[a-z]` matches é).
 fn regex_collation_for(
     pattern: &[u8],
 ) -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
-    if pattern.windows(2).any(|w| w == b"[=") {
+    if pattern.contains(&b'[') {
         crate::locale_abi::named_collate()
     } else {
         None
@@ -10959,6 +10960,29 @@ pub unsafe extern "C" fn fnmatch(
     let pat_bytes = unsafe { core::ffi::CStr::from_ptr(pattern) }.to_bytes();
     let str_bytes = unsafe { core::ffi::CStr::from_ptr(string) }.to_bytes();
     let core_flags = frankenlibc_core::string::fnmatch::FnmatchFlags::from_bits(flags as u32);
+    // Under collation rules (en_US.UTF-8) equivalence classes and ranges are
+    // collation-defined, even in an ASCII pattern: `[[=a=]]` matches "A" and
+    // `[B-a]` is empty (B sorts after a). glibc then reads the strings both
+    // as bytes and as characters and matches when either reading does, each
+    // with its own tables: the byte reading orders ranges by COLLSEQMB, where
+    // every non-ASCII byte has value 0 (so `[a-ö]` is empty there and
+    // `[à-é]?` matches "ß"), the character reading by COLLSEQWC.
+    if pat_bytes.contains(&b'[')
+        && (pat_bytes.windows(2).any(|w| w == b"[=") || pat_bytes.contains(&b'-'))
+        && crate::locale_abi::mb_cur_max() > 1
+        && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
+        && let Some(tables) = crate::locale_abi::named_collate()
+    {
+        let bytes = |b: &[u8]| b.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
+        let matched = frankenlibc_core::string::fnmatch::fnmatch_wide(
+            &bytes(pat_bytes),
+            &bytes(str_bytes),
+            core_flags,
+            &ByteCollation(tables),
+        ) || fnmatch_by_characters(pat_bytes, str_bytes, core_flags, Some(tables))
+            == Some(true);
+        return if matched { 0 } else { FNM_NOMATCH };
+    }
     if frankenlibc_core::string::fnmatch::fnmatch_match(pat_bytes, str_bytes, core_flags) {
         return 0;
     }
@@ -10973,23 +10997,93 @@ pub unsafe extern "C" fn fnmatch(
     if crate::locale_abi::mb_cur_max() > 1
         && !core_flags.contains(frankenlibc_core::string::fnmatch::FnmatchFlags::EXTMATCH)
         && (!pat_bytes.is_ascii() || !str_bytes.is_ascii())
-        && let (Ok(p), Ok(s)) = (
-            core::str::from_utf8(pat_bytes),
-            core::str::from_utf8(str_bytes),
-        )
+        && let Some(matched) = fnmatch_by_characters(pat_bytes, str_bytes, core_flags, None)
     {
-        let p: Vec<u32> = p.chars().map(u32::from).collect();
-        let s: Vec<u32> = s.chars().map(u32::from).collect();
-        let matched =
-            frankenlibc_core::string::fnmatch::fnmatch_wide(&p, &s, core_flags, &LocaleWideCtype);
         return if matched { 0 } else { FNM_NOMATCH };
     }
     FNM_NOMATCH
 }
 
-/// Wide-character classes and case folding of the active locale, for
-/// `fnmatch_wide`.
-struct LocaleWideCtype;
+/// `fnmatch_wide` over the UTF-8 `pattern` and `string` in the active
+/// locale, with its collation rules `collate`; `None` when either is not
+/// valid UTF-8.
+fn fnmatch_by_characters(
+    pattern: &[u8],
+    string: &[u8],
+    flags: frankenlibc_core::string::fnmatch::FnmatchFlags,
+    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
+) -> Option<bool> {
+    let p: Vec<u32> = core::str::from_utf8(pattern)
+        .ok()?
+        .chars()
+        .map(u32::from)
+        .collect();
+    let s: Vec<u32> = core::str::from_utf8(string)
+        .ok()?
+        .chars()
+        .map(u32::from)
+        .collect();
+    let ctype = LocaleWideCtype { collate };
+    Some(frankenlibc_core::string::fnmatch::fnmatch_wide(
+        &p, &s, flags, &ctype,
+    ))
+}
+
+/// The byte reading of fnmatch under collation rules (see `fnmatch`): each
+/// byte is one "character"; classes and case folding are ASCII-only, ranges
+/// use the single-byte COLLSEQMB values, and `[=x=]` the single-byte
+/// equivalence keys.
+struct ByteCollation(frankenlibc_core::locale::collate::CollateTables<'static>);
+
+impl frankenlibc_core::string::fnmatch::WideCtype for ByteCollation {
+    fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
+        LocaleWideCtype { collate: None }
+            .in_class(name, c)
+            .map(|hit| hit && c < 0x80)
+    }
+
+    fn fold(&self, c: u32) -> u32 {
+        if c < 0x80 {
+            u32::from((c as u8).to_ascii_lowercase())
+        } else {
+            c
+        }
+    }
+
+    fn has_collation(&self) -> bool {
+        true
+    }
+
+    fn equivalent(&self, a: u32, b: u32) -> bool {
+        let key = |c: u32| self.0.equivalence_key(&[u8::try_from(c).ok()?]);
+        a == b || key(a).is_some_and(|ka| key(b) == Some(ka))
+    }
+
+    fn collation_seq(&self, c: u32) -> Option<u32> {
+        self.0.collation_seq_byte(u8::try_from(c).ok()?)
+    }
+
+    /// glibc keys the text by the whole collating element starting at this
+    /// byte (yet consumes one byte): `[[=e=]]?` matches "é".
+    fn equivalent_at(&self, class: u32, text: &[u32], ti: usize) -> bool {
+        let rest: Vec<u8> = text[ti..].iter().take(16).map(|&b| b as u8).collect();
+        let Some(class_key) = u8::try_from(class)
+            .ok()
+            .and_then(|b| self.0.equivalence_key(&[b]))
+        else {
+            return class == text[ti];
+        };
+        self.0
+            .leading_equivalence_key(&rest)
+            .is_some_and(|(key, _)| key == class_key)
+    }
+}
+
+/// Wide-character classes, case folding and collation of the active locale,
+/// for `fnmatch_wide`.
+struct LocaleWideCtype {
+    collate: Option<frankenlibc_core::locale::collate::CollateTables<'static>>,
+}
 
 impl frankenlibc_core::string::fnmatch::WideCtype for LocaleWideCtype {
     fn in_class(&self, name: &[u8], c: u32) -> Option<bool> {
@@ -11010,6 +11104,25 @@ impl frankenlibc_core::string::fnmatch::WideCtype for LocaleWideCtype {
     fn fold(&self, c: u32) -> u32 {
         // SAFETY: plain case mapping of a code point.
         unsafe { crate::wchar_abi::towlower(c) }
+    }
+
+    fn has_collation(&self) -> bool {
+        self.collate.is_some()
+    }
+
+    fn equivalent(&self, a: u32, b: u32) -> bool {
+        let Some(tables) = self.collate.as_ref() else {
+            return a == b;
+        };
+        let key = |c: u32| {
+            let mut buf = [0u8; 4];
+            tables.equivalence_key(char::from_u32(c)?.encode_utf8(&mut buf).as_bytes())
+        };
+        a == b || key(a).is_some_and(|ka| key(b) == Some(ka))
+    }
+
+    fn collation_seq(&self, c: u32) -> Option<u32> {
+        self.collate.as_ref()?.collation_seq(c)
     }
 }
 

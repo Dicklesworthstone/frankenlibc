@@ -48,6 +48,10 @@ pub struct CollateTables<'a> {
     weights: &'a [u8],
     extra: &'a [u8],
     indirect: &'a [u8],
+    /// `COLLSEQMB` (item 16): one byte per byte value.
+    collseq_mb: &'a [u8],
+    /// `COLLSEQWC` (item 17): a wide character's collation-sequence value.
+    collseq_wc: &'a [u8],
 }
 
 fn slice_between<'a>(blob: &CategoryBlob<'a>, item: usize, next: usize) -> Option<&'a [u8]> {
@@ -82,7 +86,48 @@ impl<'a> CollateTables<'a> {
             weights: slice_between(blob, 3, 4)?,
             extra: slice_between(blob, 4, 5)?,
             indirect: slice_between(blob, 5, 6)?,
+            collseq_mb: slice_between(blob, 16, 17).unwrap_or(&[]),
+            collseq_wc: slice_between(blob, 17, 18).unwrap_or(&[]),
         })
+    }
+
+    /// The single-byte `COLLSEQMB` value of `byte`. glibc's regcomp orders a
+    /// collating-symbol range endpoint (`[[.a.]-z]`) by this table even in a
+    /// multibyte locale, where its small values fall below every
+    /// [`collation_seq`](Self::collation_seq) of a letter.
+    pub fn collation_seq_byte(&self, byte: u8) -> Option<u32> {
+        self.collseq_mb
+            .get(usize::from(byte))
+            .map(|&v| u32::from(v))
+    }
+
+    /// The collation-sequence value of the wide character `wc`, which orders
+    /// bracket ranges in regex and fnmatch (en_US: `[a-z]` holds à, é and ß
+    /// but not `B`). `None` when the locale assigns `wc` no value.
+    ///
+    /// `COLLSEQWC` is a three-level table of `u32`s: a header `shift1, bound,
+    /// shift2, mask2, mask3`, then `bound` first-level byte offsets of
+    /// second-level tables (0: absent), whose entries are byte offsets of
+    /// third-level tables of values.
+    pub fn collation_seq(&self, wc: u32) -> Option<u32> {
+        let t = self.collseq_wc;
+        let word = |at: usize| i32_at_unaligned(t, at).map(|v| v as u32);
+        let shift1 = word(0)?;
+        let index1 = wc.checked_shr(shift1)? as usize;
+        if index1 >= word(4)? as usize {
+            return None;
+        }
+        let lookup1 = word(4 * (5 + index1))? as usize;
+        if lookup1 == 0 {
+            return None;
+        }
+        let index2 = (wc.checked_shr(word(8)?)? & word(12)?) as usize;
+        let lookup2 = word(lookup1 + 4 * index2)? as usize;
+        if lookup2 == 0 {
+            return None;
+        }
+        let index3 = (wc & word(16)?) as usize;
+        word(lookup2 + 4 * index3).filter(|&v| v != u32::MAX)
     }
 
     /// Look up the entry for the character at the start of `s`, returning
@@ -146,12 +191,22 @@ impl<'a> CollateTables<'a> {
     /// fnmatch decide it (so `a`, `A` and `à` share a class in en_US, and every
     /// ignorable character has the empty key). `None` for no entry.
     pub fn equivalence_key(&self, s: &[u8]) -> Option<(u32, &'a [u8])> {
+        let (key, used) = self.leading_equivalence_key(s)?;
+        (used == s.len()).then_some(key)
+    }
+
+    /// The equivalence-class key of the collating element at the start of
+    /// `s`, and its length in bytes.
+    pub fn leading_equivalence_key(&self, s: &[u8]) -> Option<((u32, &'a [u8]), usize)> {
         let (entry, used) = self.find_index(s)?;
-        if entry == 0 || used != s.len() {
+        if entry == 0 {
             return None;
         }
         let e = entry as u32;
-        Some((e >> 24, self.level_weights((e & 0x00ff_ffff) as usize, 0)))
+        Some((
+            (e >> 24, self.level_weights((e & 0x00ff_ffff) as usize, 0)),
+            used,
+        ))
     }
 
     /// The entries of every character of `s` (stopping at NUL), as
