@@ -197,6 +197,7 @@ macro_rules! avx2_dispatch {
         }
     };
 }
+pub(crate) use avx2_dispatch;
 
 fn active_string_simd_feature_mask() -> u32 {
     let override_mask = STRING_SIMD_FEATURE_OVERRIDE.load(AtomicOrdering::Relaxed);

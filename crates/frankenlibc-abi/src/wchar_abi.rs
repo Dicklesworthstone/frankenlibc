@@ -3980,6 +3980,20 @@ const WIDE_SCAN_PAGE: usize = 4096;
 /// comes first.
 #[inline(always)]
 unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
+    crate::string_abi::avx2_dispatch! {
+        /// `wide_core::wcsnlen` over `n` readable elements at `s`, as an AVX2
+        /// build on CPUs that have it: its `Simd<u32>` panels are SSE2 in the
+        /// baseline x86-64 build, where wcsnlen at a 4096 bound measured 3.0x
+        /// the x86-64-v3 build against live glibc (bd-rc0923-epic-eeuy4f.13).
+        #[inline(always)]
+        unsafe fn core_wcsnlen(s: *const u32, n: usize) -> usize => core_wcsnlen_body;
+    }
+    #[inline(always)]
+    unsafe fn core_wcsnlen_body(s: *const u32, n: usize) -> usize {
+        // SAFETY: the caller guarantees `n` readable elements at `s`.
+        unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, n), n) }
+    }
+
     const ELEM: usize = size_of::<u32>();
 
     // Fast path: the whole bound lies in one page, which is mapped because `s`
@@ -3990,7 +4004,7 @@ unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
     // count would wrap.
     if bound <= (WIDE_SCAN_PAGE - (s as usize & (WIDE_SCAN_PAGE - 1))) / ELEM {
         // SAFETY: as argued above, all `bound` elements are readable.
-        return unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, bound), bound) };
+        return unsafe { core_wcsnlen(s, bound) };
     }
 
     let mut done = 0usize;
@@ -4007,7 +4021,7 @@ unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
         let chunk = (bound - done).min((to_page_end / ELEM).max(1));
         // SAFETY: element `done` is readable, hence its whole page is, and
         // `chunk` stops at that page's end.
-        let idx = unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(here, chunk), chunk) };
+        let idx = unsafe { core_wcsnlen(here, chunk) };
         if idx < chunk {
             return done + idx;
         }
