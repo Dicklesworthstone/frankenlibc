@@ -5905,16 +5905,17 @@ pub extern "C" fn endusershell() {
 
 /// `gets` — read a line from stdin (DEPRECATED, insecure).
 ///
-/// POSIX removed this in 2008; kept for legacy compatibility.
+/// POSIX removed this in 2008; kept for legacy compatibility. Its `read` is
+/// a cancellation point, as glibc's stdin read is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gets(s: *mut c_char) -> *mut c_char {
+pub unsafe extern "C-unwind" fn gets(s: *mut c_char) -> *mut c_char {
     if s.is_null() {
         return ptr::null_mut();
     }
     let mut i = 0usize;
     loop {
         let mut ch: u8 = 0;
-        let n = unsafe { crate::unistd_abi::read(0, &mut ch as *mut u8 as *mut c_void, 1) };
+        let n = unsafe { crate::unistd_abi::read_cp(0, &mut ch as *mut u8 as *mut c_void, 1) };
         if n <= 0 {
             if i == 0 {
                 return ptr::null_mut();

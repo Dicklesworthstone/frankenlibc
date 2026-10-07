@@ -143,6 +143,19 @@ pub unsafe extern "C-unwind" fn accept(
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> c_int {
+    unsafe { accept_cp(sockfd, addr, addrlen) }
+}
+
+/// Body of [`accept`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn accept_cp(
+    sockfd: c_int,
+    addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -182,6 +195,12 @@ pub unsafe extern "C-unwind" fn connect(
     addr: *const libc::sockaddr,
     addrlen: u32,
 ) -> c_int {
+    unsafe { connect_cp(sockfd, addr, addrlen) }
+}
+
+/// Body of [`connect`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn connect_cp(sockfd: c_int, addr: *const libc::sockaddr, addrlen: u32) -> c_int {
     let (_, decision) = runtime_policy::decide(
         ApiFamily::Socket,
         sockfd as usize,
@@ -228,6 +247,12 @@ pub unsafe extern "C-unwind" fn send(
     len: usize,
     flags: c_int,
 ) -> isize {
+    unsafe { send_cp(sockfd, buf, len, flags) }
+}
+
+/// Body of [`send`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn send_cp(sockfd: c_int, buf: *const c_void, len: usize, flags: c_int) -> isize {
     if sockfd < 0 {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -283,6 +308,12 @@ pub unsafe extern "C-unwind" fn recv(
     len: usize,
     flags: c_int,
 ) -> isize {
+    unsafe { recv_cp(sockfd, buf, len, flags) }
+}
+
+/// Body of [`recv`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn recv_cp(sockfd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize {
     if sockfd < 0 {
         unsafe { set_abi_errno(errno::EBADF) };
         return -1;
@@ -347,6 +378,19 @@ pub unsafe extern "C-unwind" fn sendto(
     dest_addr: *const libc::sockaddr,
     addrlen: u32,
 ) -> isize {
+    unsafe { sendto_cp(sockfd, buf, len, flags, dest_addr, addrlen) }
+}
+
+/// Body of [`sendto`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sendto_cp(
+    sockfd: c_int,
+    buf: *const c_void,
+    len: usize,
+    flags: c_int,
+    dest_addr: *const libc::sockaddr,
+    addrlen: u32,
+) -> isize {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -403,6 +447,19 @@ pub unsafe extern "C-unwind" fn sendto(
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn recvfrom(
+    sockfd: c_int,
+    buf: *mut c_void,
+    len: usize,
+    flags: c_int,
+    src_addr: *mut libc::sockaddr,
+    addrlen: *mut u32,
+) -> isize {
+    unsafe { recvfrom_cp(sockfd, buf, len, flags, src_addr, addrlen) }
+}
+
+/// Body of [`recvfrom`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn recvfrom_cp(
     sockfd: c_int,
     buf: *mut c_void,
     len: usize,
@@ -723,6 +780,12 @@ pub unsafe extern "C-unwind" fn sendmsg(
     msg: *const libc::msghdr,
     flags: c_int,
 ) -> isize {
+    unsafe { sendmsg_cp(sockfd, msg, flags) }
+}
+
+/// Body of [`sendmsg`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -767,6 +830,12 @@ pub unsafe extern "C-unwind" fn recvmsg(
     msg: *mut libc::msghdr,
     flags: c_int,
 ) -> isize {
+    unsafe { recvmsg_cp(sockfd, msg, flags) }
+}
+
+/// Body of [`recvmsg`] and its aliases (see [`accept_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
     let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -949,12 +1018,12 @@ pub unsafe extern "C" fn getpeereid(
 ///
 /// Same as [`accept`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __accept(
+pub unsafe extern "C-unwind" fn __accept(
     sockfd: c_int,
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> c_int {
-    unsafe { accept(sockfd, addr, addrlen) }
+    unsafe { accept_cp(sockfd, addr, addrlen) }
 }
 
 /// glibc reserved-namespace alias for [`bind`].
@@ -983,7 +1052,7 @@ pub unsafe extern "C" fn __listen(sockfd: c_int, backlog: c_int) -> c_int {
 ///
 /// Same as [`sendto`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sendto(
+pub unsafe extern "C-unwind" fn __sendto(
     sockfd: c_int,
     buf: *const c_void,
     len: usize,
@@ -991,7 +1060,7 @@ pub unsafe extern "C" fn __sendto(
     dest_addr: *const libc::sockaddr,
     addrlen: u32,
 ) -> isize {
-    unsafe { sendto(sockfd, buf, len, flags, dest_addr, addrlen) }
+    unsafe { sendto_cp(sockfd, buf, len, flags, dest_addr, addrlen) }
 }
 
 /// glibc reserved-namespace alias for [`recvfrom`].
@@ -1000,7 +1069,7 @@ pub unsafe extern "C" fn __sendto(
 ///
 /// Same as [`recvfrom`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __recvfrom(
+pub unsafe extern "C-unwind" fn __recvfrom(
     sockfd: c_int,
     buf: *mut c_void,
     len: usize,
@@ -1008,7 +1077,7 @@ pub unsafe extern "C" fn __recvfrom(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
-    unsafe { recvfrom(sockfd, buf, len, flags, src_addr, addrlen) }
+    unsafe { recvfrom_cp(sockfd, buf, len, flags, src_addr, addrlen) }
 }
 
 /// glibc reserved-namespace alias for [`getsockname`].
@@ -1060,8 +1129,12 @@ pub unsafe extern "C" fn __socketpair(
 ///
 /// Same as [`sendmsg`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sendmsg(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
-    unsafe { sendmsg(sockfd, msg, flags) }
+pub unsafe extern "C-unwind" fn __sendmsg(
+    sockfd: c_int,
+    msg: *const libc::msghdr,
+    flags: c_int,
+) -> isize {
+    unsafe { sendmsg_cp(sockfd, msg, flags) }
 }
 
 /// glibc reserved-namespace alias for [`recvmsg`].
@@ -1070,8 +1143,12 @@ pub unsafe extern "C" fn __sendmsg(sockfd: c_int, msg: *const libc::msghdr, flag
 ///
 /// Same as [`recvmsg`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __recvmsg(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
-    unsafe { recvmsg(sockfd, msg, flags) }
+pub unsafe extern "C-unwind" fn __recvmsg(
+    sockfd: c_int,
+    msg: *mut libc::msghdr,
+    flags: c_int,
+) -> isize {
+    unsafe { recvmsg_cp(sockfd, msg, flags) }
 }
 
 /// glibc reserved-namespace alias for [`setsockopt`].

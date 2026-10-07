@@ -158,8 +158,10 @@ fn write_err_message(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usize, with_e
 
     let out = frankenlibc_core::err::format_err_message(&progname, &message, errno_msg_opt);
 
+    // Not a cancellation point: a forced unwind must not start inside these
+    // "C" frames holding `out` (glibc may act here; POSIX lets it not).
     unsafe {
-        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::unistd_abi::sys_write_fd(2, out.as_ptr() as *const c_void, out.len());
         crate::errno_abi::set_abi_errno(saved_errno);
     }
 }
@@ -181,8 +183,9 @@ fn write_err_message_with_code(fmt_bytes: &[u8], arg_buf: &[u64], arg_count: usi
 
     let out = frankenlibc_core::err::format_err_message(&progname, &message, Some(errno_msg));
 
+    // Not a cancellation point, as in write_err_message.
     unsafe {
-        crate::unistd_abi::write(2, out.as_ptr() as *const c_void, out.len());
+        crate::unistd_abi::sys_write_fd(2, out.as_ptr() as *const c_void, out.len());
         crate::errno_abi::set_abi_errno(saved_errno);
     }
 }

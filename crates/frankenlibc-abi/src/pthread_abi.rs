@@ -769,6 +769,8 @@ pub(crate) fn prewarm_host_thread_symbols() {
     {
         FORCE_NATIVE_THREADING.store(false, Ordering::Release);
     }
+    // Startup runs on the main thread.
+    remember_main_thread_host_handle();
 }
 
 #[allow(dead_code)]
@@ -1191,7 +1193,12 @@ pub(crate) fn native_pthread_self() -> libc::pthread_t {
         core_handle_for_tid(tid)
             .map(|handle_ptr| handle_ptr as usize as libc::pthread_t)
             // Fallback for threads not created via our managed pthread_create path.
-            .unwrap_or(tid as libc::pthread_t)
+            .unwrap_or_else(|| {
+                if tid == raw_syscall::sys_getpid() {
+                    MAIN_THREAD_FL_NAME.store(tid as usize, Ordering::Release);
+                }
+                tid as libc::pthread_t
+            })
     } else {
         tid as libc::pthread_t
     };
@@ -3935,7 +3942,9 @@ impl Drop for CondWaitGuard {
 
 /// Block on a condvar's sequence word until it moves past `expected_seq`
 /// (0), the deadline passes (ETIMEDOUT), or a spurious wake (0). The futex
-/// wait is a cancellation point.
+/// wait is a cancellation point, so this and every function between it and
+/// the exported entry point is always inlined (see `at_cancellation_point`).
+#[inline(always)]
 fn cond_futex_wait(cv: &CondvarData, expected_seq: u32, abstime: Option<&libc::timespec>) -> c_int {
     let seq_addr = &cv.seq as *const _ as usize;
     let (futex_op, deadline, bitset) = match abstime {
@@ -4009,6 +4018,8 @@ impl Drop for ExtCondWaitGuard<'_> {
 /// not the private 0/1/2 word that core's prepare/finish release and re-take,
 /// so the mutex is released and re-acquired through the extended paths
 /// (EOWNERDEAD from the re-acquire is returned to the caller, as in glibc).
+/// Always inlined: it reaches the cond_futex_wait cancellation point.
+#[inline(always)]
 unsafe fn cond_wait_extended_mutex(
     cond_ptr: *mut CondvarData,
     mutex: *mut libc::pthread_mutex_t,
@@ -4048,7 +4059,8 @@ unsafe fn cond_wait_extended_mutex(
 
 /// Shared body of `pthread_cond_wait` and `pthread_cond_timedwait`. Callers
 /// have rejected null pointers and invalid deadlines. The futex wait is a
-/// cancellation point.
+/// cancellation point, so this is always inlined into the entry points.
+#[inline(always)]
 unsafe fn cond_wait_common(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
@@ -4120,9 +4132,21 @@ unsafe fn cond_wait_common(
     rc
 }
 
-/// POSIX `pthread_cond_wait`.
+/// POSIX `pthread_cond_wait`. A cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_cond_wait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+) -> c_int {
+    unsafe { pthread_cond_wait_cp(cond, mutex) }
+}
+
+/// Body of [`pthread_cond_wait`] and of `__pthread_cond_wait`/`cnd_wait`:
+/// always inlined (rustc ignores inline hints on exported functions), so the
+/// futex wait's cancellation window sees the caller of whichever exported
+/// entry point was called (see [`at_cancellation_point`]).
+#[inline(always)]
+pub(crate) unsafe fn pthread_cond_wait_cp(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
 ) -> c_int {
@@ -4169,7 +4193,7 @@ pub unsafe extern "C-unwind" fn __pthread_cond_wait(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
 ) -> c_int {
-    unsafe { pthread_cond_wait(cond, mutex) }
+    unsafe { pthread_cond_wait_cp(cond, mutex) }
 }
 
 /// glibc reserved-namespace alias for [`pthread_cond_signal`].
@@ -4350,9 +4374,20 @@ pub unsafe extern "C" fn pthread_rwlock_trywrlock(rwlock: *mut libc::pthread_rwl
 // Condition variable timed wait
 // ===========================================================================
 
-/// POSIX `pthread_cond_timedwait`.
+/// POSIX `pthread_cond_timedwait`. A cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_cond_timedwait(
+    cond: *mut libc::pthread_cond_t,
+    mutex: *mut libc::pthread_mutex_t,
+    abstime: *const libc::timespec,
+) -> c_int {
+    unsafe { pthread_cond_timedwait_cp(cond, mutex, abstime) }
+}
+
+/// Body of [`pthread_cond_timedwait`] and of `pthread_cond_clockwait`, the
+/// alias and `cnd_timedwait` (see [`pthread_cond_wait_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pthread_cond_timedwait_cp(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
     abstime: *const libc::timespec,
@@ -4378,7 +4413,7 @@ pub unsafe extern "C-unwind" fn __pthread_cond_timedwait(
     mutex: *mut libc::pthread_mutex_t,
     abstime: *const libc::timespec,
 ) -> c_int {
-    unsafe { pthread_cond_timedwait(cond, mutex, abstime) }
+    unsafe { pthread_cond_timedwait_cp(cond, mutex, abstime) }
 }
 
 // ===========================================================================
@@ -5401,8 +5436,48 @@ fn consume_pending_cancel_for_current_thread() -> bool {
     true
 }
 
+/// glibc's handle for the main thread. fl names a thread no registry knows --
+/// the main thread above all -- by its tid (see `native_pthread_self`), and
+/// glibc's `pthread_cancel` dereferences its argument as its own thread
+/// descriptor: `pthread_cancel(pthread_self())` in `main` died with SIGSEGV.
+/// Recorded on the main thread at startup (`prewarm_host_thread_symbols`) and
+/// in a fork child, whose only thread is its main thread.
+static MAIN_THREAD_HOST_HANDLE: AtomicUsize = AtomicUsize::new(0);
+/// The value `pthread_self` returns in the main thread (its tid when it was
+/// first asked; a fork child keeps the cached value, as glibc keeps the
+/// descriptor address).
+static MAIN_THREAD_FL_NAME: AtomicUsize = AtomicUsize::new(0);
+
+/// Record the calling thread's glibc handle when it is the main thread.
+pub(crate) fn remember_main_thread_host_handle() {
+    if force_native_threading_enabled() || core_self_tid() != raw_syscall::sys_getpid() {
+        return;
+    }
+    if let Some(host_self) = resolved_thread_self_raw() {
+        // SAFETY: the resolved host symbol is glibc's `pthread_self`.
+        let handle = unsafe { host_self() };
+        MAIN_THREAD_HOST_HANDLE.store(handle as usize, Ordering::Release);
+    }
+}
+
+/// The handle glibc knows `thread` by, and whether it is the calling thread.
+fn host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
+    if thread == native_pthread_self() {
+        let handle = resolved_thread_self_raw()
+            // SAFETY: the resolved host symbol is glibc's `pthread_self`.
+            .map_or(thread, |host_self| unsafe { host_self() });
+        return (handle, true);
+    }
+    let main_name = MAIN_THREAD_FL_NAME.load(Ordering::Acquire);
+    let main_handle = MAIN_THREAD_HOST_HANDLE.load(Ordering::Acquire);
+    if main_name != 0 && main_handle != 0 && thread as usize == main_name {
+        return (main_handle as libc::pthread_t, false);
+    }
+    (thread, false)
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
+pub unsafe extern "C-unwind" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
     if thread == 0 {
         return libc::ESRCH;
     }
@@ -5411,7 +5486,16 @@ pub unsafe extern "C" fn pthread_cancel(thread: libc::pthread_t) -> c_int {
         && !is_managed_thread_handle(thread)
         && let Some(host_cancel) = resolved_thread_cancel_raw()
     {
-        return unsafe { host_cancel(thread) };
+        let (target, is_self) = host_cancel_target(thread);
+        if is_self {
+            // A single-threaded process may cancel itself; glibc then treats
+            // the process as multi-threaded so that its next cancellation
+            // point acts. fl's cancellation points consult fl's own copy of
+            // the flag (cancellation_window_hook).
+            crate::glibc_internal_abi::__libc_single_threaded.store(0, Ordering::Release);
+        }
+        // SAFETY: `target` is glibc's handle for a live host thread.
+        return unsafe { host_cancel(target) };
     }
 
     // Validate that the target looks alive before enqueuing a cancel request.
@@ -5541,9 +5625,24 @@ pub unsafe extern "C-unwind" fn __pthread_setcanceltype(typ: c_int, oldtype: *mu
 // asynchronous acts on a request that is already pending; one that arrives
 // while blocked is acted on by glibc's handler. Either way the forced unwind
 // runs the thread's cleanup handlers and crosses fl's C-unwind entry points.
+//
+// Only a call from OUTSIDE this object is a cancellation point. fl's own code
+// reaches the same exported symbols through the PLT -- Rust std's file I/O
+// (getpwnam reading /etc/passwd, lazy symbol resolution reading /proc, ...)
+// calls `open`/`read`/`close` -- and a forced unwind started there crosses
+// std and fl frames that called "C" functions the compiler assumed cannot
+// unwind; the personality routine reports a fatal error and glibc aborts the
+// process (getpwnam/getgrnam/getaddrinfo/aio_read with a pending cancel all
+// died with SIGABRT). glibc's internal I/O uses its *_nocancel variants for
+// the same reason. The window opens only when the exported entry point's
+// return address lies outside fl's loaded image.
 
 /// Issue one blocking syscall as a POSIX cancellation point. Returns the
 /// syscall result, or -1 with errno set.
+///
+/// Always inlined: [`at_cancellation_point`] reads the return address of the
+/// function it ends up in, which must be the exported entry point.
+#[inline(always)]
 pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 6]) -> isize {
     let ret = unsafe { cancellation_point_syscall_raw(nr, args) };
     if (-4095..0).contains(&ret) {
@@ -5554,8 +5653,8 @@ pub(crate) unsafe fn cancellation_point_syscall(nr: libc::c_long, args: [usize; 
 }
 
 /// [`cancellation_point_syscall`] returning the raw kernel result (a negated
-/// errno on failure).
-#[inline]
+/// errno on failure). Always inlined, for the reason given there.
+#[inline(always)]
 pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usize; 6]) -> isize {
     // SAFETY: the caller supplies a valid syscall number and arguments.
     unsafe {
@@ -5574,10 +5673,39 @@ pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usi
 }
 
 /// Run `blocking_syscall` (one blocking system call) as a POSIX cancellation
-/// point.
+/// point of the exported function this is inlined into.
 ///
-/// Unwind safety: an asynchronous cancellation starts a forced unwind whose
-/// interrupted instruction is the `syscall` inside `blocking_syscall`. The
+/// Always inlined, and so must be every fl function between it and the
+/// exported entry point: `return_address` names the caller of the function it
+/// is finally inlined into, and that caller decides whether this call is a
+/// cancellation point at all (see [`cancellation_window_hook`]). rustc ignores
+/// inline hints on exported functions, so an exported cancellation point that
+/// other exported functions (its aliases: `__read`, `__read_chk`, `pread64`,
+/// ...) share keeps its body in an always-inlined `*_cp` function they all
+/// call.
+#[inline(always)]
+pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() -> R) -> R {
+    let caller = core::intrinsics::return_address() as usize;
+    unsafe { cancellation_window(caller, blocking_syscall) }
+}
+
+/// The asynchronous-cancel window around one blocking syscall.
+///
+/// Async-cancel safety: between switching to ASYNCHRONOUS and back, this
+/// thread executes only the tail of the host `pthread_setcanceltype`, the
+/// register moves that load the syscall arguments, the `syscall` instruction,
+/// and the call that restores the type. It takes no lock, allocates nothing,
+/// holds no `RefCell` borrow and writes no fl state, so a cancellation acting
+/// at any of those instructions leaves nothing half-updated. State the CALLER
+/// set up around the window (a semaphore waiter registration, a condvar
+/// wait's released mutex) is owned by `Drop` guards in C-unwind frames, which
+/// the forced unwind's cleanup phase runs. The one inherited hazard is glibc
+/// <= 2.40's: a cancel delivered after the syscall completed but before the
+/// type is restored discards that syscall's result (glibc BZ #12683, the race
+/// 2.41's redesign closed for its own wrappers).
+///
+/// Unwind safety: the forced unwind's innermost fl frame is this one, at the
+/// `syscall` (or at the call into glibc that acted on a pending request). The
 /// unwinder consults a frame's personality routine only when the frame has a
 /// language-specific data area, and Rust's personality treats an address
 /// outside every call site as "must not unwind". This function therefore stays
@@ -5585,8 +5713,8 @@ pub(crate) unsafe fn cancellation_point_syscall_raw(nr: libc::c_long, args: [usi
 /// capture only plain values and `R` must not need dropping), so neither it
 /// nor the closure has an LSDA and the unwind passes through to the callers.
 #[inline(never)]
-pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() -> R) -> R {
-    let set_type = cancellation_window_hook();
+unsafe fn cancellation_window<R>(caller: usize, blocking_syscall: impl FnOnce() -> R) -> R {
+    let set_type = cancellation_window_hook(caller);
     let mut old_type = PTHREAD_CANCEL_DEFERRED_TYPE;
     if let Some(set) = set_type {
         unsafe { set(PTHREAD_CANCEL_ASYNCHRONOUS_TYPE, &mut old_type) };
@@ -5600,18 +5728,55 @@ pub(crate) unsafe fn at_cancellation_point<R>(blocking_syscall: impl FnOnce() ->
     ret
 }
 
-/// The host `pthread_setcanceltype` when the calling thread can be cancelled
-/// through glibc: only another thread can cancel it, and only host threads
-/// are cancelled by glibc.
-#[inline]
-fn cancellation_window_hook() -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int> {
+/// The host `pthread_setcanceltype` when this call is a cancellation point
+/// that glibc can act on: the process is multi-threaded (or a thread has
+/// cancelled itself, see `pthread_cancel`), the thread is a host thread
+/// (only host threads are cancelled by glibc), and the exported entry point
+/// was called from outside fl's image.
+///
+/// Always inlined into the window, as it was before callers were told apart:
+/// out of line it cost every read/write a call even single-threaded (measured
+/// in the io_cancel_points self-A/B: write 1.030x, read 1.012x of the base).
+#[inline(always)]
+fn cancellation_window_hook(
+    caller: usize,
+) -> Option<unsafe extern "C-unwind" fn(c_int, *mut c_int) -> c_int> {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
         return None;
     }
     if current_threading_backend() != THREAD_BACKEND_HOST {
         return None;
     }
+    if address_is_inside_this_object(caller) {
+        return None;
+    }
     resolved_thread_setcanceltype_raw()
+}
+
+static OWN_IMAGE_START: AtomicUsize = AtomicUsize::new(0);
+static OWN_IMAGE_END: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether `addr` lies in fl's own loaded image. An image whose range cannot
+/// be read is cached as empty, so every caller then counts as outside (the
+/// behaviour before callers were told apart).
+#[inline(always)]
+fn address_is_inside_this_object(addr: usize) -> bool {
+    let mut end = OWN_IMAGE_END.load(Ordering::Acquire);
+    if end == 0 {
+        end = record_own_image_range();
+    }
+    (OWN_IMAGE_START.load(Ordering::Relaxed)..end).contains(&addr)
+}
+
+/// First use: read the image range from fl's own ELF header. Racing first
+/// calls compute the same range; the end is published last.
+#[cold]
+#[inline(never)]
+fn record_own_image_range() -> usize {
+    let (start, end) = crate::startup_abi::own_image_range().unwrap_or((usize::MAX, usize::MAX));
+    OWN_IMAGE_START.store(start, Ordering::Relaxed);
+    OWN_IMAGE_END.store(end, Ordering::Release);
+    end
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7486,7 +7651,7 @@ pub unsafe extern "C-unwind" fn pthread_cond_clockwait(
         };
         &converted_deadline
     };
-    unsafe { pthread_cond_timedwait(cond, mutex, effective_deadline) }
+    unsafe { pthread_cond_timedwait_cp(cond, mutex, effective_deadline) }
 }
 
 // ---------------------------------------------------------------------------
@@ -8463,6 +8628,21 @@ pub fn __test_atfork_handlers_clear() {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clear();
+}
+
+/// Test-only hook (bd-rc0923-epic-eeuy4f.24): whether a cancellation point
+/// called from `addr` counts as called from inside this object, so that it
+/// opens no cancellation window (`cancellation_window_hook`).
+#[doc(hidden)]
+pub fn __test_address_is_inside_this_object(addr: usize) -> bool {
+    address_is_inside_this_object(addr)
+}
+
+/// Test-only hook (bd-rc0923-epic-eeuy4f.24): the handle `pthread_cancel`
+/// passes to glibc for `thread`, and whether `thread` is the calling thread.
+#[doc(hidden)]
+pub fn __test_host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
+    host_cancel_target(thread)
 }
 
 /// Replay the host-thread-handle reuse interleaving for the integration gate.

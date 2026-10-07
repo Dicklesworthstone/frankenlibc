@@ -22,6 +22,12 @@ extern "C" fn noop_handler(_: c_int) {}
 
 type WaitFn = unsafe extern "C" fn(*const libc::sigset_t, *mut c_int) -> c_int;
 
+/// fl's `sigwait` is a cancellation point and therefore `extern "C-unwind"`;
+/// this shim gives it the host arm's type so both share `run`.
+unsafe extern "C" fn fl_sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { fl::sigwait(set, sig) }
+}
+
 /// Block SIGUSR1 in this thread and install a no-op SIGUSR2 handler so SIGUSR2
 /// interrupts (rather than terminates) a blocking wait.
 fn arm() {
@@ -74,7 +80,7 @@ fn sigwait_restarts_on_eintr_like_glibc() {
     );
 
     // fl must match: rc 0, sig SIGUSR1, NOT EINTR.
-    let f = run(fl::sigwait);
+    let f = run(fl_sigwait);
     assert_eq!(
         f,
         g,

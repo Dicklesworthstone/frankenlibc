@@ -4,6 +4,11 @@
 #![cfg_attr(target_arch = "x86_64", feature(rtm_target_feature))]
 #![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_rtm))]
 #![feature(thread_local)]
+// `core::intrinsics::return_address`: a cancellation point opens its
+// asynchronous-cancel window only when it was called from outside this
+// object (pthread_abi::at_cancellation_point).
+#![feature(core_intrinsics)]
+#![allow(internal_features)]
 #![allow(unused_features)]
 // All extern "C" ABI exports accept raw pointers from C callers; the membrane
 // validates at runtime, so per-function safety docs would be redundant boilerplate.

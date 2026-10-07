@@ -4016,16 +4016,10 @@ pub unsafe extern "C" fn __clone(
     unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
-// __close: native syscall
+// __close: `close`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __close(fd: c_int) -> c_int {
-    match raw_syscall::sys_close(fd) {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __close(fd: c_int) -> c_int {
+    unsafe { crate::unistd_abi::close_cp(fd) }
 }
 // __cmsg_nxthdr: native — navigate to next CMSG header
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4059,16 +4053,14 @@ pub unsafe extern "C" fn __cmsg_nxthdr(mhdr: *mut c_void, cmsg: *mut c_void) -> 
         next as *mut c_void
     }
 }
-// __connect: native syscall
+// __connect: `connect`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __connect(sockfd: c_int, addr: *const c_void, addrlen: c_uint) -> c_int {
-    match unsafe { raw_syscall::sys_connect(sockfd, addr as *const u8, addrlen) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __connect(
+    sockfd: c_int,
+    addr: *const c_void,
+    addrlen: c_uint,
+) -> c_int {
+    unsafe { crate::socket_abi::connect_cp(sockfd, addr.cast(), addrlen) }
 }
 // __cyg_profile_func_enter/exit: GCC -finstrument-functions hooks — no-op
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4112,7 +4104,7 @@ pub unsafe extern "C" fn __fbufsize(fp: *mut c_void) -> SizeT {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __fcntl(fd: c_int, cmd: c_int, mut args: ...) -> c_int {
     let arg: c_long = unsafe { args.next_arg::<c_long>() };
-    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
+    unsafe { crate::io_abi::fcntl_cp(fd, cmd, arg) }
 }
 // __fdelt_warn: FD_SET overflow check — return d if valid, abort otherwise
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4368,16 +4360,10 @@ pub unsafe extern "C" fn __mbrtowc(
 pub unsafe extern "C" fn __monstartup(lowpc: c_ulong, highpc: c_ulong) {
     let _ = (lowpc, highpc);
 }
-// __nanosleep: native syscall
+// __nanosleep: `nanosleep`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> c_int {
-    match unsafe { raw_syscall::sys_nanosleep(rqtp as *const u8, rmtp as *mut u8) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __nanosleep(rqtp: *const c_void, rmtp: *mut c_void) -> c_int {
+    unsafe { crate::time_abi::nanosleep_cp(rqtp.cast(), rmtp.cast()) }
 }
 // __open/__open64: glibc's internal aliases of open, which is variadic: the
 // mode is the third argument with O_CREAT/O_TMPFILE. It is taken as a fixed
@@ -4389,7 +4375,7 @@ pub unsafe extern "C-unwind" fn __open(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
+    unsafe { crate::unistd_abi::open_cp(pathname, flags, mode) }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __open64(
@@ -4397,7 +4383,7 @@ pub unsafe extern "C-unwind" fn __open64(
     flags: c_int,
     mode: libc::mode_t,
 ) -> c_int {
-    unsafe { crate::unistd_abi::open(pathname, flags, mode) }
+    unsafe { crate::unistd_abi::open_cp(pathname, flags, mode) }
 }
 // __overflow: glibc stdio vtable helper — native file overflow bridge
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4425,10 +4411,10 @@ pub unsafe extern "C" fn __overflow(fp: *mut c_void, c: c_int) -> c_int {
     crate::stdio_abi::republish_read_window(fp);
     rc
 }
-// __poll: native syscall
+// __poll: `poll`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
-    unsafe { crate::poll_abi::poll(fds.cast::<libc::pollfd>(), nfds as libc::nfds_t, timeout) }
+pub unsafe extern "C-unwind" fn __poll(fds: *mut c_void, nfds: c_ulong, timeout: c_int) -> c_int {
+    unsafe { crate::poll_abi::poll_cp(fds.cast::<libc::pollfd>(), nfds as libc::nfds_t, timeout) }
 }
 // __posix_getopt → getopt (POSIX semantics — same as getopt)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4439,25 +4425,15 @@ pub unsafe extern "C" fn __posix_getopt(
 ) -> c_int {
     unsafe { super::unistd_abi::getopt(argc, argv, optstring) }
 }
-// __pread64/__pwrite64: native syscall
+// __pread64/__pwrite64: `pread`/`pwrite`, cancellation points as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pread64(
+pub unsafe extern "C-unwind" fn __pread64(
     fd: c_int,
     buf: *mut c_void,
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
-    if tracked_output_too_short(buf, count) {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    match unsafe { raw_syscall::sys_pread64(fd, buf as *mut u8, count, offset) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
 // __printf_fp: glibc-internal float printf helper — returns -1 (not exposed in public API)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4501,19 +4477,13 @@ pub unsafe extern "C" fn __profile_frequency() -> c_int {
     }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pwrite64(
+pub unsafe extern "C-unwind" fn __pwrite64(
     fd: c_int,
     buf: *const c_void,
     count: SizeT,
     offset: i64,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_pwrite64(fd, buf as *const u8, count, offset) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pwrite_cp(fd, buf, count, offset) }
 }
 // __rcmd_errstr: pointer to rcmd error string (thread-local for reentrancy)
 #[cfg(feature = "owned-tls-cache")]
@@ -4542,20 +4512,11 @@ fn rcmd_errstr_ptr() -> *mut *mut c_char {
 pub unsafe extern "C" fn __rcmd_errstr() -> *mut *mut c_char {
     rcmd_errstr_ptr()
 }
-// __read/__write: native syscall
+// __read: glibc's exported `__read` is `read`, a cancellation point (the
+// non-cancelling variant is the GLIBC_PRIVATE `__read_nocancel`).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
-    if tracked_output_too_short(buf, count) {
-        unsafe { set_abi_errno(libc::EFAULT) };
-        return -1;
-    }
-    match unsafe { raw_syscall::sys_read(fd, buf as *mut u8, count) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __read(fd: c_int, buf: *mut c_void, count: SizeT) -> SSizeT {
+    unsafe { crate::unistd_abi::read_cp(fd, buf, count) }
 }
 // __register_atfork: native — forward to our pthread_atfork (dso_handle ignored)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4597,9 +4558,9 @@ pub unsafe extern "C" fn __secure_getenv(name: *const c_char) -> *mut c_char {
     }
     unsafe { crate::stdlib_abi::getenv(name) as *mut c_char }
 }
-// __select: native syscall
+// __select: `select`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __select(
+pub unsafe extern "C-unwind" fn __select(
     nfds: c_int,
     readfds: *mut c_void,
     writefds: *mut c_void,
@@ -4607,7 +4568,7 @@ pub unsafe extern "C" fn __select(
     timeout: *mut c_void,
 ) -> c_int {
     unsafe {
-        crate::poll_abi::select(
+        crate::poll_abi::select_cp(
             nfds,
             readfds.cast::<libc::fd_set>(),
             writefds.cast::<libc::fd_set>(),
@@ -4616,23 +4577,15 @@ pub unsafe extern "C" fn __select(
         )
     }
 }
-// __send: native syscall
+// __send: `send`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __send(
+pub unsafe extern "C-unwind" fn __send(
     sockfd: c_int,
     buf: *const c_void,
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe {
-        raw_syscall::sys_sendto(sockfd, buf as *const u8, len, flags, std::ptr::null(), 0)
-    } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::socket_abi::send_cp(sockfd, buf, len, flags) }
 }
 // __setmntent: native — forward to our setmntent
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4696,18 +4649,18 @@ pub unsafe extern "C" fn __sigismember(set: *const c_void, signum: c_int) -> c_i
 }
 // __sigpause → sigpause (BSD compatibility)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigpause(sig_or_mask: c_int) -> c_int {
-    unsafe { super::unistd_abi::sigpause(sig_or_mask) }
+pub unsafe extern "C-unwind" fn __sigpause(sig_or_mask: c_int) -> c_int {
+    unsafe { super::unistd_abi::sigpause_cp(sig_or_mask) }
 }
 // __sigsetjmp: NOT exported — setjmp-family functions must save the
 // caller's CPU context and cannot work through a trampoline.
 pub unsafe extern "C" fn __sigsetjmp(env: *mut c_void, savesigs: c_int) -> c_int {
     unsafe { super::setjmp_abi::sigsetjmp(env, savesigs) }
 }
-// __sigsuspend: native via signal_abi
+// __sigsuspend: `sigsuspend`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigsuspend(set: *const c_void) -> c_int {
-    unsafe { crate::signal_abi::sigsuspend(set.cast()) }
+pub unsafe extern "C-unwind" fn __sigsuspend(set: *const c_void) -> c_int {
+    unsafe { crate::signal_abi::sigsuspend_cp(set.cast()) }
 }
 /// __statfs: native syscall
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4765,38 +4718,20 @@ pub unsafe extern "C" fn __vsnprintf(
 pub unsafe extern "C" fn __vsscanf(s: *const c_char, fmt: *const c_char, ap: *mut c_void) -> c_int {
     unsafe { super::stdio_abi::vsscanf(s, fmt, ap) }
 }
-// __wait: native — wait4 with pid=-1, options=0
+// __wait: `wait`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait(status: *mut c_int) -> c_int {
-    match unsafe { raw_syscall::sys_wait4(-1, status, 0, std::ptr::null_mut()) } {
-        Ok(pid) => pid,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __wait(status: *mut c_int) -> c_int {
+    unsafe { crate::process_abi::waitpid_cp(-1, status, 0) }
 }
-// __waitpid: native syscall
+// __waitpid: `waitpid`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
-    match unsafe { raw_syscall::sys_wait4(pid, status, options, std::ptr::null_mut()) } {
-        Ok(ret_pid) => ret_pid,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int {
+    unsafe { crate::process_abi::waitpid_cp(pid, status, options) }
 }
-// __write: native syscall
+// __write: `write`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
-    match unsafe { raw_syscall::sys_write(fd, buf as *const u8, count) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+pub unsafe extern "C-unwind" fn __write(fd: c_int, buf: *const c_void, count: SizeT) -> SSizeT {
+    unsafe { crate::unistd_abi::write_cp(fd, buf, count) }
 }
 // __xmknod: native — forward to mknodat syscall with AT_FDCWD (ignoring ver)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4844,12 +4779,12 @@ pub unsafe extern "C" fn __xmknodat(
 }
 // __xpg_sigpause: native — XPG sigpause removes sig from mask then sigsuspend
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __xpg_sigpause(sig: c_int) -> c_int {
+pub unsafe extern "C-unwind" fn __xpg_sigpause(sig: c_int) -> c_int {
     unsafe {
         let mut mask: libc::sigset_t = std::mem::zeroed();
         crate::signal_abi::sigprocmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask);
         crate::signal_abi::sigdelset(&mut mask, sig);
-        crate::signal_abi::sigsuspend(&mask)
+        crate::signal_abi::sigsuspend_cp(&mask)
     }
 }
 // --- Native math: long-double classification (long double = f64 in this ABI) ---
@@ -6980,22 +6915,16 @@ pub unsafe extern "C" fn pidfd_spawnp(
         crate::process_abi::pidfd_spawn_impl(pidfd, file, file_actions, attrp, argv, envp, true)
     }
 }
-// preadv64v2: native syscall
+// preadv64v2: `preadv2` (LFS alias), a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn preadv64v2(
+pub unsafe extern "C-unwind" fn preadv64v2(
     fd: c_int,
     iov: *const c_void,
     iovcnt: c_int,
     offset: i64,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::preadv2_cp(fd, iov.cast(), iovcnt, offset, flags) }
 }
 // putgrent: native — write group entry to file
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7135,22 +7064,16 @@ pub unsafe extern "C" fn putpwent(pw: *const c_void, fp: *mut c_void) -> c_int {
     let written = unsafe { crate::stdio_abi::fwrite(line.as_ptr().cast(), 1, line.len(), fp) };
     if written == line.len() { 0 } else { -1 }
 }
-// pwritev64v2: native syscall
+// pwritev64v2: `pwritev2` (LFS alias), a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwritev64v2(
+pub unsafe extern "C-unwind" fn pwritev64v2(
     fd: c_int,
     iov: *const c_void,
     iovcnt: c_int,
     offset: i64,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe { raw_syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags) } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::io_abi::pwritev2_cp(fd, iov.cast(), iovcnt, offset, flags) }
 }
 // query_module: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8878,30 +8801,15 @@ pub unsafe extern "C" fn __socket(domain: c_int, sock_type: c_int, protocol: c_i
     }
 }
 
-/// `__recv` — internal recv alias.
+/// `__recv` — internal recv alias; a cancellation point as `recv` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __recv(
+pub unsafe extern "C-unwind" fn __recv(
     sockfd: c_int,
     buf: *mut c_void,
     len: SizeT,
     flags: c_int,
 ) -> SSizeT {
-    match unsafe {
-        raw_syscall::sys_recvfrom(
-            sockfd,
-            buf as *mut u8,
-            len,
-            flags,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
-    } {
-        Ok(n) => n as SSizeT,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::socket_abi::recv_cp(sockfd, buf, len, flags) }
 }
 
 /// `__sendmmsg` — internal sendmmsg alias.
@@ -9048,23 +8956,15 @@ pub unsafe extern "C" fn __mktemp(template: *mut c_char) -> *mut c_char {
     template
 }
 
-/// `__sigtimedwait` — internal sigtimedwait alias.
+/// `__sigtimedwait` — internal sigtimedwait alias; a cancellation point as
+/// `sigtimedwait` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigtimedwait(
+pub unsafe extern "C-unwind" fn __sigtimedwait(
     set: *const c_void,
     info: *mut c_void,
     timeout: *const c_void,
 ) -> c_int {
-    // Kernel expects _NSIG/8 = 8 (NOT sizeof(sigset_t) which is 128 in glibc).
-    match unsafe {
-        raw_syscall::sys_rt_sigtimedwait(set as *const u8, info as *mut u8, timeout as *const u8, 8)
-    } {
-        Ok(sig) => sig,
-        Err(e) => {
-            unsafe { crate::errno_abi::set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::unistd_abi::sigtimedwait_cp(set, info, timeout.cast()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -10939,23 +10839,23 @@ pub unsafe extern "C" fn __libc_system(command: *const c_char) -> c_int {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_pread(
+pub unsafe extern "C-unwind" fn __libc_pread(
     fd: c_int,
     buf: *mut c_void,
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::unistd_abi::pread64(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pread_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_pwrite(
+pub unsafe extern "C-unwind" fn __libc_pwrite(
     fd: c_int,
     buf: *const c_void,
     count: usize,
     offset: i64,
 ) -> isize {
-    unsafe { crate::unistd_abi::pwrite64(fd, buf, count, offset) }
+    unsafe { crate::io_abi::pwrite_cp(fd, buf, count, offset) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -11538,8 +11438,12 @@ pub static _itoa_lower_digits: [c_char; 17] = [
 /// `fd` must be a valid file descriptor for the requested `cmd`.
 /// `arg` must match the `cmd` contract per `fcntl(2)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_fcntl64(fd: c_int, cmd: c_int, arg: std::ffi::c_long) -> c_int {
-    unsafe { crate::io_abi::fcntl(fd, cmd, arg) }
+pub unsafe extern "C-unwind" fn __libc_fcntl64(
+    fd: c_int,
+    cmd: c_int,
+    arg: std::ffi::c_long,
+) -> c_int {
+    unsafe { crate::io_abi::fcntl_cp(fd, cmd, arg) }
 }
 
 /// `__libc_mallinfo() -> struct mallinfo` — GLIBC_2.2.5 alias for

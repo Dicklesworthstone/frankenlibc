@@ -2356,10 +2356,11 @@ pub unsafe extern "C" fn clnt_broadcast(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
     let msg = rpc_errstr(stat);
-    // Write to stderr: "RPC: <message>\n"
-    let _ = unsafe { crate::unistd_abi::write(2, b"RPC: ".as_ptr().cast(), 5) };
-    let _ = unsafe { crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len()) };
-    let _ = unsafe { crate::unistd_abi::write(2, b"\n".as_ptr().cast(), 1) };
+    // Write to stderr: "RPC: <message>\n". Raw writes: an error report is not
+    // a cancellation point here (a forced unwind must not start in a "C" frame).
+    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"RPC: ".as_ptr().cast(), 5) };
+    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.as_ptr().cast(), msg.len()) };
+    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
 }
 
 rpc_native!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
@@ -2374,8 +2375,9 @@ pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
     let msg = unsafe { clnt_spcreateerror(s) };
     if !msg.is_null() {
         let len = unsafe { crate::string_abi::strlen(msg) };
-        let _ = unsafe { crate::unistd_abi::write(2, msg.cast(), len) };
-        let _ = unsafe { crate::unistd_abi::write(2, b"\n".as_ptr().cast(), 1) };
+        // Raw writes, as in clnt_perrno.
+        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.cast(), len) };
+        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
     }
 }
 

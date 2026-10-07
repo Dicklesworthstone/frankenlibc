@@ -354,6 +354,9 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
 
     if pid == 0 {
+        // The forking thread is the child's main thread: pthread_cancel of
+        // it must reach glibc with glibc's handle for it.
+        crate::pthread_abi::remember_main_thread_host_handle();
         // Child: run child handlers to reinitialize state.
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
@@ -485,6 +488,19 @@ pub unsafe extern "C-unwind" fn waitpid(
     wstatus: *mut c_int,
     options: c_int,
 ) -> libc::pid_t {
+    unsafe { waitpid_cp(pid, wstatus, options) }
+}
+
+/// Body of [`waitpid`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn waitpid_cp(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+) -> libc::pid_t {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Process, wstatus as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -495,21 +511,32 @@ pub unsafe extern "C-unwind" fn waitpid(
 
     // Kernel first: __WALL, __WCLONE and __WNOTHREAD are valid wait4
     // options (debuggers wait with __WALL); hardened repairs only options
-    // the kernel rejected.
-    let wait = |opts: c_int| unsafe {
-        crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
-        })
+    // the kernel rejected. The wait stays in this function's body (no
+    // closure): the cancellation point is decided by waitpid's caller.
+    let mut opts = options;
+    let mut repaired = false;
+    let rc = loop {
+        let rc = unsafe {
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_wait4(pid, wstatus, opts, std::ptr::null_mut())
+            })
+        };
+        if !repaired
+            && mode.heals_enabled()
+            && rc == Err(libc::EINVAL)
+            && !process::valid_wait_options(options)
+        {
+            let sanitized = process::sanitize_wait_options(options);
+            global_healing_policy().record(&HealingAction::ClampSize {
+                requested: options as usize,
+                clamped: sanitized as usize,
+            });
+            opts = sanitized;
+            repaired = true;
+            continue;
+        }
+        break rc;
     };
-    let mut rc = wait(options);
-    if mode.heals_enabled() && rc == Err(libc::EINVAL) && !process::valid_wait_options(options) {
-        let sanitized = process::sanitize_wait_options(options);
-        global_healing_policy().record(&HealingAction::ClampSize {
-            requested: options as usize,
-            clamped: sanitized as usize,
-        });
-        rc = wait(sanitized);
-    }
 
     match rc {
         Ok(child_pid) => {
@@ -531,7 +558,7 @@ pub unsafe extern "C-unwind" fn waitpid(
 /// POSIX `wait` — equivalent to `waitpid(-1, wstatus, 0)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wait(wstatus: *mut c_int) -> libc::pid_t {
-    unsafe { waitpid(-1, wstatus, 0) }
+    unsafe { waitpid_cp(-1, wstatus, 0) }
 }
 
 // ---------------------------------------------------------------------------
@@ -542,12 +569,12 @@ pub unsafe extern "C-unwind" fn wait(wstatus: *mut c_int) -> libc::pid_t {
 ///
 /// Equivalent to `wait4(-1, wstatus, options, rusage)`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wait3(
+pub unsafe extern "C-unwind" fn wait3(
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait4(-1, wstatus, options, rusage) }
+    unsafe { wait4_cp(-1, wstatus, options, rusage) }
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +584,17 @@ pub unsafe extern "C" fn wait3(
 /// BSD `wait4` — wait for a specific child with resource usage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn wait4(
+    pid: libc::pid_t,
+    wstatus: *mut c_int,
+    options: c_int,
+    rusage: *mut libc::rusage,
+) -> libc::pid_t {
+    unsafe { wait4_cp(pid, wstatus, options, rusage) }
+}
+
+/// Body of [`wait4`] and its aliases (see [`waitpid_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn wait4_cp(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
@@ -601,6 +639,17 @@ pub unsafe extern "C-unwind" fn waitid(
     infop: *mut libc::siginfo_t,
     options: c_int,
 ) -> c_int {
+    unsafe { waitid_cp(idtype, id, infop, options) }
+}
+
+/// Body of [`waitid`] and its aliases (see [`waitpid_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn waitid_cp(
+    idtype: c_int,
+    id: libc::id_t,
+    infop: *mut libc::siginfo_t,
+    options: c_int,
+) -> c_int {
     let (_, decision) =
         runtime_policy::decide(ApiFamily::Process, infop as usize, 0, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -640,12 +689,12 @@ pub unsafe extern "C-unwind" fn waitid(
 ///
 /// Same as [`wait3`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait3(
+pub unsafe extern "C-unwind" fn __wait3(
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait3(wstatus, options, rusage) }
+    unsafe { wait4_cp(-1, wstatus, options, rusage) }
 }
 
 /// glibc reserved-namespace alias for [`wait4`].
@@ -654,13 +703,13 @@ pub unsafe extern "C" fn __wait3(
 ///
 /// Same as [`wait4`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wait4(
+pub unsafe extern "C-unwind" fn __wait4(
     pid: libc::pid_t,
     wstatus: *mut c_int,
     options: c_int,
     rusage: *mut libc::rusage,
 ) -> libc::pid_t {
-    unsafe { wait4(pid, wstatus, options, rusage) }
+    unsafe { wait4_cp(pid, wstatus, options, rusage) }
 }
 
 /// glibc reserved-namespace alias for [`waitid`].
@@ -669,13 +718,13 @@ pub unsafe extern "C" fn __wait4(
 ///
 /// Same as [`waitid`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __waitid(
+pub unsafe extern "C-unwind" fn __waitid(
     idtype: c_int,
     id: libc::id_t,
     infop: *mut libc::siginfo_t,
     options: c_int,
 ) -> c_int {
-    unsafe { waitid(idtype, id, infop, options) }
+    unsafe { waitid_cp(idtype, id, infop, options) }
 }
 
 // ---------------------------------------------------------------------------

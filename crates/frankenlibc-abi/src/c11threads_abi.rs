@@ -389,21 +389,23 @@ pub unsafe extern "C" fn cnd_broadcast(cond: *mut CndT) -> c_int {
 // cnd_wait — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `cnd_wait` — wait on a condition variable.
+/// C11 `cnd_wait` — wait on a condition variable. A cancellation point, as
+/// in glibc (it is `pthread_cond_wait`), so the unwind passes through it.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
+pub unsafe extern "C-unwind" fn cnd_wait(cond: *mut CndT, mtx: *mut MtxT) -> c_int {
     if !tracked_required_object_fits(cond) || !tracked_required_object_fits(mtx) {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait(cond, mtx) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_wait_cp(cond, mtx) })
 }
 
 // cnd_timedwait — Implemented
 // ---------------------------------------------------------------------------
 
-/// C11 `cnd_timedwait` — wait on a condition variable with timeout.
+/// C11 `cnd_timedwait` — wait on a condition variable with timeout. A
+/// cancellation point, as `cnd_wait` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn cnd_timedwait(
+pub unsafe extern "C-unwind" fn cnd_timedwait(
     cond: *mut CndT,
     mtx: *mut MtxT,
     ts: *const libc::timespec,
@@ -414,7 +416,7 @@ pub unsafe extern "C" fn cnd_timedwait(
     {
         return THRD_ERROR;
     }
-    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait(cond, mtx, ts) })
+    pthread_rc_to_thrd(unsafe { crate::pthread_abi::pthread_cond_timedwait_cp(cond, mtx, ts) })
 }
 
 // cnd_destroy — Implemented

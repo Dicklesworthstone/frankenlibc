@@ -194,6 +194,15 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
 /// POSIX `msync` — synchronize a file with a memory map.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+    unsafe { msync_cp(addr, length, flags) }
+}
+
+/// Body of [`msync`] and its alias. Always inlined (rustc ignores inline hints
+/// on exported functions): the cancellation point it reaches must see the
+/// caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`).
+#[inline(always)]
+pub(crate) unsafe fn msync_cp(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::VirtualMemory,
         addr as usize,
@@ -416,8 +425,8 @@ pub unsafe extern "C" fn mremap(
 ///
 /// Same as [`msync`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
-    unsafe { msync(addr, length, flags) }
+pub unsafe extern "C-unwind" fn __msync(addr: *mut c_void, length: usize, flags: c_int) -> c_int {
+    unsafe { msync_cp(addr, length, flags) }
 }
 
 /// glibc reserved-namespace alias for [`mremap`].

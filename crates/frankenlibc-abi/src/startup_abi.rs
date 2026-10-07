@@ -21,6 +21,11 @@ use crate::startup_helpers::{
 use crate::util::scan_c_string;
 
 type MainFn = unsafe extern "C" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
+/// `main` as `host_delegate_main_wrapper` calls it: cancelling the main thread
+/// (pthread_cancel of it, or of itself) unwinds out of `main` through the
+/// wrapper into glibc's __libc_start_call_main, which ends the forced unwind.
+/// The calling convention is `MainFn`'s; only the unwind contract differs.
+type MainUnwindFn = unsafe extern "C-unwind" fn(c_int, *mut *mut c_char, *mut *mut c_char) -> c_int;
 type HookFn = unsafe extern "C" fn();
 type HostStartMainFn = unsafe extern "C" fn(
     Option<MainFn>,
@@ -557,7 +562,7 @@ fn use_owned_startup() -> bool {
     !startup_delegate_env_requested()
 }
 
-unsafe extern "C" fn host_delegate_main_wrapper(
+unsafe extern "C-unwind" fn host_delegate_main_wrapper(
     argc: c_int,
     argv: *mut *mut c_char,
     envp: *mut *mut c_char,
@@ -578,9 +583,10 @@ unsafe extern "C" fn host_delegate_main_wrapper(
     }
 
     // SAFETY: `HOST_DELEGATED_MAIN` is set from a valid `MainFn` immediately
-    // before delegating into host `__libc_start_main`.
-    let main_fn: MainFn =
-        unsafe { std::mem::transmute::<*const c_void, MainFn>(main_ptr as *const c_void) };
+    // before delegating into host `__libc_start_main`; `MainUnwindFn` is the
+    // same calling convention, and `main` may be unwound out of.
+    let main_fn: MainUnwindFn =
+        unsafe { std::mem::transmute::<*const c_void, MainUnwindFn>(main_ptr as *const c_void) };
     // SAFETY: host `__libc_start_main` invokes the wrapper with the user
     // process entrypoint ABI and argument vectors.
     unsafe { main_fn(argc, argv, resolved_envp) }
@@ -605,7 +611,11 @@ unsafe fn delegate_to_host_libc_start_main(
     let wrapped_main = if delegated_main == 0 {
         None
     } else {
-        Some(host_delegate_main_wrapper as MainFn)
+        // SAFETY: "C" and "C-unwind" share the calling convention; the host
+        // calls the wrapper as `main`, and an unwind may leave through it.
+        Some(unsafe {
+            std::mem::transmute::<MainUnwindFn, MainFn>(host_delegate_main_wrapper as MainUnwindFn)
+        })
     };
 
     #[cfg(debug_assertions)]
@@ -1792,7 +1802,7 @@ fn process_malloc_is_ours() -> bool {
 
 /// `[start, end)` of this object's PT_LOAD segments, from its own ELF header
 /// (`__ehdr_start`, defined by the linker for the object being linked).
-fn own_image_range() -> Option<(usize, usize)> {
+pub(crate) fn own_image_range() -> Option<(usize, usize)> {
     unsafe extern "C" {
         static __ehdr_start: u8;
     }

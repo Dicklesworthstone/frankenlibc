@@ -1340,6 +1340,15 @@ pub unsafe extern "C" fn sigismember(set: *const libc::sigset_t, signum: c_int) 
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pause() -> c_int {
+    unsafe { pause_cp() }
+}
+
+/// Body of [`pause`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn pause_cp() -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, 0, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1360,6 +1369,12 @@ pub unsafe extern "C-unwind" fn pause() -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn sigsuspend(mask: *const libc::sigset_t) -> c_int {
+    unsafe { sigsuspend_cp(mask) }
+}
+
+/// Body of [`sigsuspend`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigsuspend_cp(mask: *const libc::sigset_t) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::Signal, mask as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -1602,9 +1617,16 @@ pub unsafe extern "C" fn sigpending(set: *mut libc::sigset_t) -> c_int {
 }
 
 /// `sigwait` — wait for a signal from `set` via `rt_sigtimedwait` syscall.
-/// Returns 0 on success with the signal number stored in `*sig`.
+/// Returns 0 on success with the signal number stored in `*sig`. A POSIX
+/// cancellation point.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+pub unsafe extern "C-unwind" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
+}
+
+/// Body of [`sigwait`] and its aliases (see [`pause_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn sigwait_cp(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
     if set.is_null() || sig.is_null() {
         return libc::EINVAL;
     }
@@ -1619,12 +1641,14 @@ pub unsafe extern "C" fn sigwait(set: *const libc::sigset_t, sig: *mut c_int) ->
     // SA_RESTART is set, so this loop is required for parity.)
     loop {
         match unsafe {
-            raw_syscall::sys_rt_sigtimedwait(
-                set as *const u8,
-                std::ptr::null_mut(),
-                std::ptr::null(),
-                kernel_sigset_size,
-            )
+            crate::pthread_abi::at_cancellation_point(|| {
+                raw_syscall::sys_rt_sigtimedwait(
+                    set as *const u8,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    kernel_sigset_size,
+                )
+            })
         } {
             Ok(signo) if signo > 0 => {
                 // SAFETY: sig is non-null; we checked above.
@@ -2274,8 +2298,8 @@ pub unsafe extern "C" fn __sigprocmask(
 ///
 /// Same as [`sigwait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
-    unsafe { sigwait(set, sig) }
+pub unsafe extern "C-unwind" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> c_int {
+    unsafe { sigwait_cp(set, sig) }
 }
 
 /// glibc reserved-namespace alias for [`pause`].
@@ -2284,8 +2308,8 @@ pub unsafe extern "C" fn __sigwait(set: *const libc::sigset_t, sig: *mut c_int) 
 ///
 /// Same as [`pause`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pause() -> c_int {
-    unsafe { pause() }
+pub unsafe extern "C-unwind" fn __pause() -> c_int {
+    unsafe { pause_cp() }
 }
 
 /// glibc reserved-namespace alias for [`raise`].

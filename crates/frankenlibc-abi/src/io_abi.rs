@@ -186,6 +186,15 @@ pub unsafe extern "C" fn __pipe(pipefd: *mut c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fcntl(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
+    unsafe { fcntl_cp(fd, cmd, arg) }
+}
+
+/// Body of [`fcntl`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn fcntl_cp(fd: c_int, cmd: c_int, arg: libc::c_long) -> c_int {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -340,6 +349,17 @@ pub unsafe extern "C-unwind" fn pread(
     count: usize,
     offset: i64,
 ) -> libc::ssize_t {
+    unsafe { pread_cp(fd, buf, count, offset) }
+}
+
+/// Body of [`pread`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pread_cp(
+    fd: c_int,
+    buf: *mut c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, buf as usize, count, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -371,6 +391,17 @@ pub unsafe extern "C-unwind" fn pread(
 /// POSIX `pwrite` — write to a file descriptor at a given offset.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pwrite(
+    fd: c_int,
+    buf: *const c_void,
+    count: usize,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwrite_cp(fd, buf, count, offset) }
+}
+
+/// Body of [`pwrite`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwrite_cp(
     fd: c_int,
     buf: *const c_void,
     count: usize,
@@ -416,6 +447,12 @@ pub unsafe extern "C-unwind" fn readv(
     iov: *const libc::iovec,
     iovcnt: c_int,
 ) -> libc::ssize_t {
+    unsafe { readv_cp(fd, iov, iovcnt) }
+}
+
+/// Body of [`readv`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn readv_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -462,6 +499,12 @@ pub unsafe extern "C-unwind" fn writev(
     iov: *const libc::iovec,
     iovcnt: c_int,
 ) -> libc::ssize_t {
+    unsafe { writev_cp(fd, iov, iovcnt) }
+}
+
+/// Body of [`writev`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn writev_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
     let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -507,13 +550,13 @@ pub unsafe extern "C-unwind" fn writev(
 ///
 /// Same as [`pread`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pread(
+pub unsafe extern "C-unwind" fn __pread(
     fd: c_int,
     buf: *mut c_void,
     count: usize,
     offset: i64,
 ) -> libc::ssize_t {
-    unsafe { pread(fd, buf, count, offset) }
+    unsafe { pread_cp(fd, buf, count, offset) }
 }
 
 /// glibc reserved-namespace alias for [`pwrite`].
@@ -522,13 +565,13 @@ pub unsafe extern "C" fn __pread(
 ///
 /// Same as [`pwrite`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pwrite(
+pub unsafe extern "C-unwind" fn __pwrite(
     fd: c_int,
     buf: *const c_void,
     count: usize,
     offset: i64,
 ) -> libc::ssize_t {
-    unsafe { pwrite(fd, buf, count, offset) }
+    unsafe { pwrite_cp(fd, buf, count, offset) }
 }
 
 /// glibc reserved-namespace alias for [`readv`].
@@ -537,12 +580,12 @@ pub unsafe extern "C" fn __pwrite(
 ///
 /// Same as [`readv`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __readv(
+pub unsafe extern "C-unwind" fn __readv(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
 ) -> libc::ssize_t {
-    unsafe { readv(fd, iov, iovcnt) }
+    unsafe { readv_cp(fd, iov, iovcnt) }
 }
 
 /// glibc reserved-namespace alias for [`writev`].
@@ -551,12 +594,12 @@ pub unsafe extern "C" fn __readv(
 ///
 /// Same as [`writev`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __writev(
+pub unsafe extern "C-unwind" fn __writev(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
 ) -> libc::ssize_t {
-    unsafe { writev(fd, iov, iovcnt) }
+    unsafe { writev_cp(fd, iov, iovcnt) }
 }
 
 // ---------------------------------------------------------------------------
@@ -600,9 +643,10 @@ pub unsafe extern "C" fn sendfile(
 // copy_file_range — RawSyscall
 // ---------------------------------------------------------------------------
 
-/// Linux `copy_file_range` — server-side copy between file descriptors.
+/// Linux `copy_file_range` — server-side copy between file descriptors. A
+/// cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn copy_file_range(
+pub unsafe extern "C-unwind" fn copy_file_range(
     fd_in: c_int,
     off_in: *mut i64,
     fd_out: c_int,
@@ -623,7 +667,11 @@ pub unsafe extern "C" fn copy_file_range(
         return -1;
     }
 
-    match unsafe { syscall::sys_copy_file_range(fd_in, off_in, fd_out, off_out, len, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_copy_file_range(fd_in, off_in, fd_out, off_out, len, flags)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
             n as libc::ssize_t
@@ -640,9 +688,21 @@ pub unsafe extern "C" fn copy_file_range(
 // preadv / pwritev — RawSyscall
 // ---------------------------------------------------------------------------
 
-/// POSIX `preadv` — read from fd at offset into multiple buffers.
+/// POSIX `preadv` — read from fd at offset into multiple buffers. A
+/// cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn preadv(
+pub unsafe extern "C-unwind" fn preadv(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { preadv_cp(fd, iov, iovcnt, offset) }
+}
+
+/// Body of [`preadv`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn preadv_cp(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
@@ -679,7 +739,11 @@ pub unsafe extern "C" fn preadv(
         return -1;
     }
 
-    match unsafe { syscall::sys_preadv(fd, iov as *const u8, iovcnt, offset) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_preadv(fd, iov as *const u8, iovcnt, offset)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -692,9 +756,21 @@ pub unsafe extern "C" fn preadv(
     }
 }
 
-/// POSIX `pwritev` — write to fd at offset from multiple buffers.
+/// POSIX `pwritev` — write to fd at offset from multiple buffers. A
+/// cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwritev(
+pub unsafe extern "C-unwind" fn pwritev(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+) -> libc::ssize_t {
+    unsafe { pwritev_cp(fd, iov, iovcnt, offset) }
+}
+
+/// Body of [`pwritev`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwritev_cp(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
@@ -725,7 +801,11 @@ pub unsafe extern "C" fn pwritev(
         return -1;
     }
 
-    match unsafe { syscall::sys_pwritev(fd, iov as *const u8, iovcnt, offset) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwritev(fd, iov as *const u8, iovcnt, offset)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -738,9 +818,21 @@ pub unsafe extern "C" fn pwritev(
     }
 }
 
-/// Linux `preadv2` — preadv with flags.
+/// Linux `preadv2` — preadv with flags. A cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn preadv2(
+pub unsafe extern "C-unwind" fn preadv2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    unsafe { preadv2_cp(fd, iov, iovcnt, offset, flags) }
+}
+
+/// Body of [`preadv2`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn preadv2_cp(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
@@ -778,7 +870,11 @@ pub unsafe extern "C" fn preadv2(
         return -1;
     }
 
-    match unsafe { syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_preadv2(fd, iov as *const u8, iovcnt, offset, flags)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -791,9 +887,21 @@ pub unsafe extern "C" fn preadv2(
     }
 }
 
-/// Linux `pwritev2` — pwritev with flags.
+/// Linux `pwritev2` — pwritev with flags. A cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pwritev2(
+pub unsafe extern "C-unwind" fn pwritev2(
+    fd: c_int,
+    iov: *const libc::iovec,
+    iovcnt: c_int,
+    offset: i64,
+    flags: c_int,
+) -> libc::ssize_t {
+    unsafe { pwritev2_cp(fd, iov, iovcnt, offset, flags) }
+}
+
+/// Body of [`pwritev2`] and its aliases (see [`fcntl_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pwritev2_cp(
     fd: c_int,
     iov: *const libc::iovec,
     iovcnt: c_int,
@@ -829,7 +937,11 @@ pub unsafe extern "C" fn pwritev2(
         return -1;
     }
 
-    match unsafe { syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_pwritev2(fd, iov as *const u8, iovcnt, offset, flags)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, false);
             n as libc::ssize_t
@@ -847,8 +959,9 @@ pub unsafe extern "C" fn pwritev2(
 // ---------------------------------------------------------------------------
 
 /// Linux `splice` — move data between two file descriptors without copying.
+/// A cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn splice(
+pub unsafe extern "C-unwind" fn splice(
     fd_in: c_int,
     off_in: *mut i64,
     fd_out: c_int,
@@ -867,7 +980,11 @@ pub unsafe extern "C" fn splice(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_splice(fd_in, off_in, fd_out, off_out, len, flags)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
             n as libc::ssize_t
@@ -880,9 +997,9 @@ pub unsafe extern "C" fn splice(
     }
 }
 
-/// Linux `tee` — duplicate pipe content.
+/// Linux `tee` — duplicate pipe content. A cancellation point, as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn tee(
+pub unsafe extern "C-unwind" fn tee(
     fd_in: c_int,
     fd_out: c_int,
     len: usize,
@@ -894,7 +1011,9 @@ pub unsafe extern "C" fn tee(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match syscall::sys_tee(fd_in, fd_out, len, flags) {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| syscall::sys_tee(fd_in, fd_out, len, flags))
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
             n as libc::ssize_t
@@ -907,9 +1026,10 @@ pub unsafe extern "C" fn tee(
     }
 }
 
-/// Linux `vmsplice` — splice user pages into a pipe.
+/// Linux `vmsplice` — splice user pages into a pipe. A cancellation point,
+/// as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vmsplice(
+pub unsafe extern "C-unwind" fn vmsplice(
     fd: c_int,
     iov: *const libc::iovec,
     nr_segs: usize,
@@ -927,7 +1047,11 @@ pub unsafe extern "C" fn vmsplice(
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    match unsafe { syscall::sys_vmsplice(fd, iov as *const u8, nr_segs, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            syscall::sys_vmsplice(fd, iov as *const u8, nr_segs, flags)
+        })
+    } {
         Ok(n) => {
             runtime_policy::observe(ApiFamily::IoFd, decision.profile, 10, false);
             n as libc::ssize_t

@@ -6837,9 +6837,10 @@ pub unsafe extern "C" fn malloc_stats() {
         "Arena 0:\nsystem bytes     = {}\nin use bytes     = {}\nTotal (incl. mmap):\nsystem bytes     = {}\nin use bytes     = {}\nmax mmap regions = {}\nmax mmap bytes   = {}\n",
         info.arena, info.uordblks, info.arena, info.uordblks, info.hblks, info.hblkhd,
     );
-    // SAFETY: write(2, buf, len) - writing to stderr fd.
+    // SAFETY: write(2, buf, len) - writing to stderr fd. Raw: a statistics
+    // report is not a cancellation point here (`msg` would leak in the unwind).
     unsafe {
-        crate::unistd_abi::write(2, msg.as_ptr().cast(), msg.len());
+        crate::unistd_abi::sys_write_fd(2, msg.as_ptr().cast(), msg.len());
     }
 }
 

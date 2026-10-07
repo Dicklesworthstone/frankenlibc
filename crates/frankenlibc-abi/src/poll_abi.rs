@@ -75,6 +75,15 @@ pub unsafe extern "C-unwind" fn poll(
     nfds: libc::nfds_t,
     timeout: c_int,
 ) -> c_int {
+    unsafe { poll_cp(fds, nfds, timeout) }
+}
+
+/// Body of [`poll`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn poll_cp(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Poll, fds as usize, nfds as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -165,6 +174,17 @@ pub unsafe extern "C-unwind" fn ppoll(
     timeout_ts: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
+    unsafe { ppoll_cp(fds, nfds, timeout_ts, sigmask) }
+}
+
+/// Body of [`ppoll`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn ppoll_cp(
+    fds: *mut libc::pollfd,
+    nfds: libc::nfds_t,
+    timeout_ts: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
     let (mode, decision) =
         runtime_policy::decide(ApiFamily::Poll, fds as usize, nfds as usize, true, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
@@ -249,6 +269,18 @@ pub unsafe extern "C-unwind" fn ppoll(
 /// POSIX `select` — synchronous I/O multiplexing.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn select(
+    nfds: c_int,
+    readfds: *mut libc::fd_set,
+    writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set,
+    timeout: *mut libc::timeval,
+) -> c_int {
+    unsafe { select_cp(nfds, readfds, writefds, exceptfds, timeout) }
+}
+
+/// Body of [`select`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn select_cp(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -358,6 +390,19 @@ pub unsafe extern "C-unwind" fn select(
 /// POSIX `pselect` — select with signal mask and timespec timeout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pselect(
+    nfds: c_int,
+    readfds: *mut libc::fd_set,
+    writefds: *mut libc::fd_set,
+    exceptfds: *mut libc::fd_set,
+    timeout: *const libc::timespec,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { pselect_cp(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
+}
+
+/// Body of [`pselect`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn pselect_cp(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -522,6 +567,17 @@ pub unsafe extern "C-unwind" fn epoll_wait(
     maxevents: c_int,
     timeout: c_int,
 ) -> c_int {
+    unsafe { epoll_wait_cp(epfd, events, maxevents, timeout) }
+}
+
+/// Body of [`epoll_wait`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn epoll_wait_cp(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+) -> c_int {
     if maxevents <= 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
@@ -556,6 +612,18 @@ pub unsafe extern "C-unwind" fn epoll_wait(
 /// Linux `epoll_pwait` — wait for events with signal mask.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn epoll_pwait(
+    epfd: c_int,
+    events: *mut libc::epoll_event,
+    maxevents: c_int,
+    timeout: c_int,
+    sigmask: *const libc::sigset_t,
+) -> c_int {
+    unsafe { epoll_pwait_cp(epfd, events, maxevents, timeout, sigmask) }
+}
+
+/// Body of [`epoll_pwait`] and its aliases (see [`poll_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn epoll_pwait_cp(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
@@ -745,13 +813,13 @@ pub unsafe extern "C" fn prctl(
 ///
 /// Same as [`ppoll`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __ppoll(
+pub unsafe extern "C-unwind" fn __ppoll(
     fds: *mut libc::pollfd,
     nfds: libc::nfds_t,
     timeout_ts: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { ppoll(fds, nfds, timeout_ts, sigmask) }
+    unsafe { ppoll_cp(fds, nfds, timeout_ts, sigmask) }
 }
 
 /// glibc reserved-namespace alias for [`pselect`].
@@ -760,7 +828,7 @@ pub unsafe extern "C" fn __ppoll(
 ///
 /// Same as [`pselect`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __pselect(
+pub unsafe extern "C-unwind" fn __pselect(
     nfds: c_int,
     readfds: *mut libc::fd_set,
     writefds: *mut libc::fd_set,
@@ -768,7 +836,7 @@ pub unsafe extern "C" fn __pselect(
     timeout: *const libc::timespec,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { pselect(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
+    unsafe { pselect_cp(nfds, readfds, writefds, exceptfds, timeout, sigmask) }
 }
 
 /// glibc reserved-namespace alias for [`epoll_wait`].
@@ -777,13 +845,13 @@ pub unsafe extern "C" fn __pselect(
 ///
 /// Same as [`epoll_wait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __epoll_wait(
+pub unsafe extern "C-unwind" fn __epoll_wait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
     timeout: c_int,
 ) -> c_int {
-    unsafe { epoll_wait(epfd, events, maxevents, timeout) }
+    unsafe { epoll_wait_cp(epfd, events, maxevents, timeout) }
 }
 
 /// glibc reserved-namespace alias for [`epoll_pwait`].
@@ -792,12 +860,12 @@ pub unsafe extern "C" fn __epoll_wait(
 ///
 /// Same as [`epoll_pwait`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __epoll_pwait(
+pub unsafe extern "C-unwind" fn __epoll_pwait(
     epfd: c_int,
     events: *mut libc::epoll_event,
     maxevents: c_int,
     timeout: c_int,
     sigmask: *const libc::sigset_t,
 ) -> c_int {
-    unsafe { epoll_pwait(epfd, events, maxevents, timeout, sigmask) }
+    unsafe { epoll_pwait_cp(epfd, events, maxevents, timeout, sigmask) }
 }

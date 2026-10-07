@@ -1533,6 +1533,15 @@ pub unsafe extern "C-unwind" fn nanosleep(
     req: *const libc::timespec,
     rem: *mut libc::timespec,
 ) -> c_int {
+    unsafe { nanosleep_cp(req, rem) }
+}
+
+/// Body of [`nanosleep`] and its aliases. Always inlined (rustc ignores inline
+/// hints on exported functions): the cancellation point it reaches must see
+/// the caller of whichever exported entry point was called
+/// (`pthread_abi::at_cancellation_point`). The same holds for every `*_cp`.
+#[inline(always)]
+pub(crate) unsafe fn nanosleep_cp(req: *const libc::timespec, rem: *mut libc::timespec) -> c_int {
     if req.is_null() {
         unsafe { set_abi_errno(errno::EFAULT) };
         return -1;
@@ -1563,6 +1572,17 @@ pub unsafe extern "C-unwind" fn nanosleep(
 /// POSIX `clock_nanosleep` — high-resolution sleep with specified clock.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clock_nanosleep(
+    clock_id: c_int,
+    flags: c_int,
+    req: *const libc::timespec,
+    rem: *mut libc::timespec,
+) -> c_int {
+    unsafe { clock_nanosleep_cp(clock_id, flags, req, rem) }
+}
+
+/// Body of [`clock_nanosleep`] and its aliases (see [`nanosleep_cp`]).
+#[inline(always)]
+pub(crate) unsafe fn clock_nanosleep_cp(
     clock_id: c_int,
     flags: c_int,
     req: *const libc::timespec,
@@ -3901,13 +3921,13 @@ pub unsafe extern "C" fn __clock_settime(
 ///
 /// Same as [`clock_nanosleep`].
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __clock_nanosleep(
+pub unsafe extern "C-unwind" fn __clock_nanosleep(
     clk_id: libc::clockid_t,
     flags: std::ffi::c_int,
     req: *const libc::timespec,
     rem: *mut libc::timespec,
 ) -> std::ffi::c_int {
-    unsafe { clock_nanosleep(clk_id, flags, req, rem) }
+    unsafe { clock_nanosleep_cp(clk_id, flags, req, rem) }
 }
 
 // ---------------------------------------------------------------------------

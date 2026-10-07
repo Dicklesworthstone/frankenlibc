@@ -4684,6 +4684,44 @@ fn host_backed_thread_with_cancel_disabled_survives_external_cancel() {
     }
 }
 
+/// A cancellation point opens its asynchronous-cancel window only for a
+/// caller outside fl's image: fl's own code (and the Rust std it links) must
+/// never start a forced unwind through frames that cannot be unwound
+/// (bd-rc0923-epic-eeuy4f.24). Here fl is linked into this test executable, so
+/// the executable is "this object" and host libc is outside it.
+#[test]
+fn only_callers_outside_this_object_get_a_cancellation_window() {
+    let hook = __test_address_is_inside_this_object as fn(usize) -> bool as usize;
+    assert!(__test_address_is_inside_this_object(hook));
+    let this_test = only_callers_outside_this_object_get_a_cancellation_window as fn() as usize;
+    assert!(__test_address_is_inside_this_object(this_test));
+    // SAFETY: NUL-terminated name; RTLD_DEFAULT searches the global scope.
+    let host_getpid = unsafe { libc::dlsym(libc::RTLD_DEFAULT, c"getpid".as_ptr()) };
+    assert!(!host_getpid.is_null());
+    assert!(!__test_address_is_inside_this_object(host_getpid as usize));
+    // A backend that cannot report a return address yields null.
+    assert!(!__test_address_is_inside_this_object(0));
+}
+
+/// glibc's pthread_cancel dereferences its argument as its own thread
+/// descriptor, so a thread fl names by its tid (no fl registry knows a thread
+/// created by host glibc directly, like this libtest worker; or the main
+/// thread) must reach glibc as glibc's handle (bd-rc0923-epic-eeuy4f.24).
+#[test]
+fn a_self_cancel_reaches_glibc_with_glibcs_own_handle() {
+    let fl_name = unsafe { pthread_self() };
+    // SAFETY: host pthread_self (fl's symbols are not exported in a test build).
+    let host_handle = unsafe { libc::pthread_self() };
+    assert_ne!(fl_name, host_handle, "fl names this thread by its tid");
+    let (target, is_self) = __test_host_cancel_target(fl_name);
+    assert!(is_self);
+    assert_eq!(target, host_handle);
+    // Another thread's handle passes through unchanged.
+    let (other, other_is_self) = __test_host_cancel_target(host_handle ^ 0x1000);
+    assert!(!other_is_self);
+    assert_eq!(other, host_handle ^ 0x1000);
+}
+
 // ===========================================================================
 // pthread_setaffinity_np
 // ===========================================================================
