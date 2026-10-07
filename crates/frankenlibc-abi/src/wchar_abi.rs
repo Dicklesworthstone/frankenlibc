@@ -3974,32 +3974,80 @@ const WIDE_SCAN_PAGE: usize = 4096;
 /// having found no NUL in the page just read, which leaves `bound` unspent and so
 /// obliges the caller to have mapped what follows.
 ///
+/// # Shape (bd-rc0923-epic-eeuy4f.13)
+///
+/// A bound under [`WIDE_TWIN_MIN_SPAN`] that ends inside `s`'s page -- the
+/// common short call -- is scanned inline with no call on its path, so
+/// `wcsnlen` stays the leaf it was before the AVX2 twin existed. Everything
+/// else goes to [`wide_nul_or_bound_long`]. With the twin's call inlined into
+/// `wcsnlen` itself, every call paid seven callee-saved pushes, and bounds
+/// 4..128 measured 1.05-1.42x main's x86-64-v3 build (incumbent_coverage_ab
+/// bounded_len vs live glibc, hz4) against 0.93-1.31x for the call-free scan.
+///
 /// # Safety
 ///
 /// `s` must be readable up to the first NUL or `bound` wide elements, whichever
 /// comes first.
 #[inline(always)]
 unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
-    crate::string_abi::avx2_dispatch! {
-        /// `wide_core::wcsnlen` over `n` readable elements at `s`, as an AVX2
-        /// build on CPUs that have it: its `Simd<u32>` panels are SSE2 in the
-        /// baseline x86-64 build, where wcsnlen at a 4096 bound measured 3.0x
-        /// the x86-64-v3 build against live glibc (bd-rc0923-epic-eeuy4f.13).
-        #[inline(always)]
-        unsafe fn core_wcsnlen_avx2(s: *const u32, n: usize) -> usize => core_wcsnlen_body;
+    if bound < WIDE_TWIN_MIN_SPAN && bound <= wide_elems_to_page_end(s) {
+        // SAFETY: all `bound` elements lie in `s`'s page, which is mapped
+        // because `s` is readable, so the slice the scan takes is valid.
+        return unsafe { core_wcsnlen_body(s, bound) };
     }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { wide_nul_or_bound_long(s, bound) }
+}
+
+/// Spans of at least this many elements -- where the core wcsnlen's 64-lane
+/// fold runs -- are scanned by its AVX2 twin on CPUs with AVX2. Below that the
+/// check and the call cost more than SSE2 loses: with every span dispatched,
+/// bounds 4..128 measured 1.35-1.63x the v3 build.
+const WIDE_TWIN_MIN_SPAN: usize = 256;
+
+/// Whole elements from `s` to the end of its page. Bounds are compared against
+/// this rather than multiplied up to bytes, because `bound` is caller-controlled
+/// and `wcsnlen(p, SIZE_MAX)` is a legal call whose byte count would wrap.
+#[inline(always)]
+fn wide_elems_to_page_end(s: *const u32) -> usize {
+    (WIDE_SCAN_PAGE - (s as usize & (WIDE_SCAN_PAGE - 1))) / size_of::<u32>()
+}
+
+/// `wide_core::wcsnlen` over `n` readable elements at `s`, compiled for the
+/// baseline in the caller.
+///
+/// # Safety
+///
+/// `n` elements at `s` must be readable.
+#[inline(always)]
+unsafe fn core_wcsnlen_body(s: *const u32, n: usize) -> usize {
+    // SAFETY: the caller guarantees `n` readable elements at `s`.
+    unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, n), n) }
+}
+
+crate::string_abi::avx2_dispatch! {
+    /// `wide_core::wcsnlen` over `n` readable elements at `s`, as an AVX2
+    /// build on CPUs that have it: its `Simd<u32>` panels are SSE2 in the
+    /// baseline x86-64 build, where wcsnlen at a 4096 bound measured 3.0x
+    /// the x86-64-v3 build against live glibc (bd-rc0923-epic-eeuy4f.13).
     #[inline(always)]
-    unsafe fn core_wcsnlen_body(s: *const u32, n: usize) -> usize {
-        // SAFETY: the caller guarantees `n` readable elements at `s`.
-        unsafe { wide_core::wcsnlen(std::slice::from_raw_parts(s, n), n) }
-    }
-    /// Only spans of 256+ elements -- where the 64-lane fold runs -- go to the
-    /// twin. Below that the check and the call cost more than SSE2 loses: with
-    /// every bound dispatched, bounds 4..128 measured 1.35-1.63x the v3 build,
-    /// against 0.93-1.30x for the inline baseline scan.
+    unsafe fn core_wcsnlen_avx2(s: *const u32, n: usize) -> usize => core_wcsnlen_body;
+}
+
+/// [`wide_nul_or_bound`] for a bound of [`WIDE_TWIN_MIN_SPAN`]+ elements or one
+/// that leaves `s`'s page. Out of line, so its calls -- and the registers they
+/// make `wcsnlen` save -- stay off the short path.
+///
+/// # Safety
+///
+/// As for [`wide_nul_or_bound`].
+#[inline(never)]
+unsafe fn wide_nul_or_bound_long(s: *const u32, bound: usize) -> usize {
+    /// Spans of [`WIDE_TWIN_MIN_SPAN`]+ go to the twin, shorter ones (a page
+    /// head or tail) run inline.
     #[inline(always)]
     unsafe fn core_wcsnlen(s: *const u32, n: usize) -> usize {
-        if n >= 256 {
+        if n >= WIDE_TWIN_MIN_SPAN {
             // SAFETY: forwarded from the caller's contract.
             unsafe { core_wcsnlen_avx2(s, n) }
         } else {
@@ -4010,13 +4058,9 @@ unsafe fn wide_nul_or_bound(s: *const u32, bound: usize) -> usize {
 
     const ELEM: usize = size_of::<u32>();
 
-    // Fast path: the whole bound lies in one page, which is mapped because `s`
-    // is readable, so the slice below is valid and the scan runs exactly as it
-    // did before this function existed. Compared against the element distance to
-    // the page end rather than multiplying `bound` up, because `bound` is
-    // caller-controlled and `wcsnlen(p, SIZE_MAX)` is a legal call whose byte
-    // count would wrap.
-    if bound <= (WIDE_SCAN_PAGE - (s as usize & (WIDE_SCAN_PAGE - 1))) / ELEM {
+    // The whole bound lies in one page, which is mapped because `s` is
+    // readable, so the slice the scan takes is valid.
+    if bound <= wide_elems_to_page_end(s) {
         // SAFETY: as argued above, all `bound` elements are readable.
         return unsafe { core_wcsnlen(s, bound) };
     }
