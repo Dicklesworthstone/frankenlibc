@@ -1100,13 +1100,88 @@ pub unsafe extern "C" fn modf(x: f64, iptr: *mut f64) -> f64 {
 // Min / max / dim / fma
 // ---------------------------------------------------------------------------
 
+/// How a min/max function treats NaN arguments (glibc 2.43, measured with
+/// scratch fmaxnan.c). In every family an operation on a signaling NaN is
+/// `x + y`: the sNaN quieted, FE_INVALID raised.
+#[derive(Clone, Copy)]
+enum MinMaxNan {
+    /// fmax/fmin/fmaxmag/fminmag: a quiet NaN yields the other operand
+    /// silently; a signaling NaN poisons the result.
+    Number,
+    /// fmaximum_num/fminimum_num: any NaN yields the other operand (FE_INVALID
+    /// for a signaling one); two NaNs give `x + y`.
+    NumberAlways,
+    /// fmaximum/fminimum: any NaN propagates.
+    Propagate,
+}
+
+#[inline]
+fn is_snan_f64(x: f64) -> bool {
+    x.is_nan() && x.to_bits() & (1 << 51) == 0
+}
+
+#[inline]
+fn is_snan_f32(x: f32) -> bool {
+    x.is_nan() && x.to_bits() & (1 << 22) == 0
+}
+
+/// The result when `x` or `y` is a NaN, else `None`. Short-circuiting here
+/// also keeps the comparisons below from raising a spurious FE_INVALID for a
+/// quiet NaN (fmax(NaN, 1) did).
+#[inline]
+fn min_max_nan_f64(x: f64, y: f64, rule: MinMaxNan) -> Option<f64> {
+    if !x.is_nan() && !y.is_nan() {
+        return None;
+    }
+    let poison = || std::hint::black_box(x) + std::hint::black_box(y);
+    let (xs, ys) = (is_snan_f64(x), is_snan_f64(y));
+    Some(match rule {
+        MinMaxNan::Propagate => poison(),
+        MinMaxNan::Number if xs || ys => poison(),
+        MinMaxNan::Number | MinMaxNan::NumberAlways if !(x.is_nan() && y.is_nan()) => {
+            if xs || ys {
+                let _ = poison();
+            }
+            if x.is_nan() { y } else { x }
+        }
+        _ => poison(),
+    })
+}
+
+/// [`min_max_nan_f64`] for `f32`.
+#[inline]
+fn min_max_nan_f32(x: f32, y: f32, rule: MinMaxNan) -> Option<f32> {
+    if !x.is_nan() && !y.is_nan() {
+        return None;
+    }
+    let poison = || std::hint::black_box(x) + std::hint::black_box(y);
+    let (xs, ys) = (is_snan_f32(x), is_snan_f32(y));
+    Some(match rule {
+        MinMaxNan::Propagate => poison(),
+        MinMaxNan::Number if xs || ys => poison(),
+        MinMaxNan::Number | MinMaxNan::NumberAlways if !(x.is_nan() && y.is_nan()) => {
+            if xs || ys {
+                let _ = poison();
+            }
+            if x.is_nan() { y } else { x }
+        }
+        _ => poison(),
+    })
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmin(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     frankenlibc_core::math::fmin(x, y)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmax(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     // glibc's fmax lowers to the hardware MAXSD instruction, which on a signed-
     // zero tie (both operands ±0) returns the SECOND operand. libm's fmax
     // returns the first, so fmax(-0,+0) gave -0 where glibc gives +0. Mirror
@@ -1942,6 +2017,9 @@ pub unsafe extern "C" fn fdimf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     // glibc fmaxf lowers to MAXSS: a signed-zero tie returns the SECOND operand
     // (see fmax). libm's fmaxf returns the first.
     if x == 0.0 && y == 0.0 {
@@ -1952,6 +2030,9 @@ pub unsafe extern "C" fn fmaxf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     binary_entry_f32(x, y, 2, frankenlibc_core::math::fminf)
 }
 
@@ -4844,10 +4925,16 @@ fn fminimum_mag_num_implf(x: f32, y: f32) -> f32 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fmaximum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximumf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fmaximum_implf(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -4880,10 +4967,16 @@ pub unsafe extern "C" fn fmaximumf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum_num(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fmaximum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaximum_numf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fmaximum_num_implf(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -5017,10 +5110,16 @@ pub unsafe extern "C" fn fmaximum_mag_numf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fminimum_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimumf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Propagate) {
+        return r;
+    }
     fminimum_implf(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -5053,10 +5152,16 @@ pub unsafe extern "C" fn fminimumf128(x: f128, y: f128) -> f128 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum_num(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fminimum_num_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminimum_numf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::NumberAlways) {
+        return r;
+    }
     fminimum_num_implf(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -6641,10 +6746,16 @@ fn fminmagf_impl(x: f32, y: f32) -> f32 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxmag(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fmaxmag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fmaxmagf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fmaxmagf_impl(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
@@ -6689,10 +6800,16 @@ pub unsafe extern "C" fn fmaxmagf128(x: f128, y: f128) -> f128 {
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmag(x: f64, y: f64) -> f64 {
+    if let Some(r) = min_max_nan_f64(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fminmag_impl(x, y)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn fminmagf(x: f32, y: f32) -> f32 {
+    if let Some(r) = min_max_nan_f32(x, y, MinMaxNan::Number) {
+        return r;
+    }
     fminmagf_impl(x, y)
 }
 #[cfg_attr(all(not(debug_assertions), not(target_arch = "x86_64")), unsafe(no_mangle))]
