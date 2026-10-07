@@ -9102,6 +9102,7 @@ fn make_object_multithreaded(handle: *mut c_void, role: &str) {
     // SAFETY: the resolved symbols have these C signatures.
     let create: PthreadCreateFn = unsafe { std::mem::transmute(resolve(c"pthread_create")) };
     let join: PthreadJoinFn = unsafe { std::mem::transmute(resolve(c"pthread_join")) };
+    let threads_before = observed_threads();
     let mut thread: libc::pthread_t = 0;
     // SAFETY: valid out-pointer and start routine.
     let rc = unsafe {
@@ -9116,6 +9117,18 @@ fn make_object_multithreaded(handle: *mut c_void, role: &str) {
     // SAFETY: `thread` was just created and is joinable.
     let rc = unsafe { join(thread, std::ptr::null_mut()) };
     assert_eq!(rc, 0, "{role} pthread_join failed");
+    // The join returns before the kernel drops the thread's /proc/self/task
+    // entry; the timed cases assert a stable task count, so wait for it to go
+    // (see `observed_threads_settled`).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while observed_threads() > threads_before && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert_eq!(
+        observed_threads(),
+        threads_before,
+        "{role}'s joined thread did not leave /proc/self/task within 2 s"
+    );
     let flag = resolve(c"__libc_single_threaded").cast::<u8>();
     // SAFETY: the exported flag is one byte of the object's data.
     let value = unsafe { std::ptr::read_volatile(flag) };
