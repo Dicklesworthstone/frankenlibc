@@ -611,6 +611,11 @@ pub unsafe extern "C" fn asin(x: f64) -> f64 {
     if x.is_finite() && x.abs() > 1.0 {
         set_domain_errno();
     }
+    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
+    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
+    }
     out
 }
 
@@ -619,6 +624,11 @@ pub unsafe extern "C" fn acos(x: f64) -> f64 {
     let out = unary_entry(x, 6, frankenlibc_core::math::acos);
     if x.is_finite() && x.abs() > 1.0 {
         set_domain_errno();
+    }
+    // glibc's domain-error NaN (|x| > 1, +-inf) is positive; the kernel's is
+    // the x86 default NaN. FE_INVALID was raised by the kernel either way.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
     }
     out
 }
@@ -764,6 +774,10 @@ pub unsafe extern "C" fn log10(x: f64) -> f64 {
         } else if x == 0.0 {
             set_range_errno();
         }
+    }
+    // glibc's log10 domain-error NaN (x < 0, -inf) is positive.
+    if out.is_nan() && !x.is_nan() {
+        return f64::NAN;
     }
     out
 }
@@ -5126,6 +5140,11 @@ pub unsafe extern "C" fn fminimum_mag_numf128(x: f128, y: f128) -> f128 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn acospi(x: f64) -> f64 {
     let r = unsafe { acos(x) };
+    // Unlike acos's, glibc's acospi domain-error NaN (|x| > 1, +-inf) is the
+    // x86 default NaN, sign set.
+    if r.is_nan() && !x.is_nan() {
+        return f64::from_bits(0xfff8_0000_0000_0000);
+    }
     r / std::f64::consts::PI
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5170,6 +5189,11 @@ pub unsafe extern "C" fn acospif128(x: f128) -> f128 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn asinpi(x: f64) -> f64 {
     let r = unsafe { asin(x) };
+    // Unlike asin's, glibc's asinpi domain-error NaN (|x| > 1, +-inf) is the
+    // x86 default NaN, sign set.
+    if r.is_nan() && !x.is_nan() {
+        return f64::from_bits(0xfff8_0000_0000_0000);
+    }
     r / std::f64::consts::PI
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -5331,7 +5355,7 @@ pub unsafe extern "C" fn cospi(x: f64) -> f64 {
     // glibc 2.43 returns every NaN with the sign bit SET (quieted; FE_INVALID
     // for a signaling one) and +-inf the default NaN, FE_INVALID.
     if x.is_nan() {
-        return -(std::hint::black_box(x).abs()) + 0.0;
+        return f64::from_bits(std::hint::black_box(x).to_bits() | (1 << 63)) + 0.0;
     }
     if x.is_infinite() {
         pi_fn_raise_invalid_f64();

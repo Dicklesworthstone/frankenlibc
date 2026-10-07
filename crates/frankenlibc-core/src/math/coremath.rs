@@ -3178,7 +3178,10 @@ pub fn sin(x: f64) -> f64 {
     }
     if e == 0x7ff {
         // NaN propagates; ±inf gives the default NaN with FE_INVALID.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
     sin_large(x)
 }
@@ -3824,7 +3827,10 @@ pub fn cos(x: f64) -> f64 {
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
         // ±inf: the default NaN with FE_INVALID; NaN propagates.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
     let ax = x.abs();
     if ax.to_bits() <= 0x3e46_a09e_667f_3bcc {
@@ -4066,7 +4072,10 @@ pub fn tan(x: f64) -> f64 {
     let e = (t >> 52) & 0x7ff;
     if e == 0x7ff {
         // ±inf: the default NaN with FE_INVALID; NaN propagates.
-        return x * 0.0;
+        // black_box: x is known to be inf or NaN here, so LLVM may fold a
+        // plain `x * 0.0` to a constant NaN -- no FE_INVALID for +-inf, NaN
+        // payload lost (tan(inf) returned a silent NaN).
+        return core::hint::black_box(x) * 0.0;
     }
     if t & 0x7fff_ffff_ffff_ffff <= 0x3e4d_12ed_0af1_a27e {
         // |x| <= 0x1.d12ed0af1a27ep-27: tan(x) rounds to x.
