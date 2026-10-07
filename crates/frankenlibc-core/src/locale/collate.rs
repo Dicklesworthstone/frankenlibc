@@ -140,6 +140,20 @@ impl<'a> CollateTables<'a> {
         }
     }
 
+    /// The equivalence-class key of `s` when it is exactly one collating
+    /// element: its ruleset and level-0 weights. Two characters are in the
+    /// same `[=c=]` class iff their keys are equal, as glibc's regex and
+    /// fnmatch decide it (so `a`, `A` and `à` share a class in en_US, and every
+    /// ignorable character has the empty key). `None` for no entry.
+    pub fn equivalence_key(&self, s: &[u8]) -> Option<(u32, &'a [u8])> {
+        let (entry, used) = self.find_index(s)?;
+        if entry == 0 || used != s.len() {
+            return None;
+        }
+        let e = entry as u32;
+        Some((e >> 24, self.level_weights((e & 0x00ff_ffff) as usize, 0)))
+    }
+
     /// The entries of every character of `s` (stopping at NUL), as
     /// `(ruleset, weight_index)`.
     fn entries(&self, s: &[u8]) -> Vec<(usize, usize)> {

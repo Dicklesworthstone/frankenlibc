@@ -15,6 +15,10 @@
 //!
 //! This gate compiles each pattern with both engines and compares the compile
 //! return code and, on success, the match/no-match verdict for a fixed corpus.
+//!
+//! Then the same under en_US.UTF-8, where LC_COLLATE defines the classes:
+//! `[[=a=]]` is every character of a's primary weight (A, à, Å, ā, ⓐ ...;
+//! grep's equiv-classes test). Skipped when the host lacks the locale.
 
 use frankenlibc_abi::string_abi as fl;
 use std::ffi::CString;
@@ -29,6 +33,7 @@ unsafe extern "C" {
         ef: i32,
     ) -> i32;
     fn regfree(p: *mut libc::regex_t);
+    fn setlocale(category: i32, locale: *const i8) -> *mut i8;
 }
 
 const CORPUS: &[&str] = &[
@@ -36,7 +41,7 @@ const CORPUS: &[&str] = &[
 ];
 
 // (compile_rc, per-corpus regexec rc) — only populated when compile succeeds.
-fn run(eng: u8, pat: &str) -> (i32, Vec<i32>) {
+fn run(eng: u8, pat: &str, corpus: &[&str]) -> (i32, Vec<i32>) {
     let cp = CString::new(pat).unwrap();
     let mut re: libc::regex_t = unsafe { std::mem::zeroed() };
     let rc = if eng == 0 {
@@ -53,7 +58,7 @@ fn run(eng: u8, pat: &str) -> (i32, Vec<i32>) {
     if rc != 0 {
         return (rc, vec![]);
     }
-    let res = CORPUS
+    let res = corpus
         .iter()
         .map(|s| {
             let cs = CString::new(*s).unwrap();
@@ -80,9 +85,9 @@ fn run(eng: u8, pat: &str) -> (i32, Vec<i32>) {
     (rc, res)
 }
 
-fn check(pat: &str) {
-    let a = run(0, pat);
-    let b = run(1, pat);
+fn check(pat: &str, corpus: &[&str]) {
+    let a = run(0, pat, corpus);
+    let b = run(1, pat, corpus);
     assert_eq!(a, b, "regex {pat:?} diverged: fl={a:?} glibc={b:?}");
 }
 
@@ -127,6 +132,60 @@ fn regex_collating_equivalence_matches_glibc() {
         "[a-z]",
     ];
     for pat in patterns {
-        check(pat);
+        check(pat, CORPUS);
+    }
+
+    // The locale is process-global, so the en_US.UTF-8 half runs after the
+    // C-locale half in this one test.
+    // SAFETY: setlocale with NUL-terminated names; no other thread of this
+    // binary uses either locale concurrently (single test).
+    let host = !unsafe { setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()) }.is_null();
+    if !host {
+        println!("SKIP: host has no en_US.UTF-8 locale");
+        return;
+    }
+    let ours =
+        !unsafe { frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"en_US.UTF-8".as_ptr()) }
+            .is_null();
+    assert!(
+        ours,
+        "fl setlocale(en_US.UTF-8) failed where glibc's succeeded"
+    );
+    let corpus: &[&str] = &[
+        "a", "A", "à", "Å", "ā", "ǻ", "ⓐ", "ａ", "b", "e", "é", "Ê", "ß", "ẞ", "ı", "i", "æ", "Æ",
+        "ø", "o", "1", "¹", "١", "!", ",", "\u{300}", "€", "中", "xày", "zz",
+    ];
+    let utf8_patterns = [
+        "[[=a=]]",
+        "^[[=a=]]$",
+        "[^[=a=]]",
+        "^[^[=a=]]$",
+        "[[=à=]]",
+        "[[=A=]x]",
+        "[[=e=][=o=]]",
+        "^[[=ø=]]+$",
+        "[[=ß=]]",
+        "[[=æ=]]",
+        "[[=1=]]",
+        "^[[=!=]]$",
+        "x[[=a=]]y",
+        "[[=ı=]]",
+        "[[=a=]-z]",
+    ];
+    for pat in utf8_patterns {
+        check(pat, corpus);
+    }
+    // Not vacuous: the class compiles and spans accented letters.
+    let (rc, res) = run(0, "^[[=a=]]$", corpus);
+    assert_eq!(rc, 0);
+    assert_eq!(
+        (res[2], res[8]),
+        (0, libc::REG_NOMATCH),
+        "à in [[=a=]], b not"
+    );
+    // SAFETY: as above.
+    unsafe {
+        setlocale(libc::LC_ALL, c"C".as_ptr());
+        frankenlibc_abi::locale_abi::setlocale(libc::LC_ALL, c"C".as_ptr());
     }
 }

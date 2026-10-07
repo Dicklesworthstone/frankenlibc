@@ -15,6 +15,8 @@
 
 // Uses std prelude: Box, Vec, String are available without explicit imports.
 
+use crate::locale::collate::CollateTables;
+
 // ---------------------------------------------------------------------------
 // POSIX constants (must match <regex.h> on glibc x86_64)
 // ---------------------------------------------------------------------------
@@ -78,6 +80,20 @@ pub const REG_UTF8: i32 = 1 << 16;
 /// RE_CHAR_CLASSES, e.g. the Emacs syntax m4 uses: glibc compiles m4's
 /// `[^][:]` as "not `]`, `[` or `:`").
 pub const REG_NO_CHAR_CLASSES: i32 = 1 << 15;
+/// fl-internal cflag: a bracket range whose end precedes its start (`[z-a]`)
+/// is empty instead of REG_ERANGE (GNU syntax without RE_NO_EMPTY_RANGES,
+/// e.g. Emacs syntax).
+pub const REG_EMPTY_RANGES: i32 = 1 << 14;
+/// fl-internal cflag: `\` inside a bracket expression quotes the next
+/// character (GNU RE_BACKSLASH_ESCAPE_IN_LISTS, the awk syntaxes: `[\]]`
+/// is the one-member list "]").
+pub const REG_BACKSLASH_IN_LISTS: i32 = 1 << 13;
+/// fl-internal cflag: the GNU escapes `\w \W \s \S \b \B \< \> \` \'` are
+/// ordinary characters (GNU RE_NO_GNU_OPS, e.g. AWK and POSIX_AWK syntax).
+pub const REG_NO_GNU_OPS: i32 = 1 << 12;
+/// fl-internal cflag: in a BRE, `\|`, `\+` and `\?` are ordinary characters
+/// (GNU RE_LIMITED_OPS, e.g. RE_SYNTAX_POSIX_MINIMAL_BASIC).
+pub const REG_LIMITED_OPS: i32 = 1 << 11;
 
 // eflags for regexec
 pub const REG_NOTBOL: i32 = 1;
@@ -291,6 +307,12 @@ struct MbClass {
     /// `towupper(x) == towupper(m)` (so µ, Μ and μ match each other, while
     /// the Ohm sign, Kelvin sign and ẞ match only themselves).
     folded: Vec<u32>,
+    /// Equivalence classes `[=c=]` of a locale with collation rules: the
+    /// classes' keys (non-ASCII characters are members iff their key is
+    /// one of these; ASCII members are already in `ascii`) ...
+    equiv: Vec<(u32, &'static [u8])>,
+    /// ... and the tables that key a character.
+    collate: Option<CollateTables<'static>>,
 }
 
 /// Non-ASCII characters whose uppercase is an ASCII letter (dotless ı -> I,
@@ -337,6 +359,8 @@ impl MbClass {
             negated,
             icase,
             folded,
+            equiv: Vec::new(),
+            collate: None,
         }
     }
 
@@ -369,7 +393,23 @@ impl MbClass {
     }
 
     fn contains(&self, cp: u32) -> bool {
-        self.ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp)) || self.class_contains(cp)
+        self.ranges.iter().any(|&(lo, hi)| (lo..=hi).contains(&cp))
+            || self.class_contains(cp)
+            || self.equiv_contains(cp)
+    }
+
+    /// Whether `cp` is in one of the bracket's equivalence classes: its
+    /// collation key (ruleset + level-0 weights) equals a class's.
+    fn equiv_contains(&self, cp: u32) -> bool {
+        let Some(tables) = self.collate.as_ref() else {
+            return false;
+        };
+        let Some(ch) = char::from_u32(cp) else {
+            return false;
+        };
+        let mut buf = [0u8; 4];
+        let key = tables.equivalence_key(ch.encode_utf8(&mut buf).as_bytes());
+        key.is_some_and(|key| self.equiv.contains(&key))
     }
 
     fn class_contains(&self, cp: u32) -> bool {
@@ -407,7 +447,7 @@ impl MbClass {
                 set.insert(b);
             }
         }
-        if self.negated || self.classes != 0 || !self.ranges.is_empty() {
+        if self.negated || self.classes != 0 || !self.ranges.is_empty() || !self.equiv.is_empty() {
             set = set.union(FirstByteSet::range(0xC2, 0xF4));
         }
         set
@@ -748,6 +788,7 @@ fn is_any_char(ast: &Ast) -> bool {
             class.negated
                 && class.ranges.is_empty()
                 && class.classes == 0
+                && class.equiv.is_empty()
                 && class.ascii[0] | 1 == u64::MAX
                 && class.ascii[1] == u64::MAX
         }
@@ -1239,6 +1280,17 @@ struct Parser<'a> {
     utf8: bool,
     /// `[:name:]` classes are recognised in brackets (not REG_NO_CHAR_CLASSES).
     char_classes: bool,
+    /// `[z-a]` is an empty range, not REG_ERANGE (REG_EMPTY_RANGES).
+    empty_ranges: bool,
+    /// `\` quotes the next bracket member (REG_BACKSLASH_IN_LISTS).
+    backslash_in_lists: bool,
+    /// The GNU escapes are ordinary characters (REG_NO_GNU_OPS).
+    gnu_ops: bool,
+    /// BRE `\|`, `\+`, `\?` are ordinary characters (REG_LIMITED_OPS).
+    limited_ops: bool,
+    /// The locale's collation rules, which define `[=c=]` (None: the class
+    /// of a character is that character, as in the C locale).
+    collate: Option<CollateTables<'static>>,
     // What an `MbClass` bakes in at parse time: ICASE, `.` excluding `\n`
     // (REG_NEWLINE / REG_DOT_NOT_NEWLINE), nonmatching lists excluding `\n`
     // (REG_NEWLINE / REG_LIST_NOT_NEWLINE), `.` matching NUL (REG_DOT_NUL).
@@ -1274,6 +1326,11 @@ impl<'a> Parser<'a> {
             plus_qm_ops: cflags & REG_PLUS_QM_OPS != 0,
             utf8: cflags & REG_UTF8 != 0,
             char_classes: cflags & REG_NO_CHAR_CLASSES == 0,
+            empty_ranges: cflags & REG_EMPTY_RANGES != 0,
+            backslash_in_lists: cflags & REG_BACKSLASH_IN_LISTS != 0,
+            gnu_ops: cflags & REG_NO_GNU_OPS == 0,
+            limited_ops: cflags & REG_LIMITED_OPS != 0,
+            collate: None,
             icase: cflags & REG_ICASE != 0,
             dot_newline: cflags & (REG_NEWLINE | REG_DOT_NOT_NEWLINE) != 0,
             list_newline: cflags & (REG_NEWLINE | REG_LIST_NOT_NEWLINE) != 0,
@@ -1354,7 +1411,13 @@ impl<'a> Parser<'a> {
         match self.peek() {
             Some(b'\n') if self.newline_alt => Some(1),
             Some(b'|') if self.extended => Some(1),
-            Some(b'\\') if !self.extended && self.pat.get(self.pos + 1) == Some(&b'|') => Some(2),
+            Some(b'\\')
+                if !self.extended
+                    && !self.limited_ops
+                    && self.pat.get(self.pos + 1) == Some(&b'|') =>
+            {
+                Some(2)
+            }
             _ => None,
         }
     }
@@ -1533,7 +1596,9 @@ impl<'a> Parser<'a> {
                         // Plain `+`/`?` are literals in BRE.
                         if self.pos + 1 < self.pat.len() && self.pat[self.pos] == b'\\' {
                             match self.pat[self.pos + 1] {
-                                b'+' | b'?' if self.plus_qm_ops => return Ok(node),
+                                b'+' | b'?' if self.plus_qm_ops || self.limited_ops => {
+                                    return Ok(node);
+                                }
                                 b'{' if self.no_intervals => return Ok(node),
                                 b'{' => {
                                     if matches!(node, Ast::Anchor(_)) {
@@ -1826,36 +1891,38 @@ impl<'a> Parser<'a> {
                     }
                     // GNU word-boundary assertions (zero-width), valid in both
                     // BRE and ERE — matching glibc. Previously these fell through
-                    // to the literal case (`\b` matched a literal 'b').
-                    Some(b'b') => {
+                    // to the literal case (`\b` matched a literal 'b'). All the
+                    // GNU escapes below are ordinary characters under
+                    // RE_NO_GNU_OPS (the `Some(ch)` arm).
+                    Some(b'b') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordBoundary { negate: false }))
                     }
-                    Some(b'B') => {
+                    Some(b'B') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordBoundary { negate: true }))
                     }
-                    Some(b'<') => {
+                    Some(b'<') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordStart))
                     }
-                    Some(b'>') => {
+                    Some(b'>') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::WordEnd))
                     }
                     // GNU buffer anchors: `` \` `` start-of-buffer, `\'` end.
-                    Some(b'`') => {
+                    Some(b'`') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::BufferStart))
                     }
-                    Some(b'\'') => {
+                    Some(b'\'') if self.gnu_ops => {
                         self.advance();
                         Ok(Ast::Anchor(AnchorKind::BufferEnd))
                     }
                     // GNU character-class escapes: `\w` == [_[:alnum:]],
                     // `\s` == [[:space:]], and their negations `\W`/`\S`; in a
                     // UTF-8 pattern they classify whole characters.
-                    Some(op @ (b'w' | b'W' | b's' | b'S')) => {
+                    Some(op @ (b'w' | b'W' | b's' | b'S')) if self.gnu_ops => {
                         self.advance();
                         let word = op.eq_ignore_ascii_case(&b'w');
                         let negated = op.is_ascii_uppercase();
@@ -1945,6 +2012,9 @@ impl<'a> Parser<'a> {
         // ... and, in a UTF-8 pattern, the non-ASCII members and named classes.
         let mut mb_ranges: Vec<(u32, u32)> = Vec::new();
         let mut classes: u16 = 0;
+        // ... and, in a UTF-8 pattern of a collating locale, the equivalence
+        // classes' keys.
+        let mut equiv: Vec<(u32, &'static [u8])> = Vec::new();
         // Add the members `lo..=hi` (codepoints; bytes outside UTF-8 mode). A
         // UTF-8 pattern keeps every member as a codepoint range too, for the
         // ICASE uppercase comparison of non-ASCII input.
@@ -2005,7 +2075,25 @@ impl<'a> Parser<'a> {
                     {
                         return Err(REG_ERANGE);
                     }
-                    add(self.utf8, ch, ch, &mut ranges, &mut mb_ranges);
+                    // With collation rules the class is every character of
+                    // equal primary weight: single bytes (ASCII in a UTF-8
+                    // pattern) are expanded here, other characters keyed at
+                    // match time, as glibc's regexec does.
+                    match (self.collate, self.equivalence_key(ch)) {
+                        (Some(tables), Some(key)) => {
+                            let top = if self.utf8 { 0x7F } else { 0xFF };
+                            for b in 0..=top {
+                                if tables.equivalence_key(&[b]) == Some(key) {
+                                    let b = u32::from(b);
+                                    add(self.utf8, b, b, &mut ranges, &mut mb_ranges);
+                                }
+                            }
+                            if self.utf8 {
+                                equiv.push(key);
+                            }
+                        }
+                        _ => add(self.utf8, ch, ch, &mut ranges, &mut mb_ranges),
+                    }
                 }
                 // A literal character or a collating symbol `[.c.]`; either may
                 // be a range endpoint (`[[.a.]-z]` == `[a-z]`). In a UTF-8
@@ -2017,10 +2105,11 @@ impl<'a> Parser<'a> {
                     {
                         self.advance(); // skip -
                         let end = self.read_bracket_element()?;
-                        if end < start {
+                        if end >= start {
+                            add(self.utf8, start, end, &mut ranges, &mut mb_ranges);
+                        } else if !self.empty_ranges {
                             return Err(REG_ERANGE);
                         }
-                        add(self.utf8, start, end, &mut ranges, &mut mb_ranges);
                     } else {
                         add(self.utf8, start, start, &mut ranges, &mut mb_ranges);
                     }
@@ -2036,13 +2125,33 @@ impl<'a> Parser<'a> {
             && (negated
                 || mb_ranges.iter().any(|&(_, hi)| hi >= 0x80)
                 || classes & !(MB_DIGIT | MB_XDIGIT) != 0
+                || !equiv.is_empty()
                 || ranges
                     .iter()
                     .any(|&(lo, hi)| (lo..=hi).any(|b| self.icase_ascii_needs_mb(b))))
         {
-            return Ok(self.mb_class(&ranges, mb_ranges, classes, negated));
+            let mut class = self.mb_class(&ranges, mb_ranges, classes, negated);
+            if let Ast::MbChar(mb) = &mut class
+                && !equiv.is_empty()
+            {
+                mb.equiv = equiv;
+                mb.collate = self.collate;
+            }
+            return Ok(class);
         }
         Ok(Ast::CharClass { ranges, negated })
+    }
+
+    /// The collation key of the equivalence-class name `ch` (a codepoint in a
+    /// UTF-8 pattern, else a byte), when the locale has collation rules.
+    fn equivalence_key(&self, ch: u32) -> Option<(u32, &'static [u8])> {
+        let tables = self.collate.as_ref()?;
+        if self.utf8 {
+            let mut buf = [0u8; 4];
+            tables.equivalence_key(char::from_u32(ch)?.encode_utf8(&mut buf).as_bytes())
+        } else {
+            tables.equivalence_key(&[u8::try_from(ch).ok()?])
+        }
     }
 
     /// Read one range-eligible bracket element: a collating symbol `[.c.]`
@@ -2054,6 +2163,14 @@ impl<'a> Parser<'a> {
             self.advance(); // .
             self.read_coll_element(b'.')
         } else {
+            // RE_BACKSLASH_ESCAPE_IN_LISTS: `\c` is the member `c`; a
+            // trailing `\` is an unmatched bracket, as in glibc.
+            if self.backslash_in_lists && self.peek() == Some(b'\\') {
+                self.advance();
+                if self.peek().is_none() {
+                    return Err(REG_EBRACK);
+                }
+            }
             if self.utf8
                 && let Some((cp, len)) = decode_utf8(&self.pat[self.pos..])
             {
@@ -4714,8 +4831,19 @@ pub fn regex_compile(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, 
 /// first embedded NUL. The old GNU regex APIs use explicit pattern lengths and
 /// therefore must remain binary-safe.
 pub fn regex_compile_bytes(pattern: &[u8], cflags: i32) -> Result<Box<CompiledRegex>, i32> {
+    regex_compile_bytes_collated(pattern, cflags, None)
+}
+
+/// [`regex_compile_bytes`] in a locale whose collation rules `collate` define
+/// the equivalence classes `[=c=]` (glibc regcomp reads them from LC_COLLATE).
+pub fn regex_compile_bytes_collated(
+    pattern: &[u8],
+    cflags: i32,
+    collate: Option<CollateTables<'static>>,
+) -> Result<Box<CompiledRegex>, i32> {
     let pat = pattern;
     let mut parser = Parser::new(pat, cflags);
+    parser.collate = collate;
     let mut ast = parser.parse()?;
     let num_groups = parser.group_count;
 
@@ -5940,16 +6068,76 @@ mod tests {
     fn char_classes_follow_the_gnu_syntax() {
         let subject = b"ab:c x:y abc]d";
         let re = regex_compile_bytes(b"[^][:]*", REG_NO_CHAR_CLASSES).unwrap();
-        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 2)));
-        let re = regex_compile_bytes(br"^\(.\)[ \t]*\(::\)\?\([^][:]\|:[^:]\)*", REG_NO_CHAR_CLASSES)
-            .unwrap();
-        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 12)));
+        assert_eq!(
+            regex_match_bounds_bytes_from(&re, subject, 0, 0),
+            Some((0, 2))
+        );
+        let re = regex_compile_bytes(
+            br"^\(.\)[ \t]*\(::\)\?\([^][:]\|:[^:]\)*",
+            REG_NO_CHAR_CLASSES,
+        )
+        .unwrap();
+        assert_eq!(
+            regex_match_bounds_bytes_from(&re, subject, 0, 0),
+            Some((0, 12))
+        );
         assert_eq!(regex_compile_bytes(b"[^][:]*", 0).err(), Some(REG_EBRACK));
-        assert_eq!(regex_compile_bytes(b"[^][:]*", REG_EXTENDED).err(), Some(REG_EBRACK));
-        assert_eq!(regex_compile_bytes(br"\([^][:]\|:[^:]\)*", 0).err(), Some(REG_ECTYPE));
+        assert_eq!(
+            regex_compile_bytes(b"[^][:]*", REG_EXTENDED).err(),
+            Some(REG_EBRACK)
+        );
+        assert_eq!(
+            regex_compile_bytes(br"\([^][:]\|:[^:]\)*", 0).err(),
+            Some(REG_ECTYPE)
+        );
         // Classes still work where the syntax has them.
         let re = regex_compile_bytes(b"[[:alpha:]]*", 0).unwrap();
-        assert_eq!(regex_match_bounds_bytes_from(&re, subject, 0, 0), Some((0, 2)));
+        assert_eq!(
+            regex_match_bounds_bytes_from(&re, subject, 0, 0),
+            Some((0, 2))
+        );
+    }
+
+    /// The remaining GNU syntax bits re_compile_pattern honours. Expected
+    /// bounds are glibc 2.43's re_search results on the same subject (probe
+    /// scratch resynmx.c: AWK, EMACS and POSIX_MINIMAL_BASIC syntaxes).
+    #[test]
+    fn gnu_syntax_bits_empty_ranges_list_escapes_gnu_ops_limited_ops() {
+        let subject = b"xx aab a^b a$b ]x a-z 22 b\naab}a{,2} *a +a a.c aa x:y a]";
+        let bounds = |pat: &[u8], cflags: i32| {
+            let re = regex_compile_bytes(pat, cflags).unwrap();
+            regex_match_bounds_bytes_from(&re, subject, 0, 0)
+        };
+        // Without RE_NO_EMPTY_RANGES `[z-a]` is empty, not "Invalid range end".
+        assert_eq!(regex_compile_bytes(b"[z-a]", 0).err(), Some(REG_ERANGE));
+        assert_eq!(bounds(b"[z-a]", REG_EMPTY_RANGES), None);
+        assert_eq!(bounds(b"x[z-a]*x", REG_EMPTY_RANGES), Some((0, 2)));
+        // RE_BACKSLASH_ESCAPE_IN_LISTS: `\` quotes the next member.
+        assert_eq!(bounds(br"[\]]x", REG_BACKSLASH_IN_LISTS), Some((15, 17)));
+        let awk = REG_EXTENDED | REG_BACKSLASH_IN_LISTS;
+        assert_eq!(bounds(br"[a\-z]+", awk), Some((3, 5)));
+        assert_eq!(bounds(br"[a\-z]+", REG_EXTENDED), Some((0, 2)));
+        // RE_NO_GNU_OPS: the GNU escapes are the plain characters.
+        assert_eq!(bounds(br"\wb", REG_NO_GNU_OPS), None);
+        assert_eq!(bounds(br"\Wb", REG_NO_GNU_OPS), None);
+        assert_eq!(bounds(br"\sb", REG_NO_GNU_OPS), None);
+        assert_eq!(bounds(br"\wb", 0), Some((4, 6)));
+        let re = regex_compile_bytes(br"\<w\>\b", REG_NO_GNU_OPS).unwrap();
+        assert_eq!(
+            regex_match_bounds_bytes_from(&re, b"a<w>b", 0, 0),
+            Some((1, 5))
+        );
+        // RE_LIMITED_OPS: BRE `\|`, `\+`, `\?` are the plain characters.
+        assert_eq!(bounds(br"x\|^a", REG_LIMITED_OPS), None);
+        assert_eq!(bounds(br"a\+", REG_LIMITED_OPS), None);
+        assert_eq!(bounds(br"a\?", REG_LIMITED_OPS), None);
+        assert_eq!(bounds(br"a\|b", REG_LIMITED_OPS), None);
+        assert_eq!(bounds(br"a\|b", 0), Some((3, 4)));
+        let re = regex_compile_bytes(br"a\+b\?c\|d", REG_LIMITED_OPS).unwrap();
+        assert_eq!(
+            regex_match_bounds_bytes_from(&re, b"a+b?c|d", 0, 0),
+            Some((0, 7))
+        );
     }
 
     #[test]

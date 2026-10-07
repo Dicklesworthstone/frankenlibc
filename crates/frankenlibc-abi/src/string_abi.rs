@@ -10318,6 +10318,7 @@ pub unsafe extern "C" fn rindex(s: *const c_char, c: c_int) -> *mut c_char {
 /// Magic value to identify our regex_t vs a glibc-compiled one.
 const FRANKEN_REGEX_MAGIC: u64 = 0x4652_4B4E_5245_4758; // "FRKNREGX"
 
+const RE_BACKSLASH_ESCAPE_IN_LISTS: u64 = 1 << 0;
 const RE_BK_PLUS_QM: u64 = 1 << 1;
 const RE_CHAR_CLASSES: u64 = 1 << 2;
 const RE_CONTEXT_INDEP_OPS: u64 = 1 << 4;
@@ -10335,6 +10336,8 @@ const RE_LIMITED_OPS: u64 = 1 << 10;
 const RE_NO_BK_BRACES: u64 = 1 << 12;
 const RE_NO_BK_PARENS: u64 = 1 << 13;
 const RE_NO_BK_VBAR: u64 = 1 << 15;
+const RE_NO_EMPTY_RANGES: u64 = 1 << 16;
+const RE_NO_GNU_OPS: u64 = 1 << 19;
 const RE_ICASE: u64 = 1 << 22;
 const RE_NO_SUB: u64 = 1 << 25;
 const REGS_ALLOCATED_SHIFT: u8 = 1;
@@ -10472,6 +10475,18 @@ fn legacy_regex_syntax_to_cflags(syntax: u64) -> c_int {
     if syntax & RE_CHAR_CLASSES == 0 {
         cflags |= regex::REG_NO_CHAR_CLASSES;
     }
+    if syntax & RE_NO_EMPTY_RANGES == 0 {
+        cflags |= regex::REG_EMPTY_RANGES;
+    }
+    if syntax & RE_BACKSLASH_ESCAPE_IN_LISTS != 0 {
+        cflags |= regex::REG_BACKSLASH_IN_LISTS;
+    }
+    if syntax & RE_NO_GNU_OPS != 0 {
+        cflags |= regex::REG_NO_GNU_OPS;
+    }
+    if !uses_extended_syntax && syntax & RE_LIMITED_OPS != 0 {
+        cflags |= regex::REG_LIMITED_OPS;
+    }
     cflags
 }
 
@@ -10528,9 +10543,11 @@ unsafe fn regex_compiled_for_search(
     }
     let mut toggled = handle.toggled.load(Ordering::Acquire);
     if toggled.is_null() {
-        let Ok(variant) =
-            regex::regex_compile_bytes(&handle.pattern, handle.cflags ^ regex::REG_NEWLINE_ANCHOR)
-        else {
+        let Ok(variant) = regex::regex_compile_bytes_collated(
+            &handle.pattern,
+            handle.cflags ^ regex::REG_NEWLINE_ANCHOR,
+            regex_collation_for(&handle.pattern),
+        ) else {
             return Some((base, eflags));
         };
         let fresh = Box::into_raw(variant);
@@ -10720,6 +10737,19 @@ unsafe fn legacy_regex_write_regs(
 }
 /// The engine flags the current locale implies: like glibc's regcomp, a
 /// pattern compiled under a UTF-8 LC_CTYPE matches whole characters.
+/// The locale's collation rules when `pattern` has an equivalence class
+/// `[=c=]`, which they define (glibc regcomp reads LC_COLLATE at compile
+/// time: in en_US.UTF-8 `[[=a=]]` matches à, grep's equiv-classes test).
+fn regex_collation_for(
+    pattern: &[u8],
+) -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
+    if pattern.windows(2).any(|w| w == b"[=") {
+        crate::locale_abi::named_collate()
+    } else {
+        None
+    }
+}
+
 fn regex_locale_cflags() -> c_int {
     if crate::locale_abi::mb_cur_max() > 1 {
         frankenlibc_core::string::regex::REG_UTF8
@@ -10754,7 +10784,16 @@ pub unsafe extern "C" fn regcomp(
     let posix_cflags = (cflags
         & (regex::REG_EXTENDED | regex::REG_ICASE | regex::REG_NEWLINE | regex::REG_NOSUB))
         | regex_locale_cflags();
-    match regex::regex_compile(&pat_bytes, posix_cflags) {
+    let pat_len = pat_bytes
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(pat_bytes.len());
+    let pat_bytes = &pat_bytes[..pat_len];
+    match regex::regex_compile_bytes_collated(
+        pat_bytes,
+        posix_cflags,
+        regex_collation_for(pat_bytes),
+    ) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
@@ -13390,7 +13429,7 @@ pub unsafe extern "C" fn re_compile_pattern(
     let cflags =
         legacy_regex_syntax_to_cflags(syntax) | regex::REG_NEWLINE_ANCHOR | regex_locale_cflags();
 
-    match regex::regex_compile_bytes(pat_slice, cflags) {
+    match regex::regex_compile_bytes_collated(pat_slice, cflags, regex_collation_for(pat_slice)) {
         Ok(compiled) => {
             let re_nsub = compiled.num_regs().saturating_sub(1);
             let raw_ptr = Box::into_raw(compiled);
