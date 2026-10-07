@@ -338,7 +338,7 @@ fn main() {
         // The flags from .cargo/config.toml are repeated because setting the
         // RUSTFLAGS env var REPLACES them rather than appending; keep the two in
         // step or the probe disassembles a build nobody ships.
-        let flags = format!("-Z threads=4 {extra}");
+        let flags = format!("-Z threads=4 -Cllvm-args=-enable-tlsdesc {extra}");
         println!("DISASM_RUSTFLAGS value={flags:?}");
         command.env("RUSTFLAGS", flags);
     }
