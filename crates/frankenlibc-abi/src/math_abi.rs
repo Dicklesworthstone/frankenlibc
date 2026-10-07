@@ -1762,7 +1762,9 @@ pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
     if x.is_finite() && y.is_finite() {
         if x < 0.0 && !is_integral_f32(y) {
             set_domain_errno();
-        } else if out.is_infinite() || (x == 0.0 && y < 0.0) || (out == 0.0 && y > 0.0 && x != 0.0)
+        } else if out.is_infinite()
+            || (x == 0.0 && y < 0.0)
+            || frankenlibc_core::math::powf_underflow_erange(x, y)
         {
             set_range_errno();
         }

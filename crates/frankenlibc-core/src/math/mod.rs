@@ -160,7 +160,7 @@ pub use float32::{
     dremf, erfcf, erff, exp2f, exp10f, expf, expm1f, fabsf, fdimf, finitef, floorf, fmaf, fmaxf,
     fminf, fmodf, fpclassifyf, frexpf, gammaf, hypotf, ilogbf, isinff, isnanf, j0f, j1f, jnf,
     ldexpf, lgammaf, lgammaf_r, llrintf, llroundf, log1pf, log2f, log10f, logbf, logf, lrintf,
-    lroundf, modff, nanf, nearbyintf, nextafterf, nexttowardf, powf, remainderf, remquof, rintf,
+    lroundf, modff, nanf, nearbyintf, nextafterf, nexttowardf, powf, powf_underflow_erange, remainderf, remquof, rintf,
     roundf, scalblnf, scalbnf, signbitf, significandf, sincosf, sinf, sinhf, sqrtf, tanf, tanhf,
     tgammaf, truncf, y0f, y1f, ynf,
 };

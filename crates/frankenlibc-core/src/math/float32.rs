@@ -205,144 +205,6 @@ pub fn log10f(x: f32) -> f32 {
     crate::math::log10(f64::from(x)) as f32
 }
 
-/// Largest |integer exponent| handled by the powf fast path. Mirrors the f64
-/// `pow` bound; verified within 4 ULP of glibc `powf` by
-/// `powf_fast_paths_within_4_ulps`.
-const POWF_MAX_EXP: u32 = 8;
-const POWF_MEDIUM_BASE_MIN: f32 = 0.5;
-const POWF_MEDIUM_BASE_MAX: f32 = 2.5;
-const POWF_MEDIUM_EXP_MIN: f32 = -3.0;
-const POWF_MEDIUM_EXP_MAX: f32 = 3.0;
-const POWF_PROFILE_EXP_1_337_BITS: u32 = 0x3fab_22d1;
-const POWF_PROFILE_EXP_1_337_GRID_SCALE: f32 = 32.0;
-const POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX: u32 = 16;
-const POWF_PROFILE_EXP_1_337_GRID_MAX_INDEX: u32 = 79;
-const POWF_1_337_COEFFS: [f64; 13] = [
-    -1.099_880_764_658_278_7e-2,
-    4.567_708_571_671_717_5e-1,
-    1.083_949_167_176_001_5,
-    -1.190_378_921_403_665_5,
-    1.346_406_175_688_553,
-    -1.229_031_190_617_532_6,
-    8.624_731_644_835_09e-1,
-    -4.552_360_785_514_129e-1,
-    1.768_120_308_208_328e-1,
-    -4.889_590_176_956_281e-2,
-    9.097_134_565_024_987e-3,
-    -1.019_609_387_482_498_4e-3,
-    5.197_685_800_524_758e-5,
-];
-const POWF_PROFILE_EXP_1_337_GRID_BITS: [u32; 64] = powf_profile_exp_1_337_grid_bits();
-
-const fn powf_profile_exp_1_337_grid_bits() -> [u32; 64] {
-    let mut bits = [0u32; 64];
-    let mut i = 0usize;
-    while i < 64 {
-        let base = 0.5_f32 + (i as f32) * 0.031_25_f32;
-        bits[i] = powf_profile_exp_1_337_poly(base).to_bits();
-        i += 1;
-    }
-    bits
-}
-
-/// `base` raised to a small integer power via exponentiation by squaring,
-/// accumulated in f64 then rounded once to f32. The f64 intermediate keeps the
-/// result within ~0.5 ULP (f32 squaring would accumulate >4 ULP by |n|=8) AND
-/// avoids spurious f32 overflow when the true result is representable — e.g.
-/// powf(1e6, -7) = 1e-42: (1e6)^7 overflows f32 but is fine in f64, and the
-/// reciprocal casts down to the correct subnormal.
-#[inline]
-fn powi_squaringf(base: f32, n: i32) -> f64 {
-    let mut result = 1.0_f64;
-    let mut b = base as f64;
-    let mut e = n.unsigned_abs();
-    while e > 0 {
-        if e & 1 == 1 {
-            result *= b;
-        }
-        e >>= 1;
-        if e > 0 {
-            b *= b;
-        }
-    }
-    if n < 0 { 1.0 / result } else { result }
-}
-
-/// `base^(n+0.5)` via `base^n * sqrt(base)` for small `n`, positive finite base.
-#[inline]
-fn powf_half_integer_fast_path(base: f32, exponent: f32) -> Option<f32> {
-    if !(base > 0.0 && base.is_finite() && exponent.is_finite()) {
-        return None;
-    }
-    let shifted = exponent - 0.5;
-    let n = shifted as i32;
-    if n as f32 == shifted && n.unsigned_abs() <= POWF_MAX_EXP {
-        // base^n * sqrt(base), accumulated in f64 then rounded once.
-        Some((powi_squaringf(base, n) * (base as f64).sqrt()) as f32)
-    } else {
-        None
-    }
-}
-
-#[inline]
-const fn powf_profile_exp_1_337_poly(base: f32) -> f32 {
-    let x = base as f64;
-    let x2 = x * x;
-    let x4 = x2 * x2;
-    let x8 = x4 * x4;
-    let p0 = POWF_1_337_COEFFS[1] * x + POWF_1_337_COEFFS[0];
-    let p1 = POWF_1_337_COEFFS[3] * x + POWF_1_337_COEFFS[2];
-    let p2 = POWF_1_337_COEFFS[5] * x + POWF_1_337_COEFFS[4];
-    let p3 = POWF_1_337_COEFFS[7] * x + POWF_1_337_COEFFS[6];
-    let p4 = POWF_1_337_COEFFS[9] * x + POWF_1_337_COEFFS[8];
-    let p5 = POWF_1_337_COEFFS[11] * x + POWF_1_337_COEFFS[10];
-    let q0 = p1 * x2 + p0;
-    let q1 = p3 * x2 + p2;
-    let q2 = p5 * x2 + p4;
-    let r0 = q1 * x4 + q0;
-    let r1 = POWF_1_337_COEFFS[12] * x4 + q2;
-    (r1 * x8 + r0) as f32
-}
-
-#[inline]
-fn powf_profile_exp_1_337_grid(base: f32) -> Option<f32> {
-    let scaled = base * POWF_PROFILE_EXP_1_337_GRID_SCALE;
-    let index = scaled as u32;
-    if !(POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX..=POWF_PROFILE_EXP_1_337_GRID_MAX_INDEX)
-        .contains(&index)
-    {
-        return None;
-    }
-    if scaled == index as f32 {
-        Some(f32::from_bits(
-            POWF_PROFILE_EXP_1_337_GRID_BITS
-                [(index - POWF_PROFILE_EXP_1_337_GRID_MIN_INDEX) as usize],
-        ))
-    } else {
-        None
-    }
-}
-
-/// Medium positive-base / bounded-exponent fast path: `exp2f(y*log2f(x))`,
-/// bypassing libm::powf's full general classifier. Gated to the domain proven
-/// within 4 ULP of glibc.
-#[inline]
-fn powf_medium_fast_path(base: f32, exponent: f32) -> Option<f32> {
-    if (POWF_MEDIUM_BASE_MIN..POWF_MEDIUM_BASE_MAX).contains(&base)
-        && (POWF_MEDIUM_EXP_MIN..=POWF_MEDIUM_EXP_MAX).contains(&exponent)
-    {
-        if exponent.to_bits() == POWF_PROFILE_EXP_1_337_BITS {
-            if let Some(result) = powf_profile_exp_1_337_grid(base) {
-                return Some(result);
-            }
-            return Some(powf_profile_exp_1_337_poly(base));
-        }
-        Some(libm::exp2f(exponent * libm::log2f(base)))
-    } else {
-        None
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Fused single-pass f32 `powf` kernel.
 //
@@ -487,22 +349,6 @@ fn powf_exp2_inline(xd: f64) -> f32 {
     (y * s) as f32
 }
 
-/// General fused `powf` for a positive **normal** finite base and finite
-/// exponent. Returns `None` when the result would overflow/underflow
-/// (|y*log2 x| >= 126) so the caller defers to `libm::powf` for exact range
-/// semantics. Within the accepted range the result is always a finite normal
-/// f32 (2^(-126) < r < 2^126), so no output guard is needed.
-#[inline]
-fn powf_fused_general(base: f32, exponent: f32) -> Option<f32> {
-    let ix = base.to_bits();
-    let ylogx = f64::from(exponent) * powf_log2_inline(ix);
-    if ylogx.abs() < 126.0 {
-        Some(powf_exp2_inline(ylogx))
-    } else {
-        None
-    }
-}
-
 /// log2f fused kernel polynomial (ARM optimized-routines `__log2f_data.poly`,
 /// degree 4). The `tab` it pairs with is byte-identical to `POWF_LOG2_TAB`
 /// (same invc/logc, `POWF_SCALE = 1`), so that table is reused.
@@ -634,45 +480,61 @@ fn logf_kernel(ix: u32) -> f32 {
 
 #[inline]
 pub fn powf(base: f32, exponent: f32) -> f32 {
-    // Fast paths mirroring the f64 `pow`: libm::powf always routes through its
-    // general log/exp classifier; small integer exponents (and y==0.5) via
-    // exponentiation by squaring are far faster and, bounded to small
-    // magnitudes / the medium base-exponent box, stay within the 4-ULP glibc
-    // parity contract. Everything else defers to libm for exact IEEE semantics.
-    if base.is_finite() && exponent.is_finite() {
-        let n = exponent as i32;
-        if n as f32 == exponent && n.unsigned_abs() <= POWF_MAX_EXP {
-            // Small integer exponents stay correctly rounded (0 ULP) via
-            // exponentiation by squaring — kept ahead of the fused kernel
-            // (which carries ~0.8 ULP) and also handles negative bases.
-            return powi_squaringf(base, n) as f32;
-        }
-        if exponent == 0.5 && base >= 0.0 {
-            return base.sqrt();
-        }
-        // General fused single-pass kernel (ARM optimized-routines / glibc
-        // `__ieee754_powf`, 0.82 ULP): one log2 + one exp2 table pass for any
-        // positive **normal** finite base whose result lands in the finite-
-        // normal f32 range. This supersedes the older `exp2f/log2f` medium box
-        // and the exponent-1.337 grid below (same domain, but bit-exact to glibc
-        // and faster), so those run only for the residual subnormal-base /
-        // overflow cases the fused guard rejects. Overflow/underflow
-        // (|y*log2 x| >= 126) returns None and defers to `libm::powf` for exact
-        // FE_OVERFLOW/FE_UNDERFLOW + errno semantics; subnormal/zero/negative
-        // bases also defer (the `>=` guard excludes them).
-        if base >= f32::MIN_POSITIVE
-            && let Some(result) = powf_fused_general(base, exponent)
-        {
-            return result;
-        }
-        if let Some(result) = powf_half_integer_fast_path(base, exponent) {
-            return result;
-        }
-        if let Some(result) = powf_medium_fast_path(base, exponent) {
-            return result;
-        }
+    // glibc 2.43's powf is this kernel (ARM optimized-routines, 0.82 ULP) for
+    // every finite nonzero base, so route all of them through it: log2 of |x|
+    // (a subnormal x normalised by 2^23 first), times y, then exp2 with the
+    // kernel's own overflow/underflow cut-offs; a negative base needs an
+    // integer y and takes the sign of x^y. fl's former shortcuts -- integer
+    // y by repeated squaring, y == 0.5 by sqrt, libm for subnormal bases and
+    // for |y*log2 x| >= 126, and a precomputed y == 1.337 table -- each
+    // differed from glibc (up to 9.8% of sampled inputs per category, scratch
+    // powcat.c). Zero, infinite and NaN operands, and the domain error of a
+    // negative base with a non-integer y, keep libm's IEEE special-case table.
+    let Some((ylogx, negate)) = powf_ylogx(base, exponent) else {
+        return libm::powf(base, exponent);
+    };
+    let r = if ylogx > f64::from_bits(0x405f_ffff_ffd1_d571) {
+        // |x^y| > 0x1.ffffffp127: overflow (FE_OVERFLOW, FE_INEXACT).
+        core::hint::black_box(f32::MAX) * 2.0
+    } else if ylogx <= -150.0 {
+        // Underflow to zero (FE_UNDERFLOW, FE_INEXACT).
+        core::hint::black_box(f32::MIN_POSITIVE) * f32::MIN_POSITIVE
+    } else {
+        powf_exp2_inline(ylogx)
+    };
+    if negate { -r } else { r }
+}
+
+/// `y * log2|x|` as `powf`'s kernel computes it, and whether the result is
+/// negative; `None` for the operands it leaves to the special-case table.
+#[inline]
+fn powf_ylogx(base: f32, exponent: f32) -> Option<(f64, bool)> {
+    if !(base.is_finite() && exponent.is_finite()) || base == 0.0 {
+        return None;
     }
-    libm::powf(base, exponent)
+    let mut ix = base.to_bits();
+    let mut negate = false;
+    if base < 0.0 {
+        if exponent.trunc() != exponent {
+            return None;
+        }
+        // |y| >= 2^24 is always even.
+        negate = exponent.abs() < 16_777_216.0 && (exponent as i32) & 1 == 1;
+        ix &= 0x7fff_ffff;
+    }
+    if ix < 0x0080_0000 {
+        ix = (f32::from_bits(ix) * 8_388_608.0)
+            .to_bits()
+            .wrapping_sub(23 << 23);
+    }
+    Some((f64::from(exponent) * powf_log2_inline(ix), negate))
+}
+
+/// Whether glibc's powf reports ERANGE for an underflow: `y * log2|x| <
+/// -149`, i.e. a result of zero or the least subnormal (glibc 2.43, scratch
+/// powsp.c). Overflow and the pole are reported by the caller from the result.
+pub fn powf_underflow_erange(base: f32, exponent: f32) -> bool {
+    powf_ylogx(base, exponent).is_some_and(|(ylogx, _)| ylogx < -149.0)
 }
 
 super::avx2_fma_dispatch! {
@@ -1533,20 +1395,6 @@ mod tests {
         assert_eq!(j1f(f32::INFINITY).to_bits(), 0.0f32.to_bits());
     }
 
-    /// ULP distance for f32 with matching-sign requirement (mirrors the f64
-    /// `within_ulps`). `f32::powf` resolves to host glibc `powf`.
-    fn within_ulps_f32(a: f32, b: f32, ulps: u32) -> bool {
-        if a == b {
-            return true;
-        }
-        if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
-            return false;
-        }
-        let ab = a.to_bits() as i32;
-        let bb = b.to_bits() as i32;
-        (ab - bb).unsigned_abs() <= ulps
-    }
-
     /// Bit-exact reference for `log2f`.
     ///
     /// These arms used to compare against `libm::log2f`, and that oracle is
@@ -1896,197 +1744,42 @@ mod tests {
     }
 
     #[test]
-    fn powf_fast_paths_within_4_ulps() {
-        let bases = [
-            0.0f32,
-            -0.0,
-            1.0,
-            -1.0,
-            2.0,
-            -2.0,
-            0.5,
-            -0.5,
-            std::f32::consts::PI,
-            1.785,
-            1e-3,
-            1e6,
-            123.456,
-            0.999_999,
-            1.000_001,
-            0.6,
-            1.5,
-            2.49,
-            0.51,
-        ];
-        // Integer exponents in the gated range, plus 0.5 and half-integers.
-        for &base in &bases {
-            for n in -(POWF_MAX_EXP as i32)..=(POWF_MAX_EXP as i32) {
-                let e = n as f32;
-                assert!(
-                    within_ulps_f32(powf(base, e), base.powf(e), 4),
-                    "powf({base},{e})={} glibc={}",
-                    powf(base, e),
-                    base.powf(e)
-                );
-            }
-            if base >= 0.0 {
-                assert!(within_ulps_f32(powf(base, 0.5), base.powf(0.5), 4));
-                for n in -(POWF_MAX_EXP as i32)..=(POWF_MAX_EXP as i32) {
-                    let e = n as f32 + 0.5;
-                    assert!(
-                        within_ulps_f32(powf(base, e), base.powf(e), 4),
-                        "powf({base},{e})={} glibc={}",
-                        powf(base, e),
-                        base.powf(e)
-                    );
+    fn powf_matches_glibc() {
+        // `f32::powf` is the host glibc's powf in this test binary. Covers the
+        // categories that once took shortcuts: integer and half exponents,
+        // negative bases, subnormal bases, the overflow/underflow edge.
+        let mut st = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            st ^= st << 13;
+            st ^= st >> 7;
+            st ^= st << 17;
+            st
+        };
+        let uni = |r: u64, lo: f32, hi: f32| lo + (hi - lo) * ((r >> 40) as f32 / 16_777_216.0);
+        for i in 0..400_000u32 {
+            let (r1, r2) = (next(), next());
+            let (x, y) = match i % 8 {
+                0 => (uni(r1, 1e-3, 50.0), ((r2 % 17) as i32 - 8) as f32),
+                1 => (-uni(r1, 1e-3, 50.0), ((r2 % 17) as i32 - 8) as f32),
+                2 => (uni(r1, 0.0, 1e6), 0.5),
+                3 => (uni(r1, 1e-3, 1e3), uni(r2, -12.0, 12.0)),
+                4 => (f32::from_bits(r1 as u32 & 0x7f_ffff), uni(r2, -0.9, 0.9)),
+                5 => {
+                    let x = uni(r1, 2.0, 1e6);
+                    (x, 127.9 / x.log2() * uni(r2, 0.99, 1.01))
                 }
+                6 => {
+                    let x = uni(r1, 2.0, 1e6);
+                    (x, -149.0 / x.log2() * uni(r2, 0.97, 1.03))
+                }
+                _ => (f32::from_bits(r1 as u32), f32::from_bits(r2 as u32)),
+            };
+            let (got, want) = (powf(x, y), x.powf(y));
+            if got.is_nan() && want.is_nan() {
+                continue;
             }
+            assert_eq!(got.to_bits(), want.to_bits(), "powf({x:e}, {y:e})");
         }
-        // Medium path: deterministic sweep of base in [0.5,2.5) x exp in [-3,3].
-        let mut s = 0x9e37_79b9_u32;
-        for _ in 0..500_000 {
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            let base = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            let exp = -3.0 + (s >> 9) as f32 * (6.0 / (1u32 << 23) as f32);
-            assert!(
-                within_ulps_f32(powf(base, exp), base.powf(exp), 4),
-                "powf({base},{exp})={} glibc={} (>4 ULP)",
-                powf(base, exp),
-                base.powf(exp)
-            );
-        }
-    }
-
-    #[test]
-    fn powf_profile_exp_1_337_poly_within_4_ulps() {
-        let exp = f32::from_bits(POWF_PROFILE_EXP_1_337_BITS);
-        let mut worst = 0;
-        let mut worst_base = 0.0f32;
-        for i in 0..=200_000 {
-            let base = 0.5 + (i as f32) * (2.0 / 200_000.0);
-            let got = powf(base, exp);
-            let want = base.powf(exp);
-            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
-            if u > worst {
-                worst = u;
-                worst_base = base;
-            }
-            assert!(
-                u <= 4,
-                "powf({base},{exp})={got:?} glibc={want:?} ({u} ULP)"
-            );
-        }
-        let mut s = 0x7a5d_39e7_u32;
-        for _ in 0..1_000_000 {
-            s ^= s << 13;
-            s ^= s >> 17;
-            s ^= s << 5;
-            let base = 0.5 + (s >> 9) as f32 * (2.0 / (1u32 << 23) as f32);
-            let got = powf(base, exp);
-            let want = base.powf(exp);
-            let u = (got.to_bits() as i32 - want.to_bits() as i32).unsigned_abs();
-            if u > worst {
-                worst = u;
-                worst_base = base;
-            }
-            assert!(
-                u <= 4,
-                "powf({base},{exp})={got:?} glibc={want:?} ({u} ULP)"
-            );
-        }
-        println!("powf 1.337 polynomial worst ULP = {worst} at base {worst_base}");
-    }
-
-    #[test]
-    fn powf_profile_exp_1_337_grid_matches_polynomial_bits_and_sha256() {
-        use sha2::{Digest, Sha256};
-
-        let exp = f32::from_bits(POWF_PROFILE_EXP_1_337_BITS);
-        let mut hasher = Sha256::new();
-        for k in 0..64 {
-            let base = 0.5 + (k as f32) * 0.031_25;
-            let grid = powf_profile_exp_1_337_grid(base).expect("dyadic profile-grid value");
-            let poly = powf_profile_exp_1_337_poly(base);
-            assert_eq!(grid.to_bits(), poly.to_bits(), "grid k={k} base={base}");
-            // The PUBLIC powf is checked against the host, NOT against the
-            // profile polynomial.
-            //
-            // This arm used to assert `powf(base, exp) == poly(base)`, and that
-            // became false by design: `powf` now routes normal bases through
-            // the fused ARM/glibc `__ieee754_powf` kernel, which its own comment
-            // records as superseding "the exponent-1.337 grid below (same
-            // domain, but bit-exact to glibc and faster)". The profile path only
-            // runs for the residual subnormal-base / overflow cases the fused
-            // guard rejects.
-            //
-            // So the polynomial is the WORSE reference, and the old assertion
-            // was failing fl for being right. Measured at base=0.5 against the
-            // host:
-            //   glibc powf                 bits = 1053469677
-            //   powl() long double -> f32  bits = 1053469677  (correctly rounded)
-            //   fl public powf             bits = 1053469677
-            //   profile polynomial         bits = 1053469675  <-- 2 ULP out
-            // bd-rlsudz.
-            assert_eq!(
-                powf(base, exp).to_bits(),
-                base.powf(exp).to_bits(),
-                "public powf vs host, grid k={k} base={base}"
-            );
-            hasher.update(base.to_bits().to_le_bytes());
-            hasher.update(grid.to_bits().to_le_bytes());
-        }
-        for &base in &[
-            0.5 + f32::EPSILON,
-            0.531_251,
-            2.5 - f32::EPSILON,
-            2.5,
-            f32::INFINITY,
-            f32::NAN,
-        ] {
-            assert!(
-                powf_profile_exp_1_337_grid(base).is_none(),
-                "{base:?} matched the grid"
-            );
-        }
-        let digest: String = hasher
-            .finalize()
-            .iter()
-            .map(|x| format!("{x:02x}"))
-            .collect();
-        println!("powf 1.337 dyadic grid corpus sha256 = {digest}");
-        assert_eq!(
-            digest, "f626b22ecc6f1217b7edb85d07eb633abb1c1b9ac4d5e0556b1053cde1055af7",
-            "powf 1.337 dyadic grid corpus hash drifted: got {digest}"
-        );
-    }
-
-    #[test]
-    fn powf_fallback_preserves_libm_bits() {
-        // Out-of-gate / special cases must stay bit-identical to libm::powf.
-        let cases = [
-            (f32::NEG_INFINITY, 1.337f32),
-            (-2.0, 1.337),
-            (0.0, 1.337),
-            (0.25, 1.337), // base < 0.5, irrational exp
-            (4.0, 1.337),  // base >= 2.5, irrational exp
-            (f32::INFINITY, 0.3),
-            (10.0, 9.0), // |n| > POWF_MAX_EXP
-            (1.5, 9.5),  // half-integer with |n| > POWF_MAX_EXP
-        ];
-        for (b, e) in cases {
-            assert_eq!(
-                powf(b, e).to_bits(),
-                libm::powf(b, e).to_bits(),
-                "powf({b},{e}) fallback drifted from libm"
-            );
-        }
-        assert!(powf(f32::NAN, 1.337).is_nan());
-        assert!(powf(1.5, f32::NAN).is_nan());
     }
 
     #[test]
