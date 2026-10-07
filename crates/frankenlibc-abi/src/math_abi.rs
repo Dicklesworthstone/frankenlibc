@@ -487,9 +487,38 @@ fn scaling_range_error_f32(x: f32, out: f32) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
 }
 
+/// Whether `x` is a finite integer, read off its exponent and fraction bits.
+///
+/// Not `x.is_finite() && x.fract() == 0.0`: the baseline x86-64 build has no
+/// `roundsd` (SSE4.1), so `fract` lowers to a call of this library's exported
+/// `trunc` -- a whole ABI entry point -- and LLVM hoists that call above
+/// `x < 0.0` in `pow`, onto every call with finite arguments
+/// (bd-rc0923-epic-eeuy4f.13).
 #[inline]
 fn is_integral_f64(x: f64) -> bool {
-    x.is_finite() && x.fract() == 0.0
+    let bits = x.to_bits() & !(1u64 << 63);
+    match (bits >> 52) as u32 {
+        // inf, NaN
+        0x7ff => false,
+        // |x| >= 2^52: no fraction bits left.
+        e if e >= 0x3ff + 52 => true,
+        // |x| < 1: only a zero is integral.
+        e if e < 0x3ff => bits == 0,
+        // 1..=52 fraction bits.
+        e => bits & ((1u64 << (0x3ff + 52 - e)) - 1) == 0,
+    }
+}
+
+/// [`is_integral_f64`] for `f32`, for the same reason (`truncf`).
+#[inline]
+fn is_integral_f32(x: f32) -> bool {
+    let bits = x.to_bits() & !(1u32 << 31);
+    match bits >> 23 {
+        0xff => false,
+        e if e >= 0x7f + 23 => true,
+        e if e < 0x7f => bits == 0,
+        e => bits & ((1u32 << (0x7f + 23 - e)) - 1) == 0,
+    }
 }
 
 #[inline]
@@ -1656,7 +1685,7 @@ pub unsafe extern "C" fn log10f(x: f32) -> f32 {
 pub unsafe extern "C" fn powf(x: f32, y: f32) -> f32 {
     let out = binary_entry_f32(x, y, 7, frankenlibc_core::math::powf);
     if x.is_finite() && y.is_finite() {
-        if x < 0.0 && y.fract() != 0.0 {
+        if x < 0.0 && !is_integral_f32(y) {
             set_domain_errno();
         } else if out.is_infinite() || (x == 0.0 && y < 0.0) || (out == 0.0 && y > 0.0 && x != 0.0)
         {
@@ -16808,6 +16837,92 @@ mod tests {
             assert_eq!(fmaximumf(3.0f32, 5.0f32), 5.0f32);
             assert_eq!(fmaximumf32(3.0f32, 5.0f32), 5.0f32);
             assert!(fmaximumf(f32::NAN, 1.0f32).is_nan());
+        }
+    }
+
+    #[test]
+    fn is_integral_bit_tests_match_fract() {
+        // The bit tests replace `x.is_finite() && x.fract() == 0.0` (a `trunc`
+        // libcall in the baseline x86-64 build); they must agree on every class
+        // of input: specials, both zeros, subnormals, every exponent around the
+        // 1 and 2^52 (2^23) edges, near-integers, and random bit patterns.
+        let mut f64s = vec![
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -0.5,
+            1.5,
+            -2.5,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -f64::NAN,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::MAX,
+            -f64::MAX,
+            f64::EPSILON,
+        ];
+        let mut f32s = vec![
+            0.0f32,
+            -0.0,
+            1.0,
+            -1.0,
+            0.5,
+            -2.5,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::MIN_POSITIVE,
+            f32::from_bits(1),
+            f32::MAX,
+            -f32::MAX,
+        ];
+        for e in -4..60 {
+            let p = 2f64.powi(e);
+            f64s.extend([p, -p, p + 1.0, p - 1.0, p + 0.5, p - 0.5]);
+            f64s.extend([
+                f64::from_bits(p.to_bits() + 1),
+                f64::from_bits(p.to_bits() - 1),
+            ]);
+        }
+        for e in -4..30 {
+            let p = 2f32.powi(e);
+            f32s.extend([p, -p, p + 1.0, p - 1.0, p + 0.5, p - 0.5]);
+            f32s.extend([
+                f32::from_bits(p.to_bits() + 1),
+                f32::from_bits(p.to_bits() - 1),
+            ]);
+        }
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..200_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            f64s.push(f64::from_bits(state));
+            f32s.push(f32::from_bits(state as u32));
+            // Integers and half-integers of every magnitude up to 2^63.
+            let k = (state >> (state & 63)) as i64;
+            f64s.extend([k as f64, k as f64 + 0.5]);
+            f32s.extend([k as f32, (k >> 40) as f32 + 0.5]);
+        }
+        for x in f64s {
+            assert_eq!(
+                is_integral_f64(x),
+                x.is_finite() && x.fract() == 0.0,
+                "is_integral_f64({x:e} / {:#x})",
+                x.to_bits()
+            );
+        }
+        for x in f32s {
+            assert_eq!(
+                is_integral_f32(x),
+                x.is_finite() && x.fract() == 0.0,
+                "is_integral_f32({x:e} / {:#x})",
+                x.to_bits()
+            );
         }
     }
 
