@@ -71,3 +71,81 @@ fn strnlen_matches_glibc() {
         "strnlen golden changed"
     );
 }
+
+/// Bounds of 256+ bytes and bounds that cross a page. In the baseline x86-64
+/// build a bound under 256 that stays in its page is scanned inline; anything
+/// else is split at page ends, and spans of 256+ go to the AVX2 twin of the
+/// scanner on CPUs with AVX2 (bd-rc0923-epic-eeuy4f.13). Starts are placed
+/// relative to a page boundary so the first span is 4096, 4095, 256, 255, 196,
+/// 96 or 1 bytes long, i.e. on both sides of the threshold. Filler bytes are
+/// nonzero but trip the SWAR zero test's candidates (0x80, 0x81, 0x01, 0xFF).
+/// Every result must equal host glibc and `min(NUL index, n)`.
+#[test]
+fn strnlen_long_bounds_match_glibc() {
+    const PAGE: usize = 4096;
+    let filler = [0x80u8, 0xFF, 0x01, 0x7F, b'a', 0xFE, 0x81];
+    let mut buf: Vec<u8> = (0..5 * PAGE).map(|i| filler[i % filler.len()]).collect();
+    let page0 = (PAGE - (buf.as_ptr() as usize & (PAGE - 1))) & (PAGE - 1);
+    let mut compared = 0usize;
+    for page_off in [
+        0usize,
+        1,
+        63,
+        PAGE - 256,
+        PAGE - 255,
+        PAGE - 196,
+        PAGE - 96,
+        PAGE - 1,
+    ] {
+        let start = page0 + page_off;
+        let avail = buf.len() - start;
+        for nul in [
+            None,
+            Some(0usize),
+            Some(1),
+            Some(15),
+            Some(16),
+            Some(31),
+            Some(32),
+            Some(63),
+            Some(64),
+            Some(127),
+            Some(128),
+            Some(255),
+            Some(256),
+            Some(257),
+            Some(1000),
+            Some(4095),
+            Some(4096),
+            Some(5000),
+        ] {
+            if let Some(k) = nul {
+                buf[start + k] = 0;
+            }
+            let mut bounds = vec![255usize, 256, 257, 300, 1024, 4096, 4097, 8000, avail];
+            if nul.is_some() {
+                // A terminator inside the buffer makes an unbounded ceiling legal.
+                bounds.push(usize::MAX);
+            }
+            let p = buf[start..].as_ptr().cast::<c_char>();
+            for n in bounds {
+                let gl = unsafe { host_strnlen()(p, n) };
+                let fl = unsafe { fa::strnlen(p, n) };
+                let want = nul.map_or(n, |k| k.min(n));
+                assert_eq!(
+                    fl, gl,
+                    "strnlen(page_off={page_off}, nul={nul:?}, n={n}): fl={fl} glibc={gl}"
+                );
+                assert_eq!(
+                    fl, want,
+                    "strnlen(page_off={page_off}, nul={nul:?}, n={n}) must be min(NUL, n)"
+                );
+                compared += 1;
+            }
+            if let Some(k) = nul {
+                buf[start + k] = filler[(start + k) % filler.len()];
+            }
+        }
+    }
+    assert_eq!(compared, 8 * (9 + 17 * 10));
+}

@@ -2678,22 +2678,70 @@ const SCAN_PAGE: usize = 4096;
 /// that reaches past the page boundary pays the loop, and there the arithmetic is
 /// per PAGE rather than per window, so the steady-state scan speed is unchanged.
 ///
+/// # Run-time dispatch (bd-rc0923-epic-eeuy4f.13)
+///
+/// A bound under [`SCAN_TWIN_MIN_SPAN`] that cannot leave `ptr`'s page -- the
+/// common short call -- runs the baseline scanner inline, with no call on its
+/// path. Everything else goes to [`scan_c_string_nul_or_bound_long`], which
+/// sends spans of [`SCAN_TWIN_MIN_SPAN`]+ to the AVX2 twin. Dispatching every
+/// bound cost the short calls the check, a call, and the registers that call
+/// makes the caller save: strnlen at bounds 4..128 measured 1.11-1.43x main's
+/// x86-64-v3 build (incumbent_coverage_ab bounded_len vs live glibc, hz4),
+/// against 0.75-1.00x for main's source built baseline with no dispatch.
+///
 /// # Safety
 ///
 /// `ptr` must be readable up to the first NUL or `bound` bytes, whichever comes
 /// first. That is strictly weaker than what [`scan_c_string`] requires.
 #[inline(always)]
 pub(crate) unsafe fn scan_c_string_nul_or_bound(ptr: *const c_char, bound: usize) -> (usize, bool) {
-    // Fast path: `[ptr, ptr+bound)` lies in one page, and that page is mapped
-    // because `ptr` is readable — so every byte the scan may load is readable and
+    // `[ptr, ptr+bound)` lies in one page, and that page is mapped because `ptr`
+    // is readable — so every byte the scan may load is readable and
     // `scan_c_string`'s stronger contract already holds. Written as a comparison
     // against the distance to the page end rather than as `offset + bound <=
     // SCAN_PAGE`, because `bound` is caller-controlled and `strnlen(p, SIZE_MAX)`
     // is a legal call: that sum would wrap and take this path with the whole
     // address space nominally in one page.
-    if bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
+    if bound < SCAN_TWIN_MIN_SPAN && bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
         // SAFETY: as argued above, all `bound` bytes are readable.
-        return unsafe { scan_c_string(ptr, Some(bound)) };
+        return unsafe { scan_c_string_body(ptr, Some(bound)) };
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { scan_c_string_nul_or_bound_long(ptr, bound) }
+}
+
+/// Bounded spans at least this long go to the AVX2 twin of the scanner on CPUs
+/// with AVX2; shorter ones run its baseline copy inline. Measured: inline
+/// baseline wins at bounds up to 128 and the twin at 4096; the cut between them
+/// is not tuned.
+const SCAN_TWIN_MIN_SPAN: usize = 256;
+
+/// [`scan_c_string_nul_or_bound`] for a bound of [`SCAN_TWIN_MIN_SPAN`]+ bytes
+/// or one that leaves `ptr`'s page. Out of line, so its calls -- and the
+/// registers they make the caller save -- stay off the short path.
+///
+/// # Safety
+///
+/// As for [`scan_c_string_nul_or_bound`].
+#[inline(never)]
+unsafe fn scan_c_string_nul_or_bound_long(ptr: *const c_char, bound: usize) -> (usize, bool) {
+    /// Spans of [`SCAN_TWIN_MIN_SPAN`]+ through the dispatcher, shorter ones
+    /// (a page head or tail) inline.
+    #[inline(always)]
+    unsafe fn scan_span(p: *const c_char, n: usize) -> (usize, bool) {
+        if n >= SCAN_TWIN_MIN_SPAN {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_c_string(p, Some(n)) }
+        } else {
+            // SAFETY: forwarded from the caller's contract.
+            unsafe { scan_c_string_body(p, Some(n)) }
+        }
+    }
+
+    // The whole bound lies in one page; see `scan_c_string_nul_or_bound`.
+    if bound <= SCAN_PAGE - (ptr as usize & (SCAN_PAGE - 1)) {
+        // SAFETY: all `bound` bytes are readable, as argued there.
+        return unsafe { scan_span(ptr, bound) };
     }
 
     let mut done = 0usize;
@@ -2706,7 +2754,7 @@ pub(crate) unsafe fn scan_c_string_nul_or_bound(ptr: *const c_char, bound: usize
         // SAFETY: byte `done` is readable (no NUL seen yet and `done < bound`),
         // hence its whole page is, and `chunk` stops at that page's end — so all
         // `chunk` bytes are readable, which is what `scan_c_string` requires.
-        let (idx, found) = unsafe { scan_c_string(here, Some(chunk)) };
+        let (idx, found) = unsafe { scan_span(here, chunk) };
         if found {
             return (done + idx, true);
         }
