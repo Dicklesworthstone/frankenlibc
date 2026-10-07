@@ -33,6 +33,9 @@ use search::{SearchContext, SearchPaths};
 #[path = "dlfcn_lifecycle.rs"]
 mod lifecycle;
 
+#[path = "dlfcn_initfirst.rs"]
+mod initialization;
+
 #[path = "dlfcn_tls.rs"]
 mod tls;
 
@@ -86,6 +89,7 @@ const HANDLE_TAG: usize = 0x4d;
 const HANDLE_MASK: usize = 0xff;
 const MAX_GROUP_OBJECTS: usize = 256;
 const DF_1_NODELETE: u64 = 0x8;
+const DF_1_INITFIRST: u64 = 0x20;
 const DF_1_NOOPEN: u64 = 0x40;
 const DF_1_PIE: u64 = 0x0800_0000;
 
@@ -119,6 +123,8 @@ struct NativeDso {
     // dlopen references that a concurrent dlclose could consume.
     load_pins: usize,
     nodelete: bool,
+    // Consumed once by the publication group's constructor scheduler.
+    initialize_first: bool,
     global: bool,
     // Global visibility is ordered by promotion, not original mapping time.
     global_rank: usize,
@@ -501,6 +507,7 @@ fn map_object(
         references: 0,
         load_pins: 0,
         nodelete: prepared.flags & DF_1_NODELETE != 0,
+        initialize_first: prepared.flags & DF_1_INITFIRST != 0,
         global: false,
         global_rank: 0,
         symbolic,
@@ -770,6 +777,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     // The last fallible publication step; successful unique ownership pins
     // only the selected provider, without making its local symbols global.
     unique.commit(&mut dsos, &mut pending)?;
+    initialization::select(&mut pending);
     phdr::published(pending.len());
     dsos.extend(pending);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
@@ -1018,38 +1026,10 @@ pub(super) fn resolve_native_dso_symbol(
     Some(None)
 }
 
-// Initialize a dependency before its consumer. Mark on traversal so cycles
-// execute each initializer once; mark Running before releasing the mutex so a
-// constructor reopening itself cannot recursively initialize itself again.
+// Native constructor scheduling retains dependency lifetimes and supports
+// the GNU initialization-priority flag without changing FINI dependencies.
 fn initialize(root: usize) -> Option<()> {
-    let mut stack = vec![(root, false)];
-    let mut seen = Vec::new();
-    while let Some((id, ready)) = stack.pop() {
-        let mut dsos = registry().lock().ok()?;
-        let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
-        if dso.state != InitState::Pending { continue; }
-        if !ready {
-            if seen.contains(&id) { continue; }
-            seen.push(id);
-            stack.push((id, true));
-            stack.extend(dso.needed.iter().rev().map(|&id| (id, false)));
-            continue;
-        }
-        dso.state = InitState::Running;
-        let callbacks = dso.callbacks.init.clone();
-        drop(dsos);
-        for address in callbacks {
-            // SAFETY: validated before publication; Pending/Running are roots
-            // for nested close, retaining every mapping until init returns.
-            unsafe { lifecycle::call_init(address) };
-        }
-        let mut dsos = registry().lock().ok()?;
-        let sequence = dsos.iter().map(|dso| dso.initialized_at).max().unwrap_or(0).checked_add(1)?;
-        let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
-        dso.initialized_at = sequence;
-        dso.state = InitState::Live;
-    }
-    Some(())
+    initialization::initialize(root)
 }
 
 fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
