@@ -148,6 +148,12 @@ pub fn logf(x: f32) -> f32 {
     if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
         return logf_kernel(ix);
     }
+    // Positive subnormal: normalise exactly (x * 2^23) and take the 23 back
+    // out of the exponent field, as glibc does -- the same kernel, so the same
+    // result (libm differed on ~1 in 400k sampled subnormal-heavy inputs).
+    if ix != 0 && ix < 0x0080_0000 {
+        return logf_kernel((x * 8_388_608.0).to_bits().wrapping_sub(23 << 23));
+    }
     // glibc raises FE_DIVBYZERO at the log(±0) pole and FE_INVALID for x<0;
     // libm::logf returns the value (-inf / NaN) without the flag.
     if x == 0.0 {
@@ -167,6 +173,12 @@ pub fn log2f(x: f32) -> f32 {
     let ix = x.to_bits();
     if ix.wrapping_sub(0x0080_0000) < (0x7f80_0000 - 0x0080_0000) {
         return log2f_kernel(ix);
+    }
+    // Positive subnormal: normalise exactly (x * 2^23) and take the 23 back
+    // out of the exponent field, as glibc does -- the same kernel, so the same
+    // result (libm differed on ~1 in 400k sampled subnormal-heavy inputs).
+    if ix != 0 && ix < 0x0080_0000 {
+        return log2f_kernel((x * 8_388_608.0).to_bits().wrapping_sub(23 << 23));
     }
     if x == 0.0 {
         fe_divbyzero_f32();
@@ -1640,6 +1652,19 @@ mod tests {
             digest, "6ca9ff9314c15c49d761f9686434e351789ff0815c083abdbf45991cb2a6ba2f",
             "log2f dyadic profile corpus hash drifted: got {digest}"
         );
+    }
+
+    #[test]
+    fn logf_log2f_subnormals_match_glibc() {
+        // Positive subnormals take glibc's own route (normalise by 2^23, same
+        // kernel); libm differed on 9772 / 9696 of them (exhaustively).
+        let mut u = 1u32;
+        while u < 0x0080_0000 {
+            let x = f32::from_bits(u);
+            assert_eq!(logf(x).to_bits(), x.ln().to_bits(), "logf({x:e})");
+            assert_eq!(log2f(x).to_bits(), x.log2().to_bits(), "log2f({x:e})");
+            u += 97;
+        }
     }
 
     #[test]
