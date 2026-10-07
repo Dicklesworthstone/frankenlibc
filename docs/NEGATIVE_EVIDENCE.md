@@ -41742,3 +41742,24 @@ ones that would notice a threading-policy depth counter behaving differently.
   hook (table 1).
 - **DISPOSITION.** KEEP `81a9b40a4`. Not a speedup and not presented as one: the caller gate costs
   nothing measurable on the hottest cancellation points.
+- **CORRECTION 2026-10-07 (independent review): a ~1% cost on a multi-threaded `read` IS
+  detectable.** The product commit is now `55f697178` (= `81a9b40a4` plus two test-only
+  `#[doc(hidden)]` hooks that the cdylib drops), on main@`833ce3f58`; the candidate below was
+  built from the same branch rebased on main@`8ddf79c99`:
+  `f338a3765da03507feb6e36f3a6ea3456e7391c274912c3c851e516e7a0108f2`, base main@`8ddf79c99`
+  `19579c9b0c277e08c70403c5f497dd41dd7414fd94263fd8ea4f635a8d39279c`. Two same-invocation self-A/B
+  runs on hz4 (`--pin-quietest 2 --fl-deepbind`, bench ELF `a5cfa31b…` then `51cb05d8…`, the
+  latter with the harness fix `39784f959`), A/A null medians 0.999209-1.000591, every null CI
+  inside [0.996883, 1.001724]: read mt **1.010385 [1.007942,1.012534]** and **1.012587
+  [1.010903,1.015277] FL_SLOWER** (window delta, MT minus ST: candidate +13.6 / +16.6 ns, base
+  +9.2 / +10.5 ns); write mt 0.996743 / 1.000081, write st 0.996870 / 0.998354, read st 0.999315 /
+  0.996744, all UNDECIDABLE; lseek controls st 0.997981 / 1.002213, mt 0.995278 (FL_FASTER) /
+  1.000011. The author's read-mt 1.0038 [1.0023,1.0058] sat just under its 2x-null bar; these two
+  clear it. Incumbent run (bench ELF `51cb05d8…`, candidate against live glibc 2.43): fl/glibc
+  write st 1.062358, read st 1.062680, write mt 1.060183, read mt 1.067196, lseek control
+  1.032393 / 1.034268, all FL_SLOWER, A/A null medians 0.999030-1.001859; window cost fl write
+  +11.690 / glibc +11.902 ns, fl read +14.572 / glibc +11.485 ns. DISPOSITION unchanged (KEEP, a
+  correctness fix: without the caller gate a pending cancel aborts the process in 11 of 25 libc
+  calls fl serves with its own I/O), but the headline above is wrong for `read`: the gated window
+  costs a multi-threaded 1-byte read about 4-6 ns (1.0-1.3%). Next lever: find where those ns go
+  (the read path pays them, write does not) before adding more work to the hook.
