@@ -545,6 +545,59 @@ fn fts_children_before_first_read_matches_host_root_listing() {
 }
 
 #[test]
+fn fts_read_walk_matches_host_with_and_without_nostat() {
+    // Tcl's recursive `file delete`/`file copy` walk with FTS_PHYSICAL |
+    // FTS_NOCHDIR | FTS_NOSTAT. glibc stats the roots regardless, classifies
+    // child directories FTS_D (only non-directories become FTS_NSOK) and names
+    // a root returned by fts_read by its last component. fl answered FTS_NSOK
+    // for the root and never descended, so Tcl unlinked directories (EISDIR).
+    const TEST_FTS_NOCHDIR: c_int = 0x0004;
+    const TEST_FTS_NOSTAT: c_int = 0x0008;
+    let root = temp_path_buf("fts_walk");
+    std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
+    std::fs::write(root.join("file"), b"x").unwrap();
+    std::fs::write(root.join("sub/inner"), b"y").unwrap();
+    std::os::unix::fs::symlink("file", root.join("link")).unwrap();
+    let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
+
+    let walk = |read: &dyn Fn() -> *mut AbiFtsEnt| {
+        let mut seen = Vec::new();
+        loop {
+            let e = read();
+            if e.is_null() {
+                break;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr((*e).fts_name.as_ptr()) }
+                .to_string_lossy()
+                .into_owned();
+            seen.push((unsafe { (*e).fts_info }, unsafe { (*e).fts_level }, name, fts_path(e)));
+        }
+        seen.sort();
+        seen
+    };
+
+    // FTS_NOCHDIR in every case: without it glibc's walk chdir()s, and other
+    // tests in this binary change the process-wide cwd concurrently.
+    for options in [
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR,
+        TEST_FTS_PHYSICAL | TEST_FTS_NOCHDIR | TEST_FTS_NOSTAT,
+    ] {
+        unsafe {
+            let host = fts_open(argv.as_ptr(), options, None);
+            let abi = abi_fts_open(argv.as_ptr() as *const *const c_char, options, None);
+            assert!(!host.is_null() && !abi.is_null());
+            let host_seen = walk(&|| fts_read(host));
+            let abi_seen = walk(&|| abi_fts_read(abi));
+            assert_eq!(abi_seen, host_seen, "fts walk with options {options:#x}");
+            assert!(host_seen.len() >= 7, "walk too short: {host_seen:?}");
+            assert_eq!(fts_close(host), 0);
+            assert_eq!(abi_fts_close(abi), 0);
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn fts_children_directory_listing_and_nameonly_match_host() {
     let root = temp_path_buf("fts_children_dir");
     std::fs::create_dir_all(root.join("sub")).unwrap();

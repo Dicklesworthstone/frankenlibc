@@ -22025,11 +22025,26 @@ fn fts_stat_entry(
     path: &std::path::Path,
     options: c_int,
     follow_symlink: bool,
+    level: i16,
+) -> (libc::stat, u16, c_int) {
+    // FTS_NOSTAT spares the stat of a CHILD that is not a directory (glibc
+    // goes by d_type): roots are always stat'ed, and a directory must still be
+    // classified FTS_D or the walk cannot descend into it -- Tcl's
+    // `file delete -force` unlinked directories (EISDIR) when fl answered
+    // FTS_NSOK for everything.
+    let (stat_buf, info, err) = fts_stat_entry_full(path, options, follow_symlink);
+    if options & FTS_NOSTAT != 0 && level > 0 && info != FTS_D {
+        return (unsafe { std::mem::zeroed() }, FTS_NSOK, 0);
+    }
+    (stat_buf, info, err)
+}
+
+fn fts_stat_entry_full(
+    path: &std::path::Path,
+    options: c_int,
+    follow_symlink: bool,
 ) -> (libc::stat, u16, c_int) {
     let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
-    if options & FTS_NOSTAT != 0 {
-        return (stat_buf, FTS_NSOK, 0);
-    }
 
     let path_cstr = match fts_path_to_cstring(path) {
         Ok(path_cstr) => path_cstr,
@@ -22109,10 +22124,10 @@ impl FtsEntryOwned {
 
         let (stat_value, mut info, stat_errno) = if entry.visit == FtsVisit::Postorder {
             let (stat_value, _info, stat_errno) =
-                fts_stat_entry(&entry.path, options, entry.follow_symlink);
+                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
             (stat_value, FTS_DP, stat_errno)
         } else {
-            fts_stat_entry(&entry.path, options, entry.follow_symlink)
+            fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level)
         };
 
         if name_only {
@@ -22163,6 +22178,30 @@ impl FtsEntryOwned {
 
     fn entry(&self) -> &FTSENT {
         unsafe { &*(self.raw.as_ptr() as *const FTSENT) }
+    }
+
+    /// A root returned by fts_read is named by its last component, as glibc's
+    /// fts_load does ("/tmp/x/d" reads as "d"); before the first read,
+    /// fts_children lists roots under their full argv names. The basename is
+    /// never longer than the stored name, so it is rewritten in place.
+    fn rename_root_to_basename(&mut self) {
+        let mut name = fts_name_bytes(&self.path);
+        let stored = self.entry().fts_namelen as usize;
+        if name.len() > stored {
+            return;
+        }
+        let len = name.len();
+        name.push(0);
+        let entry = self.entry_mut();
+        // SAFETY: the inline name buffer holds `stored + 1 >= len + 1` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                entry.fts_name.as_mut_ptr() as *mut u8,
+                name.len(),
+            );
+        }
+        entry.fts_namelen = len as u16;
     }
 
     fn entry_mut(&mut self) -> &mut FTSENT {
@@ -22396,13 +22435,16 @@ pub unsafe extern "C" fn fts_read(ftsp: *mut c_void) -> *mut FTSENT {
         })
         .unwrap_or(std::ptr::null_mut());
 
-    let owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
+    let mut owned = match FtsEntryOwned::new(&entry, stream.options, parent, false) {
         Ok(owned) => owned,
         Err(err) => {
             unsafe { set_abi_errno(err) };
             return std::ptr::null_mut();
         }
     };
+    if entry.level == 0 {
+        owned.rename_root_to_basename();
+    }
 
     stream.current = Some(owned);
     if entry.visit == FtsVisit::Preorder {
