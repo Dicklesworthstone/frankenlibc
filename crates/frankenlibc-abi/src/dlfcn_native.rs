@@ -45,6 +45,9 @@ mod ifunc;
 #[path = "dlfcn_binding.rs"]
 mod binding;
 
+#[path = "dlfcn_unique.rs"]
+mod unique;
+
 #[path = "dlfcn_versions.rs"]
 mod versions;
 
@@ -555,6 +558,9 @@ fn protect_object(dso: &NativeDso, image: &LoadImage, apply_relro: bool) -> Opti
 struct Resolver<'a> {
     scope: Vec<&'a NativeDso>,
     providers: RefCell<Vec<usize>>,
+    // None only for empty-scope runtime builtin lookup. Native definition
+    // selection shares one transaction across ordinary, TLS and IFUNC passes.
+    unique: Option<&'a unique::Transaction>,
 }
 
 impl SymbolLookup for Resolver<'_> {
@@ -573,10 +579,11 @@ impl SymbolLookup for Resolver<'_> {
             ) {
                 // All IFUNC references belong to the explicit late pass.
                 if symbol.is_tls() || symbol.is_ifunc() { return None; }
-                let address = symbol.definition_address(dso.object.base)?;
+                let definition = self.unique?.select(dso, symbol)?;
+                let address = definition.address()?;
                 let mut providers = self.providers.borrow_mut();
-                if !providers.contains(&dso.id) {
-                    providers.push(dso.id);
+                if !providers.contains(&definition.provider) {
+                    providers.push(definition.provider);
                 }
                 return Some(address);
             }
@@ -669,14 +676,19 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             }
         }
     }
-    let direct = binding::prepare(&dsos, &mut pending, root, flags)?;
-    let indirect = ifunc::prepare(&dsos, &mut pending, root, flags)?;
+    // A failed load must not reserve a process-lifetime unique name or pin a
+    // resident provider. All binding passes share unpublished first selections.
+    let unique = unique::Transaction::new();
+    let direct = binding::prepare(&dsos, &mut pending, root, flags, &unique)?;
+    let indirect = ifunc::prepare(&dsos, &mut pending, root, flags, &unique)?;
     // Every member is mapped before the first relocation. Forward references,
     // siblings and cycles therefore resolve without publishing partial DSOs.
     let mut edges = Vec::new();
     for (dso, plan) in pending.iter().zip(&direct) {
         let scope = binding::scope(&dsos, &pending, root, dso, flags)?;
-        let resolver = Resolver { scope, providers: RefCell::new(Vec::new()) };
+        let resolver = Resolver {
+            scope, providers: RefCell::new(Vec::new()), unique: Some(&unique),
+        };
         // SAFETY: all pending mappings remain uniquely owned by this
         // transaction, are disjoint and writable, and no callback is invoked.
         let memory = unsafe {
@@ -755,6 +767,9 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     let root_dso = pending.iter_mut().find(|dso| dso.id == root)?;
     root_dso.references = 1;
     root_dso.nodelete |= flags & dlfcn_core::RTLD_NODELETE != 0;
+    // The last fallible publication step; successful unique ownership pins
+    // only the selected provider, without making its local symbols global.
+    unique.commit(&mut dsos, &mut pending)?;
     phdr::published(pending.len());
     dsos.extend(pending);
     if flags & dlfcn_core::RTLD_GLOBAL != 0 {
@@ -964,7 +979,8 @@ pub(super) fn resolve_native_dso_symbol(
         None => None,
     };
     let _operation = OPERATIONS.lock();
-    let dsos = registry().lock().ok()?;
+    let mut dsos = registry().lock().ok()?;
+    let unique = unique::Transaction::new();
     let order = if let Some(id) = id {
         dsos.iter().find(|dso| dso.id == id)?;
         lookup_order(&dsos, &[], id)
@@ -974,21 +990,29 @@ pub(super) fn resolve_native_dso_symbol(
     for candidate in order {
         let dso = dsos.iter().find(|dso| dso.id == candidate)?;
         if let Some(symbol) = dso.versions.lookup(&dso.object, symbol, version, versions::Lookup::Public) {
-            if symbol.is_tls() {
-                let module = dso.tls.clone()?;
-                let offset = usize::try_from(symbol.st_value).ok()?;
+            // Preserve handle/version scope selection, then canonicalize only
+            // a GNU unique candidate. Its owner may be in another LOCAL group.
+            let Some(definition) = unique.select(dso, symbol) else { return Some(None); };
+            if definition.symbol.is_tls() {
+                let module = dsos.iter().find(|dso| dso.id == definition.provider)?.tls.clone()?;
+                let offset = usize::try_from(definition.tls_offset(0)?).ok()?;
+                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
                 drop(dsos);
                 return Some(tls::address(&module, offset));
             }
-            if symbol.is_ifunc() {
-                let address = usize::try_from(symbol.definition_address(dso.object.base)?).ok()?;
+            let address = usize::try_from(definition.address()?).ok()?;
+            if definition.symbol.is_ifunc() {
                 drop(dsos);
-                // A main-handle lookup has no owning DSO. Retain an indirect
-                // implementation through the selected provider, not a fake ID.
-                return Some(ifunc::resolve_symbol(id.unwrap_or(candidate), address)
-                    .map(|address| address as *mut c_void));
+                // Resolve before publishing a first unique selection: a failed
+                // resolver must not establish process-lifetime ownership.
+                let resolved = ifunc::resolve_symbol(id.unwrap_or(definition.provider), address);
+                let Some(resolved) = resolved else { return Some(None); };
+                let mut dsos = registry().lock().ok()?;
+                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+                return Some(Some(resolved as *mut c_void));
             }
-            return Some(symbol.definition_address(dso.object.base).map(|address| address as *mut c_void));
+            if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+            return Some(Some(address as *mut c_void));
         }
     }
     Some(None)

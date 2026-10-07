@@ -15,7 +15,7 @@ use frankenlibc_core::elf::{
     Elf64ProgramHeader, Elf64Rela, ProgramType, RelocationType,
 };
 
-use super::{NativeDso, binding, lifecycle, registry, tls};
+use super::{NativeDso, binding, lifecycle, registry, tls, unique};
 
 std::thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
@@ -157,6 +157,7 @@ fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
 /// continues to own all ordinary arithmetic, including compressed RELR.
 pub(super) fn prepare(
     resident: &[NativeDso], pending: &mut [NativeDso], root: usize, flags: c_int,
+    unique: &unique::Transaction,
 ) -> Option<Vec<Vec<Fixup>>> {
     let mut plans = Vec::new();
     for dso in pending.iter() {
@@ -170,7 +171,7 @@ pub(super) fn prepare(
             } else if matches!(relocation.reloc_type(), RelocationType::None | RelocationType::Relative) {
                 None
             } else if relocation.symbol_index() != 0 {
-                let definition = binding::select(dso, relocation.symbol_index() as usize, &scope)?;
+                let definition = binding::select(dso, relocation.symbol_index() as usize, &scope, unique)?;
                 if definition.indirect {
                     Some((definition.provider?, usize::try_from(definition.address).ok()?))
                 } else { None }

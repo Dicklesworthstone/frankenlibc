@@ -11,7 +11,7 @@ use frankenlibc_core::dlfcn::RTLD_DEEPBIND;
 use frankenlibc_core::elf::{Elf64Rela, LoadedObject, ProgramType, RelocationType};
 use frankenlibc_core::elf::relocation::{RelocationContext, compute_relocation, compute_size_relocation};
 
-use super::{NativeDso, Resolver, lookup_order};
+use super::{NativeDso, Resolver, lookup_order, unique};
 
 /// Both the historical DT_SYMBOLIC tag and DF_SYMBOLIC request own-object
 /// lookup before the normal global scope. Parse runtime metadata, not linker
@@ -85,7 +85,9 @@ fn own_definition(dso: &NativeDso, index: usize) -> Option<Definition> {
     })
 }
 
-pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Option<Definition> {
+pub(super) fn select(
+    dso: &NativeDso, index: usize, scope: &[&NativeDso], unique: &unique::Transaction,
+) -> Option<Definition> {
     let symbol = dso.object.dynsym.get(index)?;
     if symbol.is_tls() { return None; }
     // Local/hidden/internal/protected references cannot be interposed, even
@@ -102,7 +104,7 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
     if symbol.is_undefined() && matches!(name,
         "__tls_get_addr" | "__cxa_thread_atexit_impl" | "__cxa_atexit" | "__cxa_finalize")
     {
-        let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
+        let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()), unique: None };
         let address = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version)?;
         return Some(Definition { address, size: None, provider: None, indirect: false });
     }
@@ -110,16 +112,17 @@ pub(super) fn select(dso: &NativeDso, index: usize, scope: &[&NativeDso]) -> Opt
         if let Some(found) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
             if !found.is_defined() || matches!(found.st_other & 3, 1 | 2) { continue; }
             if found.is_tls() { return None; }
+            let selected = unique.select(provider, found)?;
             return Some(Definition {
-                address: found.definition_address(provider.object.base)?,
-                size: Some(found.st_size),
-                provider: Some(provider.id), indirect: found.is_ifunc(),
+                address: selected.address()?,
+                size: Some(selected.symbol.st_size),
+                provider: Some(selected.provider), indirect: selected.symbol.is_ifunc(),
             });
         }
     }
     // Keep ordinary builtin fallback on the same ABI/version path too. An
     // empty scope cannot accidentally select a different native provider.
-    let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()) };
+    let runtime = Resolver { scope: Vec::new(), providers: std::cell::RefCell::new(Vec::new()), unique: None };
     if let Some(address) = frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version) {
         return Some(Definition { address, size: None, provider: None, indirect: false });
     }
@@ -149,6 +152,7 @@ fn same_entry(left: &Elf64Rela, right: &Elf64Rela) -> bool {
 /// No mapping, resident lifetime edge or symbol definition is mutated here.
 pub(super) fn prepare(
     resident: &[NativeDso], pending: &mut [NativeDso], root: usize, flags: c_int,
+    unique: &unique::Transaction,
 ) -> Option<Vec<Plan>> {
     let mut plans = Vec::new();
     for dso in pending.iter() {
@@ -164,7 +168,7 @@ pub(super) fn prepare(
                 // STN_UNDEF has zero size and requires no provider lookup.
                 Definition { address: 0, size: Some(0), provider: None, indirect: false }
             } else {
-                select(dso, relocation.symbol_index() as usize, &scope)?
+                select(dso, relocation.symbol_index() as usize, &scope, unique)?
             };
             let (value, width) = if size_relocation {
                 // Z belongs to the selected provider, including preempting

@@ -100,38 +100,50 @@ pub(super) fn take_relocations(object: &mut LoadedObject) -> Vec<Elf64Rela> {
     tls
 }
 
- enum Definition<'a> {
-    Tls(&'a NativeDso, u64),
+enum Definition {
+    // A canonical unique TLS owner need not belong to the current LOCAL scope.
+    // Keep its module identity, offset and bounds rather than a scope borrow.
+    Tls { provider: usize, offset: u64, limit: u64 },
     UndefinedWeak,
 }
 
-fn definition<'a>(dso: &'a NativeDso, resolver: &Resolver<'a>, index: usize) -> Option<Definition<'a>> {
+fn definition(dso: &NativeDso, resolver: &Resolver<'_>, index: usize) -> Option<Definition> {
     if index == 0 {
-        dso.object.tls_segment.as_ref()?;
-        return Some(Definition::Tls(dso, 0));
+        let limit = dso.object.tls_segment.as_ref()?.memsz;
+        return Some(Definition::Tls { provider: dso.id, offset: 0, limit });
     }
     let requested = dso.object.dynsym.get(index)?;
     if !requested.is_tls() { return None; }
     // Local/hidden/internal/protected definitions cannot be preempted.
     if requested.is_defined() && (requested.is_local() || requested.st_other & 3 != 0) {
-        return Some(Definition::Tls(dso, symbol_offset(&dso.object, requested)?));
+        return Some(Definition::Tls {
+            provider: dso.id,
+            offset: symbol_offset(&dso.object, requested)?,
+            limit: dso.object.tls_segment.as_ref()?.memsz,
+        });
     }
     let name = dso.object.symbol_name(requested)?;
     let version = dso.versions.name(index);
     for provider in &resolver.scope {
         if let Some(symbol) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
             // A malformed or non-TLS definition is an error, not an unresolved
-            // weak reference. Never conceal a type/version/bounds mismatch.
-            return Some(Definition::Tls(provider, symbol_offset(&provider.object, symbol)?));
+            // weak reference. Validate before selecting unique ownership.
+            symbol_offset(&provider.object, symbol)?;
+            let selected = resolver.unique?.select(provider, symbol)?;
+            return Some(Definition::Tls {
+                provider: selected.provider,
+                offset: selected.tls_offset(0)?,
+                limit: selected.tls_limit()?,
+            });
         }
     }
     // No host fallback: a host TLS offset/module ID is not usable in our DTV.
     (requested.is_undefined() && requested.is_weak()).then_some(Definition::UndefinedWeak)
 }
 
-fn addend_offset(provider: &NativeDso, offset: u64, addend: i64) -> Option<u64> {
-    let value = u64::try_from((offset as i128).checked_add(addend as i128)?).ok()?;
-    (value <= provider.object.tls_segment.as_ref()?.memsz).then_some(value)
+fn addend_offset(offset: u64, limit: u64, addend: i64) -> Option<u64> {
+    let value = u64::try_from(i128::from(offset) + i128::from(addend)).ok()?;
+    (value <= limit).then_some(value)
 }
 
 pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'_>) -> Option<()> {
@@ -140,11 +152,11 @@ pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'
         let start = usize::try_from(relocation.r_offset).ok()?;
         if is_descriptor(relocation) {
             let (module, offset) = match definition {
-                Definition::Tls(provider, offset) => {
-                    let offset = addend_offset(provider, offset, relocation.r_addend)?;
+                Definition::Tls { provider, offset, limit } => {
+                    let offset = addend_offset(offset, limit, relocation.r_addend)?;
                     let mut providers = resolver.providers.borrow_mut();
-                    if !providers.contains(&provider.id) { providers.push(provider.id); }
-                    (provider.id, usize::try_from(offset).ok()?)
+                    if !providers.contains(&provider) { providers.push(provider); }
+                    (provider, usize::try_from(offset).ok()?)
                 }
                 // The compiler adds the thread pointer to the resolver result.
                 // An unresolved weak TLS symbol must yield NULL + A, NOT TP+A.
@@ -158,15 +170,15 @@ pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'
         } else {
             // Preserve the existing GD/LD contract; missing weak module-index
             // pairs are not implicitly treated as host DTV module zero.
-            let Definition::Tls(provider, offset) = definition else { return None; };
+            let Definition::Tls { provider, offset, limit } = definition else { return None; };
             let value = match relocation.reloc_type() {
-                RelocationType::DtpMod64 => provider.id as u64,
-                RelocationType::DtpOff64 => addend_offset(provider, offset, relocation.r_addend)?,
+                RelocationType::DtpMod64 => provider as u64,
+                RelocationType::DtpOff64 => addend_offset(offset, limit, relocation.r_addend)?,
                 _ => return None,
             };
             memory.get_mut(start..start.checked_add(8)?)?.copy_from_slice(&value.to_le_bytes());
             let mut providers = resolver.providers.borrow_mut();
-            if !providers.contains(&provider.id) { providers.push(provider.id); }
+            if !providers.contains(&provider) { providers.push(provider); }
         }
     }
     Some(())
