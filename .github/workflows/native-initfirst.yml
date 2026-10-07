@@ -1,0 +1,59 @@
+name: Native constructor priority
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_initfirst_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-initfirst.yml'
+  pull_request:
+    paths:
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_initfirst_test.rs'
+      - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
+      - 'crates/frankenlibc-core/src/elf/**'
+      - '.github/workflows/native-initfirst.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  native-initfirst:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [strict, hardened]
+    env:
+      FRANKENLIBC_MODE: ${{ matrix.mode }}
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-09-11
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute native and host constructor priority regressions
+        run: |
+          mkdir -p artifacts/native-initfirst
+          cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_initfirst_test -- --nocapture \
+            2>&1 | tee "artifacts/native-initfirst/${FRANKENLIBC_MODE}.log"
+          # The unfiltered parent must execute every lifecycle case; child
+          # subprocesses alone must not satisfy this assertion.
+          grep -F 'test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
+            "artifacts/native-initfirst/${FRANKENLIBC_MODE}.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-initfirst-${{ matrix.mode }}
+          path: artifacts/native-initfirst/
