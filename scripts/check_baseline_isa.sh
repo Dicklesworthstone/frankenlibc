@@ -91,6 +91,7 @@ EXT = {
     "aes": "aesenc aesenclast aesdec aesdeclast aesimc aeskeygenassist pclmulqdq",
     "sha": "sha1rnds4 sha1nexte sha1msg1 sha1msg2 sha256rnds2 sha256msg1 sha256msg2",
     "rdrand": "rdrand rdseed",
+    "pku": "rdpkru wrpkru",
 }
 MNEMONIC = {m: ext for ext, ms in EXT.items() for m in ms.split()}
 
@@ -121,6 +122,10 @@ ALLOWED = [
     # Dependencies with their own CPUID dispatch: libm's fma, sha2 (cpufeatures).
     r"^libm::math::arch::x86::fma::",
     r"^sha2::sha(256|512)::x86_",
+    # pkey_get/pkey_set: RDPKRU/WRPKRU only after the arguments validate, the
+    # order glibc uses; a valid-key call faults without OSPKE under glibc too
+    # (unistd_abi.rs, `pkey_arg_is_valid`). Not a dispatch: the caller asked.
+    r"^pkey_(get|set)$",
 ]
 allowed = [re.compile(p) for p in ALLOWED]
 
