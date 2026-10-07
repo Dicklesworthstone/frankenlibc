@@ -2324,6 +2324,13 @@ fn swar_word_has_zero(w: u64) -> bool {
 /// Runs an AVX2 build of [`scan_c_string_body`] on CPUs that have it
 /// (`avx2_dispatch!`): its 32/64-lane portable-SIMD tiers are SSE2 halves in
 /// the baseline x86-64 build.
+///
+/// In that build an unbounded scan first checks its first one or two 64-byte
+/// blocks inline ([`scan_c_string_head`]) and dispatches only the rest: with
+/// every call dispatched, strlen of 16- and 64-byte strings measured 1.09x
+/// main's x86-64-v3 build, against 0.93x for the same source built baseline
+/// with no dispatch (incumbent_coverage_ab isa_kernels, same-invocation
+/// self-A/B, hz4; bd-rc0923-epic-eeuy4f.13).
 #[inline(always)]
 pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> (usize, bool) {
     avx2_dispatch! {
@@ -2331,8 +2338,82 @@ pub(crate) unsafe fn scan_c_string(ptr: *const c_char, bound: Option<usize>) -> 
         unsafe fn dispatch(ptr: *const c_char, bound: Option<usize>) -> (usize, bool)
             => scan_c_string_body;
     }
+    #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+    {
+        if bound.is_none() {
+            // SAFETY: an unbounded scan's contract is a readable NUL-terminated
+            // string at `ptr`, which is what the head check needs.
+            match unsafe { scan_c_string_head(ptr) } {
+                Ok(len) => return (len, true),
+                Err(skip) => {
+                    // SAFETY: none of the `skip` bytes from `ptr` is NUL, so the
+                    // string continues at `ptr + skip`, and the rest of it is
+                    // the caller's NUL-terminated, readable string.
+                    let (len, found) = unsafe { dispatch(ptr.add(skip), None) };
+                    return (skip + len, found);
+                }
+            }
+        }
+    }
     // SAFETY: forwarded from the caller's contract.
     unsafe { dispatch(ptr, bound) }
+}
+
+/// The first bytes of an unbounded scan, inline and compiled for the baseline:
+/// the 64-aligned block holding `ptr` (its bytes before `ptr` masked off) and,
+/// if that has no NUL, the next block. Returns `Ok(len)` for a NUL in them;
+/// otherwise `Err(skip)`, where the `skip` bytes from `ptr` hold no NUL and
+/// `ptr + skip` is 64-aligned.
+///
+/// The probes are 16-lane, one `pcmpeqb`/`pmovmskb` pair each: a 64-lane mask
+/// in this build is the SSE2 halves whose spilled masks made strcmp 6x slower.
+///
+/// # Safety
+///
+/// `ptr` must point to a readable NUL-terminated string.
+#[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
+#[inline(always)]
+unsafe fn scan_c_string_head(ptr: *const c_char) -> Result<usize, usize> {
+    use core::simd::Simd;
+    use core::simd::cmp::SimdPartialEq;
+
+    /// Bit `i` set iff byte `i` of the 64-byte block at `block` is NUL.
+    ///
+    /// # Safety
+    ///
+    /// `block` must be 64-aligned in a mapped page.
+    #[inline(always)]
+    unsafe fn block_nul_mask(block: *const u8) -> u64 {
+        let zero = Simd::<u8, 16>::splat(0);
+        let mut mask = 0u64;
+        for k in 0..4 {
+            // SAFETY: 64 | 4096, so the aligned block lies in its one mapped page.
+            let v = Simd::<u8, 16>::from_slice(unsafe {
+                core::slice::from_raw_parts(block.wrapping_add(16 * k), 16)
+            });
+            mask |= v.simd_eq(zero).to_bitmask() << (16 * k);
+        }
+        mask
+    }
+
+    let p = ptr.cast::<u8>();
+    let align = p as usize & 63;
+    let base = p.wrapping_sub(align);
+    // SAFETY: `base` is `p` aligned down to 64 bytes, inside `p`'s page, which is
+    // mapped because `p` is readable -- the same argument as the 32-byte head
+    // window of `scan_c_string_body`.
+    let m0 = unsafe { block_nul_mask(base) } & (u64::MAX << align);
+    if m0 != 0 {
+        return Ok(m0.trailing_zeros() as usize - align);
+    }
+    // No NUL from `p` to the block's end, so the string continues at `base + 64`:
+    // that byte is readable, hence its page and the aligned block it starts.
+    // SAFETY: as just argued.
+    let m1 = unsafe { block_nul_mask(base.wrapping_add(64)) };
+    if m1 != 0 {
+        return Ok(64 - align + m1.trailing_zeros() as usize);
+    }
+    Err(128 - align)
 }
 
 /// The scanner behind [`scan_c_string`]; see there.
