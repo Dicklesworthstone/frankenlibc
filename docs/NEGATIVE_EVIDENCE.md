@@ -41597,3 +41597,88 @@ ones that would notice a threading-policy depth counter behaving differently.
   follow-up perf work, not a revert) with: IFUNC-resolved exports so AVX2 CPUs run whole v3 export
   bodies with no per-call dispatch; twins of the ABI math wrappers; 16-lane kernels for the SSE2 path.
   Each needs the same same-invocation `--fl-so-b` self-A/B against a `release-x86-64-v3` build.
+
+## 2026-10-07 (claude-opus-review) — MAINTENANCE: `pow`'s integer test without a `trunc` libcall in the baseline build, and the rebased baseline build re-measured against main's x86-64-v3 build (`bd-rc0923-epic-eeuy4f.13`) — `pow` back to parity; exp/log/log2/sinf/atan still 1.17-1.30x, strlen 4096 1.25x
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, no
+  competitive claim). `same_invocation=true` for every row (`--fl-so-b`, both objects dlopen'd into
+  one process); `cv_used=false`. The class names the comparison, not its direction: table 2 is a
+  net LOSS against the x86-64-v3 build on most twinned kernels, recorded as such.
+- **WHAT CHANGED (`6f9cdfeb9`).** `is_integral_f64` (pow, tgamma, lgamma, gamma) and powf's domain
+  check read the exponent and fraction bits instead of `x.fract() == 0.0`. Baseline x86-64 has no
+  `roundsd` (SSE4.1), so `fract` was a call of this library's own exported `trunc` (a full ABI entry
+  point), and LLVM hoisted it above `x < 0.0`: objdump of the previous build's `pow` export shows
+  `call *GOT -> trunc` on the path of every call with finite arguments; it is gone after the change.
+  Same predicate: `is_integral_bit_tests_match_fract` (specials, zeros, subnormals, every exponent
+  edge, near-integers, 200k random bit patterns, both widths); and pow/powf/tgamma/lgamma (result,
+  errno) over 220,000 calls (49,469 EDOM, 76,615 ERANGE) hash identically before and after, natively
+  and under `qemu-x86_64 -cpu Nehalem`, and identically to origin/main's v3 build.
+- **WHERE THE REST OF THE RESIDUAL IS (attribution, not a timed claim).** `pow_fused`'s
+  `avx2_fma_twin` is main's v3 `pow_fused` instruction for instruction (374/374, zero diff). In a
+  local dlopen probe of the previous head's objects the twins ran at the v3 kernels' speed and the
+  out-of-line dispatcher (two GOT-indirect std_detect loads, three branches, a frame, a tail jump)
+  added about 1 ns per call. exp/log, whose dispatch test is already inlined into the export, lose
+  more than sin, whose dispatcher is out of line: what costs is that the kernel can no longer be
+  inlined into the baseline-compiled ABI wrapper, not the CPUID test. 144 call sites in the baseline
+  `.so` still call the library's own exported `fma`/`trunc`/`floor`/`ceil`/`round`/`rint`
+  (membrane runtime_math, printf float formatting, ecvt/fcvt, fromfp, exp10, sinpi/cospi/tanpi, the
+  f32x aliases); none was measured here.
+- **REBASE NOTE.** The 2026-10-07 MAINTENANCE / PORTABILITY COST row above names commits of the
+  branch as it stood on `0dfdfce4d`; its measured objects keep their SHA-256s. Rebased onto
+  `15cecfdfa` they are `a1b1445f2`->`edd32401a`, `48e2f7e78`->`ad4886e56`, `d40f8e687`->`662d5c591`,
+  `bd2fe8884`->`59894fba9`, `23580f904`->`1722c6b9b`, `43a078599`->`69e4e1abe`,
+  `c5e94c926`->`b2fe52a14`, `89b771a4b`->`cc33b727b`, `403a7cf73`->`02ac618a1`,
+  `37acd65c9`->`929e68fcc`, `8f48cafeb`->`4f1badb77`, `a39d35afc`->`2f2d57871`,
+  `d22fa733a`->`cf4747377`, `eeb376950`->`6353dd170`, `357615dc8`->`bbe5f9666`,
+  `d4ebbdf63`->`6fec8e2c7`.
+- **INSTRUMENT.** `incumbent_coverage_ab --families isa_kernels --pin-quietest 2 --fl-deepbind`
+  with `--fl-so CANDIDATE --fl-so-b BASE`, worker hz3 (`isa=x86_64+sse4.2+avx+avx2+fma+bmi1+bmi2`,
+  two quiet pinned CPUs on distinct cores), 36 retained samples, six-cell rotation, same-invocation
+  FL/FL A/A nulls on both arms of every case. Executing ELF, as the harness self-reports it
+  in-process: bench_elf_sha256=`945b8d7b628ea055590c10d719cd75edd8fcc3cbb10ce864c74b5578dc7eb9fa`
+  (all three tables). Before timing, the two objects agreed bit for bit on all 2826 conformance
+  comparisons in each run.
+- **OBJECTS** (each built from a commit whose tree differs from the one named only in
+  `.beads/issues.jsonl`). pre = `be478cbf0` (the author's rebased head), baseline build,
+  `662faf97bca2f5325651dd918554bc11101a293fc6cb09fc3ce6df65df76f876`; post = `6f9cdfeb9`, baseline
+  build, `60b92faec1139be511511dcd929c6e3dd9788e2320bd961f2c397d83002f391b`; post-v3 = the same
+  source as `--profile release-x86-64-v3`,
+  `0cd0279a9d9f89e8ffa4ecbd70088c2eef54fab4cd1f968f4d6efa68e3e8fa33`; main-v3 = origin/main
+  `15cecfdfa` as shipped (x86-64-v3), `853380017efd051758dc6c161d501e0db6f566b5c68fc0b84104bbad565f11dd`.
+- **TABLES** (candidate/base ratio median with its bootstrap median 95% CI; A/A null medians of the
+  two arms with their bootstrap median 95% CIs):
+
+  | case | 1: post / pre | 2: post / main-v3 | 3: post-v3 / main-v3 |
+  |---|---|---|---|
+  | pow | 0.650 [0.649,0.650] | 0.996 [0.995,1.002] | 0.999 [0.996,1.001] |
+  | sin | 1.003 [0.999,1.008] | 1.109 [1.099,1.118] | 1.000 [0.998,1.003] |
+  | cos | 1.000 [1.000,1.003] | 1.079 [1.076,1.088] | 1.003 [1.001,1.004] |
+  | tan | 1.002 [1.001,1.004] | 1.045 [1.038,1.047] | 0.998 [0.995,1.001] |
+  | atan | 1.001 [0.999,1.003] | 1.167 [1.161,1.172] | 0.969 [0.967,0.971] |
+  | exp | 0.997 [0.996,1.000] | 1.220 [1.210,1.224] | 1.002 [0.994,1.011] |
+  | exp2 (control) | 0.999 [0.997,1.000] | 1.024 [1.020,1.030] | 1.005 [1.000,1.008] |
+  | log | 1.003 [1.001,1.005] | 1.304 [1.292,1.312] | 0.997 [0.993,1.002] |
+  | log2 | 1.006 [1.004,1.008] | 1.270 [1.263,1.273] | 0.995 [0.992,0.998] |
+  | sinf | 1.026 [1.024,1.028] | 1.200 [1.198,1.203] | 0.937 [0.931,0.943] |
+  | sqrt (control) | 1.037 [1.016,1.046] | 1.025 [0.981,1.044] | 1.027 [0.995,1.041] |
+  | strcmp 16 / 256 / 4096 | 1.000 / 0.997 / 1.004 | 1.112 / 1.081 / 1.013 | 1.001 / 1.005 / 0.997 |
+  | memchr 16 (control) / 4096 | 0.953 / 0.997 | 0.830 / 1.040 | 1.034 / 1.002 |
+  | strlen 16 / 64 / 4096 | 0.998 / 1.000 / 1.001 | 1.001 / 0.955 / 1.252 | 0.951 / 0.955 / 0.984 |
+  | strchr 4096 / memcmp 256 | 0.999 / 1.004 | 1.130 / 1.160 | 0.982 / 0.975 |
+
+  Same-invocation A/A null medians: table 1 0.994-1.003, each null bootstrap median 95% CI inside
+  [0.986, 1.008]; table 2 0.997-1.006, each CI inside [0.985, 1.021]; table 3 0.994-1.005, each CI
+  inside [0.985, 1.023]. Headline effect, candidate/base: pow 0.650 in table 1, bootstrap median 95%
+  CI [0.649, 0.650], and 0.996 against the v3 build in table 2, CI [0.995, 1.002]. Unchanged code
+  moves up to about 0.06 between objects (table 1's sinf, sqrt and memchr 16 rows, whose code the
+  change does not touch): read smaller differences as layout. Table 2 runs on hz3; the row above ran
+  on hz4, so its numbers are not interchangeable with these (strlen 4096 there 1.124, here 1.252;
+  sinf 1.088 / 1.200).
+- **WHAT TABLE 3 ANSWERS.** The labelled `release-x86-64-v3` build of this branch does not regress
+  against main's shipped v3 build (every row inside the layout band, none worse than 1.034), which is
+  the "math perf A/B on the v3 build to show no regression there" check the bead's 2026-09-24
+  analysis asked for.
+- **DISPOSITION.** KEEP `6f9cdfeb9`: pow 0.650x of the previous head, at parity with the v3 build.
+  The branch as a whole stays MAINTENANCE with the table-2 losses open on the bead: the next lever is
+  dispatch at the export (twins of whole ABI wrappers, or IFUNC-resolved exports with an
+  asm resolver like `cpu_guard`), measured the same way against a `release-x86-64-v3` build.
