@@ -3106,6 +3106,38 @@ fn sin_moderate(x: f64, sbit: usize) -> f64 {
     sin_large_accurate(x)
 }
 
+/// Fast cos for 0x1.6a09e667f3bccp-27 < |x| < 2^31: `sin_moderate`'s
+/// computation a quarter turn on. cos(|x|) = sin(|x| + pi/2), and pi/2 is
+/// exactly 2^13 steps of its pi/2^14 reduction grid, so only the table index
+/// moves: the reduction, the evaluation and the error bound behind the
+/// rounding test are sin's, whose analysis covers every index. `None` when
+/// the test cannot prove the rounding (the caller's accurate cos decides).
+#[inline(always)]
+fn cos_moderate(ax: f64) -> Option<f64> {
+    const PIH: f64 = hf!("-0x1.921fb54442d18p-13");
+    const PIL: f64 = hf!("-0x1.1a62633145c07p-67");
+    let k = (hf!("0x1.45f306dc9c883p+12") * ax).round_ties_even();
+    let rh = k.mul_add(PIH, ax); // exact
+    let rl = k * PIL;
+    let r = rh + rl;
+    let r2 = r * r;
+    let j = k as i64 + (1 << 13);
+    let sbit = ((j >> 14) & 1) as usize;
+    let (big_sh, big_sl, big_ch) = sin_table(j as u64);
+    let sh = r * (1.0 - hf!("0x1.55555553068fp-3") * r2);
+    let ch = r2 * (-0.5 + hf!("0x1.55555553bfd3p-5") * r2);
+    let fh = big_sh;
+    let fl = big_sl + big_sh * ch + big_ch * sh;
+    const SGN: [f64; 2] = [1.0, -1.0];
+    const EPS: f64 = hf!("0x1.dep-64");
+    const EPS2: f64 = hf!("0x1.dep-63");
+    let fh = SGN[sbit] * fh;
+    let fl = SGN[sbit] * fl - EPS;
+    let lb = fh + fl;
+    let ub = fh + (fl + EPS2);
+    (ub == lb).then_some(lb)
+}
+
 /// Fast sin for |x| >= 2^31.
 #[inline(never)]
 fn sin_large(x: f64) -> f64 {
@@ -3798,6 +3830,11 @@ pub fn cos(x: f64) -> f64 {
     if ax.to_bits() <= 0x3e46_a09e_667f_3bcc {
         // |x| <= 0x1.6a09e667f3bccp-27: cos(x) rounds to 1.
         return ax.mul_add(hf!("-0x1p-28"), 1.0);
+    }
+    if e < 1054
+        && let Some(r) = cos_moderate(ax)
+    {
+        return r;
     }
     let (h, l, err) = cos_fast(ax);
     let left = h + (l - err);
@@ -5586,6 +5623,55 @@ mod tests {
         // Pinned from the CORE-MATH C original (glibc's IBM cos differs from it
         // on 547 of these inputs).
         assert_eq!(corpus_hash(cos, -40, 40), 0x120e_4de5_ef7d_d712);
+    }
+
+    #[test]
+    fn cos_moderate_agrees_with_the_dint_path_wherever_it_answers() {
+        // The quarter-turn fast path may only return a value its rounding
+        // test proves; it must then equal what the original cos_fast /
+        // cos_accurate chain returns. Random bit patterns over every exponent
+        // it serves (2^-27 .. 2^31), plus multiples of pi/2 neighbours.
+        let reference = |ax: f64| {
+            let (h, l, err) = cos_fast(ax);
+            let (left, right) = (h + (l - err), h + (l + err));
+            if left == right {
+                left
+            } else {
+                cos_accurate(ax)
+            }
+        };
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut answered = 0u32;
+        for i in 0..300_000u32 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let exp = 0x3e4 + u64::from(i % 59); // 2^-27 .. 2^31
+            let mut ax = f64::from_bits((exp << 52) | (state & MASK52));
+            if i % 7 == 0 {
+                // Next to k pi/2, where cos is small.
+                let k = (state >> 40) % 1_000_000;
+                ax = f64::from_bits(
+                    (k as f64 * core::f64::consts::FRAC_PI_2)
+                        .to_bits()
+                        .wrapping_add(state & 3)
+                        .wrapping_sub(1),
+                );
+            }
+            if ax.to_bits() <= 0x3e46_a09e_667f_3bcc || ax >= hf!("0x1p31") {
+                continue;
+            }
+            if let Some(fast) = cos_moderate(ax) {
+                answered += 1;
+                assert_eq!(
+                    fast.to_bits(),
+                    reference(ax).to_bits(),
+                    "cos({:#x})",
+                    ax.to_bits()
+                );
+            }
+        }
+        assert!(answered > 250_000, "fast path answered only {answered}");
     }
 
     #[test]
