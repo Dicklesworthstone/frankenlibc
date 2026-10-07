@@ -573,6 +573,14 @@ struct GetenvNameProbe {
     hi: u64,
 }
 
+/// The last found variable: the `environ` array, the slot it sat in and the
+/// entry string. The epoch covers fl's own setenv/putenv/unsetenv, but a
+/// program may write `environ` directly -- Tcl replaces `environ[i]` with a new
+/// malloc'd string and frees the old one -- so a hit is also re-validated
+/// against the live table: same array, same entry pointer in the same slot,
+/// name still in place. (Without that, getenv returned the previous value from
+/// freed memory: Tcl's unixFile tests saw each PATH one update late.) Misses
+/// are not cached: an appended entry cannot be ruled out cheaply.
 #[derive(Clone, Copy)]
 struct GetenvHotCache {
     epoch: u64,
@@ -580,7 +588,9 @@ struct GetenvHotCache {
     name_len: usize,
     lo: u64,
     hi: u64,
-    result: usize,
+    environ: usize,
+    slot: usize,
+    entry: usize,
 }
 
 impl GetenvHotCache {
@@ -591,7 +601,38 @@ impl GetenvHotCache {
             name_len: 0,
             lo: 0,
             hi: 0,
-            result: 0,
+            environ: 0,
+            slot: 0,
+            entry: 0,
+        }
+    }
+
+    /// The cached variable's value if the live environ table still holds the
+    /// same entry in the same slot with the same name.
+    #[inline]
+    unsafe fn live_value(&self) -> Option<*mut c_char> {
+        // SAFETY: `slot` was a slot of `environ`, which is still the active
+        // array (checked first) and is not reallocated without an epoch bump;
+        // `entry` is read only after the slot is seen to still hold it.
+        unsafe {
+            if HOST_ENVIRON as usize != self.environ
+                || *(self.slot as *const *mut c_char) as usize != self.entry
+            {
+                return None;
+            }
+            let entry = self.entry as *const u8;
+            for i in 0..self.name_len {
+                let expected = if i < 8 {
+                    (self.lo >> (i * 8)) as u8
+                } else {
+                    (self.hi >> ((i - 8) * 8)) as u8
+                };
+                if *entry.add(i) != expected {
+                    return None;
+                }
+            }
+            (*entry.add(self.name_len) == b'=')
+                .then(|| entry.add(self.name_len + 1) as *mut c_char)
         }
     }
 }
@@ -757,8 +798,21 @@ pub(crate) unsafe fn native_getenv(name_bytes: &[u8]) -> *mut c_char {
     unsafe { native_getenv_raw(name_bytes.as_ptr(), name_bytes.len()) }
 }
 
+/// Where `native_getenv_slot` found a variable (null slot: not found).
+#[derive(Clone, Copy)]
+struct GetenvFound {
+    value: *mut c_char,
+    environ: *mut *mut c_char,
+    slot: *const *mut c_char,
+    entry: *const c_char,
+}
+
 #[inline]
 unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char {
+    unsafe { native_getenv_slot(name_ptr, name_len) }.value
+}
+
+unsafe fn native_getenv_slot(name_ptr: *const u8, name_len: usize) -> GetenvFound {
     // Hold ENVIRON_LOCK during the array walk so a concurrent setenv that
     // host_passthrough_realloc()s the HOST_ENVIRON array out from under us
     // cannot turn this read into a use-after-free. The lock is released
@@ -784,9 +838,15 @@ unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char
     // SAFETY: HOST_ENVIRON is owned by libc; we only read pointers/bytes
     // and the array layout is stable while we hold the mutator lock.
     unsafe {
+        let not_found = GetenvFound {
+            value: ptr::null_mut(),
+            environ: HOST_ENVIRON,
+            slot: ptr::null(),
+            entry: ptr::null(),
+        };
         let mut cursor = HOST_ENVIRON;
         if cursor.is_null() {
-            return ptr::null_mut();
+            return not_found;
         }
         while !(*cursor).is_null() {
             let entry = *cursor as *const u8;
@@ -795,11 +855,16 @@ unsafe fn native_getenv_raw(name_ptr: *const u8, name_len: usize) -> *mut c_char
                 i += 1;
             }
             if i == name_len && *entry.add(i) == b'=' {
-                return entry.add(i + 1) as *mut c_char;
+                return GetenvFound {
+                    value: entry.add(i + 1) as *mut c_char,
+                    environ: HOST_ENVIRON,
+                    slot: cursor,
+                    entry: entry.cast(),
+                };
             }
             cursor = cursor.add(1);
         }
-        ptr::null_mut()
+        not_found
     }
 }
 
@@ -901,7 +966,7 @@ unsafe fn getenv_hot_cache_lookup_same_ptr(name: *const c_char) -> Option<*mut c
             && cache.name_len <= 16
             && unsafe { getenv_cached_name_matches(name, cache) }
         {
-            Some(cache.result as *mut c_char)
+            unsafe { cache.live_value() }
         } else {
             None
         }
@@ -916,17 +981,21 @@ fn getenv_hot_cache_lookup(probe: GetenvNameProbe) -> Option<*mut c_char> {
     let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
     GETENV_HOT_CACHE.with(|slot| {
         let cache = slot.get();
-        (cache.epoch == epoch
+        if cache.epoch == epoch
             && cache.name_len == probe.len
             && cache.lo == probe.lo
-            && cache.hi == probe.hi)
-            .then_some(cache.result as *mut c_char)
+            && cache.hi == probe.hi
+        {
+            unsafe { cache.live_value() }
+        } else {
+            None
+        }
     })
 }
 
 #[inline]
-fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, result: *mut c_char) {
-    if !getenv_hot_cache_enabled() || probe.len > 16 {
+fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, found: GetenvFound) {
+    if !getenv_hot_cache_enabled() || probe.len > 16 || found.slot.is_null() {
         return;
     }
     let epoch = ENVIRON_EPOCH.load(std::sync::atomic::Ordering::Acquire);
@@ -937,7 +1006,9 @@ fn getenv_hot_cache_store(name: *const c_char, probe: GetenvNameProbe, result: *
             name_len: probe.len,
             lo: probe.lo,
             hi: probe.hi,
-            result: result as usize,
+            environ: found.environ as usize,
+            slot: found.slot as usize,
+            entry: found.entry as usize,
         });
     });
 }
@@ -2518,9 +2589,9 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         if let Some(cached) = getenv_hot_cache_lookup(probe) {
             return cached;
         }
-        let result = unsafe { native_getenv_raw(name.cast::<u8>(), probe.len) };
-        getenv_hot_cache_store(name, probe, result);
-        return result;
+        let found = unsafe { native_getenv_slot(name.cast::<u8>(), probe.len) };
+        getenv_hot_cache_store(name, probe, found);
+        return found.value;
     } else {
         let bound = env_name_scan_bound(name);
         let (_mode, decision) = runtime_policy::decide(

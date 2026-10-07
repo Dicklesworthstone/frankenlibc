@@ -82,6 +82,27 @@ int main(void) {
     show("setenv after clearenv", "FLP_Z");
     printf("secure_getenv(FLP_Z)=%s\n", secure_getenv("FLP_Z") ? secure_getenv("FLP_Z") : "(null)");
 
+    /* Tcl's TclSetEnv: environ[i] = new malloc'd "NAME=value", free(old).
+     * malloc hands the freed block back for the next value, so successive
+     * values share an address. fl's getenv cache, fenced only by fl's own
+     * setenv/putenv, returned the previous value from freed memory. */
+    {
+        setenv("FLP_TCL", "start", 1);
+        int slot = -1;
+        for (int i = 0; environ[i]; i++)
+            if (!strncmp(environ[i], "FLP_TCL=", 8)) slot = i;
+        environ[slot] = strdup(environ[slot]);
+        const char *vals[] = {"", "/dummy", "/dummy:/x", "/y"};
+        for (int k = 0; k < 4; k++) {
+            char *p = malloc(strlen(vals[k]) + 9);
+            sprintf(p, "FLP_TCL=%s", vals[k]);
+            char *old = environ[slot];
+            environ[slot] = p;
+            free(old);
+            show("slot overwrite + free", "FLP_TCL");
+        }
+    }
+
     /* coreutils `env -i NAME=VALUE cmd`: point environ at an empty array,
      * putenv into it (an inherited name and a new one), exec. fl kept
      * environ and __environ as separate variables, so the child got the old

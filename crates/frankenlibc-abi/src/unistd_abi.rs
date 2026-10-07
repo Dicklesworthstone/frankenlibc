@@ -21915,6 +21915,10 @@ struct FtsEntryInternal {
 enum FtsVisit {
     Preorder,
     Postorder,
+    /// The post-order visit of a directory whose entries could not be read:
+    /// glibc reports it as FTS_DNR with this errno in place of FTS_DP (the
+    /// pre-order FTS_D has already been returned).
+    Unreadable(c_int),
 }
 
 /// Owned FTSENT for returning to caller.
@@ -22126,6 +22130,10 @@ impl FtsEntryOwned {
             let (stat_value, _info, stat_errno) =
                 fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
             (stat_value, FTS_DP, stat_errno)
+        } else if let FtsVisit::Unreadable(err) = entry.visit {
+            let (stat_value, _info, _) =
+                fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level);
+            (stat_value, FTS_DNR, err)
         } else {
             fts_stat_entry(&entry.path, options, entry.follow_symlink, entry.level)
         };
@@ -22263,12 +22271,11 @@ fn fts_expand_pending_children(stream: &mut FtsStream) {
     let children = match fts_read_dir_paths(&dir_entry.path) {
         Ok(children) => children,
         Err(err) => {
-            if let Some(current) = stream.current.as_mut()
-                && current.path == dir_entry.path
-                && current.visit == FtsVisit::Preorder
-            {
-                current.entry_mut().fts_info = FTS_DNR;
-                current.entry_mut().fts_errno = err;
+            // Tcl's recursive `file delete`/`file copy` rely on this FTS_DNR
+            // to fail on a mode-000 subdirectory; fl reported FTS_DP and the
+            // operation silently succeeded.
+            if let Some(post) = stream.queue.front_mut() {
+                post.visit = FtsVisit::Unreadable(err);
             }
             unsafe { set_abi_errno(err) };
             return;
