@@ -1004,9 +1004,16 @@ pub(super) fn resolve_native_dso_symbol(
             if definition.symbol.is_tls() {
                 let module = dsos.iter().find(|dso| dso.id == definition.provider)?.tls.clone()?;
                 let offset = usize::try_from(definition.tls_offset(0)?).ok()?;
-                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+                // Materialize before publishing a first unique owner. Worker
+                // teardown or allocation failure must not pin an otherwise
+                // unloadable provider for a lookup that returned no address.
+                // OPERATIONS retains the selected image while the registry is
+                // unlocked; the Arc keeps its TLS template alive as well.
                 drop(dsos);
-                return Some(tls::address(&module, offset));
+                let Some(address) = tls::address(&module, offset) else { return Some(None); };
+                let mut dsos = registry().lock().ok()?;
+                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+                return Some(Some(address));
             }
             let address = usize::try_from(definition.address()?).ok()?;
             if definition.symbol.is_ifunc() {
