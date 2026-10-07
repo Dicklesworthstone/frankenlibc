@@ -97,60 +97,74 @@ struct Group {
     next: usize,
 }
 
-fn parse_group(pattern: &[u8], open: usize, noescape: bool) -> Option<Group> {
-    if !matches!(pattern.get(open), Some(b'?' | b'*' | b'+' | b'@' | b'!'))
-        || pattern.get(open + 1) != Some(&b'(')
-    {
-        return None;
-    }
-    let mut i = open + 2;
-    let mut depth = 1usize;
-    let mut start = i;
-    let mut alternatives = Vec::new();
+/// Flat syntax index. Groups are closed once during a single left-to-right
+/// scan rather than reparsing every ancestor's suffix at every nesting level.
+/// Only real groups occupy the map; long literal prefixes allocate no entries.
+type Groups = BTreeMap<usize, Rc<Group>>;
+
+struct OpenGroup {
+    position: usize,
+    alternative_start: usize,
+    alternatives: Vec<(usize, usize)>,
+}
+
+fn parse_groups(pattern: &[u8], noescape: bool) -> Groups {
+    let mut groups = BTreeMap::new();
+    let mut stack: Vec<OpenGroup> = Vec::new();
+    let mut i = 0;
     while i < pattern.len() {
         match pattern[i] {
             b'\\' if !noescape => i += 2,
             b'[' => match bracket(pattern, i, noescape) {
                 Bracket::Closed(next) => i = next,
-                _ => return None,
+                _ => {
+                    // An unterminated bracket makes every enclosing group
+                    // malformed. Matching can nevertheless reach later groups
+                    // after consuming the malformed prefix as literal text.
+                    stack.clear();
+                    i += 1;
+                }
             },
             b'?' | b'*' | b'+' | b'@' | b'!' if pattern.get(i + 1) == Some(&b'(') => {
-                depth += 1;
+                stack.push(OpenGroup {
+                    position: i,
+                    alternative_start: i + 2,
+                    alternatives: Vec::new(),
+                });
                 i += 2;
             }
             b')' => {
-                depth -= 1;
-                if depth == 0 {
-                    alternatives.push((start, i));
-                    return Some(Group {
-                        operator: pattern[open],
-                        alternatives,
-                        next: i + 1,
-                    });
+                if let Some(mut open) = stack.pop() {
+                    open.alternatives.push((open.alternative_start, i));
+                    groups.insert(
+                        open.position,
+                        Rc::new(Group {
+                            operator: pattern[open.position],
+                            alternatives: open.alternatives,
+                            next: i + 1,
+                        }),
+                    );
                 }
                 i += 1;
             }
-            b'|' if depth == 1 => {
-                alternatives.push((start, i));
+            b'|' => {
+                if let Some(open) = stack.last_mut() {
+                    open.alternatives.push((open.alternative_start, i));
+                    open.alternative_start = i + 1;
+                }
                 i += 1;
-                start = i;
             }
             _ => i += 1,
         }
     }
-    None
+    groups
 }
 
-type Groups = BTreeMap<(usize, usize, bool), Option<Rc<Group>>>;
-
-fn group_at(pattern: &[u8], state: State, groups: &mut Groups) -> Option<Rc<Group>> {
+fn group_at(state: State, groups: &Groups) -> Option<Rc<Group>> {
     groups
-        .entry((state.p, state.pend, state.flag(FnmatchFlags::NOESCAPE)))
-        .or_insert_with(|| {
-            parse_group(&pattern[..state.pend], state.p, state.flag(FnmatchFlags::NOESCAPE))
-                .map(Rc::new)
-        })
-        .clone()
+        .get(&state.p)
+        .filter(|group| group.next <= state.pend)
+        .cloned()
 }
 
 /// Text bounds and flags belong in the key: alternatives match fixed slices,
@@ -174,11 +188,18 @@ impl State {
     }
 
     fn suffix(self, p: usize, s: usize, star: bool) -> Self {
-        Self { p, s, star, repeat: false, ..self }
+        Self {
+            p,
+            s,
+            star,
+            repeat: false,
+            ..self
+        }
     }
 
     fn at_leading(self, text: &[u8], s: usize) -> bool {
-        s == self.start || (self.flag(FnmatchFlags::PATHNAME) && s > self.start && text[s - 1] == b'/')
+        s == self.start
+            || (self.flag(FnmatchFlags::PATHNAME) && s > self.start && text[s - 1] == b'/')
     }
 
     fn period_blocked(self, text: &[u8]) -> bool {
@@ -248,7 +269,7 @@ impl Frame {
         &mut self,
         pattern: &[u8],
         text: &[u8],
-        groups: &mut Groups,
+        groups: &Groups,
         completed: &BTreeMap<State, bool>,
     ) -> Step {
         loop {
@@ -256,11 +277,14 @@ impl Frame {
             match self.phase {
                 Phase::Scan => {
                     if state.p == state.pend {
-                        return Step::Done(state.s == state.end
-                            || (state.flag(FnmatchFlags::LEADING_DIR)
-                                && state.s < state.end && text[state.s] == b'/'));
+                        return Step::Done(
+                            state.s == state.end
+                                || (state.flag(FnmatchFlags::LEADING_DIR)
+                                    && state.s < state.end
+                                    && text[state.s] == b'/'),
+                        );
                     }
-                    if let Some(group) = group_at(pattern, state, groups) {
+                    if let Some(group) = group_at(state, groups) {
                         let op = if state.repeat { b'*' } else { group.operator };
                         if op == b'@' && state.star && state.s == state.end {
                             return Step::Done(false);
@@ -272,7 +296,11 @@ impl Frame {
                         } else {
                             state.s
                         };
-                        self.phase = if matches!(op, b'*' | b'?') { Phase::Zero } else { Phase::Candidate };
+                        self.phase = if matches!(op, b'*' | b'?') {
+                            Phase::Zero
+                        } else {
+                            Phase::Candidate
+                        };
                         self.group = Some(group);
                         continue;
                     }
@@ -282,8 +310,10 @@ impl Frame {
                             return Step::Done(false);
                         }
                         let mut next = state.p + 1;
-                        while next < state.pend && pattern[next] == b'*'
-                            && group_at(pattern, state.suffix(next, state.s, state.star), groups).is_none()
+                        while next < state.pend
+                            && pattern[next] == b'*'
+                            && group_at(state.suffix(next, state.s, state.star), groups)
+                                .is_none()
                         {
                             next += 1;
                         }
@@ -297,23 +327,38 @@ impl Frame {
                     }
                     let c = text[state.s];
                     let eq = |a: u8, b: u8| {
-                        if state.flag(FnmatchFlags::CASEFOLD) { a.eq_ignore_ascii_case(&b) } else { a == b }
+                        if state.flag(FnmatchFlags::CASEFOLD) {
+                            a.eq_ignore_ascii_case(&b)
+                        } else {
+                            a == b
+                        }
                     };
                     let mut next = state.p + 1;
                     let hit = match pc {
-                        b'?' => !(state.flag(FnmatchFlags::PATHNAME) && c == b'/')
-                            && !state.period_blocked(text),
+                        b'?' => {
+                            !(state.flag(FnmatchFlags::PATHNAME) && c == b'/')
+                                && !state.period_blocked(text)
+                        }
                         b'[' => {
-                            if (state.flag(FnmatchFlags::PATHNAME) && c == b'/') || state.period_blocked(text) {
+                            if (state.flag(FnmatchFlags::PATHNAME) && c == b'/')
+                                || state.period_blocked(text)
+                            {
                                 return Step::Done(false);
                             }
-                            match bracket(&pattern[..state.pend], state.p, state.flag(FnmatchFlags::NOESCAPE)) {
+                            match bracket(
+                                &pattern[..state.pend],
+                                state.p,
+                                state.flag(FnmatchFlags::NOESCAPE),
+                            ) {
                                 Bracket::Closed(end) => {
                                     next = end;
                                     // Only single-byte atom semantics are delegated; this
                                     // can never enter the recursive extglob implementation.
-                                    let flags = FnmatchFlags::from_bits(state.bits
-                                        & (FnmatchFlags::NOESCAPE.bits() | FnmatchFlags::CASEFOLD.bits()));
+                                    let flags = FnmatchFlags::from_bits(
+                                        state.bits
+                                            & (FnmatchFlags::NOESCAPE.bits()
+                                                | FnmatchFlags::CASEFOLD.bits()),
+                                    );
                                     legacy::fnmatch_match(&pattern[state.p..end], &[c], flags)
                                 }
                                 Bracket::Literal => eq(c, b'['),
@@ -321,13 +366,17 @@ impl Frame {
                             }
                         }
                         b'\\' if !state.flag(FnmatchFlags::NOESCAPE) => {
-                            if next == state.pend { return Step::Done(false); }
+                            if next == state.pend {
+                                return Step::Done(false);
+                            }
                             next += 1;
                             eq(c, pattern[state.p + 1])
                         }
                         _ => eq(c, pc),
                     };
-                    if !hit { return Step::Done(false); }
+                    if !hit {
+                        return Step::Done(false);
+                    }
                     self.state = state.suffix(next, state.s + 1, pc == b'?' && state.star);
                 }
                 Phase::Star => {
@@ -360,12 +409,17 @@ impl Frame {
                             }
                         }
                         Phase::Candidate => {
-                            if self.split > state.end { return Step::Done(false); }
+                            if self.split > state.end {
+                                return Step::Done(false);
+                            }
                             if op == b'!' {
                                 let child = state.suffix(group.next, self.split, false);
                                 match completed.get(&child).copied() {
                                     None => return Step::Need(child),
-                                    Some(false) => { self.split += 1; continue; }
+                                    Some(false) => {
+                                        self.split += 1;
+                                        continue;
+                                    }
                                     Some(true) => {}
                                 }
                             }
@@ -374,7 +428,9 @@ impl Frame {
                         }
                         Phase::Alternatives => {
                             let Some(&range) = group.alternatives.get(self.alternative) else {
-                                if op == b'!' { return Step::Done(true); }
+                                if op == b'!' {
+                                    return Step::Done(true);
+                                }
                                 self.split += 1;
                                 self.phase = Phase::Candidate;
                                 continue;
@@ -392,7 +448,12 @@ impl Frame {
                         }
                         Phase::Follow => {
                             let child = if matches!(op, b'*' | b'+') && self.split > state.s {
-                                State { s: self.split, star: false, repeat: true, ..state }
+                                State {
+                                    s: self.split,
+                                    star: false,
+                                    repeat: true,
+                                    ..state
+                                }
                             } else {
                                 state.suffix(group.next, self.split, false)
                             };
@@ -427,16 +488,18 @@ fn evaluate(pattern: &[u8], text: &[u8], flags: FnmatchFlags) -> (bool, usize) {
         repeat: false,
     };
     let mut completed = BTreeMap::new();
-    let mut groups = BTreeMap::new();
+    let groups = parse_groups(pattern, flags.contains(FnmatchFlags::NOESCAPE));
     let mut stack = vec![Frame::new(root)];
     loop {
         let frame = stack.last_mut().expect("root frame remains until return");
-        match frame.advance(pattern, text, &mut groups, &completed) {
+        match frame.advance(pattern, text, &groups, &completed) {
             Step::Need(state) => stack.push(Frame::new(state)),
             Step::Done(value) => {
                 let frame = stack.pop().expect("completed frame exists");
                 completed.insert(frame.key, value);
-                if stack.is_empty() { return (value, completed.len()); }
+                if stack.is_empty() {
+                    return (value, completed.len());
+                }
             }
         }
     }
@@ -506,7 +569,9 @@ mod tests {
                 for &byte in b"ab./" {
                     let mut next = text.clone();
                     next.push(byte);
-                    if !texts.contains(&next) { texts.push(next); }
+                    if !texts.contains(&next) {
+                        texts.push(next);
+                    }
                 }
             }
         }
@@ -519,6 +584,65 @@ mod tests {
                         "pattern={pattern:?} text={text:?} flags={bits}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn syntax_index_stores_groups_not_literal_positions() {
+        let mut pattern = vec![b'a'; 131_072];
+        pattern.extend_from_slice(b"@(x)");
+        let groups = parse_groups(&pattern, false);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[&131_072].next, pattern.len());
+    }
+
+    #[test]
+    fn syntax_index_handles_large_nesting_and_malformed_outer_groups() {
+        let depth = 16_384;
+        let mut pattern = b"@(".repeat(depth);
+        pattern.push(b'x');
+        pattern.extend(std::iter::repeat_n(b')', depth));
+        let groups = parse_groups(&pattern, false);
+        assert_eq!(groups.len(), depth);
+        assert_eq!(groups[&0].next, pattern.len());
+        assert_eq!(groups[&(2 * (depth - 1))].next, 2 * depth + 2);
+
+        let malformed = b"@([@(a)";
+        let groups = parse_groups(malformed, false);
+        assert!(!groups.contains_key(&0));
+        assert_eq!(groups[&3].next, malformed.len());
+        assert!(fnmatch_match(malformed, b"@([a", EXT));
+        assert!(!fnmatch_match(malformed, b"@([b", EXT));
+    }
+
+    #[test]
+    fn generated_malformed_patterns_preserve_legacy_matching() {
+        let mut seed = 0x62bb_e572_1cad_903fu64;
+        let mut draw = |limit: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 32) as usize % limit
+        };
+        let alphabet = br"@*!+?()|[]:-=.^/\ab";
+        let text_alphabet = b"ab./[]()|*?@!";
+        for _ in 0..12_000 {
+            let length = 1 + draw(23);
+            let mut pattern: Vec<u8> = (0..length)
+                .map(|_| alphabet[draw(alphabet.len())])
+                .collect();
+            if draw(2) == 0 {
+                pattern.splice(0..0, b"@(".iter().copied());
+                pattern.push(b')');
+            }
+            let length = draw(7);
+            let text: Vec<u8> = (0..length)
+                .map(|_| text_alphabet[draw(text_alphabet.len())])
+                .collect();
+            let flags = FnmatchFlags::from_bits(32 + draw(32) as u32);
+            assert_eq!(
+                fnmatch_match(&pattern, &text, flags),
+                legacy::fnmatch_match(&pattern, &text, flags),
+                "pattern={pattern:?} text={text:?} flags={flags:?}",
+            );
         }
     }
 }
