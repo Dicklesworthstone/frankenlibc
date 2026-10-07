@@ -8311,7 +8311,7 @@ const fn string_case(
 }
 
 const NO_Y: (f64, f64) = (0.0, 0.0);
-const ISA_CASES: [IsaCase; 19] = [
+const ISA_CASES: [IsaCase; 21] = [
     math_case(
         "sin",
         IsaKind::Unary,
@@ -8416,6 +8416,22 @@ const ISA_CASES: [IsaCase; 19] = [
         4096,
         32_768,
         "absent; core memchr twin",
+    ),
+    string_case(
+        "strlen",
+        "strlen_16",
+        IsaKind::Strlen,
+        16,
+        262_144,
+        "short; the scan_c_string dispatch runs on every call",
+    ),
+    string_case(
+        "strlen",
+        "strlen_64",
+        IsaKind::Strlen,
+        64,
+        262_144,
+        "short; the scan_c_string dispatch runs on every call",
     ),
     string_case(
         "strlen",
