@@ -37,12 +37,14 @@
 //!  --family \
 //!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs|\
-//!  isa_kernels`
+//!  isa_kernels|io_cancel_points`
 //!
-//! `isa_kernels` (and `sscanf`) also take `--fl-so-b PATH`: a SECOND FrankenLibC
-//! object as the comparison arm, for a same-invocation self-A/B of two builds --
-//! e.g. the baseline x86-64 artifact against a `release-x86-64-v3` one
-//! (bd-rc0923-epic-eeuy4f.13).
+//! `isa_kernels` (and `sscanf`, `io_cancel_points`) also take `--fl-so-b PATH`: a
+//! SECOND FrankenLibC object as the comparison arm, for a same-invocation self-A/B
+//! of two builds -- e.g. the baseline x86-64 artifact against a
+//! `release-x86-64-v3` one (bd-rc0923-epic-eeuy4f.13), or a change to the
+//! cancellation window of `read`/`write` against its base
+//! (`io_cancel_points`, bd-rc0923-epic-eeuy4f.24).
 //!
 //! On a shared fleet add `--pin-quietest N` and drive several conversions from
 //! one build with `--families a,b,c` (each family runs in a fresh child).
@@ -639,6 +641,7 @@ enum Family {
     Wcsnrtombs,
     Strcasestr,
     IsaKernels,
+    IoCancelPoints,
 }
 
 struct Case {
@@ -1137,10 +1140,11 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("wcsnrtombs") => Family::Wcsnrtombs,
                 Some(value) if value == OsStr::new("strcasestr") => Family::Strcasestr,
                 Some(value) if value == OsStr::new("isa_kernels") => Family::IsaKernels,
+                Some(value) if value == OsStr::new("io_cancel_points") => Family::IoCancelPoints,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
                      sem_post, thrd_current, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
-                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, strcasestr, or isa_kernels"
+                     gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, strcasestr, isa_kernels, or io_cancel_points"
                 ),
             };
         } else {
@@ -1152,7 +1156,7 @@ fn parse_args() -> Config {
                   nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
-                  wcsnrtombs|strcasestr|isa_kernels]"
+                  wcsnrtombs|strcasestr|isa_kernels|io_cancel_points]"
             );
         }
     }
@@ -8877,6 +8881,468 @@ fn run_isa_kernels(config: &Config) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// io_cancel_points: `read`/`write`, the hottest cancellation points
+// (bd-rc0923-epic-eeuy4f.24). In a multi-threaded process fl runs each call's
+// syscall inside an asynchronous-cancel window (two host
+// `pthread_setcanceltype` calls, opened only for a caller outside fl);
+// single-threaded it skips the window. Each case is a 1-byte write to
+// /dev/null or read from /dev/zero, timed before ("_st") and after ("_mt") a
+// thread has been created and joined through every measured object's own
+// `pthread_create` -- the real way fl's `__libc_single_threaded` clears.
+// `lseek` (not a cancellation point; its code is untouched by the change)
+// is the layout control in each phase: a build-to-build move it shows is not
+// the window's.
+//
+// Incumbent mode times host libc. With `--fl-so-b` the comparison arm is a
+// second FrankenLibC object (SELF-A/B, ratio CANDIDATE/BASE). An undecidable
+// row is a result here (no detectable difference), not a harness failure; only
+// a violated A/A null fails the run.
+// ---------------------------------------------------------------------------
+
+type ReadFn = unsafe extern "C" fn(c_int, *mut c_void, usize) -> isize;
+type WriteFn = unsafe extern "C" fn(c_int, *const c_void, usize) -> isize;
+type LseekFn = unsafe extern "C" fn(c_int, libc::off_t, c_int) -> libc::off_t;
+type PthreadCreateFn = unsafe extern "C" fn(
+    *mut libc::pthread_t,
+    *const libc::pthread_attr_t,
+    extern "C" fn(*mut c_void) -> *mut c_void,
+    *mut c_void,
+) -> c_int;
+type PthreadJoinFn = unsafe extern "C" fn(libc::pthread_t, *mut *mut c_void) -> c_int;
+
+/// Calls per timed batch: a 1-byte /dev/null or /dev/zero syscall is a few
+/// hundred nanoseconds, so a batch is a few milliseconds.
+const IO_CANCEL_REPS: usize = 20_000;
+
+#[derive(Clone, Copy)]
+struct IoArm {
+    read: ReadFn,
+    write: WriteFn,
+    lseek: LseekFn,
+}
+
+struct IoCase {
+    label: &'static str,
+    symbol: &'static str,
+    multithreaded: bool,
+    /// What one call returns.
+    expect_each: isize,
+    note: &'static str,
+}
+
+/// Single-threaded cases first, then (after the switch) multi-threaded ones,
+/// in the same symbol order.
+const IO_CASES: [IoCase; 6] = [
+    IoCase {
+        label: "write_devnull_1_st",
+        symbol: "write",
+        multithreaded: false,
+        expect_each: 1,
+        note: "1-byte write to /dev/null; fl single-threaded: no cancellation window",
+    },
+    IoCase {
+        label: "read_devzero_1_st",
+        symbol: "read",
+        multithreaded: false,
+        expect_each: 1,
+        note: "1-byte read from /dev/zero; fl single-threaded: no cancellation window",
+    },
+    IoCase {
+        label: "lseek_devzero_st_control",
+        symbol: "lseek",
+        multithreaded: false,
+        expect_each: 0,
+        note: "lseek(SEEK_CUR) on /dev/zero; not a cancellation point: layout control",
+    },
+    IoCase {
+        label: "write_devnull_1_mt",
+        symbol: "write",
+        multithreaded: true,
+        expect_each: 1,
+        note: "1-byte write to /dev/null after a thread was created through each object: window open",
+    },
+    IoCase {
+        label: "read_devzero_1_mt",
+        symbol: "read",
+        multithreaded: true,
+        expect_each: 1,
+        note: "1-byte read from /dev/zero after a thread was created through each object: window open",
+    },
+    IoCase {
+        label: "lseek_devzero_mt_control",
+        symbol: "lseek",
+        multithreaded: true,
+        expect_each: 0,
+        note: "lseek(SEEK_CUR) on /dev/zero, multi-threaded; not a cancellation point: layout control",
+    },
+];
+
+const IO_ST_CASES: usize = 3;
+
+#[inline(never)]
+fn run_io_batch(arm: IoArm, case: &IoCase, devnull: c_int, devzero: c_int) -> isize {
+    let mut byte = [0u8; 1];
+    let mut total = 0isize;
+    for _ in 0..IO_CANCEL_REPS {
+        // SAFETY: valid descriptors and a live 1-byte buffer.
+        let result = unsafe {
+            match case.symbol {
+                "write" => (arm.write)(black_box(devnull), black_box(b"x".as_ptr().cast()), 1),
+                "read" => (arm.read)(black_box(devzero), black_box(byte.as_mut_ptr().cast()), 1),
+                _ => (arm.lseek)(black_box(devzero), 0, libc::SEEK_CUR) as isize,
+            }
+        };
+        total = total.wrapping_add(black_box(result));
+    }
+    black_box(byte);
+    black_box(total)
+}
+
+fn time_io_batch(arm: IoArm, case: &IoCase, devnull: c_int, devzero: c_int) -> f64 {
+    let started = Instant::now();
+    let total = run_io_batch(arm, case, devnull, devzero);
+    let elapsed = started.elapsed().as_secs_f64() * 1_000_000_000.0 / IO_CANCEL_REPS as f64;
+    assert_eq!(
+        total,
+        IO_CANCEL_REPS as isize * case.expect_each,
+        "{} timed batch had a short or failed call",
+        case.label
+    );
+    elapsed
+}
+
+fn measure_io_case(
+    case: &IoCase,
+    host: IoArm,
+    fl: IoArm,
+    devnull: c_int,
+    devzero: c_int,
+) -> CaseResult {
+    let time = |arm: IoArm| time_io_batch(arm, case, devnull, devzero);
+    let retained = SAMPLES - WARMUPS;
+    let mut fl_effect = Vec::with_capacity(retained);
+    let mut glibc_effect = Vec::with_capacity(retained);
+    let mut fl_null_a = Vec::with_capacity(retained);
+    let mut fl_null_b = Vec::with_capacity(retained);
+    let mut glibc_null_a = Vec::with_capacity(retained);
+    let mut glibc_null_b = Vec::with_capacity(retained);
+    for sample in 0..SAMPLES {
+        let (mut effect_fl, mut effect_glibc) = (0.0, 0.0);
+        let (mut fa, mut fb, mut ga, mut gb) = (0.0, 0.0, 0.0, 0.0);
+        // Same six-cell phase/order rotation as the other families.
+        for slot in 0..3 {
+            match (sample + slot) % 3 {
+                0 if sample % 2 == 0 => {
+                    fa = time(fl);
+                    fb = time(fl);
+                }
+                0 => {
+                    fb = time(fl);
+                    fa = time(fl);
+                }
+                1 if sample % 2 == 0 => {
+                    ga = time(host);
+                    gb = time(host);
+                }
+                1 => {
+                    gb = time(host);
+                    ga = time(host);
+                }
+                2 if sample % 2 == 0 => {
+                    effect_fl = time(fl);
+                    effect_glibc = time(host);
+                }
+                2 => {
+                    effect_glibc = time(host);
+                    effect_fl = time(fl);
+                }
+                _ => unreachable!(),
+            }
+        }
+        if sample >= WARMUPS {
+            fl_effect.push(effect_fl);
+            glibc_effect.push(effect_glibc);
+            fl_null_a.push(fa);
+            fl_null_b.push(fb);
+            glibc_null_a.push(ga);
+            glibc_null_b.push(gb);
+        }
+    }
+    summarize_case(
+        case.label,
+        case.note,
+        IO_CANCEL_REPS,
+        fl_effect,
+        glibc_effect,
+        fl_null_a,
+        fl_null_b,
+        glibc_null_a,
+        glibc_null_b,
+    )
+}
+
+extern "C" fn io_cancel_noop_thread(_arg: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
+}
+
+/// Create and join one thread through `handle`'s own `pthread_create`, then
+/// require that object's `__libc_single_threaded` to read 0 (multi-threaded).
+fn make_object_multithreaded(handle: *mut c_void, role: &str) {
+    let resolve = |symbol: &CStr| {
+        // SAFETY: `handle` came from dlopen; the name is NUL-terminated.
+        let address = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
+        assert!(
+            !address.is_null(),
+            "{}",
+            dl_error(&format!("dlsym {role} {}", symbol.to_string_lossy()))
+        );
+        address
+    };
+    // SAFETY: the resolved symbols have these C signatures.
+    let create: PthreadCreateFn = unsafe { std::mem::transmute(resolve(c"pthread_create")) };
+    let join: PthreadJoinFn = unsafe { std::mem::transmute(resolve(c"pthread_join")) };
+    let mut thread: libc::pthread_t = 0;
+    // SAFETY: valid out-pointer and start routine.
+    let rc = unsafe {
+        create(
+            &mut thread,
+            std::ptr::null(),
+            io_cancel_noop_thread,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0, "{role} pthread_create failed");
+    // SAFETY: `thread` was just created and is joinable.
+    let rc = unsafe { join(thread, std::ptr::null_mut()) };
+    assert_eq!(rc, 0, "{role} pthread_join failed");
+    let flag = resolve(c"__libc_single_threaded").cast::<u8>();
+    // SAFETY: the exported flag is one byte of the object's data.
+    let value = unsafe { std::ptr::read_volatile(flag) };
+    assert_eq!(
+        value, 0,
+        "{role} still reports single-threaded after a thread was created"
+    );
+    println!("IO_CANCEL_MULTITHREADED role={role} libc_single_threaded={value}");
+}
+
+fn run_io_cancel_points(config: &Config) {
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "io_cancel_points");
+    let (comparison_handle, supplied_b) = match &config.fl_so_b {
+        Some(path_b) => {
+            let supplied_b = sha256_file(path_b).expect("hash second FrankenLibC SO");
+            assert_ne!(
+                supplied_b.sha256, supplied_fl.sha256,
+                "--fl-so and --fl-so-b are the SAME object; a self-A/B against an \
+                 identical build measures nothing"
+            );
+            let path_b_c = CString::new(supplied_b.path.as_os_str().as_bytes())
+                .expect("second FrankenLibC path has NUL");
+            let handle_b = dlopen_fl_so_with_plain_model(
+                config,
+                &path_b_c,
+                "io_cancel_points_b",
+                "plain_dlopen",
+            );
+            (handle_b, Some(supplied_b))
+        }
+        None => {
+            // SAFETY: NUL-terminated soname of an object this process maps.
+            let libc_handle =
+                unsafe { libc::dlopen(c"libc.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+            assert!(
+                !libc_handle.is_null(),
+                "{}",
+                dl_error("dlopen host libc.so.6")
+            );
+            (libc_handle, None)
+        }
+    };
+    let arm = |object: *mut c_void, expected: Option<&str>, role: &str| -> IoArm {
+        let resolve = |symbol: &CStr| {
+            // SAFETY: `object` came from dlopen; the name is NUL-terminated.
+            let address = unsafe { libc::dlsym(object, symbol.as_ptr()) };
+            assert!(
+                !address.is_null(),
+                "{}",
+                dl_error(&format!("dlsym {role} {symbol:?}"))
+            );
+            let identity = symbol_object(address.cast_const()).expect("identify serving object");
+            if let Some(sha) = expected {
+                assert_eq!(
+                    identity.sha256, sha,
+                    "{role} {symbol:?} resolved outside its object"
+                );
+            } else {
+                assert!(
+                    identity
+                        .path
+                        .file_name()
+                        .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+                    "{role} {symbol:?} resolved to {}, not host libc",
+                    identity.path.display()
+                );
+            }
+            address
+        };
+        // SAFETY: `read`/`write`/`lseek` have these C signatures.
+        unsafe {
+            IoArm {
+                read: std::mem::transmute::<*mut c_void, ReadFn>(resolve(c"read")),
+                write: std::mem::transmute::<*mut c_void, WriteFn>(resolve(c"write")),
+                lseek: std::mem::transmute::<*mut c_void, LseekFn>(resolve(c"lseek")),
+            }
+        }
+    };
+    let fl = arm(handle, Some(&supplied_fl.sha256), "fl");
+    let comparison = arm(
+        comparison_handle,
+        supplied_b.as_ref().map(|b| b.sha256.as_str()),
+        "comparison",
+    );
+    assert_ne!(
+        fl.read as usize, comparison.read as usize,
+        "both read arms are one function"
+    );
+    assert_ne!(
+        fl.write as usize, comparison.write as usize,
+        "both write arms are one function"
+    );
+    assert_ne!(
+        fl.lseek as usize, comparison.lseek as usize,
+        "both lseek arms are one function"
+    );
+    print_identity("FL", &supplied_fl);
+    match &supplied_b {
+        Some(supplied_b) => println!(
+            "SELF_AB_MODE comparison_arm=frankenlibc base_sha256={} candidate_sha256={} \
+             note=\"ratio is CANDIDATE/BASE, not fl/glibc; no incumbent was measured\"",
+            supplied_b.sha256, supplied_fl.sha256
+        ),
+        None => println!("INCUMBENT_LINKAGE explicit_dlopen_local objects=libc.so.6"),
+    }
+    println!("FL_LINKAGE explicit_dlopen_local family=io_cancel_points");
+
+    // SAFETY: NUL-terminated paths; the descriptors live for the whole run.
+    let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY | libc::O_CLOEXEC) };
+    // SAFETY: as above.
+    let devzero = unsafe { libc::open(c"/dev/zero".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC) };
+    assert!(devnull >= 0 && devzero >= 0, "open /dev/null and /dev/zero");
+
+    // Conformance: one call through each arm writes 1, reads a zero byte, and
+    // finds /dev/zero at offset 0.
+    for (role, arm) in [("fl", fl), ("comparison", comparison)] {
+        let mut byte = [0xffu8; 1];
+        // SAFETY: valid descriptors and buffers.
+        let (wrote, read, offset) = unsafe {
+            (
+                (arm.write)(devnull, b"x".as_ptr().cast(), 1),
+                (arm.read)(devzero, byte.as_mut_ptr().cast(), 1),
+                (arm.lseek)(devzero, 0, libc::SEEK_CUR),
+            )
+        };
+        assert_eq!(
+            (wrote, read, byte[0], offset),
+            (1, 1, 0, 0),
+            "{role} read/write/lseek contract"
+        );
+    }
+    println!("INCUMBENT_COVERAGE_CONFORMANCE family=io_cancel_points comparisons=6 verdict=pass");
+    if config.verify_only {
+        println!("INCUMBENT_COVERAGE_VERIFY_ONLY family=io_cancel_points verdict=pass");
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let mut results = Vec::with_capacity(IO_CASES.len());
+    let mut threads = (0, 0);
+    for case in &IO_CASES {
+        if case.multithreaded && results.len() == IO_ST_CASES {
+            make_object_multithreaded(handle, "fl");
+            if supplied_b.is_some() {
+                make_object_multithreaded(comparison_handle, "comparison");
+            }
+        }
+        let threads_pre = observed_threads();
+        let result = measure_io_case(case, comparison, fl, devnull, devzero);
+        let threads_post = observed_threads();
+        assert_eq!(
+            threads_post, threads_pre,
+            "{} thread count changed while timing",
+            case.label
+        );
+        threads = (threads_pre, threads_post);
+        results.push(result);
+    }
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    let comparison_path = supplied_b
+        .as_ref()
+        .map_or_else(|| PathBuf::from("libc.so.6"), |b| b.path.clone());
+    for (case, result) in IO_CASES.iter().zip(&results) {
+        result.print(case.symbol, &comparison_path, threads.0, threads.1);
+    }
+    // The window's cost inside each object: the multi-threaded median minus the
+    // single-threaded one, same object, same invocation (cross-row, so outside
+    // the A/A-gated ratios above). The lseek control's delta is what becoming
+    // multi-threaded costs a call that has no window.
+    for st in 0..IO_ST_CASES {
+        let mt = st + IO_ST_CASES;
+        println!(
+            "IO_CANCEL_WINDOW_COST symbol={} fl_st_ns={:.3} fl_mt_ns={:.3} fl_delta_ns={:.3} \
+             comparison_st_ns={:.3} comparison_mt_ns={:.3} comparison_delta_ns={:.3}",
+            IO_CASES[st].symbol,
+            results[st].fl_median_ns,
+            results[mt].fl_median_ns,
+            results[mt].fl_median_ns - results[st].fl_median_ns,
+            results[st].glibc_median_ns,
+            results[mt].glibc_median_ns,
+            results[mt].glibc_median_ns - results[st].glibc_median_ns,
+        );
+    }
+    let nulls_hold = results.iter().all(|r| r.comparison != "NULL_VIOLATED");
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT family=io_cancel_points verdict={} cases={} faster={} slower={} \
+         undecidable={} self_ab={}",
+        if nulls_hold {
+            "NULLS_HOLD"
+        } else {
+            "NULL_VIOLATED"
+        },
+        results.len(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "FL_FASTER")
+            .count(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "FL_SLOWER")
+            .count(),
+        results
+            .iter()
+            .filter(|r| r.comparison == "UNDECIDABLE")
+            .count(),
+        supplied_b.is_some(),
+    );
+    if !nulls_hold {
+        std::process::exit(2);
+    }
+}
+
 fn first_non_edge_offset(address: usize, element_size: usize) -> usize {
     let to_next_page = (4096 - (address & 4095)) & 4095;
     (to_next_page + 64) / element_size
@@ -11595,6 +12061,7 @@ fn main() {
         Family::Wcsnrtombs => run_wcsnrtombs(&config),
         Family::Strcasestr => run_strcasestr(&config),
         Family::IsaKernels => run_isa_kernels(&config),
+        Family::IoCancelPoints => run_io_cancel_points(&config),
     }
 }
 
