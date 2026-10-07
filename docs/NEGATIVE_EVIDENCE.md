@@ -41682,3 +41682,63 @@ ones that would notice a threading-policy depth counter behaving differently.
   The branch as a whole stays MAINTENANCE with the table-2 losses open on the bead: the next lever is
   dispatch at the export (twins of whole ABI wrappers, or IFUNC-resolved exports with an
   asm resolver like `cpu_guard`), measured the same way against a `release-x86-64-v3` build.
+
+## 2026-10-07 (claude-opus-salvage) — MAINTENANCE / CORRECTNESS COST: read/write cancellation window gated on the caller being outside fl (`bd-rc0923-epic-eeuy4f.24`) — KEEP: no detectable cost against main single- or multi-threaded; the window itself costs 10-17 ns per call multi-threaded, about what glibc 2.43's own cancellable syscall costs
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, a
+  correctness change measured for cost, no competitive claim). `same_invocation=true` for every row
+  (both objects dlopen'd into one process); `cv_used=false`.
+- **WHAT CHANGED.** fl's `read`/`write` (and every other cancellation point) already ran their
+  syscall inside an asynchronous-cancel window (two host `pthread_setcanceltype` calls) in a
+  multi-threaded process. The window now also requires the exported entry point's return address
+  (`core::intrinsics::return_address`) to lie outside fl's image, so fl's own I/O (Rust std inside
+  getpwnam/getaddrinfo/...) is never a cancellation point; bodies shared with aliases moved to
+  always-inlined `*_cp` functions.
+- **INSTRUMENT.** `incumbent_coverage_ab --families io_cancel_points` (new family), hz4,
+  `--pin-quietest 2 --fl-deepbind`, 36 retained samples, six-cell rotation, 20000 calls per batch.
+  1-byte write to /dev/null, 1-byte read from /dev/zero, and `lseek(SEEK_CUR)` as the no-window
+  layout control, each single-threaded (`_st`) and after a thread was created and joined through
+  each object's own `pthread_create` (`_mt`, `__libc_single_threaded` asserted 0). Executing ELF as
+  the harness self-reports it in-process: bench_elf_sha256=`a5cfa31be199ef01e95691fd886df4dc095e96f82dbd04f41de1dbf858831b6d`
+  (tables 1 and 2); bench_elf_sha256=`24c100a79d4ec09af320d532fa18c61999e3d7615837c99fcb7923ca4ca08654`
+  (table 3).
+- **OBJECTS.** base = main@`a1024c75a`, SHA-256
+  `a2cfde273de26dfec1fd2c65f776ee746dc6c0832e41c1cff54ba9a93c07c169`; candidate = this branch's
+  product source (`81a9b40a4`; built from the pre-squash commit `8946744f3`, whose `crates/` tree
+  is identical), `a11e36bd3335f99c188fdb9b1ee9e593700ebfcd22eae655cc3b57dac5a64fef`.
+- **TABLE 1 — candidate / base, same invocation** (ratio median [bootstrap median 95% CI]; A/A null
+  medians FL/FL and base/base with their CIs):
+
+  | case | candidate/base | FL/FL null | base/base null | verdict |
+  |---|---|---|---|---|
+  | write 1 st | 0.999735 [0.998601,1.001419] | 1.000481 [0.999226,1.001335] | 1.000384 [0.999390,1.001342] | UNDECIDABLE |
+  | read 1 st | 0.988555 [0.987585,0.989753] | 1.000368 [0.999652,1.001072] | 1.000399 [0.998913,1.001318] | faster |
+  | lseek st (control) | 1.001439 [0.998312,1.003506] | 0.999820 [0.999262,1.001024] | 1.000114 [0.998744,1.000948] | UNDECIDABLE |
+  | write 1 mt | 1.002051 [0.999560,1.004259] | 1.001518 [0.998572,1.002317] | 1.000201 [0.999861,1.000872] | UNDECIDABLE |
+  | read 1 mt | 1.003764 [1.002269,1.005773] | 0.999482 [0.998262,1.001211] | 1.000750 [0.999760,1.001905] | UNDECIDABLE |
+  | lseek mt (control) | 1.000465 [0.998274,1.002131] | 1.000373 [0.999575,1.001095] | 1.000587 [0.999316,1.002085] | UNDECIDABLE |
+
+  The read_st "faster" (1.1%) is not attributed: its code differs from the base only by one stack
+  load and a register argument; read it as layout. Medians (ns): write st 348.959 / 348.840, read st
+  376.361 / 380.432, write mt 363.875 / 363.907, read mt 393.152 / 391.521, lseek 198.7 / 198.4.
+- **TABLE 2 — the window's own cost and glibc's** (multi- minus single-threaded median, same
+  object, same invocation; cross-row, so outside the A/A-gated ratios). Self-A/B run: write
+  candidate +14.916 ns, base +15.067 ns; read candidate +16.791 ns, base +11.088 ns; lseek control
+  -0.218 / -0.133 ns. Incumbent run (candidate against live glibc 2.43, `legacy_incumbent=host-glibc`
+  via the harness's dlopen of libc.so.6 with identity checks): fl write +9.697 ns, glibc +9.376 ns;
+  fl read +13.629 ns, glibc +11.506 ns; lseek -0.271 / -0.192 ns. fl/glibc in that run, ratio median
+  [95% CI]: write st 1.066500 [1.064883,1.068568], write mt 1.062682 [1.060885,1.064947], read st
+  1.054374 [1.053076,1.055652], read mt 1.058573 [1.056972,1.061655], lseek control 1.034275 /
+  1.034011; A/A null medians 0.998396-1.001705, every null bootstrap median 95% CI inside
+  [0.997434, 1.003105]. fl's window costs about what glibc's own cancellable syscall costs; fl's
+  remaining 5-7% against glibc on these calls is the pre-existing gap (the no-window lseek shows 3.4%).
+- **TABLE 3 — REJECTED variant: the hook out of line** (`cancellation_window_hook` not inlined into
+  the window, so every call paid a call before the single-threaded test), candidate
+  `e46c44def53fa6042aa3de234d2d9a1bb24620a1a54d27e6847b688096ace555` against main@`0246fcfdb`
+  `f08ee31ffde06783ef641affbd59aec7366dacb51318fe0aea9b276dda412a70`, no lseek control: write st
+  1.029732 [1.023547,1.031813], read st 1.012255 [1.009432,1.014012], write mt 1.031472
+  [1.027206,1.040908], read mt 1.021084 [1.016546,1.026003], all FL_SLOWER; A/A null medians
+  0.997897-1.001840, every null CI inside [0.995371, 1.004808]. Fixed by `#[inline(always)]` on the
+  hook (table 1).
+- **DISPOSITION.** KEEP `81a9b40a4`. Not a speedup and not presented as one: the caller gate costs
+  nothing measurable on the hottest cancellation points.
