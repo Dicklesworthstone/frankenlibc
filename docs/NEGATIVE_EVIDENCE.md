@@ -41448,3 +41448,152 @@ ones that would notice a threading-policy depth counter behaving differently.
   - `conformance_diff_strftime_exact_dispatch` diverges.
 
   The banked-leaf residual above is the first thing a follow-up should attack.
+
+## 2026-10-07 (claude-opus-salvage) — MAINTENANCE / PORTABILITY COST: the baseline x86-64 release build with AVX2(+FMA) twins against the old x86-64-v3 build (`bd-rc0923-epic-eeuy4f.13`) — big losses recovered, residual 2-53% losses remain on twinned kernels, short string scans at or below the v3 build
+
+- **RESULT CLASS:** `result_class=self-speedup` (FrankenLibC against FrankenLibC; MAINTENANCE, no
+  competitive claim). Live glibc was also timed in separate same-host invocations (tables 2, 3).
+  `same_invocation=true` for every self-A/B row (`--fl-so-b`, both objects dlopen'd into one
+  process); `cv_used=false`.
+- **WHAT CHANGED.** The release `.so` is no longer compiled with `-Ctarget-feature=+avx2,+fma`, so it
+  runs on every x86_64 CPU. Hot kernels whose baseline codegen lost were given twins compiled with
+  `#[target_feature(enable = "avx2,fma")]` / `"avx2"`, chosen per call from std's cached CPUID bits
+  (`avx2_fma_dispatch!` in core math, `avx2_dispatch!` in string_abi): sin cos tan atan asinh acosh
+  atanh erf erfc tgamma lgamma_r (+ their out-of-line helpers), exp log log2 pow_fused, sinf cosf
+  sinhf coshf erff, scan_c_string, scan_strcmp, the core memchr, and the core wcsnlen. Short string
+  scans stay off the dispatch: a bounded NUL scan (strnlen, wcsnlen) under 256 bytes/elements that
+  stays in its page runs the baseline code inline and call-free, and an unbounded one (strlen and the
+  other ~36 `scan_c_string(p, None)` callers) checks its first two aligned 64-byte blocks inline with
+  16-lane SSE2 probes and dispatches only the rest (`a39d35afc`, `d22fa733a`, `357615dc8`).
+  `release-x86-64-v3` is the labelled v3 build for this kind of A/B.
+- **INSTRUMENT.** `incumbent_coverage_ab --families isa_kernels` (new family: 21 cases since
+  `eeb376950` added `strlen_16`/`strlen_64`; `exp2`, `sqrt` and `memchr_16` are no-twin controls) and
+  `--families bounded_len`, `--pin-quietest 2 --fl-deepbind`, hz4, 36 retained samples, six-cell
+  rotation, same-invocation FL/FL and comparison A/A nulls on every case (self-A/B runs: A/A null
+  medians 0.988-1.006, null bootstrap median 95% CI inside [0.978, 1.023]; the glibc runs: A/A null
+  medians 0.980-1.017, bootstrap median 95% CI inside [0.961, 1.047]). Effects are candidate/base
+  (self-A/B) or FL/glibc medians, each with its bootstrap median 95% CI (table 1 prints the head's).
+  Executing ELF, as the harness self-reports it in-process (`BENCH_ELF_OBJECT`):
+  bench_elf_sha256=`06b9b1c27f782e638982988127ee9ad4fb98bb18ed802c946914acf28bb4db93` (first cut,
+  v3 vs glibc), bench_elf_sha256=`02d674a6e008bb4445a097c6f27a256b2d56d4e35e68845278c15bf6189e7f2b`
+  (`403a7cf73` rows, raw and every-span bounded_len) and
+  bench_elf_sha256=`8a65ee8ab5aeed0b7deeceb31c0487a18400d2bccb5265f5f836653ee375f5a0` (21-case rows,
+  head bounded_len, v3 bounded_len re-run). Before timing, both FrankenLibC objects agreed bit for
+  bit on every conformance comparison (2826 in the 21-case runs).
+- **OBJECTS.** base = main@0dfdfce4d as shipped (x86-64-v3), SHA-256
+  `7fb89d614902fadeba85ecaffe0fd7581997352385fd762f43409b03b4ab7af8`; raw = the same source built
+  baseline, no dispatch, `a9c8e5fb73f6e6daf8d067e00d786c8a0d0f6781b204b5ae36d3f13ec9df0cf4`; first cut
+  = twins with the baseline body inlined into the dispatcher, `7dc318f4af8bf6fe478c9eafdbbf3cbc6d6b1afe2179889c9cc60fd2df33e2a2`;
+  `403a7cf73` = every scan dispatched, `ca730d3da385fa5a0f6567f2ed32fb04960aa93d798aa1dbfd33fa1cf93b3c8a`;
+  `d22fa733a` = short bounded scans inline, `afad673e09879b318b9170bf0aa5357a9e858861d1c3ff044fd83d4f9c97b2aa`;
+  head = `357615dc8` (adds the inline unbounded head check),
+  `c863c417ee6776aec0c4c58b14b1aff5c9db6d665a9ad8af5282e1418a4acadc`.
+- **TABLE 1 — candidate / x86-64-v3 base, same invocation** (ratio median; head with its 95% CI):
+
+  | case | raw baseline | first cut | `403a7cf73` | `d22fa733a` | head [95% CI] |
+  |---|---:|---:|---:|---:|---|
+  | sin | 2.500 | 1.221 | 1.164 | 1.154 | 1.161 [1.158,1.163] |
+  | cos | 4.173 | 1.127 | 1.090 | 1.133 | 1.095 [1.093,1.095] |
+  | tan | 4.601 | 1.088 | 1.046 | 1.040 | 1.046 [1.045,1.046] |
+  | atan | 1.318 | 1.171 | 1.167 | 1.166 | 1.166 [1.165,1.166] |
+  | exp | 3.652 | 1.308 | 1.211 | 1.204 | 1.202 [1.197,1.210] |
+  | exp2 (control) | 1.008 | 1.000 | 1.005 | 1.004 | 1.063 [1.054,1.072] |
+  | log | 3.815 | 1.253 | 1.276 | 1.280 | 1.282 [1.279,1.290] |
+  | log2 | 4.146 | 1.183 | 1.229 | 1.227 | 1.230 [1.226,1.233] |
+  | pow | 3.623 | 1.522 | 1.532 | 1.528 | 1.529 [1.525,1.534] |
+  | sinf | 1.302 | 1.042 | 1.081 | 1.038 | 1.088 [1.079,1.096] |
+  | sqrt (control) | 1.000 | 0.997 | 1.020 | 0.986 | 1.004 [0.971,1.025] |
+  | strcmp 16 | 6.399 | 1.186 | 1.112 | 1.148 | 1.147 [1.138,1.152] |
+  | strcmp 256 | 7.437 | 1.067 | 1.068 | 1.073 | 1.069 [1.059,1.076] |
+  | strcmp 4096 | 13.888 | 1.019 | 1.007 | 1.018 | 1.012 [1.005,1.028] |
+  | memchr 16 (control) | 0.788 | 0.844 | 0.859 | 0.858 | 0.860 [0.855,0.865] |
+  | memchr 4096 | 1.905 | 1.100 | 1.024 | 1.023 | 1.035 [1.025,1.039] |
+  | strlen 16 | 0.925 | — | — | 1.095 | 1.002 [0.987,1.009] |
+  | strlen 64 | 0.937 | — | — | 1.091 | 0.960 [0.956,0.961] |
+  | strlen 4096 | 1.924 | 0.987 | 1.024 | 1.034 | 1.124 [1.120,1.130] |
+  | strchr 4096 (pre-existing AVX2 kernel) | 1.133 | 1.153 | 1.144 | 1.126 | 1.122 [1.119,1.126] |
+  | memcmp 256 (pre-existing AVX2 kernel) | 1.236 | 1.199 | 1.152 | 1.204 | 1.137 [1.134,1.142] |
+
+  The raw column is the 21-case re-run. An earlier 19-case run of the same object agreed within
+  0.03 on every math row; its string rows differed more (strcmp 256 5.682, strcmp 4096 13.363,
+  memchr 4096 1.769, memcmp 256 1.171, memchr 16 0.826). Kernels whose code did not change between
+  builds move by up to 0.06 from build to build (exp2 control 1.004 -> 1.063, sinf, cos, memcmp):
+  read differences smaller than that between columns as layout, not as an effect.
+
+- **TABLE 2 — against live glibc** (`legacy_incumbent=host-glibc`, `incumbent_provenance` = the
+  harness's dlopen of libm.so.6/libc.so.6 with identity checks; `403a7cf73` (`ca730d3d…`) and base
+  each in its own invocation, so the last column is a cross-invocation ratio of ratios; not re-run
+  for the head):
+
+  | case | `403a7cf73` / glibc | v3 base / glibc | `403a7cf73` / base |
+  |---|---:|---:|---:|
+  | sin | 1.222 | 1.050 | 1.164 |
+  | exp | 1.799 | 1.441 | 1.249 |
+  | log | 2.011 | 1.570 | 1.281 |
+  | pow | 2.330 | 1.525 | 1.528 |
+  | strcmp 16 | 1.875 | 1.691 | 1.108 |
+  | memchr 4096 | 1.864 | 1.847 | 1.009 |
+  | strlen 4096 | 1.300 | 1.297 | 1.002 |
+  | malloc_free small_64 | 9.623 | 9.968 | 0.965 |
+  | memcpy 64k | 0.969 | 0.970 | 0.999 |
+  | strlen 256k | 1.006 | 1.002 | 1.004 |
+  | sinhf / coshf mid sweep | 1.503 / 1.468 | 1.105 / 1.118 | 1.36 / 1.31 |
+
+- **TABLE 3 — bounded length against live glibc** (`--families bounded_len`; each object in its own
+  invocation, fl/glibc median; the last two columns are cross-invocation ratios to the v3 re-run,
+  which reproduced an earlier v3 run within 0.02 on every row but wcsnlen 128, 1.055 vs 1.000):
+
+  | case | v3 base | raw | `403a7cf73` (every span dispatched) | head | head / v3 | raw / v3 |
+  |---|---:|---:|---:|---:|---:|---:|
+  | strnlen 4 | 1.495 | 1.249 | 1.744 | 1.129 | 0.755 | 0.836 |
+  | strnlen 8 | 1.495 | 1.126 | 1.659 | 1.004 | 0.672 | 0.753 |
+  | strnlen 16 | 1.334 | 1.085 | 1.580 | 1.000 | 0.750 | 0.813 |
+  | strnlen 31 | 1.508 | 1.263 | 2.186 | 1.081 | 0.717 | 0.838 |
+  | strnlen 32 | 1.433 | 1.251 | 2.008 | 1.100 | 0.767 | 0.873 |
+  | strnlen 63 | 1.286 | 1.286 | 1.877 | 1.036 | 0.806 | 1.000 |
+  | strnlen 128 | 1.562 | 1.500 | 1.875 | 1.312 | 0.840 | 0.960 |
+  | strnlen 4096 | 1.293 | 2.105 | 1.433 | 1.240 | 0.959 | 1.628 |
+  | wcsnlen 4 | 1.381 | 1.078 | 2.076 | 1.153 | 0.835 | 0.780 |
+  | wcsnlen 8 | 1.152 | 0.999 | 1.768 | 0.999 | 0.867 | 0.867 |
+  | wcsnlen 16 | 1.001 | 0.933 | 1.632 | 0.967 | 0.966 | 0.933 |
+  | wcsnlen 31 | 1.062 | 1.189 | 1.620 | 1.188 | 1.118 | 1.119 |
+  | wcsnlen 32 | 1.059 | 1.133 | 1.683 | 1.186 | 1.120 | 1.070 |
+  | wcsnlen 63 | 0.962 | 1.087 | 1.334 | 1.136 | 1.181 | 1.130 |
+  | wcsnlen 128 | 1.055 | 1.287 | 1.354 | 1.266 | 1.200 | 1.220 |
+  | wcsnlen 4096 | 1.920 | 5.808 | 1.369 | 1.884 | 0.981 | 3.025 |
+
+  Null medians of the head and v3 re-run: 0.985-1.013, CIs inside [0.980, 1.021]. wcsnlen 31..128
+  stays 1.12-1.20x the v3 build at the head, the same as the raw build: the baseline inline scan,
+  not the dispatch, is what costs there.
+
+- **WHERE THE RESIDUAL IS.** objdump: each twin is the v3 kernel instruction for instruction
+  (`pow_fused` twin vs v3 `pow_fused`: the same 382/373 instructions, 20 vfmadd, no calls), and the
+  dispatcher is a CPUID-cache test plus a tail jump (`89b771a4b` moved the baseline copy out of line;
+  before that every call paid the baseline body's six pushes and 136-byte frame — strcmp 16 went
+  1.186 -> 1.112, memchr 4096 1.100 -> 1.024, exp 1.308 -> 1.211). What is left is the extra call per
+  kernel and the baseline (SSE, non-VEX) code around it in the export wrappers; it is not attributed
+  further here. `pow` (1.53x) is the worst and not understood. strchr/memcmp already used explicit
+  AVX2 kernels and cost the same with and without this change.
+- **SHORT SCANS: THE DISPATCH ITSELF WAS THE COST.** Dispatching every string scan made short ones
+  slower than the raw baseline build that has no AVX2 at all: strlen 16/64 1.09x the v3 build
+  against raw 0.93x; strnlen bounds 4..128 1.11-1.46x against raw 0.75-1.00x; wcsnlen 4..128
+  1.35-1.63x against raw 0.78-1.29x (the twin's call, inlined into the export, made `wcsnlen` save
+  seven callee-saved registers on every call). With the short paths inline (table 1 head column,
+  table 3) they are at or below the v3 build. Price: strlen 4096 went 1.034 -> 1.124, the inline
+  128-byte SSE2 head check in front of the twin, beyond the 0.06 layout spread above; kept because
+  short strings are the common strlen call.
+- **WCSNLEN 4096 IS LAYOUT-SENSITIVE.** Four builds with the same twin source measured wcsnlen at a
+  4096 bound at 1.369 / 2.592 / 1.333 / 1.884 x glibc (`403a7cf73` / `37acd65c9` / `d22fa733a` /
+  head) — 0.69-1.35x the v3 build's 1.922, against 3.02x for the raw build. The twin's 737-byte main
+  loop is the same in all four, and its alignment does not order them (`403a7cf73` and head have the
+  same loop placement). Not attributed.
+- **NOT COVERED.** Pre-AVX2 CPUs run the baseline copies: they were unable to run the library at all
+  before, and the portable-SIMD string kernels are slow there (strcmp spills 32-lane masks). No twin
+  exists yet for the rest of the wide-char family, the remaining f32 kernels, or the ABI-level math
+  wrappers; none of those were measured here beyond the rows above. strnlen bounds 129..4095 and
+  strlen lengths 65..4095 are unmeasured (the 256-byte bounded cut is between measured points).
+- **DISPOSITION.** KEEP — running on every x86_64 CPU is a correctness requirement, and the raw
+  baseline costs (2.5-13x on the twinned rows) are recovered to the figures above. Reopen (as
+  follow-up perf work, not a revert) with: IFUNC-resolved exports so AVX2 CPUs run whole v3 export
+  bodies with no per-call dispatch; twins of the ABI math wrappers; 16-lane kernels for the SSE2 path.
+  Each needs the same same-invocation `--fl-so-b` self-A/B against a `release-x86-64-v3` build.
