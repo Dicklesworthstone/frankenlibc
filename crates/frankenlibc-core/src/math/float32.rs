@@ -1958,6 +1958,34 @@ mod tests {
         );
     }
 
+    /// Independent million-input cohort on [0.5, 2.5) (same xorshift seed and
+    /// domain as before the glibc-kernel port): <=4 ULP of libm::exp10f, and
+    /// <=1 ULP of 10^x evaluated in f64 (an f32 result within half an ULP of
+    /// the f64 value cannot be more than one ULP from the true result).
+    #[test]
+    fn exp10f_profile_band_within_4_ulps() {
+        let ulps = |a: f32, b: f32| (a.to_bits() as i32 - b.to_bits() as i32).unsigned_abs();
+        let mut worst_libm = 0u32;
+        let mut worst_f64 = 0u32;
+        let mut state = 0x2468_ace1_u32;
+        for _ in 0..1_000_000 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            let x = 0.5 + (state >> 8) as f32 * (2.0 / (1u32 << 24) as f32);
+            let got = exp10f(x);
+            let want = libm::exp10f(x);
+            let u = ulps(got, want);
+            worst_libm = worst_libm.max(u);
+            assert!(u <= 4, "exp10f({x})={got:?} vs libm {want:?} ({u} ULP)");
+            let reference = 10f64.powf(f64::from(x)) as f32;
+            let u = ulps(got, reference);
+            worst_f64 = worst_f64.max(u);
+            assert!(u <= 1, "exp10f({x})={got:?} vs f64 {reference:?} ({u} ULP)");
+        }
+        println!("exp10f profile band worst ULP: {worst_libm} vs libm, {worst_f64} vs f64");
+    }
+
     #[test]
     fn bessel_f32_sanity() {
         assert!((j0f(0.0) - 1.0).abs() < 1e-5);

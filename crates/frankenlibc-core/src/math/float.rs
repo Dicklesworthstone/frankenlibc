@@ -858,22 +858,20 @@ pub fn significand(x: f64) -> f64 {
 /// GNU extension: base-10 exponential `10^x`.
 #[inline]
 pub fn exp10(x: f64) -> f64 {
-    // Integer exponents in [-22, 22] yield powers of ten that are exactly
-    // representable in f64; `powi` returns them exactly. `exp(x * ln10)`
-    // double-rounds (the product and the exp each round), so e.g. exp10(3)
-    // would come out as 1000.0000000000007 — glibc returns exactly 1000.0.
-    if x.is_finite() && x == x.trunc() && (-22.0..=22.0).contains(&x) {
-        return 10.0_f64.powi(x as i32);
-    }
     // 10^x = exp(x*ln10) with x*ln10 carried as a double-double into exp's
     // kernel (glibc's exp/pow kernel, the tail added before its polynomial):
     // one rounding, ~0.52 ULP. The former 2^(x*log2 10) * (1 + e*ln2) form
     // rounded twice and was wrong (vs a long-double reference) on 44k of 2M
     // sampled inputs where glibc was wrong on 329, differing from glibc on 13%.
-    // inf/NaN keep libm's special cases; overflow/underflow are the kernel's.
+    // Exact powers 10^0..10^22 come out exact, and like glibc's they raise
+    // FE_INEXACT (no integer shortcut). inf/NaN keep libm's special cases;
+    // overflow/underflow are the kernel's. |x| is clamped to 400 (well past
+    // both thresholds) first: x*ln10 for x near -DBL_MAX would overflow and
+    // raise a spurious FE_OVERFLOW before the kernel's underflow path.
     if !x.is_finite() {
         return libm::exp10(x);
     }
+    let x = x.clamp(-400.0, 400.0);
     let hi = x * core::f64::consts::LN_10;
     let lo = x.mul_add(core::f64::consts::LN_10, -hi) + x * LN_10_LO;
     super::exp::exp_with_tail(hi, lo)
@@ -954,7 +952,7 @@ mod tests {
     #[test]
     fn exp10_exp2_fast_path() {
         // Positive powers of ten <=10^22 are exactly representable; the
-        // integer-exponent path (`10.0.powi`) returns them exactly.
+        // double-double reduction returns them exactly.
         for k in 0..=22 {
             assert_eq!(exp10(k as f64), 10.0_f64.powi(k), "exp10({k})");
         }

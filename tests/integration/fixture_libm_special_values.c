@@ -12,6 +12,8 @@
  * subject. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <errno.h>
+#include <float.h>
 #include <math.h>
 #include <fenv.h>
 #include <stdint.h>
@@ -143,10 +145,43 @@ static void lib_version(void) {
     *p = 2;
 }
 
+/* exp10/exp10f range edges: value bits, errno and FE_OVERFLOW/UNDERFLOW/INEXACT.
+ * fl raised FE_OVERFLOW for exp10(-DBL_MAX) (x*ln10 overflowed before the
+ * underflow path), raised no FE_INEXACT for exact powers (glibc does), and
+ * left errno alone for exp10f results that round up to 2^-149. */
+static void exp10_range(void) {
+    static const double dins[] = {-DBL_MAX, -1e300, -1e20, -400, -323.5, -323.3, -308.5,
+                                  308.25, 308.26, 1e20, DBL_MAX, 0, 1, 2, 3, 22, -1, 23};
+    static const float fins[] = {-FLT_MAX, -1e30f, -46, -45.5f, -44.9f, -0x1.66d3eap+5f,
+                                 -0x1.66d3e8p+5f, -37.9f, 38.5f, 38.53f, 1e30f, FLT_MAX, 0, 1,
+                                 10, -1};
+    for (unsigned i = 0; i < sizeof dins / sizeof *dins; i++) {
+        uint64_t b;
+        feclearexcept(FE_ALL_EXCEPT);
+        errno = 0;
+        double r = exp10(dins[i]);
+        int e = errno, fe = fetestexcept(FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+        memcpy(&b, &r, sizeof b);
+        printf("exp10  %a %016llx errno=%d O%d U%d I%d\n", dins[i], (unsigned long long)b, e,
+               !!(fe & FE_OVERFLOW), !!(fe & FE_UNDERFLOW), !!(fe & FE_INEXACT));
+    }
+    for (unsigned i = 0; i < sizeof fins / sizeof *fins; i++) {
+        uint32_t b;
+        feclearexcept(FE_ALL_EXCEPT);
+        errno = 0;
+        float r = exp10f(fins[i]);
+        int e = errno, fe = fetestexcept(FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT);
+        memcpy(&b, &r, sizeof b);
+        printf("exp10f %a %08x errno=%d O%d U%d I%d\n", (double)fins[i], (unsigned)b, e,
+               !!(fe & FE_OVERFLOW), !!(fe & FE_UNDERFLOW), !!(fe & FE_INEXACT));
+    }
+}
+
 int main(void) {
     doubles();
     floats();
     min_max();
     lib_version();
+    exp10_range();
     return 0;
 }

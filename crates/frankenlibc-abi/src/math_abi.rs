@@ -3322,7 +3322,9 @@ pub unsafe extern "C" fn nanf(tagp: *const std::ffi::c_char) -> f32 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn exp10f(x: f32) -> f32 {
     let out = unary_entry_f32(x, 7, frankenlibc_core::math::exp10f);
-    if x.is_finite() && (out.is_infinite() || out == 0.0) {
+    // glibc reports ERANGE once the exact 10^x falls below the least
+    // subnormal 2^-149 (x < log10(2^-149)), even when it rounds up to 2^-149.
+    if x.is_finite() && (out.is_infinite() || out == 0.0 || x < f32::from_bits(0xc233_69f4)) {
         set_range_errno();
     }
     out
