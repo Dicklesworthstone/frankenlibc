@@ -250,6 +250,10 @@ use std::sync::Arc;
 pub struct PipelineAtforkGuard<'a> {
     _arena: crate::arena::ArenaAtforkGuard<'a>,
     _page_oracle: crate::page_oracle::PageOracleForkGuard<'a>,
+    /// Declared last so it drops after the locks are released: while this
+    /// thread holds them it is inside validation, and a membrane-validated
+    /// libc call it makes copies through without taking them again.
+    _validation: ValidationExecutionGuard,
 }
 
 /// The validation pipeline with all backing data structures.
@@ -742,10 +746,16 @@ impl ValidationPipeline {
     /// page-oracle readers to drain while holding every shard). The arena
     /// guard does not allocate, so taking it under the page lock is safe.
     pub fn atfork_prepare(&self) -> PipelineAtforkGuard<'_> {
+        // Before the locks: moving the guards is a `memcpy`, which in the
+        // libc build is the exported, membrane-validated one. Its validation
+        // took the page-oracle lock this thread had just taken for writing,
+        // and the forking thread (git's test shell under hardened) hung.
+        let validation = enter_validation_execution_context();
         let page_oracle = self.page_oracle.atfork_prepare();
         PipelineAtforkGuard {
             _arena: self.arena.atfork_prepare(),
             _page_oracle: page_oracle,
+            _validation: validation,
         }
     }
 
@@ -2175,6 +2185,37 @@ mod tests {
             }
         }
         stages
+    }
+
+    /// The ABI's validated memcpy copies through without validating while
+    /// `in_validation_context()`; fork's guard must keep that true for as
+    /// long as it holds the page-oracle lock, or a guard move (a memcpy)
+    /// re-enters `PageOracle::query` and blocks on its own write lock.
+    #[cfg(not(feature = "owned-tls-cache"))]
+    #[test]
+    fn atfork_guard_marks_thread_in_validation_while_locks_held() {
+        let pipeline = ValidationPipeline::new();
+        // An empty oracle answers without its lock.
+        pipeline.page_oracle.insert(0x7000_0000, 4096);
+        assert!(!in_validation_context());
+        let guard = pipeline.atfork_prepare();
+        assert!(in_validation_context());
+        // A second thread cannot read the oracle until the guard drops.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                assert!(pipeline.page_oracle.query(0x7000_0010));
+                tx.send(()).unwrap();
+            });
+            assert!(
+                rx.recv_timeout(std::time::Duration::from_millis(50))
+                    .is_err()
+            );
+            drop(guard);
+            assert!(!in_validation_context());
+            rx.recv_timeout(std::time::Duration::from_secs(10))
+                .expect("oracle readable after the fork guard drops");
+        });
     }
 
     #[test]
