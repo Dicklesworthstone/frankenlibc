@@ -589,7 +589,26 @@ unsafe extern "C-unwind" fn host_delegate_main_wrapper(
         unsafe { std::mem::transmute::<*const c_void, MainUnwindFn>(main_ptr as *const c_void) };
     // SAFETY: host `__libc_start_main` invokes the wrapper with the user
     // process entrypoint ABI and argument vectors.
-    unsafe { main_fn(argc, argv, resolved_envp) }
+    let rc = unsafe { main_fn(argc, argv, resolved_envp) };
+    if delegated_main_returns_to_host() {
+        return rc;
+    }
+    // exit(main(...)) through fl's exit: returned to the host, glibc's exit
+    // flushed glibc's streams, not fl's -- `printf("a\n"); return 0;` into a
+    // pipe wrote nothing -- and skipped atexit handlers registered with fl.
+    // fl's exit then runs the finalizers recorded at delegation (_dl_fini).
+    // SAFETY: plain libc exit with main's status.
+    unsafe { crate::stdlib_abi::exit(rc) }
+}
+
+/// Whether the delegated `main` wrapper hands main's status back to the host
+/// `__libc_start_main` (unit tests driving a stand-in host) instead of exiting.
+fn delegated_main_returns_to_host() -> bool {
+    #[cfg(debug_assertions)]
+    if HOST_START_MAIN_OVERRIDE.load(Ordering::Relaxed) != 0 {
+        return true;
+    }
+    startup_return_to_caller_for_tests()
 }
 
 unsafe fn delegate_to_host_libc_start_main(
@@ -608,6 +627,11 @@ unsafe fn delegate_to_host_libc_start_main(
     unsafe { crate::io_internal_abi::bootstrap_host_libio_exports() };
     let delegated_main = main.map_or(0usize, |f| f as usize);
     HOST_DELEGATED_MAIN.store(delegated_main, Ordering::Release);
+    if !delegated_main_returns_to_host() {
+        // fl's exit, which the wrapper calls, runs these; glibc's exit list
+        // that the host registers them on never runs.
+        crate::stdlib_abi::set_exit_finalizers(fini, rtld_fini);
+    }
     let wrapped_main = if delegated_main == 0 {
         None
     } else {

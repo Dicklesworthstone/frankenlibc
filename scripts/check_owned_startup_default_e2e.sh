@@ -178,8 +178,10 @@ echo "--- Test 4: atexit handlers ---"
 if echo "${output}" | grep -q "atexit_order=correct"; then
   echo "PASS: atexit handler fired before TLS shutdown"
 else
-  # TLS shutdown panic may prevent atexit output - this is a known pre-existing issue
-  echo "INFO: atexit output not captured (known TLS shutdown ordering issue)"
+  # The delegated main used to return into glibc's exit, which flushed
+  # glibc's streams rather than fl's and skipped fl's atexit handlers.
+  echo "FAIL: atexit handler output missing under FRANKENLIBC_STARTUP_DELEGATE=1"
+  exit 1
 fi
 echo ""
 

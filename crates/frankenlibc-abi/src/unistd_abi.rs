@@ -15802,8 +15802,15 @@ enum AioOp {
 
 fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp) -> i64 {
     match op {
+        // A pipe or socket has no offset: pread/pwrite fail with ESPIPE and,
+        // like glibc's aio worker, the request falls back to read/write.
         AioOp::Read => {
-            match unsafe { syscall::sys_pread64(fd, buf_addr as *mut u8, nbytes, offset) } {
+            let buf = buf_addr as *mut u8;
+            let r = match unsafe { syscall::sys_pread64(fd, buf, nbytes, offset) } {
+                Err(libc::ESPIPE) => unsafe { syscall::sys_read(fd, buf, nbytes) },
+                r => r,
+            };
+            match r {
                 Ok(n) => n as i64,
                 Err(e) => {
                     unsafe { set_abi_errno(e) };
@@ -15812,7 +15819,12 @@ fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp
             }
         }
         AioOp::Write => {
-            match unsafe { syscall::sys_pwrite64(fd, buf_addr as *const u8, nbytes, offset) } {
+            let buf = buf_addr as *const u8;
+            let r = match unsafe { syscall::sys_pwrite64(fd, buf, nbytes, offset) } {
+                Err(libc::ESPIPE) => unsafe { syscall::sys_write(fd, buf, nbytes) },
+                r => r,
+            };
+            match r {
                 Ok(n) => n as i64,
                 Err(e) => {
                     unsafe { set_abi_errno(e) };
@@ -19025,25 +19037,12 @@ pub unsafe extern "C" fn pkey_mprotect(
 // Batch: Pthread scheduling — Implemented (delegates to kernel)
 // ===========================================================================
 
-/// Extract kernel TID from a pthread_t handle.
-/// On glibc x86_64, pthread_t is a pointer to the thread control block (TCB).
-/// The TID (pid field) is at offset 720 in the NPTL struct (glibc 2.34+).
-/// For the common case of pthread_self(), we can detect this and use SYS_gettid.
+/// Kernel TID of a pthread_t: the calling thread, an fl-managed handle, a
+/// registered host thread, or the main thread (which fl names by its tid).
+/// The former read of glibc's TCB at offset 720 dereferenced the main
+/// thread's tid as a pointer when another thread asked about it (SIGSEGV).
 unsafe fn pthread_to_tid(thread: libc::pthread_t) -> c_long {
-    let self_handle = unsafe { crate::pthread_abi::pthread_self() };
-    if thread == self_handle {
-        // Common case: operating on current thread
-        syscall::sys_gettid() as c_long
-    } else {
-        // For other threads, try reading TID from the glibc TCB.
-        // On glibc x86_64 (NPTL), the pid field is at offset 720.
-        // This is version-dependent but stable across glibc 2.17-2.38.
-        let tcb = thread as *const u8;
-        if tcb.is_null() {
-            return -1;
-        }
-        unsafe { *(tcb.add(720) as *const i32) as c_long }
-    }
+    crate::pthread_abi::resolve_thread_tid(thread).map_or(-1, c_long::from)
 }
 
 /// POSIX `pthread_setschedparam` — set thread scheduling policy and priority.

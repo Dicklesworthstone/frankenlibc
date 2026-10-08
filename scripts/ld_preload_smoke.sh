@@ -306,6 +306,8 @@ FLOCKFILE_THREADS_BIN="${BIN_DIR}/fixture_flockfile_threads"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_flockfile_threads.c" -o "${FLOCKFILE_THREADS_BIN}"
 PTHREAD_CANCEL_BIN="${BIN_DIR}/fixture_pthread_cancel"
 cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_cancel.c" -o "${PTHREAD_CANCEL_BIN}"
+PTHREAD_MAIN_HANDLE_BIN="${BIN_DIR}/fixture_pthread_main_handle"
+cc -O2 -pthread "${ROOT}/tests/integration/fixture_pthread_main_handle.c" -o "${PTHREAD_MAIN_HANDLE_BIN}"
 SETJMP_GUARD_BIN="${BIN_DIR}/fixture_setjmp_guard"
 cc -O2 -D_FORTIFY_SOURCE=2 "${ROOT}/tests/integration/fixture_setjmp_guard.c" -o "${SETJMP_GUARD_BIN}"
 ARGP_BIN="${BIN_DIR}/fixture_argp"
@@ -1074,6 +1076,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   # Thread cancellation at blocking points + cleanup handlers, static condvars
   # (bd-rc0923-epic-eeuy4f.24).
   run_corpus_case "${mode}" "pthread_cancel" "${PTHREAD_CANCEL_BIN}" || mode_failed=1
+  # Another thread's calls on the main thread's pthread_t (bd-5aw3u6).
+  run_corpus_case "${mode}" "pthread_main_handle" "${PTHREAD_MAIN_HANDLE_BIN}" || mode_failed=1
   # Cancellation as a C++ forced unwind: destructors, abi::__forced_unwind.
   if [[ -n "${CANCEL_UNWIND_BIN}" ]]; then
     run_corpus_case "${mode}" "cxx_cancel_forced_unwind" "${CANCEL_UNWIND_BIN}" || mode_failed=1

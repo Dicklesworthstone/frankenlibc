@@ -196,6 +196,112 @@ fn diff_aio_read_then_complete() {
     }
 }
 
+struct AioImpl {
+    read: unsafe extern "C" fn(*mut c_void) -> c_int,
+    write: unsafe extern "C" fn(*mut c_void) -> c_int,
+    error: unsafe extern "C" fn(*const c_void) -> c_int,
+    ret: unsafe extern "C" fn(*mut c_void) -> libc::ssize_t,
+}
+
+/// On a non-seekable descriptor pair (pipe or socketpair): an aio_read
+/// submitted before any data is written, then an aio_write whose bytes are
+/// read back. Returns (read error, read return, read bytes, write error,
+/// write return, bytes seen by the peer).
+fn aio_stream_roundtrip(
+    imp: &AioImpl,
+    fds: [c_int; 2],
+) -> (c_int, isize, Vec<u8>, c_int, isize, Vec<u8>) {
+    let wait = |cb: *const c_void| {
+        for _ in 0..2000 {
+            let r = unsafe { (imp.error)(cb) };
+            if r != libc::EINPROGRESS {
+                return r;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        libc::EINPROGRESS
+    };
+    let mut cb = vec![0u8; AIOCB_BYTES];
+    let mut buf = vec![0u8; 16];
+    unsafe {
+        let cbp = cb.as_mut_ptr() as *mut AioCb;
+        (*cbp).aio_fildes = fds[0];
+        (*cbp).aio_buf = buf.as_mut_ptr() as *mut c_void;
+        (*cbp).aio_nbytes = 3;
+        (*cbp).aio_offset = 0;
+        assert_eq!((imp.read)(cb.as_mut_ptr() as *mut c_void), 0);
+        assert_eq!(libc::write(fds[1], b"abc".as_ptr() as *const c_void, 3), 3);
+    }
+    let rerr = wait(cb.as_ptr() as *const c_void);
+    let rret = unsafe { (imp.ret)(cb.as_mut_ptr() as *mut c_void) };
+    let rbuf = buf[..rret.max(0) as usize].to_vec();
+
+    let mut cb = vec![0u8; AIOCB_BYTES];
+    let mut out = *b"xyz12";
+    unsafe {
+        let cbp = cb.as_mut_ptr() as *mut AioCb;
+        (*cbp).aio_fildes = fds[1];
+        (*cbp).aio_buf = out.as_mut_ptr() as *mut c_void;
+        (*cbp).aio_nbytes = out.len();
+        (*cbp).aio_offset = 7;
+        assert_eq!((imp.write)(cb.as_mut_ptr() as *mut c_void), 0);
+    }
+    let werr = wait(cb.as_ptr() as *const c_void);
+    let wret = unsafe { (imp.ret)(cb.as_mut_ptr() as *mut c_void) };
+    let mut peer = vec![0u8; 16];
+    let n = if wret > 0 {
+        unsafe { libc::read(fds[0], peer.as_mut_ptr() as *mut c_void, peer.len()) }
+    } else {
+        0
+    };
+    peer.truncate(n.max(0) as usize);
+    (rerr, rret, rbuf, werr, wret, peer)
+}
+
+#[test]
+fn diff_aio_read_write_on_pipe_and_socket() {
+    let fl_impl = AioImpl {
+        read: fl::aio_read,
+        write: fl::aio_write,
+        error: fl::aio_error,
+        ret: fl::aio_return,
+    };
+    let lc_impl = AioImpl {
+        read: aio_read,
+        write: aio_write,
+        error: aio_error,
+        ret: aio_return,
+    };
+    let pipe = || {
+        let mut p = [0 as c_int; 2];
+        assert_eq!(unsafe { libc::pipe(p.as_mut_ptr()) }, 0);
+        p
+    };
+    let socketpair = || {
+        let mut p = [0 as c_int; 2];
+        let r = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, p.as_mut_ptr()) };
+        assert_eq!(r, 0);
+        p
+    };
+    for (kind, make) in [
+        ("pipe", &pipe as &dyn Fn() -> [c_int; 2]),
+        ("socketpair", &socketpair),
+    ] {
+        let (fds_fl, fds_lc) = (make(), make());
+        let got = aio_stream_roundtrip(&fl_impl, fds_fl);
+        let want = aio_stream_roundtrip(&lc_impl, fds_lc);
+        for fd in fds_fl.into_iter().chain(fds_lc) {
+            unsafe { libc::close(fd) };
+        }
+        assert_eq!(
+            want,
+            (0, 3, b"abc".to_vec(), 0, 5, b"xyz12".to_vec()),
+            "{kind}: glibc"
+        );
+        assert_eq!(got, want, "{kind}: fl vs glibc");
+    }
+}
+
 #[test]
 fn diff_aio_error_einprogress_or_zero_at_submit() {
     // Right after submission, aio_error should return either 0 (already done)

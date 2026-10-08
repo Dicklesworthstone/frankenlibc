@@ -1528,7 +1528,7 @@ fn resolve_registered_host_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     None
 }
 
-fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
+pub(crate) fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
     let self_tid = core_self_tid();
     if self_tid > 0 && thread == native_pthread_self() {
         return Some(self_tid);
@@ -1575,6 +1575,12 @@ fn resolve_thread_tid(thread: libc::pthread_t) -> Option<i32> {
 
     if let Some(tid) = resolve_registered_host_thread_tid(thread) {
         return Some(tid);
+    }
+
+    // The main thread's tid is the pid. A fork child keeps the parent's name
+    // for it (pthread_self is cached), which as a tid names no thread here.
+    if thread as usize == MAIN_THREAD_FL_NAME.load(Ordering::Acquire) {
+        return Some(raw_syscall::sys_getpid());
     }
 
     // A thread no registry knows -- the main thread above all -- has its tid
@@ -3418,7 +3424,7 @@ pub unsafe extern "C-unwind" fn pthread_join(
         && !is_managed_thread_handle(thread)
         && let Some(host_join) = resolved_thread_join_raw()
     {
-        return unsafe { host_join(thread, retval) };
+        return unsafe { host_join(host_thread_handle(thread), retval) };
     }
     unsafe { native_pthread_join(thread, retval) }
 }
@@ -3430,7 +3436,7 @@ pub unsafe extern "C" fn pthread_detach(thread: libc::pthread_t) -> c_int {
         && !is_managed_thread_handle(thread)
         && let Some(host_detach) = resolved_thread_detach_raw()
     {
-        return unsafe { host_detach(thread) };
+        return unsafe { host_detach(host_thread_handle(thread)) };
     }
     unsafe { native_pthread_detach(thread) }
 }
@@ -5474,6 +5480,13 @@ fn host_cancel_target(thread: libc::pthread_t) -> (libc::pthread_t, bool) {
         return (main_handle as libc::pthread_t, false);
     }
     (thread, false)
+}
+
+/// The handle glibc knows `thread` by, for every call forwarded to glibc with
+/// a pthread_t: the main thread's fl name (its tid) handed to glibc's
+/// pthread_join/detach/tryjoin_np from another thread died with SIGSEGV.
+fn host_thread_handle(thread: libc::pthread_t) -> libc::pthread_t {
+    host_cancel_target(thread).0
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7673,7 +7686,7 @@ pub unsafe extern "C-unwind" fn pthread_timedjoin_np(
             return unsafe { pthread_join(thread, retval) };
         }
         if let Some(host_timedjoin) = resolved_thread_timedjoin_np_raw() {
-            return unsafe { host_timedjoin(thread, retval, abstime) };
+            return unsafe { host_timedjoin(host_thread_handle(thread), retval, abstime) };
         }
     }
 
@@ -7768,7 +7781,7 @@ pub unsafe extern "C" fn pthread_tryjoin_np(
         && !is_managed_thread_handle(thread)
         && let Some(host_tryjoin) = resolved_thread_tryjoin_np_raw()
     {
-        return unsafe { host_tryjoin(thread, retval) };
+        return unsafe { host_tryjoin(host_thread_handle(thread), retval) };
     }
 
     let thread_key = thread as usize;
@@ -7836,7 +7849,7 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
             return unsafe { pthread_join(thread, retval) };
         }
         if let Some(host_clockjoin) = resolved_thread_clockjoin_np_raw() {
-            return unsafe { host_clockjoin(thread, retval, clockid, abstime) };
+            return unsafe { host_clockjoin(host_thread_handle(thread), retval, clockid, abstime) };
         }
     }
 
