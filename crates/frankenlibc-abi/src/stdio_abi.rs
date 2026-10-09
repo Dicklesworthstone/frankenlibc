@@ -2310,11 +2310,47 @@ fn sorted_stream_ids(reg: &StreamRegistry) -> Vec<usize> {
 /// instant of the clone otherwise leaves a registry locked forever in the
 /// child, whose next fopen/fclose blocks. Dropping the guard (in the parent and
 /// in the child) unlocks them; none of these mutexes records an owner thread.
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+struct HostStreamState {
+    io_started: bool,
+}
+
+static HOST_STREAMS_PTR: std::sync::atomic::AtomicPtr<
+    Mutex<ArtifactHashMap<usize, HostStreamState>>,
+> = std::sync::atomic::AtomicPtr::new(std::ptr::null_mut());
+
+#[allow(dead_code)]
+fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamState>> {
+    use std::sync::atomic::Ordering;
+    static INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let p = HOST_STREAMS_PTR.load(Ordering::Acquire);
+    if !p.is_null() {
+        return unsafe { &*p };
+    }
+    if INIT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
+        let reg = Box::new(Mutex::new(artifact_hash_map()));
+        HOST_STREAMS_PTR.store(Box::into_raw(reg), Ordering::Release);
+        return unsafe { &*HOST_STREAMS_PTR.load(Ordering::Acquire) };
+    }
+    loop {
+        let p = HOST_STREAMS_PTR.load(Ordering::Acquire);
+        if !p.is_null() {
+            return unsafe { &*p };
+        }
+        std::hint::spin_loop();
+    }
+}
+
 pub(crate) struct StdioForkGuard {
     _native: std::sync::MutexGuard<'static, crate::io_internal_abi::NativeStreamRegistry>,
     _streams: parking_lot::MutexGuard<'static, StreamRegistry>,
     _cookies: std::sync::MutexGuard<'static, Option<ArtifactHashMap<usize, CookieStreamInfo>>>,
     _foreign: std::sync::MutexGuard<'static, ArtifactHashMap<usize, usize>>,
+    _host_streams: std::sync::MutexGuard<'static, ArtifactHashMap<usize, HostStreamState>>,
 }
 
 impl StdioForkGuard {
@@ -2335,6 +2371,7 @@ impl StdioForkGuard {
             _streams,
             _cookies,
             _foreign,
+            _host_streams,
         } = self;
         // SAFETY: the child is single-threaded and the old mutex (with the
         // value inside it) is never used again, so reading the value out is a
@@ -2343,6 +2380,14 @@ impl StdioForkGuard {
         std::mem::forget(_streams);
         let fresh = Box::into_raw(Box::new(FastRegistryMutex::new(streams)));
         REGISTRY_PTR.store(fresh, std::sync::atomic::Ordering::Release);
+
+        let host_streams = unsafe {
+            std::ptr::read(&*_host_streams as *const ArtifactHashMap<usize, HostStreamState>)
+        };
+        std::mem::forget(_host_streams);
+        let fresh_host = Box::into_raw(Box::new(Mutex::new(host_streams)));
+        HOST_STREAMS_PTR.store(fresh_host, std::sync::atomic::Ordering::Release);
+
         drop(_native);
         drop(_cookies);
         drop(_foreign);
@@ -2353,6 +2398,10 @@ impl StdioForkGuard {
 /// so they are taken all-or-nothing with try-locks and the attempt backs off
 /// instead of blocking while holding one.
 pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
+    // Eagerly ensure read_only_mappings are cached before fork so the child never
+    // races on OnceLock futex.
+    let _ = read_only_mappings();
+
     loop {
         if let Some(native) = crate::io_internal_abi::try_lock_native_stream_registry()
             && let Ok(streams) = registry().try_lock()
@@ -2362,14 +2411,21 @@ pub(crate) fn stdio_fork_prepare() -> StdioForkGuard {
                 Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
                 Err(std::sync::TryLockError::WouldBlock) => None,
             };
+            let host_streams = match host_stream_registry().try_lock() {
+                Ok(guard) => Some(guard),
+                Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+                Err(std::sync::TryLockError::WouldBlock) => None,
+            };
             if let Some(cookies) = cookies
                 && let Some(foreign) = crate::io_internal_abi::try_lock_foreign_adoption_map()
+                && let Some(host_streams) = host_streams
             {
                 return StdioForkGuard {
                     _native: native,
                     _streams: streams,
                     _cookies: cookies,
                     _foreign: foreign,
+                    _host_streams: host_streams,
                 };
             }
         }
@@ -2517,18 +2573,6 @@ fn may_delegate_to_host(stream: *mut c_void, id: usize) -> bool {
         return false;
     }
     !io_internal_abi::is_native_handle_slot_address(stream)
-}
-
-#[derive(Clone, Copy, Debug)]
-#[allow(dead_code)]
-struct HostStreamState {
-    io_started: bool,
-}
-
-#[allow(dead_code)]
-fn host_stream_registry() -> &'static Mutex<ArtifactHashMap<usize, HostStreamState>> {
-    static HOST_STREAMS: OnceLock<Mutex<ArtifactHashMap<usize, HostStreamState>>> = OnceLock::new();
-    HOST_STREAMS.get_or_init(|| Mutex::new(artifact_hash_map()))
 }
 
 #[allow(dead_code)]
@@ -7867,6 +7911,11 @@ fn read_only_mappings() -> &'static [(usize, usize)] {
                 .collect()
         })
         .as_slice()
+}
+
+#[doc(hidden)]
+pub fn ensure_read_only_mappings_cached() {
+    let _ = read_only_mappings();
 }
 
 #[inline]

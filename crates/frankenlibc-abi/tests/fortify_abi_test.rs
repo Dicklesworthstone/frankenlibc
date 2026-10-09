@@ -11,6 +11,9 @@ use std::ffi::{CStr, CString, c_char, c_int, c_long, c_void};
 // Re-export fortified functions from the ABI crate.
 use frankenlibc_abi::errno_abi::__errno_location;
 use frankenlibc_abi::fortify_abi::*;
+use frankenlibc_abi::process_abi::fork as fl_fork;
+
+static FORK_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
 
 #[test]
 fn wide_fortify_entrypoints_use_target_wchar_t() {
@@ -42,16 +45,19 @@ fn errno_value() -> c_int {
 }
 
 fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
-    let pid = unsafe { libc::fork() };
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
     assert!(pid >= 0, "fork failed for {label}");
 
     if pid == 0 {
+        drop(_fork_guard);
         child();
         unsafe { libc::_exit(127) };
     }
 
     let mut status: c_int = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
     assert_eq!(waited, pid, "waitpid failed for {label}");
     assert!(
         libc::WIFSIGNALED(status),
@@ -72,16 +78,19 @@ fn assert_child_sigabrt(label: &str, child: impl FnOnce()) {
 /// were made in-process, which reads as a harness crash rather than a failed
 /// assertion. Here it is a plain failure naming the signal.
 fn assert_child_exits_normally(label: &str, child: impl FnOnce()) {
-    let pid = unsafe { libc::fork() };
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
     assert!(pid >= 0, "fork failed for {label}");
 
     if pid == 0 {
+        drop(_fork_guard);
         child();
         unsafe { libc::_exit(0) };
     }
 
     let mut status: c_int = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
     assert_eq!(waited, pid, "waitpid failed for {label}");
     assert!(
         !libc::WIFSIGNALED(status),
@@ -1509,14 +1518,17 @@ fn wctomb_chk_short_buffer_aborts_child_process() {
 /// Did the child die by SIGABRT? Reports rather than asserts, so a differential
 /// can compare fl's answer against the host's for the same input.
 fn child_aborted(label: &str, child: impl FnOnce()) -> bool {
-    let pid = unsafe { libc::fork() };
+    let _fork_guard = FORK_LOCK.lock();
+    let pid = unsafe { fl_fork() };
     assert!(pid >= 0, "fork failed for {label}");
     if pid == 0 {
+        drop(_fork_guard);
         child();
         unsafe { libc::_exit(0) };
     }
     let mut status: c_int = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    drop(_fork_guard);
     assert_eq!(waited, pid, "waitpid failed for {label}");
     libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGABRT
 }
