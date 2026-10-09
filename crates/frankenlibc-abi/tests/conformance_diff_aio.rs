@@ -53,29 +53,32 @@ fn unique_tempfile(label: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("fl_aio_diff_{label}_{pid}_{id}"))
 }
 
-/// Wait up to 1 second for aio_error to return 0 (not EINPROGRESS).
+/// Wait up to 5 seconds for aio_error to return something other than EINPROGRESS.
+/// Panics on timeout to ensure in-flight memory is never dropped by callers.
 fn wait_aio_complete_lc(cb: *const c_void) -> c_int {
     const EINPROGRESS: c_int = libc::EINPROGRESS;
-    for _ in 0..1000 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(5) {
         let r = unsafe { aio_error(cb) };
         if r != EINPROGRESS {
             return r;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    EINPROGRESS
+    panic!("glibc aio operation timed out after 5s while still EINPROGRESS");
 }
 
 fn wait_aio_complete_fl(cb: *const c_void) -> c_int {
     const EINPROGRESS: c_int = libc::EINPROGRESS;
-    for _ in 0..1000 {
+    let start = std::time::Instant::now();
+    while start.elapsed() < std::time::Duration::from_secs(5) {
         let r = unsafe { fl::aio_error(cb) };
         if r != EINPROGRESS {
             return r;
         }
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    EINPROGRESS
+    panic!("frankenlibc aio operation timed out after 5s while still EINPROGRESS");
 }
 
 #[test]
@@ -214,14 +217,15 @@ fn aio_stream_roundtrip(
     fds: [c_int; 2],
 ) -> (c_int, isize, Vec<u8>, c_int, isize, Vec<u8>) {
     let wait = |cb: *const c_void| {
-        for _ in 0..2000 {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(5) {
             let r = unsafe { (imp.error)(cb) };
             if r != libc::EINPROGRESS {
                 return r;
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        libc::EINPROGRESS
+        panic!("aio_stream_roundtrip wait timed out after 5s while still EINPROGRESS");
     };
     let mut cb = vec![0u8; AIOCB_BYTES];
     let mut buf = vec![0u8; 16];
@@ -230,8 +234,14 @@ fn aio_stream_roundtrip(
         (*cbp).aio_fildes = fds[0];
         (*cbp).aio_buf = buf.as_mut_ptr() as *mut c_void;
         (*cbp).aio_nbytes = 3;
-        (*cbp).aio_offset = 0;
+        (*cbp).aio_offset = 12345;
         assert_eq!((imp.read)(cb.as_mut_ptr() as *mut c_void), 0);
+        let immediate_err = (imp.error)(cb.as_ptr() as *const c_void);
+        assert_eq!(
+            immediate_err,
+            libc::EINPROGRESS,
+            "read submission on empty pipe must report EINPROGRESS"
+        );
         assert_eq!(libc::write(fds[1], b"abc".as_ptr() as *const c_void, 3), 3);
     }
     let rerr = wait(cb.as_ptr() as *const c_void);
@@ -448,6 +458,276 @@ fn diff_aio_assert_abi_offsets() {
         std::mem::offset_of!(AbiAiocb, aio_offset),
         std::mem::offset_of!(libc::aiocb, aio_offset)
     );
+}
+
+#[test]
+fn diff_aio_full_pipe_write_is_nonblocking() {
+    let fl_impl = AioImpl {
+        read: fl::aio_read,
+        write: fl::aio_write,
+        error: fl::aio_error,
+        ret: fl::aio_return,
+    };
+    let lc_impl = AioImpl {
+        read: aio_read,
+        write: aio_write,
+        error: aio_error,
+        ret: aio_return,
+    };
+
+    let test_full_pipe = |imp: &AioImpl| {
+        let mut p = [0 as c_int; 2];
+        assert_eq!(unsafe { libc::pipe(p.as_mut_ptr()) }, 0);
+        let [rfd, wfd] = p;
+
+        // Fill pipe to capacity in nonblocking mode
+        unsafe {
+            let flags = libc::fcntl(wfd, libc::F_GETFL);
+            assert!(flags >= 0);
+            assert_eq!(libc::fcntl(wfd, libc::F_SETFL, flags | libc::O_NONBLOCK), 0);
+        }
+        let chunk = [0x5au8; 4096];
+        let mut total_filled = 0;
+        loop {
+            let written = unsafe { libc::write(wfd, chunk.as_ptr() as *const c_void, chunk.len()) };
+            if written <= 0 {
+                break;
+            }
+            total_filled += written as usize;
+        }
+        assert!(total_filled >= 4096, "pipe buffer was not filled");
+
+        // Restore blocking mode on write end
+        unsafe {
+            let flags = libc::fcntl(wfd, libc::F_GETFL);
+            assert!(flags >= 0);
+            assert_eq!(
+                libc::fcntl(wfd, libc::F_SETFL, flags & !libc::O_NONBLOCK),
+                0
+            );
+        }
+
+        // Submit aio_write on the full pipe — must return 0 immediately and report EINPROGRESS
+        let mut payload = vec![0x42u8; 512];
+        let mut cb = vec![0u8; AIOCB_BYTES];
+        let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
+        unsafe {
+            (*cbp).aio_fildes = wfd;
+            (*cbp).aio_buf = payload.as_mut_ptr() as *mut c_void;
+            (*cbp).aio_nbytes = payload.len();
+            (*cbp).aio_offset = 777; // ignored on non-seekable descriptor
+        }
+        assert_eq!(unsafe { (imp.write)(cb.as_mut_ptr() as *mut c_void) }, 0);
+        assert_eq!(
+            unsafe { (imp.error)(cb.as_ptr() as *const c_void) },
+            libc::EINPROGRESS,
+            "aio_write on full pipe must report EINPROGRESS immediately"
+        );
+
+        // Now drain 4096 bytes (one pipe page) from rfd so the kernel frees the buffer page
+        // and wakes the background worker completing the write.
+        let mut drain_buf = vec![0u8; 4096];
+        let drained =
+            unsafe { libc::read(rfd, drain_buf.as_mut_ptr() as *mut c_void, drain_buf.len()) };
+        assert_eq!(drained, 4096);
+
+        // Bounded wait with watchdog
+        let start = std::time::Instant::now();
+        loop {
+            let err = unsafe { (imp.error)(cb.as_ptr() as *const c_void) };
+            if err == 0 {
+                break;
+            }
+            assert_eq!(err, libc::EINPROGRESS);
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                panic!("timed out waiting for aio_write on drained pipe");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        let ret = unsafe { (imp.ret)(cb.as_mut_ptr() as *mut c_void) };
+        assert_eq!(ret, 512);
+
+        // Drain the rest of the initial filler bytes
+        let mut remaining_filler = total_filled - 4096;
+        let mut sink = vec![0u8; 4096];
+        while remaining_filler > 0 {
+            let to_read = remaining_filler.min(sink.len());
+            let n = unsafe { libc::read(rfd, sink.as_mut_ptr() as *mut c_void, to_read) };
+            assert!(n > 0);
+            remaining_filler -= n as usize;
+        }
+
+        // Read our 512 bytes back and verify
+        let mut read_back = vec![0u8; 512];
+        let n = unsafe { libc::read(rfd, read_back.as_mut_ptr() as *mut c_void, read_back.len()) };
+        assert_eq!(n, 512);
+        assert_eq!(read_back, payload);
+
+        unsafe {
+            libc::close(rfd);
+            libc::close(wfd);
+        }
+    };
+
+    test_full_pipe(&fl_impl);
+    test_full_pipe(&lc_impl);
+}
+
+#[test]
+fn diff_aio_nonzero_offset_honored_on_seekable_and_ignored_on_pipe() {
+    let fl_impl = AioImpl {
+        read: fl::aio_read,
+        write: fl::aio_write,
+        error: fl::aio_error,
+        ret: fl::aio_return,
+    };
+    let lc_impl = AioImpl {
+        read: aio_read,
+        write: aio_write,
+        error: aio_error,
+        ret: aio_return,
+    };
+
+    let test_seekable = |imp: &AioImpl| {
+        let path = unique_tempfile("seekable_offset");
+        std::fs::write(&path, b"0123456789abcdefghijklmnopqrstuvwxyz").unwrap();
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let fd = f.as_raw_fd();
+
+        // 1. Read at offset 10, len 6 -> should be "abcdef"
+        let mut read_buf = vec![0u8; 6];
+        let mut cb = vec![0u8; AIOCB_BYTES];
+        let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
+        unsafe {
+            (*cbp).aio_fildes = fd;
+            (*cbp).aio_buf = read_buf.as_mut_ptr() as *mut c_void;
+            (*cbp).aio_nbytes = read_buf.len();
+            (*cbp).aio_offset = 10;
+        }
+        assert_eq!(unsafe { (imp.read)(cb.as_mut_ptr() as *mut c_void) }, 0);
+        let start = std::time::Instant::now();
+        loop {
+            let err = unsafe { (imp.error)(cb.as_ptr() as *const c_void) };
+            if err == 0 {
+                break;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                panic!("timed out waiting for seekable aio_read");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(unsafe { (imp.ret)(cb.as_mut_ptr() as *mut c_void) }, 6);
+        assert_eq!(&read_buf, b"abcdef");
+
+        // 2. Write at offset 20, len 4 with "WXYZ"
+        let mut write_payload = b"WXYZ".to_vec();
+        let mut cb = vec![0u8; AIOCB_BYTES];
+        let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
+        unsafe {
+            (*cbp).aio_fildes = fd;
+            (*cbp).aio_buf = write_payload.as_mut_ptr() as *mut c_void;
+            (*cbp).aio_nbytes = write_payload.len();
+            (*cbp).aio_offset = 20;
+        }
+        assert_eq!(unsafe { (imp.write)(cb.as_mut_ptr() as *mut c_void) }, 0);
+        let start = std::time::Instant::now();
+        loop {
+            let err = unsafe { (imp.error)(cb.as_ptr() as *const c_void) };
+            if err == 0 {
+                break;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                panic!("timed out waiting for seekable aio_write");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(unsafe { (imp.ret)(cb.as_mut_ptr() as *mut c_void) }, 4);
+
+        drop(f);
+        let content = std::fs::read(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            &content[20..24],
+            b"WXYZ",
+            "offset 20 must contain written bytes"
+        );
+    };
+
+    let test_pipe_ignores_offset = |imp: &AioImpl| {
+        let mut p = [0 as c_int; 2];
+        assert_eq!(unsafe { libc::pipe(p.as_mut_ptr()) }, 0);
+        let [rfd, wfd] = p;
+
+        // Write with non-zero offset on pipe
+        let mut write_payload = b"ignored_offset_pipe".to_vec();
+        let mut cb_w = vec![0u8; AIOCB_BYTES];
+        let cbp_w = cb_w.as_mut_ptr() as *mut AbiAiocb;
+        unsafe {
+            (*cbp_w).aio_fildes = wfd;
+            (*cbp_w).aio_buf = write_payload.as_mut_ptr() as *mut c_void;
+            (*cbp_w).aio_nbytes = write_payload.len();
+            (*cbp_w).aio_offset = 9999;
+        }
+        assert_eq!(unsafe { (imp.write)(cb_w.as_mut_ptr() as *mut c_void) }, 0);
+        let start = std::time::Instant::now();
+        loop {
+            let err = unsafe { (imp.error)(cb_w.as_ptr() as *const c_void) };
+            if err == 0 {
+                break;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                panic!("timed out waiting for pipe aio_write");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(
+            unsafe { (imp.ret)(cb_w.as_mut_ptr() as *mut c_void) },
+            write_payload.len() as isize
+        );
+
+        // Read with non-zero offset on pipe
+        let mut read_buf = vec![0u8; write_payload.len()];
+        let mut cb_r = vec![0u8; AIOCB_BYTES];
+        let cbp_r = cb_r.as_mut_ptr() as *mut AbiAiocb;
+        unsafe {
+            (*cbp_r).aio_fildes = rfd;
+            (*cbp_r).aio_buf = read_buf.as_mut_ptr() as *mut c_void;
+            (*cbp_r).aio_nbytes = read_buf.len();
+            (*cbp_r).aio_offset = 8888;
+        }
+        assert_eq!(unsafe { (imp.read)(cb_r.as_mut_ptr() as *mut c_void) }, 0);
+        let start = std::time::Instant::now();
+        loop {
+            let err = unsafe { (imp.error)(cb_r.as_ptr() as *const c_void) };
+            if err == 0 {
+                break;
+            }
+            if start.elapsed() > std::time::Duration::from_secs(5) {
+                panic!("timed out waiting for pipe aio_read");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(
+            unsafe { (imp.ret)(cb_r.as_mut_ptr() as *mut c_void) },
+            read_buf.len() as isize
+        );
+        assert_eq!(read_buf, write_payload);
+
+        unsafe {
+            libc::close(rfd);
+            libc::close(wfd);
+        }
+    };
+
+    test_seekable(&fl_impl);
+    test_seekable(&lc_impl);
+    test_pipe_ignores_offset(&fl_impl);
+    test_pipe_ignores_offset(&lc_impl);
 }
 
 #[test]
