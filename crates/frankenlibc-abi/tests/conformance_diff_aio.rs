@@ -31,16 +31,18 @@ unsafe extern "C" {
 // across any frankenlibc overlay.
 const AIOCB_BYTES: usize = 256;
 
-#[repr(C)]
-struct AioCb {
-    aio_fildes: c_int,
-    aio_lio_opcode: c_int,
-    aio_reqprio: c_int,
-    aio_buf: *mut c_void,
-    aio_nbytes: usize,
-    aio_sigevent: [u8; 64], // sigevent ~ 64 bytes
-    aio_offset: libc::off_t,
-    _pad: [u8; 256 - (4 + 4 + 4 + 8 + 8 + 64 + 8)],
+#[repr(C, align(8))]
+pub struct AbiAiocb {
+    pub aio_fildes: c_int,
+    pub aio_lio_opcode: c_int,
+    pub aio_reqprio: c_int,
+    _pad_prefix: [u8; 4],
+    pub aio_buf: *mut c_void,
+    pub aio_nbytes: usize,
+    pub aio_sigevent: [u8; 64],
+    _glibc_internal: [u8; 32],
+    pub aio_offset: libc::off_t,
+    _pad_tail: [u8; 120],
 }
 
 fn unique_tempfile(label: &str) -> std::path::PathBuf {
@@ -91,7 +93,7 @@ fn diff_aio_write_then_complete() {
 
     // fl run
     let mut cb_fl = vec![0u8; AIOCB_BYTES];
-    let cbp = cb_fl.as_mut_ptr() as *mut AioCb;
+    let cbp = cb_fl.as_mut_ptr() as *mut AbiAiocb;
     unsafe {
         (*cbp).aio_fildes = fd;
         (*cbp).aio_buf = payload.as_ptr() as *mut c_void;
@@ -107,7 +109,7 @@ fn diff_aio_write_then_complete() {
 
     // lc run
     let mut cb_lc = vec![0u8; AIOCB_BYTES];
-    let cbp = cb_lc.as_mut_ptr() as *mut AioCb;
+    let cbp = cb_lc.as_mut_ptr() as *mut AbiAiocb;
     unsafe {
         (*cbp).aio_fildes = fd;
         (*cbp).aio_buf = payload.as_ptr() as *mut c_void;
@@ -154,7 +156,7 @@ fn diff_aio_read_then_complete() {
     let mut cb_fl = vec![0u8; AIOCB_BYTES];
     let mut buf_fl = vec![0u8; 64];
     unsafe {
-        let cbp = cb_fl.as_mut_ptr() as *mut AioCb;
+        let cbp = cb_fl.as_mut_ptr() as *mut AbiAiocb;
         (*cbp).aio_fildes = fd;
         (*cbp).aio_buf = buf_fl.as_mut_ptr() as *mut c_void;
         (*cbp).aio_nbytes = buf_fl.len();
@@ -168,7 +170,7 @@ fn diff_aio_read_then_complete() {
     let mut cb_lc = vec![0u8; AIOCB_BYTES];
     let mut buf_lc = vec![0u8; 64];
     unsafe {
-        let cbp = cb_lc.as_mut_ptr() as *mut AioCb;
+        let cbp = cb_lc.as_mut_ptr() as *mut AbiAiocb;
         (*cbp).aio_fildes = fd;
         (*cbp).aio_buf = buf_lc.as_mut_ptr() as *mut c_void;
         (*cbp).aio_nbytes = buf_lc.len();
@@ -224,7 +226,7 @@ fn aio_stream_roundtrip(
     let mut cb = vec![0u8; AIOCB_BYTES];
     let mut buf = vec![0u8; 16];
     unsafe {
-        let cbp = cb.as_mut_ptr() as *mut AioCb;
+        let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
         (*cbp).aio_fildes = fds[0];
         (*cbp).aio_buf = buf.as_mut_ptr() as *mut c_void;
         (*cbp).aio_nbytes = 3;
@@ -239,7 +241,7 @@ fn aio_stream_roundtrip(
     let mut cb = vec![0u8; AIOCB_BYTES];
     let mut out = *b"xyz12";
     unsafe {
-        let cbp = cb.as_mut_ptr() as *mut AioCb;
+        let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
         (*cbp).aio_fildes = fds[1];
         (*cbp).aio_buf = out.as_mut_ptr() as *mut c_void;
         (*cbp).aio_nbytes = out.len();
@@ -321,7 +323,7 @@ fn diff_aio_error_einprogress_or_zero_at_submit() {
     let run = |use_fl: bool| -> c_int {
         let mut cb = vec![0u8; AIOCB_BYTES];
         unsafe {
-            let cbp = cb.as_mut_ptr() as *mut AioCb;
+            let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
             (*cbp).aio_fildes = fd;
             (*cbp).aio_buf = payload.as_ptr() as *mut c_void;
             (*cbp).aio_nbytes = payload.len();
@@ -383,7 +385,7 @@ fn diff_aio_cancel_after_submit() {
     let run = |use_fl: bool| -> c_int {
         let mut cb = vec![0u8; AIOCB_BYTES];
         unsafe {
-            let cbp = cb.as_mut_ptr() as *mut AioCb;
+            let cbp = cb.as_mut_ptr() as *mut AbiAiocb;
             (*cbp).aio_fildes = fd;
             (*cbp).aio_buf = payload.as_ptr() as *mut c_void;
             (*cbp).aio_nbytes = payload.len();
@@ -416,6 +418,35 @@ fn diff_aio_cancel_after_submit() {
     assert!(
         (r_fl >= 0) == (r_lc >= 0),
         "aio_cancel success-match: fl={r_fl}, lc={r_lc}"
+    );
+}
+
+#[test]
+fn diff_aio_assert_abi_offsets() {
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_fildes), 0);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_lio_opcode), 4);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_reqprio), 8);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_buf), 16);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_nbytes), 24);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_sigevent), 32);
+    assert_eq!(std::mem::offset_of!(AbiAiocb, aio_offset), 128);
+    assert_eq!(std::mem::size_of::<AbiAiocb>(), 256);
+
+    assert_eq!(
+        std::mem::offset_of!(AbiAiocb, aio_fildes),
+        std::mem::offset_of!(libc::aiocb, aio_fildes)
+    );
+    assert_eq!(
+        std::mem::offset_of!(AbiAiocb, aio_buf),
+        std::mem::offset_of!(libc::aiocb, aio_buf)
+    );
+    assert_eq!(
+        std::mem::offset_of!(AbiAiocb, aio_nbytes),
+        std::mem::offset_of!(libc::aiocb, aio_nbytes)
+    );
+    assert_eq!(
+        std::mem::offset_of!(AbiAiocb, aio_offset),
+        std::mem::offset_of!(libc::aiocb, aio_offset)
     );
 }
 
