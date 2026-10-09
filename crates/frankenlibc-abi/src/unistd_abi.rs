@@ -15890,10 +15890,64 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
 
     #[cfg(feature = "owned-tls-cache")]
     {
-        let result = aio_execute(fd, buf_addr, nbytes, offset, op);
-        unsafe { aio_complete(aiocbp, result) };
-        aio_notify_waiters();
-        0
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        {
+            struct AioWork {
+                aiocbp: usize,
+                fd: c_int,
+                buf_addr: usize,
+                nbytes: usize,
+                offset: i64,
+                op: AioOp,
+            }
+
+            unsafe extern "C" fn aio_worker_entry(arg: usize) -> usize {
+                let work = unsafe { Box::from_raw(arg as *mut AioWork) };
+                let cb = work.aiocbp as *mut c_void;
+                let result = aio_execute(work.fd, work.buf_addr, work.nbytes, work.offset, work.op);
+                unsafe { aio_complete(cb, result) };
+                aio_notify_waiters();
+                0
+            }
+
+            let work = Box::into_raw(Box::new(AioWork {
+                aiocbp: aiocbp as usize,
+                fd,
+                buf_addr,
+                nbytes,
+                offset,
+                op,
+            }));
+
+            crate::malloc_abi::note_native_thread_backend();
+
+            match unsafe {
+                frankenlibc_core::pthread::create_thread(
+                    aio_worker_entry as *const () as usize,
+                    work as usize,
+                    0,
+                )
+            } {
+                Ok(handle) => {
+                    let _ = unsafe { frankenlibc_core::pthread::detach_thread(handle) };
+                    0
+                }
+                Err(_) => {
+                    unsafe { drop(Box::from_raw(work)) };
+                    unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
+                    unsafe { set_abi_errno(errno::EAGAIN) };
+                    -1
+                }
+            }
+        }
+
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            let result = aio_execute(fd, buf_addr, nbytes, offset, op);
+            unsafe { aio_complete(aiocbp, result) };
+            aio_notify_waiters();
+            0
+        }
     }
 
     #[cfg(not(feature = "owned-tls-cache"))]
