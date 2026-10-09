@@ -52,11 +52,15 @@ fn bytes_at(bytes: &[u8], offset: usize, size: usize) -> Option<&[u8]> {
 }
 
 fn word(bytes: &[u8], offset: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(bytes_at(bytes, offset, 2)?.try_into().ok()?))
+    Some(u16::from_le_bytes(
+        bytes_at(bytes, offset, 2)?.try_into().ok()?,
+    ))
 }
 
 fn dword(bytes: &[u8], offset: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(bytes_at(bytes, offset, 4)?.try_into().ok()?))
+    Some(u32::from_le_bytes(
+        bytes_at(bytes, offset, 4)?.try_into().ok()?,
+    ))
 }
 
 fn string(bytes: &[u8], offset: u32) -> Option<&str> {
@@ -72,15 +76,31 @@ struct Image<'a> {
 impl<'a> Image<'a> {
     fn tail(&self, address: u64) -> Option<(u64, &'a [u8])> {
         let mut found: Option<(u64, &'a [u8])> = None;
-        for header in self.object.program_headers.iter().filter(|header| header.is_load()) {
-            let Some(delta) = address.checked_sub(header.p_vaddr) else { continue; };
-            if delta >= header.p_filesz { continue; }
+        for header in self
+            .object
+            .program_headers
+            .iter()
+            .filter(|header| header.is_load())
+        {
+            let Some(delta) = address.checked_sub(header.p_vaddr) else {
+                continue;
+            };
+            if delta >= header.p_filesz {
+                continue;
+            }
             let offset = header.p_offset.checked_add(delta)?;
-            let bytes = bytes_at(self.bytes, usize::try_from(offset).ok()?,
-                usize::try_from(header.p_filesz - delta).ok()?)?;
+            let bytes = bytes_at(
+                self.bytes,
+                usize::try_from(offset).ok()?,
+                usize::try_from(header.p_filesz - delta).ok()?,
+            )?;
             if let Some((previous_offset, previous)) = found {
-                if offset != previous_offset { return None; }
-                if previous.len() >= bytes.len() { continue; }
+                if offset != previous_offset {
+                    return None;
+                }
+                if previous.len() >= bytes.len() {
+                    continue;
+                }
             }
             found = Some((offset, bytes));
         }
@@ -92,29 +112,51 @@ impl<'a> Image<'a> {
     }
 
     fn dynamic(&self) -> Option<BTreeMap<i64, u64>> {
-        let mut headers = self.object.program_headers.iter()
+        let mut headers = self
+            .object
+            .program_headers
+            .iter()
             .filter(|header| header.p_type == ProgramType::Dynamic);
-        let Some(header) = headers.next() else { return Some(BTreeMap::new()); };
-        if headers.next().is_some() || header.p_filesz > header.p_memsz { return None; }
+        let Some(header) = headers.next() else {
+            return Some(BTreeMap::new());
+        };
+        if headers.next().is_some() || header.p_filesz > header.p_memsz {
+            return None;
+        }
         let (offset, bytes) = self.tail(header.p_vaddr)?;
-        if offset != header.p_offset { return None; }
+        if offset != header.p_offset {
+            return None;
+        }
         let size = usize::try_from(header.p_filesz).ok()?;
-        if size % 16 != 0 { return None; }
+        if size % 16 != 0 {
+            return None;
+        }
         let mut tags = BTreeMap::new();
         for entry in bytes.get(..size)?.chunks_exact(16) {
             let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
             let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
-            if tag == 0 { return Some(tags); }
-            if matches!(tag, 5 | 10 | VERSYM | VERDEF | VERDEFNUM | VERNEED | VERNEEDNUM) {
-                if tags.insert(tag, value).is_some_and(|old| old != value) { return None; }
+            if tag == 0 {
+                return Some(tags);
+            }
+            if matches!(
+                tag,
+                5 | 10 | VERSYM | VERDEF | VERDEFNUM | VERNEED | VERNEEDNUM
+            ) {
+                if tags.insert(tag, value).is_some_and(|old| old != value) {
+                    return None;
+                }
             }
         }
         None
     }
 
-    fn records(&self, tags: &BTreeMap<i64, u64>, address: i64, count: i64, width: usize)
-        -> Option<(&'a [u8], usize)>
-    {
+    fn records(
+        &self,
+        tags: &BTreeMap<i64, u64>,
+        address: i64,
+        count: i64,
+        width: usize,
+    ) -> Option<(&'a [u8], usize)> {
         match (tags.get(&address), tags.get(&count)) {
             (None, None) => Some((&[], 0)),
             (Some(_), Some(0)) => Some((&[], 0)),
@@ -130,19 +172,36 @@ impl<'a> Image<'a> {
 
 /// One relative-offset record, with its auxiliaries confined before the next
 /// record. Counts and forward-only offsets bound both nested walks.
-fn record(bytes: &[u8], offset: usize, width: usize, next_field: usize, last: bool)
-    -> Option<(&[u8], usize)>
-{
+fn record(
+    bytes: &[u8],
+    offset: usize,
+    width: usize,
+    next_field: usize,
+    last: bool,
+) -> Option<(&[u8], usize)> {
     let header = bytes_at(bytes, offset, width)?;
     let next = usize::try_from(dword(header, next_field)?).ok()?;
-    if last != (next == 0) || (next != 0 && next < width) { return None; }
-    let end = if next == 0 { bytes.len() } else { offset.checked_add(next)? };
+    if last != (next == 0) || (next != 0 && next < width) {
+        return None;
+    }
+    let end = if next == 0 {
+        bytes.len()
+    } else {
+        offset.checked_add(next)?
+    };
     Some((bytes.get(offset..end)?, end))
 }
 
 fn insert_name(names: &mut BTreeMap<u16, String>, index: u16, name: &str) -> Option<()> {
-    if index == 0 || name.is_empty() { return None; }
-    if names.insert(index, name.to_owned()).is_some_and(|old| old != name) { return None; }
+    if index == 0 || name.is_empty() {
+        return None;
+    }
+    if names
+        .insert(index, name.to_owned())
+        .is_some_and(|old| old != name)
+    {
+        return None;
+    }
     Some(())
 }
 
@@ -150,31 +209,46 @@ impl Table {
     pub(super) fn parse(bytes: &[u8], object: &LoadedObject) -> Option<Self> {
         let image = Image { bytes, object };
         let tags = image.dynamic()?;
-        let mut table = Self { has_definitions: tags.contains_key(&VERDEF), ..Self::default() };
+        let mut table = Self {
+            has_definitions: tags.contains_key(&VERDEF),
+            ..Self::default()
+        };
         let mut names = BTreeMap::new();
-        let has_records = tags.contains_key(&VERDEF) || tags.contains_key(&VERNEED)
-            || tags.contains_key(&VERSYM);
+        let has_records =
+            tags.contains_key(&VERDEF) || tags.contains_key(&VERNEED) || tags.contains_key(&VERSYM);
         let strings = if has_records {
             image.span(*tags.get(&5)?, usize::try_from(*tags.get(&10)?).ok()?)?
-        } else { &[] };
+        } else {
+            &[]
+        };
         let (definitions, count) = image.records(&tags, VERDEF, VERDEFNUM, 20)?;
         let mut offset = 0;
         for ordinal in 0..count {
             let (definition, next) = record(definitions, offset, 20, 16, ordinal + 1 == count)?;
-            if word(definition, 0)? != 1 { return None; }
+            if word(definition, 0)? != 1 {
+                return None;
+            }
             let index = word(definition, 4)?;
-            if index & 0x8000 != 0 { return None; }
+            if index & 0x8000 != 0 {
+                return None;
+            }
             let count = usize::from(word(definition, 6)?);
             let mut aux = usize::try_from(dword(definition, 12)?).ok()?;
-            if count == 0 || count > definition.len() / 8 || aux < 20 { return None; }
+            if count == 0 || count > definition.len() / 8 || aux < 20 {
+                return None;
+            }
             for ordinal in 0..count {
                 let (entry, next_aux) = record(definition, aux, 8, 4, ordinal + 1 == count)?;
                 let name = string(strings, dword(entry, 0)?)?;
                 if ordinal == 0 {
                     let hash = dword(definition, 8)?;
-                    if hash != elf_hash(name.as_bytes()) { return None; }
+                    if hash != elf_hash(name.as_bytes()) {
+                        return None;
+                    }
                     insert_name(&mut names, index, name)?;
-                    if table.definitions.insert(name.to_owned(), hash).is_some() { return None; }
+                    if table.definitions.insert(name.to_owned(), hash).is_some() {
+                        return None;
+                    }
                 }
                 aux = next_aux;
             }
@@ -184,28 +258,47 @@ impl Table {
         let mut offset = 0;
         for ordinal in 0..count {
             let (requirement, next) = record(requirements, offset, 16, 12, ordinal + 1 == count)?;
-            if word(requirement, 0)? != 1 { return None; }
+            if word(requirement, 0)? != 1 {
+                return None;
+            }
             let count = usize::from(word(requirement, 2)?);
             let library = string(strings, dword(requirement, 4)?)?;
-            if library.is_empty() { return None; }
-            let mut required = Requirement { library: library.to_owned(), versions: Vec::new() };
+            if library.is_empty() {
+                return None;
+            }
+            let mut required = Requirement {
+                library: library.to_owned(),
+                versions: Vec::new(),
+            };
             let mut aux = usize::try_from(dword(requirement, 8)?).ok()?;
-            if count == 0 || count > requirement.len() / 16 || aux < 16 { return None; }
+            if count == 0 || count > requirement.len() / 16 || aux < 16 {
+                return None;
+            }
             for ordinal in 0..count {
                 let (entry, next_aux) = record(requirement, aux, 16, 12, ordinal + 1 == count)?;
                 let raw = word(entry, 6)?;
                 let index = raw & 0x7fff;
-                if index <= 1 { return None; }
+                if index <= 1 {
+                    return None;
+                }
                 let name = string(strings, dword(entry, 8)?)?;
                 let hash = dword(entry, 0)?;
-                if hash != elf_hash(name.as_bytes()) { return None; }
+                if hash != elf_hash(name.as_bytes()) {
+                    return None;
+                }
                 insert_name(&mut names, index, name)?;
                 let hidden = raw & 0x8000 != 0;
-                if table.hidden_requests.insert(index, hidden).is_some_and(|old| old != hidden) {
+                if table
+                    .hidden_requests
+                    .insert(index, hidden)
+                    .is_some_and(|old| old != hidden)
+                {
                     return None;
                 }
                 required.versions.push(RequiredVersion {
-                    name: name.to_owned(), hash, weak: word(entry, 4)? & 2 != 0,
+                    name: name.to_owned(),
+                    hash,
+                    weak: word(entry, 4)? & 2 != 0,
                 });
                 aux = next_aux;
             }
@@ -219,7 +312,9 @@ impl Table {
                 let raw = u16::from_le_bytes(entry.try_into().ok()?);
                 let index = raw & 0x7fff;
                 table.raw.push(raw);
-                if index > 1 && !names.contains_key(&index) { return None; }
+                if index > 1 && !names.contains_key(&index) {
+                    return None;
+                }
             }
         }
         table.names = names;
@@ -229,7 +324,11 @@ impl Table {
             }
             let name = object.symbol_name(symbol)?;
             if !name.is_empty() {
-                table.symbols.entry(name.to_owned()).or_default().push(index);
+                table
+                    .symbols
+                    .entry(name.to_owned())
+                    .or_default()
+                    .push(index);
             }
         }
         Some(table)
@@ -240,25 +339,36 @@ impl Table {
     /// no relocation in the consumer currently refers to it. Weak requirements
     /// do not make an otherwise compatible load fail.
     pub(super) fn satisfies(&self, requirement: &Requirement) -> bool {
-        !self.has_definitions || requirement.versions.iter().all(|required| {
-            required.weak || self.definitions.get(&required.name) == Some(&required.hash)
-        })
+        !self.has_definitions
+            || requirement.versions.iter().all(|required| {
+                required.weak || self.definitions.get(&required.name) == Some(&required.hash)
+            })
     }
 
     pub(super) fn name(&self, index: usize) -> Option<&str> {
         let index = self.raw.get(index)? & 0x7fff;
-        (index > 1).then(|| self.names.get(&index).map(String::as_str)).flatten()
+        (index > 1)
+            .then(|| self.names.get(&index).map(String::as_str))
+            .flatten()
     }
 
     pub(super) fn relocation(&self, index: usize) -> Lookup {
-        let hidden = self.raw.get(index).and_then(|raw| self.hidden_requests.get(&(raw & 0x7fff)))
-            .copied().unwrap_or(false);
+        let hidden = self
+            .raw
+            .get(index)
+            .and_then(|raw| self.hidden_requests.get(&(raw & 0x7fff)))
+            .copied()
+            .unwrap_or(false);
         Lookup::Relocation { hidden }
     }
 
-    pub(super) fn lookup<'a>(&self, object: &'a LoadedObject, name: &str,
-        requested: Option<&str>, mode: Lookup) -> Option<&'a Elf64Symbol>
-    {
+    pub(super) fn lookup<'a>(
+        &self,
+        object: &'a LoadedObject,
+        name: &str,
+        requested: Option<&str>,
+        mode: Lookup,
+    ) -> Option<&'a Elf64Symbol> {
         let mut fallback = None;
         let mut ambiguous = false;
         for &slot in self.symbols.get(name)? {
@@ -266,19 +376,32 @@ impl Table {
             // Unversioned providers can interpose versioned imports and are
             // accepted by dlvsym. Do not confuse them with index 1 in a DSO
             // that *does* have a version table.
-            if !self.versioned { return Some(symbol); }
+            if !self.versioned {
+                return Some(symbol);
+            }
             let raw = *self.raw.get(slot)?;
             let index = raw & 0x7fff;
-            if index == 0 { continue; }
+            if index == 0 {
+                continue;
+            }
             if let Some(requested) = requested {
-                if self.name(slot).unwrap_or("") == requested { return Some(symbol); }
-                if !matches!(mode, Lookup::Relocation { hidden: false }) || index != 1 || raw & 0x8000 != 0 {
+                if self.name(slot).unwrap_or("") == requested {
+                    return Some(symbol);
+                }
+                if !matches!(mode, Lookup::Relocation { hidden: false })
+                    || index != 1
+                    || raw & 0x8000 != 0
+                {
                     continue;
                 }
             } else {
                 let compatibility = matches!(mode, Lookup::Relocation { .. }) && index == 2;
-                if compatibility || (index == 1 && raw & 0x8000 == 0) { return Some(symbol); }
-                if raw & 0x8000 != 0 { continue; }
+                if compatibility || (index == 1 && raw & 0x8000 == 0) {
+                    return Some(symbol);
+                }
+                if raw & 0x8000 != 0 {
+                    continue;
+                }
             }
             // GNU accepts a unique public version when no exact/base match
             // exists. Never choose one arbitrarily when a malformed table

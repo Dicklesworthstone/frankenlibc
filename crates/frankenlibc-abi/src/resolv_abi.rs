@@ -4472,9 +4472,9 @@ unsafe fn read_reverse_host_address(
     // Copy before touching output storage, and do not require address alignment.
     unsafe { ptr::copy_nonoverlapping(addr.cast::<u8>(), octets.as_mut_ptr(), width) };
     Ok(match af {
-        libc::AF_INET => std::net::IpAddr::V4(Ipv4Addr::new(
-            octets[0], octets[1], octets[2], octets[3],
-        )),
+        libc::AF_INET => {
+            std::net::IpAddr::V4(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
+        }
         _ => std::net::IpAddr::V6(Ipv6Addr::from(octets)),
     })
 }
@@ -4508,10 +4508,7 @@ fn lookup_reverse_host<T>(
     }
 }
 
-unsafe fn populate_tls_reverse_hostent(
-    name: &[u8],
-    address: std::net::IpAddr,
-) -> *mut c_void {
+unsafe fn populate_tls_reverse_hostent(name: &[u8], address: std::net::IpAddr) -> *mut c_void {
     match address {
         std::net::IpAddr::V4(ip) => {
             // SAFETY: the existing IPv4 writer copies into stable TLS storage.
@@ -4620,7 +4617,9 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
 
     let written = match lookup_reverse_host(address, files_only, |hostname| {
         // SAFETY: caller-provided output buffers; the writer checks their bounds.
-        unsafe { write_reentrant_reverse_hostent(hostname, address, result_buf, buf, buflen, result) }
+        unsafe {
+            write_reentrant_reverse_hostent(hostname, address, result_buf, buf, buflen, result)
+        }
     }) {
         Ok(written) => written,
         Err(error) => {
@@ -6397,18 +6396,16 @@ pub unsafe extern "C" fn ns_parserr(
         return failure(libc::EMSGSIZE);
     }
 
-    let (mut pos, start_index) = if current_section == section
-        && next_index >= 0
-        && next_index <= target
-    {
-        let next_addr = next_ptr as usize;
-        if next_ptr.is_null() || next_addr < section_addr || next_addr >= eom as usize {
-            return failure(libc::EMSGSIZE);
-        }
-        (next_addr - msg_addr, next_index)
-    } else {
-        (section_addr - msg_addr, 0)
-    };
+    let (mut pos, start_index) =
+        if current_section == section && next_index >= 0 && next_index <= target {
+            let next_addr = next_ptr as usize;
+            if next_ptr.is_null() || next_addr < section_addr || next_addr >= eom as usize {
+                return failure(libc::EMSGSIZE);
+            }
+            (next_addr - msg_addr, next_index)
+        } else {
+            (section_addr - msg_addr, 0)
+        };
     for _ in start_index..target {
         if pos >= buf.len() {
             return failure(libc::EMSGSIZE);

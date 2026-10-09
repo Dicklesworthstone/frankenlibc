@@ -753,40 +753,17 @@ fn verify_conformance(
     let mut recognition = 0usize;
 
     for name in REGISTERED_CLASS_ORDER {
-        recognition += verify_recognition(
-            host_wctype,
-            fl.wctype,
-            "wctype",
-            name.as_bytes(),
-            true,
-        );
+        recognition += verify_recognition(host_wctype, fl.wctype, "wctype", name.as_bytes(), true);
     }
     for name in REGISTERED_MAP_ORDER {
-        recognition += verify_recognition(
-            host_wctrans,
-            fl.wctrans,
-            "wctrans",
-            name.as_bytes(),
-            true,
-        );
+        recognition +=
+            verify_recognition(host_wctrans, fl.wctrans, "wctrans", name.as_bytes(), true);
     }
     for candidate in unknown_name_domain(REGISTERED_CLASS_ORDER) {
-        recognition += verify_recognition(
-            host_wctype,
-            fl.wctype,
-            "wctype",
-            &candidate,
-            false,
-        );
+        recognition += verify_recognition(host_wctype, fl.wctype, "wctype", &candidate, false);
     }
     for candidate in unknown_name_domain(REGISTERED_MAP_ORDER) {
-        recognition += verify_recognition(
-            host_wctrans,
-            fl.wctrans,
-            "wctrans",
-            &candidate,
-            false,
-        );
+        recognition += verify_recognition(host_wctrans, fl.wctrans, "wctrans", &candidate, false);
     }
 
     // Composition over the claimed ASCII slice. Each arm applies the
@@ -932,7 +909,10 @@ fn adjudicate(results: &[CaseResult]) -> Verdict {
             .find(|row| row.label == label)
             .unwrap_or_else(|| panic!("missing wctype row {label}"))
     };
-    let classes: Vec<&CaseResult> = REGISTERED_CLASS_ORDER.iter().map(|name| named(name)).collect();
+    let classes: Vec<&CaseResult> = REGISTERED_CLASS_ORDER
+        .iter()
+        .map(|name| named(name))
+        .collect();
 
     let shape_endpoints = named("alnum").glibc_median_ns > named("upper").glibc_median_ns;
     let slowest_known = classes
@@ -965,7 +945,11 @@ fn adjudicate(results: &[CaseResult]) -> Verdict {
         .iter()
         .map(|row| row.fl_median_ns)
         .fold(f64::MAX, f64::min);
-    let fl_flat_ratio = if fl_min > 0.0 { fl_max / fl_min } else { f64::MAX };
+    let fl_flat_ratio = if fl_min > 0.0 {
+        fl_max / fl_min
+    } else {
+        f64::MAX
+    };
     let shape_fl_flat = fl_flat_ratio <= 1.5;
 
     // Registered secondary: xdigit is the only six-byte name, so the length
@@ -981,7 +965,11 @@ fn adjudicate(results: &[CaseResult]) -> Verdict {
             num += (x - mx) * (y - my);
             den += (x - mx) * (x - mx);
         }
-        if den == 0.0 { my } else { my + (num / den) * (index - mx) }
+        if den == 0.0 {
+            my
+        } else {
+            my + (num / den) * (index - mx)
+        }
     };
     let xdigit_below_trend = xdigit.glibc_median_ns < trend_at(4.0);
 
@@ -1005,9 +993,7 @@ fn adjudicate(results: &[CaseResult]) -> Verdict {
         .fold(f64::MAX, f64::min);
     let wctrans_worse_than_wctype = best_wctrans_ratio > worst_wctype_ratio;
     // Bold sub-prediction, reported but not gating.
-    let wctrans_not_a_win = wctrans_rows
-        .iter()
-        .any(|row| row.comparison != "FL_FASTER");
+    let wctrans_not_a_win = wctrans_rows.iter().any(|row| row.comparison != "FL_FASTER");
 
     let verdict = if !all_decidable {
         "INCOMPLETE"

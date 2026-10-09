@@ -237,10 +237,7 @@ fn manifest_anchors_to_verify_subcommand() -> TestResult {
         json_string(&m, "manifest_id")? == "verify-cli-contract",
         "manifest_id mismatch",
     )?;
-    require(
-        json_string(&m, "bead")? == "bd-yjz2d",
-        "bead mismatch",
-    )?;
+    require(json_string(&m, "bead")? == "bd-yjz2d", "bead mismatch")?;
     require(
         json_string(&m, "subcommand_name")? == "verify",
         "subcommand_name mismatch",

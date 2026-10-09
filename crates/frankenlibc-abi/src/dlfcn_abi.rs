@@ -1042,8 +1042,7 @@ pub unsafe extern "C" fn dlvsym(
     }
 
     if !is_main_program_handle(handle)
-        && let Some(native_sym) =
-            resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
+        && let Some(native_sym) = resolve_native_dso_symbol(handle, symbol_name, Some(version_name))
     {
         // NULL can be a successful IFUNC result; absence is represented by None.
         let adverse = native_sym.is_none();

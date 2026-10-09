@@ -383,9 +383,8 @@ mod tests {
     #[test]
     fn test_empty_search_preserves_previous_effective_configuration() {
         for empty in ["search\n", "search \t\r\n"] {
-            let content = format!(
-                "domain stale.example\nsearch current.example other.example\n{empty}"
-            );
+            let content =
+                format!("domain stale.example\nsearch current.example other.example\n{empty}");
             let config = ResolverConfig::parse(content.as_bytes());
             assert_eq!(config.search, vec!["current.example", "other.example"]);
 
@@ -493,7 +492,9 @@ options ndots:2 timeout:3 attempts:2 rotate
         let config = ResolverConfig::parse(b"search one two three four five six seven eight\n");
         assert_eq!(
             config.search,
-            vec!["one", "two", "three", "four", "five", "six", "seven", "eight"]
+            vec![
+                "one", "two", "three", "four", "five", "six", "seven", "eight"
+            ]
         );
 
         let config =

@@ -6,53 +6,68 @@ mod dlsym_oracle;
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 mod linux {
+    use super::dlsym_oracle;
+    use frankenlibc_abi::dlfcn_abi::{dlclose, dlopen, dlsym, native_dso_handle_for_tests};
     use std::ffi::{CString, c_char, c_int, c_void};
     use std::os::unix::ffi::OsStrExt;
     use std::path::{Path, PathBuf};
     use std::process::{Command, ExitCode, Stdio};
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-    use frankenlibc_abi::dlfcn_abi::{dlclose, dlopen, dlsym, native_dso_handle_for_tests};
-    use super::dlsym_oracle;
 
     #[derive(Clone, Copy)]
-    enum Loader { Native, Host }
+    enum Loader {
+        Native,
+        Host,
+    }
     impl Loader {
         fn load(self, path: &Path, flags: c_int) -> *mut c_void {
             let name = CString::new(path.as_os_str().as_bytes()).unwrap();
-            let handle = unsafe { match self {
-                Self::Native => dlopen(name.as_ptr(), flags),
-                Self::Host => {
-                    let f: unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void =
-                        dlsym_oracle::host_fn(c"dlopen", dlopen as *const ());
-                    f(name.as_ptr(), flags)
+            let handle = unsafe {
+                match self {
+                    Self::Native => dlopen(name.as_ptr(), flags),
+                    Self::Host => {
+                        let f: unsafe extern "C" fn(*const c_char, c_int) -> *mut c_void =
+                            dlsym_oracle::host_fn(c"dlopen", dlopen as *const ());
+                        f(name.as_ptr(), flags)
+                    }
                 }
-            }};
-            assert!(!handle.is_null(), "process fixture failed to load: {path:?}");
+            };
+            assert!(
+                !handle.is_null(),
+                "process fixture failed to load: {path:?}"
+            );
             if matches!(self, Self::Native) {
-                assert!(native_dso_handle_for_tests(handle), "host fallback is not native process exit");
+                assert!(
+                    native_dso_handle_for_tests(handle),
+                    "host fallback is not native process exit"
+                );
             }
             handle
         }
         fn close(self, handle: *mut c_void) {
-            let result = unsafe { match self {
-                Self::Native => dlclose(handle),
-                Self::Host => {
-                    let f: unsafe extern "C" fn(*mut c_void) -> c_int =
-                        dlsym_oracle::host_fn(c"dlclose", dlclose as *const ());
-                    f(handle)
+            let result = unsafe {
+                match self {
+                    Self::Native => dlclose(handle),
+                    Self::Host => {
+                        let f: unsafe extern "C" fn(*mut c_void) -> c_int =
+                            dlsym_oracle::host_fn(c"dlclose", dlclose as *const ());
+                        f(handle)
+                    }
                 }
-            }};
+            };
             assert_eq!(result, 0);
         }
         fn terminate(self, handle: *mut c_void, status: c_int) -> ! {
-            let address = unsafe { match self {
-                Self::Native => dlsym(handle, c"terminate".as_ptr()),
-                Self::Host => {
-                    let f: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void =
-                        dlsym_oracle::host_fn(c"dlsym", dlsym as *const ());
-                    f(handle, c"terminate".as_ptr())
+            let address = unsafe {
+                match self {
+                    Self::Native => dlsym(handle, c"terminate".as_ptr()),
+                    Self::Host => {
+                        let f: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void =
+                            dlsym_oracle::host_fn(c"dlsym", dlsym as *const ());
+                        f(handle, c"terminate".as_ptr())
+                    }
                 }
-            }};
+            };
             assert!(!address.is_null());
             let f: unsafe extern "C" fn(c_int) -> ! = unsafe { std::mem::transmute(address) };
             unsafe { f(status) }
@@ -136,61 +151,169 @@ mod linux {
     "#;
 
     struct Case {
-        name: &'static str, source: &'static str, cpp: bool, dependency: bool,
-        mode: &'static str, function: &'static str, gnu2: bool,
-        expected: &'static str, status: i32, native_only: bool,
+        name: &'static str,
+        source: &'static str,
+        cpp: bool,
+        dependency: bool,
+        mode: &'static str,
+        function: &'static str,
+        gnu2: bool,
+        expected: &'static str,
+        status: i32,
+        native_only: bool,
     }
     fn cases() -> Vec<Case> {
         let base = |name, source, mode, expected| Case {
-            name, source, mode, expected, cpp: false, dependency: false,
-            function: "", gnu2: false, status: 17, native_only: false,
+            name,
+            source,
+            mode,
+            expected,
+            cpp: false,
+            dependency: false,
+            function: "",
+            gnu2: false,
+            status: 17,
+            native_only: false,
         };
         vec![
-            Case { dependency: true, ..base("plain-return", ROOT, "return", "LRMrl") },
-            Case { dependency: true, ..base("plain-host-exit", ROOT, "host-exit", "LRMrl") },
-            Case { dependency: true, function: "exit", ..base("plain-native-exit", ROOT, "call", "LRMrl") },
-            Case { dependency: true, ..base("nodelete-return", ROOT, "nodelete", "LRMrl") },
-            Case { dependency: true, ..base("closed-return", ROOT, "closed", "LRrlM") },
-            Case { cpp: true, ..base("cpp-return", CPP, "return", "CMDF") },
-            Case { cpp: true, function: "exit", ..base("cpp-native-exit", CPP, "call", "CMDF") },
+            Case {
+                dependency: true,
+                ..base("plain-return", ROOT, "return", "LRMrl")
+            },
+            Case {
+                dependency: true,
+                ..base("plain-host-exit", ROOT, "host-exit", "LRMrl")
+            },
+            Case {
+                dependency: true,
+                function: "exit",
+                ..base("plain-native-exit", ROOT, "call", "LRMrl")
+            },
+            Case {
+                dependency: true,
+                ..base("nodelete-return", ROOT, "nodelete", "LRMrl")
+            },
+            Case {
+                dependency: true,
+                ..base("closed-return", ROOT, "closed", "LRrlM")
+            },
+            Case {
+                cpp: true,
+                ..base("cpp-return", CPP, "return", "CMDF")
+            },
+            Case {
+                cpp: true,
+                function: "exit",
+                ..base("cpp-native-exit", CPP, "call", "CMDF")
+            },
             base("tls-return", TLS, "return", "MTUU"),
-            Case { gnu2: true, ..base("tlsdesc-return", TLS, "return", "MTUU") },
+            Case {
+                gnu2: true,
+                ..base("tlsdesc-return", TLS, "return", "MTUU")
+            },
             base("tls-worker-host-exit", TLS, "worker-host-exit", "MTUU"),
-            Case { function: "exit", ..base("tls-worker-native-exit", TLS, "worker-call", "MTUU") },
+            Case {
+                function: "exit",
+                ..base("tls-worker-native-exit", TLS, "worker-call", "MTUU")
+            },
             base("cold-tls-fini", COLD_TLS, "return", "MK"),
-            Case { gnu2: true, ..base("cold-tlsdesc-fini", COLD_TLS, "return", "MK") },
-            Case { function: "_Exit", ..base("immediate-exit", TLS, "call", "M") },
-            Case { function: "_exit", ..base("underscore-exit", TLS, "call", "M") },
-            Case { function: "quick_exit", ..base("quick-exit", TLS, "call", "M") },
-            Case { status: 31, ..base("recursive-exit", RECURSIVE, "host-exit", "MBAF") },
+            Case {
+                gnu2: true,
+                ..base("cold-tlsdesc-fini", COLD_TLS, "return", "MK")
+            },
+            Case {
+                function: "_Exit",
+                ..base("immediate-exit", TLS, "call", "M")
+            },
+            Case {
+                function: "_exit",
+                ..base("underscore-exit", TLS, "call", "M")
+            },
+            Case {
+                function: "quick_exit",
+                ..base("quick-exit", TLS, "call", "M")
+            },
+            Case {
+                status: 31,
+                ..base("recursive-exit", RECURSIVE, "host-exit", "MBAF")
+            },
             base("registration-during-exit", REGISTERING, "return", "MBCAF"),
-            base("registration-during-fini", FINI_REGISTERING, "return", "MFQ"),
-            Case { native_only: true, ..base("null-owner-retention", NULL_OWNER, "closed", "MQF") },
+            base(
+                "registration-during-fini",
+                FINI_REGISTERING,
+                "return",
+                "MFQ",
+            ),
+            Case {
+                native_only: true,
+                ..base("null-owner-retention", NULL_OWNER, "closed", "MQF")
+            },
         ]
     }
 
-    fn compile(dir: &Path, name: &str, source: &str, cpp: bool, deps: &[&Path], gnu2: bool) -> PathBuf {
+    fn compile(
+        dir: &Path,
+        name: &str,
+        source: &str,
+        cpp: bool,
+        deps: &[&Path],
+        gnu2: bool,
+    ) -> PathBuf {
         let input = dir.join(format!("{name}.{}", if cpp { "cc" } else { "c" }));
         let output = dir.join(format!("{name}.so"));
         std::fs::write(&input, source).unwrap();
         let mut cmd = Command::new(if cpp { "c++" } else { "cc" });
-        cmd.args(["-shared", "-fPIC", "-Wl,--build-id=none", "-Wl,--no-as-needed"]);
-        if cpp { cmd.args(["-nodefaultlibs", "-fno-exceptions", "-fno-rtti", "-fno-gnu-unique"]); }
-        else { cmd.arg("-nostdlib"); }
-        if gnu2 { cmd.arg("-mtls-dialect=gnu2"); }
-        let result = cmd.arg(&input).args(deps).arg("-o").arg(&output).output().unwrap();
-        assert!(result.status.success(), "fixture compilation failed: {}", String::from_utf8_lossy(&result.stderr));
+        cmd.args([
+            "-shared",
+            "-fPIC",
+            "-Wl,--build-id=none",
+            "-Wl,--no-as-needed",
+        ]);
+        if cpp {
+            cmd.args([
+                "-nodefaultlibs",
+                "-fno-exceptions",
+                "-fno-rtti",
+                "-fno-gnu-unique",
+            ]);
+        } else {
+            cmd.arg("-nostdlib");
+        }
+        if gnu2 {
+            cmd.arg("-mtls-dialect=gnu2");
+        }
+        let result = cmd
+            .arg(&input)
+            .args(deps)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "fixture compilation failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
         output
     }
 
     fn run_child(loader: Loader, path: PathBuf, mode: String) -> ExitCode {
         if let Some(next) = mode.strip_prefix("worker-") {
             let next = next.to_owned();
-            return std::thread::spawn(move || run_child(loader, path, next)).join().unwrap();
+            return std::thread::spawn(move || run_child(loader, path, next))
+                .join()
+                .unwrap();
         }
-        let flags = libc::RTLD_NOW | if mode == "nodelete" { libc::RTLD_NODELETE } else { 0 };
+        let flags = libc::RTLD_NOW
+            | if mode == "nodelete" {
+                libc::RTLD_NODELETE
+            } else {
+                0
+            };
         let handle = loader.load(&path, flags);
-        if matches!(mode.as_str(), "nodelete" | "closed") { loader.close(handle); }
+        if matches!(mode.as_str(), "nodelete" | "closed") {
+            loader.close(handle);
+        }
         // Unbuffered boundary marker: this does not invoke the candidate.
         assert_eq!(unsafe { libc::write(1, b"M".as_ptr().cast(), 1) }, 1);
         match mode.as_str() {
@@ -204,46 +327,90 @@ mod linux {
         let args = std::env::args().skip(1).collect::<Vec<_>>();
         if args.first().map(String::as_str) == Some("--child") {
             assert_eq!(args.len(), 4);
-            let loader = if args[1] == "native" { Loader::Native } else { Loader::Host };
+            let loader = if args[1] == "native" {
+                Loader::Native
+            } else {
+                Loader::Host
+            };
             return run_child(loader, PathBuf::from(&args[3]), args[2].clone());
         }
-        let only = if args.first().map(String::as_str) == Some("--only") { Some(args[1].as_str()) } else { None };
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let dir = std::env::temp_dir().join(format!("fl-process-exit-{}-{stamp}", std::process::id()));
+        let only = if args.first().map(String::as_str) == Some("--only") {
+            Some(args[1].as_str())
+        } else {
+            None
+        };
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("fl-process-exit-{}-{stamp}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let sink = compile(&dir, "sink", SINK, false, &[], false);
         let leaf = compile(&dir, "leaf", LEAF, false, &[&sink], false);
         let mut count = 0;
-        for case in cases().into_iter().filter(|case| only.is_none_or(|name| name == case.name)) {
+        for case in cases()
+            .into_iter()
+            .filter(|case| only.is_none_or(|name| name == case.name))
+        {
             let mut source = case.source.to_owned();
             if !case.function.is_empty() {
                 let linkage = if case.cpp { "extern \"C\"" } else { "extern" };
                 let definition = if case.cpp { "extern \"C\"" } else { "" };
-                source.push_str(&format!("\n{linkage} void {0}(int); {definition} void terminate(int n) {{ {0}(n); }}", case.function));
+                source.push_str(&format!(
+                    "\n{linkage} void {0}(int); {definition} void terminate(int n) {{ {0}(n); }}",
+                    case.function
+                ));
             }
-            let deps = if case.dependency { vec![leaf.as_path(), sink.as_path()] } else { vec![sink.as_path()] };
+            let deps = if case.dependency {
+                vec![leaf.as_path(), sink.as_path()]
+            } else {
+                vec![sink.as_path()]
+            };
             let path = compile(&dir, case.name, &source, case.cpp, &deps, case.gnu2);
             for loader in ["host", "native"] {
-                if loader == "host" && case.native_only { continue; }
+                if loader == "host" && case.native_only {
+                    continue;
+                }
                 let mut child = Command::new(std::env::current_exe().unwrap())
-                    .args(["--child", loader, case.mode]).arg(&path)
-                    .stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+                    .args(["--child", loader, case.mode])
+                    .arg(&path)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .unwrap();
                 let deadline = Instant::now() + Duration::from_secs(30);
                 loop {
-                    if child.try_wait().unwrap().is_some() { break; }
+                    if child.try_wait().unwrap().is_some() {
+                        break;
+                    }
                     if Instant::now() >= deadline {
-                        child.kill().unwrap(); let _ = child.wait();
+                        child.kill().unwrap();
+                        let _ = child.wait();
                         panic!("process-exit child deadlocked: {loader} {}", case.name);
                     }
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 let result = child.wait_with_output().unwrap();
-                assert_eq!(result.status.code(), Some(case.status), "process-exit status mismatch: {loader} {}: {}",
-                    case.name, String::from_utf8_lossy(&result.stderr));
-                assert_eq!(result.stdout, case.expected.as_bytes(), "native process-exit trace mismatch: {loader} {}: {}",
-                    case.name, String::from_utf8_lossy(&result.stderr));
+                assert_eq!(
+                    result.status.code(),
+                    Some(case.status),
+                    "process-exit status mismatch: {loader} {}: {}",
+                    case.name,
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                assert_eq!(
+                    result.stdout,
+                    case.expected.as_bytes(),
+                    "native process-exit trace mismatch: {loader} {}: {}",
+                    case.name,
+                    String::from_utf8_lossy(&result.stderr)
+                );
                 count += 1;
-                println!("process-exit {loader} {} status={} trace={}", case.name, case.status, case.expected);
+                println!(
+                    "process-exit {loader} {} status={} trace={}",
+                    case.name, case.status, case.expected
+                );
             }
         }
         assert!(count > 0, "no process-exit scenarios selected");
@@ -253,6 +420,10 @@ mod linux {
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-fn main() -> std::process::ExitCode { linux::run() }
+fn main() -> std::process::ExitCode {
+    linux::run()
+}
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-fn main() { panic!("native process-exit probe requires x86-64 Linux"); }
+fn main() {
+    panic!("native process-exit probe requires x86-64 Linux");
+}

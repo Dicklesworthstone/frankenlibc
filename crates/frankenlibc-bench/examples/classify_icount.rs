@@ -140,9 +140,7 @@ impl Counter {
             )
         };
         if fd < 0 {
-            return Err(std::io::Error::last_os_error()
-                .raw_os_error()
-                .unwrap_or(0));
+            return Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(0));
         }
         Ok(Self {
             fd: fd as c_int,
@@ -444,13 +442,29 @@ fn main() {
     for (label, value) in WIDE_CASES {
         for (arm, f) in [("fl", fl_wide), ("glibc", host_wide)] {
             let m = measure(&instructions, &misses, || drive_wide(f, *value, n));
-            report("__fpclassify", arm, label, n, &m, baseline_instructions, baseline_misses);
+            report(
+                "__fpclassify",
+                arm,
+                label,
+                n,
+                &m,
+                baseline_instructions,
+                baseline_misses,
+            );
         }
     }
     for (label, value) in NARROW_CASES {
         for (arm, f) in [("fl", fl_narrow), ("glibc", host_narrow)] {
             let m = measure(&instructions, &misses, || drive_narrow(f, *value, n));
-            report("__fpclassifyf", arm, label, n, &m, baseline_instructions, baseline_misses);
+            report(
+                "__fpclassifyf",
+                arm,
+                label,
+                n,
+                &m,
+                baseline_instructions,
+                baseline_misses,
+            );
         }
     }
 }

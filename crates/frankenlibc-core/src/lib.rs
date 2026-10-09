@@ -69,8 +69,8 @@ compile_error!(
 );
 
 pub mod addrinfo;
-pub mod argp;
 pub mod aliases;
+pub mod argp;
 pub mod crypt;
 pub mod ctype;
 pub mod dirent;

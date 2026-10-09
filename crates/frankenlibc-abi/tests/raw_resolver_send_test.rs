@@ -19,7 +19,12 @@ fn short_raw_send_output_is_rejected_without_any_write() {
         // small advertised output must be rejected before network activity.
         let result = unsafe {
             *__errno_location() = 0;
-            __res_send(sent.as_ptr().cast(), sent.len() as _, output.as_mut_ptr().cast(), capacity)
+            __res_send(
+                sent.as_ptr().cast(),
+                sent.len() as _,
+                output.as_mut_ptr().cast(),
+                capacity,
+            )
         };
         assert_eq!(result, -1);
         assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
@@ -41,7 +46,12 @@ fn invalid_raw_send_pointer_and_wire_lengths_do_not_touch_output() {
         // rejected before dereference; the output always has its full extent.
         let result = unsafe {
             *__errno_location() = 0;
-            __res_send(message, length, output.as_mut_ptr().cast(), output.len() as _)
+            __res_send(
+                message,
+                length,
+                output.as_mut_ptr().cast(),
+                output.len() as _,
+            )
         };
         assert_eq!(result, -1);
         assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);
@@ -55,7 +65,12 @@ fn null_raw_send_output_is_rejected_before_network_activity() {
     // SAFETY: a valid message and deliberately null output exercise the guard.
     let result = unsafe {
         *__errno_location() = 0;
-        __res_send(sent.as_ptr().cast(), sent.len() as _, std::ptr::null_mut(), 512)
+        __res_send(
+            sent.as_ptr().cast(),
+            sent.len() as _,
+            std::ptr::null_mut(),
+            512,
+        )
     };
     assert_eq!(result, -1);
     assert_eq!(unsafe { *__errno_location() }, libc::EINVAL);

@@ -543,7 +543,10 @@ fn main() {
         "incumbent resolved to {}, not host libc",
         host_identity.path.display()
     );
-    assert_eq!(fl_identity.sha256, supplied.sha256, "loaded SO hash differs");
+    assert_eq!(
+        fl_identity.sha256, supplied.sha256,
+        "loaded SO hash differs"
+    );
     assert_ne!(
         host_identity.sha256, fl_identity.sha256,
         "both arms are the same object"
@@ -603,7 +606,10 @@ fn main() {
         ("fl_heap", fl_strtol_buf.cast()),
     ];
     for (label, pointer) in wctype_bufs.iter().chain(&strtol_bufs) {
-        println!("BUFFER_PROVENANCE label={label} address={:#x}", *pointer as usize);
+        println!(
+            "BUFFER_PROVENANCE label={label} address={:#x}",
+            *pointer as usize
+        );
     }
 
     // ---- conformance precedes timing --------------------------------------
@@ -633,8 +639,21 @@ fn main() {
     }
     // Broader strtol agreement so the timed input is not a lucky special case.
     for value in [
-        "0", "-1", "42", "12345", "  77", "+9", "0x1f", "999999999", "-2147483648",
-        "9223372036854775807", "abc", "", "  ", "12abc", "-0",
+        "0",
+        "-1",
+        "42",
+        "12345",
+        "  77",
+        "+9",
+        "0x1f",
+        "999999999",
+        "-2147483648",
+        "9223372036854775807",
+        "abc",
+        "",
+        "  ",
+        "12abc",
+        "-0",
     ] {
         for base in [0, 8, 10, 16] {
             let input = CString::new(value).unwrap();

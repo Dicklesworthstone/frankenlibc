@@ -1262,8 +1262,14 @@ fn gconv_spec_parses_suffixes_and_opens_like_glibc() {
     let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
     let ret = unsafe { __gconv_create_spec(spec_ptr, from.as_ptr(), to.as_ptr()) };
     assert_eq!(ret, spec_ptr);
-    assert_eq!(unsafe { CStr::from_ptr(spec.fromcode) }.to_bytes(), b"UTF-8");
-    assert_eq!(unsafe { CStr::from_ptr(spec.tocode) }.to_bytes(), b"utf-16le");
+    assert_eq!(
+        unsafe { CStr::from_ptr(spec.fromcode) }.to_bytes(),
+        b"UTF-8"
+    );
+    assert_eq!(
+        unsafe { CStr::from_ptr(spec.tocode) }.to_bytes(),
+        b"utf-16le"
+    );
     assert!(spec.translit && spec.ignore);
 
     let mut handle = ptr::null_mut();
@@ -1280,7 +1286,10 @@ fn gconv_open_unsupported_codec_returns_noconv() {
     let to = CString::new("NO-SUCH-CODESET").unwrap();
     let mut spec = empty_gconv_spec();
     let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
-    assert_eq!(unsafe { __gconv_create_spec(spec_ptr, from.as_ptr(), to.as_ptr()) }, spec_ptr);
+    assert_eq!(
+        unsafe { __gconv_create_spec(spec_ptr, from.as_ptr(), to.as_ptr()) },
+        spec_ptr
+    );
     let mut handle = ptr::null_mut();
     // glibc's __GCONV_NOCONV is 1.
     assert_eq!(unsafe { __gconv_open(spec_ptr, &mut handle, 0) }, 1);
@@ -1299,7 +1308,9 @@ fn gconv_create_spec_null_arguments_return_null() {
     let name = CString::new("UTF-8").unwrap();
     let mut spec = empty_gconv_spec();
     let spec_ptr: *mut c_void = (&mut spec as *mut GconvSpec).cast();
-    assert!(unsafe { __gconv_create_spec(ptr::null_mut(), name.as_ptr(), name.as_ptr()) }.is_null());
+    assert!(
+        unsafe { __gconv_create_spec(ptr::null_mut(), name.as_ptr(), name.as_ptr()) }.is_null()
+    );
     assert!(unsafe { __gconv_create_spec(spec_ptr, ptr::null(), name.as_ptr()) }.is_null());
 }
 
@@ -1321,9 +1332,13 @@ fn gconv_get_alias_db_returns_null() {
 fn gconv_get_cache_maps_the_system_cache() {
     // iconv -l reads charset names straight from this mapping.
     let cache = unsafe { __gconv_get_cache() };
-    let present = ["/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache", "/usr/lib64/gconv/gconv-modules.cache", "/usr/lib/gconv/gconv-modules.cache"]
-        .iter()
-        .any(|p| std::path::Path::new(p).exists());
+    let present = [
+        "/usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache",
+        "/usr/lib64/gconv/gconv-modules.cache",
+        "/usr/lib/gconv/gconv-modules.cache",
+    ]
+    .iter()
+    .any(|p| std::path::Path::new(p).exists());
     if !present || std::env::var_os("GCONV_PATH").is_some() {
         assert!(cache.is_null());
         return;

@@ -1,7 +1,9 @@
 // Preserve all existing build-time policy checks and generated artifacts.
 mod checks {
     include!("build.rs");
-    pub fn run() { main(); }
+    pub fn run() {
+        main();
+    }
 }
 
 fn main() {
@@ -17,7 +19,9 @@ fn main() {
         // guessed glibc versions to unrelated interposition exports, and has
         // no missing _Unwind_* requirements. LLD (the Rust target default)
         // combines these nodes with rustc's anonymous visibility script.
-        println!("cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest}/version_scripts/fromfp.map");
+        println!(
+            "cargo:rustc-cdylib-link-arg=-Wl,--version-script={manifest}/version_scripts/fromfp.map"
+        );
         // The `.symver name,alias,remove` directives in fromfp_abi drop the
         // `__frankenlibc_c23_*` export names, but rustc's own anonymous
         // version script still lists them and rustc links with

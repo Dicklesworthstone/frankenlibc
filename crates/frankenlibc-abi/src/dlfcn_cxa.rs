@@ -26,26 +26,39 @@ struct Entry {
 static ENTRIES: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 static PROCESS_FINI: AtomicBool = AtomicBool::new(false);
 
-pub(super) fn begin_process_fini() { PROCESS_FINI.store(true, Ordering::Relaxed); }
+pub(super) fn begin_process_fini() {
+    PROCESS_FINI.store(true, Ordering::Relaxed);
+}
 
 fn contains(dso: &NativeDso, address: usize) -> bool {
-    let Some(offset) = (address as u64).checked_sub(dso.object.base) else { return false; };
+    let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
+        return false;
+    };
     dso.object.program_headers.iter().any(|segment| {
-        segment.is_load() && segment.p_vaddr <= offset
-            && segment.p_vaddr.checked_add(segment.p_memsz).is_some_and(|end| offset < end)
+        segment.is_load()
+            && segment.p_vaddr <= offset
+            && segment
+                .p_vaddr
+                .checked_add(segment.p_memsz)
+                .is_some_and(|end| offset < end)
     })
 }
 
 fn register(destructor: Destructor, argument: *mut c_void, token: *mut c_void) -> Option<()> {
-    if ifunc::active() { return None; }
+    if ifunc::active() {
+        return None;
+    }
     let _operation = OPERATIONS.lock();
     let mut entries = ENTRIES.lock().ok()?;
     entries.try_reserve(1).ok()?;
     let mut dsos = registry().lock().ok()?;
-    let provider = dsos.iter().find(|dso| {
-        lifecycle::executable_address(dso, destructor as *const () as usize)
-    })?.id;
-    let owner = if token.is_null() { None } else {
+    let provider = dsos
+        .iter()
+        .find(|dso| lifecycle::executable_address(dso, destructor as *const () as usize))?
+        .id;
+    let owner = if token.is_null() {
+        None
+    } else {
         Some(dsos.iter().find(|dso| contains(dso, token as usize))?.id)
     };
     // A retiring provider cannot be resurrected by registering a callback
@@ -54,7 +67,9 @@ fn register(destructor: Destructor, argument: *mut c_void, token: *mut c_void) -
     if dsos.iter().find(|dso| dso.id == provider)?.retiring
         && !PROCESS_FINI.load(Ordering::Relaxed)
         && !owner.is_some_and(|id| dsos.iter().any(|dso| dso.id == id && dso.retiring))
-    { return None; }
+    {
+        return None;
+    }
     if let Some(owner) = owner {
         let dso = dsos.iter_mut().find(|dso| dso.id == owner)?;
         if provider != owner && !dso.dependencies.contains(&provider) {
@@ -69,7 +84,13 @@ fn register(destructor: Destructor, argument: *mut c_void, token: *mut c_void) -
         let dso = dsos.iter_mut().find(|dso| dso.id == provider)?;
         dso.thread_exit_pins = dso.thread_exit_pins.checked_add(1)?;
     }
-    entries.push(Entry { destructor, argument: argument as usize, token: token as usize, owner, provider });
+    entries.push(Entry {
+        destructor,
+        argument: argument as usize,
+        token: token as usize,
+        owner,
+        provider,
+    });
     Some(())
 }
 
@@ -77,17 +98,26 @@ struct CallPins(Vec<usize>);
 impl CallPins {
     fn acquire(entry: &Entry) -> Option<Self> {
         let mut owners = vec![entry.provider];
-        if let Some(owner) = entry.owner && owner != entry.provider { owners.push(owner); }
+        if let Some(owner) = entry.owner
+            && owner != entry.provider
+        {
+            owners.push(owner);
+        }
         let mut dsos = registry().lock().ok()?;
         for id in &owners {
-            dsos.iter().find(|dso| dso.id == *id)?.thread_exit_pins.checked_add(1)?;
+            dsos.iter()
+                .find(|dso| dso.id == *id)?
+                .thread_exit_pins
+                .checked_add(1)?;
         }
         for dso in dsos.iter_mut().filter(|dso| owners.contains(&dso.id)) {
             dso.thread_exit_pins += 1;
         }
         if entry.owner.is_none() {
             // Transfer the queued NULL-token pin to the in-flight callback.
-            dsos.iter_mut().find(|dso| dso.id == entry.provider)?.thread_exit_pins -= 1;
+            dsos.iter_mut()
+                .find(|dso| dso.id == entry.provider)?
+                .thread_exit_pins -= 1;
         }
         Some(Self(owners))
     }
@@ -106,12 +136,16 @@ impl Drop for CallPins {
 }
 
 fn drain(mut matches: impl FnMut(&Entry) -> bool) -> Option<()> {
-    if ifunc::active() { return None; }
+    if ifunc::active() {
+        return None;
+    }
     loop {
         let (entry, pins) = {
             let _operation = OPERATIONS.lock();
             let mut entries = ENTRIES.lock().ok()?;
-            let Some(index) = entries.iter().rposition(&mut matches) else { return Some(()); };
+            let Some(index) = entries.iter().rposition(&mut matches) else {
+                return Some(());
+            };
             let pins = CallPins::acquire(&entries[index])?;
             (entries.remove(index), pins)
         };
@@ -133,7 +167,9 @@ fn drain(mut matches: impl FnMut(&Entry) -> bool) -> Option<()> {
     }
 }
 
-pub(super) fn finalize_all() -> Option<()> { drain(|_| true) }
+pub(super) fn finalize_all() -> Option<()> {
+    drain(|_| true)
+}
 
 pub(super) fn finalize_owners(owners: &[usize]) -> Option<()> {
     // Also drains registrations left by custom CRTs with no __cxa_finalize
@@ -142,10 +178,18 @@ pub(super) fn finalize_owners(owners: &[usize]) -> Option<()> {
 }
 
 unsafe extern "C" fn register_impl(
-    destructor: Option<Destructor>, argument: *mut c_void, token: *mut c_void,
+    destructor: Option<Destructor>,
+    argument: *mut c_void,
+    token: *mut c_void,
 ) -> c_int {
-    let Some(destructor) = destructor else { return -1; };
-    if register(destructor, argument, token).is_some() { 0 } else { -1 }
+    let Some(destructor) = destructor else {
+        return -1;
+    };
+    if register(destructor, argument, token).is_some() {
+        0
+    } else {
+        -1
+    }
 }
 
 unsafe extern "C-unwind" fn finalize_impl(token: *mut c_void) {
@@ -153,7 +197,9 @@ unsafe extern "C-unwind" fn finalize_impl(token: *mut c_void) {
 }
 
 pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64> {
-    if version.is_some_and(|version| version != "GLIBC_2.2.5") { return None; }
+    if version.is_some_and(|version| version != "GLIBC_2.2.5") {
+        return None;
+    }
     match name {
         "__cxa_atexit" => Some(register_impl as *const () as usize as u64),
         "__cxa_finalize" => Some(finalize_impl as *const () as usize as u64),

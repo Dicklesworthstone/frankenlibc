@@ -643,10 +643,22 @@ fn format_fixed_from_sci_into(sci: &str, exp: i32, out: &mut [u8]) -> usize {
     let n = dn as i32;
     let mut len = 0usize;
     macro_rules! put {
-        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+        ($b:expr) => {{
+            if len < out.len() {
+                out[len] = $b;
+                len += 1;
+            }
+        }};
     }
     macro_rules! put_slice {
-        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+        ($s:expr) => {{
+            for &b in $s {
+                if len < out.len() {
+                    out[len] = b;
+                    len += 1;
+                }
+            }
+        }};
     }
     if neg {
         put!(b'-');
@@ -683,10 +695,22 @@ fn format_fixed_from_sci_into(sci: &str, exp: i32, out: &mut [u8]) -> usize {
 fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
     let mut len = 0usize;
     macro_rules! put {
-        ($b:expr) => {{ if len < out.len() { out[len] = $b; len += 1; } }};
+        ($b:expr) => {{
+            if len < out.len() {
+                out[len] = $b;
+                len += 1;
+            }
+        }};
     }
     macro_rules! put_slice {
-        ($s:expr) => {{ for &b in $s { if len < out.len() { out[len] = b; len += 1; } } }};
+        ($s:expr) => {{
+            for &b in $s {
+                if len < out.len() {
+                    out[len] = b;
+                    len += 1;
+                }
+            }
+        }};
     }
     let Some(e_pos) = s.find('e') else {
         put_slice!(strip_trailing_zeros(s).as_bytes());
@@ -720,13 +744,27 @@ fn rust_e_to_glibc_e_into(s: &str, out: &mut [u8]) -> usize {
 /// (e.g. `render_pct_g_into`) must clamp or fall back to the `render_gcvt` String version.
 fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     if value.is_nan() {
-        return copy_into(out, if value.is_sign_negative() { b"-nan" } else { b"nan" });
+        return copy_into(
+            out,
+            if value.is_sign_negative() {
+                b"-nan"
+            } else {
+                b"nan"
+            },
+        );
     }
     if value.is_infinite() {
         return copy_into(out, if value < 0.0 { b"-inf" } else { b"inf" });
     }
     if value == 0.0 {
-        return copy_into(out, if value.is_sign_negative() { b"-0" } else { b"0" });
+        return copy_into(
+            out,
+            if value.is_sign_negative() {
+                b"-0"
+            } else {
+                b"0"
+            },
+        );
     }
     if let Some(simple) = try_gcvt_exact_small_fixed(value, ndigit) {
         return copy_into(out, simple.as_bytes());

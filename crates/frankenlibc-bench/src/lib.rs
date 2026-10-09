@@ -110,8 +110,7 @@ fn sample_allowed_cpu_khz(allowed: &BTreeSet<usize>) -> Option<(u64, u64, u64)> 
     let mut readings: Vec<u64> = allowed
         .iter()
         .filter_map(|cpu| {
-            let path =
-                format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq");
+            let path = format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/scaling_cur_freq");
             std::fs::read_to_string(path)
                 .ok()
                 .and_then(|text| text.trim().parse::<u64>().ok())

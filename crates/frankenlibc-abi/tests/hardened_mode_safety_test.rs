@@ -502,6 +502,12 @@ fn hardened_bounded_string_ops_heal_only_real_overreads() {
         .collect();
     assert_eq!(fields[1], "true", "strncpy must NUL-pad to n: {stdout}");
     assert_eq!(fields[2], "true", "compare results: {stdout}");
-    assert_eq!(fields[3], "0", "terminated sources recorded heals: {stdout}");
-    assert_eq!(fields[4], "3", "unterminated sources must each heal: {stdout}");
+    assert_eq!(
+        fields[3], "0",
+        "terminated sources recorded heals: {stdout}"
+    );
+    assert_eq!(
+        fields[4], "3",
+        "unterminated sources must each heal: {stdout}"
+    );
 }

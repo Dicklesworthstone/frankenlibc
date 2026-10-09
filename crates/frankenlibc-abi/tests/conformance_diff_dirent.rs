@@ -37,7 +37,10 @@ unsafe extern "C-unwind" {
         namelist: *mut *mut *mut libc::dirent,
         filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent) -> c_int>,
         compar: Option<
-            unsafe extern "C-unwind" fn(*mut *const libc::dirent, *mut *const libc::dirent) -> c_int,
+            unsafe extern "C-unwind" fn(
+                *mut *const libc::dirent,
+                *mut *const libc::dirent,
+            ) -> c_int,
         >,
     ) -> c_int;
     fn scandir64(
@@ -45,7 +48,10 @@ unsafe extern "C-unwind" {
         namelist: *mut *mut *mut libc::dirent64,
         filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent64) -> c_int>,
         compar: Option<
-            unsafe extern "C-unwind" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+            unsafe extern "C-unwind" fn(
+                *mut *const libc::dirent64,
+                *mut *const libc::dirent64,
+            ) -> c_int,
         >,
     ) -> c_int;
     #[link_name = "versionsort"]
@@ -700,7 +706,10 @@ fn scandir64_names_lc(
     dir: &std::path::Path,
     filter: Option<unsafe extern "C-unwind" fn(*const libc::dirent64) -> c_int>,
     compar: Option<
-        unsafe extern "C-unwind" fn(*mut *const libc::dirent64, *mut *const libc::dirent64) -> c_int,
+        unsafe extern "C-unwind" fn(
+            *mut *const libc::dirent64,
+            *mut *const libc::dirent64,
+        ) -> c_int,
     >,
 ) -> Result<Vec<Vec<u8>>, String> {
     let cp = cstr_path(dir);

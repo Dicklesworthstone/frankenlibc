@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use frankenlibc_core::dlfcn as dlfcn_core;
 use frankenlibc_core::elf::{
-    Elf64Rela, ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, ProgramType,
-    RelocationResult, SymbolLookup,
+    Elf64Rela, ElfLoader, LoadImage, LoadedObject, PltBindingPolicy, ProgramType, RelocationResult,
+    SymbolLookup,
 };
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -81,12 +81,17 @@ static OPERATIONS: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex
 static COLLECTING: AtomicBool = AtomicBool::new(false);
 struct CollectionGuard;
 impl Drop for CollectionGuard {
-    fn drop(&mut self) { COLLECTING.store(false, Ordering::Relaxed); }
+    fn drop(&mut self) {
+        COLLECTING.store(false, Ordering::Relaxed);
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum InitState { Pending, Running, Live }
-
+enum InitState {
+    Pending,
+    Running,
+    Live,
+}
 
 const HANDLE_TAG: usize = 0x4d;
 const HANDLE_MASK: usize = 0xff;
@@ -169,9 +174,13 @@ struct ResidentPin {
 impl Drop for ResidentPin {
     fn drop(&mut self) {
         let _operation = OPERATIONS.lock();
-        let Ok(mut dsos) = registry().lock() else { return; };
+        let Ok(mut dsos) = registry().lock() else {
+            return;
+        };
         if let Some(dso) = dsos.iter_mut().find(|dso| dso.id == self.id) {
-            let Some(pins) = dso.load_pins.checked_sub(1) else { return; };
+            let Some(pins) = dso.load_pins.checked_sub(1) else {
+                return;
+            };
             dso.load_pins = pins;
         }
         drop(dsos);
@@ -236,8 +245,11 @@ fn next_id() -> Option<usize> {
 }
 
 fn absolute_path(path: &Path) -> Option<PathBuf> {
-    if path.is_absolute() { Some(path.to_owned()) }
-    else { Some(std::env::current_dir().ok()?.join(path)) }
+    if path.is_absolute() {
+        Some(path.to_owned())
+    } else {
+        Some(std::env::current_dir().ok()?.join(path))
+    }
 }
 
 fn open_file(path: &Path) -> Option<(File, u64, u64)> {
@@ -249,7 +261,9 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
         .open(path)
         .ok()?;
     let metadata = file.metadata().ok()?;
-    if !metadata.is_file() { return None; }
+    if !metadata.is_file() {
+        return None;
+    }
     if candidate::incompatible(&file) {
         // Continue search only for an unowned, incompatible object. A resident
         // image remains authoritative even if its backing inode was modified;
@@ -257,7 +271,10 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
         // The positional header read above holds neither loader lock.
         let _operation = OPERATIONS.lock();
         let dsos = registry().lock().ok()?;
-        if !dsos.iter().any(|dso| dso.device == metadata.dev() && dso.inode == metadata.ino()) {
+        if !dsos
+            .iter()
+            .any(|dso| dso.device == metadata.dev() && dso.inode == metadata.ino())
+        {
             return None;
         }
     }
@@ -268,49 +285,80 @@ fn open_file(path: &Path) -> Option<(File, u64, u64)> {
 // their load restrictions. Reject ambiguous/truncated dynamic segments before
 // mapping, TLS allocation, IFUNC execution, or constructor side effects.
 fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
-    let mut headers = object.program_headers.iter()
+    let mut headers = object
+        .program_headers
+        .iter()
         .filter(|header| header.p_type == ProgramType::Dynamic);
-    let Some(header) = headers.next() else { return Some(0); };
-    if headers.next().is_some() || header.p_filesz > header.p_memsz { return None; }
+    let Some(header) = headers.next() else {
+        return Some(0);
+    };
+    if headers.next().is_some() || header.p_filesz > header.p_memsz {
+        return None;
+    }
     if !object.program_headers.iter().any(|load| {
-        if !load.is_load() { return false; }
-        let Some(delta) = header.p_vaddr.checked_sub(load.p_vaddr) else { return false; };
+        if !load.is_load() {
+            return false;
+        }
+        let Some(delta) = header.p_vaddr.checked_sub(load.p_vaddr) else {
+            return false;
+        };
         load.p_offset.checked_add(delta) == Some(header.p_offset)
-            && delta.checked_add(header.p_filesz).is_some_and(|end| end <= load.p_filesz)
-    }) { return None; }
+            && delta
+                .checked_add(header.p_filesz)
+                .is_some_and(|end| end <= load.p_filesz)
+    }) {
+        return None;
+    }
     let offset = usize::try_from(header.p_offset).ok()?;
     let size = usize::try_from(header.p_filesz).ok()?;
-    if size % 16 != 0 { return None; }
+    if size % 16 != 0 {
+        return None;
+    }
     let mut flags = None;
-    for entry in bytes.get(offset..offset.checked_add(size)?)?.chunks_exact(16) {
+    for entry in bytes
+        .get(offset..offset.checked_add(size)?)?
+        .chunks_exact(16)
+    {
         let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
         let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
-        if tag == 0 { return Some(flags.unwrap_or(0)); }
+        if tag == 0 {
+            return Some(flags.unwrap_or(0));
+        }
         if tag == 0x6fff_fffb {
-            if flags.is_some_and(|old| old != value) { return None; }
+            if flags.is_some_and(|old| old != value) {
+                return None;
+            }
             flags = Some(value);
         }
     }
     None
 }
 
-fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, context: &SearchContext) -> Option<PreparedDso> {
+fn prepare_file(
+    mut file: File,
+    device: u64,
+    inode: u64,
+    requested_path: &Path,
+    context: &SearchContext,
+) -> Option<PreparedDso> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
     // The metadata reader alone does not reject unsupported ELF versions.
-    if !candidate::versions_supported(&bytes) { return None; }
+    if !candidate::versions_supported(&bytes) {
+        return None;
+    }
     let loader = ElfLoader::new(0);
     let object = loader.parse(&bytes).ok()?;
     // ET_EXEC cannot be safely relocated as an ordinary shared library.
-    if bytes.get(16..18)? != [3, 0].as_slice()
-        || tls::validate(&object, &bytes).is_none()
-    {
+    if bytes.get(16..18)? != [3, 0].as_slice() || tls::validate(&object, &bytes).is_none() {
         return None;
     }
     let flags = dynamic_flags(&bytes, &object)?;
     // PIE also has ET_DYN, but is not a dlopen-able shared library. NOOPEN
     // applies to dependencies as well as the explicitly requested root.
-    if flags & (DF_1_NOOPEN | DF_1_PIE) != 0 { return None; }
+    if flags & (DF_1_NOOPEN | DF_1_PIE) != 0 {
+        return None;
+    }
     let lifecycle = lifecycle::Layout::parse(&bytes, &object)?;
     let image = loader.materialize_load_image(&bytes, &object).ok()?;
     if image.low_vaddr != 0 || image.memory.is_empty() {
@@ -323,9 +371,20 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
     let path = requested_path.to_owned();
     let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
     Some(PreparedDso {
-        file, device, inode, bytes, object, image, flags, needed: Vec::new(),
-        needed_by_name: Vec::new(), resident_pins: Vec::new(),
-        path, search, inherited_rpaths: Vec::new(), lifecycle,
+        file,
+        device,
+        inode,
+        bytes,
+        object,
+        image,
+        flags,
+        needed: Vec::new(),
+        needed_by_name: Vec::new(),
+        resident_pins: Vec::new(),
+        path,
+        search,
+        inherited_rpaths: Vec::new(),
+        lifecycle,
     })
 }
 
@@ -333,22 +392,34 @@ fn prepare_file(mut file: File, device: u64, inode: u64, requested_path: &Path, 
 // an established DT_NEEDED alias) remains usable after rename/unlink or package
 // replacement. For path aliases, an opened inode can identify the same image.
 // Some(None) means absent; None means the transaction cannot safely continue.
-fn pin_resident_dependency(name: &str, identity: Option<(u64, u64)>) -> Option<Option<ResidentPin>> {
+fn pin_resident_dependency(
+    name: &str,
+    identity: Option<(u64, u64)>,
+) -> Option<Option<ResidentPin>> {
     let _operation = OPERATIONS.lock();
-    if process_exit::unloading() { return None; }
+    if process_exit::unloading() {
+        return None;
+    }
     let mut dsos = registry().lock().ok()?;
     let index = dsos.iter().position(|dso| {
-        if dso.retiring { return false; }
+        if dso.retiring {
+            return false;
+        }
         if let Some((device, inode)) = identity {
             return dso.device == device && dso.inode == inode;
         }
         dso.object.soname.as_deref() == Some(name)
             || dsos.iter().any(|consumer| {
-                !consumer.retiring && consumer.needed_by_name.iter()
-                    .any(|(alias, id)| alias == name && *id == dso.id)
+                !consumer.retiring
+                    && consumer
+                        .needed_by_name
+                        .iter()
+                        .any(|(alias, id)| alias == name && *id == dso.id)
             })
     });
-    let Some(index) = index else { return Some(None); };
+    let Some(index) = index else {
+        return Some(None);
+    };
     let dso = &mut dsos[index];
     dso.load_pins = dso.load_pins.checked_add(1)?;
     Some(Some(ResidentPin { id: dso.id }))
@@ -366,19 +437,31 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
                 if let Some(pin) = pin_resident_dependency(&name, None)? {
                     let dependency = Dependency::Resident(pin.id);
                     group[cursor].resident_pins.push(pin);
-                    if !needed.contains(&dependency) { needed.push(dependency); }
+                    if !needed.contains(&dependency) {
+                        needed.push(dependency);
+                    }
                     needed_by_name.push((name, dependency));
                     continue;
                 }
-                if let Some(index) = group.iter().position(|dso| dso.object.soname.as_deref() == Some(name.as_str())) {
+                if let Some(index) = group
+                    .iter()
+                    .position(|dso| dso.object.soname.as_deref() == Some(name.as_str()))
+                {
                     let dependency = Dependency::Prepared(index);
-                    if !needed.contains(&dependency) { needed.push(dependency); }
+                    if !needed.contains(&dependency) {
+                        needed.push(dependency);
+                    }
                     needed_by_name.push((name, dependency));
                     continue;
                 }
             }
             let parent = &group[cursor];
-            let candidates = parent.search.candidates(name.as_bytes(), parent.path.parent()?, &parent.inherited_rpaths, context)?;
+            let candidates = parent.search.candidates(
+                name.as_bytes(),
+                parent.path.parent()?,
+                &parent.inherited_rpaths,
+                context,
+            )?;
             let inherited = parent.search.child_rpaths(&parent.inherited_rpaths);
             let (path, file, device, inode) = candidates.into_iter().find_map(|path| {
                 let path = absolute_path(&path)?;
@@ -387,13 +470,16 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
             if let Some(pin) = pin_resident_dependency(&name, Some((device, inode)))? {
                 let dependency = Dependency::Resident(pin.id);
                 group[cursor].resident_pins.push(pin);
-                if !needed.contains(&dependency) { needed.push(dependency); }
+                if !needed.contains(&dependency) {
+                    needed.push(dependency);
+                }
                 needed_by_name.push((name, dependency));
                 continue;
             }
-            let index = if let Some(index) = group.iter().position(|dso| {
-                dso.device == device && dso.inode == inode
-            }) {
+            let index = if let Some(index) = group
+                .iter()
+                .position(|dso| dso.device == device && dso.inode == inode)
+            {
                 index
             } else {
                 if group.len() == MAX_GROUP_OBJECTS {
@@ -417,7 +503,11 @@ fn prepare_group(root: PreparedDso, context: &SearchContext) -> Option<Vec<Prepa
     Some(group)
 }
 
-fn find<'a>(resident: &'a [NativeDso], pending: &'a [NativeDso], id: usize) -> Option<&'a NativeDso> {
+fn find<'a>(
+    resident: &'a [NativeDso],
+    pending: &'a [NativeDso],
+    id: usize,
+) -> Option<&'a NativeDso> {
     resident.iter().chain(pending).find(|dso| dso.id == id)
 }
 
@@ -442,8 +532,11 @@ fn lookup_order(resident: &[NativeDso], pending: &[NativeDso], root: usize) -> V
 // Must be called with the registry locked. No additional lock or callback
 // is involved, so relocation, TLS and IFUNC see one consistent global order.
 fn global_scope_order(dsos: &[NativeDso]) -> Vec<usize> {
-    let mut globals = dsos.iter().filter(|dso| dso.global && !dso.retiring)
-        .map(|dso| (dso.global_rank, dso.id)).collect::<Vec<_>>();
+    let mut globals = dsos
+        .iter()
+        .filter(|dso| dso.global && !dso.retiring)
+        .map(|dso| (dso.global_rank, dso.id))
+        .collect::<Vec<_>>();
     globals.sort_unstable();
     globals.into_iter().map(|(_, id)| id).collect()
 }
@@ -453,7 +546,9 @@ fn promote_global(dsos: &mut [NativeDso], root: usize) {
     // its BFS dependency closure; it must not jump ahead of existing globals.
     let mut order = global_scope_order(dsos);
     for id in lookup_order(dsos, &[], root) {
-        if !order.contains(&id) { order.push(id); }
+        if !order.contains(&id) {
+            order.push(id);
+        }
     }
     // Compact ranks after unload. Ranks are bounded by resident count, so
     // repeated opens cannot overflow a process-lifetime sequence counter.
@@ -469,7 +564,9 @@ fn reopen(dsos: &mut [NativeDso], index: usize, flags: c_int) -> Option<*mut c_v
     // Resurrection during a finalization batch is deliberately rejected. Its
     // dependency closure is pinned for callbacks, but is no longer admissible
     // for new consumers. Never return a soon-to-be-unmapped successful handle.
-    if dsos[index].retiring { return None; }
+    if dsos[index].retiring {
+        return None;
+    }
     let references = dsos[index].references.checked_add(1)?;
     let id = dsos[index].id;
     dsos[index].references = references;
@@ -484,7 +581,9 @@ fn reopen(dsos: &mut [NativeDso], index: usize, flags: c_int) -> Option<*mut c_v
 }
 
 fn map_object(
-    prepared: &PreparedDso, id: usize, needed: Vec<usize>,
+    prepared: &PreparedDso,
+    id: usize,
+    needed: Vec<usize>,
     needed_by_name: Vec<(String, usize)>,
 ) -> Option<NativeDso> {
     let file = prepared.file.try_clone().ok()?;
@@ -492,15 +591,22 @@ fn map_object(
     // SAFETY: independent anonymous mapping, writable only while relocating.
     let base = unsafe {
         raw_syscall::sys_mmap(
-            std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0,
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
         )
-    }.ok()?;
-    let mapping = Mapping { base: base as usize, len };
+    }
+    .ok()?;
+    let mapping = Mapping {
+        base: base as usize,
+        len,
+    };
     // SAFETY: the fresh mapping has exactly len writable bytes and is disjoint
     // from the immutable source Vec. The guard unmaps it on every error path.
-    unsafe { core::slice::from_raw_parts_mut(base, len) }
-        .copy_from_slice(&prepared.image.memory);
+    unsafe { core::slice::from_raw_parts_mut(base, len) }.copy_from_slice(&prepared.image.memory);
     let mut object = ElfLoader::new(base as u64).parse(&prepared.bytes).ok()?;
     let symbolic = binding::symbolic(&prepared.bytes, &object)?;
     let versions = versions::Table::parse(&prepared.bytes, &object)?;
@@ -541,16 +647,26 @@ fn map_object(
 fn protect_object(dso: &NativeDso, image: &LoadImage, apply_relro: bool) -> Option<()> {
     // Anonymous gaps between PT_LOAD segments must not remain writable.
     // SAFETY: this guard owns the entire page-aligned anonymous mapping.
-    unsafe { raw_syscall::sys_mprotect(dso.mapping.base as *mut u8, dso.mapping.len, libc::PROT_NONE) }.ok()?;
+    unsafe {
+        raw_syscall::sys_mprotect(
+            dso.mapping.base as *mut u8,
+            dso.mapping.len,
+            libc::PROT_NONE,
+        )
+    }
+    .ok()?;
     for segment in &image.segments {
         let offset = usize::try_from(segment.map_addr).ok()?;
         let len = usize::try_from(segment.map_size).ok()?;
         if offset.checked_add(len)? > dso.mapping.len {
             return None;
         }
-        if !apply_relro && segment.prot & (libc::PROT_WRITE | libc::PROT_EXEC)
-            == (libc::PROT_WRITE | libc::PROT_EXEC)
-        { return None; }
+        if !apply_relro
+            && segment.prot & (libc::PROT_WRITE | libc::PROT_EXEC)
+                == (libc::PROT_WRITE | libc::PROT_EXEC)
+        {
+            return None;
+        }
         let address = dso.mapping.base.checked_add(offset)? as *mut u8;
         // SAFETY: checked range inside this mapping; page alignment and flags
         // come from the validated materialized PT_LOAD image.
@@ -585,16 +701,29 @@ impl SymbolLookup for Resolver<'_> {
     }
 
     fn lookup_versioned(&self, name: &str, version: Option<&str>) -> Option<u64> {
-        if name == "__tls_get_addr" { return tls::resolver_address(version); }
-        if name == "__cxa_thread_atexit_impl" { return thread_exit::resolver_address(version); }
-        if matches!(name, "__cxa_atexit" | "__cxa_finalize") { return cxa::resolver_address(name, version); }
-        if matches!(name, "exit" | "_Exit" | "_exit" | "quick_exit") { return process_exit::resolver_address(name, version); }
+        if name == "__tls_get_addr" {
+            return tls::resolver_address(version);
+        }
+        if name == "__cxa_thread_atexit_impl" {
+            return thread_exit::resolver_address(version);
+        }
+        if matches!(name, "__cxa_atexit" | "__cxa_finalize") {
+            return cxa::resolver_address(name, version);
+        }
+        if matches!(name, "exit" | "_Exit" | "_exit" | "quick_exit") {
+            return process_exit::resolver_address(name, version);
+        }
         for dso in &self.scope {
             if let Some(symbol) = dso.versions.lookup(
-                &dso.object, name, version, versions::Lookup::Relocation { hidden: false },
+                &dso.object,
+                name,
+                version,
+                versions::Lookup::Relocation { hidden: false },
             ) {
                 // All IFUNC references belong to the explicit late pass.
-                if symbol.is_tls() || symbol.is_ifunc() { return None; }
+                if symbol.is_tls() || symbol.is_ifunc() {
+                    return None;
+                }
                 let definition = self.unique?.select(dso, symbol)?;
                 let address = definition.address()?;
                 let mut providers = self.providers.borrow_mut();
@@ -618,9 +747,10 @@ impl SymbolLookup for Resolver<'_> {
 fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     let mut dsos = registry().lock().ok()?;
     // Another opener may have completed while this transaction read its files.
-    if let Some(index) = dsos.iter().position(|dso| {
-        dso.device == group[0].device && dso.inode == group[0].inode
-    }) {
+    if let Some(index) = dsos
+        .iter()
+        .position(|dso| dso.device == group[0].device && dso.inode == group[0].inode)
+    {
         return reopen(&mut dsos, index, flags);
     }
 
@@ -634,10 +764,13 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
         let index = visit[cursor];
         if ids[index].is_none() {
             let prepared = &group[index];
-            if let Some(dso) = dsos.iter().find(|dso| {
-                dso.device == prepared.device && dso.inode == prepared.inode
-            }) {
-                if dso.retiring { return None; }
+            if let Some(dso) = dsos
+                .iter()
+                .find(|dso| dso.device == prepared.device && dso.inode == prepared.inode)
+            {
+                if dso.retiring {
+                    return None;
+                }
                 ids[index] = Some(dso.id);
             } else {
                 if let Some(id) = next_id() {
@@ -646,12 +779,15 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
                     return None;
                 }
                 new_indexes.push(index);
-                visit.extend(prepared.needed.iter().filter_map(|dependency| {
-                    match dependency {
-                        Dependency::Prepared(index) => Some(*index),
-                        Dependency::Resident(_) => None,
-                    }
-                }));
+                visit.extend(
+                    prepared
+                        .needed
+                        .iter()
+                        .filter_map(|dependency| match dependency {
+                            Dependency::Prepared(index) => Some(*index),
+                            Dependency::Resident(_) => None,
+                        }),
+                );
             }
         }
         cursor += 1;
@@ -662,35 +798,53 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     let dependency_id = |dependency: Dependency| -> Option<usize> {
         match dependency {
             Dependency::Prepared(index) => ids.get(index).copied().flatten(),
-            Dependency::Resident(id) => dsos.iter()
-                .find(|dso| dso.id == id && !dso.retiring).map(|dso| dso.id),
+            Dependency::Resident(id) => dsos
+                .iter()
+                .find(|dso| dso.id == id && !dso.retiring)
+                .map(|dso| dso.id),
         }
     };
     let root = ids[0]?;
     let mut pending = Vec::new();
     for &index in &new_indexes {
-        let needed = group[index].needed.iter()
+        let needed = group[index]
+            .needed
+            .iter()
             .map(|&dependency| dependency_id(dependency))
             .collect::<Option<Vec<_>>>()?;
-        let needed_by_name = group[index].needed_by_name.iter()
+        let needed_by_name = group[index]
+            .needed_by_name
+            .iter()
             .map(|(name, dependency)| Some((name.clone(), dependency_id(*dependency)?)))
             .collect::<Option<Vec<_>>>()?;
-        pending.push(map_object(&group[index], ids[index]?, needed, needed_by_name)?);
+        pending.push(map_object(
+            &group[index],
+            ids[index]?,
+            needed,
+            needed_by_name,
+        )?);
     }
     // Version requirements are a dependency contract, not merely a filter on
     // symbols that happen to be relocated. Validate against the named direct
     // provider's ORIGINAL image before any resolver, initializer or publication.
     for dso in &pending {
         for requirement in &dso.versions.requirements {
-            let provider_id = dso.needed_by_name.iter()
+            let provider_id = dso
+                .needed_by_name
+                .iter()
                 .find(|(name, _)| name == &requirement.library)
                 .map(|(_, id)| *id)
-                .or_else(|| dso.needed.iter().copied().find(|&id| {
-                    find(&dsos, &pending, id).is_some_and(|provider| {
-                        provider.object.soname.as_deref() == Some(requirement.library.as_str())
+                .or_else(|| {
+                    dso.needed.iter().copied().find(|&id| {
+                        find(&dsos, &pending, id).is_some_and(|provider| {
+                            provider.object.soname.as_deref() == Some(requirement.library.as_str())
+                        })
                     })
-                }))?;
-            if !find(&dsos, &pending, provider_id)?.versions.satisfies(requirement) {
+                })?;
+            if !find(&dsos, &pending, provider_id)?
+                .versions
+                .satisfies(requirement)
+            {
                 return None;
             }
         }
@@ -706,7 +860,9 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     for (dso, plan) in pending.iter().zip(&direct) {
         let scope = binding::scope(&dsos, &pending, root, dso, flags)?;
         let resolver = Resolver {
-            scope, providers: RefCell::new(Vec::new()), unique: Some(&unique),
+            scope,
+            providers: RefCell::new(Vec::new()),
+            unique: Some(&unique),
         };
         // SAFETY: all pending mappings remain uniquely owned by this
         // transaction, are disjoint and writable, and no callback is invoked.
@@ -714,10 +870,16 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
             core::slice::from_raw_parts_mut(dso.mapping.base as *mut u8, dso.mapping.len)
         };
         let report = ElfLoader::new(dso.object.base).apply_relocations_with_policy(
-            &dso.object, memory, &resolver, PltBindingPolicy::Eager,
+            &dso.object,
+            memory,
+            &resolver,
+            PltBindingPolicy::Eager,
         );
         if !report.events.iter().all(|event| {
-            matches!(event.result, RelocationResult::Applied | RelocationResult::Skipped)
+            matches!(
+                event.result,
+                RelocationResult::Applied | RelocationResult::Skipped
+            )
         }) {
             return None;
         }
@@ -773,7 +935,9 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     for (dso, (callbacks, providers)) in pending.iter_mut().zip(lifecycle_data) {
         dso.callbacks = callbacks;
         for provider in providers {
-            if !dso.dependencies.contains(&provider) { dso.dependencies.push(provider); }
+            if !dso.dependencies.contains(&provider) {
+                dso.dependencies.push(provider);
+            }
         }
     }
     for (dso, &index) in pending.iter().zip(&new_indexes) {
@@ -847,7 +1011,9 @@ pub(super) fn reopen_native_soname(name: &[u8], flags: c_int) -> NativeReopen {
 }
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
-    if ifunc::active() || process_exit::unloading() { return None; }
+    if ifunc::active() || process_exit::unloading() {
+        return None;
+    }
     if name.is_empty() || name.contains(&0) {
         return None;
     }
@@ -868,9 +1034,8 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     if name.contains(&b'$') && origin.is_none() {
         return None;
     }
-    let candidates = SearchPaths::default().candidates(
-        name, origin.unwrap_or(Path::new("/")), &[], &context,
-    )?;
+    let candidates =
+        SearchPaths::default().candidates(name, origin.unwrap_or(Path::new("/")), &[], &context)?;
     // Explicit pathnames stay exact. Bare names use the immutable initial
     // environment, native cache and default directories, not an implicit cwd.
     // The context also suppresses environment/ORIGIN use in secure execution.
@@ -880,9 +1045,14 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     })?;
     {
         let _operation = OPERATIONS.lock();
-        if process_exit::unloading() { return None; }
+        if process_exit::unloading() {
+            return None;
+        }
         let mut dsos = registry().lock().ok()?;
-        if let Some(index) = dsos.iter().position(|dso| dso.device == device && dso.inode == inode) {
+        if let Some(index) = dsos
+            .iter()
+            .position(|dso| dso.device == device && dso.inode == inode)
+        {
             let handle = reopen(&mut dsos, index, flags)?;
             let id = dsos[index].id;
             drop(dsos);
@@ -898,7 +1068,9 @@ pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> 
     // Slow file reads and dependency staging hold neither loader lock. Recheck
     // resident identities atomically once the complete group is prepared.
     let _operation = OPERATIONS.lock();
-    if process_exit::unloading() { return None; }
+    if process_exit::unloading() {
+        return None;
+    }
     process_exit::install()?;
     let result = publish_group(&group, flags)?;
     initialize(native_dso_id_from_handle(result)?)?;
@@ -995,7 +1167,9 @@ pub(super) fn resolve_native_dso_symbol(
     } else {
         Some(native_dso_id_from_handle(handle)?)
     };
-    if ifunc::active() { return Some(None); }
+    if ifunc::active() {
+        return Some(None);
+    }
     let symbol = std::str::from_utf8(symbol_name).ok()?;
     let version = match version_name {
         Some(bytes) => Some(std::str::from_utf8(bytes).ok()?),
@@ -1012,12 +1186,21 @@ pub(super) fn resolve_native_dso_symbol(
     };
     for candidate in order {
         let dso = dsos.iter().find(|dso| dso.id == candidate)?;
-        if let Some(symbol) = dso.versions.lookup(&dso.object, symbol, version, versions::Lookup::Public) {
+        if let Some(symbol) =
+            dso.versions
+                .lookup(&dso.object, symbol, version, versions::Lookup::Public)
+        {
             // Preserve handle/version scope selection, then canonicalize only
             // a GNU unique candidate. Its owner may be in another LOCAL group.
-            let Some(definition) = unique.select(dso, symbol) else { return Some(None); };
+            let Some(definition) = unique.select(dso, symbol) else {
+                return Some(None);
+            };
             if definition.symbol.is_tls() {
-                let module = dsos.iter().find(|dso| dso.id == definition.provider)?.tls.clone()?;
+                let module = dsos
+                    .iter()
+                    .find(|dso| dso.id == definition.provider)?
+                    .tls
+                    .clone()?;
                 let offset = usize::try_from(definition.tls_offset(0)?).ok()?;
                 // Materialize before publishing a first unique owner. Worker
                 // teardown or allocation failure must not pin an otherwise
@@ -1025,9 +1208,13 @@ pub(super) fn resolve_native_dso_symbol(
                 // OPERATIONS retains the selected image while the registry is
                 // unlocked; the Arc keeps its TLS template alive as well.
                 drop(dsos);
-                let Some(address) = tls::address(&module, offset) else { return Some(None); };
+                let Some(address) = tls::address(&module, offset) else {
+                    return Some(None);
+                };
                 let mut dsos = registry().lock().ok()?;
-                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+                if unique.commit(&mut dsos, &mut []).is_none() {
+                    return Some(None);
+                }
                 return Some(Some(address));
             }
             let address = usize::try_from(definition.address()?).ok()?;
@@ -1036,12 +1223,18 @@ pub(super) fn resolve_native_dso_symbol(
                 // Resolve before publishing a first unique selection: a failed
                 // resolver must not establish process-lifetime ownership.
                 let resolved = ifunc::resolve_symbol(id.unwrap_or(definition.provider), address);
-                let Some(resolved) = resolved else { return Some(None); };
+                let Some(resolved) = resolved else {
+                    return Some(None);
+                };
                 let mut dsos = registry().lock().ok()?;
-                if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+                if unique.commit(&mut dsos, &mut []).is_none() {
+                    return Some(None);
+                }
                 return Some(Some(resolved as *mut c_void));
             }
-            if unique.commit(&mut dsos, &mut []).is_none() { return Some(None); }
+            if unique.commit(&mut dsos, &mut []).is_none() {
+                return Some(None);
+            }
             return Some(Some(address as *mut c_void));
         }
     }
@@ -1057,15 +1250,25 @@ fn initialize(root: usize) -> Option<()> {
 fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
     // Active initialization and finalization batches pin their entire closure
     // during reentrant operations, independent of explicit open counts.
-    let mut live = dsos.iter().filter(|dso| {
-        dso.references != 0 || dso.load_pins != 0 || dso.thread_exit_pins != 0 || dso.nodelete
-            || dso.state != InitState::Live || dso.retiring
-    }).map(|dso| dso.id).collect::<Vec<_>>();
+    let mut live = dsos
+        .iter()
+        .filter(|dso| {
+            dso.references != 0
+                || dso.load_pins != 0
+                || dso.thread_exit_pins != 0
+                || dso.nodelete
+                || dso.state != InitState::Live
+                || dso.retiring
+        })
+        .map(|dso| dso.id)
+        .collect::<Vec<_>>();
     let mut cursor = 0;
     while cursor < live.len() {
         if let Some(dso) = dsos.iter().find(|dso| dso.id == live[cursor]) {
             for &dependency in &dso.dependencies {
-                if !live.contains(&dependency) { live.push(dependency); }
+                if !live.contains(&dependency) {
+                    live.push(dependency);
+                }
             }
         }
         cursor += 1;
@@ -1074,14 +1277,21 @@ fn live_ids(dsos: &[NativeDso]) -> Vec<usize> {
 }
 
 fn collect_unreachable() -> Option<()> {
-    if COLLECTING.swap(true, Ordering::Relaxed) { return Some(()); }
+    if COLLECTING.swap(true, Ordering::Relaxed) {
+        return Some(());
+    }
     let _collection = CollectionGuard;
     loop {
         let mut dsos = registry().lock().ok()?;
         let live = live_ids(&dsos);
-        let mut retiring = dsos.iter().filter(|dso| !live.contains(&dso.id))
-            .map(|dso| (dso.initialized_at, dso.id)).collect::<Vec<_>>();
-        if retiring.is_empty() { return Some(()); }
+        let mut retiring = dsos
+            .iter()
+            .filter(|dso| !live.contains(&dso.id))
+            .map(|dso| (dso.initialized_at, dso.id))
+            .collect::<Vec<_>>();
+        if retiring.is_empty() {
+            return Some(());
+        }
         retiring.sort_unstable_by(|left, right| right.cmp(left));
         let ids = retiring.iter().map(|entry| entry.1).collect::<Vec<_>>();
         let mut callbacks = Vec::new();
@@ -1116,11 +1326,15 @@ fn collect_unreachable() -> Option<()> {
 
 pub(super) fn close_native_dso(handle: *mut c_void) -> Option<c_int> {
     let id = native_dso_id_from_handle(handle)?;
-    if ifunc::active() { return Some(-1); }
+    if ifunc::active() {
+        return Some(-1);
+    }
     let _operation = OPERATIONS.lock();
     let mut dsos = registry().lock().ok()?;
     let dso = dsos.iter_mut().find(|dso| dso.id == id)?;
-    if dso.references == 0 { return Some(-1); }
+    if dso.references == 0 {
+        return Some(-1);
+    }
     dso.references -= 1;
     drop(dsos);
     collect_unreachable()?;

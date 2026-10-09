@@ -100,7 +100,10 @@ fn iswctype_differential_scan_vs_glibc() {
 
     // Regression guard: in the C.UTF-8 locale every predicate is glibc-exact via
     // the generated ctype table (bd-2g7oyh.254).
-    assert!(set_locale("C.UTF-8"), "C.UTF-8 locale required for the exactness guard");
+    assert!(
+        set_locale("C.UTF-8"),
+        "C.UTF-8 locale required for the exactness guard"
+    );
     let mut failures = Vec::new();
     for (name, flf, hostf) in FNS {
         let (div, first) = divergences(*flf, *hostf);

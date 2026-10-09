@@ -44,7 +44,10 @@ fn wcsspn_range_ref(s: &[u32], min: u32, max: u32) -> usize {
     let mut i = 0usize;
     while i + LANES <= s.len() {
         let lanes = Simd::<u32, LANES>::from_slice(&s[i..i + LANES]);
-        if !(lanes - Simd::splat(min)).simd_le(Simd::splat(max - min)).all() {
+        if !(lanes - Simd::splat(min))
+            .simd_le(Simd::splat(max - min))
+            .all()
+        {
             break;
         }
         i += LANES;
@@ -126,6 +129,8 @@ fn wcsspn_ab_timing() {
         var.push(0);
         eprintln!("range size={size}");
         time_it("wcsspn(prod)", || wcsspn(&var, &accept));
-        time_it("naive16", || wcsspn_range_ref(&var, b'0' as u32, b'3' as u32));
+        time_it("naive16", || {
+            wcsspn_range_ref(&var, b'0' as u32, b'3' as u32)
+        });
     }
 }

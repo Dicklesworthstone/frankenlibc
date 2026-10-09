@@ -8,7 +8,7 @@ use std::ffi::{CStr, c_void};
 
 use frankenlibc_core::elf::{Elf64Symbol, LoadedObject};
 
-use super::{NativeDso, NATIVE_DSOS, OPERATIONS};
+use super::{NATIVE_DSOS, NativeDso, OPERATIONS};
 
 /// Match the loaded image, including its inter-segment reservation, but not
 /// the page-rounded tail after the last PT_LOAD's p_memsz. No queried address
@@ -17,7 +17,10 @@ fn contains_address(dso: &NativeDso, address: usize) -> bool {
     let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
         return false;
     };
-    let end = dso.object.program_headers.iter()
+    let end = dso
+        .object
+        .program_headers
+        .iter()
         .filter(|header| header.is_load())
         .filter_map(|header| header.p_vaddr.checked_add(header.p_memsz))
         .max()
@@ -69,7 +72,10 @@ pub(crate) unsafe fn address_info(address: *const c_void, info: *mut libc::Dl_in
     let Ok(dsos) = registry.lock() else {
         return false;
     };
-    let Some(dso) = dsos.iter().find(|dso| contains_address(dso, address as usize)) else {
+    let Some(dso) = dsos
+        .iter()
+        .find(|dso| contains_address(dso, address as usize))
+    else {
         return false;
     };
     // Retiring DSOs remain inspectable while their finalizers execute.

@@ -63,8 +63,12 @@ fn call(id: usize) -> Option<()> {
     let mut dsos = registry().lock().ok()?;
     let index = dsos.iter().position(|dso| dso.id == id)?;
     if dsos[index].initialized_at == 0 {
-        let sequence = dsos.iter().map(|dso| dso.initialized_at)
-            .max().unwrap_or(0).checked_add(1)?;
+        let sequence = dsos
+            .iter()
+            .map(|dso| dso.initialized_at)
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)?;
         dsos[index].initialized_at = sequence;
     }
     dsos[index].state = InitState::Live;
@@ -78,9 +82,11 @@ pub(super) fn initialize(root: usize) -> Option<()> {
         if order.is_empty() {
             return Some(());
         }
-        let first = dsos.iter().rev().find(|dso| {
-            dso.initialize_first && order.contains(&dso.id)
-        }).map(|dso| dso.id);
+        let first = dsos
+            .iter()
+            .rev()
+            .find(|dso| dso.initialize_first && order.contains(&dso.id))
+            .map(|dso| dso.id);
         let root_index = dsos.iter().position(|dso| dso.id == root)?;
         let pins = dsos[root_index].load_pins.checked_add(1)?;
         if first.is_some() {

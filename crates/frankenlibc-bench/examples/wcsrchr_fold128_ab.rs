@@ -132,7 +132,8 @@ unsafe fn scan_fold_p0(s: *const u32, c: u32) -> (Option<usize>, usize) {
     let cv = Simd::<u32, L>::splat(c);
     let zv = Simd::<u32, L>::splat(0);
     loop {
-        let v0 = Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
+        let v0 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
         if (v0.simd_eq(cv) | v0.simd_eq(zv)).any() {
             if let Some(span) = unsafe { resolve_panel(v0, cv, zv, i, &mut last) } {
                 return (last, span);
@@ -191,7 +192,8 @@ unsafe fn scan_fold_p0r(s: *const u32, c: u32) -> (Option<usize>, usize) {
     let cv = Simd::<u32, L>::splat(c);
     let zv = Simd::<u32, L>::splat(0);
     loop {
-        let v0 = Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
+        let v0 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
         let e0c = v0.simd_eq(cv);
         let e0z = v0.simd_eq(zv);
         if (e0c | e0z).any() {
@@ -299,13 +301,16 @@ unsafe fn scan_fold_track(s: *const u32, c: u32) -> (Option<usize>, usize) {
     // 128B-aligned fold loop (page-safe by alignment). Track the last nul-free block with a c.
     let mut last_c_block: Option<usize> = None;
     loop {
-        let v0 = Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
+        let v0 =
+            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i).cast::<[u32; L]>()) });
         let v1 =
             Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 8).cast::<[u32; L]>()) });
-        let v2 =
-            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 16).cast::<[u32; L]>()) });
-        let v3 =
-            Simd::<u32, L>::from_array(unsafe { core::ptr::read(s.add(i + 24).cast::<[u32; L]>()) });
+        let v2 = Simd::<u32, L>::from_array(unsafe {
+            core::ptr::read(s.add(i + 16).cast::<[u32; L]>())
+        });
+        let v3 = Simd::<u32, L>::from_array(unsafe {
+            core::ptr::read(s.add(i + 24).cast::<[u32; L]>())
+        });
         let (c0, c1, c2, c3) = (
             v0.simd_eq(cv),
             v1.simd_eq(cv),
@@ -472,8 +477,16 @@ fn main() {
 
             // Byte-identity of all fl variants vs the deployed 8-lane kernel.
             let ref_ = unsafe { scan8(sp, c) };
-            assert_eq!(unsafe { scan_fold_p0(sp, c) }, ref_, "p0 mismatch n={n} {tag}");
-            assert_eq!(unsafe { scan_fold_p0r(sp, c) }, ref_, "p0r mismatch n={n} {tag}");
+            assert_eq!(
+                unsafe { scan_fold_p0(sp, c) },
+                ref_,
+                "p0 mismatch n={n} {tag}"
+            );
+            assert_eq!(
+                unsafe { scan_fold_p0r(sp, c) },
+                ref_,
+                "p0r mismatch n={n} {tag}"
+            );
             assert_eq!(
                 unsafe { scan_fold_track(sp, c) },
                 ref_,

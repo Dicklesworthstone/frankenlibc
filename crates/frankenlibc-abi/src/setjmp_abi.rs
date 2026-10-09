@@ -432,158 +432,129 @@ pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
 // instructions on a cold non-local-jump path, and the linked cdylib binds the
 // GOT slot to this object's own definition (an R_AARCH64_RELATIVE relocation).
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-core::arch::global_asm!(
-    ".global __sigsetjmp",
-    ".global sigsetjmp",
-    ".global setjmp",
-    ".global _setjmp",
-    ".type __sigsetjmp, %function",
-    ".type sigsetjmp, %function",
-    ".type setjmp, %function",
-    ".type _setjmp, %function",
-    "setjmp:",
-    "  mov w1, wzr",
-    "  b __sigsetjmp",
-    "_setjmp:",
-    "  mov w1, wzr",
-    "  b __sigsetjmp",
-    "sigsetjmp:",
-    "__sigsetjmp:",
-    "  stp x19, x20, [x0, #0]",
-    "  stp x21, x22, [x0, #16]",
-    "  stp x23, x24, [x0, #32]",
-    "  stp x25, x26, [x0, #48]",
-    "  stp x27, x28, [x0, #64]",
-    // Load the per-process pointer guard (__frankenlibc_pointer_guard) via the
-    // GOT. x9..x12 are caller-saved scratch the ABI lets setjmp clobber.
-    "  adrp x9, :got:__frankenlibc_pointer_guard",
-    "  ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
-    "  ldr  x9, [x9]",
-    // Store the frame pointer (x29) and return address (x30) mangled.
-    "  eor x10, x29, x9",
-    "  eor x11, x30, x9",
-    "  stp x10, x11, [x0, #80]",
-    // Store the caller's stack pointer mangled.
-    "  mov x12, sp",
-    "  eor x12, x12, x9",
-    "  str x12, [x0, #96]",
-    "  stp d8, d9, [x0, #104]",
-    "  stp d10, d11, [x0, #120]",
-    "  stp d12, d13, [x0, #136]",
-    "  stp d14, d15, [x0, #152]",
-    "  str w1, [x0, #168]",
-    "  cbz w1, 1f",
-    "  mov x4, x0",
-    "  add x2, x0, #176",
-    "  mov x0, xzr",
-    "  mov x1, xzr",
-    "  mov x3, #8",
-    "  mov x8, #135",
-    "  svc #0",
-    "  mov x0, x4",
-    "1:",
-    "  mov w0, wzr",
-    "  ret",
-    ".global longjmp",
-    ".global _longjmp",
-    ".global siglongjmp",
-    ".type longjmp, %function",
-    ".type _longjmp, %function",
-    ".type siglongjmp, %function",
-    "siglongjmp:",
-    "_longjmp:",
-    "longjmp:",
-    "  mov w2, w1",
-    "  cbnz w2, 2f",
-    "  mov w2, #1",
-    "2:",
-    "  ldr w3, [x0, #168]",
-    "  cbz w3, 3f",
-    "  mov x4, x0",
-    "  mov w5, w2",
-    "  mov x0, #2",
-    "  add x1, x4, #176",
-    "  mov x2, xzr",
-    "  mov x3, #8",
-    "  mov x8, #135",
-    "  svc #0",
-    "  mov x0, x4",
-    "  mov w2, w5",
-    "3:",
-    // Reload the same pointer guard used at capture to demangle x29/x30/sp.
-    "  adrp x9, :got:__frankenlibc_pointer_guard",
-    "  ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
-    "  ldr  x9, [x9]",
-    "  ldp x19, x20, [x0, #0]",
-    "  ldp x21, x22, [x0, #16]",
-    "  ldp x23, x24, [x0, #32]",
-    "  ldp x25, x26, [x0, #48]",
-    "  ldp x27, x28, [x0, #64]",
-    // Demangle the frame pointer (x29) and return address (x30).
-    "  ldp x10, x11, [x0, #80]",
-    "  eor x29, x10, x9",
-    "  eor x30, x11, x9",
-    // Demangle the stack pointer into scratch before switching stacks.
-    "  ldr x12, [x0, #96]",
-    "  eor x12, x12, x9",
-    "  ldp d8, d9, [x0, #104]",
-    "  ldp d10, d11, [x0, #120]",
-    "  ldp d12, d13, [x0, #136]",
-    "  ldp d14, d15, [x0, #152]",
-    "  mov sp, x12",
-    "  mov w0, w2",
-    "  br x30",
-);
-
-// Rust-callable wrappers that dispatch to aarch64 global_asm symbols in release
-// or the deterministic phase-1 capture/restore path in debug/test. The x86_64
-// release path above uses exported naked functions directly, so no wrapper is
-// needed there.
-
-#[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-unsafe extern "C" {
-    #[link_name = "setjmp"]
-    fn asm_setjmp(env: *mut c_void) -> c_int;
-    #[link_name = "_setjmp"]
-    fn asm__setjmp(env: *mut c_void) -> c_int;
-    #[link_name = "__sigsetjmp"]
-    fn asm_sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int;
-    #[link_name = "longjmp"]
-    fn asm_longjmp(env: *mut c_void, val: c_int) -> !;
-    #[link_name = "_longjmp"]
-    fn asm__longjmp(env: *mut c_void, val: c_int) -> !;
-    #[link_name = "siglongjmp"]
-    fn asm_siglongjmp(env: *mut c_void, val: c_int) -> !;
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn setjmp(_env: *mut c_void) -> c_int {
+    std::arch::naked_asm!("mov w1, wzr", "b __sigsetjmp",);
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn setjmp(env: *mut c_void) -> c_int {
-    unsafe { asm_setjmp(env) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn _setjmp(_env: *mut c_void) -> c_int {
+    std::arch::naked_asm!("mov w1, wzr", "b __sigsetjmp",);
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn _setjmp(env: *mut c_void) -> c_int {
-    unsafe { asm__setjmp(env) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int {
+    std::arch::naked_asm!("b __sigsetjmp",);
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn sigsetjmp(env: *mut c_void, savemask: c_int) -> c_int {
-    unsafe { asm_sigsetjmp(env, savemask) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn __sigsetjmp(_env: *mut c_void, _savemask: c_int) -> c_int {
+    std::arch::naked_asm!(
+        "stp x19, x20, [x0, #0]",
+        "stp x21, x22, [x0, #16]",
+        "stp x23, x24, [x0, #32]",
+        "stp x25, x26, [x0, #48]",
+        "stp x27, x28, [x0, #64]",
+        // Load the per-process pointer guard (__frankenlibc_pointer_guard) via the
+        // GOT. x9..x12 are caller-saved scratch the ABI lets setjmp clobber.
+        "adrp x9, :got:__frankenlibc_pointer_guard",
+        "ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
+        "ldr  x9, [x9]",
+        // Store the frame pointer (x29) and return address (x30) mangled.
+        "eor x10, x29, x9",
+        "eor x11, x30, x9",
+        "stp x10, x11, [x0, #80]",
+        // Store the caller's stack pointer mangled.
+        "mov x12, sp",
+        "eor x12, x12, x9",
+        "str x12, [x0, #96]",
+        "stp d8, d9, [x0, #104]",
+        "stp d10, d11, [x0, #120]",
+        "stp d12, d13, [x0, #136]",
+        "stp d14, d15, [x0, #152]",
+        "str w1, [x0, #168]",
+        "cbz w1, 1f",
+        "mov x4, x0",
+        "add x2, x0, #176",
+        "mov x0, xzr",
+        "mov x1, xzr",
+        "mov x3, #8",
+        "mov x8, #135",
+        "svc #0",
+        "mov x0, x4",
+        "1:",
+        "mov w0, wzr",
+        "ret",
+    );
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn longjmp(env: *mut c_void, val: c_int) -> ! {
-    unsafe { asm_longjmp(env, val) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn longjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!(
+        "mov w2, w1",
+        "cbnz w2, 2f",
+        "mov w2, #1",
+        "2:",
+        "ldr w3, [x0, #168]",
+        "cbz w3, 3f",
+        "mov x4, x0",
+        "mov w5, w2",
+        "mov x0, #2",
+        "add x1, x4, #176",
+        "mov x2, xzr",
+        "mov x3, #8",
+        "mov x8, #135",
+        "svc #0",
+        "mov x0, x4",
+        "mov w2, w5",
+        "3:",
+        // Reload the same pointer guard used at capture to demangle x29/x30/sp.
+        "adrp x9, :got:__frankenlibc_pointer_guard",
+        "ldr  x9, [x9, #:got_lo12:__frankenlibc_pointer_guard]",
+        "ldr  x9, [x9]",
+        "ldp x19, x20, [x0, #0]",
+        "ldp x21, x22, [x0, #16]",
+        "ldp x23, x24, [x0, #32]",
+        "ldp x25, x26, [x0, #48]",
+        "ldp x27, x28, [x0, #64]",
+        // Demangle the frame pointer (x29) and return address (x30).
+        "ldp x10, x11, [x0, #80]",
+        "eor x29, x10, x9",
+        "eor x30, x11, x9",
+        // Demangle the stack pointer into scratch before switching stacks.
+        "ldr x12, [x0, #96]",
+        "eor x12, x12, x9",
+        "ldp d8, d9, [x0, #104]",
+        "ldp d10, d11, [x0, #120]",
+        "ldp d12, d13, [x0, #136]",
+        "ldp d14, d15, [x0, #152]",
+        "mov sp, x12",
+        "mov w0, w2",
+        "br x30",
+    );
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn _longjmp(env: *mut c_void, val: c_int) -> ! {
-    unsafe { asm__longjmp(env, val) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn _longjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!("b longjmp");
 }
 
 #[cfg(all(not(debug_assertions), target_arch = "aarch64"))]
-pub unsafe extern "C" fn siglongjmp(env: *mut c_void, val: c_int) -> ! {
-    unsafe { asm_siglongjmp(env, val) }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+pub unsafe extern "C" fn siglongjmp(_env: *mut c_void, _val: c_int) -> ! {
+    std::arch::naked_asm!("b longjmp");
 }
 
 // In debug/test builds, use the deterministic phase-1 path instead of

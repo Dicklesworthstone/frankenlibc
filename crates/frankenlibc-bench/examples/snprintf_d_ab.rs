@@ -26,23 +26,17 @@ unsafe extern "C" fn fl_vsn(
 
 /// Variadic wrapper → fl `vfprintf` (stream v-formatter). Same va_list bridge as `fl_vsn`.
 unsafe extern "C" fn fl_vf(stream: *mut c_void, fmt: *const c_char, mut args: ...) -> c_int {
-    unsafe {
-        frankenlibc_abi::stdio_abi::vfprintf(stream, fmt, &mut args as *mut _ as *mut c_void)
-    }
+    unsafe { frankenlibc_abi::stdio_abi::vfprintf(stream, fmt, &mut args as *mut _ as *mut c_void) }
 }
 
 /// Variadic wrapper → fl `vsprintf` (unbounded buffer v-formatter). Same va_list bridge.
 unsafe extern "C" fn fl_vsp(buf: *mut c_char, fmt: *const c_char, mut args: ...) -> c_int {
-    unsafe {
-        frankenlibc_abi::stdio_abi::vsprintf(buf, fmt, &mut args as *mut _ as *mut c_void)
-    }
+    unsafe { frankenlibc_abi::stdio_abi::vsprintf(buf, fmt, &mut args as *mut _ as *mut c_void) }
 }
 
 /// Variadic wrapper → fl `vdprintf` (fd v-formatter). Same va_list bridge.
 unsafe extern "C" fn fl_vd(fd: c_int, fmt: *const c_char, mut args: ...) -> c_int {
-    unsafe {
-        frankenlibc_abi::stdio_abi::vdprintf(fd, fmt, &mut args as *mut _ as *mut c_void)
-    }
+    unsafe { frankenlibc_abi::stdio_abi::vdprintf(fd, fmt, &mut args as *mut _ as *mut c_void) }
 }
 
 type SnD = unsafe extern "C" fn(*mut c_char, usize, *const c_char, c_int) -> c_int;
@@ -92,7 +86,19 @@ fn main() {
     let fmt_u = c"%u";
 
     // Byte-identity: fl == glibc across the full signed-int edge set.
-    for &n in &[0i32, 1, -1, 42, -42, 12345, -12345, i32::MIN, i32::MAX, 100000, -999999] {
+    for &n in &[
+        0i32,
+        1,
+        -1,
+        42,
+        -42,
+        12345,
+        -12345,
+        i32::MIN,
+        i32::MAX,
+        100000,
+        -999999,
+    ] {
         let mut fb = [0u8; 32];
         let mut gb = [0u8; 32];
         let fr = unsafe { fl_d(fb.as_mut_ptr().cast(), 32, fmt_d.as_ptr(), n) };
@@ -137,10 +143,24 @@ fn main() {
         black_box(unsafe { g_d(black_box(bp).cast(), 32, fmt_d.as_ptr(), black_box(-12345)) });
     });
     let (flu, flu_cv) = collect(&|| {
-        black_box(unsafe { fl_u(black_box(bp).cast(), 32, fmt_u.as_ptr(), black_box(12345u32)) });
+        black_box(unsafe {
+            fl_u(
+                black_box(bp).cast(),
+                32,
+                fmt_u.as_ptr(),
+                black_box(12345u32),
+            )
+        });
     });
     let (glu, glu_cv) = collect(&|| {
-        black_box(unsafe { g_u(black_box(bp).cast(), 32, fmt_u.as_ptr(), black_box(12345u32)) });
+        black_box(unsafe {
+            g_u(
+                black_box(bp).cast(),
+                32,
+                fmt_u.as_ptr(),
+                black_box(12345u32),
+            )
+        });
     });
 
     println!(
@@ -207,13 +227,33 @@ fn main() {
     }
     println!("verify: OK (fl snprintf/sprintf %x == glibc)");
     let (snx, snx_cv) = collect(&|| {
-        black_box(unsafe { fl_u(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+        black_box(unsafe {
+            fl_u(
+                black_box(bp).cast(),
+                32,
+                fmt_x.as_ptr(),
+                black_box(0xdead_beefu32),
+            )
+        });
     });
     let (gsnx, gsnx_cv) = collect(&|| {
-        black_box(unsafe { g_u(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+        black_box(unsafe {
+            g_u(
+                black_box(bp).cast(),
+                32,
+                fmt_x.as_ptr(),
+                black_box(0xdead_beefu32),
+            )
+        });
     });
     let (spx, spx_cv) = collect(&|| {
-        black_box(unsafe { fl_sp_u(black_box(bp).cast(), fmt_x.as_ptr(), black_box(0xdead_beefu32)) });
+        black_box(unsafe {
+            fl_sp_u(
+                black_box(bp).cast(),
+                fmt_x.as_ptr(),
+                black_box(0xdead_beefu32),
+            )
+        });
     });
     println!(
         "SNPRINTF_X fl={snx:.2}ns cv={snx_cv:.2} glibc={gsnx:.2}ns cv={gsnx_cv:.2} fl/glibc={:.3}",
@@ -285,7 +325,12 @@ fn main() {
     });
     let (vsnx, vsnx_cv) = collect(&|| {
         black_box(unsafe {
-            fl_vsn(black_box(bp).cast(), 32, fmt_x.as_ptr(), black_box(0xdead_beefu32))
+            fl_vsn(
+                black_box(bp).cast(),
+                32,
+                fmt_x.as_ptr(),
+                black_box(0xdead_beefu32),
+            )
         });
     });
     let (vsnp, vsnp_cv) = collect(&|| {
@@ -346,7 +391,16 @@ fn main() {
         std::mem::transmute::<*const (), SnLd>(frankenlibc_abi::stdio_abi::snprintf as *const ())
     };
     let g_ld: SnLd = unsafe { std::mem::transmute::<*mut c_void, SnLd>(g) };
-    for &n in &[0i64, -1, 12345, -12345, i64::MIN, i64::MAX, 9_000_000_000, -9_000_000_000] {
+    for &n in &[
+        0i64,
+        -1,
+        12345,
+        -12345,
+        i64::MIN,
+        i64::MAX,
+        9_000_000_000,
+        -9_000_000_000,
+    ] {
         let mut fb = [0u8; 32];
         let mut gb = [0u8; 32];
         let fr = unsafe { fl_ld(fb.as_mut_ptr().cast(), 32, fmt_ld.as_ptr(), n) };
@@ -356,10 +410,24 @@ fn main() {
     }
     println!("verify: OK (fl snprintf %ld == glibc)");
     let (snld, snld_cv) = collect(&|| {
-        black_box(unsafe { fl_ld(black_box(bp).cast(), 32, fmt_ld.as_ptr(), black_box(-9_000_000_000i64)) });
+        black_box(unsafe {
+            fl_ld(
+                black_box(bp).cast(),
+                32,
+                fmt_ld.as_ptr(),
+                black_box(-9_000_000_000i64),
+            )
+        });
     });
     let (gsnld, gsnld_cv) = collect(&|| {
-        black_box(unsafe { g_ld(black_box(bp).cast(), 32, fmt_ld.as_ptr(), black_box(-9_000_000_000i64)) });
+        black_box(unsafe {
+            g_ld(
+                black_box(bp).cast(),
+                32,
+                fmt_ld.as_ptr(),
+                black_box(-9_000_000_000i64),
+            )
+        });
     });
     println!(
         "SNPRINTF_LD fl={snld:.2}ns cv={snld_cv:.2} glibc={gsnld:.2}ns cv={gsnld_cv:.2} fl/glibc={:.3}",
@@ -383,10 +451,24 @@ fn main() {
     }
     println!("verify: OK (fl snprintf %zu == glibc)");
     let (snzu, snzu_cv) = collect(&|| {
-        black_box(unsafe { fl_zu(black_box(bp).cast(), 32, fmt_zu.as_ptr(), black_box(9_000_000_000usize)) });
+        black_box(unsafe {
+            fl_zu(
+                black_box(bp).cast(),
+                32,
+                fmt_zu.as_ptr(),
+                black_box(9_000_000_000usize),
+            )
+        });
     });
     let (gsnzu, gsnzu_cv) = collect(&|| {
-        black_box(unsafe { g_zu(black_box(bp).cast(), 32, fmt_zu.as_ptr(), black_box(9_000_000_000usize)) });
+        black_box(unsafe {
+            g_zu(
+                black_box(bp).cast(),
+                32,
+                fmt_zu.as_ptr(),
+                black_box(9_000_000_000usize),
+            )
+        });
     });
     println!(
         "SNPRINTF_ZU fl={snzu:.2}ns cv={snzu_cv:.2} glibc={gsnzu:.2}ns cv={gsnzu_cv:.2} fl/glibc={:.3}",
@@ -395,7 +477,15 @@ fn main() {
 
     // %lx (64-bit lowercase hex) — reuses SnZu signature shape (usize arg == u64). Byte-identity.
     let fmt_lx = c"%lx";
-    for &n in &[0usize, 1, 0xff, 0xdead_beef, 0xdead_beef_cafe_babe, usize::MAX, 4096] {
+    for &n in &[
+        0usize,
+        1,
+        0xff,
+        0xdead_beef,
+        0xdead_beef_cafe_babe,
+        usize::MAX,
+        4096,
+    ] {
         let mut fb = [0u8; 32];
         let mut gb = [0u8; 32];
         let fr = unsafe { fl_zu(fb.as_mut_ptr().cast(), 32, fmt_lx.as_ptr(), n) };
@@ -405,10 +495,24 @@ fn main() {
     }
     println!("verify: OK (fl snprintf %lx == glibc)");
     let (snlx, snlx_cv) = collect(&|| {
-        black_box(unsafe { fl_zu(black_box(bp).cast(), 32, fmt_lx.as_ptr(), black_box(0xdead_beef_cafe_babeusize)) });
+        black_box(unsafe {
+            fl_zu(
+                black_box(bp).cast(),
+                32,
+                fmt_lx.as_ptr(),
+                black_box(0xdead_beef_cafe_babeusize),
+            )
+        });
     });
     let (gsnlx, gsnlx_cv) = collect(&|| {
-        black_box(unsafe { g_zu(black_box(bp).cast(), 32, fmt_lx.as_ptr(), black_box(0xdead_beef_cafe_babeusize)) });
+        black_box(unsafe {
+            g_zu(
+                black_box(bp).cast(),
+                32,
+                fmt_lx.as_ptr(),
+                black_box(0xdead_beef_cafe_babeusize),
+            )
+        });
     });
     println!(
         "SNPRINTF_LX fl={snlx:.2}ns cv={snlx_cv:.2} glibc={gsnlx:.2}ns cv={gsnlx_cv:.2} fl/glibc={:.3}",
@@ -425,8 +529,11 @@ fn main() {
     let fl_fprintf: FprintfD = unsafe {
         std::mem::transmute::<*const (), FprintfD>(frankenlibc_abi::stdio_abi::fprintf as *const ())
     };
-    let g_fopen: FopenFn = unsafe { std::mem::transmute::<*mut c_void, FopenFn>(libc::dlsym(h, c"fopen".as_ptr())) };
-    let g_fprintf: FprintfD = unsafe { std::mem::transmute::<*mut c_void, FprintfD>(libc::dlsym(h, c"fprintf".as_ptr())) };
+    let g_fopen: FopenFn =
+        unsafe { std::mem::transmute::<*mut c_void, FopenFn>(libc::dlsym(h, c"fopen".as_ptr())) };
+    let g_fprintf: FprintfD = unsafe {
+        std::mem::transmute::<*mut c_void, FprintfD>(libc::dlsym(h, c"fprintf".as_ptr()))
+    };
     // Byte-identity: fl fprintf vs glibc fprintf into fmemopen "w" buffers, over the edge set +
     // both "%d" and "%d\n". Proves the stream fast path emits the exact bytes.
     type FmemFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
@@ -434,11 +541,14 @@ fn main() {
     let fl_fmem: FmemFn = unsafe {
         std::mem::transmute::<*const (), FmemFn>(frankenlibc_abi::stdio_abi::fmemopen as *const ())
     };
-    let g_fmem: FmemFn = unsafe { std::mem::transmute::<*mut c_void, FmemFn>(libc::dlsym(h, c"fmemopen".as_ptr())) };
+    let g_fmem: FmemFn =
+        unsafe { std::mem::transmute::<*mut c_void, FmemFn>(libc::dlsym(h, c"fmemopen".as_ptr())) };
     let fl_fclose2: FcloseFn2 = unsafe {
         std::mem::transmute::<*const (), FcloseFn2>(frankenlibc_abi::stdio_abi::fclose as *const ())
     };
-    let g_fclose2: FcloseFn2 = unsafe { std::mem::transmute::<*mut c_void, FcloseFn2>(libc::dlsym(h, c"fclose".as_ptr())) };
+    let g_fclose2: FcloseFn2 = unsafe {
+        std::mem::transmute::<*mut c_void, FcloseFn2>(libc::dlsym(h, c"fclose".as_ptr()))
+    };
     for &nl in &[c"%d".as_ptr(), c"%d\n".as_ptr()] {
         for &n in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
             let mut flbuf = [0u8; 32];
@@ -456,9 +566,18 @@ fn main() {
     println!("verify: OK (fl fprintf %d/%d\\n == glibc, values + bytes)");
     // fprintf %u/%x byte-identity (unsigned).
     type FprintfU = unsafe extern "C" fn(*mut c_void, *const c_char, c_uint) -> c_int;
-    let fl_fprintf_u: FprintfU = unsafe { std::mem::transmute::<*const (), FprintfU>(frankenlibc_abi::stdio_abi::fprintf as *const ()) };
-    let g_fprintf_u: FprintfU = unsafe { std::mem::transmute::<*mut c_void, FprintfU>(libc::dlsym(h, c"fprintf".as_ptr())) };
-    for &uf in &[c"%u".as_ptr(), c"%u\n".as_ptr(), c"%x".as_ptr(), c"%x\n".as_ptr()] {
+    let fl_fprintf_u: FprintfU = unsafe {
+        std::mem::transmute::<*const (), FprintfU>(frankenlibc_abi::stdio_abi::fprintf as *const ())
+    };
+    let g_fprintf_u: FprintfU = unsafe {
+        std::mem::transmute::<*mut c_void, FprintfU>(libc::dlsym(h, c"fprintf".as_ptr()))
+    };
+    for &uf in &[
+        c"%u".as_ptr(),
+        c"%u\n".as_ptr(),
+        c"%x".as_ptr(),
+        c"%x\n".as_ptr(),
+    ] {
         for &n in &[0u32, 1, 0xff, 0xdead_beef, u32::MAX, 12345] {
             let mut flbuf = [0u8; 32];
             let mut gbuf = [0u8; 32];
@@ -475,12 +594,19 @@ fn main() {
     println!("verify: OK (fl fprintf %u/%x == glibc)");
     // fprintf 64-bit %ld/%lu/%lx byte-identity.
     type FprintfL = unsafe extern "C" fn(*mut c_void, *const c_char, u64) -> c_int;
-    let fl_fprintf_l: FprintfL = unsafe { std::mem::transmute::<*const (), FprintfL>(frankenlibc_abi::stdio_abi::fprintf as *const ()) };
-    let g_fprintf_l: FprintfL = unsafe { std::mem::transmute::<*mut c_void, FprintfL>(libc::dlsym(h, c"fprintf".as_ptr())) };
+    let fl_fprintf_l: FprintfL = unsafe {
+        std::mem::transmute::<*const (), FprintfL>(frankenlibc_abi::stdio_abi::fprintf as *const ())
+    };
+    let g_fprintf_l: FprintfL = unsafe {
+        std::mem::transmute::<*mut c_void, FprintfL>(libc::dlsym(h, c"fprintf".as_ptr()))
+    };
     let lfmts: [(&core::ffi::CStr, u64); 6] = [
-        (c"%ld", (-9_000_000_000i64) as u64), (c"%ld\n", i64::MIN as u64),
-        (c"%lu", u64::MAX), (c"%lu\n", 9_000_000_000u64),
-        (c"%lx", 0xdead_beef_cafe_babeu64), (c"%lx\n", u64::MAX),
+        (c"%ld", (-9_000_000_000i64) as u64),
+        (c"%ld\n", i64::MIN as u64),
+        (c"%lu", u64::MAX),
+        (c"%lu\n", 9_000_000_000u64),
+        (c"%lx", 0xdead_beef_cafe_babeu64),
+        (c"%lx\n", u64::MAX),
     ];
     for &(lf, n) in &lfmts {
         let mut flbuf = [0u8; 40];
@@ -498,7 +624,10 @@ fn main() {
 
     let fl_fp = unsafe { fl_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
     let g_fp = unsafe { g_fopen(c"/dev/null".as_ptr(), c"w".as_ptr()) };
-    assert!(!fl_fp.is_null() && !g_fp.is_null(), "fopen /dev/null failed");
+    assert!(
+        !fl_fp.is_null() && !g_fp.is_null(),
+        "fopen /dev/null failed"
+    );
     let fmt_dn = c"%d\n";
     let (fprd, fprd_cv) = collect(&|| {
         black_box(unsafe { fl_fprintf(fl_fp, fmt_dn.as_ptr(), black_box(-12345)) });
@@ -523,10 +652,22 @@ fn main() {
     );
     let fmt_ldn = c"%ld\n";
     let (fprl, fprl_cv) = collect(&|| {
-        black_box(unsafe { fl_fprintf_l(fl_fp, fmt_ldn.as_ptr(), black_box((-9_000_000_000i64) as u64)) });
+        black_box(unsafe {
+            fl_fprintf_l(
+                fl_fp,
+                fmt_ldn.as_ptr(),
+                black_box((-9_000_000_000i64) as u64),
+            )
+        });
     });
     let (gfprl, gfprl_cv) = collect(&|| {
-        black_box(unsafe { g_fprintf_l(g_fp, fmt_ldn.as_ptr(), black_box((-9_000_000_000i64) as u64)) });
+        black_box(unsafe {
+            g_fprintf_l(
+                g_fp,
+                fmt_ldn.as_ptr(),
+                black_box((-9_000_000_000i64) as u64),
+            )
+        });
     });
     println!(
         "FPRINTF_LDN fl={fprl:.2}ns cv={fprl_cv:.2} glibc={gfprl:.2}ns cv={gfprl_cv:.2} fl/glibc={:.3}",
@@ -578,10 +719,12 @@ fn main() {
     // dprintf/vdprintf %d\n — fd v-formatters (direct-fd / syslog logging). Verify fl==glibc via a
     // pipe (both write to it, compare the two halves), then time to /dev/null. base=slow, cand=fast.
     type DprintfD = unsafe extern "C" fn(c_int, *const c_char, c_int) -> c_int;
-    let fl_dpr: DprintfD =
-        unsafe { std::mem::transmute::<*const (), DprintfD>(frankenlibc_abi::stdio_abi::dprintf as *const ()) };
-    let g_dpr: DprintfD =
-        unsafe { std::mem::transmute::<*mut c_void, DprintfD>(libc::dlsym(h, c"dprintf".as_ptr())) };
+    let fl_dpr: DprintfD = unsafe {
+        std::mem::transmute::<*const (), DprintfD>(frankenlibc_abi::stdio_abi::dprintf as *const ())
+    };
+    let g_dpr: DprintfD = unsafe {
+        std::mem::transmute::<*mut c_void, DprintfD>(libc::dlsym(h, c"dprintf".as_ptr()))
+    };
     for &nv in &[0i32, -1, 12345, -12345, i32::MIN, i32::MAX] {
         let mut fds = [0i32; 2];
         assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
@@ -593,7 +736,11 @@ fn main() {
         unsafe { libc::close(fds[0]) };
         assert_eq!(fr, gr, "dprintf %d return diverged for {nv}");
         let hl = fr as usize;
-        assert_eq!(&rb[..hl], &rb[hl..hl * 2], "dprintf %d bytes diverged for {nv}");
+        assert_eq!(
+            &rb[..hl],
+            &rb[hl..hl * 2],
+            "dprintf %d bytes diverged for {nv}"
+        );
     }
     println!("verify: OK (fl dprintf %d\\n == glibc, via pipe)");
     let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };

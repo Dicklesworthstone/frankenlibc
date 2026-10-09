@@ -14,7 +14,10 @@ mod dlsym_oracle;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Copy)]
-enum Loader { Native, Host }
+enum Loader {
+    Native,
+    Host,
+}
 impl Loader {
     fn open(self, path: &Path, flags: c_int) -> *mut c_void {
         let path = CString::new(path.as_os_str().as_bytes()).unwrap();
@@ -29,7 +32,10 @@ impl Loader {
             }
         };
         if matches!(self, Self::Native) && !result.is_null() {
-            assert!(native_dso_handle_for_tests(result), "host fallback is not native execution");
+            assert!(
+                native_dso_handle_for_tests(result),
+                "host fallback is not native execution"
+            );
         }
         result
     }
@@ -52,8 +58,10 @@ impl Loader {
             match self {
                 Self::Native => dlsym(handle, name.as_ptr()),
                 Self::Host => {
-                    let lookup: unsafe extern "C" fn(*mut c_void, *const libc::c_char) -> *mut c_void =
-                        dlsym_oracle::host_fn(c"dlsym", dlsym as *const ());
+                    let lookup: unsafe extern "C" fn(
+                        *mut c_void,
+                        *const libc::c_char,
+                    ) -> *mut c_void = dlsym_oracle::host_fn(c"dlsym", dlsym as *const ());
                     lookup(handle, name.as_ptr())
                 }
             }
@@ -62,15 +70,22 @@ impl Loader {
         result
     }
     fn value(self, handle: *mut c_void, name: &str) -> c_int {
-        let function: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(self.symbol(handle, name)) };
+        let function: unsafe extern "C" fn() -> c_int =
+            unsafe { std::mem::transmute(self.symbol(handle, name)) };
         unsafe { function() }
     }
 }
 
-struct Fixture { dir: PathBuf, prefix: String }
+struct Fixture {
+    dir: PathBuf,
+    prefix: String,
+}
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let prefix = format!("fl_lifecycle_{}_{stamp}", std::process::id());
         let dir = std::env::temp_dir().join(&prefix);
         std::fs::create_dir_all(&dir).unwrap();
@@ -79,14 +94,26 @@ impl Fixture {
     fn compile(&self, name: &str, source: &str, dependencies: &[&Path], flags: &[&str]) -> PathBuf {
         let source_path = self.dir.join(format!("{name}.c"));
         let library = self.dir.join(format!("{name}.so"));
-        let source = source.replace("event_push", &format!("{}_push", self.prefix))
+        let source = source
+            .replace("event_push", &format!("{}_push", self.prefix))
             .replace("event_count", &format!("{}_count", self.prefix))
             .replace("event_get", &format!("{}_get", self.prefix));
         std::fs::write(&source_path, source).unwrap();
-        let output = Command::new("cc").args(["-shared", "-fPIC", "-nostdlib", "-Wl,--build-id=none"])
-            .arg(&source_path).args(flags).arg("-Wl,--no-as-needed").args(dependencies)
-            .arg("-o").arg(&library).output().unwrap();
-        assert!(output.status.success(), "cc failed: {}", String::from_utf8_lossy(&output.stderr));
+        let output = Command::new("cc")
+            .args(["-shared", "-fPIC", "-nostdlib", "-Wl,--build-id=none"])
+            .arg(&source_path)
+            .args(flags)
+            .arg("-Wl,--no-as-needed")
+            .args(dependencies)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "cc failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         library
     }
     fn sink(&self, loader: Loader) -> *mut c_void {
@@ -98,7 +125,8 @@ impl Fixture {
     fn events(&self, loader: Loader, sink: *mut c_void) -> Vec<c_int> {
         let count = loader.value(sink, &format!("{}_count", self.prefix));
         assert!((0..=128).contains(&count));
-        let get: unsafe extern "C" fn(c_int) -> c_int = unsafe { std::mem::transmute(loader.symbol(sink, &format!("{}_get", self.prefix))) };
+        let get: unsafe extern "C" fn(c_int) -> c_int =
+            unsafe { std::mem::transmute(loader.symbol(sink, &format!("{}_get", self.prefix))) };
         (0..count).map(|i| unsafe { get(i) }).collect()
     }
 }
@@ -106,10 +134,14 @@ impl Fixture {
 // Reentrant callbacks are tested in bounded subprocesses, so a regression in
 // lock ordering fails the test rather than wedging the entire test campaign.
 fn child_case(name: &str) -> bool {
-    if std::env::var("FL_LIFECYCLE_CHILD").as_deref() == Ok(name) { return true; }
+    if std::env::var("FL_LIFECYCLE_CHILD").as_deref() == Ok(name) {
+        return true;
+    }
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", name, "--nocapture"])
-        .env("FL_LIFECYCLE_CHILD", name).spawn().unwrap();
+        .env("FL_LIFECYCLE_CHILD", name)
+        .spawn()
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
@@ -172,7 +204,10 @@ fn native_lifecycle_soname_reopen_preserves_identity_and_global_promotion() {
             Path::new(&soname),
             libc::RTLD_NOW | libc::RTLD_NOLOAD | libc::RTLD_GLOBAL,
         );
-        assert_eq!(third, first, "NOLOAD promotion must reuse the resident image");
+        assert_eq!(
+            third, first,
+            "NOLOAD promotion must reuse the resident image"
+        );
         assert_eq!(loader.value(third, "resident_started"), 1);
         assert_eq!(fixture.events(loader, sink), [17], "constructor ran twice");
 
@@ -205,7 +240,13 @@ fn native_lifecycle_runtime_metadata_ignores_section_headers() {
     for loader in [Loader::Host, Loader::Native] {
         let fixture = Fixture::new();
         let sink = fixture.sink(loader);
-        for variant in ["ordinary", "emit-relocs", "null-section", "no-sections", "bad-section-offset"] {
+        for variant in [
+            "ordinary",
+            "emit-relocs",
+            "null-section",
+            "no-sections",
+            "bad-section-offset",
+        ] {
             let flags: &[&str] = if variant == "emit-relocs" {
                 &["-Wl,--emit-relocs"]
             } else {
@@ -291,7 +332,9 @@ fn native_lifecycle_malformed_dynamic_metadata_cannot_use_sections() {
         .find(|header| header.p_type == frankenlibc_core::elf::ProgramType::Dynamic)
         .unwrap();
     let start = usize::try_from(dynamic.p_offset).unwrap();
-    let end = start.checked_add(usize::try_from(dynamic.p_filesz).unwrap()).unwrap();
+    let end = start
+        .checked_add(usize::try_from(dynamic.p_filesz).unwrap())
+        .unwrap();
     for (case, tag, value) in [
         ("bad-rela-entry-size", 9i64, 8u64),
         ("unmapped-symbol-table", 6, u64::MAX),
@@ -309,7 +352,10 @@ fn native_lifecycle_malformed_dynamic_metadata_cannot_use_sections() {
                 changed = true;
             }
         }
-        assert!(changed, "fixture did not contain required dynamic tag: {case}");
+        assert!(
+            changed,
+            "fixture did not contain required dynamic tag: {case}"
+        );
         assert!(
             parser.parse(&bytes).is_err(),
             "valid sections must not rescue invalid PT_DYNAMIC: {case}"
@@ -329,7 +375,8 @@ fn native_lifecycle_malformed_dynamic_metadata_cannot_use_sections() {
 fn native_lifecycle_priority_reopen_reload_matches_host() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
-        let fixture = Fixture::new(); let sink = fixture.sink(loader);
+        let fixture = Fixture::new();
+        let sink = fixture.sink(loader);
         let library = fixture.compile("ordered", r#"
             extern void event_push(int); static int value;
             void legacy_init(void) { value=1; event_push(10); }
@@ -341,13 +388,18 @@ fn native_lifecycle_priority_reopen_reload_matches_host() {
             int result(void) { return value; }
         "#, &[], &["-Wl,-init,legacy_init", "-Wl,-fini,legacy_fini"]);
         for iteration in 1..=2 {
-            let first = loader.open(&library, libc::RTLD_NOW); assert!(!first.is_null());
+            let first = loader.open(&library, libc::RTLD_NOW);
+            assert!(!first.is_null());
             assert_eq!(loader.value(first, "result"), 123);
-            let second = loader.open(&library, libc::RTLD_NOW); assert_eq!(first, second);
+            let second = loader.open(&library, libc::RTLD_NOW);
+            assert_eq!(first, second);
             loader.close(first);
             assert_eq!(fixture.events(loader, sink).len(), (iteration - 1) * 6 + 3);
             loader.close(second);
-            assert_eq!(fixture.events(loader, sink), [10,20,30,-30,-20,-10].repeat(iteration));
+            assert_eq!(
+                fixture.events(loader, sink),
+                [10, 20, 30, -30, -20, -10].repeat(iteration)
+            );
         }
         loader.close(sink);
     }
@@ -357,69 +409,110 @@ fn native_lifecycle_priority_reopen_reload_matches_host() {
 fn native_lifecycle_shared_dependency_order_matches_host() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
-        let f = Fixture::new(); let sink = f.sink(loader);
+        let f = Fixture::new();
+        let sink = f.sink(loader);
         let leaf = f.compile("leaf", "extern void event_push(int); __attribute__((constructor)) void init(void){event_push(1);} __attribute__((destructor)) void fini(void){event_push(-1);} int leaf(void){return 7;}", &[], &["-Wl,-Bsymbolic"]);
         let mid = f.compile("mid", "extern void event_push(int); extern int leaf(void); __attribute__((constructor)) void init(void){event_push(leaf()-5);} __attribute__((destructor)) void fini(void){event_push(-2);} int mid(void){return leaf();}", &[&leaf], &["-Wl,-Bsymbolic"]);
         let root = f.compile("root", "extern void event_push(int); __attribute__((constructor)) void init(void){event_push(3);} __attribute__((destructor)) void fini(void){event_push(-3);}", &[&mid], &["-Wl,-Bsymbolic"]);
         let other = f.compile("other", "extern void event_push(int); __attribute__((constructor)) void init(void){event_push(4);} __attribute__((destructor)) void fini(void){event_push(-4);}", &[&leaf], &["-Wl,-Bsymbolic"]);
-        let first=loader.open(&root,libc::RTLD_NOW); assert!(!first.is_null());
-        let second=loader.open(&other,libc::RTLD_NOW); assert!(!second.is_null());
-        assert_eq!(f.events(loader,sink), [1,2,3,4]);
-        loader.close(first); assert_eq!(f.events(loader,sink), [1,2,3,4,-3,-2]);
-        loader.close(second); assert_eq!(f.events(loader,sink), [1,2,3,4,-3,-2,-4,-1]);
+        let first = loader.open(&root, libc::RTLD_NOW);
+        assert!(!first.is_null());
+        let second = loader.open(&other, libc::RTLD_NOW);
+        assert!(!second.is_null());
+        assert_eq!(f.events(loader, sink), [1, 2, 3, 4]);
+        loader.close(first);
+        assert_eq!(f.events(loader, sink), [1, 2, 3, 4, -3, -2]);
+        loader.close(second);
+        assert_eq!(f.events(loader, sink), [1, 2, 3, 4, -3, -2, -4, -1]);
         loader.close(sink);
     }
 }
 
 #[test]
 fn native_lifecycle_callbacks_can_reenter_loader() {
-    if !child_case("native_lifecycle_callbacks_can_reenter_loader") { return; }
+    if !child_case("native_lifecycle_callbacks_can_reenter_loader") {
+        return;
+    }
     for loader in [Loader::Host, Loader::Native] {
-        let f=Fixture::new(); let sink=f.sink(loader);
+        let f = Fixture::new();
+        let sink = f.sink(loader);
         let child=f.compile("child","extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(1);} __attribute__((destructor)) static void fini(void){event_push(-1);} int answer(void){return 7;}",&[],&[]);
-        let source=format!(r#"
+        let source = format!(
+            r#"
             extern void event_push(int); extern void *dlopen(const char*,int); extern void *dlsym(void*,const char*); extern int dlclose(void*);
             static void *child; static int value;
             __attribute__((constructor)) static void init(void) {{ event_push(10); child=dlopen({:?},2); if(child){{ int(*answer)(void)=dlsym(child,"answer"); if(answer)value=answer(); }} event_push(20); }}
             __attribute__((destructor)) static void fini(void) {{ event_push(-20); if(child)dlclose(child); event_push(-10); }}
             int result(void){{return value;}}
-        "#, child.to_str().unwrap());
-        let root=f.compile("root",&source,&[],&[]);
-        let h=loader.open(&root,libc::RTLD_NOW); assert!(!h.is_null()); assert_eq!(loader.value(h,"result"),7);
-        assert_eq!(f.events(loader,sink),[10,1,20]); loader.close(h);
+        "#,
+            child.to_str().unwrap()
+        );
+        let root = f.compile("root", &source, &[], &[]);
+        let h = loader.open(&root, libc::RTLD_NOW);
+        assert!(!h.is_null());
+        assert_eq!(loader.value(h, "result"), 7);
+        assert_eq!(f.events(loader, sink), [10, 1, 20]);
+        loader.close(h);
         // Live glibc defers the child finalizer until the enclosing finalizer
         // has returned; the nested dlclose updates counts without recursing.
-        assert_eq!(f.events(loader,sink),[10,1,20,-20,-10,-1]); loader.close(sink);
+        assert_eq!(f.events(loader, sink), [10, 1, 20, -20, -10, -1]);
+        loader.close(sink);
     }
 }
 
 #[test]
 fn native_lifecycle_concurrent_first_opens_initialize_once() {
-    if !child_case("native_lifecycle_concurrent_first_opens_initialize_once") { return; }
-    let f=Fixture::new(); let sink=f.sink(Loader::Native);
+    if !child_case("native_lifecycle_concurrent_first_opens_initialize_once") {
+        return;
+    }
+    let f = Fixture::new();
+    let sink = f.sink(Loader::Native);
     let path=f.compile("slow","extern void event_push(int); static int value; __attribute__((constructor)) static void init(void){for(volatile unsigned i=0;i<1000000;i++){} value=123; event_push(1);} __attribute__((destructor)) static void fini(void){event_push(-1);} int result(void){return value;}",&[],&[]);
-    let barrier=Arc::new(Barrier::new(8));
-    let threads=(0..8).map(|_| {let path=path.clone();let barrier=barrier.clone();std::thread::spawn(move||{
-        barrier.wait(); let h=Loader::Native.open(&path,libc::RTLD_NOW); assert!(!h.is_null());
-        assert_eq!(Loader::Native.value(h,"result"),123); h as usize
-    })}).collect::<Vec<_>>();
-    let handles=threads.into_iter().map(|thread|thread.join().unwrap()).collect::<Vec<_>>();
-    assert!(handles.iter().all(|handle|*handle==handles[0])); assert_eq!(f.events(Loader::Native,sink),[1]);
-    for h in handles {Loader::Native.close(h as *mut c_void);}
-    assert_eq!(f.events(Loader::Native,sink),[1,-1]); Loader::Native.close(sink);
+    let barrier = Arc::new(Barrier::new(8));
+    let threads = (0..8)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let h = Loader::Native.open(&path, libc::RTLD_NOW);
+                assert!(!h.is_null());
+                assert_eq!(Loader::Native.value(h, "result"), 123);
+                h as usize
+            })
+        })
+        .collect::<Vec<_>>();
+    let handles = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect::<Vec<_>>();
+    assert!(handles.iter().all(|handle| *handle == handles[0]));
+    assert_eq!(f.events(Loader::Native, sink), [1]);
+    for h in handles {
+        Loader::Native.close(h as *mut c_void);
+    }
+    assert_eq!(f.events(Loader::Native, sink), [1, -1]);
+    Loader::Native.close(sink);
 }
 
 #[test]
 fn native_lifecycle_invalid_callbacks_roll_back_before_any_initializer() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let f=Fixture::new();let sink=f.sink(Loader::Native);
+    let f = Fixture::new();
+    let sink = f.sink(Loader::Native);
     let dependency=f.compile("dependency","extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(1);}",&[],&[]);
-    for (name,value) in [("outside","(void*)0x123"),("data","(void*)&data")] {
-        let source=format!("static int data; __attribute__((used,section(\".init_array\"))) static void (*bad)(void)={value};");
-        let path=f.compile(name,&source,&[&dependency],&[]);
-        assert!(Loader::Native.open(&path,libc::RTLD_NOW).is_null());
-        assert!(f.events(Loader::Native,sink).is_empty());
-        assert!(Loader::Native.open(&dependency,libc::RTLD_NOW|libc::RTLD_NOLOAD).is_null());
+    for (name, value) in [("outside", "(void*)0x123"), ("data", "(void*)&data")] {
+        let source = format!(
+            "static int data; __attribute__((used,section(\".init_array\"))) static void (*bad)(void)={value};"
+        );
+        let path = f.compile(name, &source, &[&dependency], &[]);
+        assert!(Loader::Native.open(&path, libc::RTLD_NOW).is_null());
+        assert!(f.events(Loader::Native, sink).is_empty());
+        assert!(
+            Loader::Native
+                .open(&dependency, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+                .is_null()
+        );
     }
     Loader::Native.close(sink);
 }
@@ -428,11 +521,18 @@ fn native_lifecycle_invalid_callbacks_roll_back_before_any_initializer() {
 fn native_lifecycle_nodelete_defers_finalization() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
-        let f=Fixture::new();let sink=f.sink(loader);
+        let f = Fixture::new();
+        let sink = f.sink(loader);
         let path=f.compile("pinned","extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(1);} __attribute__((destructor)) static void fini(void){event_push(-1);}",&[],&[]);
-        let h=loader.open(&path,libc::RTLD_NOW|libc::RTLD_NODELETE); assert!(!h.is_null());loader.close(h);
-        assert_eq!(f.events(loader,sink),[1]);let again=loader.open(&path,libc::RTLD_NOW);assert_eq!(again,h);loader.close(again);
-        assert_eq!(f.events(loader,sink),[1]);loader.close(sink);
+        let h = loader.open(&path, libc::RTLD_NOW | libc::RTLD_NODELETE);
+        assert!(!h.is_null());
+        loader.close(h);
+        assert_eq!(f.events(loader, sink), [1]);
+        let again = loader.open(&path, libc::RTLD_NOW);
+        assert_eq!(again, h);
+        loader.close(again);
+        assert_eq!(f.events(loader, sink), [1]);
+        loader.close(sink);
     }
 }
 
@@ -440,44 +540,69 @@ fn native_lifecycle_nodelete_defers_finalization() {
 fn native_lifecycle_constructor_receives_argument_vectors() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for loader in [Loader::Host, Loader::Native] {
-        let f=Fixture::new();
+        let f = Fixture::new();
         let path=f.compile("arguments","static int ok; __attribute__((constructor)) static void init(int argc,char **argv,char **envp){ok=argc>0 && argv && argv[0] && argv[argc]==0 && envp;} int result(void){return ok;}",&[],&[]);
-        let h=loader.open(&path,libc::RTLD_NOW);assert!(!h.is_null());assert_eq!(loader.value(h,"result"),1);loader.close(h);
+        let h = loader.open(&path, libc::RTLD_NOW);
+        assert!(!h.is_null());
+        assert_eq!(loader.value(h, "result"), 1);
+        loader.close(h);
     }
 }
 
 #[test]
 fn native_lifecycle_cycle_keeps_every_mapping_until_finalizers_finish() {
-    if !child_case("native_lifecycle_cycle_keeps_every_mapping_until_finalizers_finish") { return; }
-    let f=Fixture::new();let sink=f.sink(Loader::Native);
-    let seed=f.compile("a","int a_value(void){return 80;}",&[],&[]);
+    if !child_case("native_lifecycle_cycle_keeps_every_mapping_until_finalizers_finish") {
+        return;
+    }
+    let f = Fixture::new();
+    let sink = f.sink(Loader::Native);
+    let seed = f.compile("a", "int a_value(void){return 80;}", &[], &[]);
     let b=f.compile("b","extern void event_push(int); extern int a_value(void); int b_value(void){return 70;} __attribute__((constructor)) static void init(void){event_push(20);} __attribute__((destructor)) static void fini(void){event_push(-20);event_push(a_value());}",&[&seed],&[]);
     let a=f.compile("a","extern void event_push(int); extern int b_value(void); int a_value(void){return 80;} __attribute__((constructor)) static void init(void){event_push(10);} __attribute__((destructor)) static void fini(void){event_push(-10);event_push(b_value());}",&[&b],&[]);
-    let h=Loader::Native.open(&a,libc::RTLD_NOW);assert!(!h.is_null());
-    assert_eq!(f.events(Loader::Native,sink),[20,10]);Loader::Native.close(h);
-    assert_eq!(f.events(Loader::Native,sink),[20,10,-10,70,-20,80]);
-    assert!(Loader::Native.open(&a,libc::RTLD_NOW|libc::RTLD_NOLOAD).is_null());
-    assert!(Loader::Native.open(&b,libc::RTLD_NOW|libc::RTLD_NOLOAD).is_null());
+    let h = Loader::Native.open(&a, libc::RTLD_NOW);
+    assert!(!h.is_null());
+    assert_eq!(f.events(Loader::Native, sink), [20, 10]);
+    Loader::Native.close(h);
+    assert_eq!(f.events(Loader::Native, sink), [20, 10, -10, 70, -20, 80]);
+    assert!(
+        Loader::Native
+            .open(&a, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+            .is_null()
+    );
+    assert!(
+        Loader::Native
+            .open(&b, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+            .is_null()
+    );
     Loader::Native.close(sink);
 }
 
 #[test]
 fn native_lifecycle_self_reopen_does_not_repeat_initialization() {
-    if !child_case("native_lifecycle_self_reopen_does_not_repeat_initialization") { return; }
-    let f=Fixture::new();let sink=f.sink(Loader::Native);
-    let path=f.dir.join("self.so");
-    let source=format!(r#"
+    if !child_case("native_lifecycle_self_reopen_does_not_repeat_initialization") {
+        return;
+    }
+    let f = Fixture::new();
+    let sink = f.sink(Loader::Native);
+    let path = f.dir.join("self.so");
+    let source = format!(
+        r#"
         extern void event_push(int); extern void *dlopen(const char*,int); extern int dlclose(void*);
         __attribute__((constructor)) static void init(void){{event_push(1);void *h=dlopen({:?},2);event_push(h?2:99);if(h)dlclose(h);event_push(3);}}
         __attribute__((destructor)) static void fini(void){{event_push(-1);void *h=dlopen({:?},2);event_push(h?99:-2);if(h)dlclose(h);}}
-    "#,path.to_str().unwrap(),path.to_str().unwrap());
-    let path=f.compile("self",&source,&[],&[]);
-    let h=Loader::Native.open(&path,libc::RTLD_NOW);assert!(!h.is_null());
-    assert_eq!(f.events(Loader::Native,sink),[1,2,3]);Loader::Native.close(h);
-    assert_eq!(f.events(Loader::Native,sink),[1,2,3,-1,-2]);
-    assert!(!native_dso_handle_for_tests(h));Loader::Native.close(sink);
+    "#,
+        path.to_str().unwrap(),
+        path.to_str().unwrap()
+    );
+    let path = f.compile("self", &source, &[], &[]);
+    let h = Loader::Native.open(&path, libc::RTLD_NOW);
+    assert!(!h.is_null());
+    assert_eq!(f.events(Loader::Native, sink), [1, 2, 3]);
+    Loader::Native.close(h);
+    assert_eq!(f.events(Loader::Native, sink), [1, 2, 3, -1, -2]);
+    assert!(!native_dso_handle_for_tests(h));
+    Loader::Native.close(sink);
 }
-
 
 fn replace_dynamic_value(path: &Path, wanted: i64, replacement: u64) {
     let mut bytes = std::fs::read(path).unwrap();
@@ -486,14 +611,19 @@ fn replace_dynamic_value(path: &Path, wanted: i64, replacement: u64) {
     let count = u16::from_le_bytes(bytes[56..58].try_into().unwrap()) as usize;
     for index in 0..count {
         let header = phoff + index * stride;
-        if u32::from_le_bytes(bytes[header..header+4].try_into().unwrap()) != 2 { continue; }
-        let offset = u64::from_le_bytes(bytes[header+8..header+16].try_into().unwrap()) as usize;
-        let size = u64::from_le_bytes(bytes[header+32..header+40].try_into().unwrap()) as usize;
-        for entry in (offset..offset+size).step_by(16) {
-            let tag = i64::from_le_bytes(bytes[entry..entry+8].try_into().unwrap());
-            if tag == 0 { break; }
+        if u32::from_le_bytes(bytes[header..header + 4].try_into().unwrap()) != 2 {
+            continue;
+        }
+        let offset =
+            u64::from_le_bytes(bytes[header + 8..header + 16].try_into().unwrap()) as usize;
+        let size = u64::from_le_bytes(bytes[header + 32..header + 40].try_into().unwrap()) as usize;
+        for entry in (offset..offset + size).step_by(16) {
+            let tag = i64::from_le_bytes(bytes[entry..entry + 8].try_into().unwrap());
+            if tag == 0 {
+                break;
+            }
             if tag == wanted {
-                bytes[entry+8..entry+16].copy_from_slice(&replacement.to_le_bytes());
+                bytes[entry + 8..entry + 16].copy_from_slice(&replacement.to_le_bytes());
                 std::fs::write(path, bytes).unwrap();
                 return;
             }
@@ -505,15 +635,29 @@ fn replace_dynamic_value(path: &Path, wanted: i64, replacement: u64) {
 #[test]
 fn native_lifecycle_rejects_malformed_array_metadata_without_side_effects() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let f=Fixture::new();let sink=f.sink(Loader::Native);
+    let f = Fixture::new();
+    let sink = f.sink(Loader::Native);
     let dependency=f.compile("dependency","extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(1);}",&[],&[]);
-    let source="extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(2);} __attribute__((destructor)) static void fini(void){event_push(-2);}";
-    for (index,(tag,value)) in [(27,9),(28,9),(25,u64::MAX-7),(26,u64::MAX-7),(27,8*65537)].into_iter().enumerate() {
-        let path=f.compile(&format!("malformed{index}"),source,&[&dependency],&[]);
-        replace_dynamic_value(&path,tag,value);
-        assert!(Loader::Native.open(&path,libc::RTLD_NOW).is_null());
-        assert!(f.events(Loader::Native,sink).is_empty());
-        assert!(Loader::Native.open(&dependency,libc::RTLD_NOW|libc::RTLD_NOLOAD).is_null());
+    let source = "extern void event_push(int); __attribute__((constructor)) static void init(void){event_push(2);} __attribute__((destructor)) static void fini(void){event_push(-2);}";
+    for (index, (tag, value)) in [
+        (27, 9),
+        (28, 9),
+        (25, u64::MAX - 7),
+        (26, u64::MAX - 7),
+        (27, 8 * 65537),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = f.compile(&format!("malformed{index}"), source, &[&dependency], &[]);
+        replace_dynamic_value(&path, tag, value);
+        assert!(Loader::Native.open(&path, libc::RTLD_NOW).is_null());
+        assert!(f.events(Loader::Native, sink).is_empty());
+        assert!(
+            Loader::Native
+                .open(&dependency, libc::RTLD_NOW | libc::RTLD_NOLOAD)
+                .is_null()
+        );
     }
     Loader::Native.close(sink);
 }

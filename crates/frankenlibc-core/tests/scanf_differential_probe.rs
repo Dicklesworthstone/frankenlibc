@@ -5,7 +5,7 @@
 //! %c, %n (not counted), literal matching, and float parsing (compared via exact
 //! IEEE bits). glibc reference captured from a C sscanf probe.
 
-use frankenlibc_core::stdio::scanf::{parse_scanf_format, scan_input, ScanValue};
+use frankenlibc_core::stdio::scanf::{ScanValue, parse_scanf_format, scan_input};
 
 fn run(fmt: &str, input: &str) -> String {
     let dirs = parse_scanf_format(fmt.as_bytes());

@@ -76,7 +76,10 @@ fn bench(c: &mut Criterion) {
         let p = buf.as_ptr().cast::<c_char>();
         let fp = unsafe { frankenlibc_abi::string_abi::strrchr(p, b'a' as c_int) };
         let gp = unsafe { g(p, b'a' as c_int) };
-        assert_eq!(fp as usize, gp as usize, "strrchr freq fl!=glibc size={size}");
+        assert_eq!(
+            fp as usize, gp as usize,
+            "strrchr freq fl!=glibc size={size}"
+        );
         let it = 2000u64;
         let (mut fs, mut gs) = (Vec::new(), Vec::new());
         for _ in 0..100 {

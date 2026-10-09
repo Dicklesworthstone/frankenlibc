@@ -1416,5 +1416,8 @@ fn under_sigaltstack_query_only_succeeds() {
 #[test]
 fn hji_classification_table_matches_the_controller() {
     let mismatches = frankenlibc_abi::signal_abi::hji_classification_table_mismatches_for_tests();
-    assert!(mismatches.is_empty(), "stale HJI_CLASSIFICATION_TABLE: {mismatches:#?}");
+    assert!(
+        mismatches.is_empty(),
+        "stale HJI_CLASSIFICATION_TABLE: {mismatches:#?}"
+    );
 }

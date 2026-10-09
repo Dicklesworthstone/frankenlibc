@@ -2116,19 +2116,19 @@ mod tests {
         for sign in [false, true] {
             for exp in [1u16, 2, 0x3ffe, 0x3fff, 0x4000, 0x403e, 0x7ffd, 0x7ffe] {
                 for &s in &significands {
-                    let v = x87_enc(sign,exp, s);
+                    let v = x87_enc(sign, exp, s);
                     assert_eq!(binary128_to_x87(x87_to_binary128(&v)), v, "{v:02x?}");
                     cases += 1;
                 }
             }
             for s in [0u64, 1, 0x7fff_ffff_ffff_ffff, 0x1234_5678] {
-                let v = x87_enc(sign,0, s);
+                let v = x87_enc(sign, 0, s);
                 assert_eq!(binary128_to_x87(x87_to_binary128(&v)), v, "{v:02x?}");
                 cases += 1;
             }
-            let inf = x87_enc(sign,0x7fff, 1u64 << 63);
+            let inf = x87_enc(sign, 0x7fff, 1u64 << 63);
             assert_eq!(binary128_to_x87(x87_to_binary128(&inf)), inf);
-            let qnan = x87_enc(sign,0x7fff, (1u64 << 63) | (1u64 << 62) | 0xabc);
+            let qnan = x87_enc(sign, 0x7fff, (1u64 << 63) | (1u64 << 62) | 0xabc);
             assert_eq!(binary128_to_x87(x87_to_binary128(&qnan)), qnan);
             cases += 2;
         }
@@ -2142,7 +2142,10 @@ mod tests {
         let one = 0x3fffu128 << 112;
         let half_ulp = 1u128 << 48;
         // 1 + half an x87 ulp: tie, even (fraction 0) stays.
-        assert_eq!(binary128_to_x87(one | half_ulp), x87_enc(false, 0x3fff, 1u64 << 63));
+        assert_eq!(
+            binary128_to_x87(one | half_ulp),
+            x87_enc(false, 0x3fff, 1u64 << 63)
+        );
         // Just above the tie rounds up.
         assert_eq!(
             binary128_to_x87(one | half_ulp | 1),
@@ -2155,7 +2158,10 @@ mod tests {
         );
         // All-ones fraction carries into the exponent: 2 - tiny -> 2.
         let below_two = one | ((1u128 << 112) - 1);
-        assert_eq!(binary128_to_x87(below_two), x87_enc(false, 0x4000, 1u64 << 63));
+        assert_eq!(
+            binary128_to_x87(below_two),
+            x87_enc(false, 0x4000, 1u64 << 63)
+        );
         // Largest subnormal + carry becomes the smallest normal.
         let sub = (1u128 << 112) - 1;
         assert_eq!(binary128_to_x87(sub), x87_enc(false, 1, 1u64 << 63));
@@ -2164,7 +2170,10 @@ mod tests {
         assert_eq!(binary128_to_x87(max), x87_enc(false, 0x7fff, 1u64 << 63));
         // A NaN whose payload lives only in the dropped bits stays a NaN.
         let nan = (0x7fffu128 << 112) | 1;
-        assert_eq!(binary128_to_x87(nan), x87_enc(false, 0x7fff, (1u64 << 63) | (1u64 << 62)));
+        assert_eq!(
+            binary128_to_x87(nan),
+            x87_enc(false, 0x7fff, (1u64 << 63) | (1u64 << 62))
+        );
     }
 
     /// Every class maps through the one expression: the boundary encodings are

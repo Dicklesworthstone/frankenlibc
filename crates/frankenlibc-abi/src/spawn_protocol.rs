@@ -37,7 +37,10 @@ fn fcntl(fd: c_int, command: c_int, argument: usize) -> Result<c_int, c_int> {
 /// valid, or dup2/open/close can destroy the only pre-exec error channel.
 /// Update the owned descriptor after each successful move so callers can clean
 /// up even when a later duplication fails with EMFILE.
-pub(super) fn reserve_error_fd(fd: &mut c_int, is_user_fd: impl Fn(c_int) -> bool) -> Result<(), c_int> {
+pub(super) fn reserve_error_fd(
+    fd: &mut c_int,
+    is_user_fd: impl Fn(c_int) -> bool,
+) -> Result<(), c_int> {
     while is_user_fd(*fd) {
         let minimum = fd.checked_add(1).ok_or(libc::EMFILE)?;
         let replacement = fcntl(*fd, libc::F_DUPFD_CLOEXEC, minimum as usize)?;
@@ -140,7 +143,13 @@ fn close_from_directory(directory: c_int, from: c_int, keep: c_int) -> Result<()
     let mut storage = std::mem::MaybeUninit::<[u8; CAPACITY]>::uninit();
     for index in 0..CAPACITY {
         // SAFETY: every index is within the writable storage allocation.
-        unsafe { storage.as_mut_ptr().cast::<u8>().add(index).write_volatile(0) };
+        unsafe {
+            storage
+                .as_mut_ptr()
+                .cast::<u8>()
+                .add(index)
+                .write_volatile(0)
+        };
     }
     loop {
         // SAFETY: storage has CAPACITY initialized, writable bytes.
@@ -175,7 +184,9 @@ fn close_from_directory(directory: c_int, from: c_int, keep: c_int) -> Result<()
             let end = name.iter().position(|&byte| byte == 0).ok_or(libc::EIO)?;
             let fd = name[..end].iter().try_fold(0_i32, |number, &byte| {
                 if byte.is_ascii_digit() {
-                    number.checked_mul(10)?.checked_add(c_int::from(byte - b'0'))
+                    number
+                        .checked_mul(10)?
+                        .checked_add(c_int::from(byte - b'0'))
                 } else {
                     None
                 }
@@ -240,7 +251,8 @@ pub(super) fn child_fail(fd: c_int, error: c_int) -> ! {
 pub(super) fn reap_failed_child(pid: libc::pid_t) {
     loop {
         // SAFETY: null status/rusage are permitted; wait for this child only.
-        match unsafe { raw_syscall::sys_wait4(pid, std::ptr::null_mut(), 0, std::ptr::null_mut()) } {
+        match unsafe { raw_syscall::sys_wait4(pid, std::ptr::null_mut(), 0, std::ptr::null_mut()) }
+        {
             Err(libc::EINTR) => continue,
             _ => break,
         }
@@ -326,12 +338,7 @@ pub(super) fn reset_child_signals(defaults: u64) -> Result<(), c_int> {
         if !force_default {
             // SAFETY: old has the kernel layout and writable size described above.
             unsafe {
-                raw_syscall::sys_rt_sigaction(
-                    signal,
-                    std::ptr::null(),
-                    old.as_mut_ptr().cast(),
-                    8,
-                )
+                raw_syscall::sys_rt_sigaction(signal, std::ptr::null(), old.as_mut_ptr().cast(), 8)
             }?;
         }
         if force_default || (old[0] != libc::SIG_DFL && old[0] != libc::SIG_IGN) {

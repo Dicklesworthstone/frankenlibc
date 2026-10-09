@@ -46,13 +46,25 @@ type QsortFn = unsafe extern "C-unwind" fn(*mut c_void, usize, usize, Option<Com
 unsafe extern "C-unwind" fn cmp_i32_desc(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: as `cmp_i32`.
     let (av, bv) = unsafe { (*(a as *const i32), *(b as *const i32)) };
-    if bv < av { -1 } else if bv > av { 1 } else { 0 }
+    if bv < av {
+        -1
+    } else if bv > av {
+        1
+    } else {
+        0
+    }
 }
 
 unsafe extern "C-unwind" fn cmp_i64_desc(a: *const c_void, b: *const c_void) -> i32 {
     // SAFETY: as `cmp_i64`.
     let (av, bv) = unsafe { (*(a as *const i64), *(b as *const i64)) };
-    if bv < av { -1 } else if bv > av { 1 } else { 0 }
+    if bv < av {
+        -1
+    } else if bv > av {
+        1
+    } else {
+        0
+    }
 }
 
 unsafe extern "C-unwind" fn cmp_i32(a: *const c_void, b: *const c_void) -> i32 {
@@ -122,7 +134,10 @@ fn scrambled(n: usize) -> Vec<i64> {
         x ^= x >> 12;
         x ^= x << 25;
         x ^= x >> 27;
-        v.swap(i, (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1));
+        v.swap(
+            i,
+            (x.wrapping_mul(0x2545_F491_4F6C_DD1D) as usize) % (i + 1),
+        );
     }
     v
 }
@@ -223,12 +238,20 @@ fn drive(qsort_fn: QsortFn, source: &[i64], width: usize, rounds: usize) -> u64 
             for (i, v) in source.iter().enumerate() {
                 buf[i * 4..i * 4 + 4].copy_from_slice(&(*v as i32).to_ne_bytes());
             }
-            if descending { cmp_i32_desc as ComparFn } else { cmp_i32 as ComparFn }
+            if descending {
+                cmp_i32_desc as ComparFn
+            } else {
+                cmp_i32 as ComparFn
+            }
         } else {
             for (i, v) in source.iter().enumerate() {
                 buf[i * width..i * width + 8].copy_from_slice(&v.to_ne_bytes());
             }
-            if descending { cmp_i64_desc as ComparFn } else { cmp_i64 as ComparFn }
+            if descending {
+                cmp_i64_desc as ComparFn
+            } else {
+                cmp_i64 as ComparFn
+            }
         };
         // SAFETY: `buf` holds `size` elements of `width` bytes and the comparator
         // reads only the leading 4 or 8 bytes of each pointer it is given.

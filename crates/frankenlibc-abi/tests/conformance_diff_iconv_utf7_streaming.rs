@@ -192,9 +192,18 @@ fn utf7_truncated_inputs_match_glibc_exactly() {
             let s = &full[..n];
             let (g, f) = (exact(true, s), exact(false, s));
             if g != f {
-                fails.push(format!("{:?}: glibc {g}\n{:>w$}  fl    {f}", String::from_utf8_lossy(s), "", w = n + 2));
+                fails.push(format!(
+                    "{:?}: glibc {g}\n{:>w$}  fl    {f}",
+                    String::from_utf8_lossy(s),
+                    "",
+                    w = n + 2
+                ));
             }
         }
     }
-    assert!(fails.is_empty(), "UTF-7 truncation divergences:\n{}", fails.join("\n"));
+    assert!(
+        fails.is_empty(),
+        "UTF-7 truncation divergences:\n{}",
+        fails.join("\n")
+    );
 }

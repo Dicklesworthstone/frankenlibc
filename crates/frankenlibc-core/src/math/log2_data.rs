@@ -29,68 +29,260 @@ pub(crate) const LOG2_A: [f64; 6] = [
 ];
 /// `tab`: (invc, logc) per subinterval.
 pub(crate) const LOG2_TAB: [(f64, f64); 64] = [
-    (f64::from_bits(0x3ff724286bb1acf8), f64::from_bits(0xbfe1095feecdb000)),
-    (f64::from_bits(0x3ff6e1f766d2cca1), f64::from_bits(0xbfe08494bd76d000)),
-    (f64::from_bits(0x3ff6a13d0e30d48a), f64::from_bits(0xbfe00143aee8f800)),
-    (f64::from_bits(0x3ff661ec32d06c85), f64::from_bits(0xbfdefec5360b4000)),
-    (f64::from_bits(0x3ff623fa951198f8), f64::from_bits(0xbfddfdd91ab7e000)),
-    (f64::from_bits(0x3ff5e75ba4cf026c), f64::from_bits(0xbfdcffae0cc79000)),
-    (f64::from_bits(0x3ff5ac055a214fb8), f64::from_bits(0xbfdc043811fda000)),
-    (f64::from_bits(0x3ff571ed0f166e1e), f64::from_bits(0xbfdb0b67323ae000)),
-    (f64::from_bits(0x3ff53909590bf835), f64::from_bits(0xbfda152f5a2db000)),
-    (f64::from_bits(0x3ff5014fed61addd), f64::from_bits(0xbfd9217f5af86000)),
-    (f64::from_bits(0x3ff4cab88e487bd0), f64::from_bits(0xbfd8304db0719000)),
-    (f64::from_bits(0x3ff49539b4334fee), f64::from_bits(0xbfd74189f9a9e000)),
-    (f64::from_bits(0x3ff460cbdfafd569), f64::from_bits(0xbfd6552bb5199000)),
-    (f64::from_bits(0x3ff42d664ee4b953), f64::from_bits(0xbfd56b23a29b1000)),
-    (f64::from_bits(0x3ff3fb01111dd8a6), f64::from_bits(0xbfd483650f5fa000)),
-    (f64::from_bits(0x3ff3c995b70c5836), f64::from_bits(0xbfd39de937f6a000)),
-    (f64::from_bits(0x3ff3991c4ab6fd4a), f64::from_bits(0xbfd2baa1538d6000)),
-    (f64::from_bits(0x3ff3698e0ce099b5), f64::from_bits(0xbfd1d98340ca4000)),
-    (f64::from_bits(0x3ff33ae48213e7b2), f64::from_bits(0xbfd0fa853a40e000)),
-    (f64::from_bits(0x3ff30d191985bdb1), f64::from_bits(0xbfd01d9c32e73000)),
-    (f64::from_bits(0x3ff2e025cab271d7), f64::from_bits(0xbfce857da2fa6000)),
-    (f64::from_bits(0x3ff2b404cf13cd82), f64::from_bits(0xbfccd3c8633d8000)),
-    (f64::from_bits(0x3ff288b02c7ccb50), f64::from_bits(0xbfcb26034c14a000)),
-    (f64::from_bits(0x3ff25e2263944de5), f64::from_bits(0xbfc97c1c2f4fe000)),
-    (f64::from_bits(0x3ff234563d8615b1), f64::from_bits(0xbfc7d6023f800000)),
-    (f64::from_bits(0x3ff20b46e33eaf38), f64::from_bits(0xbfc633a71a05e000)),
-    (f64::from_bits(0x3ff1e2eefdcda3dd), f64::from_bits(0xbfc494f5e9570000)),
-    (f64::from_bits(0x3ff1bb4a580b3930), f64::from_bits(0xbfc2f9e424e0a000)),
-    (f64::from_bits(0x3ff19453847f2200), f64::from_bits(0xbfc162595afdc000)),
-    (f64::from_bits(0x3ff16e06c0d5d73c), f64::from_bits(0xbfbf9c9a75bd8000)),
-    (f64::from_bits(0x3ff1485f47b7e4c2), f64::from_bits(0xbfbc7b575bf9c000)),
-    (f64::from_bits(0x3ff12358ad0085d1), f64::from_bits(0xbfb960c60ff48000)),
-    (f64::from_bits(0x3ff0fef00f532227), f64::from_bits(0xbfb64ce247b60000)),
-    (f64::from_bits(0x3ff0db2077d03a8f), f64::from_bits(0xbfb33f78b2014000)),
-    (f64::from_bits(0x3ff0b7e6d65980d9), f64::from_bits(0xbfb0387d1a42c000)),
-    (f64::from_bits(0x3ff0953efe7b408d), f64::from_bits(0xbfaa6f9208b50000)),
-    (f64::from_bits(0x3ff07325cac53b83), f64::from_bits(0xbfa47a954f770000)),
-    (f64::from_bits(0x3ff05197e40d1b5c), f64::from_bits(0xbf9d23a8c50c0000)),
-    (f64::from_bits(0x3ff03091c1208ea2), f64::from_bits(0xbf916a2629780000)),
-    (f64::from_bits(0x3ff0101025b37e21), f64::from_bits(0xbf7720f8d8e80000)),
-    (f64::from_bits(0x3fefc07ef9caa76b), f64::from_bits(0x3f86fe53b1500000)),
-    (f64::from_bits(0x3fef4465d3f6f184), f64::from_bits(0x3fa11ccce10f8000)),
-    (f64::from_bits(0x3feecc079f84107f), f64::from_bits(0x3fac4dfc8c8b8000)),
-    (f64::from_bits(0x3fee573a99975ae8), f64::from_bits(0x3fb3aa321e574000)),
-    (f64::from_bits(0x3fede5d6f0bd3de6), f64::from_bits(0x3fb918a0d08b8000)),
-    (f64::from_bits(0x3fed77b681ff38b3), f64::from_bits(0x3fbe72e9da044000)),
-    (f64::from_bits(0x3fed0cb5724de943), f64::from_bits(0x3fc1dcd2507f6000)),
-    (f64::from_bits(0x3feca4b2dc0e7563), f64::from_bits(0x3fc476ab03dea000)),
-    (f64::from_bits(0x3fec3f8ee8d6cb51), f64::from_bits(0x3fc7074377e22000)),
-    (f64::from_bits(0x3febdd2b4f020c4c), f64::from_bits(0x3fc98ede8ba94000)),
-    (f64::from_bits(0x3feb7d6c006015ca), f64::from_bits(0x3fcc0db86ad2e000)),
-    (f64::from_bits(0x3feb20366e2e338f), f64::from_bits(0x3fce840aafcee000)),
-    (f64::from_bits(0x3feac57026295039), f64::from_bits(0x3fd0790ab4678000)),
-    (f64::from_bits(0x3fea6d01bc2731dd), f64::from_bits(0x3fd1ac056801c000)),
-    (f64::from_bits(0x3fea16d3bc3ff18b), f64::from_bits(0x3fd2db11d4fee000)),
-    (f64::from_bits(0x3fe9c2d14967fead), f64::from_bits(0x3fd406464ec58000)),
-    (f64::from_bits(0x3fe970e4f47c9902), f64::from_bits(0x3fd52dbe093af000)),
-    (f64::from_bits(0x3fe920fb3982bcf2), f64::from_bits(0x3fd651902050d000)),
-    (f64::from_bits(0x3fe8d30187f759f1), f64::from_bits(0x3fd771d2cdeaf000)),
-    (f64::from_bits(0x3fe886e5ebb9f66d), f64::from_bits(0x3fd88e9c857d9000)),
-    (f64::from_bits(0x3fe83c97b658b994), f64::from_bits(0x3fd9a80155e16000)),
-    (f64::from_bits(0x3fe7f405ffc61022), f64::from_bits(0x3fdabe186ed3d000)),
-    (f64::from_bits(0x3fe7ad22181415ca), f64::from_bits(0x3fdbd0f2aea0e000)),
-    (f64::from_bits(0x3fe767dcf99eff8c), f64::from_bits(0x3fdce0a43dbf4000)),
+    (
+        f64::from_bits(0x3ff724286bb1acf8),
+        f64::from_bits(0xbfe1095feecdb000),
+    ),
+    (
+        f64::from_bits(0x3ff6e1f766d2cca1),
+        f64::from_bits(0xbfe08494bd76d000),
+    ),
+    (
+        f64::from_bits(0x3ff6a13d0e30d48a),
+        f64::from_bits(0xbfe00143aee8f800),
+    ),
+    (
+        f64::from_bits(0x3ff661ec32d06c85),
+        f64::from_bits(0xbfdefec5360b4000),
+    ),
+    (
+        f64::from_bits(0x3ff623fa951198f8),
+        f64::from_bits(0xbfddfdd91ab7e000),
+    ),
+    (
+        f64::from_bits(0x3ff5e75ba4cf026c),
+        f64::from_bits(0xbfdcffae0cc79000),
+    ),
+    (
+        f64::from_bits(0x3ff5ac055a214fb8),
+        f64::from_bits(0xbfdc043811fda000),
+    ),
+    (
+        f64::from_bits(0x3ff571ed0f166e1e),
+        f64::from_bits(0xbfdb0b67323ae000),
+    ),
+    (
+        f64::from_bits(0x3ff53909590bf835),
+        f64::from_bits(0xbfda152f5a2db000),
+    ),
+    (
+        f64::from_bits(0x3ff5014fed61addd),
+        f64::from_bits(0xbfd9217f5af86000),
+    ),
+    (
+        f64::from_bits(0x3ff4cab88e487bd0),
+        f64::from_bits(0xbfd8304db0719000),
+    ),
+    (
+        f64::from_bits(0x3ff49539b4334fee),
+        f64::from_bits(0xbfd74189f9a9e000),
+    ),
+    (
+        f64::from_bits(0x3ff460cbdfafd569),
+        f64::from_bits(0xbfd6552bb5199000),
+    ),
+    (
+        f64::from_bits(0x3ff42d664ee4b953),
+        f64::from_bits(0xbfd56b23a29b1000),
+    ),
+    (
+        f64::from_bits(0x3ff3fb01111dd8a6),
+        f64::from_bits(0xbfd483650f5fa000),
+    ),
+    (
+        f64::from_bits(0x3ff3c995b70c5836),
+        f64::from_bits(0xbfd39de937f6a000),
+    ),
+    (
+        f64::from_bits(0x3ff3991c4ab6fd4a),
+        f64::from_bits(0xbfd2baa1538d6000),
+    ),
+    (
+        f64::from_bits(0x3ff3698e0ce099b5),
+        f64::from_bits(0xbfd1d98340ca4000),
+    ),
+    (
+        f64::from_bits(0x3ff33ae48213e7b2),
+        f64::from_bits(0xbfd0fa853a40e000),
+    ),
+    (
+        f64::from_bits(0x3ff30d191985bdb1),
+        f64::from_bits(0xbfd01d9c32e73000),
+    ),
+    (
+        f64::from_bits(0x3ff2e025cab271d7),
+        f64::from_bits(0xbfce857da2fa6000),
+    ),
+    (
+        f64::from_bits(0x3ff2b404cf13cd82),
+        f64::from_bits(0xbfccd3c8633d8000),
+    ),
+    (
+        f64::from_bits(0x3ff288b02c7ccb50),
+        f64::from_bits(0xbfcb26034c14a000),
+    ),
+    (
+        f64::from_bits(0x3ff25e2263944de5),
+        f64::from_bits(0xbfc97c1c2f4fe000),
+    ),
+    (
+        f64::from_bits(0x3ff234563d8615b1),
+        f64::from_bits(0xbfc7d6023f800000),
+    ),
+    (
+        f64::from_bits(0x3ff20b46e33eaf38),
+        f64::from_bits(0xbfc633a71a05e000),
+    ),
+    (
+        f64::from_bits(0x3ff1e2eefdcda3dd),
+        f64::from_bits(0xbfc494f5e9570000),
+    ),
+    (
+        f64::from_bits(0x3ff1bb4a580b3930),
+        f64::from_bits(0xbfc2f9e424e0a000),
+    ),
+    (
+        f64::from_bits(0x3ff19453847f2200),
+        f64::from_bits(0xbfc162595afdc000),
+    ),
+    (
+        f64::from_bits(0x3ff16e06c0d5d73c),
+        f64::from_bits(0xbfbf9c9a75bd8000),
+    ),
+    (
+        f64::from_bits(0x3ff1485f47b7e4c2),
+        f64::from_bits(0xbfbc7b575bf9c000),
+    ),
+    (
+        f64::from_bits(0x3ff12358ad0085d1),
+        f64::from_bits(0xbfb960c60ff48000),
+    ),
+    (
+        f64::from_bits(0x3ff0fef00f532227),
+        f64::from_bits(0xbfb64ce247b60000),
+    ),
+    (
+        f64::from_bits(0x3ff0db2077d03a8f),
+        f64::from_bits(0xbfb33f78b2014000),
+    ),
+    (
+        f64::from_bits(0x3ff0b7e6d65980d9),
+        f64::from_bits(0xbfb0387d1a42c000),
+    ),
+    (
+        f64::from_bits(0x3ff0953efe7b408d),
+        f64::from_bits(0xbfaa6f9208b50000),
+    ),
+    (
+        f64::from_bits(0x3ff07325cac53b83),
+        f64::from_bits(0xbfa47a954f770000),
+    ),
+    (
+        f64::from_bits(0x3ff05197e40d1b5c),
+        f64::from_bits(0xbf9d23a8c50c0000),
+    ),
+    (
+        f64::from_bits(0x3ff03091c1208ea2),
+        f64::from_bits(0xbf916a2629780000),
+    ),
+    (
+        f64::from_bits(0x3ff0101025b37e21),
+        f64::from_bits(0xbf7720f8d8e80000),
+    ),
+    (
+        f64::from_bits(0x3fefc07ef9caa76b),
+        f64::from_bits(0x3f86fe53b1500000),
+    ),
+    (
+        f64::from_bits(0x3fef4465d3f6f184),
+        f64::from_bits(0x3fa11ccce10f8000),
+    ),
+    (
+        f64::from_bits(0x3feecc079f84107f),
+        f64::from_bits(0x3fac4dfc8c8b8000),
+    ),
+    (
+        f64::from_bits(0x3fee573a99975ae8),
+        f64::from_bits(0x3fb3aa321e574000),
+    ),
+    (
+        f64::from_bits(0x3fede5d6f0bd3de6),
+        f64::from_bits(0x3fb918a0d08b8000),
+    ),
+    (
+        f64::from_bits(0x3fed77b681ff38b3),
+        f64::from_bits(0x3fbe72e9da044000),
+    ),
+    (
+        f64::from_bits(0x3fed0cb5724de943),
+        f64::from_bits(0x3fc1dcd2507f6000),
+    ),
+    (
+        f64::from_bits(0x3feca4b2dc0e7563),
+        f64::from_bits(0x3fc476ab03dea000),
+    ),
+    (
+        f64::from_bits(0x3fec3f8ee8d6cb51),
+        f64::from_bits(0x3fc7074377e22000),
+    ),
+    (
+        f64::from_bits(0x3febdd2b4f020c4c),
+        f64::from_bits(0x3fc98ede8ba94000),
+    ),
+    (
+        f64::from_bits(0x3feb7d6c006015ca),
+        f64::from_bits(0x3fcc0db86ad2e000),
+    ),
+    (
+        f64::from_bits(0x3feb20366e2e338f),
+        f64::from_bits(0x3fce840aafcee000),
+    ),
+    (
+        f64::from_bits(0x3feac57026295039),
+        f64::from_bits(0x3fd0790ab4678000),
+    ),
+    (
+        f64::from_bits(0x3fea6d01bc2731dd),
+        f64::from_bits(0x3fd1ac056801c000),
+    ),
+    (
+        f64::from_bits(0x3fea16d3bc3ff18b),
+        f64::from_bits(0x3fd2db11d4fee000),
+    ),
+    (
+        f64::from_bits(0x3fe9c2d14967fead),
+        f64::from_bits(0x3fd406464ec58000),
+    ),
+    (
+        f64::from_bits(0x3fe970e4f47c9902),
+        f64::from_bits(0x3fd52dbe093af000),
+    ),
+    (
+        f64::from_bits(0x3fe920fb3982bcf2),
+        f64::from_bits(0x3fd651902050d000),
+    ),
+    (
+        f64::from_bits(0x3fe8d30187f759f1),
+        f64::from_bits(0x3fd771d2cdeaf000),
+    ),
+    (
+        f64::from_bits(0x3fe886e5ebb9f66d),
+        f64::from_bits(0x3fd88e9c857d9000),
+    ),
+    (
+        f64::from_bits(0x3fe83c97b658b994),
+        f64::from_bits(0x3fd9a80155e16000),
+    ),
+    (
+        f64::from_bits(0x3fe7f405ffc61022),
+        f64::from_bits(0x3fdabe186ed3d000),
+    ),
+    (
+        f64::from_bits(0x3fe7ad22181415ca),
+        f64::from_bits(0x3fdbd0f2aea0e000),
+    ),
+    (
+        f64::from_bits(0x3fe767dcf99eff8c),
+        f64::from_bits(0x3fdce0a43dbf4000),
+    ),
 ];

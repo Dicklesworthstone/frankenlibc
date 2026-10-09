@@ -184,7 +184,8 @@ impl Drop for SignalHandlerAllocScope {
     fn drop(&mut self) {
         if let Some(slot) = self.slot {
             core::sync::atomic::compiler_fence(Ordering::SeqCst);
-            slot.signal_handler_sp.store(self.previous, Ordering::Relaxed);
+            slot.signal_handler_sp
+                .store(self.previous, Ordering::Relaxed);
         }
     }
 }
@@ -3156,11 +3157,15 @@ impl FlatCombiningStats {
         s.allocation_events = s
             .allocation_events
             .saturating_add(take(&c.allocation_events, &mut f.allocation_events));
-        s.free_events = s.free_events.saturating_add(take(&c.free_events, &mut f.free_events));
+        s.free_events = s
+            .free_events
+            .saturating_add(take(&c.free_events, &mut f.free_events));
         s.total_allocated = s
             .total_allocated
             .saturating_add(take(&c.total_allocated, &mut f.total_allocated));
-        s.total_freed = s.total_freed.saturating_add(take(&c.total_freed, &mut f.total_freed));
+        s.total_freed = s
+            .total_freed
+            .saturating_add(take(&c.total_freed, &mut f.total_freed));
         s.active_allocations = add_signed(
             s.active_allocations,
             take(&c.active_allocations, &mut f.active_allocations),
@@ -3414,7 +3419,6 @@ fn same_small_malloc_size_class(a: usize, b: usize) -> bool {
     a_bin < frankenlibc_core::malloc::size_class::NUM_SIZE_CLASSES && a_bin == b_bin
 }
 
-
 /// Per-slot multi-threaded stats counters (see [`record_slot_mt_stats`]).
 struct SlotMtCounters {
     allocation_events: AtomicUsize,
@@ -3472,7 +3476,10 @@ fn record_slot_mt_stats(
     // lock and tolerates a moment's skew between fields.
     #[inline(always)]
     fn add(counter: &AtomicUsize, delta: usize) {
-        counter.store(counter.load(Ordering::Relaxed).wrapping_add(delta), Ordering::Relaxed);
+        counter.store(
+            counter.load(Ordering::Relaxed).wrapping_add(delta),
+            Ordering::Relaxed,
+        );
     }
     let c = &slot.mt_counts;
     match op {
@@ -5101,7 +5108,13 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         let out = unsafe { bump_alloc(size) };
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
-            unsafe { std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size)) };
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                )
+            };
             if bump_size.is_some() {
                 let _ = unsafe { bump_mmap_release(ptr) };
             }
@@ -5121,7 +5134,11 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
             unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                );
                 let _ = bump_mmap_release(ptr);
             }
         }
@@ -5137,7 +5154,11 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
         if !out.is_null() {
             // SAFETY: both blocks are live and at least min(old, new) long.
             unsafe {
-                std::ptr::copy_nonoverlapping(ptr.cast::<u8>(), out.cast::<u8>(), old_size.min(size));
+                std::ptr::copy_nonoverlapping(
+                    ptr.cast::<u8>(),
+                    out.cast::<u8>(),
+                    old_size.min(size),
+                );
             }
         }
         return out;

@@ -214,10 +214,9 @@ fn main() {
                 "two_strings" | "key_value" => {
                     vec![buf_a.as_mut_ptr().cast(), buf_b.as_mut_ptr().cast()]
                 }
-                "string_then_int" => vec![
-                    buf_a.as_mut_ptr().cast(),
-                    (&mut int_a as *mut c_int).cast(),
-                ],
+                "string_then_int" => {
+                    vec![buf_a.as_mut_ptr().cast(), (&mut int_a as *mut c_int).cast()]
+                }
                 "mixed_record" => vec![
                     buf_a.as_mut_ptr().cast(),
                     (&mut int_a as *mut c_int).cast(),
@@ -236,72 +235,72 @@ fn main() {
             }
         } else {
             unsafe {
-            match case.as_str() {
-                "long_literal" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut int_a as *mut c_int,
-                ),
-                "single_int" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut int_a as *mut c_int,
-                ),
-                "two_ints" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut int_a as *mut c_int,
-                    &mut int_b as *mut c_int,
-                ),
-                "dotted_quad" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut int_a as *mut c_int,
-                    &mut int_b as *mut c_int,
-                    &mut int_c as *mut c_int,
-                    &mut int_d as *mut c_int,
-                ),
-                "float_only" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut flt as *mut f32,
-                ),
-                "two_strings" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    buf_a.as_mut_ptr().cast::<c_char>(),
-                    buf_b.as_mut_ptr().cast::<c_char>(),
-                ),
-                "string_then_int" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    buf_a.as_mut_ptr().cast::<c_char>(),
-                    &mut int_a as *mut c_int,
-                ),
-                "long_hex" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    &mut long_a as *mut libc::c_long,
-                ),
-                "mixed_record" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    buf_a.as_mut_ptr().cast::<c_char>(),
-                    &mut int_a as *mut c_int,
-                    &mut dbl as *mut f64,
-                ),
-                "key_value" => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    buf_a.as_mut_ptr().cast::<c_char>(),
-                    buf_b.as_mut_ptr().cast::<c_char>(),
-                ),
-                _ => sscanf(
-                    std::hint::black_box(cin.as_ptr()),
-                    std::hint::black_box(cfmt.as_ptr()),
-                    buf_a.as_mut_ptr().cast::<c_char>(),
-                ),
-            }
+                match case.as_str() {
+                    "long_literal" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut int_a as *mut c_int,
+                    ),
+                    "single_int" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut int_a as *mut c_int,
+                    ),
+                    "two_ints" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut int_a as *mut c_int,
+                        &mut int_b as *mut c_int,
+                    ),
+                    "dotted_quad" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut int_a as *mut c_int,
+                        &mut int_b as *mut c_int,
+                        &mut int_c as *mut c_int,
+                        &mut int_d as *mut c_int,
+                    ),
+                    "float_only" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut flt as *mut f32,
+                    ),
+                    "two_strings" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        buf_a.as_mut_ptr().cast::<c_char>(),
+                        buf_b.as_mut_ptr().cast::<c_char>(),
+                    ),
+                    "string_then_int" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        buf_a.as_mut_ptr().cast::<c_char>(),
+                        &mut int_a as *mut c_int,
+                    ),
+                    "long_hex" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        &mut long_a as *mut libc::c_long,
+                    ),
+                    "mixed_record" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        buf_a.as_mut_ptr().cast::<c_char>(),
+                        &mut int_a as *mut c_int,
+                        &mut dbl as *mut f64,
+                    ),
+                    "key_value" => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        buf_a.as_mut_ptr().cast::<c_char>(),
+                        buf_b.as_mut_ptr().cast::<c_char>(),
+                    ),
+                    _ => sscanf(
+                        std::hint::black_box(cin.as_ptr()),
+                        std::hint::black_box(cfmt.as_ptr()),
+                        buf_a.as_mut_ptr().cast::<c_char>(),
+                    ),
+                }
             }
         };
         // Order-sensitive mix over EVERY destination this driver can write: the

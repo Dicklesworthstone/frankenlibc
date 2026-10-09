@@ -84,7 +84,10 @@ fn main() {
         let (fm, gm) = (fl_v[15], g_v[15]);
         println!(
             "size={:>7}: fl={:>8.1}ns glibc={:>8.1}ns ratio={:.3}",
-            size, fm, gm, fm / gm
+            size,
+            fm,
+            gm,
+            fm / gm
         );
     }
 }

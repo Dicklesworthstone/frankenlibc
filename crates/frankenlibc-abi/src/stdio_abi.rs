@@ -9694,6 +9694,7 @@ pub unsafe extern "C" fn asprintf(
 /// Reads each argument according to the format specifiers: integer/pointer/string
 /// args come from GP registers or overflow area, float args from FP registers or
 /// overflow area.
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn vprintf_extract_args(
     segments: &[FormatSegment<'_>],
     ap: *mut c_void,
@@ -9777,7 +9778,91 @@ pub(crate) unsafe fn vprintf_extract_args(
     idx
 }
 
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn vprintf_extract_args(
+    segments: &[FormatSegment<'_>],
+    ap: *mut c_void,
+    buf: &mut [u64; MAX_VA_ARGS],
+    extract_count: usize,
+) -> usize {
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let vr_top = unsafe { *((ap as *mut u8).add(16) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    let vr_offs_ptr = unsafe { (ap as *mut u8).add(28) as *mut i32 };
+
+    let mut idx = 0usize;
+    if let Some(plan) = core_positional_printf_arg_plan(segments) {
+        for kind in plan.iter().take(extract_count) {
+            match kind {
+                ValueArgKind::Gp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+                ValueArgKind::Fp => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+                ValueArgKind::X87 => {
+                    if idx < extract_count {
+                        buf[idx] =
+                            unsafe { vprintf_read_x87_aarch64(stack_ptr, vr_top, vr_offs_ptr) };
+                        idx += 1;
+                    }
+                }
+            }
+        }
+    } else {
+        for seg in segments {
+            if let FormatSegment::Spec(spec) = seg {
+                if spec.width.uses_arg() && idx < extract_count {
+                    buf[idx] = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                    idx += 1;
+                }
+                if spec.precision.uses_arg() && idx < extract_count {
+                    buf[idx] = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                    idx += 1;
+                }
+                match spec.value_arg_kind() {
+                    Some(ValueArgKind::Fp | ValueArgKind::X87) if idx < extract_count => {
+                        buf[idx] = if spec.length == LengthMod::BigL {
+                            unsafe { vprintf_read_x87_aarch64(stack_ptr, vr_top, vr_offs_ptr) }
+                        } else {
+                            unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) }
+                        };
+                        idx += 1;
+                    }
+                    Some(ValueArgKind::Gp) if idx < extract_count => {
+                        buf[idx] =
+                            unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+                        idx += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    idx
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) unsafe fn vprintf_extract_args(
+    _segments: &[FormatSegment<'_>],
+    _ap: *mut c_void,
+    _buf: &mut [u64; MAX_VA_ARGS],
+    _extract_count: usize,
+) -> usize {
+    0
+}
+
 /// Read the next GP (integer/pointer) argument from va_list.
+#[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn vprintf_read_gp(
     gp_offset_ptr: *mut u32,
@@ -9797,6 +9882,7 @@ unsafe fn vprintf_read_gp(
 }
 
 /// Read the next FP (float/double) argument from va_list.
+#[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn vprintf_read_fp(
     fp_offset_ptr: *mut u32,
@@ -9819,44 +9905,71 @@ unsafe fn vprintf_read_fp(
 }
 
 /// Consume a `long double` argument and return the ADDRESS of its stack slot.
-///
-/// ## Why this exists
-///
-/// On x86-64 SysV a `long double` argument is class X87, and class X87 is
-/// **passed in memory** — never in a register. It occupies a 16-byte, 16-byte
-/// aligned slot in the overflow area, of which ten bytes are significant.
-///
-/// Before this, every float argument was read with [`vprintf_read_fp`]
-/// regardless of length modifier, so `%Lf` took eight bytes out of the SSE
-/// register save area. That is wrong twice over, and the second way is worse
-/// than the first: the value is unrelated to the argument, AND the sixteen
-/// stack bytes the caller actually pushed are never consumed, so **every
-/// following conversion reads the wrong argument too**. One `%Lf` corrupts the
-/// rest of the format string.
-///
-/// ## Why an address rather than a value
-///
-/// The extracted-argument buffer is one `u64` per argument and cannot hold 80
-/// bits, so returning the value meant rounding to `f64` — `%.25Lf` of pi came
-/// out as `3.1415926535897931159979635` against glibc's
-/// `3.1415926535897932385128090`, and `%Lf` of `1e400`, an ordinary finite long
-/// double, came out `inf`. The slot instead carries the address of the caller's
-/// own sixteen bytes, which live for the whole call exactly as a `%s` argument's
-/// string does, and [`render_segments`] widens from there. That keeps the buffer
-/// (and the per-call memset it costs) the size it was.
-///
-/// THE SLOT'S MEANING IS PER-CLASS, so producer and consumer must agree: a slot
-/// whose spec is [`ValueArgKind::X87`] holds an address, every other slot holds
-/// a value. The four register-path extractors cannot see an X87 argument at all,
-/// which is why `has_long_double()` routes any format carrying one here; their
-/// X87 arms store a null instead of inventing an address, and `render_segments`
-/// treats null as "no argument".
+#[cfg(target_arch = "x86_64")]
 unsafe fn vprintf_read_x87(overflow_ptr: *mut *mut u8) -> u64 {
     // The slot is 16-byte aligned, so round the cursor up before reading.
     let raw = unsafe { *overflow_ptr } as usize;
     let aligned = (raw + 15) & !15usize;
     unsafe { *overflow_ptr = (aligned + 16) as *mut u8 };
     aligned as u64
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_gp_aarch64(
+    stack_ptr: *mut *mut u8,
+    gr_top: *mut u8,
+    gr_offs_ptr: *mut i32,
+) -> u64 {
+    let gr_offs = unsafe { *gr_offs_ptr };
+    if gr_offs < 0 {
+        let p = unsafe { gr_top.offset(gr_offs as isize) as *const u64 };
+        unsafe { *gr_offs_ptr = gr_offs + 8 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *stack_ptr as *const u64 };
+        unsafe { *stack_ptr = (*stack_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_fp_aarch64(
+    stack_ptr: *mut *mut u8,
+    vr_top: *mut u8,
+    vr_offs_ptr: *mut i32,
+) -> u64 {
+    let vr_offs = unsafe { *vr_offs_ptr };
+    if vr_offs < 0 {
+        let p = unsafe { vr_top.offset(vr_offs as isize) as *const u64 };
+        unsafe { *vr_offs_ptr = vr_offs + 16 };
+        unsafe { *p }
+    } else {
+        let p = unsafe { *stack_ptr as *const u64 };
+        unsafe { *stack_ptr = (*stack_ptr).add(8) };
+        unsafe { *p }
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn vprintf_read_x87_aarch64(
+    stack_ptr: *mut *mut u8,
+    vr_top: *mut u8,
+    vr_offs_ptr: *mut i32,
+) -> u64 {
+    let vr_offs = unsafe { *vr_offs_ptr };
+    if vr_offs <= -16 {
+        let p = unsafe { vr_top.offset(vr_offs as isize) as usize };
+        unsafe { *vr_offs_ptr = vr_offs + 16 };
+        p as u64
+    } else {
+        let cur = unsafe { *stack_ptr as usize };
+        let aligned = (cur + 15) & !15usize;
+        unsafe { *stack_ptr = (aligned + 16) as *mut u8 };
+        aligned as u64
+    }
 }
 
 /// Round an x87 80-bit extended value to `f64`, correctly and in one step.
@@ -9967,12 +10080,28 @@ pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> S
 /// parsing the format. Reuses `vprintf_read_gp` (the same decode `vprintf_extract_args` uses:
 /// gp_offset @0, overflow_arg_area @8, reg_save_area @16). The caller must return immediately
 /// after (no fall-through to the slow path, which would re-read from the now-advanced `ap`).
+#[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
     let gp_offset_ptr = ap as *mut u32;
     let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
     let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
     unsafe { vprintf_read_gp(gp_offset_ptr, overflow_ptr, reg_save_ptr) }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) }
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+unsafe fn va_read_one_gp(_ap: *mut c_void) -> u64 {
+    0
 }
 
 /// Read exactly one `double` out of a va_list for the `%f` / `%.Nf` fast path,
@@ -10007,12 +10136,28 @@ unsafe fn va_read_one_gp(ap: *mut c_void) -> u64 {
 /// pure optimisation, so unwiring it leaves every test green and every byte
 /// correct while silently costing the win. Letting the compiler report this as
 /// dead makes that regression loud at build time instead.
+#[cfg(target_arch = "x86_64")]
 #[inline]
 unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
     let fp_offset_ptr = unsafe { (ap as *mut u8).add(4) as *mut u32 };
     let overflow_ptr = unsafe { (ap as *mut u8).add(8) as *mut *mut u8 };
     let reg_save_ptr = unsafe { (ap as *mut u8).add(16) as *mut *mut u8 };
     f64::from_bits(unsafe { vprintf_read_fp(fp_offset_ptr, overflow_ptr, reg_save_ptr) })
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn va_read_one_fp(ap: *mut c_void) -> f64 {
+    let stack_ptr = ap as *mut *mut u8;
+    let vr_top = unsafe { *((ap as *mut u8).add(16) as *const *mut u8) };
+    let vr_offs_ptr = unsafe { (ap as *mut u8).add(28) as *mut i32 };
+    f64::from_bits(unsafe { vprintf_read_fp_aarch64(stack_ptr, vr_top, vr_offs_ptr) })
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+#[inline]
+unsafe fn va_read_one_fp(_ap: *mut c_void) -> f64 {
+    0.0
 }
 
 /// `sprintf` for an exact `%f` / `%.Nf`: same renderer as the snprintf path, but
@@ -11732,6 +11877,7 @@ pub unsafe extern "C-unwind" fn vscanf(format: *const c_char, ap: *mut c_void) -
 ///
 /// # Safety
 /// `ap` must be a live `va_list` positioned at a pointer argument.
+#[cfg(target_arch = "x86_64")]
 pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
     let gp_offset_ptr = ap as *mut u32;
     // SAFETY: the caller guarantees `ap` points at a `__va_list_tag`.
@@ -11749,6 +11895,20 @@ pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
             *p
         }
     }
+}
+
+#[cfg(target_arch = "aarch64")]
+pub(crate) unsafe fn va_next_pointer(ap: *mut c_void) -> *mut c_void {
+    let stack_ptr = ap as *mut *mut u8;
+    let gr_top = unsafe { *((ap as *mut u8).add(8) as *const *mut u8) };
+    let gr_offs_ptr = unsafe { (ap as *mut u8).add(24) as *mut i32 };
+    let val = unsafe { vprintf_read_gp_aarch64(stack_ptr, gr_top, gr_offs_ptr) };
+    val as usize as *mut c_void
+}
+
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub(crate) unsafe fn va_next_pointer(_ap: *mut c_void) -> *mut c_void {
+    std::ptr::null_mut()
 }
 
 pub(crate) unsafe fn vscanf_write_values(

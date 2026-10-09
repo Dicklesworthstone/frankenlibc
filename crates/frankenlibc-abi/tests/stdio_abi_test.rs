@@ -320,13 +320,12 @@ fn run_alone_in_child(test: &str) -> bool {
     if std::env::var_os("FRANKENLIBC_REGISTRY_PROBE_CHILD").is_some() {
         return false;
     }
-    let output = std::process::Command::new(
-        std::env::current_exe().expect("current test binary path"),
-    )
-    .args(["--exact", test, "--nocapture", "--test-threads", "1"])
-    .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
-    .output()
-    .expect("re-run the test alone");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test binary path"))
+            .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+            .env("FRANKENLIBC_REGISTRY_PROBE_CHILD", "1")
+            .output()
+            .expect("re-run the test alone");
     let child_out = String::from_utf8_lossy(&output.stdout);
     assert!(
         output.status.success() && child_out.contains("1 passed"),

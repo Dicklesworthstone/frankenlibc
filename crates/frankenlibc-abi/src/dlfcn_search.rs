@@ -56,7 +56,11 @@ pub(super) struct SearchContext {
 
 fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
-    File::open(path).ok()?.take((limit + 1) as u64).read_to_end(&mut bytes).ok()?;
+    File::open(path)
+        .ok()?
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
     (bytes.len() <= limit).then_some(bytes)
 }
 
@@ -68,17 +72,23 @@ impl SearchContext {
                 for entry in bytes.chunks_exact(16) {
                     let tag = u64::from_ne_bytes(entry[..8].try_into().ok()?);
                     let value = u64::from_ne_bytes(entry[8..].try_into().ok()?);
-                    if tag == 23 { return Some(value != 0); } // AT_SECURE
-                    if tag == 0 { break; } // AT_NULL
+                    if tag == 23 {
+                        return Some(value != 0);
+                    } // AT_SECURE
+                    if tag == 0 {
+                        break;
+                    } // AT_NULL
                 }
                 None
-            }).unwrap_or(true);
+            })
+            .unwrap_or(true);
         let mut environment = Vec::new();
         if !secure {
             // /proc exposes the initial environment, not later setenv edits.
             // Do not consult mutable process environment during concurrent loads.
             if let Some(bytes) = bounded_file("/proc/self/environ", 1 << 20) {
-                if let Some(value) = bytes.split(|byte| *byte == 0)
+                if let Some(value) = bytes
+                    .split(|byte| *byte == 0)
                     .find_map(|entry| entry.strip_prefix(b"LD_LIBRARY_PATH="))
                 {
                     let executable = std::fs::read_link("/proc/self/exe").ok();
@@ -92,7 +102,12 @@ impl SearchContext {
         // Missing, oversized, or malformed files leave ordinary search intact.
         let cache = bounded_file("/etc/ld.so.cache", cache::MAX_CACHE_BYTES)
             .and_then(cache::Cache::from_bytes);
-        Self { secure, environment, cache, capabilities: Capabilities::detect() }
+        Self {
+            secure,
+            environment,
+            cache,
+            capabilities: Capabilities::detect(),
+        }
     }
 }
 
@@ -104,47 +119,80 @@ fn dynamic_string(strings: &[u8], offset: u64) -> Option<&[u8]> {
 }
 
 impl SearchPaths {
-    pub(super) fn parse(bytes: &[u8], object: &LoadedObject, origin: &Path, secure: bool) -> Option<Self> {
+    pub(super) fn parse(
+        bytes: &[u8],
+        object: &LoadedObject,
+        origin: &Path,
+        secure: bool,
+    ) -> Option<Self> {
         let mut paths = Self::default();
         let origin = (!secure).then_some(origin);
         for header in &object.program_headers {
-            if header.p_type != ProgramType::Dynamic { continue; }
+            if header.p_type != ProgramType::Dynamic {
+                continue;
+            }
             let start = usize::try_from(header.p_offset).ok()?;
             let length = usize::try_from(header.p_filesz).ok()?;
             let entries = bytes.get(start..start.checked_add(length)?)?;
-            if entries.len() % 16 != 0 { return None; }
+            if entries.len() % 16 != 0 {
+                return None;
+            }
             let mut terminated = false;
             for entry in entries.chunks_exact(16) {
                 let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
                 let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
                 match tag {
-                    0 => { terminated = true; break; }
-                    15 => paths.rpath = split_paths(dynamic_string(&object.dynstr, value)?, origin, false),
-                    29 => paths.runpath = Some(split_paths(dynamic_string(&object.dynstr, value)?, origin, false)),
+                    0 => {
+                        terminated = true;
+                        break;
+                    }
+                    15 => {
+                        paths.rpath =
+                            split_paths(dynamic_string(&object.dynstr, value)?, origin, false)
+                    }
+                    29 => {
+                        paths.runpath = Some(split_paths(
+                            dynamic_string(&object.dynstr, value)?,
+                            origin,
+                            false,
+                        ))
+                    }
                     0x6fff_fffb => paths.no_default = value & 0x800 != 0, // DF_1_NODEFLIB
                     _ => {}
                 }
             }
-            if !terminated { return None; }
+            if !terminated {
+                return None;
+            }
         }
         Some(paths)
     }
 
     pub(super) fn child_rpaths(&self, inherited: &[PathBuf]) -> Vec<PathBuf> {
         let mut paths = Vec::new();
-        if self.runpath.is_none() { append_unique(&mut paths, &self.rpath); }
+        if self.runpath.is_none() {
+            append_unique(&mut paths, &self.rpath);
+        }
         append_unique(&mut paths, inherited);
         paths
     }
 
-    pub(super) fn candidates(&self, name: &[u8], origin: &Path, inherited: &[PathBuf], context: &SearchContext) -> Option<Vec<PathBuf>> {
+    pub(super) fn candidates(
+        &self,
+        name: &[u8],
+        origin: &Path,
+        inherited: &[PathBuf],
+        context: &SearchContext,
+    ) -> Option<Vec<PathBuf>> {
         let name = expand_origin(name, (!context.secure).then_some(origin))?;
         if name.as_os_str().as_bytes().contains(&b'/') {
             // Path-bearing dependencies are exact paths, relative to cwd when
             // relative, and do not use RUNPATH as an implicit parent directory.
             return Some(vec![name]);
         }
-        if name.as_os_str().is_empty() { return None; }
+        if name.as_os_str().is_empty() {
+            return None;
+        }
         let mut directories = Vec::new();
         if self.runpath.is_none() {
             directories = self.child_rpaths(inherited);
@@ -152,7 +200,9 @@ impl SearchPaths {
         if !context.secure {
             append_unique(&mut directories, &context.environment);
         }
-        if let Some(runpath) = &self.runpath { append_unique(&mut directories, runpath); }
+        if let Some(runpath) = &self.runpath {
+            append_unique(&mut directories, runpath);
+        }
         let mut candidates = Vec::new();
         for directory in directories {
             append_directory(&mut candidates, &directory, &name, context.capabilities);
@@ -160,9 +210,13 @@ impl SearchPaths {
         // Cache entries are complete pathnames, not additional directories.
         // They rank after RUNPATH and before the default directory fallback.
         if let Some(cache) = &context.cache {
-            for path in cache.candidates_with_capabilities(name.as_os_str().as_bytes(), context.capabilities) {
+            for path in cache
+                .candidates_with_capabilities(name.as_os_str().as_bytes(), context.capabilities)
+            {
                 if self.no_default
-                    && DEFAULT_DIRECTORIES.iter().any(|directory| path.starts_with(directory))
+                    && DEFAULT_DIRECTORIES
+                        .iter()
+                        .any(|directory| path.starts_with(directory))
                 {
                     continue;
                 }
@@ -173,7 +227,12 @@ impl SearchPaths {
         }
         if !self.no_default {
             for directory in DEFAULT_DIRECTORIES {
-                append_directory(&mut candidates, Path::new(directory), &name, context.capabilities);
+                append_directory(
+                    &mut candidates,
+                    Path::new(directory),
+                    &name,
+                    context.capabilities,
+                );
             }
         }
         Some(candidates)
@@ -183,27 +242,43 @@ impl SearchPaths {
 /// Preserve directory precedence, including each directory's baseline, before
 /// advancing to the next RPATH/environment/RUNPATH/default entry. A CPU's best
 /// variant in a later directory must not displace an earlier baseline DSO.
-fn append_directory(output: &mut Vec<PathBuf>, directory: &Path, name: &Path, capabilities: Capabilities) {
+fn append_directory(
+    output: &mut Vec<PathBuf>,
+    directory: &Path,
+    name: &Path,
+    capabilities: Capabilities,
+) {
     for capability in capabilities.names() {
         let path = directory.join("glibc-hwcaps").join(capability).join(name);
-        if !output.contains(&path) { output.push(path); }
+        if !output.contains(&path) {
+            output.push(path);
+        }
     }
     let path = directory.join(name);
-    if !output.contains(&path) { output.push(path); }
+    if !output.contains(&path) {
+        output.push(path);
+    }
 }
 
 fn append_unique(output: &mut Vec<PathBuf>, paths: &[PathBuf]) {
     for path in paths {
-        if !output.contains(path) { output.push(path.clone()); }
+        if !output.contains(path) {
+            output.push(path.clone());
+        }
     }
 }
 
 fn split_paths(value: &[u8], origin: Option<&Path>, environment: bool) -> Vec<PathBuf> {
-    value.split(|byte| *byte == b':' || (environment && *byte == b';'))
+    value
+        .split(|byte| *byte == b':' || (environment && *byte == b';'))
         .filter_map(|component| {
-            if component.is_empty() { Some(PathBuf::from(".")) }
-            else { expand_origin(component, origin) }
-        }).collect()
+            if component.is_empty() {
+                Some(PathBuf::from("."))
+            } else {
+                expand_origin(component, origin)
+            }
+        })
+        .collect()
 }
 
 fn expand_origin(value: &[u8], origin: Option<&Path>) -> Option<PathBuf> {
@@ -216,10 +291,17 @@ fn expand_origin(value: &[u8], origin: Option<&Path>) -> Option<PathBuf> {
             continue;
         }
         let remaining = &value[cursor..];
-        let length = if remaining.starts_with(b"${ORIGIN}") { 9 }
-            else if remaining.starts_with(b"$ORIGIN")
-                && !remaining.get(7).is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_') { 7 }
-            else { return None; };
+        let length = if remaining.starts_with(b"${ORIGIN}") {
+            9
+        } else if remaining.starts_with(b"$ORIGIN")
+            && !remaining
+                .get(7)
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            7
+        } else {
+            return None;
+        };
         result.extend_from_slice(origin?.as_os_str().as_bytes());
         cursor += length;
     }
@@ -233,8 +315,20 @@ mod tests {
     #[test]
     fn origin_expansion_preserves_non_utf8_and_rejects_unknown_tokens() {
         let origin = Path::new(OsStr::from_bytes(b"/tmp/lib-\xff"));
-        assert_eq!(expand_origin(b"${ORIGIN}/child", Some(origin)).unwrap().as_os_str().as_bytes(), b"/tmp/lib-\xff/child");
-        assert_eq!(expand_origin(b"$ORIGIN/child", Some(origin)).unwrap().as_os_str().as_bytes(), b"/tmp/lib-\xff/child");
+        assert_eq!(
+            expand_origin(b"${ORIGIN}/child", Some(origin))
+                .unwrap()
+                .as_os_str()
+                .as_bytes(),
+            b"/tmp/lib-\xff/child"
+        );
+        assert_eq!(
+            expand_origin(b"$ORIGIN/child", Some(origin))
+                .unwrap()
+                .as_os_str()
+                .as_bytes(),
+            b"/tmp/lib-\xff/child"
+        );
         assert!(expand_origin(b"$ORIGIN_EXTRA/child", Some(origin)).is_none());
         assert!(expand_origin(b"$PLATFORM/child", Some(origin)).is_none());
         assert!(expand_origin(b"$ORIGIN/child", None).is_none());
@@ -242,20 +336,60 @@ mod tests {
 
     #[test]
     fn runpath_does_not_inherit_and_overrides_own_rpath() {
-        let paths = SearchPaths { rpath: vec!["/rpath".into()], runpath: Some(vec!["/runpath".into()]), no_default: true };
-        let context = SearchContext { secure: false, environment: vec!["/environment".into()], cache: None, capabilities: Capabilities::default() };
+        let paths = SearchPaths {
+            rpath: vec!["/rpath".into()],
+            runpath: Some(vec!["/runpath".into()]),
+            no_default: true,
+        };
+        let context = SearchContext {
+            secure: false,
+            environment: vec!["/environment".into()],
+            cache: None,
+            capabilities: Capabilities::default(),
+        };
         let inherited = vec![PathBuf::from("/ancestor")];
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("/environment/libx.so"), PathBuf::from("/runpath/libx.so")]);
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &inherited, &context)
+                .unwrap(),
+            vec![
+                PathBuf::from("/environment/libx.so"),
+                PathBuf::from("/runpath/libx.so")
+            ]
+        );
         assert_eq!(paths.child_rpaths(&inherited), inherited);
     }
 
     #[test]
     fn rpath_search_precedes_environment_and_inherits() {
-        let paths = SearchPaths { rpath: vec!["/rpath".into()], runpath: None, no_default: true };
-        let context = SearchContext { secure: false, environment: vec!["/environment".into()], cache: None, capabilities: Capabilities::default() };
+        let paths = SearchPaths {
+            rpath: vec!["/rpath".into()],
+            runpath: None,
+            no_default: true,
+        };
+        let context = SearchContext {
+            secure: false,
+            environment: vec!["/environment".into()],
+            cache: None,
+            capabilities: Capabilities::default(),
+        };
         let inherited = vec![PathBuf::from("/ancestor")];
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("/rpath/libx.so"), PathBuf::from("/ancestor/libx.so"), PathBuf::from("/environment/libx.so")]);
-        assert_eq!(paths.candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("sub/libx.so")]);
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &inherited, &context)
+                .unwrap(),
+            vec![
+                PathBuf::from("/rpath/libx.so"),
+                PathBuf::from("/ancestor/libx.so"),
+                PathBuf::from("/environment/libx.so")
+            ]
+        );
+        assert_eq!(
+            paths
+                .candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context)
+                .unwrap(),
+            vec![PathBuf::from("sub/libx.so")]
+        );
     }
 
     fn cache_fixture(paths: &[&[u8]], capability: Option<&[u8]>) -> Vec<u8> {
@@ -290,9 +424,12 @@ mod tests {
             let data = extension + 24;
             bytes.resize(data + 4, 0);
             for (offset, value) in [
-                (32, extension as u32), (extension, 0xeaa4_2174),
-                (extension + 4, 1), (extension + 8, 1),
-                (extension + 16, data as u32), (extension + 20, 4),
+                (32, extension as u32),
+                (extension, 0xeaa4_2174),
+                (extension + 4, 1),
+                (extension + 8, 1),
+                (extension + 16, data as u32),
+                (extension + 20, 4),
                 (data, capability_offset),
             ] {
                 bytes[offset..offset + 4].copy_from_slice(&value.to_ne_bytes());
@@ -317,31 +454,50 @@ mod tests {
             ..SearchPaths::default()
         };
         let context = context_with_cache(&[b"/vendor/libx.so"], false);
-        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap();
-        assert_eq!(&candidates[..3], &[
-            PathBuf::from("/environment/libx.so"),
-            PathBuf::from("/runpath/libx.so"),
-            PathBuf::from("/vendor/libx.so"),
-        ]);
-        assert_eq!(candidates[3], Path::new(DEFAULT_DIRECTORIES[0]).join("libx.so"));
+        let candidates = paths
+            .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+            .unwrap();
+        assert_eq!(
+            &candidates[..3],
+            &[
+                PathBuf::from("/environment/libx.so"),
+                PathBuf::from("/runpath/libx.so"),
+                PathBuf::from("/vendor/libx.so"),
+            ]
+        );
+        assert_eq!(
+            candidates[3],
+            Path::new(DEFAULT_DIRECTORIES[0]).join("libx.so")
+        );
         assert!(!candidates.contains(&PathBuf::from("/vendor/libx.so/libx.so")));
     }
 
     #[test]
     fn nodeflib_skips_default_cache_entries_but_keeps_vendor_entries() {
-        let paths = SearchPaths { no_default: true, ..SearchPaths::default() };
-        let context = context_with_cache(&[
-            b"/lib/libx.so",
-            b"/lib64/libx.so",
-            b"/usr/lib/nested/libx.so",
-            b"/vendor/libx.so",
-            b"/liberal/libx.so",
-        ], false);
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap(), vec![
-            PathBuf::from("/environment/libx.so"),
-            PathBuf::from("/vendor/libx.so"),
-            PathBuf::from("/liberal/libx.so"),
-        ]);
+        let paths = SearchPaths {
+            no_default: true,
+            ..SearchPaths::default()
+        };
+        let context = context_with_cache(
+            &[
+                b"/lib/libx.so",
+                b"/lib64/libx.so",
+                b"/usr/lib/nested/libx.so",
+                b"/vendor/libx.so",
+                b"/liberal/libx.so",
+            ],
+            false,
+        );
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+                .unwrap(),
+            vec![
+                PathBuf::from("/environment/libx.so"),
+                PathBuf::from("/vendor/libx.so"),
+                PathBuf::from("/liberal/libx.so"),
+            ]
+        );
     }
 
     #[test]
@@ -353,33 +509,71 @@ mod tests {
         };
         let context = context_with_cache(&[b"/vendor/libx.so"], false);
         let inherited = [PathBuf::from("/ancestor")];
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![
-            PathBuf::from("/rpath/libx.so"),
-            PathBuf::from("/ancestor/libx.so"),
-            PathBuf::from("/environment/libx.so"),
-            PathBuf::from("/vendor/libx.so"),
-        ]);
-        assert_eq!(paths.candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context).unwrap(), vec![PathBuf::from("sub/libx.so")]);
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &inherited, &context)
+                .unwrap(),
+            vec![
+                PathBuf::from("/rpath/libx.so"),
+                PathBuf::from("/ancestor/libx.so"),
+                PathBuf::from("/environment/libx.so"),
+                PathBuf::from("/vendor/libx.so"),
+            ]
+        );
+        assert_eq!(
+            paths
+                .candidates(b"sub/libx.so", Path::new("/origin"), &inherited, &context)
+                .unwrap(),
+            vec![PathBuf::from("sub/libx.so")]
+        );
     }
 
     #[test]
     fn secure_mode_uses_system_cache_but_never_environment_or_origin() {
-        let paths = SearchPaths { no_default: true, ..SearchPaths::default() };
+        let paths = SearchPaths {
+            no_default: true,
+            ..SearchPaths::default()
+        };
         let context = context_with_cache(&[b"/vendor/libx.so"], true);
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap(), vec![PathBuf::from("/vendor/libx.so")]);
-        assert!(paths.candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &context).is_none());
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+                .unwrap(),
+            vec![PathBuf::from("/vendor/libx.so")]
+        );
+        assert!(
+            paths
+                .candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &context)
+                .is_none()
+        );
     }
 
     #[test]
     fn duplicate_cache_paths_do_not_change_precedence_or_fallbacks() {
         let paths = SearchPaths::default();
         let context = context_with_cache(&[b"/environment/libx.so", b"/vendor/libx.so"], false);
-        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap();
-        assert_eq!(candidates.iter().filter(|path| **path == Path::new("/environment/libx.so")).count(), 1);
+        let candidates = paths
+            .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+            .unwrap();
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|path| **path == Path::new("/environment/libx.so"))
+                .count(),
+            1
+        );
         let mut missing = context;
         missing.cache = None;
-        let without_cache = paths.candidates(b"libx.so", Path::new("/origin"), &[], &missing).unwrap();
-        assert_eq!(candidates.into_iter().filter(|path| path != Path::new("/vendor/libx.so")).collect::<Vec<_>>(), without_cache);
+        let without_cache = paths
+            .candidates(b"libx.so", Path::new("/origin"), &[], &missing)
+            .unwrap();
+        assert_eq!(
+            candidates
+                .into_iter()
+                .filter(|path| path != Path::new("/vendor/libx.so"))
+                .collect::<Vec<_>>(),
+            without_cache
+        );
     }
 
     fn capable_context(level: u8) -> SearchContext {
@@ -398,14 +592,19 @@ mod tests {
             no_default: true,
             ..SearchPaths::default()
         };
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &capable_context(3)).unwrap(), vec![
-            PathBuf::from("/first/glibc-hwcaps/x86-64-v3/libx.so"),
-            PathBuf::from("/first/glibc-hwcaps/x86-64-v2/libx.so"),
-            PathBuf::from("/first/libx.so"),
-            PathBuf::from("/second/glibc-hwcaps/x86-64-v3/libx.so"),
-            PathBuf::from("/second/glibc-hwcaps/x86-64-v2/libx.so"),
-            PathBuf::from("/second/libx.so"),
-        ]);
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &[], &capable_context(3))
+                .unwrap(),
+            vec![
+                PathBuf::from("/first/glibc-hwcaps/x86-64-v3/libx.so"),
+                PathBuf::from("/first/glibc-hwcaps/x86-64-v2/libx.so"),
+                PathBuf::from("/first/libx.so"),
+                PathBuf::from("/second/glibc-hwcaps/x86-64-v3/libx.so"),
+                PathBuf::from("/second/glibc-hwcaps/x86-64-v2/libx.so"),
+                PathBuf::from("/second/libx.so"),
+            ]
+        );
     }
 
     #[test]
@@ -418,27 +617,64 @@ mod tests {
             no_default: true,
             ..SearchPaths::default()
         };
-        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap();
+        let candidates = paths
+            .candidates(b"libx.so", Path::new("/origin"), &inherited, &context)
+            .unwrap();
         assert_eq!(candidates.len(), 6);
-        assert_eq!(candidates[0], Path::new("/rpath/glibc-hwcaps/x86-64-v2/libx.so"));
+        assert_eq!(
+            candidates[0],
+            Path::new("/rpath/glibc-hwcaps/x86-64-v2/libx.so")
+        );
         assert_eq!(candidates[1], Path::new("/rpath/libx.so"));
-        assert_eq!(candidates[2], Path::new("/ancestor/glibc-hwcaps/x86-64-v2/libx.so"));
-        assert_eq!(candidates[4], Path::new("/environment/glibc-hwcaps/x86-64-v2/libx.so"));
+        assert_eq!(
+            candidates[2],
+            Path::new("/ancestor/glibc-hwcaps/x86-64-v2/libx.so")
+        );
+        assert_eq!(
+            candidates[4],
+            Path::new("/environment/glibc-hwcaps/x86-64-v2/libx.so")
+        );
         paths.runpath = Some(vec!["/runpath".into()]);
-        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &inherited, &context).unwrap();
+        let candidates = paths
+            .candidates(b"libx.so", Path::new("/origin"), &inherited, &context)
+            .unwrap();
         assert_eq!(candidates.len(), 4);
-        assert_eq!(candidates[0], Path::new("/environment/glibc-hwcaps/x86-64-v2/libx.so"));
-        assert_eq!(candidates[2], Path::new("/runpath/glibc-hwcaps/x86-64-v2/libx.so"));
+        assert_eq!(
+            candidates[0],
+            Path::new("/environment/glibc-hwcaps/x86-64-v2/libx.so")
+        );
+        assert_eq!(
+            candidates[2],
+            Path::new("/runpath/glibc-hwcaps/x86-64-v2/libx.so")
+        );
         assert_eq!(paths.child_rpaths(&inherited), inherited);
     }
 
     #[test]
     fn capable_exact_paths_still_bypass_all_search_and_expansion() {
-        let paths = SearchPaths { runpath: Some(vec!["/runpath".into()]), ..SearchPaths::default() };
+        let paths = SearchPaths {
+            runpath: Some(vec!["/runpath".into()]),
+            ..SearchPaths::default()
+        };
         for name in [b"/absolute/libx.so".as_slice(), b"relative/libx.so"] {
-            assert_eq!(paths.candidates(name, Path::new("/origin"), &[], &capable_context(4)).unwrap(), vec![PathBuf::from(OsStr::from_bytes(name))]);
+            assert_eq!(
+                paths
+                    .candidates(name, Path::new("/origin"), &[], &capable_context(4))
+                    .unwrap(),
+                vec![PathBuf::from(OsStr::from_bytes(name))]
+            );
         }
-        assert_eq!(paths.candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &capable_context(4)).unwrap(), vec![PathBuf::from("/origin/libx.so")]);
+        assert_eq!(
+            paths
+                .candidates(
+                    b"$ORIGIN/libx.so",
+                    Path::new("/origin"),
+                    &[],
+                    &capable_context(4)
+                )
+                .unwrap(),
+            vec![PathBuf::from("/origin/libx.so")]
+        );
     }
 
     #[test]
@@ -449,10 +685,23 @@ mod tests {
             no_default: true,
             ..SearchPaths::default()
         };
-        let candidates = paths.candidates(b"lib\xfe.so", Path::new("/origin"), &[], &capable_context(2)).unwrap();
+        let candidates = paths
+            .candidates(
+                b"lib\xfe.so",
+                Path::new("/origin"),
+                &[],
+                &capable_context(2),
+            )
+            .unwrap();
         assert_eq!(candidates.len(), 2);
-        assert_eq!(candidates[0].as_os_str().as_bytes(), b"/vendor/\xff/glibc-hwcaps/x86-64-v2/lib\xfe.so");
-        assert_eq!(candidates[1].as_os_str().as_bytes(), b"/vendor/\xff/lib\xfe.so");
+        assert_eq!(
+            candidates[0].as_os_str().as_bytes(),
+            b"/vendor/\xff/glibc-hwcaps/x86-64-v2/lib\xfe.so"
+        );
+        assert_eq!(
+            candidates[1].as_os_str().as_bytes(),
+            b"/vendor/\xff/lib\xfe.so"
+        );
     }
 
     #[test]
@@ -460,17 +709,29 @@ mod tests {
         let mut context = capable_context(4);
         context.secure = true;
         context.environment.push("/untrusted".into());
-        let paths = SearchPaths { no_default: true, ..SearchPaths::default() };
-        assert!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap().is_empty());
-        assert!(paths.candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &context).is_none());
+        let paths = SearchPaths {
+            no_default: true,
+            ..SearchPaths::default()
+        };
+        assert!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            paths
+                .candidates(b"$ORIGIN/libx.so", Path::new("/origin"), &[], &context)
+                .is_none()
+        );
     }
 
     #[test]
     fn capable_defaults_follow_cache_and_nodeflib_filters_optimized_system_paths() {
-        let bytes = cache_fixture(&[
-            b"/lib/glibc-hwcaps/x86-64-v2/libx.so",
-            b"/vendor/libx.so",
-        ], Some(b"x86-64-v2"));
+        let bytes = cache_fixture(
+            &[b"/lib/glibc-hwcaps/x86-64-v2/libx.so", b"/vendor/libx.so"],
+            Some(b"x86-64-v2"),
+        );
         let context = SearchContext {
             secure: true,
             environment: Vec::new(),
@@ -478,12 +739,28 @@ mod tests {
             capabilities: Capabilities::for_x86_level(2),
         };
         let mut paths = SearchPaths::default();
-        let candidates = paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap();
-        assert_eq!(candidates[0], Path::new("/lib/glibc-hwcaps/x86-64-v2/libx.so"));
+        let candidates = paths
+            .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+            .unwrap();
+        assert_eq!(
+            candidates[0],
+            Path::new("/lib/glibc-hwcaps/x86-64-v2/libx.so")
+        );
         assert_eq!(candidates[1], Path::new("/vendor/libx.so"));
-        assert_eq!(candidates[2], Path::new(DEFAULT_DIRECTORIES[0]).join("glibc-hwcaps/x86-64-v2/libx.so"));
-        assert_eq!(candidates[3], Path::new(DEFAULT_DIRECTORIES[0]).join("libx.so"));
+        assert_eq!(
+            candidates[2],
+            Path::new(DEFAULT_DIRECTORIES[0]).join("glibc-hwcaps/x86-64-v2/libx.so")
+        );
+        assert_eq!(
+            candidates[3],
+            Path::new(DEFAULT_DIRECTORIES[0]).join("libx.so")
+        );
         paths.no_default = true;
-        assert_eq!(paths.candidates(b"libx.so", Path::new("/origin"), &[], &context).unwrap(), vec![PathBuf::from("/vendor/libx.so")]);
+        assert_eq!(
+            paths
+                .candidates(b"libx.so", Path::new("/origin"), &[], &context)
+                .unwrap(),
+            vec![PathBuf::from("/vendor/libx.so")]
+        );
     }
 }

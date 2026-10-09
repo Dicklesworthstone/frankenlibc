@@ -94,12 +94,6 @@ pub mod ctype_abi;
 mod erf_tables;
 pub mod errno_abi;
 mod expl_table;
-pub mod locale_abi;
-mod locale_catalog;
-#[path = "math_abi.rs"]
-mod legacy_math_abi;
-#[path = "math_exports.rs"]
-pub mod math_abi;
 #[cfg(all(
     target_os = "linux",
     target_arch = "x86_64",
@@ -108,6 +102,12 @@ pub mod math_abi;
     not(feature = "standalone")
 ))]
 mod fromfp_abi;
+#[path = "math_abi.rs"]
+mod legacy_math_abi;
+pub mod locale_abi;
+mod locale_catalog;
+#[path = "math_exports.rs"]
+pub mod math_abi;
 pub mod startup_helpers;
 pub mod stdbit_abi;
 mod trig_tables;

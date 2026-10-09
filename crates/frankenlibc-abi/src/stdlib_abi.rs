@@ -631,8 +631,7 @@ impl GetenvHotCache {
                     return None;
                 }
             }
-            (*entry.add(self.name_len) == b'=')
-                .then(|| entry.add(self.name_len + 1) as *mut c_char)
+            (*entry.add(self.name_len) == b'=').then(|| entry.add(self.name_len + 1) as *mut c_char)
         }
     }
 }

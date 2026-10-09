@@ -160,12 +160,8 @@ fn fake_cases(canonical: &Value) -> Vec<Value> {
         // fails (here: for perf) but is reported with status "xfail".
         let xfails = canonical["modes"][mode]["xfails"].as_u64().unwrap_or(0) as usize;
         for index in 0..xfails {
-            let mut case = failing_smoke_case(
-                mode,
-                &format!("synthetic_xfail_{index:02}"),
-                false,
-                true,
-            );
+            let mut case =
+                failing_smoke_case(mode, &format!("synthetic_xfail_{index:02}"), false, true);
             case["status"] = json!("xfail");
             cases.push(case);
         }

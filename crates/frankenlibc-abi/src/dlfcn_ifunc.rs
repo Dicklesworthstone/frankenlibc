@@ -11,9 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::ffi::c_int;
 use std::sync::Arc;
 
-use frankenlibc_core::elf::{
-    Elf64ProgramHeader, Elf64Rela, ProgramType, RelocationType,
-};
+use frankenlibc_core::elf::{Elf64ProgramHeader, Elf64Rela, ProgramType, RelocationType};
 
 use super::{NativeDso, binding, lifecycle, registry, tls, unique};
 
@@ -27,21 +25,33 @@ pub(super) fn active() -> bool {
 }
 
 pub(super) fn temporary_tls_module(id: usize) -> Option<Arc<tls::Module>> {
-    MODULES.try_with(|modules| {
-        modules.try_borrow().ok()?.iter().find(|(module, _)| *module == id)
-            .map(|(_, module)| Arc::clone(module))
-    }).ok().flatten()
+    MODULES
+        .try_with(|modules| {
+            modules
+                .try_borrow()
+                .ok()?
+                .iter()
+                .find(|(module, _)| *module == id)
+                .map(|(_, module)| Arc::clone(module))
+        })
+        .ok()
+        .flatten()
 }
 
 struct Execution;
 impl Execution {
     fn enter(modules: Vec<(usize, Arc<tls::Module>)>) -> Option<Self> {
-        if ACTIVE.try_with(|active| active.replace(true)).ok()? { return None; }
+        if ACTIVE.try_with(|active| active.replace(true)).ok()? {
+            return None;
+        }
         let guard = Self;
-        MODULES.try_with(|slot| {
-            *slot.try_borrow_mut().ok()? = modules;
-            Some(())
-        }).ok().flatten()?;
+        MODULES
+            .try_with(|slot| {
+                *slot.try_borrow_mut().ok()? = modules;
+                Some(())
+            })
+            .ok()
+            .flatten()?;
         Some(guard)
     }
 }
@@ -62,27 +72,46 @@ struct ObjectImage {
 
 impl ObjectImage {
     fn executable(&self, address: usize) -> bool {
-        let Some(offset) = address.checked_sub(self.base) else { return false; };
-        if offset >= self.len { return false; }
+        let Some(offset) = address.checked_sub(self.base) else {
+            return false;
+        };
+        if offset >= self.len {
+            return false;
+        }
         let offset = offset as u64;
         let mut backed = false;
         let mut executable = false;
         // Match native protect_object and lifecycle::executable_address,
         // including last-segment-wins page permissions and final RELRO.
         for header in &self.headers {
-            if !header.is_load() || header.p_memsz == 0 { continue; }
-            let Some(end) = header.p_vaddr.checked_add(header.p_memsz) else { return false; };
-            let Some(page_end) = end.checked_add(4095).map(|end| end & !4095) else { return false; };
+            if !header.is_load() || header.p_memsz == 0 {
+                continue;
+            }
+            let Some(end) = header.p_vaddr.checked_add(header.p_memsz) else {
+                return false;
+            };
+            let Some(page_end) = end.checked_add(4095).map(|end| end & !4095) else {
+                return false;
+            };
             backed |= header.p_vaddr <= offset && offset < end;
             if (header.p_vaddr & !4095) <= offset && offset < page_end {
                 executable = header.p_flags.0 & 1 != 0;
             }
         }
         for header in &self.headers {
-            if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 { continue; }
-            let Some(end) = header.p_vaddr.checked_add(header.p_memsz)
-                .and_then(|end| end.checked_add(4095)) else { return false; };
-            if (header.p_vaddr & !4095) <= offset && offset < (end & !4095) { return false; }
+            if header.p_type != ProgramType::GnuRelro || header.p_memsz == 0 {
+                continue;
+            }
+            let Some(end) = header
+                .p_vaddr
+                .checked_add(header.p_memsz)
+                .and_then(|end| end.checked_add(4095))
+            else {
+                return false;
+            };
+            if (header.p_vaddr & !4095) <= offset && offset < (end & !4095) {
+                return false;
+            }
         }
         backed && executable
     }
@@ -97,17 +126,25 @@ impl Context {
     pub(super) fn new(resident: &[NativeDso], pending: &[NativeDso]) -> Self {
         let objects = resident.iter().chain(pending).filter(|dso| !dso.retiring);
         Self {
-            images: objects.clone().map(|dso| ObjectImage {
-                id: dso.id, base: dso.mapping.base, len: dso.mapping.len,
-                headers: dso.object.program_headers.clone(),
-            }).collect(),
-            modules: objects.filter_map(|dso| {
-                dso.tls.as_ref().map(|module| (dso.id, Arc::clone(module)))
-            }).collect(),
+            images: objects
+                .clone()
+                .map(|dso| ObjectImage {
+                    id: dso.id,
+                    base: dso.mapping.base,
+                    len: dso.mapping.len,
+                    headers: dso.object.program_headers.clone(),
+                })
+                .collect(),
+            modules: objects
+                .filter_map(|dso| dso.tls.as_ref().map(|module| (dso.id, Arc::clone(module))))
+                .collect(),
         }
     }
     fn provider(&self, address: usize) -> Option<usize> {
-        self.images.iter().find(|image| image.executable(address)).map(|image| image.id)
+        self.images
+            .iter()
+            .find(|image| image.executable(address))
+            .map(|image| image.id)
     }
 }
 
@@ -123,32 +160,57 @@ pub(super) struct Fixup {
 // Do not silently treat a resolver address as an implementation for other
 // forms: reject them until their overflow/text-relocation contract is owned.
 fn indirect_form(relocation: &Elf64Rela) -> bool {
-    matches!(relocation.reloc_type(), RelocationType::R64 | RelocationType::GlobDat
-        | RelocationType::JumpSlot | RelocationType::IRelative)
+    matches!(
+        relocation.reloc_type(),
+        RelocationType::R64
+            | RelocationType::GlobDat
+            | RelocationType::JumpSlot
+            | RelocationType::IRelative
+    )
 }
 
 fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
     let end = offset.checked_add(8)?;
-    if end > dso.mapping.len as u64 || !dso.object.program_headers.iter().any(|header| {
-        header.is_load() && header.p_vaddr <= offset
-            && header.p_vaddr.checked_add(header.p_memsz).is_some_and(|limit| end <= limit)
-    }) { return None; }
+    if end > dso.mapping.len as u64
+        || !dso.object.program_headers.iter().any(|header| {
+            header.is_load()
+                && header.p_vaddr <= offset
+                && header
+                    .p_vaddr
+                    .checked_add(header.p_memsz)
+                    .is_some_and(|limit| end <= limit)
+        })
+    {
+        return None;
+    }
     // A late write must stay in writable, non-executable pages before RELRO.
     // No temporary RWX permissions, and no write through an RX text mapping.
     for address in [offset, end - 1] {
         let mut flags = 0;
         for header in &dso.object.program_headers {
-            if !header.is_load() || header.p_memsz == 0 { continue; }
-            let page_end = header.p_vaddr.checked_add(header.p_memsz)?.checked_add(4095)? & !4095;
-            if (header.p_vaddr & !4095) <= address && address < page_end { flags = header.p_flags.0; }
+            if !header.is_load() || header.p_memsz == 0 {
+                continue;
+            }
+            let page_end = header
+                .p_vaddr
+                .checked_add(header.p_memsz)?
+                .checked_add(4095)?
+                & !4095;
+            if (header.p_vaddr & !4095) <= address && address < page_end {
+                flags = header.p_flags.0;
+            }
         }
-        if flags & 3 != 2 { return None; }
+        if flags & 3 != 2 {
+            return None;
+        }
     }
     // Capturing a template before a resolver must not freeze an unresolved
     // function pointer into the first thread's block or erase resolver writes.
     if let Some(segment) = &dso.object.tls_segment {
         let template_end = segment.vaddr.checked_add(segment.filesz)?;
-        if offset < template_end && segment.vaddr < end { return None; }
+        if offset < template_end && segment.vaddr < end {
+            return None;
+        }
     }
     dso.mapping.base.checked_add(usize::try_from(offset).ok()?)
 }
@@ -156,7 +218,10 @@ fn writable_target(dso: &NativeDso, offset: u64) -> Option<usize> {
 /// Identify indirect relocations without calling any machine code. The core
 /// continues to own all ordinary arithmetic, including compressed RELR.
 pub(super) fn prepare(
-    resident: &[NativeDso], pending: &mut [NativeDso], root: usize, flags: c_int,
+    resident: &[NativeDso],
+    pending: &mut [NativeDso],
+    root: usize,
+    flags: c_int,
     unique: &unique::Transaction,
 ) -> Option<Vec<Vec<Fixup>>> {
     let mut plans = Vec::new();
@@ -165,23 +230,43 @@ pub(super) fn prepare(
         let mut fixups = Vec::new();
         for relocation in dso.object.rela_dyn.iter().chain(&dso.object.rela_plt) {
             let indirect = if relocation.reloc_type() == RelocationType::IRelative {
-                if relocation.symbol_index() != 0 { return None; }
-                let address = usize::try_from(dso.mapping.base as i128 + relocation.r_addend as i128).ok()?;
+                if relocation.symbol_index() != 0 {
+                    return None;
+                }
+                let address =
+                    usize::try_from(dso.mapping.base as i128 + relocation.r_addend as i128).ok()?;
                 Some((dso.id, address))
-            } else if matches!(relocation.reloc_type(), RelocationType::None | RelocationType::Relative) {
+            } else if matches!(
+                relocation.reloc_type(),
+                RelocationType::None | RelocationType::Relative
+            ) {
                 None
             } else if relocation.symbol_index() != 0 {
-                let definition = binding::select(dso, relocation.symbol_index() as usize, &scope, unique)?;
+                let definition =
+                    binding::select(dso, relocation.symbol_index() as usize, &scope, unique)?;
                 if definition.indirect {
-                    Some((definition.provider?, usize::try_from(definition.address).ok()?))
-                } else { None }
-            } else { None };
+                    Some((
+                        definition.provider?,
+                        usize::try_from(definition.address).ok()?,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
             if let Some((provider, address)) = indirect {
-                if !indirect_form(relocation) { return None; }
+                if !indirect_form(relocation) {
+                    return None;
+                }
                 let owner = super::find(resident, pending, provider)?;
-                if !lifecycle::executable_address(owner, address) { return None; }
+                if !lifecycle::executable_address(owner, address) {
+                    return None;
+                }
                 fixups.push(Fixup {
-                    relocation: *relocation, resolver: address, provider,
+                    relocation: *relocation,
+                    resolver: address,
+                    provider,
                     target: writable_target(dso, relocation.r_offset)?,
                 });
             }
@@ -192,22 +277,31 @@ pub(super) fn prepare(
     // are exactly the ones subsequently submitted to the ordinary core engine.
     for (dso, plan) in pending.iter_mut().zip(&plans) {
         for table in [&mut dso.object.rela_dyn, &mut dso.object.rela_plt] {
-            table.retain(|entry| !plan.iter().any(|fixup| {
-                entry.r_offset == fixup.relocation.r_offset && entry.r_info == fixup.relocation.r_info
-                    && entry.r_addend == fixup.relocation.r_addend
-            }));
+            table.retain(|entry| {
+                !plan.iter().any(|fixup| {
+                    entry.r_offset == fixup.relocation.r_offset
+                        && entry.r_info == fixup.relocation.r_info
+                        && entry.r_addend == fixup.relocation.r_addend
+                })
+            });
         }
     }
     Some(plans)
 }
 
-pub(super) fn execution_order(resident: &[NativeDso], pending: &[NativeDso], root: usize) -> Vec<usize> {
+pub(super) fn execution_order(
+    resident: &[NativeDso],
+    pending: &[NativeDso],
+    root: usize,
+) -> Vec<usize> {
     let mut stack = vec![(root, false)];
     let mut seen = Vec::new();
     let mut order = Vec::new();
     while let Some((id, ready)) = stack.pop() {
         if ready {
-            if let Some(index) = pending.iter().position(|dso| dso.id == id) { order.push(index); }
+            if let Some(index) = pending.iter().position(|dso| dso.id == id) {
+                order.push(index);
+            }
         } else if !seen.contains(&id) {
             seen.push(id);
             stack.push((id, true));
@@ -228,7 +322,9 @@ unsafe fn invoke(address: usize) -> usize {
 }
 
 pub(super) fn execute(
-    mut context: Context, plans: &[Vec<Fixup>], order: &[usize],
+    mut context: Context,
+    plans: &[Vec<Fixup>],
+    order: &[usize],
 ) -> Option<Vec<Vec<usize>>> {
     let _execution = Execution::enter(std::mem::take(&mut context.modules))?;
     let mut providers = vec![Vec::new(); plans.len()];
@@ -237,14 +333,20 @@ pub(super) fn execute(
             // No registry lock or Rust reference to mapped bytes crosses this
             // call. Every ordinary relocation and TLS template is ready.
             let selected = unsafe { invoke(fixup.resolver) };
-            if !providers[index].contains(&fixup.provider) { providers[index].push(fixup.provider); }
+            if !providers[index].contains(&fixup.provider) {
+                providers[index].push(fixup.provider);
+            }
             if selected != 0 {
                 let provider = context.provider(selected)?;
-                if !providers[index].contains(&provider) { providers[index].push(provider); }
+                if !providers[index].contains(&provider) {
+                    providers[index].push(provider);
+                }
             }
             let value = if fixup.relocation.reloc_type() == RelocationType::R64 {
                 usize::try_from(selected as i128 + fixup.relocation.r_addend as i128).ok()?
-            } else { selected };
+            } else {
+                selected
+            };
             // SAFETY: preflight checked the full eight-byte PT_LOAD range and
             // writable/non-executable stage permissions. RELRO is applied later.
             unsafe { std::ptr::write_unaligned(fixup.target as *mut usize, value) };
@@ -268,7 +370,9 @@ pub(super) fn resolve_symbol(root: usize, resolver: usize) -> Option<usize> {
         let provider = context.provider(selected)?;
         let mut dsos = registry().lock().ok()?;
         let owner = dsos.iter_mut().find(|dso| dso.id == root)?;
-        if provider != root && !owner.dependencies.contains(&provider) { owner.dependencies.push(provider); }
+        if provider != root && !owner.dependencies.contains(&provider) {
+            owner.dependencies.push(provider);
+        }
     }
     Some(selected)
 }

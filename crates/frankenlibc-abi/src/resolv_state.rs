@@ -186,7 +186,11 @@ fn random_id() -> Result<u16, c_int> {
             continue;
         }
         if result <= 0 {
-            return Err(if result == 0 { libc::EIO } else { (-result) as c_int });
+            return Err(if result == 0 {
+                libc::EIO
+            } else {
+                (-result) as c_int
+            });
         }
         done += result as usize;
     }
@@ -204,9 +208,10 @@ fn initial_config() -> (ResolverConfig, c_ulong) {
     // ResolverConfig. Read it from the same fresh file/environment snapshot.
     // glibc accepts the "edns0" prefix and does not recognize "no-edns0".
     let edns0 = content.split(|&byte| byte == b'\n').any(|line| {
-        let mut words = line.split(u8::is_ascii_whitespace).filter(|word| !word.is_empty());
-        words.next() == Some(b"options".as_slice())
-            && words.any(|word| word.starts_with(b"edns0"))
+        let mut words = line
+            .split(u8::is_ascii_whitespace)
+            .filter(|word| !word.is_empty());
+        words.next() == Some(b"options".as_slice()) && words.any(|word| word.starts_with(b"edns0"))
     });
     let mut config = ResolverConfig::parse(&content);
     if let Some(domain) = std::env::var_os("LOCALDOMAIN") {
@@ -243,9 +248,15 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
     next.retry = config.attempts as c_int;
     next.id = id;
     next.options = RES_INIT | RES_DEFAULT | extended_options;
-    if config.use_vc { next.options |= RES_USEVC; }
-    if config.rotate { next.options |= RES_ROTATE; }
-    if config.trust_ad { next.options |= RES_TRUSTAD; }
+    if config.use_vc {
+        next.options |= RES_USEVC;
+    }
+    if config.rotate {
+        next.options |= RES_ROTATE;
+    }
+    if config.trust_ad {
+        next.options |= RES_TRUSTAD;
+    }
     next.ndots_nsort = if cfg!(target_endian = "little") {
         config.ndots.min(15)
     } else {
@@ -253,11 +264,18 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
     };
     next.vcsock = -1;
     let mut extension = Extension {
-        nscount: 0, nsmap: [0, 1, 2], nssocks: [-1; MAXNS],
-        nscount6: 0, nsinit: 0, nsaddrs: [std::ptr::null_mut(); MAXNS], reserved: [0; 2],
+        nscount: 0,
+        nsmap: [0, 1, 2],
+        nssocks: [-1; MAXNS],
+        nscount6: 0,
+        nsinit: 0,
+        nsaddrs: [std::ptr::null_mut(); MAXNS],
+        reserved: [0; 2],
     };
     let mut owned = OwnedState {
-        search: Vec::new(), ipv6: Vec::new(), published_search: [0; MAXDNSRCH + 1],
+        search: Vec::new(),
+        ipv6: Vec::new(),
+        published_search: [0; MAXDNSRCH + 1],
     };
     for (index, address) in config.nameservers.iter().take(MAXNS).enumerate() {
         next.nscount += 1;
@@ -281,14 +299,19 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
     }
     for domain in &config.search {
         let mut bytes = domain.as_bytes().to_vec();
-        if bytes.contains(&0) { continue; }
+        if bytes.contains(&0) {
+            continue;
+        }
         bytes.push(0);
         owned.search.push(bytes.into_boxed_slice());
     }
     let mut inline_offset = 0;
     for (index, domain) in owned.search.iter_mut().take(MAXDNSRCH).enumerate() {
         if inline_offset + domain.len() <= next.defdname.len() {
-            for (out, &byte) in next.defdname[inline_offset..inline_offset + domain.len()].iter_mut().zip(domain.iter()) {
+            for (out, &byte) in next.defdname[inline_offset..inline_offset + domain.len()]
+                .iter_mut()
+                .zip(domain.iter())
+            {
                 *out = byte as c_char;
             }
             // SAFETY: the caller state stays at this address; publishing next
@@ -303,7 +326,10 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
     next.extension.ext = extension;
     // Reinitialization replaces only allocations that this implementation
     // owns for this exact state address. No caller pointer is ever freed.
-    let previous = OWNED.lock().unwrap_or_else(|e| e.into_inner()).insert(pointer as usize, owned);
+    let previous = OWNED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(pointer as usize, owned);
     *state = next;
     drop(previous);
     0
@@ -313,11 +339,20 @@ pub unsafe fn init(pointer: *mut c_void) -> c_int {
 /// installed by the caller stay borrowed. Exchanges retain no open sockets.
 pub unsafe fn close(pointer: *mut c_void) {
     // SAFETY: a non-null caller state must remain valid during close.
-    let Ok(state) = (unsafe { checked_state(pointer) }) else { return; };
-    let owned = OWNED.lock().unwrap_or_else(|e| e.into_inner()).remove(&(pointer as usize));
+    let Ok(state) = (unsafe { checked_state(pointer) }) else {
+        return;
+    };
+    let owned = OWNED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&(pointer as usize));
     if let Some(owned) = owned {
         for slot in &mut state.dnsrch {
-            if owned.search.iter().any(|name| name.as_ptr() as usize == *slot as usize) {
+            if owned
+                .search
+                .iter()
+                .any(|name| name.as_ptr() as usize == *slot as usize)
+            {
                 *slot = std::ptr::null_mut();
             }
         }
@@ -337,9 +372,7 @@ pub unsafe fn close(pointer: *mut c_void) {
 
 unsafe fn ensure_initialized(pointer: *mut c_void) -> Result<(), c_int> {
     // SAFETY: caller owns and exclusively accesses the state.
-    if unsafe { checked_state(pointer)? }.options & RES_INIT == 0
-        && unsafe { init(pointer) } != 0
-    {
+    if unsafe { checked_state(pointer)? }.options & RES_INIT == 0 && unsafe { init(pointer) } != 0 {
         // SAFETY: errno belongs to this thread and was set by init.
         return Err(unsafe { *crate::errno_abi::__errno_location() });
     }
@@ -373,10 +406,14 @@ unsafe fn transport_config(pointer: *mut c_void) -> Result<raw::Config, c_int> {
             // SAFETY: a caller-installed or init-owned sockaddr_in6 with
             // checked null/alignment/known extent; copied before any I/O.
             let address = unsafe { &*v6 };
-            if address.sin6_family as c_int != libc::AF_INET6 { return Err(libc::EINVAL); }
+            if address.sin6_family as c_int != libc::AF_INET6 {
+                return Err(libc::EINVAL);
+            }
             nameservers.push(SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::from(address.sin6_addr.s6_addr), u16::from_be(address.sin6_port),
-                u32::from_be(address.sin6_flowinfo), address.sin6_scope_id,
+                Ipv6Addr::from(address.sin6_addr.s6_addr),
+                u16::from_be(address.sin6_port),
+                u32::from_be(address.sin6_flowinfo),
+                address.sin6_scope_id,
             )));
         }
     }
@@ -391,7 +428,13 @@ unsafe fn transport_config(pointer: *mut c_void) -> Result<raw::Config, c_int> {
     })
 }
 
-fn make_query(name: &[u8], op: c_int, class: c_int, kind: c_int, options: c_ulong) -> Result<Vec<u8>, c_int> {
+fn make_query(
+    name: &[u8],
+    op: c_int,
+    class: c_int,
+    kind: c_int,
+    options: c_ulong,
+) -> Result<Vec<u8>, c_int> {
     if !matches!(op, 0 | 4) || !(0..=65535).contains(&class) || !(0..=65535).contains(&kind) {
         return Err(libc::EINVAL);
     }
@@ -412,8 +455,16 @@ fn make_query(name: &[u8], op: c_int, class: c_int, kind: c_int, options: c_ulon
 /// Build from this state's recursion/AD options without implicitly calling
 /// init. A zero-initialized state intentionally emits neither RD nor AD.
 pub unsafe fn mkquery(
-    pointer: *mut c_void, op: c_int, name: *const c_char, class: c_int, kind: c_int,
-    data: *const c_void, _datalen: c_int, _newrr: *const c_void, buffer: *mut c_void, capacity: c_int,
+    pointer: *mut c_void,
+    op: c_int,
+    name: *const c_char,
+    class: c_int,
+    kind: c_int,
+    data: *const c_void,
+    _datalen: c_int,
+    _newrr: *const c_void,
+    buffer: *mut c_void,
+    capacity: c_int,
 ) -> c_int {
     let result = (|| {
         // SAFETY: validated caller state and bounded C string inputs.
@@ -433,14 +484,18 @@ pub unsafe fn mkquery(
                 let mut target = DNS_HEADER_SIZE;
                 while target < wire.len() && wire[target] != 0 {
                     let mut end = target;
-                    while wire[end] != 0 { end += usize::from(wire[end]) + 1; }
+                    while wire[end] != 0 {
+                        end += usize::from(wire[end]) + 1;
+                    }
                     if name[prefix..].eq_ignore_ascii_case(&wire[target..=end]) {
                         compressed = Some((prefix, target));
                         break;
                     }
                     target += usize::from(wire[target]) + 1;
                 }
-                if compressed.is_some() { break; }
+                if compressed.is_some() {
+                    break;
+                }
                 prefix += usize::from(name[prefix]) + 1;
             }
             if let Some((prefix, target)) = compressed {
@@ -466,18 +521,31 @@ pub unsafe fn mkquery(
     result.unwrap_or_else(fail)
 }
 
-unsafe fn copy_reply(reply: &raw::Reply, answer: *mut c_void, capacity: c_int) -> Result<c_int, c_int> {
+unsafe fn copy_reply(
+    reply: &raw::Reply,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> Result<c_int, c_int> {
     if capacity < DNS_HEADER_SIZE as c_int || !fits(answer as usize, capacity.max(0) as usize) {
         return Err(libc::EINVAL);
     }
     // SAFETY: checked writable caller extent, with no live query-buffer borrow.
     let out = unsafe { std::slice::from_raw_parts_mut(answer.cast(), capacity as usize) };
-    reply.copy_answer(out).map(|n| n as c_int).map_err(|e| transport_errno(&e))
+    reply
+        .copy_answer(out)
+        .map(|n| n as c_int)
+        .map_err(|e| transport_errno(&e))
 }
 
 /// Send using the caller's current nameservers (including ports and IPv6
 /// scope), timeouts, retry count, rotation, TCP, truncation and trust flags.
-pub unsafe fn send(pointer: *mut c_void, message: *const c_void, length: c_int, answer: *mut c_void, capacity: c_int) -> c_int {
+pub unsafe fn send(
+    pointer: *mut c_void,
+    message: *const c_void,
+    length: c_int,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> c_int {
     let result = (|| {
         if !(DNS_HEADER_SIZE as c_int..=65535).contains(&length)
             || capacity < DNS_HEADER_SIZE as c_int
@@ -512,9 +580,20 @@ unsafe fn record_host_error(pointer: *mut c_void, code: c_int) {
     }
 }
 
-unsafe fn lookup(pointer: *mut c_void, name: &[u8], class: c_int, kind: c_int, options: c_ulong, config: &raw::Config, capacity: c_int) -> Result<raw::Reply, LookupFailure> {
-    let mut wire = make_query(name, 0, class, kind, options)
-        .map_err(|os| LookupFailure { host: NO_RECOVERY, os, servfail: false })?;
+unsafe fn lookup(
+    pointer: *mut c_void,
+    name: &[u8],
+    class: c_int,
+    kind: c_int,
+    options: c_ulong,
+    config: &raw::Config,
+    capacity: c_int,
+) -> Result<raw::Reply, LookupFailure> {
+    let mut wire = make_query(name, 0, class, kind, options).map_err(|os| LookupFailure {
+        host: NO_RECOVERY,
+        os,
+        servfail: false,
+    })?;
     if options & (RES_USE_EDNS0 | RES_USE_DNSSEC) != 0 {
         // RFC 6891 OPT: root owner, TYPE=41, CLASS=UDP payload, extended
         // RCODE/version zero, flags, empty option data. make_query produced
@@ -522,7 +601,11 @@ unsafe fn lookup(pointer: *mut c_void, name: &[u8], class: c_int, kind: c_int, o
         // Match the live glibc query contract: at least 512, at most 1200;
         // capacity is already validated and is NOT used to allocate memory.
         let payload = capacity.clamp(512, 1200) as u16;
-        let flags: u16 = if options & RES_USE_DNSSEC != 0 { 0x8000 } else { 0 };
+        let flags: u16 = if options & RES_USE_DNSSEC != 0 {
+            0x8000
+        } else {
+            0
+        };
         wire[11] = 1;
         wire.extend_from_slice(&[0, 0, 41]);
         wire.extend_from_slice(&payload.to_be_bytes());
@@ -537,8 +620,16 @@ unsafe fn lookup(pointer: *mut c_void, name: &[u8], class: c_int, kind: c_int, o
     // SAFETY: each public entry validated the caller state before lookup.
     unsafe { (*pointer.cast::<State>()).id = u16::from_ne_bytes([wire[0], wire[1]]) };
     raw::send_for_query(&wire, config).map_err(|error| LookupFailure {
-        host: if matches!(error, QueryError::InvalidQuery | QueryError::InvalidResponse) { NO_RECOVERY } else { TRY_AGAIN },
-        os: transport_errno(&error), servfail: false,
+        host: if matches!(
+            error,
+            QueryError::InvalidQuery | QueryError::InvalidResponse
+        ) {
+            NO_RECOVERY
+        } else {
+            TRY_AGAIN
+        },
+        os: transport_errno(&error),
+        servfail: false,
     })
 }
 
@@ -551,21 +642,36 @@ fn reply_status(reply: &raw::Reply) -> Result<(), LookupFailure> {
         3 => HOST_NOT_FOUND,
         _ => NO_RECOVERY,
     };
-    Err(LookupFailure { host, os: 0, servfail: code == 2 })
+    Err(LookupFailure {
+        host,
+        os: 0,
+        servfail: code == 2,
+    })
 }
 
-unsafe fn finish_lookup(pointer: *mut c_void, result: Result<raw::Reply, LookupFailure>, answer: *mut c_void, capacity: c_int) -> c_int {
+unsafe fn finish_lookup(
+    pointer: *mut c_void,
+    result: Result<raw::Reply, LookupFailure>,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> c_int {
     match result {
         Ok(reply) => {
             // A valid negative DNS packet is still copied for the caller.
             // SAFETY: caller output and state remain live through this call.
             match unsafe { copy_reply(&reply, answer, capacity) } {
-                Err(error) => { unsafe { record_host_error(pointer, NO_RECOVERY) }; fail(error) }
+                Err(error) => {
+                    unsafe { record_host_error(pointer, NO_RECOVERY) };
+                    fail(error)
+                }
                 Ok(length) => match reply_status(&reply) {
                     // h_errno is meaningful on failure; a successful query
                     // preserves both preexisting error slots, like glibc.
                     Ok(()) => length,
-                    Err(error) => { unsafe { record_host_error(pointer, error.host) }; -1 }
+                    Err(error) => {
+                        unsafe { record_host_error(pointer, error.host) };
+                        -1
+                    }
                 },
             }
         }
@@ -577,7 +683,11 @@ unsafe fn finish_lookup(pointer: *mut c_void, result: Result<raw::Reply, LookupF
     }
 }
 
-unsafe fn lookup_inputs(pointer: *mut c_void, answer: *mut c_void, capacity: c_int) -> Result<(raw::Config, c_ulong), c_int> {
+unsafe fn lookup_inputs(
+    pointer: *mut c_void,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> Result<(raw::Config, c_ulong), c_int> {
     if capacity < DNS_HEADER_SIZE as c_int || !fits(answer as usize, capacity.max(0) as usize) {
         return Err(libc::EINVAL);
     }
@@ -588,23 +698,44 @@ unsafe fn lookup_inputs(pointer: *mut c_void, answer: *mut c_void, capacity: c_i
     Ok((config, options))
 }
 
-pub unsafe fn query(pointer: *mut c_void, name: *const c_char, class: c_int, kind: c_int, answer: *mut c_void, capacity: c_int) -> c_int {
+pub unsafe fn query(
+    pointer: *mut c_void,
+    name: *const c_char,
+    class: c_int,
+    kind: c_int,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> c_int {
     // SAFETY: validate before updating per-state errors or touching output.
     let (config, options) = match unsafe { lookup_inputs(pointer, answer, capacity) } {
-        Ok(inputs) => inputs, Err(error) => return fail(error),
+        Ok(inputs) => inputs,
+        Err(error) => return fail(error),
     };
     let result = match unsafe { text(name) } {
         Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config, capacity) },
-        Err(os) => Err(LookupFailure { host: NO_RECOVERY, os, servfail: false }),
+        Err(os) => Err(LookupFailure {
+            host: NO_RECOVERY,
+            os,
+            servfail: false,
+        }),
     };
     // SAFETY: spans were checked by lookup_inputs, with no retained input borrow.
     unsafe { finish_lookup(pointer, result, answer, capacity) }
 }
 
-pub unsafe fn querydomain(pointer: *mut c_void, name: *const c_char, domain: *const c_char, class: c_int, kind: c_int, answer: *mut c_void, capacity: c_int) -> c_int {
+pub unsafe fn querydomain(
+    pointer: *mut c_void,
+    name: *const c_char,
+    domain: *const c_char,
+    class: c_int,
+    kind: c_int,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> c_int {
     // SAFETY: validate before updating per-state errors or touching output.
     let (config, options) = match unsafe { lookup_inputs(pointer, answer, capacity) } {
-        Ok(inputs) => inputs, Err(error) => return fail(error),
+        Ok(inputs) => inputs,
+        Err(error) => return fail(error),
     };
     let combined = (|| {
         // SAFETY: caller supplies NUL-terminated input strings; copies own bytes.
@@ -620,7 +751,11 @@ pub unsafe fn querydomain(pointer: *mut c_void, name: *const c_char, domain: *co
     })();
     let result = match combined {
         Ok(name) => unsafe { lookup(pointer, &name, class, kind, options, &config, capacity) },
-        Err(os) => Err(LookupFailure { host: NO_RECOVERY, os, servfail: false }),
+        Err(os) => Err(LookupFailure {
+            host: NO_RECOVERY,
+            os,
+            servfail: false,
+        }),
     };
     // SAFETY: checked writable output and caller state; strings no longer borrowed.
     unsafe { finish_lookup(pointer, result, answer, capacity) }
@@ -632,14 +767,17 @@ unsafe fn search_domains(pointer: *mut c_void) -> Result<Vec<Vec<u8>>, c_int> {
     let published = state.dnsrch.map(|p| p as usize);
     let mut domains = Vec::new();
     for &domain in state.dnsrch.iter().take(MAXDNSRCH) {
-        if domain.is_null() { break; }
+        if domain.is_null() {
+            break;
+        }
         domains.push(unsafe { text(domain)? });
     }
     let registry = OWNED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(owned) = registry.get(&(pointer as usize))
         && owned.published_search == published
-        && domains.iter().zip(&owned.search).all(|(domain, bytes)|
-            bytes.len() == domain.len() + 1 && bytes[..domain.len()] == domain[..])
+        && domains.iter().zip(&owned.search).all(|(domain, bytes)| {
+            bytes.len() == domain.len() + 1 && bytes[..domain.len()] == domain[..]
+        })
     {
         // A changed public pointer OR changed inline string invalidates the
         // extended suffix list. Ordinary caller overrides are authoritative.
@@ -651,10 +789,18 @@ unsafe fn search_domains(pointer: *mut c_void) -> Result<Vec<Vec<u8>>, c_int> {
     Ok(domains)
 }
 
-pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, kind: c_int, answer: *mut c_void, capacity: c_int) -> c_int {
+pub unsafe fn search(
+    pointer: *mut c_void,
+    name: *const c_char,
+    class: c_int,
+    kind: c_int,
+    answer: *mut c_void,
+    capacity: c_int,
+) -> c_int {
     // SAFETY: validate before updating errors or touching output.
     let (config, options) = match unsafe { lookup_inputs(pointer, answer, capacity) } {
-        Ok(inputs) => inputs, Err(error) => return fail(error),
+        Ok(inputs) => inputs,
+        Err(error) => return fail(error),
     };
     // res_nsearch starts with HOST_NOT_FOUND, unlike plain res_nquery.
     unsafe { record_host_error(pointer, HOST_NOT_FOUND) };
@@ -667,7 +813,20 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
     })();
     let (name, domains, ndots) = match inputs {
         Ok(inputs) => inputs,
-        Err(os) => return unsafe { finish_lookup(pointer, Err(LookupFailure { host: NO_RECOVERY, os, servfail: false }), answer, capacity) },
+        Err(os) => {
+            return unsafe {
+                finish_lookup(
+                    pointer,
+                    Err(LookupFailure {
+                        host: NO_RECOVERY,
+                        os,
+                        servfail: false,
+                    }),
+                    answer,
+                    capacity,
+                )
+            };
+        }
     };
     // Use wire labels to distinguish a final root dot from an escaped literal
     // dot. A decimal escaped dot is data, never a search-label separator.
@@ -676,17 +835,39 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
     let mut absolute = false;
     for &byte in &name {
         absolute = false;
-        if escaped { escaped = false; continue; }
-        if byte == b'\\' { escaped = true; continue; }
-        if byte == b'.' { dots += 1; absolute = true; }
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if byte == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if byte == b'.' {
+            dots += 1;
+            absolute = true;
+        }
     }
     if absolute {
-        return unsafe { finish_lookup(pointer, lookup(pointer, &name, class, kind, options, &config, capacity), answer, capacity) };
+        return unsafe {
+            finish_lookup(
+                pointer,
+                lookup(pointer, &name, class, kind, options, &config, capacity),
+                answer,
+                capacity,
+            )
+        };
     }
     let first_bare = dots >= ndots;
-    let use_search = if dots == 0 { options & RES_DEFNAMES != 0 } else { options & RES_DNSRCH != 0 };
+    let use_search = if dots == 0 {
+        options & RES_DEFNAMES != 0
+    } else {
+        options & RES_DNSRCH != 0
+    };
     let mut candidates = Vec::new();
-    if first_bare { candidates.push((name.clone(), true)); }
+    if first_bare {
+        candidates.push((name.clone(), true));
+    }
     if use_search {
         for domain in domains {
             let mut candidate = name.clone();
@@ -695,7 +876,9 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
                 candidate.extend_from_slice(&domain);
             }
             candidates.push((candidate, false));
-            if options & RES_DNSRCH == 0 { break; }
+            if options & RES_DNSRCH == 0 {
+                break;
+            }
         }
     }
     if !first_bare && (dots != 0 || options & RES_NOTLDQUERY == 0) {
@@ -706,20 +889,35 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
     let mut saved_servfail = false;
     let mut stop_search = false;
     let mut last_reply = None;
-    let mut last_failure = LookupFailure { host: HOST_NOT_FOUND, os: 0, servfail: false };
+    let mut last_failure = LookupFailure {
+        host: HOST_NOT_FOUND,
+        os: 0,
+        servfail: false,
+    };
     for (candidate, bare) in candidates {
-        if stop_search && !bare { continue; }
-        let result = unsafe { lookup(pointer, &candidate, class, kind, options, &config, capacity) };
+        if stop_search && !bare {
+            continue;
+        }
+        let result =
+            unsafe { lookup(pointer, &candidate, class, kind, options, &config, capacity) };
         let failure = match result {
             Ok(reply) => match reply_status(&reply) {
                 Ok(()) => return unsafe { finish_lookup(pointer, Ok(reply), answer, capacity) },
-                Err(error) => { last_reply = Some(reply); error }
+                Err(error) => {
+                    last_reply = Some(reply);
+                    error
+                }
             },
-            Err(error) => { last_reply = None; error }
+            Err(error) => {
+                last_reply = None;
+                error
+            }
         };
         // Each failed nquery updates h_errno even if a later candidate wins.
         unsafe { record_host_error(pointer, failure.host) };
-        if first_bare && bare { first_failure = Some(failure); }
+        if first_bare && bare {
+            first_failure = Some(failure);
+        }
         if !bare {
             saved_nodata |= failure.host == NO_DATA;
             saved_servfail |= failure.servfail;
@@ -728,16 +926,34 @@ pub unsafe fn search(pointer: *mut c_void, name: *const c_char, class: c_int, ki
             }
         }
         last_failure = failure;
-        if failure.os == libc::ECONNREFUSED { break; }
+        if failure.os == libc::ECONNREFUSED {
+            break;
+        }
     }
-    let failure = if last_failure.os == libc::ECONNREFUSED { last_failure }
-        else if let Some(first) = first_failure { first }
-        else if saved_nodata { LookupFailure { host: NO_DATA, os: 0, servfail: false } }
-        else if saved_servfail { LookupFailure { host: TRY_AGAIN, os: 0, servfail: true } }
-        else { last_failure };
+    let failure = if last_failure.os == libc::ECONNREFUSED {
+        last_failure
+    } else if let Some(first) = first_failure {
+        first
+    } else if saved_nodata {
+        LookupFailure {
+            host: NO_DATA,
+            os: 0,
+            servfail: false,
+        }
+    } else if saved_servfail {
+        LookupFailure {
+            host: TRY_AGAIN,
+            os: 0,
+            servfail: true,
+        }
+    } else {
+        last_failure
+    };
     if let Some(reply) = last_reply {
         // SAFETY: the checked output receives the last valid negative packet.
-        if let Err(error) = unsafe { copy_reply(&reply, answer, capacity) } { return fail(error); }
+        if let Err(error) = unsafe { copy_reply(&reply, answer, capacity) } {
+            return fail(error);
+        }
     }
     // SAFETY: caller state was validated before constructing any query.
     unsafe { finish_lookup(pointer, Err(failure), answer, capacity) }

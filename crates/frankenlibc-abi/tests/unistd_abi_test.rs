@@ -562,8 +562,7 @@ fn fts_read_walk_matches_host_with_and_without_nostat() {
     // An unreadable directory: glibc reports FTS_DNR (with fts_errno) in place
     // of its FTS_DP (as root it is simply readable, on both sides).
     std::fs::create_dir_all(root.join("locked/hidden")).unwrap();
-    std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000))
-        .unwrap();
+    std::fs::set_permissions(root.join("locked"), std::fs::Permissions::from_mode(0o000)).unwrap();
     let (_roots, argv) = make_fts_argv(std::slice::from_ref(&root));
 
     let walk = |read: &dyn Fn() -> *mut AbiFtsEnt| {

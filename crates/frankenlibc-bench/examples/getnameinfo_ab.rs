@@ -201,7 +201,10 @@ fn dl_error(context: &str) -> String {
         format!("{context}: unknown dynamic-loader error")
     } else {
         // SAFETY: non-null dlerror results are NUL-terminated strings.
-        format!("{context}: {}", unsafe { CStr::from_ptr(error) }.to_string_lossy())
+        format!(
+            "{context}: {}",
+            unsafe { CStr::from_ptr(error) }.to_string_lossy()
+        )
     }
 }
 
@@ -215,7 +218,7 @@ fn fl_getnameinfo() -> (GetNameInfo, ObjectIdentity) {
                 .and_then(Path::parent)
                 .expect("benchmark executable has target/release/examples parent")
                 .join("libfrankenlibc_abi.so")
-    });
+        });
     let supplied = sha256_file(&explicit);
     // This example deliberately has no static FrankenLibC calls.  A static ABI
     // dependency exports its own dlopen/dlsym and turns this into a benchmark
@@ -234,10 +237,18 @@ fn fl_getnameinfo() -> (GetNameInfo, ObjectIdentity) {
             libc::RTLD_NOW | libc::RTLD_LOCAL | libc::RTLD_DEEPBIND,
         )
     };
-    assert!(!handle.is_null(), "{}", dl_error("dlopen FrankenLibC ABI artifact"));
+    assert!(
+        !handle.is_null(),
+        "{}",
+        dl_error("dlopen FrankenLibC ABI artifact")
+    );
     // SAFETY: `handle` is live and the symbol name is NUL-terminated.
     let symbol = unsafe { libc::dlsym(handle, c"getnameinfo".as_ptr()) };
-    assert!( !symbol.is_null(), "{}", dl_error("dlsym FrankenLibC getnameinfo"));
+    assert!(
+        !symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC getnameinfo")
+    );
     let loaded = symbol_object(symbol.cast_const());
     assert_eq!(
         loaded.sha256, supplied.sha256,
@@ -489,5 +500,4 @@ fn main() {
         || deployed_cand(ff, &sin),
     );
     report_live_incumbent(&fl_times, &host_times, &m1, &m2, &host_null_a, &host_null_b);
-
 }

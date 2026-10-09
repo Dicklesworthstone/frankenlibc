@@ -806,9 +806,14 @@ impl AllocationArena {
         let depth = crate::quarantine_controller::current_depth();
         while shard.quarantine_bytes > QUARANTINE_MAX_BYTES
             || shard.quarantine.len() > depth
-            || self.quarantine_total_bytes.load(std::sync::atomic::Ordering::Relaxed)
+            || self
+                .quarantine_total_bytes
+                .load(std::sync::atomic::Ordering::Relaxed)
                 > QUARANTINE_MAX_BYTES
-            || self.quarantine_total_entries.load(std::sync::atomic::Ordering::Relaxed) > depth
+            || self
+                .quarantine_total_entries
+                .load(std::sync::atomic::Ordering::Relaxed)
+                > depth
         {
             let Some(entry) = shard.quarantine.pop_front() else {
                 break;
@@ -1012,7 +1017,10 @@ mod tests {
             "quarantine holds {held} bytes, over the {QUARANTINE_MAX_BYTES}-byte budget"
         );
         // Still a real window: within one block of the whole budget.
-        assert!(held > QUARANTINE_MAX_BYTES - (2 << 20), "held only {held} bytes");
+        assert!(
+            held > QUARANTINE_MAX_BYTES - (2 << 20),
+            "held only {held} bytes"
+        );
     }
 
     #[test]

@@ -135,11 +135,11 @@ pub(crate) fn assert_dispatch_matches_body(
 
 mod coremath;
 mod erf_data;
-mod gamma_data;
 pub mod exp;
 pub mod float;
 pub mod float32;
 pub mod fromfp;
+mod gamma_data;
 mod log2_data;
 mod log_data;
 pub mod special;
@@ -160,9 +160,9 @@ pub use float32::{
     dremf, erfcf, erff, exp2f, exp10f, expf, expm1f, fabsf, fdimf, finitef, floorf, fmaf, fmaxf,
     fminf, fmodf, fpclassifyf, frexpf, gammaf, hypotf, ilogbf, isinff, isnanf, j0f, j1f, jnf,
     ldexpf, lgammaf, lgammaf_r, llrintf, llroundf, log1pf, log2f, log10f, logbf, logf, lrintf,
-    lroundf, modff, nanf, nearbyintf, nextafterf, nexttowardf, powf, powf_underflow_erange, remainderf, remquof, rintf,
-    roundf, scalblnf, scalbnf, signbitf, significandf, sincosf, sinf, sinhf, sqrtf, tanf, tanhf,
-    tgammaf, truncf, y0f, y1f, ynf,
+    lroundf, modff, nanf, nearbyintf, nextafterf, nexttowardf, powf, powf_underflow_erange,
+    remainderf, remquof, rintf, roundf, scalblnf, scalbnf, signbitf, significandf, sincosf, sinf,
+    sinhf, sqrtf, tanf, tanhf, tgammaf, truncf, y0f, y1f, ynf,
 };
 pub use special::{erf, erfc, j0, j1, jn, lgamma, lgamma_r, tgamma, y0, y1, yn};
 pub use trig::{acos, acosh, asin, asinh, atan, atan2, atanh, cos, cosh, sin, sinh, tan, tanh};

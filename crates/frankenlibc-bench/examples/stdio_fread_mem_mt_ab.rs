@@ -198,8 +198,7 @@ fn verify_gets(h: &'static HostStdio) {
         let ns: [c_int; 2] = [128, 7];
         for n in ns {
             let fp_f = unsafe { fl::fmemopen(d1.as_mut_ptr().cast(), d1.len(), c"r".as_ptr()) };
-            let fp_g =
-                unsafe { (h.fmemopen)(d2.as_mut_ptr().cast(), d2.len(), c"r".as_ptr()) };
+            let fp_g = unsafe { (h.fmemopen)(d2.as_mut_ptr().cast(), d2.len(), c"r".as_ptr()) };
             assert!(!fp_f.is_null() && !fp_g.is_null());
             loop {
                 let mut bf = [0x5au8; 130];
@@ -682,7 +681,11 @@ fn median(xs: &[f64]) -> f64 {
     let mut v = xs.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).expect("no NaN timings"));
     let n = v.len();
-    if n % 2 == 0 { (v[n / 2 - 1] + v[n / 2]) / 2.0 } else { v[n / 2] }
+    if n % 2 == 0 {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    } else {
+        v[n / 2]
+    }
 }
 
 fn cv_pct(xs: &[f64]) -> f64 {
@@ -895,9 +898,7 @@ fn run_arm(threads: usize, use_glibc: bool, work: Work, h: &'static HostStdio) -
     });
 
     (WARMUP..ROUNDS)
-        .map(|r| {
-            per_thread.iter().map(|t| t[r]).sum::<f64>() / per_thread.len() as f64
-        })
+        .map(|r| per_thread.iter().map(|t| t[r]).sum::<f64>() / per_thread.len() as f64)
         .collect()
 }
 
@@ -906,7 +907,9 @@ fn main() {
     verify(h);
     verify_gets(h);
     verify_fd(h);
-    let maxt: usize = std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(8);
+    let maxt: usize = std::thread::available_parallelism()
+        .map(|n| n.get().min(8))
+        .unwrap_or(8);
     for &(work, tag) in &[
         (Work::FreadMem, "FREAD_MEM_AB"),
         (Work::FgetsMem, "FGETS_MEM_AB"),

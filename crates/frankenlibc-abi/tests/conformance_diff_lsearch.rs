@@ -28,8 +28,13 @@ type Cmp = unsafe extern "C-unwind" fn(*const c_void, *const c_void) -> c_int;
 // `dlsym` on an explicit `libc.so.6` handle is correct in either profile, and
 // the `assert_ne!` below turns the remaining doubt into a failing test rather
 // than a silent one.
-type LfindFn =
-    unsafe extern "C-unwind" fn(*const c_void, *const c_void, *mut usize, usize, Cmp) -> *mut c_void;
+type LfindFn = unsafe extern "C-unwind" fn(
+    *const c_void,
+    *const c_void,
+    *mut usize,
+    usize,
+    Cmp,
+) -> *mut c_void;
 type LsearchFn =
     unsafe extern "C-unwind" fn(*const c_void, *mut c_void, *mut usize, usize, Cmp) -> *mut c_void;
 

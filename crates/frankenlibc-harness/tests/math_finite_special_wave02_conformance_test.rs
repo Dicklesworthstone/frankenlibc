@@ -162,8 +162,7 @@ fn execute_case_via_harness(
 
 fn skips_host_oracle(symbol: &str) -> bool {
     // _LIB_VERSION has a host oracle: glibc's compat symbol via dlvsym.
-    symbol.contains("f128")
-        || matches!(symbol, "__acosl_finite" | "__acoshl_finite")
+    symbol.contains("f128") || matches!(symbol, "__acosl_finite" | "__acoshl_finite")
 }
 
 #[test]

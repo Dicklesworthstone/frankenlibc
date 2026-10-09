@@ -27,7 +27,11 @@ impl Entry {
 }
 
 fn prefix_mask(bits: u8) -> u128 {
-    if bits == 0 { 0 } else { u128::MAX << (128 - bits) }
+    if bits == 0 {
+        0
+    } else {
+        u128::MAX << (128 - bits)
+    }
 }
 
 /// Immutable policy snapshot. Parsing is independent of the filesystem and
@@ -50,7 +54,9 @@ impl DestinationPolicy {
             let line = line.split('#').next().unwrap_or("");
             let mut fields = line.split_ascii_whitespace();
             let Some(kind) = fields.next() else { continue };
-            let Some(prefix) = fields.next() else { continue };
+            let Some(prefix) = fields.next() else {
+                continue;
+            };
             if kind == "reload" {
                 match prefix {
                     "yes" => policy.reload = true,
@@ -59,7 +65,9 @@ impl DestinationPolicy {
                 }
                 continue;
             }
-            let Some(value) = fields.next().and_then(decimal) else { continue };
+            let Some(value) = fields.next().and_then(decimal) else {
+                continue;
+            };
             if value > i32::MAX as u32 {
                 continue;
             }
@@ -70,8 +78,14 @@ impl DestinationPolicy {
             } else {
                 None
             };
-            let Some((network, bits)) = entry else { continue };
-            let entry = Entry { network, bits, value };
+            let Some((network, bits)) = entry else {
+                continue;
+            };
+            let entry = Entry {
+                network,
+                bits,
+                value,
+            };
             match kind {
                 "precedence" => policy.precedence.push(entry),
                 "label" => policy.labels.push(entry),
@@ -205,7 +219,10 @@ impl CachedPolicy {
             Some((DestinationPolicy::parse(&text), stamp))
         })();
         let (policy, stamp) = loaded.unwrap_or_default();
-        Self { policy: Arc::new(policy), stamp }
+        Self {
+            policy: Arc::new(policy),
+            stamp,
+        }
     }
 
     fn snapshot(&mut self, path: &Path) -> Arc<DestinationPolicy> {
@@ -228,7 +245,9 @@ pub(super) fn system_policy() -> Arc<DestinationPolicy> {
     static CACHE: OnceLock<Mutex<CachedPolicy>> = OnceLock::new();
     let path = Path::new("/etc/gai.conf");
     let cache = CACHE.get_or_init(|| Mutex::new(CachedPolicy::load(path)));
-    let mut cached = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut cached = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     cached.snapshot(path)
 }
 
@@ -237,14 +256,20 @@ mod tests {
     use super::*;
     use crate::addrinfo::{DestinationCandidate, destination_order_with_policy};
 
-    fn ip(text: &str) -> IpAddr { text.parse().unwrap() }
+    fn ip(text: &str) -> IpAddr {
+        text.parse().unwrap()
+    }
     fn loopbacks() -> [DestinationCandidate; 2] {
         [
             DestinationCandidate {
-                dest: ip("127.0.0.2"), source: Some(ip("127.0.0.1")), source_prefix_len: Some(8),
+                dest: ip("127.0.0.2"),
+                source: Some(ip("127.0.0.1")),
+                source_prefix_len: Some(8),
             },
             DestinationCandidate {
-                dest: ip("::1"), source: Some(ip("::1")), source_prefix_len: None,
+                dest: ip("::1"),
+                source: Some(ip("::1")),
+                source_prefix_len: None,
             },
         ]
     }
@@ -315,7 +340,8 @@ mod tests {
     #[test]
     fn ipv4_scope_accepts_both_notations_and_replaces_defaults() {
         for prefix in ["127.0.0.0/8", "::ffff:127.0.0.0/104"] {
-            let policy = DestinationPolicy::parse(&format!("precedence ::/0 40\nscopev4 {prefix} 1\n"));
+            let policy =
+                DestinationPolicy::parse(&format!("precedence ::/0 40\nscopev4 {prefix} 1\n"));
             assert_eq!(policy.scope(ip("127.0.0.2")), 1);
             assert_eq!(policy.scope(ip("169.254.1.2")), 14);
             assert_eq!(policy.scope(ip("::1")), 2);
@@ -325,9 +351,8 @@ mod tests {
 
     #[test]
     fn scope_match_precedes_a_higher_precedence() {
-        let policy = DestinationPolicy::parse(
-            "precedence ::ffff:0:0/96 100\nscopev4 127.0.0.2/32 1\n",
-        );
+        let policy =
+            DestinationPolicy::parse("precedence ::ffff:0:0/96 100\nscopev4 127.0.0.2/32 1\n");
         assert_eq!(destination_order_with_policy(&loopbacks(), &policy), [1, 0]);
     }
 

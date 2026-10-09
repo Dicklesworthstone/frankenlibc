@@ -328,7 +328,11 @@ fn common_prefix_bits(candidate: &DestinationCandidate) -> Option<u32> {
         (IpAddr::V4(destination), IpAddr::V4(source)) => {
             let (destination, source) = (u32::from(destination), u32::from(source));
             let length = u32::from(candidate.source_prefix_len.unwrap_or(0)).min(32);
-            let mask = if length == 0 { 0 } else { u32::MAX << (32 - length) };
+            let mask = if length == 0 {
+                0
+            } else {
+                u32::MAX << (32 - length)
+            };
             Some(if source & mask == destination & mask {
                 (destination ^ source).leading_zeros()
             } else {

@@ -155,7 +155,10 @@ fn newlocale_lc_all_bit_masks_match_glibc() {
                 "newlocale({label}, {name}) NULL-ness: fl={fnull} glibc={gnull}"
             );
             if gnull {
-                assert_eq!(fe, ge, "newlocale({label}, {name}) errno: fl={fe} glibc={ge}");
+                assert_eq!(
+                    fe, ge,
+                    "newlocale({label}, {name}) errno: fl={fe} glibc={ge}"
+                );
             }
         }
     }

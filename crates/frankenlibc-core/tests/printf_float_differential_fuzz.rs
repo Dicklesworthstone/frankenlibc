@@ -40,7 +40,14 @@ fn host_render(fmt: &str, val: f64) -> String {
     let need = unsafe { snprintf(std::ptr::null_mut(), 0, cfmt.as_ptr(), val) };
     let need = need.max(0) as usize;
     let mut buf = vec![0u8; need + 1];
-    let n = unsafe { snprintf(buf.as_mut_ptr() as *mut c_char, buf.len(), cfmt.as_ptr(), val) };
+    let n = unsafe {
+        snprintf(
+            buf.as_mut_ptr() as *mut c_char,
+            buf.len(),
+            cfmt.as_ptr(),
+            val,
+        )
+    };
     let n = (n.max(0) as usize).min(buf.len() - 1);
     String::from_utf8_lossy(&buf[..n]).into_owned()
 }

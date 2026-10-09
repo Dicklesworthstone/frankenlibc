@@ -26,7 +26,8 @@ impl<const N: usize, const B: usize> PackedTranslit<N, B> {
     pub(super) fn lookup(&self, code_point: u32) -> Option<&[u8]> {
         let index = self.keys.binary_search(&code_point).ok()?;
         let (start, len) = self.spans[index];
-        self.bytes.get(start as usize..start as usize + len as usize)
+        self.bytes
+            .get(start as usize..start as usize + len as usize)
     }
 }
 

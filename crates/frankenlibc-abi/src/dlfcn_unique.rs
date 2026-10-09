@@ -102,11 +102,7 @@ impl Transaction {
         Self::default()
     }
 
-    pub(super) fn select(
-        &self,
-        provider: &NativeDso,
-        symbol: &Elf64Symbol,
-    ) -> Option<Selection> {
+    pub(super) fn select(&self, provider: &NativeDso, symbol: &Elf64Symbol) -> Option<Selection> {
         let candidate = Selection::new(provider, symbol)?;
         if symbol.st_info >> 4 != STB_GNU_UNIQUE {
             // GLOBAL/WEAK must retain ordinary scope/preemption semantics,

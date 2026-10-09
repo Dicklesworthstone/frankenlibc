@@ -203,7 +203,10 @@ unsafe fn apply_progress(
 /// Replace an empty charset name with `nl_langinfo(CODESET)`, keeping any
 /// `//` suffix.
 unsafe fn resolve_locale_charset(code: Vec<u8>) -> Vec<u8> {
-    let name_len = code.windows(2).position(|w| w == b"//").unwrap_or(code.len());
+    let name_len = code
+        .windows(2)
+        .position(|w| w == b"//")
+        .unwrap_or(code.len());
     if name_len != 0 {
         return code;
     }

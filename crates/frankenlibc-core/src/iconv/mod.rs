@@ -6,8 +6,6 @@ use crate::errno;
 use std::simd::{Simd, cmp::SimdPartialEq, cmp::SimdPartialOrd, num::SimdInt, num::SimdUint};
 
 mod big5hkscs_tables;
-mod translit_c;
-mod translit_c_utf8;
 mod cjk_tables;
 mod cp932_tables;
 mod euc_jp_ms_tables;
@@ -29,6 +27,8 @@ mod iso2022jp3_tables;
 mod iso6937_tables;
 mod iso_ir_165_tables;
 mod sjisx0213_tables;
+mod translit_c;
+mod translit_c_utf8;
 mod tscii_tables;
 
 /// Core iconv error code: output buffer has insufficient capacity.
@@ -40205,7 +40205,9 @@ fn decode_euctw(input: &[u8]) -> Result<(char, usize), DecodeError> {
     if cp == 0 {
         return Err(DecodeError::Invalid);
     }
-    char::from_u32(cp).map(|c| (c, 2)).ok_or(DecodeError::Invalid)
+    char::from_u32(cp)
+        .map(|c| (c, 2))
+        .ok_or(DecodeError::Invalid)
 }
 
 /// EUC-TW encoder, glibc-exact via the `code point -> packed` table
@@ -46531,10 +46533,7 @@ fn sjisx0213_decode(
 fn sjisx0213_enc_direct() -> &'static [u32] {
     static D: std::sync::OnceLock<Vec<u32>> = std::sync::OnceLock::new();
     D.get_or_init(|| {
-        build_dbcs_x_enc_direct(
-            &sjisx0213_tables::SJISX_ENC1,
-            &sjisx0213_tables::SJISX_ENC2,
-        )
+        build_dbcs_x_enc_direct(&sjisx0213_tables::SJISX_ENC1, &sjisx0213_tables::SJISX_ENC2)
     })
 }
 fn sjisx0213_multi_first_cps() -> &'static [u32] {
@@ -46689,8 +46688,10 @@ fn tscii_decode(
     // holding the whole worst-case output (a byte decodes to <=4 Tamil BMP scalars = 12
     // UTF-8 bytes; plus the one end-of-input pending flush) so E2BIG is unreachable. TSCII
     // carries no cd state (pending/bit3 are local, flushed at end), so a re-run is safe.
-    if matches!(cd.to, Encoding::Utf8 | Encoding::Utf16Le | Encoding::Utf16Be)
-        && outbuf.len() >= input.len().saturating_mul(12).saturating_add(16)
+    if matches!(
+        cd.to,
+        Encoding::Utf8 | Encoding::Utf16Le | Encoding::Utf16Be
+    ) && outbuf.len() >= input.len().saturating_mul(12).saturating_add(16)
     {
         // UTF-16 (marked LE/BE) shares this path via emit_unicode_cp; all TSCII scalars
         // are Tamil BMP, so UTF-16 output (2 B/scalar) <= UTF-8 output (3 B/scalar) and the
@@ -46719,7 +46720,12 @@ fn tscii_decode(
                     if (last == 0x0BC6 && ch == 0xa1)
                         || (last == 0x0BC7 && (ch == 0xa1 || ch == 0xaa))
                     {
-                        o += emit_unicode_cp(outbuf, o, last + 4 + if ch != 0xa1 { 1 } else { 0 }, to);
+                        o += emit_unicode_cp(
+                            outbuf,
+                            o,
+                            last + 4 + if ch != 0xa1 { 1 } else { 0 },
+                            to,
+                        );
                         pending = 0;
                         bit3 = false;
                         i += 1;
@@ -47722,8 +47728,7 @@ fn jp3_enc_bmp_direct() -> &'static [u32] {
         let mut t = vec![0u32; 0x10000];
         for &(cp, id, b0, b1) in iso2022jp3_tables::JP3_ENC_TBL.iter() {
             if cp < 0x10000 {
-                t[cp as usize] =
-                    (1 << 24) | ((id as u32) << 16) | ((b0 as u32) << 8) | (b1 as u32);
+                t[cp as usize] = (1 << 24) | ((id as u32) << 16) | ((b0 as u32) << 8) | (b1 as u32);
             }
         }
         t
@@ -48545,10 +48550,11 @@ fn translit_into(cd: &mut IconvDescriptor, ch: char, out: &mut [u8]) -> Translit
     } else {
         None
     };
-    let candidates: [&[u8]; 2] = match utf8_entry.or_else(|| translit_c::C_TRANSLIT_PACKED.lookup(cp)) {
-        Some(replacement) => [replacement, b"?"],
-        None => [b"?", b"?"],
-    };
+    let candidates: [&[u8]; 2] =
+        match utf8_entry.or_else(|| translit_c::C_TRANSLIT_PACKED.lookup(cp)) {
+            Some(replacement) => [replacement, b"?"],
+            None => [b"?", b"?"],
+        };
     for replacement in candidates {
         if replacement.is_empty() {
             return TranslitOutcome::Written(0);
@@ -50222,8 +50228,16 @@ fn iconv_core(
                     let v = cp - 0x10000;
                     let hi = (0xD800 | (v >> 10)) as u16;
                     let lo = (0xDC00 | (v & 0x3FF)) as u16;
-                    let hb = if be { hi.to_be_bytes() } else { hi.to_le_bytes() };
-                    let lb = if be { lo.to_be_bytes() } else { lo.to_le_bytes() };
+                    let hb = if be {
+                        hi.to_be_bytes()
+                    } else {
+                        hi.to_le_bytes()
+                    };
+                    let lb = if be {
+                        lo.to_be_bytes()
+                    } else {
+                        lo.to_le_bytes()
+                    };
                     outbuf[out_pos] = hb[0];
                     outbuf[out_pos + 1] = hb[1];
                     outbuf[out_pos + 2] = lb[0];

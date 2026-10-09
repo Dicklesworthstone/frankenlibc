@@ -71,7 +71,11 @@ fn child_probe() {
     MODE.store(COUNT, Ordering::Relaxed);
     let policy = std::hint::black_box(global_healing_policy());
     MODE.store(0, Ordering::Relaxed);
-    assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0, "first policy access allocated");
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "first policy access allocated"
+    );
     policy.set_healing_logging_enabled(true);
 
     // Initialization may allocate. After opening, the actual write path must
@@ -83,7 +87,11 @@ fn child_probe() {
     MODE.store(COUNT, Ordering::Relaxed);
     append_runtime_log_record("{\"probe\":true}");
     MODE.store(0, Ordering::Relaxed);
-    assert_eq!(ALLOCATIONS.load(Ordering::Relaxed), 0, "initialized sink allocated");
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "initialized sink allocated"
+    );
     assert_eq!(runtime_log_snapshot().written_records, 2);
 
     // Exercise first ring growth, ledger initialization, formatting, eviction,
@@ -98,13 +106,19 @@ fn child_probe() {
     policy.clear_healing_logs();
     MODE.store(0, Ordering::Relaxed);
 
-    assert!(CALLBACKS.load(Ordering::Relaxed) > 0, "allocator injector never ran");
+    assert!(
+        CALLBACKS.load(Ordering::Relaxed) > 0,
+        "allocator injector never ran"
+    );
     assert!(policy.healing_log_reentry_drops.load(Ordering::Relaxed) > 0);
     assert_eq!(rows.lines().count(), 1024);
     for (index, line) in rows.lines().enumerate() {
         let row: serde_json::Value = serde_json::from_str(line).unwrap();
         assert_eq!(row["healing_action"], "ReallocAsMalloc");
-        assert_eq!(row["details"]["size"].as_u64(), Some((OUTER_RECORDS - 1024 + index) as u64));
+        assert_eq!(
+            row["details"]["size"].as_u64(),
+            Some((OUTER_RECORDS - 1024 + index) as u64)
+        );
     }
     assert!(policy.export_healing_log_jsonl().is_empty());
     // The guard must have been restored, not left permanently suppressing logs.

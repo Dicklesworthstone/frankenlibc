@@ -167,7 +167,10 @@ fn section_of(sections: &[(String, u64, u64)], address: u64) -> String {
 }
 
 fn dynamic_symbols(object: &str) -> std::collections::BTreeSet<String> {
-    let Ok(out) = Command::new("nm").args(["-D", "--defined-only", object]).output() else {
+    let Ok(out) = Command::new("nm")
+        .args(["-D", "--defined-only", object])
+        .output()
+    else {
         return Default::default();
     };
     String::from_utf8_lossy(&out.stdout)
@@ -193,15 +196,16 @@ fn parse_nm_line(line: &str) -> Option<(u64, u64, String)> {
             u64::from_str_radix(size, 16).ok()?,
             (*name).to_owned(),
         )),
-        [value, _type, name] => {
-            Some((u64::from_str_radix(value, 16).ok()?, 0, (*name).to_owned()))
-        }
+        [value, _type, name] => Some((u64::from_str_radix(value, 16).ok()?, 0, (*name).to_owned())),
         _ => None,
     }
 }
 
 fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
-    let Ok(out) = Command::new("nm").args(["-S", "--defined-only", object]).output() else {
+    let Ok(out) = Command::new("nm")
+        .args(["-S", "--defined-only", object])
+        .output()
+    else {
         return Vec::new();
     };
     let mut table: Vec<(u64, u64, String)> = String::from_utf8_lossy(&out.stdout)
@@ -295,9 +299,8 @@ fn main() {
     // cannot link against a version script naming symbols it does not define.
     // Scoping a link arg to just the cdylib needs --target plumbing (which also
     // moves the artifact path) or build.rs's cargo:rustc-cdylib-link-arg.
-    let extra_rustflags: Option<&str> = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--rustflags="));
+    let extra_rustflags: Option<&str> =
+        args.iter().find_map(|arg| arg.strip_prefix("--rustflags="));
 
     // `--env=KEY=VALUE` (repeatable) sets an environment variable for the inner
     // cargo build. Needed because some questions cannot be asked through
@@ -331,7 +334,14 @@ fn main() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut command = Command::new(&cargo);
     command
-        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .args([
+            "build",
+            "--quiet",
+            "--profile",
+            "release",
+            "-p",
+            "frankenlibc-abi",
+        ])
         // Same directory this probe reads from — see `target_dir`.
         .env("CARGO_TARGET_DIR", target_dir());
     if let Some(extra) = extra_rustflags {
@@ -378,7 +388,10 @@ fn main() {
     match Command::new("nm").arg("--version").output() {
         Ok(out) if out.status.success() => {
             let first = String::from_utf8_lossy(&out.stdout);
-            println!("DISASM_TOOL nm={}", first.lines().next().unwrap_or("unknown"));
+            println!(
+                "DISASM_TOOL nm={}",
+                first.lines().next().unwrap_or("unknown")
+            );
         }
         _ => {
             println!("DISASM_UNAVAILABLE reason=nm_not_runnable");

@@ -18,33 +18,56 @@ use super::{NativeDso, OPERATIONS, Resolver, registry};
 
 // The pure core engine deliberately does not execute TLS relocations. Keep
 // recognition here until that engine has a TLS execution context of its own.
+#[cfg(target_arch = "x86_64")]
 const R_X86_64_TLSDESC: u32 = 36;
 
+#[cfg(target_arch = "x86_64")]
 fn is_descriptor(relocation: &Elf64Rela) -> bool {
     relocation.reloc_type().to_u32() == R_X86_64_TLSDESC
 }
 
+#[cfg(not(target_arch = "x86_64"))]
+fn is_descriptor(_relocation: &Elf64Rela) -> bool {
+    false
+}
+
 pub(super) fn handles(relocation: &Elf64Rela) -> bool {
-    matches!(relocation.reloc_type(), RelocationType::DtpMod64 | RelocationType::DtpOff64)
-        || is_descriptor(relocation)
+    matches!(
+        relocation.reloc_type(),
+        RelocationType::DtpMod64 | RelocationType::DtpOff64
+    ) || is_descriptor(relocation)
 }
 
 fn load_contains(object: &LoadedObject, start: u64, size: u64) -> bool {
-    let Some(end) = start.checked_add(size) else { return false; };
+    let Some(end) = start.checked_add(size) else {
+        return false;
+    };
     object.program_headers.iter().any(|header| {
-        header.is_load() && header.p_vaddr <= start
-            && header.p_vaddr.checked_add(header.p_memsz).is_some_and(|limit| end <= limit)
+        header.is_load()
+            && header.p_vaddr <= start
+            && header
+                .p_vaddr
+                .checked_add(header.p_memsz)
+                .is_some_and(|limit| end <= limit)
     })
 }
 
 pub(super) fn validate(object: &LoadedObject, bytes: &[u8]) -> Option<()> {
-    if object.program_headers.iter().filter(|header| header.p_type == ProgramType::Tls).count() > 1 {
+    if object
+        .program_headers
+        .iter()
+        .filter(|header| header.p_type == ProgramType::Tls)
+        .count()
+        > 1
+    {
         return None;
     }
     if let Some(segment) = &object.tls_segment {
         let size = usize::try_from(segment.memsz).ok()?;
         let align = usize::try_from(segment.align.max(1)).ok()?;
-        if !align.is_power_of_two() || segment.filesz > segment.memsz { return None; }
+        if !align.is_power_of_two() || segment.filesz > segment.memsz {
+            return None;
+        }
         let first_byte = usize::try_from(segment.vaddr % align as u64).ok()?;
         Layout::from_size_align(size.checked_add(first_byte)?.max(1), align).ok()?;
         let start = usize::try_from(segment.file_offset).ok()?;
@@ -54,36 +77,55 @@ pub(super) fn validate(object: &LoadedObject, bytes: &[u8]) -> Option<()> {
             // The initialized template must agree with the PT_LOAD file view,
             // not point into an anonymous hole or an unrelated file range.
             let backed = object.program_headers.iter().any(|header| {
-                if !header.is_load() || header.p_vaddr > segment.vaddr { return false; }
+                if !header.is_load() || header.p_vaddr > segment.vaddr {
+                    return false;
+                }
                 let offset = segment.vaddr - header.p_vaddr;
                 header.p_offset.checked_add(offset) == Some(segment.file_offset)
-                    && offset.checked_add(segment.filesz).is_some_and(|end| end <= header.p_filesz)
+                    && offset
+                        .checked_add(segment.filesz)
+                        .is_some_and(|end| end <= header.p_filesz)
             });
-            if !backed || !load_contains(object, segment.vaddr, segment.filesz) { return None; }
+            if !backed || !load_contains(object, segment.vaddr, segment.filesz) {
+                return None;
+            }
         }
     }
     for symbol in &object.dynsym {
-        if symbol.is_tls() && !symbol.is_undefined() { symbol_offset(object, symbol)?; }
+        if symbol.is_tls() && !symbol.is_undefined() {
+            symbol_offset(object, symbol)?;
+        }
     }
     for relocation in object.rela_dyn.iter().chain(&object.rela_plt) {
         if handles(relocation) {
             // A descriptor is TWO words. Validating only the function word can
             // let its argument overwrite a PT_LOAD gap or the end of a mapping.
             let width = if is_descriptor(relocation) { 16 } else { 8 };
-            if !load_contains(object, relocation.r_offset, width) { return None; }
+            if !load_contains(object, relocation.r_offset, width) {
+                return None;
+            }
         } else {
-            if !relocation.reloc_type().is_supported() { return None; }
+            if !relocation.reloc_type().is_supported() {
+                return None;
+            }
             // A TLS offset is not an ordinary load-biased data address.
             if relocation.symbol_index() != 0
-                && object.dynsym.get(relocation.symbol_index() as usize).is_some_and(|symbol| symbol.is_tls())
-            { return None; }
+                && object
+                    .dynsym
+                    .get(relocation.symbol_index() as usize)
+                    .is_some_and(|symbol| symbol.is_tls())
+            {
+                return None;
+            }
         }
     }
     Some(())
 }
 
 fn symbol_offset(object: &LoadedObject, symbol: &Elf64Symbol) -> Option<u64> {
-    if !symbol.is_tls() || !symbol.is_defined() || symbol.st_shndx >= 0xff00 { return None; }
+    if !symbol.is_tls() || !symbol.is_defined() || symbol.st_shndx >= 0xff00 {
+        return None;
+    }
     let segment = object.tls_segment.as_ref()?;
     (symbol.st_value.checked_add(symbol.st_size)? <= segment.memsz).then_some(symbol.st_value)
 }
@@ -94,7 +136,12 @@ pub(super) fn take_relocations(object: &mut LoadedObject) -> Vec<Elf64Rela> {
     let mut tls = Vec::new();
     for relocations in [&mut object.rela_dyn, &mut object.rela_plt] {
         relocations.retain(|relocation| {
-            if handles(relocation) { tls.push(*relocation); false } else { true }
+            if handles(relocation) {
+                tls.push(*relocation);
+                false
+            } else {
+                true
+            }
         });
     }
     tls
@@ -103,17 +150,27 @@ pub(super) fn take_relocations(object: &mut LoadedObject) -> Vec<Elf64Rela> {
 enum Definition {
     // A canonical unique TLS owner need not belong to the current LOCAL scope.
     // Keep its module identity, offset and bounds rather than a scope borrow.
-    Tls { provider: usize, offset: u64, limit: u64 },
+    Tls {
+        provider: usize,
+        offset: u64,
+        limit: u64,
+    },
     UndefinedWeak,
 }
 
 fn definition(dso: &NativeDso, resolver: &Resolver<'_>, index: usize) -> Option<Definition> {
     if index == 0 {
         let limit = dso.object.tls_segment.as_ref()?.memsz;
-        return Some(Definition::Tls { provider: dso.id, offset: 0, limit });
+        return Some(Definition::Tls {
+            provider: dso.id,
+            offset: 0,
+            limit,
+        });
     }
     let requested = dso.object.dynsym.get(index)?;
-    if !requested.is_tls() { return None; }
+    if !requested.is_tls() {
+        return None;
+    }
     // Local/hidden/internal/protected definitions cannot be preempted.
     if requested.is_defined() && (requested.is_local() || requested.st_other & 3 != 0) {
         return Some(Definition::Tls {
@@ -125,7 +182,12 @@ fn definition(dso: &NativeDso, resolver: &Resolver<'_>, index: usize) -> Option<
     let name = dso.object.symbol_name(requested)?;
     let version = dso.versions.name(index);
     for provider in &resolver.scope {
-        if let Some(symbol) = provider.versions.lookup(&provider.object, name, version, dso.versions.relocation(index)) {
+        if let Some(symbol) = provider.versions.lookup(
+            &provider.object,
+            name,
+            version,
+            dso.versions.relocation(index),
+        ) {
             // A malformed or non-TLS definition is an error, not an unresolved
             // weak reference. Validate before selecting unique ownership.
             symbol_offset(&provider.object, symbol)?;
@@ -151,34 +213,60 @@ pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'
         let definition = definition(dso, resolver, relocation.symbol_index() as usize)?;
         let start = usize::try_from(relocation.r_offset).ok()?;
         if is_descriptor(relocation) {
-            let (module, offset) = match definition {
-                Definition::Tls { provider, offset, limit } => {
-                    let offset = addend_offset(offset, limit, relocation.r_addend)?;
-                    let mut providers = resolver.providers.borrow_mut();
-                    if !providers.contains(&provider) { providers.push(provider); }
-                    (provider, usize::try_from(offset).ok()?)
-                }
-                // The compiler adds the thread pointer to the resolver result.
-                // An unresolved weak TLS symbol must yield NULL + A, NOT TP+A.
-                // Module zero is private to descriptors; native IDs start at 1.
-                Definition::UndefinedWeak => (0, relocation.r_addend as usize),
-            };
-            let target = memory.get_mut(start..start.checked_add(16)?)?;
-            let argument = dso.tls_descriptors.allocate(module, offset)?;
-            target[..8].copy_from_slice(&(frankenlibc_native_tlsdesc as *const () as usize as u64).to_le_bytes());
-            target[8..].copy_from_slice(&argument.to_le_bytes());
+            #[cfg(target_arch = "x86_64")]
+            {
+                let (module, offset) = match definition {
+                    Definition::Tls {
+                        provider,
+                        offset,
+                        limit,
+                    } => {
+                        let offset = addend_offset(offset, limit, relocation.r_addend)?;
+                        let mut providers = resolver.providers.borrow_mut();
+                        if !providers.contains(&provider) {
+                            providers.push(provider);
+                        }
+                        (provider, usize::try_from(offset).ok()?)
+                    }
+                    // The compiler adds the thread pointer to the resolver result.
+                    // An unresolved weak TLS symbol must yield NULL + A, NOT TP+A.
+                    // Module zero is private to descriptors; native IDs start at 1.
+                    Definition::UndefinedWeak => (0, relocation.r_addend as usize),
+                };
+                let target = memory.get_mut(start..start.checked_add(16)?)?;
+                let argument = dso.tls_descriptors.allocate(module, offset)?;
+                target[..8].copy_from_slice(
+                    &(frankenlibc_native_tlsdesc as *const () as usize as u64).to_le_bytes(),
+                );
+                target[8..].copy_from_slice(&argument.to_le_bytes());
+            }
+            #[cfg(not(target_arch = "x86_64"))]
+            {
+                return None;
+            }
         } else {
             // Preserve the existing GD/LD contract; missing weak module-index
             // pairs are not implicitly treated as host DTV module zero.
-            let Definition::Tls { provider, offset, limit } = definition else { return None; };
+            let Definition::Tls {
+                provider,
+                offset,
+                limit,
+            } = definition
+            else {
+                return None;
+            };
             let value = match relocation.reloc_type() {
                 RelocationType::DtpMod64 => provider as u64,
                 RelocationType::DtpOff64 => addend_offset(offset, limit, relocation.r_addend)?,
                 _ => return None,
             };
-            memory.get_mut(start..start.checked_add(8)?)?.copy_from_slice(&value.to_le_bytes());
+            memory
+                .get_mut(start..start.checked_add(8)?)?
+                .copy_from_slice(&value.to_le_bytes());
             let mut providers = resolver.providers.borrow_mut();
-            if !providers.contains(&provider) { providers.push(provider); }
+            if !providers.contains(&provider) {
+                providers.push(provider);
+            }
         }
     }
     Some(())
@@ -193,6 +281,7 @@ pub(super) struct Descriptors {
 }
 
 impl Descriptors {
+    #[allow(dead_code)]
     fn allocate(&self, module: usize, offset: usize) -> Option<u64> {
         let mut arguments = self.arguments.try_borrow_mut().ok()?;
         arguments.try_reserve(1).ok()?;
@@ -207,15 +296,18 @@ impl Descriptors {
 // register except RAX/EFLAGS must survive, including x87 and enabled vector
 // state. The assembly bridge calls the ordinary C-ABI helper only after saving
 // that state, and returns an offset relative to the host thread pointer.
+#[cfg(target_arch = "x86_64")]
 core::arch::global_asm!(
     include_str!("dlfcn_tlsdesc_x86_64.S"),
     resolver = sym descriptor_address,
     options(att_syntax),
 );
+#[cfg(target_arch = "x86_64")]
 unsafe extern "C" {
     fn frankenlibc_native_tlsdesc();
 }
 
+#[cfg(target_arch = "x86_64")]
 unsafe extern "C" fn descriptor_address(index: *const TlsIndex) -> *mut c_void {
     // SAFETY: the descriptor points to a stable, DSO-owned argument. The code
     // using the descriptor must, like any DSO code, retain the containing DSO.
@@ -240,24 +332,36 @@ pub(super) struct Module {
 
 impl Module {
     pub(super) fn capture(dso: &NativeDso) -> Option<Option<Arc<Self>>> {
-        let Some(segment) = &dso.object.tls_segment else { return Some(None); };
+        let Some(segment) = &dso.object.tls_segment else {
+            return Some(None);
+        };
         let size = usize::try_from(segment.memsz).ok()?;
         let align = usize::try_from(segment.align.max(1)).ok()?;
         let first_byte = usize::try_from(segment.vaddr % align as u64).ok()?;
         let layout = Layout::from_size_align(size.checked_add(first_byte)?.max(1), align).ok()?;
         let count = usize::try_from(segment.filesz).ok()?;
         let start = usize::try_from(segment.vaddr).ok()?;
-        if start.checked_add(count)? > dso.mapping.len { return None; }
+        if start.checked_add(count)? > dso.mapping.len {
+            return None;
+        }
         let mut template = Vec::new();
         template.try_reserve_exact(count).ok()?;
         if count != 0 {
             // SAFETY: validated PT_TLS/PT_LOAD range of an unpublished RW
             // mapping. Capture AFTER all ordinary relocations, not raw bytes.
             // Indirect relocations into the template are rejected separately.
-            let bytes = unsafe { std::slice::from_raw_parts((dso.mapping.base + start) as *const u8, count) };
+            let bytes = unsafe {
+                std::slice::from_raw_parts((dso.mapping.base + start) as *const u8, count)
+            };
             template.extend_from_slice(bytes);
         }
-        Some(Some(Arc::new(Self { id: dso.id, size, first_byte, layout, template })))
+        Some(Some(Arc::new(Self {
+            id: dso.id,
+            size,
+            first_byte,
+            layout,
+            template,
+        })))
     }
 }
 
@@ -275,8 +379,20 @@ impl Block {
         let allocation = NonNull::new(unsafe { alloc_zeroed(module.layout) })?;
         // SAFETY: first_byte + size fits the allocation. The zero tail is .tbss.
         let data = unsafe { NonNull::new_unchecked(allocation.as_ptr().add(module.first_byte)) };
-        unsafe { std::ptr::copy_nonoverlapping(module.template.as_ptr(), data.as_ptr(), module.template.len()) };
-        Some(Self { id: module.id, module: Arc::downgrade(module), allocation, data, layout: module.layout })
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                module.template.as_ptr(),
+                data.as_ptr(),
+                module.template.len(),
+            )
+        };
+        Some(Self {
+            id: module.id,
+            module: Arc::downgrade(module),
+            allocation,
+            data,
+            layout: module.layout,
+        })
     }
 }
 
@@ -288,7 +404,9 @@ impl Drop for Block {
 }
 
 pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void> {
-    if offset > module.size { return None; }
+    if offset > module.size {
+        return None;
+    }
     super::thread_exit::with_state(|state| {
         let mut blocks = state.blocks.try_borrow_mut().ok()?;
         // Weak ownership permits dlclose to unload modules. Never reuse an ID:
@@ -312,17 +430,25 @@ pub(super) fn address(module: &Arc<Module>, offset: usize) -> Option<*mut c_void
 pub(super) fn allocated_address(module: &Arc<Module>) -> *mut c_void {
     super::thread_exit::with_existing_state(|state| {
         let blocks = state.blocks.try_borrow().ok()?;
-        blocks.iter().find(|block| block.id == module.id)
+        blocks
+            .iter()
+            .find(|block| block.id == module.id)
             .map(|block| block.data.as_ptr().cast())
-    }).unwrap_or(std::ptr::null_mut())
+    })
+    .unwrap_or(std::ptr::null_mut())
 }
 
 #[repr(C)]
 #[derive(Debug)]
-struct TlsIndex { module: usize, offset: usize }
+struct TlsIndex {
+    module: usize,
+    offset: usize,
+}
 
 unsafe extern "C" fn get_addr(index: *const TlsIndex) -> *mut c_void {
-    if index.is_null() { return std::ptr::null_mut(); }
+    if index.is_null() {
+        return std::ptr::null_mut();
+    }
     // SAFETY: native compiler-emitted TLS sequences pass a readable GOT pair.
     let index = unsafe { std::ptr::read_unaligned(index) };
     let _operation = OPERATIONS.lock();
@@ -330,15 +456,21 @@ unsafe extern "C" fn get_addr(index: *const TlsIndex) -> *mut c_void {
     // registry publication. This private scope never exposes a partial handle.
     let module = super::ifunc::temporary_tls_module(index.module).or_else(|| {
         registry().lock().ok().and_then(|dsos| {
-            dsos.iter().find(|dso| dso.id == index.module).and_then(|dso| dso.tls.clone())
+            dsos.iter()
+                .find(|dso| dso.id == index.module)
+                .and_then(|dso| dso.tls.clone())
         })
     });
-    module.and_then(|module| address(&module, index.offset)).unwrap_or(std::ptr::null_mut())
+    module
+        .and_then(|module| address(&module, index.offset))
+        .unwrap_or(std::ptr::null_mut())
 }
 
 pub(super) fn resolver_address(version: Option<&str>) -> Option<u64> {
     // GLIBC_2.3 is the x86-64 __tls_get_addr symbol version. Keep this private;
     // interposing it on the host would interpret unrelated host module IDs.
-    if version.is_some_and(|version| version != "GLIBC_2.3") { return None; }
+    if version.is_some_and(|version| version != "GLIBC_2.3") {
+        return None;
+    }
     Some(get_addr as *const () as usize as u64)
 }

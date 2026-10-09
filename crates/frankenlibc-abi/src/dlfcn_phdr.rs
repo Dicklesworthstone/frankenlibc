@@ -16,8 +16,7 @@ use super::{NATIVE_DSOS, OPERATIONS, ResidentPin, tls};
 
 pub(crate) type Callback =
     unsafe extern "C-unwind" fn(*mut libc::dl_phdr_info, usize, *mut c_void) -> c_int;
-pub(crate) type IteratorFn =
-    unsafe extern "C-unwind" fn(Option<Callback>, *mut c_void) -> c_int;
+pub(crate) type IteratorFn = unsafe extern "C-unwind" fn(Option<Callback>, *mut c_void) -> c_int;
 
 // Updated only at publication/retirement, under OPERATIONS and the registry
 // mutex. Failed transactions and RTLD_NOLOAD do not invent load events.
@@ -42,14 +41,19 @@ pub(super) struct Headers {
 
 impl std::fmt::Debug for Headers {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Headers").field("count", &self.entries.len()).finish()
+        formatter
+            .debug_struct("Headers")
+            .field("count", &self.entries.len())
+            .finish()
     }
 }
 
 impl Headers {
     pub(super) fn new(object: &LoadedObject) -> Option<Self> {
         let count = object.program_headers.len();
-        if count == 0 || count > u16::MAX as usize { return None; }
+        if count == 0 || count > u16::MAX as usize {
+            return None;
+        }
         let mut entries = Vec::new();
         entries.try_reserve_exact(count).ok()?;
         for header in &object.program_headers {
@@ -69,10 +73,14 @@ impl Headers {
                 ProgramType::Unknown(raw) => raw,
             };
             entries.push(libc::Elf64_Phdr {
-                p_type, p_flags: header.p_flags.0,
-                p_offset: header.p_offset, p_vaddr: header.p_vaddr,
-                p_paddr: header.p_paddr, p_filesz: header.p_filesz,
-                p_memsz: header.p_memsz, p_align: header.p_align,
+                p_type,
+                p_flags: header.p_flags.0,
+                p_offset: header.p_offset,
+                p_vaddr: header.p_vaddr,
+                p_paddr: header.p_paddr,
+                p_filesz: header.p_filesz,
+                p_memsz: header.p_memsz,
+                p_align: header.p_align,
             });
         }
         Some(Self { entries })
@@ -100,20 +108,30 @@ struct Snapshot {
 impl Snapshot {
     fn acquire() -> Option<Self> {
         let mut snapshot = Self {
-            objects: Vec::new(), _pins: Vec::new(), adds: 0, subs: 0,
+            objects: Vec::new(),
+            _pins: Vec::new(),
+            adds: 0,
+            subs: 0,
         };
-        let Some(registry) = NATIVE_DSOS.get() else { return Some(snapshot); };
+        let Some(registry) = NATIVE_DSOS.get() else {
+            return Some(snapshot);
+        };
         let _operation = OPERATIONS.lock();
         let mut dsos = registry.lock().ok()?;
         snapshot.objects.try_reserve_exact(dsos.len()).ok()?;
         snapshot._pins.try_reserve_exact(dsos.len()).ok()?;
         // Complete every fallible operation before constructing a pin: its
         // destructor takes these locks and must never run while we hold them.
-        if dsos.iter().any(|dso| dso.load_pins == usize::MAX) { return None; }
+        if dsos.iter().any(|dso| dso.load_pins == usize::MAX) {
+            return None;
+        }
         for dso in dsos.iter_mut() {
             snapshot.objects.push(Object {
-                id: dso.id, base: dso.object.base, name: dso.name.as_ptr(),
-                headers: dso.phdrs.entries.as_ptr(), count: dso.phdrs.entries.len() as u16,
+                id: dso.id,
+                base: dso.object.base,
+                name: dso.name.as_ptr(),
+                headers: dso.phdrs.entries.as_ptr(),
+                count: dso.phdrs.entries.len() as u16,
                 tls: dso.tls.clone(),
             });
             dso.load_pins += 1;
@@ -135,12 +153,16 @@ struct Prefix {
 }
 
 unsafe extern "C-unwind" fn forward_prefix(
-    info: *mut libc::dl_phdr_info, size: usize, data: *mut c_void,
+    info: *mut libc::dl_phdr_info,
+    size: usize,
+    data: *mut c_void,
 ) -> c_int {
     // SAFETY: iterate supplies this private stack context for the synchronous
     // prefix iterator. The caller's callback receives only its original data.
     let context = unsafe { &mut *data.cast::<Prefix>() };
-    if info.is_null() { return -1; }
+    if info.is_null() {
+        return -1;
+    }
     let size = size.min(std::mem::size_of::<libc::dl_phdr_info>());
     // Copy only fields the prefix actually supplies. Never read beyond an
     // older ABI struct or advertise unknown future fields in our local copy.
@@ -169,18 +191,30 @@ unsafe extern "C-unwind" fn forward_prefix(
 /// Callback and data obey dl_iterate_phdr's ABI. The optional prefix is a
 /// trusted synchronous iterator with that same callback contract.
 pub(crate) unsafe fn iterate(
-    callback: Option<Callback>, data: *mut c_void, prefix: Option<IteratorFn>,
+    callback: Option<Callback>,
+    data: *mut c_void,
+    prefix: Option<IteratorFn>,
 ) -> c_int {
-    let Some(callback) = callback else { return 0; };
-    let Some(snapshot) = Snapshot::acquire() else { return -1; };
+    let Some(callback) = callback else {
+        return 0;
+    };
+    let Some(snapshot) = Snapshot::acquire() else {
+        return -1;
+    };
     let mut context = Prefix {
-        callback, data, native_adds: snapshot.adds, native_subs: snapshot.subs,
-        host_adds: 0, host_subs: 0,
+        callback,
+        data,
+        native_adds: snapshot.adds,
+        native_subs: snapshot.subs,
+        host_adds: 0,
+        host_subs: 0,
     };
     if let Some(prefix) = prefix {
         // No operation/registry lock is held while entering the host loader.
         let result = unsafe { prefix(Some(forward_prefix), (&raw mut context).cast()) };
-        if result != 0 { return result; }
+        if result != 0 {
+            return result;
+        }
     }
     for object in &snapshot.objects {
         let (module, tls_data) = match &object.tls {
@@ -188,16 +222,22 @@ pub(crate) unsafe fn iterate(
             None => (0, std::ptr::null_mut()),
         };
         let mut info = libc::dl_phdr_info {
-            dlpi_addr: object.base, dlpi_name: object.name,
-            dlpi_phdr: object.headers, dlpi_phnum: object.count,
+            dlpi_addr: object.base,
+            dlpi_name: object.name,
+            dlpi_phdr: object.headers,
+            dlpi_phnum: object.count,
             dlpi_adds: context.host_adds.saturating_add(snapshot.adds),
             dlpi_subs: context.host_subs.saturating_add(snapshot.subs),
-            dlpi_tls_modid: module, dlpi_tls_data: tls_data,
+            dlpi_tls_modid: module,
+            dlpi_tls_data: tls_data,
         };
         // All snapshot mappings stay pinned, including objects not visited
         // yet. A nested/concurrent close cannot invalidate these pointers.
-        let result = unsafe { callback(&mut info, std::mem::size_of::<libc::dl_phdr_info>(), data) };
-        if result != 0 { return result; }
+        let result =
+            unsafe { callback(&mut info, std::mem::size_of::<libc::dl_phdr_info>(), data) };
+        if result != 0 {
+            return result;
+        }
     }
     0
 }

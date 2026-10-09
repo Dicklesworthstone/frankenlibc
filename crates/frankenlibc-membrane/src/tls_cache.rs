@@ -253,10 +253,7 @@ impl TlsValidationCache {
     #[inline]
     fn range_hit(&mut self, addr: usize) -> Option<CachedValidation> {
         for range in &mut self.ranges {
-            if range.valid
-                && addr >= range.user_base
-                && addr - range.user_base < range.user_size
-            {
+            if range.valid && addr >= range.user_base && addr - range.user_base < range.user_size {
                 if range.shard_epoch == current_shard_epoch(range.shard_idx as usize) {
                     return Some(CachedValidation {
                         user_base: range.user_base,
@@ -1010,7 +1007,9 @@ mod tests {
         cache.insert(base + 8, val, &snapshot_shard_epochs());
 
         // Any address inside the allocation hits, with its allocation bounds.
-        let hit = cache.lookup(base + 4000).expect("interior pointer hits by range");
+        let hit = cache
+            .lookup(base + 4000)
+            .expect("interior pointer hits by range");
         assert_eq!((hit.user_base, hit.user_size), (base, 4096));
         assert!(cache.lookup_hit_only(base + 1).is_some());
         // One past the end, and before the base, miss.

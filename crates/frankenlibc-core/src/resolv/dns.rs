@@ -400,9 +400,8 @@ impl DnsMessage {
         // five bytes, and a root-name RR with empty RDATA needs eleven. Reject
         // impossible counts BEFORE reserving vectors: a twelve-byte datagram
         // must not trigger allocations for tens of thousands of records.
-        let record_count = usize::from(header.ancount)
-            + usize::from(header.nscount)
-            + usize::from(header.arcount);
+        let record_count =
+            usize::from(header.ancount) + usize::from(header.nscount) + usize::from(header.arcount);
         let minimum_body = usize::from(header.qdcount) * 5 + record_count * 11;
         if minimum_body > buf.len() - DNS_HEADER_SIZE {
             return None;

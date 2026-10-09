@@ -2588,7 +2588,10 @@ mod tests {
                 visibility: RtldVisibility::Local,
             },
         ])?;
-        assert_eq!(resolver.dependency_graph().local_lookup_order(0)?, vec![0, 1, 3, 2]);
+        assert_eq!(
+            resolver.dependency_graph().local_lookup_order(0)?,
+            vec![0, 1, 3, 2]
+        );
         for version in [None, Some("VER_1")] {
             let report = resolver.resolve_with_trace(
                 "provider",
@@ -2599,7 +2602,11 @@ mod tests {
             assert_eq!(symbol.object_index, 3);
             assert_eq!(symbol.address, 0x4022);
             assert_eq!(
-                report.trace.iter().map(|event| event.object_index).collect::<Vec<_>>(),
+                report
+                    .trace
+                    .iter()
+                    .map(|event| event.object_index)
+                    .collect::<Vec<_>>(),
                 vec![0, 1, 3],
             );
         }
@@ -2610,7 +2617,11 @@ mod tests {
         )?;
         assert!(missing.symbol.is_none());
         assert_eq!(
-            missing.trace.iter().map(|event| event.object_index).collect::<Vec<_>>(),
+            missing
+                .trace
+                .iter()
+                .map(|event| event.object_index)
+                .collect::<Vec<_>>(),
             vec![0, 1, 3, 2],
         );
         Ok(())
@@ -2628,10 +2639,19 @@ mod tests {
     #[test]
     fn local_scope_rejects_invalid_root_and_dependency_indexes() {
         let graph = dependency_scope_regression_graph(&[&[1], &[99]]);
-        assert!(matches!(graph.local_lookup_order(2), Err(ElfError::InvalidObjectIndex(2))));
-        assert!(matches!(graph.local_lookup_order(0), Err(ElfError::InvalidObjectIndex(99))));
+        assert!(matches!(
+            graph.local_lookup_order(2),
+            Err(ElfError::InvalidObjectIndex(2))
+        ));
+        assert!(matches!(
+            graph.local_lookup_order(0),
+            Err(ElfError::InvalidObjectIndex(99))
+        ));
         let empty = dependency_scope_regression_graph(&[]);
-        assert!(matches!(empty.local_lookup_order(0), Err(ElfError::InvalidObjectIndex(0))));
+        assert!(matches!(
+            empty.local_lookup_order(0),
+            Err(ElfError::InvalidObjectIndex(0))
+        ));
     }
 
     #[test]
@@ -2825,7 +2845,11 @@ mod tests {
         assert_eq!(graph.local_lookup_order(0)?, vec![0, 1]);
         assert_eq!(graph.local_lookup_order(1)?, vec![1, 0]);
         let resolver = ScopedSymbolResolver::new(objects)?;
-        assert!(resolver.resolve("absent", None, RtldLookupScope::Local { object_index: 0 })?.is_none());
+        assert!(
+            resolver
+                .resolve("absent", None, RtldLookupScope::Local { object_index: 0 })?
+                .is_none()
+        );
         Ok(())
     }
 
@@ -2836,14 +2860,21 @@ mod tests {
         let graph = dependency_scope_regression_graph(&[&[1, 2], &[0], &[]]);
         assert_eq!(dependency_topological_order(&graph.nodes)?, vec![2, 1, 0]);
         let two_cycles = dependency_scope_regression_graph(&[&[1], &[0, 2], &[3], &[2]]);
-        assert_eq!(dependency_topological_order(&two_cycles.nodes)?, vec![3, 2, 1, 0]);
+        assert_eq!(
+            dependency_topological_order(&two_cycles.nodes)?,
+            vec![3, 2, 1, 0]
+        );
         Ok(())
     }
 
     #[test]
-    fn dependency_order_handles_self_edges_duplicates_and_disconnected_components() -> ElfResult<()> {
+    fn dependency_order_handles_self_edges_duplicates_and_disconnected_components() -> ElfResult<()>
+    {
         let graph = dependency_scope_regression_graph(&[&[0, 1, 1], &[], &[3], &[2], &[]]);
-        assert_eq!(dependency_topological_order(&graph.nodes)?, vec![1, 0, 3, 2, 4]);
+        assert_eq!(
+            dependency_topological_order(&graph.nodes)?,
+            vec![1, 0, 3, 2, 4]
+        );
         assert!(dependency_topological_order(&[])?.is_empty());
         Ok(())
     }
@@ -2910,11 +2941,17 @@ mod tests {
         assert_eq!(graph.topological_order, vec![2, 1, 0]);
         let plan = graph.lifecycle_plan(&objects)?;
         assert_eq!(
-            plan.init_order.iter().map(|entry| entry.address).collect::<Vec<_>>(),
+            plan.init_order
+                .iter()
+                .map(|entry| entry.address)
+                .collect::<Vec<_>>(),
             vec![0x3010, 0x2010, 0x1000, 0x1010, 0x1020],
         );
         assert_eq!(
-            plan.fini_order.iter().map(|entry| entry.address).collect::<Vec<_>>(),
+            plan.fini_order
+                .iter()
+                .map(|entry| entry.address)
+                .collect::<Vec<_>>(),
             vec![0x1040, 0x1030, 0x10f0, 0x2020, 0x3020],
         );
         Ok(())
@@ -2964,7 +3001,10 @@ mod tests {
                 for (from, node) in nodes.iter().enumerate() {
                     for &to in &node.dependencies {
                         if !reachable[to][from] {
-                            assert!(position[to] < position[from], "mask={edge_mask:#x}: {from}->{to}");
+                            assert!(
+                                position[to] < position[from],
+                                "mask={edge_mask:#x}: {from}->{to}"
+                            );
                         }
                     }
                     let component = (0..count)
@@ -2973,7 +3013,11 @@ mod tests {
                         .collect::<Vec<_>>();
                     let first = component.iter().copied().min().unwrap();
                     let last = component.iter().copied().max().unwrap();
-                    assert_eq!(last - first + 1, component.len(), "mask={edge_mask:#x}: split SCC");
+                    assert_eq!(
+                        last - first + 1,
+                        component.len(),
+                        "mask={edge_mask:#x}: split SCC"
+                    );
                 }
             }
         }

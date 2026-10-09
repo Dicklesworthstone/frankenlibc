@@ -304,7 +304,8 @@ impl HealingPolicy {
         // and ring locking. Counting a nested repair is safe; logging it can
         // recursively acquire whichever allocator/ledger/ring lock led here.
         let Some(_guard) = LogReentryGuard::enter(&EMITTING_HEALING_LOG) else {
-            self.healing_log_reentry_drops.fetch_add(1, Ordering::Relaxed);
+            self.healing_log_reentry_drops
+                .fetch_add(1, Ordering::Relaxed);
             return;
         };
         if !self.healing_logging_active() {

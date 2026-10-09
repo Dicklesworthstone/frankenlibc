@@ -131,7 +131,11 @@ pub fn tanh(x: f64) -> f64 {
     let ix = jx & 0x7fff_ffff;
     if ix >= 0x7ff0_0000 {
         // tanh(±inf) = ±1; NaN propagates.
-        return if jx >= 0 { 1.0 / x + 1.0 } else { 1.0 / x - 1.0 };
+        return if jx >= 0 {
+            1.0 / x + 1.0
+        } else {
+            1.0 / x - 1.0
+        };
     }
     let z = if ix < 0x4036_0000 {
         // |x| < 22

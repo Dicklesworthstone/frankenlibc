@@ -104,7 +104,14 @@ fn main() {
         // SAFETY: `dst` has 256 bytes; every format names exactly its arguments.
         unsafe {
             sum ^= f(dst, 256, c"%s %s".as_ptr(), a.as_ptr(), b.as_ptr()) as u64;
-            sum ^= f(dst, 256, c"%s %s %s".as_ptr(), a.as_ptr(), b.as_ptr(), c.as_ptr()) as u64;
+            sum ^= f(
+                dst,
+                256,
+                c"%s %s %s".as_ptr(),
+                a.as_ptr(),
+                b.as_ptr(),
+                c.as_ptr(),
+            ) as u64;
             sum ^= f(
                 dst,
                 256,

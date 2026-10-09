@@ -20,8 +20,7 @@ use frankenlibc_core::string::wchar as wchar_core;
 
 type StrftimeFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, *const libc::tm) -> usize;
 type StrptimeFn = unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
-type WcscollFn =
-    unsafe extern "C" fn(*const libc::wchar_t, *const libc::wchar_t) -> libc::c_int;
+type WcscollFn = unsafe extern "C" fn(*const libc::wchar_t, *const libc::wchar_t) -> libc::c_int;
 
 /// Host glibc `wcscoll` via dlmopen so frankenlibc's exported symbol cannot
 /// shadow the baseline. C/POSIX locale = code-point order (locale-independent).
@@ -295,7 +294,12 @@ fn bench(c: &mut Criterion) {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
             let n = unsafe {
-                fl::strftime(buf.as_mut_ptr(), buf.len(), fmt_mdy.as_ptr(), black_box(&tm))
+                fl::strftime(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_mdy.as_ptr(),
+                    black_box(&tm),
+                )
             };
             black_box((n, buf[0]));
         });
@@ -303,7 +307,14 @@ fn bench(c: &mut Criterion) {
     group.bench_function("host_glibc", |bencher| {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
-            let n = unsafe { host(buf.as_mut_ptr(), buf.len(), fmt_mdy.as_ptr(), black_box(&tm)) };
+            let n = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_mdy.as_ptr(),
+                    black_box(&tm),
+                )
+            };
             black_box((n, buf[0]));
         });
     });
@@ -314,7 +325,12 @@ fn bench(c: &mut Criterion) {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
             let n = unsafe {
-                fl::strftime(buf.as_mut_ptr(), buf.len(), fmt_ymdhm.as_ptr(), black_box(&tm))
+                fl::strftime(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_ymdhm.as_ptr(),
+                    black_box(&tm),
+                )
             };
             black_box((n, buf[0]));
         });
@@ -322,8 +338,14 @@ fn bench(c: &mut Criterion) {
     group.bench_function("host_glibc", |bencher| {
         bencher.iter(|| {
             let mut buf = [0i8; 64];
-            let n =
-                unsafe { host(buf.as_mut_ptr(), buf.len(), fmt_ymdhm.as_ptr(), black_box(&tm)) };
+            let n = unsafe {
+                host(
+                    buf.as_mut_ptr(),
+                    buf.len(),
+                    fmt_ymdhm.as_ptr(),
+                    black_box(&tm),
+                )
+            };
             black_box((n, buf[0]));
         });
     });
@@ -418,7 +440,11 @@ fn bench(c: &mut Criterion) {
     // per-directive parse loop). ymd_hms is the covered control.
     let sp_host = host_strptime();
     for (name, input, sfmt) in [
-        ("strptime_ymd_hms", c"2024-03-15 14:30:45", c"%Y-%m-%d %H:%M:%S"),
+        (
+            "strptime_ymd_hms",
+            c"2024-03-15 14:30:45",
+            c"%Y-%m-%d %H:%M:%S",
+        ),
         ("strptime_ymd_hm", c"2024-03-15 14:30", c"%Y-%m-%d %H:%M"),
         ("strptime_mdy", c"03/15/2024", c"%m/%d/%Y"),
         ("strptime_hm", c"14:30", c"%H:%M"),
@@ -427,9 +453,7 @@ fn bench(c: &mut Criterion) {
         group.bench_function("frankenlibc_abi", |bencher| {
             bencher.iter(|| {
                 let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-                let r = unsafe {
-                    fl::strptime(black_box(input.as_ptr()), sfmt.as_ptr(), &mut tm)
-                };
+                let r = unsafe { fl::strptime(black_box(input.as_ptr()), sfmt.as_ptr(), &mut tm) };
                 black_box((r, tm.tm_hour, tm.tm_min));
             });
         });
@@ -451,9 +475,7 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("wcscoll_equal_48");
     group.bench_function("frankenlibc_abi", |bencher| {
         bencher.iter(|| {
-            black_box(unsafe {
-                fl_wchar::wcscoll(black_box(ws.as_ptr()), black_box(ws.as_ptr()))
-            });
+            black_box(unsafe { fl_wchar::wcscoll(black_box(ws.as_ptr()), black_box(ws.as_ptr())) });
         });
     });
     group.bench_function("host_glibc", |bencher| {

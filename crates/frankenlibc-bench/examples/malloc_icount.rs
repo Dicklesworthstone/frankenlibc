@@ -314,7 +314,10 @@ mod tests {
         assert_eq!(sizes_from(args(&["prog", "fl"]), 2), SIZES.to_vec());
         // `churn` parsed at skip=2 would be an override if the filter were
         // wrong; it is not numeric, so the defaults must survive.
-        assert_eq!(sizes_from(args(&["prog", "fl", "churn"]), 2), SIZES.to_vec());
+        assert_eq!(
+            sizes_from(args(&["prog", "fl", "churn"]), 2),
+            SIZES.to_vec()
+        );
         assert_eq!(
             sizes_from(args(&["prog", "fl", "growth"]), 2),
             SIZES.to_vec()
@@ -400,6 +403,10 @@ mod tests {
         seen.sort_unstable();
         let before = seen.len();
         seen.dedup();
-        assert_eq!(before, seen.len(), "two different prefixes folded to the same value");
+        assert_eq!(
+            before,
+            seen.len(),
+            "two different prefixes folded to the same value"
+        );
     }
 }

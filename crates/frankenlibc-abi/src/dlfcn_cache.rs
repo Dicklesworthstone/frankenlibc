@@ -115,9 +115,13 @@ fn hwcaps_extension(bytes: &[u8], offset: u32, strings_end: usize) -> Option<Ran
         if word(section, 0)? == 1 {
             // Reject ambiguous duplicate tables and unknown semantics rather
             // than interpreting arbitrary metadata as a capability grant.
-            if hwcaps.is_some() || word(section, 4)? != 0
-                || begin % 4 != 0 || length == 0 || length % 4 != 0
-                || begin < strings_end || (begin < end && offset < limit)
+            if hwcaps.is_some()
+                || word(section, 4)? != 0
+                || begin % 4 != 0
+                || length == 0
+                || length % 4 != 0
+                || begin < strings_end
+                || (begin < end && offset < limit)
             {
                 return None;
             }
@@ -183,7 +187,10 @@ impl Cache {
             return None;
         }
         let tail = self.bytes.get(start..self.layout.strings.end)?;
-        let end = tail.iter().take(MAX_STRING_BYTES).position(|byte| *byte == 0)?;
+        let end = tail
+            .iter()
+            .take(MAX_STRING_BYTES)
+            .position(|byte| *byte == 0)?;
         Some(&tail[..end])
     }
 
@@ -211,7 +218,11 @@ impl Cache {
         self.candidates_with_capabilities(name, Capabilities::detect())
     }
 
-    pub(super) fn candidates_with_capabilities(&self, name: &[u8], capabilities: Capabilities) -> Vec<PathBuf> {
+    pub(super) fn candidates_with_capabilities(
+        &self,
+        name: &[u8],
+        capabilities: Capabilities,
+    ) -> Vec<PathBuf> {
         let mut result: Vec<(usize, PathBuf)> = Vec::new();
         if name.is_empty()
             || name.len() >= MAX_STRING_BYTES
@@ -244,12 +255,16 @@ impl Cache {
             // A directory name alone does not establish ISA eligibility.
             // In particular, old caches discard the hwcap field entirely.
             if rank == BASELINE_RANK
-                && path.components().any(|part| part.as_os_str() == OsStr::new("glibc-hwcaps"))
+                && path
+                    .components()
+                    .any(|part| part.as_os_str() == OsStr::new("glibc-hwcaps"))
             {
                 continue;
             }
             if let Some(index) = result.iter().position(|(_, previous)| previous == &path) {
-                if result[index].0 <= rank { continue; }
+                if result[index].0 <= rank {
+                    continue;
+                }
                 result.remove(index);
             }
             // Stable priority insertion preserves cache order for equal ranks.
@@ -258,7 +273,9 @@ impl Cache {
             let index = result.partition_point(|(previous, _)| *previous <= rank);
             if index < MAX_MATCHES {
                 result.insert(index, (rank, path));
-                if result.len() > MAX_MATCHES { result.pop(); }
+                if result.len() > MAX_MATCHES {
+                    result.pop();
+                }
             }
         }
         result.into_iter().map(|(_, path)| path).collect()
@@ -281,13 +298,25 @@ mod tests {
         let mut bytes = vec![0; start];
         let magic = if modern { NEW_MAGIC } else { OLD_MAGIC };
         bytes[..magic.len()].copy_from_slice(magic);
-        put(&mut bytes, if modern { 20 } else { 12 }, entries.len() as u32);
+        put(
+            &mut bytes,
+            if modern { 20 } else { 12 },
+            entries.len() as u32,
+        );
         for (i, &(key, value, flags, hwcap)) in entries.iter().enumerate() {
             let offset = header + size * i;
-            let key_offset = if modern { bytes.len() } else { bytes.len() - start };
+            let key_offset = if modern {
+                bytes.len()
+            } else {
+                bytes.len() - start
+            };
             bytes.extend_from_slice(key);
             bytes.push(0);
-            let value_offset = if modern { bytes.len() } else { bytes.len() - start };
+            let value_offset = if modern {
+                bytes.len()
+            } else {
+                bytes.len() - start
+            };
             bytes.extend_from_slice(value);
             bytes.push(0);
             put(&mut bytes, offset, flags);
@@ -306,14 +335,20 @@ mod tests {
     }
 
     fn sample(modern: bool) -> Vec<u8> {
-        fixture(&[(b"libx.so", b"/opt/vendor/libx.so", native_flags(), 0)], modern)
+        fixture(
+            &[(b"libx.so", b"/opt/vendor/libx.so", native_flags(), 0)],
+            modern,
+        )
     }
 
     #[test]
     fn modern_and_legacy_offsets_are_distinct_and_supported() {
         for modern in [true, false] {
             let cache = Cache::from_bytes(sample(modern)).unwrap();
-            assert_eq!(cache.candidates(b"libx.so"), vec![PathBuf::from("/opt/vendor/libx.so")]);
+            assert_eq!(
+                cache.candidates(b"libx.so"),
+                vec![PathBuf::from("/opt/vendor/libx.so")]
+            );
             assert!(cache.candidates(b"missing.so").is_empty());
         }
     }
@@ -328,30 +363,50 @@ mod tests {
             put(&mut bytes, 12, count as u32);
             bytes.extend_from_slice(&sample(true));
             let cache = Cache::from_bytes(bytes).unwrap();
-            assert_eq!(cache.candidates(b"libx.so"), vec![PathBuf::from("/opt/vendor/libx.so")]);
+            assert_eq!(
+                cache.candidates(b"libx.so"),
+                vec![PathBuf::from("/opt/vendor/libx.so")]
+            );
         }
     }
 
     #[test]
     fn foreign_abi_hwcap_and_duplicate_entries_are_not_selected() {
-        let bytes = fixture(&[
-            (b"libx.so", b"/wrong/libx.so", 0x0803, 0),
-            (b"libx.so", b"/fast/libx.so", native_flags(), 1 << 62),
-            (b"libx.so", b"/legacy-hwcap/libx.so", native_flags(), 1),
-            (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
-            (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
-        ], true);
-        assert_eq!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so"), vec![PathBuf::from("/baseline/libx.so")]);
+        let bytes = fixture(
+            &[
+                (b"libx.so", b"/wrong/libx.so", 0x0803, 0),
+                (b"libx.so", b"/fast/libx.so", native_flags(), 1 << 62),
+                (b"libx.so", b"/legacy-hwcap/libx.so", native_flags(), 1),
+                (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
+                (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
+            ],
+            true,
+        );
+        assert_eq!(
+            Cache::from_bytes(bytes).unwrap().candidates(b"libx.so"),
+            vec![PathBuf::from("/baseline/libx.so")]
+        );
     }
 
     #[test]
     fn legacy_capability_directories_are_not_mistaken_for_baseline_dsos() {
         for modern in [true, false] {
-            let bytes = fixture(&[
-                (b"libx.so", b"/opt/glibc-hwcaps/x86-64-v3/libx.so", native_flags(), 0),
-                (b"libx.so", b"/opt/libx.so", native_flags(), 0),
-            ], modern);
-            assert_eq!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so"), vec![PathBuf::from("/opt/libx.so")]);
+            let bytes = fixture(
+                &[
+                    (
+                        b"libx.so",
+                        b"/opt/glibc-hwcaps/x86-64-v3/libx.so",
+                        native_flags(),
+                        0,
+                    ),
+                    (b"libx.so", b"/opt/libx.so", native_flags(), 0),
+                ],
+                modern,
+            );
+            assert_eq!(
+                Cache::from_bytes(bytes).unwrap().candidates(b"libx.so"),
+                vec![PathBuf::from("/opt/libx.so")]
+            );
         }
     }
 
@@ -360,7 +415,11 @@ mod tests {
         let path = b"/opt/\xff/libx.so";
         let mut bytes = fixture(&[(b"unused", path, native_flags(), 0)], true);
         let value = word(&bytes, NEW_HEADER + 8).unwrap();
-        put(&mut bytes, NEW_HEADER + 4, value + (path.len() - b"libx.so".len()) as u32);
+        put(
+            &mut bytes,
+            NEW_HEADER + 4,
+            value + (path.len() - b"libx.so".len()) as u32,
+        );
         let cache = Cache::from_bytes(bytes).unwrap();
         assert_eq!(cache.candidates(b"libx.so")[0].as_os_str().as_bytes(), path);
     }
@@ -384,7 +443,10 @@ mod tests {
     fn every_modern_truncation_and_oversized_count_is_rejected() {
         let bytes = sample(true);
         for end in 0..bytes.len() {
-            assert!(Cache::from_bytes(bytes[..end].to_vec()).is_none(), "length {end}");
+            assert!(
+                Cache::from_bytes(bytes[..end].to_vec()).is_none(),
+                "length {end}"
+            );
         }
         for modern in [true, false] {
             let mut bytes = sample(modern);
@@ -399,7 +461,12 @@ mod tests {
             for value in [0, NEW_HEADER as u32, u32::MAX] {
                 let mut bytes = sample(true);
                 put(&mut bytes, field, value);
-                assert!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so").is_empty());
+                assert!(
+                    Cache::from_bytes(bytes)
+                        .unwrap()
+                        .candidates(b"libx.so")
+                        .is_empty()
+                );
             }
         }
     }
@@ -409,13 +476,26 @@ mod tests {
         let mut bytes = sample(true);
         *bytes.last_mut().unwrap() = b'x';
         bytes.extend_from_slice(&[0; 64]);
-        assert!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so").is_empty());
+        assert!(
+            Cache::from_bytes(bytes)
+                .unwrap()
+                .candidates(b"libx.so")
+                .is_empty()
+        );
     }
 
     #[test]
     fn relative_paths_empty_and_path_bearing_queries_are_rejected() {
-        let bytes = fixture(&[(b"libx.so", b"relative/libx.so", native_flags(), 0)], true);
-        assert!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so").is_empty());
+        let bytes = fixture(
+            &[(b"libx.so", b"relative/libx.so", native_flags(), 0)],
+            true,
+        );
+        assert!(
+            Cache::from_bytes(bytes)
+                .unwrap()
+                .candidates(b"libx.so")
+                .is_empty()
+        );
         let cache = Cache::from_bytes(sample(true)).unwrap();
         for name in [b"".as_slice(), b"./libx.so", b"libx.so\0suffix"] {
             assert!(cache.candidates(name).is_empty());
@@ -437,9 +517,19 @@ mod tests {
         assert!(Cache::from_bytes(vec![0; MAX_CACHE_BYTES + 1]).is_none());
         let long_path = vec![b'/'; MAX_STRING_BYTES];
         let bytes = fixture(&[(b"libx.so", &long_path, native_flags(), 0)], true);
-        assert!(Cache::from_bytes(bytes).unwrap().candidates(b"libx.so").is_empty());
-        let paths: Vec<_> = (0..MAX_MATCHES + 1).map(|i| format!("/opt/{i}/libx.so")).collect();
-        let entries: Vec<_> = paths.iter().map(|path| (b"libx.so".as_slice(), path.as_bytes(), native_flags(), 0)).collect();
+        assert!(
+            Cache::from_bytes(bytes)
+                .unwrap()
+                .candidates(b"libx.so")
+                .is_empty()
+        );
+        let paths: Vec<_> = (0..MAX_MATCHES + 1)
+            .map(|i| format!("/opt/{i}/libx.so"))
+            .collect();
+        let entries: Vec<_> = paths
+            .iter()
+            .map(|path| (b"libx.so".as_slice(), path.as_bytes(), native_flags(), 0))
+            .collect();
         let cache = Cache::from_bytes(fixture(&entries, true)).unwrap();
         assert_eq!(cache.candidates(b"libx.so").len(), MAX_MATCHES);
     }
@@ -484,34 +574,74 @@ mod tests {
     }
 
     fn variants() -> Vec<u8> {
-        with_hwcaps(fixture(&[
-            (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
-            (b"libx.so", b"/v2/libx.so", native_flags(), HWCAP_EXTENSION),
-            (b"libx.so", b"/v3/libx.so", native_flags(), HWCAP_EXTENSION | 1 | (2 << 32)),
-            (b"libx.so", b"/v4/libx.so", native_flags(), HWCAP_EXTENSION | 2 | (3 << 32)),
-        ], true), &[b"x86-64-v2", b"x86-64-v3", b"x86-64-v4"])
+        with_hwcaps(
+            fixture(
+                &[
+                    (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
+                    (b"libx.so", b"/v2/libx.so", native_flags(), HWCAP_EXTENSION),
+                    (
+                        b"libx.so",
+                        b"/v3/libx.so",
+                        native_flags(),
+                        HWCAP_EXTENSION | 1 | (2 << 32),
+                    ),
+                    (
+                        b"libx.so",
+                        b"/v4/libx.so",
+                        native_flags(),
+                        HWCAP_EXTENSION | 2 | (3 << 32),
+                    ),
+                ],
+                true,
+            ),
+            &[b"x86-64-v2", b"x86-64-v3", b"x86-64-v4"],
+        )
     }
 
     #[test]
     fn supported_variants_precede_baseline_independently_of_cache_order() {
         let cache = Cache::from_bytes(variants()).unwrap();
         for level in 1..=4 {
-            let mut expected: Vec<_> = (2..=level).rev()
-                .map(|n| PathBuf::from(format!("/v{n}/libx.so"))).collect();
+            let mut expected: Vec<_> = (2..=level)
+                .rev()
+                .map(|n| PathBuf::from(format!("/v{n}/libx.so")))
+                .collect();
             expected.push(PathBuf::from("/baseline/libx.so"));
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(level)), expected);
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(level)),
+                expected
+            );
         }
-        assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::default()), vec![PathBuf::from("/baseline/libx.so")]);
+        assert_eq!(
+            cache.candidates_with_capabilities(b"libx.so", Capabilities::default()),
+            vec![PathBuf::from("/baseline/libx.so")]
+        );
     }
 
     #[test]
     fn hwcaps_only_library_is_resolvable_without_baseline() {
-        let bytes = with_hwcaps(fixture(&[
-            (b"libx.so", b"/opt/glibc-hwcaps/x86-64-v2/libx.so", native_flags(), HWCAP_EXTENSION),
-        ], true), &[b"x86-64-v2"]);
+        let bytes = with_hwcaps(
+            fixture(
+                &[(
+                    b"libx.so",
+                    b"/opt/glibc-hwcaps/x86-64-v2/libx.so",
+                    native_flags(),
+                    HWCAP_EXTENSION,
+                )],
+                true,
+            ),
+            &[b"x86-64-v2"],
+        );
         let cache = Cache::from_bytes(bytes).unwrap();
-        assert!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(1)).is_empty());
-        assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(2)), vec![PathBuf::from("/opt/glibc-hwcaps/x86-64-v2/libx.so")]);
+        assert!(
+            cache
+                .candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(1))
+                .is_empty()
+        );
+        assert_eq!(
+            cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(2)),
+            vec![PathBuf::from("/opt/glibc-hwcaps/x86-64-v2/libx.so")]
+        );
     }
 
     #[test]
@@ -526,12 +656,22 @@ mod tests {
             (b"x86-64-v2", HWCAP_EXTENSION | (1 << 63)),
             (b"x86-64-v2", 1),
         ] {
-            let bytes = with_hwcaps(fixture(&[
-                (b"libx.so", b"/candidate/libx.so", native_flags(), flags),
-                (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
-            ], true), &[name]);
+            let bytes = with_hwcaps(
+                fixture(
+                    &[
+                        (b"libx.so", b"/candidate/libx.so", native_flags(), flags),
+                        (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
+                    ],
+                    true,
+                ),
+                &[name],
+            );
             let cache = Cache::from_bytes(bytes).unwrap();
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3)), vec![PathBuf::from("/baseline/libx.so")], "name {name:?}, flags {flags:#x}");
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3)),
+                vec![PathBuf::from("/baseline/libx.so")],
+                "name {name:?}, flags {flags:#x}"
+            );
         }
     }
 
@@ -549,9 +689,14 @@ mod tests {
             put(&mut bytes, 12, count as u32);
             bytes.extend_from_slice(&modern);
             let cache = Cache::from_bytes(bytes).unwrap();
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3)), vec![
-                PathBuf::from("/v3/libx.so"), PathBuf::from("/v2/libx.so"), PathBuf::from("/baseline/libx.so"),
-            ]);
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3)),
+                vec![
+                    PathBuf::from("/v3/libx.so"),
+                    PathBuf::from("/v2/libx.so"),
+                    PathBuf::from("/baseline/libx.so"),
+                ]
+            );
         }
     }
 
@@ -560,50 +705,101 @@ mod tests {
         let seed = variants();
         let extension = word(&seed, 32).unwrap() as usize;
         for (offset, value) in [
-            (32, 0), (32, 1), (32, NEW_HEADER as u32), (32, u32::MAX),
-            (extension, 0), (extension + 4, u32::MAX),
+            (32, 0),
+            (32, 1),
+            (32, NEW_HEADER as u32),
+            (32, u32::MAX),
+            (extension, 0),
+            (extension + 4, u32::MAX),
             (extension + 12, 1), // unknown section flags
-            (extension + 16, 0), (extension + 16, extension as u32),
+            (extension + 16, 0),
+            (extension + 16, extension as u32),
             (extension + 16, u32::MAX),
-            (extension + 20, 0), (extension + 20, 3), (extension + 20, u32::MAX),
+            (extension + 20, 0),
+            (extension + 20, 3),
+            (extension + 20, u32::MAX),
         ] {
             let mut bytes = seed.clone();
             put(&mut bytes, offset, value);
             let cache = Cache::from_bytes(bytes).unwrap();
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)), vec![PathBuf::from("/baseline/libx.so")], "offset {offset}, value {value}");
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)),
+                vec![PathBuf::from("/baseline/libx.so")],
+                "offset {offset}, value {value}"
+            );
         }
         let strings_end = NEW_HEADER + 4 * NEW_ENTRY + word(&seed, 24).unwrap() as usize;
         for end in strings_end..seed.len() {
             let cache = Cache::from_bytes(seed[..end].to_vec()).unwrap();
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)), vec![PathBuf::from("/baseline/libx.so")], "length {end}");
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)),
+                vec![PathBuf::from("/baseline/libx.so")],
+                "length {end}"
+            );
         }
     }
 
     #[test]
     fn extension_name_indices_cannot_escape_the_string_table() {
-        let seed = with_hwcaps(fixture(&[
-            (b"libx.so", b"/candidate/libx.so", native_flags(), HWCAP_EXTENSION),
-            (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
-        ], true), &[b"x86-64-v2"]);
+        let seed = with_hwcaps(
+            fixture(
+                &[
+                    (
+                        b"libx.so",
+                        b"/candidate/libx.so",
+                        native_flags(),
+                        HWCAP_EXTENSION,
+                    ),
+                    (b"libx.so", b"/baseline/libx.so", native_flags(), 0),
+                ],
+                true,
+            ),
+            &[b"x86-64-v2"],
+        );
         let extension = word(&seed, 32).unwrap() as usize;
         let data = word(&seed, extension + 16).unwrap() as usize;
         for value in [0, NEW_HEADER as u32, extension as u32, u32::MAX] {
             let mut bytes = seed.clone();
             put(&mut bytes, data, value);
             let cache = Cache::from_bytes(bytes).unwrap();
-            assert_eq!(cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)), vec![PathBuf::from("/baseline/libx.so")]);
+            assert_eq!(
+                cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4)),
+                vec![PathBuf::from("/baseline/libx.so")]
+            );
         }
     }
 
     #[test]
     fn capability_ranking_is_stable_deduplicated_and_bounded() {
-        let paths: Vec<_> = (0..MAX_MATCHES + 1).map(|i| format!("/baseline/{i}/libx.so")).collect();
-        let mut entries: Vec<_> = paths.iter().map(|path| (b"libx.so".as_slice(), path.as_bytes(), native_flags(), 0)).collect();
-        entries.push((b"libx.so", b"/first/libx.so", native_flags(), HWCAP_EXTENSION));
-        entries.push((b"libx.so", b"/first/libx.so", native_flags(), HWCAP_EXTENSION));
-        entries.push((b"libx.so", b"/second/libx.so", native_flags(), HWCAP_EXTENSION));
+        let paths: Vec<_> = (0..MAX_MATCHES + 1)
+            .map(|i| format!("/baseline/{i}/libx.so"))
+            .collect();
+        let mut entries: Vec<_> = paths
+            .iter()
+            .map(|path| (b"libx.so".as_slice(), path.as_bytes(), native_flags(), 0))
+            .collect();
+        entries.push((
+            b"libx.so",
+            b"/first/libx.so",
+            native_flags(),
+            HWCAP_EXTENSION,
+        ));
+        entries.push((
+            b"libx.so",
+            b"/first/libx.so",
+            native_flags(),
+            HWCAP_EXTENSION,
+        ));
+        entries.push((
+            b"libx.so",
+            b"/second/libx.so",
+            native_flags(),
+            HWCAP_EXTENSION,
+        ));
         let bytes = with_hwcaps(fixture(&entries, true), &[b"x86-64-v3"]);
-        let paths = Cache::from_bytes(bytes).unwrap().candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3));
+        let paths = Cache::from_bytes(bytes)
+            .unwrap()
+            .candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(3));
         assert_eq!(paths.len(), MAX_MATCHES);
         assert_eq!(paths[0], Path::new("/first/libx.so"));
         assert_eq!(paths[1], Path::new("/second/libx.so"));
@@ -619,7 +815,8 @@ mod tests {
                 let mut bytes = seed.clone();
                 bytes[offset] = value;
                 let cache = Cache::from_bytes(bytes).unwrap();
-                let paths = cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4));
+                let paths =
+                    cache.candidates_with_capabilities(b"libx.so", Capabilities::for_x86_level(4));
                 assert!(paths.contains(&PathBuf::from("/baseline/libx.so")));
                 assert!(paths.len() <= 4);
             }

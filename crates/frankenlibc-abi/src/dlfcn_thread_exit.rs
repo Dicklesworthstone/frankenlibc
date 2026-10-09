@@ -8,8 +8,8 @@ use std::cell::{Cell, RefCell};
 use std::ffi::{c_int, c_void};
 use std::sync::OnceLock;
 
-use super::{NativeDso, OPERATIONS, lifecycle, registry};
 use super::tls::Block;
+use super::{NativeDso, OPERATIONS, lifecycle, registry};
 
 type Destructor = unsafe extern "C" fn(*mut c_void);
 
@@ -38,49 +38,65 @@ std::thread_local! {
 }
 
 pub(super) fn with_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
-    STATE.try_with(|slot| {
-        let mut state = slot.get();
-        if state.is_null() {
-            // Ordinary worker teardown must not resurrect a dead cleanup key.
-            // During process exit, late FINI calls may first touch a TLS block;
-            // that state is instead retained until the kernel reclaims it.
-            if !PROCESS_EXIT.with(Cell::get) { CLEANUP.try_with(|_| ()).ok()?; }
-            let allocation = Box::new(ThreadState::default());
-            state = Box::into_raw(allocation);
-            if !PROCESS_EXIT.with(Cell::get) && !attach_reclaimer(state) {
-                // SAFETY: registration failed before the pointer was exposed.
-                unsafe { drop(Box::from_raw(state)) };
-                return None;
+    STATE
+        .try_with(|slot| {
+            let mut state = slot.get();
+            if state.is_null() {
+                // Ordinary worker teardown must not resurrect a dead cleanup key.
+                // During process exit, late FINI calls may first touch a TLS block;
+                // that state is instead retained until the kernel reclaims it.
+                if !PROCESS_EXIT.with(Cell::get) {
+                    CLEANUP.try_with(|_| ()).ok()?;
+                }
+                let allocation = Box::new(ThreadState::default());
+                state = Box::into_raw(allocation);
+                if !PROCESS_EXIT.with(Cell::get) && !attach_reclaimer(state) {
+                    // SAFETY: registration failed before the pointer was exposed.
+                    unsafe { drop(Box::from_raw(state)) };
+                    return None;
+                }
+                slot.set(state);
             }
-            slot.set(state);
-        }
-        // SAFETY: only this thread accesses its heap-pinned state. Cleanup
-        // leaves it alive until every callback (including new ones) returns.
-        callback(unsafe { &*state })
-    }).ok().flatten()
+            // SAFETY: only this thread accesses its heap-pinned state. Cleanup
+            // leaves it alive until every callback (including new ones) returns.
+            callback(unsafe { &*state })
+        })
+        .ok()
+        .flatten()
 }
 
 /// Observe TLS without allocating state or registering a reclamation hook.
 /// Inspection must not turn an untouched module into allocated thread storage.
-pub(super) fn with_existing_state<T>(callback: impl FnOnce(&ThreadState) -> Option<T>) -> Option<T> {
-    STATE.try_with(|slot| {
-        let state = slot.get();
-        if state.is_null() { return None; }
-        // SAFETY: this thread exclusively owns the state, and the synchronous
-        // observer neither reclaims it nor invokes foreign callbacks.
-        callback(unsafe { &*state })
-    }).ok().flatten()
+pub(super) fn with_existing_state<T>(
+    callback: impl FnOnce(&ThreadState) -> Option<T>,
+) -> Option<T> {
+    STATE
+        .try_with(|slot| {
+            let state = slot.get();
+            if state.is_null() {
+                return None;
+            }
+            // SAFETY: this thread exclusively owns the state, and the synchronous
+            // observer neither reclaims it nor invokes foreign callbacks.
+            callback(unsafe { &*state })
+        })
+        .ok()
+        .flatten()
 }
 
 fn drain_current() {
     let _ = STATE.try_with(|slot| {
         let state = slot.get();
-        if state.is_null() { return; }
+        if state.is_null() {
+            return;
+        }
         loop {
             // SAFETY: this thread owns state through the entire drain.
             // Remove before invoking, with no borrow held across user code.
             let next = unsafe { &*state }.destructors.borrow_mut().pop();
-            let Some(entry) = next else { break; };
+            let Some(entry) = next else {
+                break;
+            };
             unsafe { (entry.destructor)(entry.argument) };
             release_pins(&entry.owners);
         }
@@ -93,13 +109,17 @@ pub(super) fn prepare_process_exit() {
 }
 
 type SetSpecific = unsafe extern "C" fn(libc::pthread_key_t, *const c_void) -> c_int;
-struct Reclaimer { key: libc::pthread_key_t, set: SetSpecific }
+struct Reclaimer {
+    key: libc::pthread_key_t,
+    set: SetSpecific,
+}
 static RECLAIMER: OnceLock<Option<Reclaimer>> = OnceLock::new();
 
 fn attach_reclaimer(state: *mut ThreadState) -> bool {
     let reclaimer = RECLAIMER.get_or_init(|| {
         type Create = unsafe extern "C" fn(
-            *mut libc::pthread_key_t, Option<unsafe extern "C" fn(*mut c_void)>,
+            *mut libc::pthread_key_t,
+            Option<unsafe extern "C" fn(*mut c_void)>,
         ) -> c_int;
         let create = crate::host_resolve::resolve_host_symbol_raw("pthread_key_create")?;
         let set = crate::host_resolve::resolve_host_symbol_raw("pthread_setspecific")?;
@@ -108,16 +128,20 @@ fn attach_reclaimer(state: *mut ThreadState) -> bool {
         let create: Create = unsafe { core::mem::transmute(create) };
         let set: SetSpecific = unsafe { std::mem::transmute(set) };
         let mut key = 0;
-        if unsafe { create(&mut key, Some(reclaim)) } != 0 { return None; }
+        if unsafe { create(&mut key, Some(reclaim)) } != 0 {
+            return None;
+        }
         Some(Reclaimer { key, set })
     });
-    reclaimer.as_ref().is_some_and(|reclaimer| {
-        unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 }
-    })
+    reclaimer
+        .as_ref()
+        .is_some_and(|reclaimer| unsafe { (reclaimer.set)(reclaimer.key, state.cast()) == 0 })
 }
 
 unsafe extern "C" fn reclaim(pointer: *mut c_void) {
-    if pointer.is_null() { return; }
+    if pointer.is_null() {
+        return;
+    }
     // pthread-key destructors run on ordinary thread termination, but not on
     // normal process exit. Deferring allocation reclamation to this stage
     // keeps TLS valid for process finalizers even when a worker calls exit.
@@ -137,10 +161,16 @@ impl Drop for Cleanup {
 }
 
 fn contains_address(dso: &NativeDso, address: usize) -> bool {
-    let Some(offset) = (address as u64).checked_sub(dso.object.base) else { return false; };
+    let Some(offset) = (address as u64).checked_sub(dso.object.base) else {
+        return false;
+    };
     dso.object.program_headers.iter().any(|segment| {
-        segment.is_load() && segment.p_vaddr <= offset
-            && segment.p_vaddr.checked_add(segment.p_memsz).is_some_and(|end| offset < end)
+        segment.is_load()
+            && segment.p_vaddr <= offset
+            && segment
+                .p_vaddr
+                .checked_add(segment.p_memsz)
+                .is_some_and(|end| offset < end)
     })
 }
 
@@ -150,21 +180,37 @@ fn register(destructor: Destructor, argument: *mut c_void, dso_handle: *mut c_vo
         let mut entries = state.destructors.try_borrow_mut().ok()?;
         entries.try_reserve(1).ok()?;
         let mut dsos = registry().lock().ok()?;
-        let owner = dsos.iter().find(|dso| !dso.retiring && contains_address(dso, dso_handle as usize))?.id;
-        let provider = dsos.iter().find(|dso| {
-            !dso.retiring && lifecycle::executable_address(dso, destructor as *const () as usize)
-        })?.id;
+        let owner = dsos
+            .iter()
+            .find(|dso| !dso.retiring && contains_address(dso, dso_handle as usize))?
+            .id;
+        let provider = dsos
+            .iter()
+            .find(|dso| {
+                !dso.retiring
+                    && lifecycle::executable_address(dso, destructor as *const () as usize)
+            })?
+            .id;
         let mut owners = vec![owner];
-        if provider != owner { owners.push(provider); }
+        if provider != owner {
+            owners.push(provider);
+        }
         // Check all counts before changing any resident state. Once pinned,
         // the reserved queue slot cannot fail and owns exactly these pins.
         for id in &owners {
-            dsos.iter().find(|dso| dso.id == *id)?.thread_exit_pins.checked_add(1)?;
+            dsos.iter()
+                .find(|dso| dso.id == *id)?
+                .thread_exit_pins
+                .checked_add(1)?;
         }
         for dso in dsos.iter_mut().filter(|dso| owners.contains(&dso.id)) {
             dso.thread_exit_pins += 1;
         }
-        entries.push(Entry { destructor, argument, owners });
+        entries.push(Entry {
+            destructor,
+            argument,
+            owners,
+        });
         Some(())
     })
 }
@@ -184,13 +230,23 @@ fn release_pins(owners: &[usize]) {
 }
 
 unsafe extern "C" fn register_impl(
-    destructor: Option<Destructor>, argument: *mut c_void, dso_handle: *mut c_void,
+    destructor: Option<Destructor>,
+    argument: *mut c_void,
+    dso_handle: *mut c_void,
 ) -> c_int {
-    let Some(destructor) = destructor else { return -1; };
-    if register(destructor, argument, dso_handle).is_some() { 0 } else { -1 }
+    let Some(destructor) = destructor else {
+        return -1;
+    };
+    if register(destructor, argument, dso_handle).is_some() {
+        0
+    } else {
+        -1
+    }
 }
 
 pub(super) fn resolver_address(version: Option<&str>) -> Option<u64> {
-    if version.is_some_and(|version| version != "GLIBC_2.18") { return None; }
+    if version.is_some_and(|version| version != "GLIBC_2.18") {
+        return None;
+    }
     Some(register_impl as *const () as usize as u64)
 }

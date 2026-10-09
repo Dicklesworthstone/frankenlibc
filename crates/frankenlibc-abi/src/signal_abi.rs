@@ -84,7 +84,10 @@ fn sigabbrev_bytes(sig: c_int) -> Option<&'static [u8]> {
     SIGNAL_ABBREVS.get(sig as usize).copied()
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct KernelSigaction {
@@ -94,7 +97,10 @@ struct KernelSigaction {
     sa_mask: libc::c_ulong,
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 impl KernelSigaction {
     const fn zeroed() -> Self {
         Self {
@@ -142,13 +148,19 @@ fn signal_restorer_trampoline_addr() -> usize {
     frankenlibc_signal_restorer as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn sigset_first_word(set: &libc::sigset_t) -> libc::c_ulong {
-    // SAFETY: x86_64 rt_sigaction consumes only the first kernel-sized word.
+    // SAFETY: rt_sigaction consumes only the first kernel-sized word.
     unsafe { *(set as *const libc::sigset_t).cast::<libc::c_ulong>() }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
     // SAFETY: the caller zero-initializes the rest of the sigset_t storage.
     unsafe {
@@ -156,7 +168,10 @@ fn write_sigset_first_word(set: &mut libc::sigset_t, value: libc::c_ulong) {
     }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
     KernelSigaction {
         sa_handler: act.sa_sigaction,
@@ -166,7 +181,10 @@ fn user_to_kernel_sigaction(act: &libc::sigaction) -> KernelSigaction {
     }
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn kernel_to_user_sigaction(act: &KernelSigaction) -> libc::sigaction {
     let mut user = unsafe { std::mem::zeroed::<libc::sigaction>() };
     user.sa_sigaction = act.sa_handler;
@@ -498,17 +516,26 @@ fn is_default_or_ignore_handler(handler: usize) -> bool {
     handler == libc::SIG_DFL || handler == libc::SIG_IGN
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn signal_handler_trampoline_addr() -> usize {
     signal_handler_trampoline as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn signal_siginfo_trampoline_addr() -> usize {
     signal_siginfo_trampoline as *const () as usize
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn is_signal_trampoline(handler: usize) -> bool {
     handler == signal_handler_trampoline_addr() || handler == signal_siginfo_trampoline_addr()
 }
@@ -728,12 +755,22 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     unsafe { dispatch_registered_handler(signum, info, context) };
 }
 
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
 fn rewrite_old_sigaction(oldact_ref: &mut libc::sigaction, prev_handler: usize, prev_flags: usize) {
     if is_signal_trampoline(oldact_ref.sa_sigaction) && prev_handler != 0 {
-        let kernel_flags = oldact_ref.sa_flags;
         oldact_ref.sa_sigaction = prev_handler;
-        oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
+        #[cfg(target_arch = "x86_64")]
+        {
+            let kernel_flags = oldact_ref.sa_flags;
+            oldact_ref.sa_flags = (prev_flags as c_int) | (kernel_flags & SA_RESTORER_FLAG);
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            oldact_ref.sa_flags = prev_flags as c_int;
+        }
     }
 }
 
@@ -1487,7 +1524,10 @@ pub unsafe extern "C" fn sigaction(
         return -1;
     }
 
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(not(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )))]
     {
         let _ = (act, oldact);
         unsafe { set_abi_errno(errno::ENOSYS) };
@@ -1495,7 +1535,10 @@ pub unsafe extern "C" fn sigaction(
         -1
     }
 
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ))]
     {
         // Linux `rt_sigaction` expects the kernel sigset size (`sizeof(unsigned long)`),
         // not libc's userspace `sigset_t` size.
@@ -1514,6 +1557,7 @@ pub unsafe extern "C" fn sigaction(
                 } else {
                     kernel_act.sa_handler = signal_handler_trampoline_addr();
                 }
+                #[cfg(target_arch = "x86_64")]
                 if kernel_act.sa_flags & SA_RESTORER_FLAG as usize == 0
                     || kernel_act.sa_restorer == 0
                 {

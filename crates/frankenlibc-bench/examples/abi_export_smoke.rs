@@ -25,7 +25,7 @@
 //! RTLD_LOCAL, deliberately: the point is to exercise the object's own export
 //! table, not to interpose the process.
 
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{CString, c_char, c_int, c_void};
 
 const RTLD_NOW: c_int = 2;
 const RTLD_LOCAL: c_int = 0;
@@ -66,7 +66,14 @@ fn shared_object() -> String {
 fn build_cdylib() {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let status = std::process::Command::new(&cargo)
-        .args(["build", "--quiet", "--profile", "release", "-p", "frankenlibc-abi"])
+        .args([
+            "build",
+            "--quiet",
+            "--profile",
+            "release",
+            "-p",
+            "frankenlibc-abi",
+        ])
         .env("CARGO_TARGET_DIR", target_dir())
         .status()
         .expect("build the FrankenLibC cdylib");
@@ -109,7 +116,10 @@ fn main() {
     let path = CString::new(object.clone()).expect("object path");
     let handle = unsafe { dlopen(path.as_ptr(), RTLD_NOW | RTLD_LOCAL) };
     if handle.is_null() {
-        println!("EXPORT_SMOKE_UNAVAILABLE object={object} dlerror={}", last_dlerror());
+        println!(
+            "EXPORT_SMOKE_UNAVAILABLE object={object} dlerror={}",
+            last_dlerror()
+        );
         std::process::exit(2);
     }
     println!("EXPORT_SMOKE_OBJECT path={object}");
@@ -118,11 +128,20 @@ fn main() {
     // all along and must pass; `definitely_not_a_libc_symbol` must NOT resolve,
     // so a run that reported everything green would be visibly broken.
     let fixed = [
-        "strchr", "strcpy", "strncpy", "wcsstr", "cospi", "dprintf", "freopen",
-        "posix_spawn_file_actions_addclose", "vfprintf",
+        "strchr",
+        "strcpy",
+        "strncpy",
+        "wcsstr",
+        "cospi",
+        "dprintf",
+        "freopen",
+        "posix_spawn_file_actions_addclose",
+        "vfprintf",
         // Converted from global_asm! trampolines to naked #[no_mangle] fns,
         // which is what actually reaches .dynsym.
-        "nexttoward", "nexttowardf", "nexttowardl",
+        "nexttoward",
+        "nexttowardf",
+        "nexttowardl",
     ];
     let controls_present = ["memcpy", "strlen"];
     let control_absent = "definitely_not_a_libc_symbol";

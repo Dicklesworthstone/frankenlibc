@@ -289,13 +289,12 @@ impl Frame {
                         if op == b'@' && state.star && state.s == state.end {
                             return Step::Done(false);
                         }
-                        self.split = if op == b'*'
-                            || (op == b'+' && state.star && state.s == state.end)
-                        {
-                            state.s + 1
-                        } else {
-                            state.s
-                        };
+                        self.split =
+                            if op == b'*' || (op == b'+' && state.star && state.s == state.end) {
+                                state.s + 1
+                            } else {
+                                state.s
+                            };
                         self.phase = if matches!(op, b'*' | b'?') {
                             Phase::Zero
                         } else {
@@ -312,8 +311,7 @@ impl Frame {
                         let mut next = state.p + 1;
                         while next < state.pend
                             && pattern[next] == b'*'
-                            && group_at(state.suffix(next, state.s, state.star), groups)
-                                .is_none()
+                            && group_at(state.suffix(next, state.s, state.star), groups).is_none()
                         {
                             next += 1;
                         }
@@ -541,26 +539,55 @@ mod tests {
     #[test]
     fn nullable_repetition_and_wildcard_slack_terminate() {
         for (pattern, text, expected) in [
-            ("+(|a)", "aaaa", true), ("*()", "", true),
-            ("+()", "", true), ("*+()", "bb", false),
-            ("*@(b|)", "ba", false), ("*a@(b|)", "ba", true),
-            ("*+()?+()", "bc", true), ("**(!()", "anything", false),
-            ("!(a|b)", "ab", true), ("!(a|b)", "a", false),
+            ("+(|a)", "aaaa", true),
+            ("*()", "", true),
+            ("+()", "", true),
+            ("*+()", "bb", false),
+            ("*@(b|)", "ba", false),
+            ("*a@(b|)", "ba", true),
+            ("*+()?+()", "bc", true),
+            ("**(!()", "anything", false),
+            ("!(a|b)", "ab", true),
+            ("!(a|b)", "a", false),
         ] {
-            assert_eq!(fnmatch_match(pattern.as_bytes(), text.as_bytes(), EXT), expected,
-                "{pattern:?} {text:?}");
+            assert_eq!(
+                fnmatch_match(pattern.as_bytes(), text.as_bytes(), EXT),
+                expected,
+                "{pattern:?} {text:?}"
+            );
         }
     }
 
     #[test]
     fn bounded_differential_corpus_preserves_existing_flag_semantics() {
         let patterns: &[&[u8]] = &[
-            b"@(a|b)", b"?(a|)", b"+(a|aa)", b"*(a|?)b", b"!(a|b)",
-            b"@(@(a)|+(b))", b"+(|a)", b"*(|?)", b"!(a*)/b", b"a@(.*|?)",
-            b"*@(b|)", b"*?@(b|)", b"*a@(b|)", b"*+()?+()", b"**(!()",
-            b"@([[:alpha:]]|[.])", b"@([])]|[|])", b"@([a-z]|\\?)",
-            b"@(a|[a-)", b"@([![:upper:]\\]|a)", b"@(a/b|a)", b"*(a)/?",
-            b"!(|a)", b"+(!(a))", b"@(\\|a)", b"*@(a|b)*", b"a\\@(b)",
+            b"@(a|b)",
+            b"?(a|)",
+            b"+(a|aa)",
+            b"*(a|?)b",
+            b"!(a|b)",
+            b"@(@(a)|+(b))",
+            b"+(|a)",
+            b"*(|?)",
+            b"!(a*)/b",
+            b"a@(.*|?)",
+            b"*@(b|)",
+            b"*?@(b|)",
+            b"*a@(b|)",
+            b"*+()?+()",
+            b"**(!()",
+            b"@([[:alpha:]]|[.])",
+            b"@([])]|[|])",
+            b"@([a-z]|\\?)",
+            b"@(a|[a-)",
+            b"@([![:upper:]\\]|a)",
+            b"@(a/b|a)",
+            b"*(a)/?",
+            b"!(|a)",
+            b"+(!(a))",
+            b"@(\\|a)",
+            b"*@(a|b)*",
+            b"a\\@(b)",
         ];
         let mut texts = vec![Vec::new()];
         for _ in 0..3 {
@@ -579,9 +606,11 @@ mod tests {
             let flags = FnmatchFlags::from_bits(bits);
             for pattern in patterns {
                 for text in &texts {
-                    assert_eq!(fnmatch_match(pattern, text, flags),
+                    assert_eq!(
+                        fnmatch_match(pattern, text, flags),
                         legacy::fnmatch_match(pattern, text, flags),
-                        "pattern={pattern:?} text={text:?} flags={bits}");
+                        "pattern={pattern:?} text={text:?} flags={bits}"
+                    );
                 }
             }
         }
