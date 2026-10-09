@@ -1014,7 +1014,8 @@ const STDERR_SENTINEL: usize = 0x1000_0003;
 const FIRST_DYNAMIC_STREAM_ID: usize = 0x1000_0010;
 
 /// Next stream ID for dynamically opened files.
-static NEXT_STREAM_ID: Mutex<usize> = Mutex::new(FIRST_DYNAMIC_STREAM_ID);
+static NEXT_STREAM_ID: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(FIRST_DYNAMIC_STREAM_ID);
 
 // `sorted_stream_ids` sorts numerically, and `_IO_flush_all` / `fflush(NULL)`
 // walk that order, so stdin/stdout/stderr flush before any stream the program
@@ -2468,7 +2469,7 @@ fn is_fl_issued_stream_id(id: usize) -> bool {
     if io_internal_abi::is_native_handle_slot_address(id as *mut c_void) {
         return true;
     }
-    let watermark = *NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
+    let watermark = NEXT_STREAM_ID.load(std::sync::atomic::Ordering::Acquire);
     id < watermark
 }
 
@@ -3021,10 +3022,7 @@ unsafe fn host_ftrylockfile_fn() -> Option<HostFtrylockfileFn> {
 }
 
 fn alloc_stream_id() -> usize {
-    let mut next = NEXT_STREAM_ID.lock().unwrap_or_else(|e| e.into_inner());
-    let id = *next;
-    *next = id.wrapping_add(1);
-    id
+    NEXT_STREAM_ID.fetch_add(1, std::sync::atomic::Ordering::AcqRel)
 }
 
 fn native_stream_open_flags(open_flags: OpenFlags) -> u32 {
