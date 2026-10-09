@@ -2539,7 +2539,11 @@ fn fgetws_unlocked_chk_reads_wide_chars() {
 /// asserted something no oracle agrees with.
 fn open_long_line() -> *mut core::ffi::c_void {
     use std::io::Write;
-    let path = std::env::temp_dir().join("fl_fortify_fgetws_long.txt");
+    let path = std::env::temp_dir().join(format!(
+        "fl_fortify_fgetws_long_{}_{:?}.txt",
+        std::process::id(),
+        std::thread::current().id()
+    ));
     let mut f = std::fs::File::create(&path).expect("create long-line file");
     writeln!(f, "{}", "x".repeat(300)).expect("write long line");
     let cpath = std::ffi::CString::new(path.to_str().expect("utf-8 path")).expect("path has NUL");
