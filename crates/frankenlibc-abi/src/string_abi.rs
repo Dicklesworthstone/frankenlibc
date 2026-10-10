@@ -4990,9 +4990,14 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
         return unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n) };
     }
 
-    if string_raw_passthrough_active() {
+    // Acquire the complete guard here, before the cold validating boundary.
+    // `memcmp_validating` used to repeat the raw-passthrough checks when it
+    // immediately acquired this same guard, so every ordinary hardened call
+    // paid two allocator/TLS/validation-context probes. Keeping the guard in
+    // this frame preserves its lifetime across the whole validating call.
+    let Some(_membrane_guard) = enter_string_membrane_guard() else {
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
-    }
+    };
 
     // Cold tail in its own frame, cut BELOW the bypass above rather than at the
     // strict gate. `memcmp` has the same shape `strlen` does: a
@@ -5009,14 +5014,6 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 #[cold]
 #[inline(never)]
 unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
-    // Healing-policy initialization reads the environment, which can call our
-    // memcpy. Hold the same guard as memcpy/memmove before entering any policy
-    // code, or that nested copy can wait on the initializer owned by this call.
-    let Some(_membrane_guard) = enter_string_membrane_guard() else {
-        // SAFETY: the caller supplies two readable n-byte regions; this nested
-        // path must not consult the membrane whose initialization is in flight.
-        return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
-    };
     let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
     // Take one coherent extent snapshot per operand and reuse it for both the
     // runtime decision and the eventual hardened clamp. This path previously
