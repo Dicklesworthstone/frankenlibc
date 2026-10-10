@@ -5017,7 +5017,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         // path must not consult the membrane whose initialization is in flight.
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     };
-    let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
+    let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
     // Take one coherent extent snapshot per operand and reuse it for both the
     // runtime decision and the eventual hardened clamp. This path previously
     // performed the two full lookups again after `decide`, while independently

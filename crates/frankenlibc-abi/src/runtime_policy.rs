@@ -66,6 +66,7 @@ const FFI_PCC_STATE_VERIFIED: u8 = 2;
 const FFI_PCC_STATE_REJECTED: u8 = 3;
 const FFI_PCC_POLICY_BASE: u32 = 0x5043_4300;
 const FFI_PCC_NO_INDEX: u8 = u8::MAX;
+const FFI_PCC_MEMCMP_INDEX: u8 = 7;
 
 // Manual init guard that avoids OnceLock's internal futex.
 // OnceLock::get_or_init uses a futex wait when it sees init-in-progress,
@@ -651,7 +652,7 @@ fn ffi_pcc_certificate_index_for_symbol(symbol: &'static str) -> u8 {
         (K_MEMALIGN, 8) => 4,
         (K_ALIGNED_ALLOC, 13) => 5,
         (K_FREE, 4) => 6,
-        (K_MEMCMP, 6) => 7,
+        (K_MEMCMP, 6) => FFI_PCC_MEMCMP_INDEX,
         (K_STRLEN, 6) => 8,
         (K_MEMCPY, 6) => 9,
         (K_SNPRINTF, 8) => 10,
@@ -1601,13 +1602,32 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
         };
     }
 
+    entrypoint_scope_active(symbol, ffi_pcc_certificate_index_for_symbol(symbol))
+}
+
+/// Install the trace scope for the certified `memcmp` entrypoint without
+/// recomputing its startup-verified certificate-table index on every call.
+#[must_use]
+pub(crate) fn entrypoint_scope_memcmp() -> EntrypointTraceGuard {
+    if strict_passthrough_active() {
+        return EntrypointTraceGuard {
+            previous: None,
+            skipped: true,
+        };
+    }
+
+    entrypoint_scope_active("memcmp", FFI_PCC_MEMCMP_INDEX)
+}
+
+#[inline(always)]
+fn entrypoint_scope_active(symbol: &'static str, pcc_index: u8) -> EntrypointTraceGuard {
     let trace_seq = next_trace_seq();
 
     let context = TraceContext {
         trace_seq,
         symbol,
         parent_span_seq: trace_seq,
-        pcc_index: ffi_pcc_certificate_index_for_symbol(symbol),
+        pcc_index,
     };
 
     let previous = with_trace_context(|slot| {
@@ -4435,7 +4455,7 @@ mod tests {
         reset_decision_contract_machine_for_tests();
         let _runtime_ready = enable_runtime_kernel_for_tests();
         let _mode = set_mode_state_for_tests(MODE_HARDENED);
-        let _scope = entrypoint_scope("memcmp");
+        let _scope = entrypoint_scope_memcmp();
 
         let token = active_memcmp_pcc_token().expect("memcmp certificate should be active");
         let (_, decision) = decide_certified_memcmp(token, 0x2400, 96, true);
@@ -4478,7 +4498,7 @@ mod tests {
         reset_ffi_pcc_state_for_tests();
         assert!(ensure_ffi_pcc_verified(), "ffi pcc table should verify");
 
-        let _memcmp = entrypoint_scope("memcmp");
+        let _memcmp = entrypoint_scope_memcmp();
         assert!(proof_carried_pointer_validation_active());
         drop(_memcmp);
 
