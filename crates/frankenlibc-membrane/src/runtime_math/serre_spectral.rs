@@ -223,9 +223,11 @@ impl SerreSpectralController {
         }
 
         let signal = if lifted_ok { 0.0 } else { 1.0 };
-        cell.differential_density = cell
-            .differential_density
-            .mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * signal);
+        cell.differential_density = super::internal_fma::mul_add(
+            cell.differential_density,
+            1.0 - EWMA_ALPHA,
+            EWMA_ALPHA * signal,
+        );
 
         // Page transition: snapshot previous densities for convergence tracking.
         if self

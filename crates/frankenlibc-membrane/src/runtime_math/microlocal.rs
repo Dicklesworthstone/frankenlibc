@@ -259,9 +259,11 @@ impl MicrolocalController {
         // conormal bundle density at the target stratum boundary.
         let is_crossing = direction != TransferDirection::Tangential;
         let crossing_signal = if is_crossing { 1.0 } else { 0.0 };
-        self.strata[to_idx].conormal_density = self.strata[to_idx]
-            .conormal_density
-            .mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * crossing_signal);
+        self.strata[to_idx].conormal_density = super::internal_fma::mul_add(
+            self.strata[to_idx].conormal_density,
+            1.0 - EWMA_ALPHA,
+            EWMA_ALPHA * crossing_signal,
+        );
 
         // Propagation failure tracking: an adverse outcome during a
         // non-tangential transfer is a "non-characteristic" crossing —
@@ -270,14 +272,18 @@ impl MicrolocalController {
             self.strata[to_idx].propagation_failures += 1;
         }
         let failure_signal = if is_crossing && adverse { 1.0 } else { 0.0 };
-        self.strata[to_idx].failure_rate = self.strata[to_idx]
-            .failure_rate
-            .mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * failure_signal);
+        self.strata[to_idx].failure_rate = super::internal_fma::mul_add(
+            self.strata[to_idx].failure_rate,
+            1.0 - EWMA_ALPHA,
+            EWMA_ALPHA * failure_signal,
+        );
 
         // Update overall propagation failure rate.
-        self.overall_failure_rate = self
-            .overall_failure_rate
-            .mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * failure_signal);
+        self.overall_failure_rate = super::internal_fma::mul_add(
+            self.overall_failure_rate,
+            1.0 - EWMA_ALPHA,
+            EWMA_ALPHA * failure_signal,
+        );
 
         // Update current stratum.
         self.current_stratum = to_stratum;

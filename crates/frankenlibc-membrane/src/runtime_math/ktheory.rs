@@ -189,8 +189,11 @@ impl KTheoryController {
         // Update observed contract coordinates via EWMA.
         for (i, coord) in coords.iter().enumerate().take(CONTRACT_RANK) {
             let sanitized = sanitize_contract_coordinate(*coord);
-            bundle.observed[i] =
-                bundle.observed[i].mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * sanitized);
+            bundle.observed[i] = super::internal_fma::mul_add(
+                bundle.observed[i],
+                1.0 - EWMA_ALPHA,
+                EWMA_ALPHA * sanitized,
+            );
         }
 
         // Freeze baseline after calibration period.

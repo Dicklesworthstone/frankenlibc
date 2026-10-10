@@ -386,8 +386,8 @@ fn overlap_fraction(src_addr: usize, dst_addr: usize, len: usize) -> f64 {
 ///
 /// Per-thread rather than a shared table: a global lock on the hardened string dispatch
 /// path would trade computation for contention, and the entries are tiny and pure so
-/// duplicating them per thread costs nothing but a few hundred bytes.
-const CERT_CACHE_SLOTS: usize = 16;
+/// duplicating them per thread costs only a few KiB.
+const CERT_CACHE_SLOTS: usize = 64;
 
 thread_local! {
     /// Direct-mapped, `None` until filled. `CliffordIsomorphismCertificate` is `Copy` and
@@ -704,16 +704,19 @@ impl CliffordController {
         }
         let current = observation_vector(obs);
         let steady = embed(current, current);
-        for _ in 1..n {
-            self.ewma_update(&steady);
-        }
+        super::internal_fma::ewma_repeated(
+            &mut self.ewma_mv.coeffs,
+            &steady.coeffs,
+            EWMA_ALPHA,
+            n - 1,
+        );
         self.total_observations += n - 1;
         self.state = self.classify();
     }
 
     fn ewma_update(&mut self, mv: &Multivector) {
         for (e, m) in self.ewma_mv.coeffs.iter_mut().zip(mv.coeffs.iter()) {
-            *e = e.mul_add(1.0 - EWMA_ALPHA, EWMA_ALPHA * m);
+            *e = super::internal_fma::mul_add(*e, 1.0 - EWMA_ALPHA, EWMA_ALPHA * m);
         }
     }
 

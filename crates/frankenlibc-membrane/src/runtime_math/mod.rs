@@ -16,6 +16,68 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 /// Offered observations per change-point detector update.
 const CHANGEPOINT_CADENCE: u64 = 16;
 
+// Runtime controllers use fused arithmetic for deterministic state updates.
+// Calling `f64::mul_add` from a baseline x86-64 build is lowered through the
+// process's public `fma` symbol, which recursively crosses FrankenLibC's ABI
+// membrane. Keep controller arithmetic inside the membrane while retaining
+// exactly the same single-rounding operation on CPUs with FMA support.
+#[allow(unsafe_code)]
+mod internal_fma {
+    #[inline(always)]
+    pub(super) fn mul_add(x: f64, y: f64, z: f64) -> f64 {
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[target_feature(enable = "fma")]
+            fn fused(x: f64, y: f64, z: f64) -> f64 {
+                x.mul_add(y, z)
+            }
+
+            if std::is_x86_feature_detected!("fma") {
+                // SAFETY: the runtime feature check above proves that the CPU
+                // supports the instruction emitted by `fused`.
+                return unsafe { fused(x, y, z) };
+            }
+        }
+
+        x.mul_add(y, z)
+    }
+
+    #[inline(always)]
+    pub(super) fn ewma_repeated(state: &mut [f64], sample: &[f64], alpha: f64, repetitions: u64) {
+        debug_assert_eq!(state.len(), sample.len());
+        if repetitions == 0 {
+            return;
+        }
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            #[target_feature(enable = "fma")]
+            fn fused_repeated(state: &mut [f64], sample: &[f64], alpha: f64, repetitions: u64) {
+                let decay = 1.0 - alpha;
+                for _ in 0..repetitions {
+                    for (value, observation) in state.iter_mut().zip(sample) {
+                        *value = value.mul_add(decay, alpha * observation);
+                    }
+                }
+            }
+
+            if std::is_x86_feature_detected!("fma") {
+                // SAFETY: the runtime feature check above proves that the CPU
+                // supports every fused operation in `fused_repeated`.
+                unsafe { fused_repeated(state, sample, alpha, repetitions) };
+                return;
+            }
+        }
+
+        let decay = 1.0 - alpha;
+        for _ in 0..repetitions {
+            for (value, observation) in state.iter_mut().zip(sample) {
+                *value = value.mul_add(decay, alpha * observation);
+            }
+        }
+    }
+}
+
 // Hardware boundary: policy arithmetic must not alter the C caller's fenv.
 // Kept here (rather than only in the ABI guard) because pointer validation owns
 // a separate kernel. This implementation covers the supported x86_64 ABI.
