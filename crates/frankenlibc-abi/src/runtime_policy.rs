@@ -1162,6 +1162,121 @@ pub(crate) struct DecisionExplainability {
     pub evidence_seqno: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum RecordedDecisionGate {
+    RuntimePolicy,
+    FfiPcc,
+}
+
+impl RecordedDecisionGate {
+    #[inline]
+    fn from_name(name: &'static str) -> Self {
+        if std::ptr::eq(name.as_ptr(), DECISION_GATE_FFI_PCC.as_ptr()) {
+            Self::FfiPcc
+        } else {
+            debug_assert_eq!(name, DECISION_GATE_RUNTIME_POLICY);
+            Self::RuntimePolicy
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::RuntimePolicy => DECISION_GATE_RUNTIME_POLICY,
+            Self::FfiPcc => DECISION_GATE_FFI_PCC,
+        }
+    }
+}
+
+/// Write-optimized TLS form of [`DecisionExplainability`].
+///
+/// The controller identifier is invariant and the decision gate has only two
+/// values. Reconstructing those fields on a diagnostic read avoids writing two
+/// fat string pointers on every deployed hardened decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordedDecisionExplainability {
+    trace_seq: u64,
+    span_seq: u64,
+    parent_span_seq: u64,
+    symbol: &'static str,
+    decision_gate: RecordedDecisionGate,
+    mode: SafetyLevel,
+    family: ApiFamily,
+    profile: ValidationProfile,
+    action: MembraneAction,
+    contract_state: TsmState,
+    contract_event: DecisionContractEvent,
+    contract_action: DecisionContractAction,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    requested_bytes: usize,
+    addr_hint: usize,
+    is_write: bool,
+    bloom_negative: bool,
+    contention_hint: u16,
+    evidence_seqno: u64,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<RecordedDecisionExplainability>()
+        < std::mem::size_of::<DecisionExplainability>()
+);
+
+impl RecordedDecisionExplainability {
+    fn expand(self) -> DecisionExplainability {
+        DecisionExplainability {
+            trace_seq: self.trace_seq,
+            span_seq: self.span_seq,
+            parent_span_seq: self.parent_span_seq,
+            symbol: self.symbol,
+            controller_id: CONTROLLER_ID_RUNTIME_MATH,
+            decision_gate: self.decision_gate.as_str(),
+            mode: self.mode,
+            family: self.family,
+            profile: self.profile,
+            action: self.action,
+            contract_state: self.contract_state,
+            contract_event: self.contract_event,
+            contract_action: self.contract_action,
+            policy_id: self.policy_id,
+            risk_upper_bound_ppm: self.risk_upper_bound_ppm,
+            requested_bytes: self.requested_bytes,
+            addr_hint: self.addr_hint,
+            is_write: self.is_write,
+            bloom_negative: self.bloom_negative,
+            contention_hint: self.contention_hint,
+            evidence_seqno: self.evidence_seqno,
+        }
+    }
+}
+
+impl From<DecisionExplainability> for RecordedDecisionExplainability {
+    fn from(value: DecisionExplainability) -> Self {
+        Self {
+            trace_seq: value.trace_seq,
+            span_seq: value.span_seq,
+            parent_span_seq: value.parent_span_seq,
+            symbol: value.symbol,
+            decision_gate: RecordedDecisionGate::from_name(value.decision_gate),
+            mode: value.mode,
+            family: value.family,
+            profile: value.profile,
+            action: value.action,
+            contract_state: value.contract_state,
+            contract_event: value.contract_event,
+            contract_action: value.contract_action,
+            policy_id: value.policy_id,
+            risk_upper_bound_ppm: value.risk_upper_bound_ppm,
+            requested_bytes: value.requested_bytes,
+            addr_hint: value.addr_hint,
+            is_write: value.is_write,
+            bloom_negative: value.bloom_negative,
+            contention_hint: value.contention_hint,
+            evidence_seqno: value.evidence_seqno,
+        }
+    }
+}
+
 impl DecisionExplainability {
     #[must_use]
     pub fn trace_id(self) -> String {
@@ -1196,7 +1311,7 @@ struct RuntimePolicyTls {
     trace_counter: u64,
     decision_counter: u64,
     trace_context: Option<TraceContext>,
-    last_explainability: Option<DecisionExplainability>,
+    last_explainability: Option<RecordedDecisionExplainability>,
     policy_reentry_depth: u32,
     decision_contract_machine: DecisionContractMachine,
 }
@@ -1256,7 +1371,7 @@ thread_local! {
     static TRACE_COUNTER: Cell<u64> = const { Cell::new(0) };
     static DECISION_COUNTER: Cell<u64> = const { Cell::new(0) };
     static TRACE_CONTEXT: Cell<Option<TraceContext>> = const { Cell::new(None) };
-    static LAST_EXPLAINABILITY: RefCell<Option<DecisionExplainability>> = const { RefCell::new(None) };
+    static LAST_EXPLAINABILITY: RefCell<Option<RecordedDecisionExplainability>> = const { RefCell::new(None) };
     static POLICY_REENTRY_DEPTH: Cell<u32> = const { Cell::new(0) };
     static DECISION_CONTRACT_MACHINE: RefCell<DecisionContractMachine> =
         const { RefCell::new(DecisionContractMachine::new(DECISION_CONTRACT_CLEAR_THRESHOLD)) };
@@ -1363,7 +1478,7 @@ fn with_trace_context<R>(callback: impl FnOnce(&mut Option<TraceContext>) -> R) 
 }
 
 fn with_last_explainability<R>(
-    callback: impl FnOnce(&mut Option<DecisionExplainability>) -> R,
+    callback: impl FnOnce(&mut Option<RecordedDecisionExplainability>) -> R,
 ) -> Option<R> {
     #[cfg(feature = "owned-tls-cache")]
     {
@@ -1510,12 +1625,16 @@ pub(crate) fn entrypoint_scope(symbol: &'static str) -> EntrypointTraceGuard {
 
 #[must_use]
 pub(crate) fn take_last_explainability() -> Option<DecisionExplainability> {
-    with_last_explainability(Option::take).flatten()
+    with_last_explainability(Option::take)
+        .flatten()
+        .map(RecordedDecisionExplainability::expand)
 }
 
 #[must_use]
 pub(crate) fn peek_last_explainability() -> Option<DecisionExplainability> {
-    with_last_explainability(|slot| *slot).flatten()
+    with_last_explainability(|slot| *slot)
+        .flatten()
+        .map(RecordedDecisionExplainability::expand)
 }
 
 /// Read-only projection of the calling thread's existing hardened decision.
@@ -1819,13 +1938,12 @@ fn record_last_explainability(
 
     let trace = active_trace_context();
     let (contract_state, contract_event, contract_action) = apply_decision_contract(mode, decision);
-    let explainability = DecisionExplainability {
+    let explainability = RecordedDecisionExplainability {
         trace_seq: trace.trace_seq,
         span_seq: next_decision_span_seq(),
         parent_span_seq: trace.parent_span_seq,
         symbol: trace.symbol,
-        controller_id: CONTROLLER_ID_RUNTIME_MATH,
-        decision_gate,
+        decision_gate: RecordedDecisionGate::from_name(decision_gate),
         mode,
         family: ctx.family,
         profile: decision.profile,
@@ -3568,7 +3686,9 @@ mod tests {
         struct RestoreRecord(Option<DecisionExplainability>);
         impl Drop for RestoreRecord {
             fn drop(&mut self) {
-                with_last_explainability(|slot| *slot = self.0);
+                with_last_explainability(|slot| {
+                    *slot = self.0.map(RecordedDecisionExplainability::from);
+                });
             }
         }
         let _restore = RestoreRecord(previous);
