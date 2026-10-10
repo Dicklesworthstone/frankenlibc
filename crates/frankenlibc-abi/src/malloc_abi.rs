@@ -1522,7 +1522,6 @@ fn allocate_from_local_class(
     }
 }
 
-#[inline]
 /// Allocate from the segment arena, returning the pointer AND the size class it
 /// came from.
 ///
