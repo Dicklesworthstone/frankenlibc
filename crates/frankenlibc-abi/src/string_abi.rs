@@ -4970,13 +4970,26 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         return unsafe { raw_lane_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), n, 1) };
     };
     let _trace_scope = runtime_policy::entrypoint_scope("memcmp");
-    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
+    // Take one coherent extent snapshot per operand and reuse it for both the
+    // runtime decision and the eventual hardened clamp. This path previously
+    // performed the two full lookups again after `decide`, while independently
+    // probing ownership for stage context. A resolved live/quarantined extent is
+    // already ownership evidence; only unresolved operands need the page-oracle
+    // fallback to preserve the old `recent_page` classification.
+    let lhs_remaining = known_remaining(s1 as usize);
+    let rhs_remaining = known_remaining(s2 as usize);
+    let aligned = ((s1 as usize | s2 as usize) & 0x7) == 0;
+    let recent_page = lhs_remaining.is_some()
+        || rhs_remaining.is_some()
+        || crate::malloc_abi::check_ownership(s1 as usize)
+        || crate::malloc_abi::check_ownership(s2 as usize);
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
         n,
         false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        lhs_remaining.is_none() && rhs_remaining.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -4997,8 +5010,8 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
 
     let (cmp_len, _clamped) = maybe_clamp_copy_len(
         n,
-        known_remaining(s1 as usize),
-        known_remaining(s2 as usize),
+        lhs_remaining,
+        rhs_remaining,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if cmp_len == 0 {
