@@ -1258,6 +1258,19 @@ pub unsafe extern "C" fn fma(x: f64, y: f64, z: f64) -> f64 {
         return hardware_fma(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fma(x, y, z));
     }
 
+    // `fma` predates the deployed math-membrane fast path used by the unary
+    // and binary wrappers, so hardened calls were still paying for a decision,
+    // explainability snapshot, and observation even though deployed MathFenv
+    // decisions are always Allow and can never repair the result. Preserve the
+    // full path for the only case it can observe: finite inputs overflowing to
+    // a non-finite result.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = hardware_fma(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fma(x, y, z));
+        if !(x.is_finite() && y.is_finite() && z.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
+    }
+
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
         ^ y.to_bits() as usize
         ^ z.to_bits() as usize;
@@ -2043,6 +2056,15 @@ pub unsafe extern "C" fn fmaf(x: f32, y: f32, z: f32) -> f32 {
     // Strict mode fast path, as `fma`: fmaf sets no errno.
     if runtime_policy::strict_passthrough_active() {
         return hardware_fmaf(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fmaf(x, y, z));
+    }
+    // Deployed MathFenv is always-Allow; keep adverse finite-to-non-finite
+    // results on the full observation path, matching the f64 entry point and
+    // the existing unary/binary wrappers.
+    if runtime_policy::math_membrane_fastpath() {
+        let raw = hardware_fmaf(x, y, z).unwrap_or_else(|| frankenlibc_core::math::fmaf(x, y, z));
+        if !(x.is_finite() && y.is_finite() && z.is_finite() && !raw.is_finite()) {
+            return raw;
+        }
     }
     // fma is ternary — use the binary path with manual third arg folding.
     let mixed = (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize)
