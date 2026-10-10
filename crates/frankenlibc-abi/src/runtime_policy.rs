@@ -345,6 +345,14 @@ struct FfiPccCertificateFlags {
     skip_pointer_validation: bool,
 }
 
+/// Opaque proof that the active entrypoint is the verified read-only `memcmp`
+/// certificate and that the runtime decision path is ready.
+///
+/// The token is intentionally neither constructible nor inspectable outside
+/// this module. It must be consumed within the same `entrypoint_scope` that
+/// produced it; production runtime readiness and mode are process-immutable.
+pub(crate) struct MemcmpPccToken(&'static FfiPccCertificate);
+
 impl FfiPccCertificate {
     const fn new(
         symbol: &'static str,
@@ -865,6 +873,21 @@ pub(crate) fn proof_carried_fast_path_active(
 #[must_use]
 pub(crate) fn proof_carried_pointer_validation_active() -> bool {
     active_ffi_pcc_symbol_certificate().is_some_and(|row| row.skip_pointer_validation)
+}
+
+/// Return an opaque token for the active, verified `memcmp` read certificate.
+///
+/// Unlike [`proof_carried_pointer_validation_active`], this also establishes
+/// runtime readiness so the token can carry the certificate through to the
+/// decision site without changing `decide`'s early-startup behavior.
+#[must_use]
+pub(crate) fn active_memcmp_pcc_token() -> Option<MemcmpPccToken> {
+    if !is_runtime_ready() {
+        return None;
+    }
+    let cert = active_ffi_pcc_symbol_certificate()?;
+    (cert.policy_id == FFI_PCC_POLICY_BASE + 8 && cert.skip_pointer_validation)
+        .then_some(MemcmpPccToken(cert))
 }
 
 #[must_use]
@@ -2475,6 +2498,34 @@ pub(crate) fn decide(
     (mode, decision)
 }
 
+/// Record the exact deployed PCC decision for a `memcmp` call whose active
+/// certificate was already resolved by [`active_memcmp_pcc_token`].
+///
+/// This is deliberately not a second decision implementation: the opaque
+/// token fixes the same certificate branch that generic [`decide`] would take,
+/// while [`record_last_explainability`] still performs the full trace/span and
+/// decision-contract transition. Carrying the proof avoids re-reading the
+/// trace TLS and re-entering the large generic decision frame.
+pub(crate) fn decide_certified_memcmp(
+    token: MemcmpPccToken,
+    addr_hint: usize,
+    requested_bytes: usize,
+    bloom_negative: bool,
+) -> (SafetyLevel, RuntimeDecision) {
+    let mode = mode();
+    let ctx = RuntimeContext {
+        family: ApiFamily::StringMemory,
+        addr_hint,
+        requested_bytes,
+        is_write: false,
+        contention_hint: 0,
+        bloom_negative,
+    };
+    let decision = ffi_pcc_decision(token.0);
+    record_last_explainability(mode, ctx, decision, DECISION_GATE_FFI_PCC);
+    (mode, decision)
+}
+
 /// Membrane denials since process start.
 static DENIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -2827,15 +2878,11 @@ pub(crate) fn check_ordering(
         let _ = (aligned, recent_page);
         return PASSTHROUGH_ORDERING;
     }
-    if active_ffi_pcc_symbol_certificate()
-        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
-    {
-        let _ = (aligned, recent_page);
-        return PASSTHROUGH_ORDERING;
-    }
-    // Note: strict mode observation is enabled (bd-06bxm.3).
-    // High-frequency families still use passthrough ordering for perf.
-    // Hardened mode fast path for high-frequency operations.
+    // Deployed high-frequency families return this exact ordering regardless
+    // of certificate state. Keep the runtime-math switch resolution above,
+    // but do not re-read the active trace certificate merely to reach the same
+    // constant below. In particular, certified `memcmp` already proved its
+    // entrypoint once before taking its extent snapshots.
     if cfg!(not(test))
         && matches!(
             family,
@@ -2850,6 +2897,15 @@ pub(crate) fn check_ordering(
         let _ = (aligned, recent_page);
         return PASSTHROUGH_ORDERING;
     }
+    if active_ffi_pcc_symbol_certificate()
+        .is_some_and(|row| row.family == family && row.skip_stage_ordering)
+    {
+        let _ = (aligned, recent_page);
+        return PASSTHROUGH_ORDERING;
+    }
+    // Note: strict mode observation is enabled (bd-06bxm.3).
+    // High-frequency families still use passthrough ordering for perf.
+    // Hardened mode fast path for high-frequency operations.
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
         return PASSTHROUGH_ORDERING;
     };
@@ -2880,6 +2936,13 @@ pub(crate) fn note_check_order_outcome(
         let _ = (aligned, recent_page, ordering_used, exit_stage);
         return;
     }
+    // The deployed allocator/string outcome path is already an unconditional
+    // no-op below. Reach it before consulting the active trace certificate or
+    // resolving the mode; neither value can affect the result.
+    if matches!(family, ApiFamily::Allocator | ApiFamily::StringMemory) {
+        let _ = (aligned, recent_page, ordering_used, exit_stage);
+        return;
+    }
     if active_ffi_pcc_symbol_certificate()
         .is_some_and(|row| row.family == family && row.skip_stage_ordering)
     {
@@ -2889,11 +2952,6 @@ pub(crate) fn note_check_order_outcome(
     let mode = mode();
     if strict_runtime_kernel_fast_path(mode) {
         let _ = (family, aligned, recent_page, ordering_used, exit_stage);
-        return;
-    }
-    // Hardened mode fast path for allocator/string operations.
-    if matches!(family, ApiFamily::Allocator | ApiFamily::StringMemory) {
-        let _ = (aligned, recent_page, ordering_used, exit_stage);
         return;
     }
     let Some(_reentry_guard) = enter_policy_reentry_guard() else {
@@ -4011,6 +4069,31 @@ mod tests {
         assert_eq!(decision.action, MembraneAction::Allow);
         assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
         assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 10);
+    }
+
+    #[test]
+    fn ffi_pcc_memcmp_token_preserves_decision_and_explainability() {
+        let _lock = ffi_pcc_lock();
+        reset_ffi_pcc_state_for_tests();
+        reset_decision_contract_machine_for_tests();
+        let _runtime_ready = enable_runtime_kernel_for_tests();
+        let _mode = set_mode_state_for_tests(MODE_HARDENED);
+        let _scope = entrypoint_scope("memcmp");
+
+        let token = active_memcmp_pcc_token().expect("memcmp certificate should be active");
+        let (_, decision) = decide_certified_memcmp(token, 0x2400, 96, true);
+        let explain = take_last_explainability().expect("explainability should be recorded");
+
+        assert_eq!(decision.policy_id, FFI_PCC_POLICY_BASE + 8);
+        assert_eq!(decision.profile, ValidationProfile::Fast);
+        assert_eq!(decision.action, MembraneAction::Allow);
+        assert_eq!(explain.symbol, "memcmp");
+        assert_eq!(explain.decision_gate, DECISION_GATE_FFI_PCC);
+        assert_eq!(explain.family, ApiFamily::StringMemory);
+        assert_eq!(explain.policy_id, FFI_PCC_POLICY_BASE + 8);
+        assert_eq!(explain.addr_hint, 0x2400);
+        assert_eq!(explain.requested_bytes, 96);
+        assert!(explain.bloom_negative);
     }
 
     #[test]

@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::known_remaining;
+use crate::malloc_abi::{known_remaining, known_remaining_for_certified_read};
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -4976,22 +4976,39 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     // probing ownership for stage context. A resolved live/quarantined extent is
     // already ownership evidence; only unresolved operands need the page-oracle
     // fallback to preserve the old `recent_page` classification.
-    let lhs_remaining = known_remaining(s1 as usize);
-    let rhs_remaining = known_remaining(s2 as usize);
+    // The read-only memcmp PCC makes validate_ptr_in_slot return Unknown before
+    // touching the membrane. Prove that once and reuse the established fact for
+    // both operands and stage context instead of looking the same trace row up
+    // repeatedly through TLS.
+    let certified_read = runtime_policy::active_memcmp_pcc_token();
+    let (lhs_remaining, rhs_remaining) = if certified_read.is_some() {
+        (
+            known_remaining_for_certified_read(s1 as usize),
+            known_remaining_for_certified_read(s2 as usize),
+        )
+    } else {
+        (known_remaining(s1 as usize), known_remaining(s2 as usize))
+    };
     let aligned = ((s1 as usize | s2 as usize) & 0x7) == 0;
     let recent_page = lhs_remaining.is_some()
         || rhs_remaining.is_some()
-        || crate::malloc_abi::check_ownership(s1 as usize)
-        || crate::malloc_abi::check_ownership(s2 as usize);
+        || (certified_read.is_none()
+            && (crate::malloc_abi::check_ownership(s1 as usize)
+                || crate::malloc_abi::check_ownership(s2 as usize)));
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
-    let (mode, decision) = runtime_policy::decide(
-        ApiFamily::StringMemory,
-        s1 as usize,
-        n,
-        false,
-        lhs_remaining.is_none() && rhs_remaining.is_none(),
-        0,
-    );
+    let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
+    let (mode, decision) = if let Some(token) = certified_read {
+        runtime_policy::decide_certified_memcmp(token, s1 as usize, n, bloom_negative)
+    } else {
+        runtime_policy::decide(
+            ApiFamily::StringMemory,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+            0,
+        )
+    };
     if matches!(decision.action, MembraneAction::Deny) {
         record_string_stage_outcome(
             &ordering,
