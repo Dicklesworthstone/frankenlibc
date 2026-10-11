@@ -45,6 +45,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The guard needs real mirror refs and an attached main checkout. Keep
+      # the selected PR merge/push commit: checking out origin/main here would
+      # silently run the gates against different code.
+      - name: Prepare main-only CI checkout
+        run: |
+          tested_commit="$(git rev-parse HEAD)"
+          test "$tested_commit" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main \
+            refs/heads/master:refs/remotes/origin/master
+          case "$(git branch --show-current)" in
+            main) ;;
+            "")
+              # Fail if main already exists; never reset an existing branch.
+              git branch main "$tested_commit"
+              git symbolic-ref HEAD refs/heads/main
+              ;;
+            *) echo "Unexpected attached CI branch" >&2; exit 1 ;;
+          esac
+          test "$(git rev-parse HEAD)" = "$tested_commit"
+
+      - name: Test CI checkout preparation
+        run: python3 scripts/test_ci_checkout.py
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@stable
