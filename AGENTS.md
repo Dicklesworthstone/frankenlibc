@@ -320,7 +320,7 @@ cargo test --workspace --all-features
 |-------|-------------|
 | `frankenlibc-membrane` | Safety lattice operations, Galois connection, fingerprint/canary integrity, arena generational correctness, bloom filter false-positive rate, TLS cache hit/miss, page oracle bitmap, healing policy completeness, runtime math kernel correctness, validation pipeline ordering |
 | `frankenlibc-core` | POSIX function correctness (string, stdlib, stdio, math, ctype, pthread, etc.), edge cases per spec section, membrane integration |
-| `frankenlibc-abi` | ABI symbol export correctness, version script compliance, extern "C" calling convention, minimal body (validate-delegate pattern) |
+| `frankenlibc-abi` | ABI symbol export correctness, version script compliance, extern "C" calling convention, and path-appropriate validate/dispatch behavior |
 | `frankenlibc-harness` | Fixture capture/verify round-trip, traceability mapping, healing oracle trigger/verify, report generation |
 | `frankenlibc-bench` | String ops throughput, malloc throughput, membrane overhead budget, runtime math kernel latency, stdio throughput, mutex/condvar contention |
 | `tests/conformance/` | Fixture-based conformance against host glibc |
@@ -340,11 +340,11 @@ If you aren't 100% sure how to use a third-party library, **SEARCH ONLINE** to f
 
 ## FrankenLibC — This Project
 
-**This is the project you're working on.** FrankenLibC is a clean-room, memory-safe Rust reimplementation of glibc targeting full POSIX coverage plus GNU extensions. It produces an ABI-compatible `libc.so` that can be used as a drop-in replacement for glibc.
+**This is the project you're working on.** FrankenLibC is a clean-room Rust reimplementation of glibc targeting full POSIX coverage plus GNU extensions. It currently produces a glibc-shaped `libc.so` for `LD_PRELOAD` interposition; full ABI-compatible drop-in replacement and universal memory-safety enforcement are project goals, not established properties of the current hybrid artifact. See `README.md`, `FEATURE_PARITY.md`, and `support_matrix.json` for the checked scope.
 
 ### The Core Innovation: Transparent Safety Membrane (TSM)
 
-C code thinks it has full control over raw pointers, but behind the ABI boundary, FrankenLibC dynamically validates, sanitizes, and mechanically fixes invalid operations so memory unsafety cannot happen through libc calls.
+C code thinks it has full control over raw pointers. On entrypoints explicitly wired through the membrane, FrankenLibC can validate, sanitize, and mechanically repair or deny invalid operations. Coverage is path- and mode-specific: many strict-mode compatibility paths bypass the full validation pipeline, so do not infer universal safety from the architecture alone.
 
 **TSM Pipeline:**
 1. **Validate:** Classify incoming pointers/regions/fd/context via fingerprints, bloom filters, arena lookups, and canary checks.
@@ -356,14 +356,14 @@ C code thinks it has full control over raw pointers, but behind the ABI boundary
 
 1. Full POSIX coverage target (with GNU/glibc compatibility where required).
 2. ABI compatibility, including symbol/version behavior for supported targets.
-3. Transparent safety: caller believes it has raw C control; implementation dynamically sanitizes and mechanically fixes invalid operations to prevent memory unsafety.
+3. Transparent safety target: expand explicit validation and deterministic repair coverage without changing the C ABI.
 4. Conformance harness + feature parity tracking + benchmark regression gates.
 5. Mandatory build-tooling leverage of `/dp/asupersync` and `/dp/frankentui`.
 
 ### Architecture
 
 ```
-C caller → extern "C" ABI boundary → TSM Validation Pipeline → Safe Rust Core → Result
+C caller → extern "C" ABI boundary → path-specific TSM gate → Safe Rust Core / syscall / host wrapper
                                           │
                      ┌────────────────────┤
                      ▼                    ▼
@@ -416,7 +416,7 @@ FrankenLibC/
 |-------|-----------|---------|
 | `frankenlibc-membrane` | `src/lattice.rs` | `SafetyState` enum with join/meet lattice operations |
 | `frankenlibc-membrane` | `src/galois.rs` | Galois connection: C flat model <-> rich safety model |
-| `frankenlibc-membrane` | `src/fingerprint.rs` | SipHash allocation fingerprints (16-byte header + 8-byte canary) |
+| `frankenlibc-membrane` | `src/fingerprint.rs` | SipHash allocation fingerprints (24-byte header + 8-byte canary) |
 | `frankenlibc-membrane` | `src/arena.rs` | Generational arena with quarantine queue |
 | `frankenlibc-membrane` | `src/bloom.rs` | Bloom filter for O(1) pointer ownership pre-check |
 | `frankenlibc-membrane` | `src/tls_cache.rs` | Thread-local validation cache (1024-entry direct-mapped) |
@@ -472,7 +472,7 @@ frankentui-ui = [...]                                 # TUI-driven analysis outp
 |-------|--------|-------|
 | `frankenlibc-core` | `#![deny(unsafe_code)]` | Safe Rust only. SIMD modules get `#[allow(unsafe_code)]` with per-block `// SAFETY:` comments. |
 | `frankenlibc-membrane` | `#![deny(unsafe_code)]` | Arena/fingerprint modules get `#[allow(unsafe_code)]` for raw pointer ops. Every unsafe block must have `// SAFETY:` comment. |
-| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Every function body is minimal: validate via membrane, delegate to core. |
+| `frankenlibc-abi` | `#![allow(unsafe_code)]` | ABI boundary is inherently unsafe. Entrypoints use a mixture of membrane-gated delegation, raw-syscall veneers, and host-backed wrappers. |
 | `frankenlibc-harness` | `#![forbid(unsafe_code)]` | Test harness never needs unsafe. |
 | `frankenlibc-bench` | `#![allow(unsafe_code)]` | Benchmarks call extern "C" functions. |
 | `frankenlibc-fuzz` | `#![allow(unsafe_code)]` | Fuzz harnesses call extern "C" functions. |
@@ -481,7 +481,7 @@ Rules:
 1. Unsafe is permitted only in explicitly documented boundary modules.
 2. All unsafe blocks require written invariants and safety preconditions (`// SAFETY:` comment).
 3. Core algorithmic behavior must stay in safe Rust.
-4. Memory safety is achieved via the TSM, not by pretending FFI unsafe does not exist.
+4. Memory-safety enforcement is explicit and path-specific: use the TSM where wired, document bypasses, and never pretend FFI unsafe does not exist.
 
 ### TSM Architecture Details
 
@@ -524,7 +524,7 @@ Fast exits at each stage. Budget target: strict overhead <20ns/call, hardened ov
 
 #### Allocation Integrity
 
-- 16-byte SipHash fingerprint header + 8-byte canary per allocation
+- 24-byte SipHash fingerprint header + 8-byte canary on hardened-arena allocations
 - Generational arena with quarantine queue for UAF detection
 - Two-level page bitmap for O(1) "is this pointer ours?" pre-check
 - Thread-local 1024-entry validation cache to avoid global lock
@@ -537,7 +537,7 @@ Fast exits at each stage. Budget target: strict overhead <20ns/call, hardened ov
 
 The advanced math stack executes at runtime via compact control kernels, not only offline reports.
 
-Runtime decision law (per call):
+Runtime decision law (for calls routed through the kernel):
 `mode + context + risk + budget + pareto + design + barrier + consistency -> Allow | FullValidate | Repair | Deny`
 
 Mandatory live modules in `frankenlibc-membrane/src/runtime_math/`:
@@ -554,7 +554,7 @@ Mandatory live modules in `frankenlibc-membrane/src/runtime_math/`:
 | `sparse.rs` | Online L1 sparse-recovery controller for latent fault-source concentration |
 | `fusion.rs` | Online robust signal-fusion controller over runtime math kernels |
 | `equivariant.rs` | Representation-stability/group-action symmetry monitor for cross-family semantic drift |
-| `eprocess.rs` | Anytime-valid sequential alarming (e-values) |
+| `eprocess.rs` | Bounded likelihood-ratio-style alarming; production `log(e)` is clamped to `[-20, 50]`, so the unclamped anytime-valid guarantee does not carry through |
 | `cvar.rs` | Distributionally-robust CVaR tail-risk guard |
 | `hji_reachability.rs` | HJI differential game safety certificates |
 | `mean_field_game.rs` | Mean-field Nash equilibrium congestion controller |
@@ -582,17 +582,17 @@ Developer transparency remains mandatory:
 
 1. **Monotonic Safety:** Lattice join is commutative, associative, idempotent. States only decrease on new information.
 2. **Galois Connection:** `gamma(alpha(c)) >= c`. Safe interpretation is at least as permissive as what correct programs need.
-3. **Allocation Integrity:** P(undetected corruption) <= 2^-64 (SipHash collision probability).
+3. **Allocation Integrity:** For a hardened-arena allocation whose fingerprint is checked, a targeted 64-bit SipHash forgery has probability at most 2^-64 under the keyed-hash assumptions.
 4. **UAF Detection:** Deterministic for a freed block while it is in the hardened arena's quarantine queue. A raw C pointer carries no generation, so after same-address reuse a stale pointer resolves to the new allocation and is NOT detected (`arena.rs` module doc). Strict-mode (segment) allocations have no quarantine.
-5. **Buffer Overflow Detection:** Trailing canaries detect writes past allocation with P(miss) <= 2^-64.
-6. **Healing Completeness:** Every libc function has defined healing for every class of invalid input.
+5. **Buffer Overflow Detection:** Hardened-arena trailing canaries detect corruption when a later checked operation reaches the block; under an unpredictable 64-bit canary, a targeted forgery has probability at most 2^-64.
+6. **Healing Scope:** Explicitly membrane-gated families have defined policy-table actions for their wired validation outcomes. Universal per-function/per-invalid-input completeness is not yet established.
 
 ### Key Design Decisions
 
 - **Clean-room implementation** — spec-first, never line-by-line translate legacy glibc source
-- **TSM validates at ABI boundary** — core implementations stay in safe Rust
+- **TSM validates selected ABI paths** — core implementations stay in safe Rust; each entrypoint's actual routing must be checked
 - **Generational arena** with quarantine queue for temporal safety (UAF detection)
-- **SipHash fingerprints** (16-byte header + 8-byte canary) for allocation integrity
+- **SipHash fingerprints** (24-byte header + 8-byte canary) for hardened-arena allocation integrity
 - **Two-level page bitmap** for O(1) pointer ownership pre-check
 - **Thread-local validation cache** (1024-entry direct-mapped) to avoid global lock on hot paths
 - **Process-level runtime mode** (`strict`/`hardened`) immutable after init
@@ -609,7 +609,7 @@ Developer transparency remains mandatory:
 **Core modules:**
 - `lattice.rs` — SafetyState enum with join/meet lattice operations
 - `galois.rs` — Galois connection: C flat model <-> rich safety model
-- `fingerprint.rs` — SipHash allocation fingerprints (16-byte header + 8-byte canary)
+- `fingerprint.rs` — SipHash allocation fingerprints (24-byte header + 8-byte canary)
 - `arena.rs` — Generational arena with quarantine queue
 - `bloom.rs` — Bloom filter for O(1) pointer ownership pre-check
 - `tls_cache.rs` — Thread-local validation cache (1024-entry direct-mapped)
@@ -627,11 +627,11 @@ Developer transparency remains mandatory:
 - `barrier.rs` — Admissibility oracle
 - `cohomology.rs` — Shard-overlap consistency monitor
 - `pareto.rs` — Latency/risk frontier + regret accounting
-- `eprocess.rs` — Anytime-valid sequential risk monitor (e-values)
+- `eprocess.rs` — Bounded likelihood-ratio-style risk monitor (`log(e)` clamp means no unclamped anytime-valid claim)
 - `cvar.rs` — Distributionally-robust CVaR tail controller
 - `design.rs` — D-optimal probe scheduling + identifiability control
 - `sobol.rs` — Sobol low-discrepancy sequence generator for deterministic probe scheduling
-- `redundancy_tuner.rs` — Adaptive evidence redundancy tuner using anytime-valid e-process updates
+- `redundancy_tuner.rs` — Adaptive evidence redundancy tuner using bounded e-process-style updates
 - `sparse.rs` — Online sparse latent-cause recovery + concentration state
 - `fusion.rs` — Robust weighted fusion + entropy/drift telemetry
 - `equivariant.rs` — Representation-stability transport + symmetry-break detection

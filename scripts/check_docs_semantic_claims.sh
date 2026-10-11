@@ -190,6 +190,198 @@ docs = {
     "FEATURE_PARITY": (feature_path, read_text(feature_path, "FEATURE_PARITY")),
 }
 
+readme_text = docs["README"][1]
+feature_text = docs["FEATURE_PARITY"][1]
+
+def count_lines(path):
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            return sum(1 for _ in fh)
+    except Exception as exc:
+        errors.append(f"numeric claims: failed to count lines in {path}: {exc}")
+        return -1
+
+def tracked_files(pathspec):
+    try:
+        output = subprocess.check_output(
+            ["git", "ls-files", "-z", "--", pathspec],
+            cwd=root,
+        )
+        return sorted(
+            root / os.fsdecode(raw_path)
+            for raw_path in output.split(b"\0")
+            if raw_path
+        )
+    except Exception as exc:
+        errors.append(f"numeric claims: failed to list tracked files for {pathspec}: {exc}")
+        return []
+
+numeric_claims = []
+
+def expect_numeric_claim(surface, claim_id, expected):
+    text = readme_text if surface == "README" else feature_text
+    numeric_claims.append((surface, claim_id, expected))
+    if expected not in text:
+        fail(
+            "numeric_claim_freshness",
+            f"{surface}: missing current numeric claim {claim_id}: {expected}",
+            doc_surface=surface,
+            symbol_or_section=claim_id,
+            generated_claim=expected,
+            failure_signature="stale_numeric_claim",
+        )
+
+completion_paths = tracked_files(":(glob)tests/conformance/*completion_contract*.json")
+cli_contract_paths = tracked_files(":(glob)tests/conformance/*cli_contract*.json")
+fixture_paths = tracked_files(":(glob)tests/conformance/fixtures/*.json")
+completion_count = len(completion_paths)
+cli_contract_count = len(cli_contract_paths)
+fixture_families = set()
+for fixture_path in fixture_paths:
+    fixture = load_json(fixture_path, f"numeric fixture {rel(fixture_path)}")
+    if isinstance(fixture, dict) and fixture.get("family"):
+        fixture_families.add(str(fixture["family"]))
+
+fuzz_target_paths = tracked_files(":(glob)crates/frankenlibc-fuzz/fuzz_targets/*.rs")
+proof_note_paths = tracked_files(":(glob)docs/proofs/*.md")
+crate_rust_paths = tracked_files(":(glob)crates/**/*.rs")
+abi_rust_paths = tracked_files(":(glob)crates/frankenlibc-abi/src/**/*.rs")
+membrane_rust_paths = tracked_files(":(glob)crates/frankenlibc-membrane/src/**/*.rs")
+core_rust_paths = tracked_files(":(glob)crates/frankenlibc-core/src/**/*.rs")
+runtime_math_paths = tracked_files(":(glob)crates/frankenlibc-membrane/src/runtime_math/*.rs")
+integration_c_paths = tracked_files(":(glob)tests/integration/**/*.c")
+scripts_paths = tracked_files(":(glob)scripts/*")
+fuzz_target_count = len(fuzz_target_paths)
+proof_note_count = len(proof_note_paths)
+crate_rust_count = len(crate_rust_paths)
+abi_rust_count = len(abi_rust_paths)
+membrane_rust_count = len(membrane_rust_paths)
+core_rust_count = len(core_rust_paths)
+runtime_math_count = len(runtime_math_paths)
+integration_c_count = len(integration_c_paths)
+scripts_file_count = len(scripts_paths)
+abi_line_count = sum(count_lines(path) for path in abi_rust_paths)
+membrane_line_count = sum(count_lines(path) for path in membrane_rust_paths)
+core_line_count = sum(count_lines(path) for path in core_rust_paths)
+
+expect_numeric_claim(
+    "README",
+    "fixture_counts",
+    f"**{len(fixture_paths)} fixture JSONs covering {len(fixture_families)} distinct `family` values**",
+)
+expect_numeric_claim("README", "completion_contract_count", f"**{completion_count} completion-contract artifacts**")
+expect_numeric_claim("README", "cli_contract_count", f"**{cli_contract_count} CLI-contract manifests**")
+expect_numeric_claim("README", "fuzz_target_count", f"**{fuzz_target_count} `cargo-fuzz` targets**")
+expect_numeric_claim("README", "proof_note_count", f"and {proof_note_count} proof notes / obligation mappings")
+expect_numeric_claim("README", "crate_rust_count", f"| Tracked Rust files in `crates/` | {crate_rust_count:,} |")
+expect_numeric_claim(
+    "README",
+    "abi_source_size",
+    f"| `crates/frankenlibc-abi/src/` | {abi_rust_count} Rust files, {abi_line_count:,} lines |",
+)
+expect_numeric_claim(
+    "README",
+    "membrane_source_size",
+    f"| `crates/frankenlibc-membrane/src/` | {membrane_rust_count} Rust files, {membrane_line_count:,} lines |",
+)
+expect_numeric_claim(
+    "README",
+    "core_source_size",
+    f"| `crates/frankenlibc-core/src/` | {core_rust_count} Rust files, {core_line_count:,} lines including generated codec tables |",
+)
+expect_numeric_claim("README", "runtime_math_count", f"| Runtime math controllers | {runtime_math_count} modules |")
+expect_numeric_claim("README", "integration_c_count", f"| C integration fixtures | {integration_c_count} |")
+expect_numeric_claim("README", "scripts_file_count", f"| Top-level shell/scripts files | {scripts_file_count} files under `scripts/` |")
+expect_numeric_claim(
+    "README",
+    "startup_source_lines",
+    f"( {count_lines(root / 'crates/frankenlibc-abi/src/startup_abi.rs'):,} lines at this snapshot)".replace("( ", "("),
+)
+expect_numeric_claim(
+    "README",
+    "membrane_build_lines",
+    f"`crates/frankenlibc-membrane/build.rs` is {count_lines(root / 'crates/frankenlibc-membrane/build.rs'):,} lines at this snapshot",
+)
+expect_numeric_claim(
+    "README",
+    "version_script_lines",
+    f"| GNU ld version script | {count_lines(root / 'crates/frankenlibc-abi/version_scripts/libc.map'):,} lines, `GLIBC_2.2.5` |",
+)
+
+toolchain_text = read_text(root / "rust-toolchain.toml", "rust-toolchain")
+toolchain_match = re.search(r'^channel\s*=\s*"([^"]+)"', toolchain_text, flags=re.MULTILINE)
+if toolchain_match:
+    expect_numeric_claim("README", "rust_toolchain", f"`{toolchain_match.group(1)}`")
+else:
+    fail(
+        "numeric_claim_freshness",
+        "rust-toolchain.toml does not declare a channel",
+        symbol_or_section="rust_toolchain",
+        failure_signature="missing_toolchain_channel",
+    )
+
+smoke_path = root / "tests/conformance/ld_preload_smoke_summary.v1.json"
+smoke = load_json(smoke_path, "smoke summary")
+if isinstance(smoke, dict):
+    smoke_summary = smoke.get("summary", {})
+    smoke_commit = str(smoke.get("source_commit", ""))
+    expect_numeric_claim("README", "smoke_run_id", f"run `{smoke.get('run_id')}`")
+    expect_numeric_claim("README", "smoke_checked_date", str(smoke.get("checked_date_display", "")))
+    expect_numeric_claim("README", "smoke_source_commit", f"source commit `{smoke_commit[:8]}…`")
+    expect_numeric_claim(
+        "README",
+        "smoke_summary",
+        f"{smoke_summary.get('passes')} pass / {smoke_summary.get('fails')} fail / {smoke_summary.get('skips')} optional skips across strict and hardened modes, plus {smoke_summary.get('xfails')} xfail",
+    )
+    for mode_name in ("strict", "hardened"):
+        mode = smoke.get("modes", {}).get(mode_name, {})
+        expect_numeric_claim(
+            "README",
+            f"smoke_{mode_name}_row",
+            f"| `{mode_name}` | {mode.get('passes')} | {mode.get('fails')} | {mode.get('skips')} | {mode.get('xfails')} |",
+        )
+
+if isinstance(support, dict):
+    support_summary = support.get("summary", {})
+    expect_numeric_claim(
+        "README",
+        "support_taxonomy_counts",
+        f"**{support_summary.get('implemented'):,} `Implemented` + {support_summary.get('raw_syscall'):,} `RawSyscall` = {support_summary.get('implemented') + support_summary.get('raw_syscall'):,} / {support_summary.get('total'):,}",
+    )
+    generated_date = str(support.get("generated_at_utc", ""))[:10]
+    expect_numeric_claim("FEATURE_PARITY", "support_snapshot_date", f"`generated_at_utc` is {generated_date}")
+
+stale_numeric_patterns = {
+    "old_cli_contract_count": r"\b68 such manifests\b|\b68 CLI-contract",
+    "old_completion_contract_count": r"\b258 completion-contract",
+    "old_fixture_count": r"\b134 fixture",
+    "old_c_fixture_count": r"\b17 C (?:test|integration)|\(17 fixtures\)",
+    "old_membrane_build_size": r"\b1,030 lines\b",
+    "old_smoke_total": r"\b60/0/4\b|\b60 pass(?:es)? / 0 fail(?:s)? / 4",
+    "old_toolchain_pin": r"nightly-2026-04-28",
+}
+for surface, (_, text) in docs.items():
+    for claim_id, pattern in stale_numeric_patterns.items():
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            fail(
+                "numeric_claim_freshness",
+                f"{surface}: stale numeric claim {claim_id}: {match.group(0)}",
+                doc_surface=surface,
+                symbol_or_section=claim_id,
+                previous_claim=match.group(0),
+                generated_claim="remove or replace with an artifact-derived current claim",
+                failure_signature="stale_numeric_literal",
+            )
+
+numeric_failures = [row for row in events if row["rule_id"] == "numeric_claim_freshness" and row["status"] == "fail"]
+checks["numeric_claim_freshness"] = "fail" if numeric_failures else "pass"
+if not numeric_failures:
+    event(
+        "numeric_claim_freshness",
+        generated_claim=f"{len(numeric_claims)} checked documentation counts match the working tree and evidence artifacts",
+    )
+
 field_ids = [str(row.get("id", "")) for row in artifact.get("required_claim_fields", [])]
 doc_surfaces = {row.get("id"): row for row in artifact.get("doc_surfaces", [])}
 missing_fields = []
@@ -353,6 +545,7 @@ summary = {
     "taxonomy_semantic_conflict_count": len(taxonomy_semantic_conflicts),
     "inventory_entry_count": len(inventory_entries),
     "forbidden_claim_count": len(forbidden_claims),
+    "numeric_claim_count": len(numeric_claims),
     "missing_claim_field_count": len(missing_fields),
     "missing_evidence_phrase_count": len(missing_phrases),
 }

@@ -3,7 +3,7 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-Source of truth for implementation parity is `tests/conformance/reality_report.v1.json` (regenerated 2026-09-18 from the checked-in matrix).
+The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`, whose own `generated_at_utc` is 2026-06-03. It was not regenerated on 2026-09-18 and is not evidence that current source behavior matches the labels.
 Reality snapshot: total_exported=4119, implemented=2441, raw_syscall=414, wraps_host_libc=1264, glibc_call_through=0, stub=0.
 Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
 Regenerate deterministically with:
@@ -14,14 +14,14 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
   --output tests/conformance/reality_report.v1.json
 ```
 
-Current exported ABI surface is **4119 symbols**, classified as:
+The checked taxonomy snapshot contains **4119 symbols**, classified as:
 - `Implemented`: 2441
 - `RawSyscall`: 414
 - `WrapsHostLibc`: 1264
 - `GlibcCallThrough`: 0
 - `Stub`: 0
 
-This means the current artifact is a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and deterministic stubs), not a full replacement profile.
+This means the checked taxonomy snapshot describes a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, and host-glibc delegation), not a full replacement profile. Deriving current labels from code remains open under `bd-rc0923-epic-eeuy4f.17`; taxonomy counts are not semantic-parity evidence.
 
 Legend:
 - `Implemented`: Native Rust behavior, no host glibc dependency for that symbol
@@ -78,14 +78,14 @@ This file tracks the current staged parity profile, not a full replacement profi
 
 ## Hard-Parts Truth Table
 
-Source of truth: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`).
+Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generated `2026-02-13T08:48:00Z`). The bullets below inherit that artifact's age unless a newer cited source says otherwise; they are not a fresh HEAD probe.
 
 - `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
 - `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
 - `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
-- `iconv`: `IMPLEMENTED_PARTIAL` — phase-1 codec core and fixtures exist, and `iconv_open`/`iconv`/`iconv_close` are native bootstrap implementations in the support taxonomy; codec scope/exclusions are locked in `tests/conformance/iconv_codec_scope_ledger.v1.json`. Deferred scope: full native `iconvdata` breadth and deterministic table-generation closure.
+- `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the implementation has grown far beyond the original four-codec phase-1 text (about 300 `Encoding` variants; `crates/frankenlibc-core/src/iconv/mod.rs` is ~54.5 kLOC, with generated tables in sibling files). Per-codec scope and remaining exclusions live in `tests/conformance/iconv_codec_scope_ledger.v1.json`.
 
 ## Deterministic Stub Surface
 
@@ -100,8 +100,8 @@ Current semantic fallback/no-op/bootstrap contracts:
 
 | Family | Strict Mode | Hardened Mode | Status |
 |---|---|---|---|
-| memory ops | host-glibc differential parity | policy-validated clamp/truncate/deny | DONE |
-| string ops | host-glibc differential parity | termination-safe repair paths | DONE |
+| memory ops | raw compatibility-first copies on strict hot paths | clamp/truncate only on explicitly membrane-gated hardened paths | IN_PROGRESS |
+| string ops | raw compatibility-first copies on strict hot paths | termination-safe repair on the wired hardened paths | IN_PROGRESS |
 | math ops | strict IEEE-style scalar behavior (no membrane rewrite) | non-finite sanitization only when repair action is selected | DONE |
 | allocator boundary | host-glibc parity for defined behavior | temporal/provenance repair policies | IN_PROGRESS |
 | stdio file ops | host-glibc parity for file stream ops | invalid mode repair, buffering fallbacks | DONE |
@@ -112,7 +112,7 @@ Current semantic fallback/no-op/bootstrap contracts:
 
 ## Runtime Math Kernel Matrix
 
-> **Liveness status (WS-2 complete)**: All runtime-math kernels below are **live by default** as of bd-06bxm closure. Default is ON; opt-out via `FRANKENLIBC_RUNTIME_MATH=off`. Evidence: `tests/conformance/runtime_math_liveness_e2e.v1.json`.
+> **Liveness scope:** the modules below are compiled and instantiated for runtime-math-enabled paths. That is not the same as universal behavioral influence: a 2026-10-06 profile found 58 runtime-math symbols in a hardened allocation-heavy Perl run and none in the matching strict run, whose hot paths bypassed the kernel. Table status records module/routing presence, not semantic parity or proof strength (`README.md#runtime-math-controllers`, `crates/frankenlibc-abi/src/runtime_policy.rs`).
 
 | Runtime Kernel | Live Role | Status |
 |---|---|---|
@@ -126,7 +126,7 @@ Current semantic fallback/no-op/bootstrap contracts:
 | `runtime_math::sparse` | online L1 sparse-recovery latent-cause inference from executed-probe anomaly vectors, with focused/diffuse/critical state gating | DONE |
 | `runtime_math::fusion` | adaptive robust weighted fusion over heterogeneous kernel severities with online entropy/drift telemetry and fused risk bonus | DONE |
 | `runtime_math::equivariant` | representation-stability/group-action monitor for cross-family semantic drift with symmetry-breaking escalation and orbit telemetry | DONE |
-| `runtime_math::eprocess` | anytime-valid sequential testing (e-value alarms) per API family | DONE |
+| `runtime_math::eprocess` | bounded likelihood-ratio-style alarm per API family; `log(e)` is clamped to `[-20, 50]`, so the implementation does not retain the unclamped anytime-valid guarantee | DONE |
 | `runtime_math::cvar` | distributionally-robust CVaR tail-risk control with runtime alarm gating | DONE |
 | sampled conformal risk fusion (`risk_engine`) | sampled high-order conformal alarm/full-check signal feeds live risk bonus | DONE |
 | sampled stage-order oracle fusion (`check_oracle`) | contextual ordering executes on live pointer-validation stages with exact stage-exit feedback loop | DONE |
@@ -157,10 +157,10 @@ Current semantic fallback/no-op/bootstrap contracts:
 | Stein discrepancy monitor (`stein_discrepancy`) | Kernelized Stein Discrepancy (Liu, Lee, Jordan 2016) goodness-of-fit testing — KL-divergence between live empirical and calibration-frozen reference models, per-controller divergence profiling, regime shift detection | DONE |
 | POMDP repair controller (`pomdp_repair`) | Constrained POMDP belief-space optimal repair policy — risk-conditioned action selection with belief state tracking for latent hazard estimation | DONE |
 | K-theory contract monitor (`ktheory`) | Algebraic K-theory contract drift detection — K₀/K₁ group element tracking for cross-family compatibility obligation monitoring | DONE |
-| SOS invariant synthesizer (`sos_invariant`) | Sum-of-squares polynomial Lyapunov certificate synthesis — SDP-relaxed invariant verification for controller stability under stress | DONE |
+| SOS invariant monitor (`sos_invariant`) | Runtime evaluation of three supplied quadratic controller-coherence forms; the build checks matrix PSD/recomposition but does not prove allocator/thread/size-class invariants | DONE |
 | pointer validator integration | runtime-math decisions affect bloom-miss/deep-check behavior and adaptive stage ordering | DONE |
-| allocator integration | runtime-math routing active across allocator ABI (`malloc`, `free`, `calloc`, `realloc`, `posix_memalign`, `memalign`, `aligned_alloc`) with exact check-order stage outcome feedback | DONE |
-| string/memory integration | runtime-math routing active for bootstrap `<string.h>` entrypoints (`mem*`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r`) with exact stage-outcome feedback on `memcpy`, `memmove`, `memset`, `memcmp`, `memchr`, `memrchr`, `strlen`, `strcmp`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strchr`, `strrchr`, `strstr`, `strtok`, `strtok_r` and cohomology overlap witness publication | DONE |
+| allocator integration | hardened/non-strict allocator paths call runtime-math routing and publish stage outcomes for `malloc`, `free`, `calloc`, `realloc`, `posix_memalign`, `memalign`, and `aligned_alloc`; deployed strict segment/host hot paths normally bypass it | DONE |
+| string/memory integration | the ABI contains runtime-policy/stage-feedback wiring for the listed `<string.h>` families on routed paths; strict compatibility hot paths use raw copies and do not universally execute full validation | DONE |
 | math/fenv integration | runtime-math routing active for bootstrap `<math.h>` entrypoints (`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `exp`, `log`, `log10`, `pow`, `fabs`, `ceil`, `floor`, `round`, `fmod`, `erf`, `tgamma`, `lgamma`) | DONE |
 | stdio integration | runtime-math routing active for `<stdio.h>` entrypoints (`fopen`, `fclose`, `fread`, `fwrite`, `fgets`, `fputs`, `fgetc`, `fputc`, `fseek`, `ftell`, `fflush`, `fprintf`, `printf`, `sprintf`, `snprintf`, `perror`) under `ApiFamily::Stdio` with stream registry, buffered I/O, and full printf format engine | DONE |
 | pthread/futex integration | runtime-math routing active for mutex (`init`, `destroy`, `lock`, `trylock`, `unlock`), cond (`init`, `destroy`, `wait`, `signal`, `broadcast`), rwlock (`init`, `destroy`, `rdlock`, `wrlock`, `unlock`) under `ApiFamily::Threading` with null-check validation + hardened EBUSY/EPERM repair | DONE |
@@ -292,14 +292,16 @@ RC-WS7 proof-program status: no machine-checked formal proof artifacts are commi
 | Clifford kernel equivalence | regime-partition proofs + cross-ISA witness bundles | PLANNED |
 | derived t-structure bootstrap ordering | t-structure filtration proofs + orthogonality violation traces | IN_PROGRESS |
 
-## Gap Summary
+## Historical Implementation Ledger and Remaining Gaps
+
+The numbered entries below record features that landed over the life of the project. They are not a fresh HEAD conformance report, and words such as “live”, “verified”, or “DONE” mean the named code/gate existed at that point—not that every deployed mode, ABI path, or mathematical guarantee is currently proved.
 
 1. ~~No Rust libc crates in repo yet.~~ Workspace scaffold with 6 crates created.
 2. Initial conformance fixtures committed (`tests/conformance/fixtures/`); full capture pending.
 3. Benchmark harnesses exist, but committed baseline evidence + regression thresholds are still pending.
 4. Version script scaffold created (`libc.map`); full symbol/version verification pending.
 5. Proof notes exist in `docs/proofs/` (9 files); machine-checked formal proof artifacts (Lean/Coq/SMT) are not committed yet.
-6. Runtime math kernel is live in membrane and pointer validation; cross-family ABI wiring remains incomplete.
+6. Runtime math kernel is live on routed membrane/pointer-validation paths; strict hot paths can bypass it and cross-family ABI wiring remains incomplete.
 7. Sequential-statistical guardrails are wired with deterministic calibration evidence (`tests/runtime_math/risk_pareto_calibration.v1.json`) and enforced via `scripts/check_runtime_math_risk_pareto_calibration.sh`.
 8. Bootstrap string/memory + allocator boundary implementations exist; initial strict/hardened fixture evidence is now committed (`tests/conformance/fixtures/membrane_mode_split.json`), full differential campaign remains pending.
 8. Core allocator subsystem (size classes, thread cache, large allocator, MallocState) implemented with 50+ tests.
@@ -313,7 +315,7 @@ RC-WS7 proof-program status: no machine-checked formal proof artifacts are commi
 15. Large-deviations monitor live — Cramér rate function (binary KL divergence) for exact exponential catastrophic failure probability bounds (math item #22).
 16. HJI reachability controller live — Hamilton-Jacobi-Isaacs value iteration on 64-state discrete game grid (4×4×4: risk/latency/adverse_rate), controller vs adversary minimax safety certificates (math item #15).
 17. Mean-field game contention controller live — Lasry-Lions Nash equilibrium via Picard fixed-point with logit best response, congestion collapse detection for validation resource contention (math item #19).
-18. String/Memory ABI fully wired — `memset`, `memcmp`, `memchr`, `strtok`, `strtok_r`, `memrchr` now delegate to `frankenlibc-core` safe implementations after membrane validation; `memcpy` and `memmove` retain local logic due to strict aliasing constraints.
+18. String/Memory ABI acquired core delegation and membrane hooks for the named functions; current strict compatibility hot paths can bypass full validation, and `memcpy`/`memmove` retain local ABI logic.
 19. D-optimal probe scheduler live — runtime selection of heavy monitors via information-gain-per-cost budgeting with identifiability feedback in hot-path decisioning (math item #41).
 20. Sparse latent-cause recovery live — runtime ISTA-based L1 controller infers concentrated vs diffuse fault sources from probe anomaly vectors and feeds strict/hardened risk escalation (math item #41 sparse recovery component).
 21. Robust fusion controller live — online multiplicative-weights fusion computes `fusion_bonus_ppm` from cross-kernel severities, reducing double-counted noise while accelerating coherent multi-signal escalation.
@@ -326,20 +328,22 @@ RC-WS7 proof-program status: no machine-checked formal proof artifacts are commi
 24. Commitment-audit controller live — hash-chain commitments (SipHash), replay ring buffer (128 entries), supermartingale sequential hypothesis test with anytime-valid tamper detection for session/accounting traces (math item #44).
 25. Bayesian change-point detector live — Adams & MacKay (2007) online Bayesian change-point detection with truncated run-length posterior (256-horizon), Beta-Bernoulli conjugate model, geometric hazard function, drift/shift/stable classification (math item #6).
 26. Conformal risk controller live — split conformal prediction (Vovk et al. 2005) with sliding-window calibration (256 entries), conformal p-values, EWMA coverage tracking, distribution-free finite-sample miscoverage detection (math item #27).
-27. Five new POSIX function families ported: `<unistd.h>` (27 entrypoints), `<sys/socket.h>` (14 entrypoints), `<arpa/inet.h>` (7 entrypoints), `<locale.h>` (2 entrypoints), `<termios.h>` (10 entrypoints). All routed through the RuntimeMathKernel via new ApiFamily variants (Socket=13, Locale=14, Termios=15, Inet=16). Core modules provide pure-Rust validators and constants; ABI modules wrap libc with membrane gating.
+27. Five POSIX function families added runtime-policy wiring and new `ApiFamily` variants (Socket=13, Locale=14, Termios=15, Inet=16). That historical wiring claim is path-specific; it does not establish that every current strict/hardened call executes the RuntimeMathKernel.
 28. Six new runtime math monitors integrated: Malliavin sensitivity, Fisher-Rao information geometry, matrix concentration (Bernstein), Čech nerve complex, Wasserstein drift, kernel MMD. Total test count: 792 (up from 608).
 29. `<dlfcn.h>` boundary locked — dlfcn boundary policy: phase-1 native local/pathname handles plus `WrapsHostLibc` interpose delegation for remaining loader cases; hardened invalid-flags repair is `RTLD_NOW`; replacement forbids residual host fallback.
 30. Stein discrepancy monitor fixed — replaced mean-score-norm KSD (broken for deterministic inputs) with KL divergence D(current||reference) between live EWMA and calibration-frozen models; all 7 tests pass.
-31. Five additional runtime math monitors verified: Stein discrepancy (KSD goodness-of-fit), POMDP repair (belief-space policy), K-theory (contract drift), SOS invariant (Lyapunov synthesis). Total test count: 792.
+31. Five additional runtime math monitors received implementation tests: Stein discrepancy, POMDP repair, K-theory, and the supplied-quadratic SOS-oriented monitor among them. The SOS item is not a synthesized Lyapunov proof of allocator/thread/size-class invariants.
 32. POSIX Batch 3: stdio file ops (27 ABI entrypoints wired via stream registry), process control (6 entrypoints under `ApiFamily::Process=17`: fork, _exit, execve, execvp, waitpid, wait), virtual memory (5 entrypoints under `ApiFamily::VirtualMemory=18`: mmap, munmap, mprotect, msync, madvise), pthread sync (15 entrypoints extending `ApiFamily::Threading`: mutex init/destroy/lock/trylock/unlock, cond init/destroy/wait/signal/broadcast, rwlock init/destroy/rdlock/wrlock/unlock), I/O multiplexing (4 entrypoints under `ApiFamily::Poll=19`: poll, ppoll, select, pselect). ApiFamily::COUNT expanded from 17 to 20. Total test count: 897.
 33. HTM fast path live — `memcpy`, `pthread_mutex_lock`, and the malloc stats combiner now route uncontended hot-path work through an RTM-backed optimistic path with deterministic abort/cooldown/fallback evidence enforced by `scripts/check_htm_fast_path.sh`.
 
 ## Update Policy
 
-No entry may move to `DONE` without:
+The intended promotion policy is that no entry moves to `DONE` without:
 
 1. fixture-based conformance evidence,
 2. benchmark result entry,
 3. documented membrane policy behavior for that API family,
 4. mode-specific strict/hardened evidence,
 5. proof artifact references for applicable obligations.
+
+Existing historical `DONE` rows have not all been re-audited against that standard; use the liveness-scope note and cited executable evidence rather than status text alone.
