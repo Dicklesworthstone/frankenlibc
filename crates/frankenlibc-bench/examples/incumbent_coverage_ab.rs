@@ -35,7 +35,7 @@
 //!  run -j2 --profile release -p frankenlibc-bench --features abi-bench \
 //!  --example incumbent_coverage_ab -- \
 //!  --family \
-//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|mtx_trylock|\
+//!  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|pthread_kill_invalid_unset_log|malloc_free|mtx_trylock|\
 //!  getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|sscanf|wcsnrtombs|\
 //!  isa_kernels|io_cancel_points`
 //!
@@ -96,6 +96,15 @@ const MEMORY_DEST_SENTINEL: u8 = 0xA5;
 const TDELETE_DELETIONS_PER_BATCH: usize = 8192;
 const SEM_POST_REPS: usize = 1_000_000;
 const THRD_CURRENT_REPS: usize = 4_000_000;
+const PTHREAD_KILL_INVALID_REPS: usize = 2_000_000;
+// Two live baseline runs resolved the effect by a huge margin (FL/glibc <
+// 0.03), but 36 retained FrankenLibC A/A ratios left the unchanged 1% null-CI
+// gate blocked at 1.056% and 1.780%. Making each batch four times longer did
+// not help (1.646%): between-batch drift, not timer resolution, dominates.
+// Split the same total work into a time-symmetric A/B/B/A/B/A/A/B schedule,
+// then aggregate it back to one bootstrap unit per outer sample. This cancels
+// linear within-cell drift without pretending nested chunks are independent.
+const PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL: usize = 4;
 const MALLOC_FREE_REPS: usize = 100_000;
 // A 4 KiB memory stream drained as 64 64-byte reads mirrors the legacy
 // `stdio_fread_mem_mt_ab` workload while keeping this incumbent harness fully
@@ -131,6 +140,9 @@ const WCSNRTOMBS_CODEPOINTS_PER_ARM: usize = 20_000_000;
 const WCSNRTOMBS_MIN_REPS: usize = 2_000;
 const BOOTSTRAP_RESAMPLES: usize = 4_096;
 const NULL_BIAS_TOLERANCE: f64 = 0.02;
+const PTHREAD_KILL_INVALID_SIGNALS: [c_int; 2] = [-1, 65];
+const PTHREAD_KILL_UNSET_LOG_MAX_RATIO: f64 = 1.02;
+const PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH: f64 = 0.01;
 const IPV4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
 const WCSNRTOMBS_OUTPUT_SENTINEL: u8 = 0xa5;
 
@@ -144,6 +156,7 @@ type SemDestroyFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemPostFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type SemTrywaitFn = unsafe extern "C" fn(*mut libc::sem_t) -> c_int;
 type ThrdCurrentFn = unsafe extern "C" fn() -> libc::pthread_t;
+type PthreadKillFn = unsafe extern "C" fn(libc::pthread_t, c_int) -> c_int;
 type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type FreeFn = unsafe extern "C" fn(*mut c_void);
 type FmemopenFn = unsafe extern "C" fn(*mut c_void, usize, *const c_char) -> *mut c_void;
@@ -284,6 +297,10 @@ unsafe extern "C" {
     fn linked_host_sem_trywait(sem: *mut libc::sem_t) -> c_int;
     #[link_name = "thrd_current"]
     fn linked_host_thrd_current() -> libc::pthread_t;
+    #[link_name = "pthread_self"]
+    fn linked_host_pthread_self() -> libc::pthread_t;
+    #[link_name = "pthread_kill"]
+    fn linked_host_pthread_kill(thread: libc::pthread_t, signal: c_int) -> c_int;
     #[link_name = "malloc"]
     fn linked_host_malloc(size: usize) -> *mut c_void;
     #[link_name = "free"]
@@ -622,6 +639,7 @@ enum Family {
     Getauxval,
     SemPost,
     ThrdCurrent,
+    PthreadKillInvalidUnsetLog,
     MallocFree,
     FreadMem,
     FscanfFd,
@@ -1121,6 +1139,9 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("getauxval") => Family::Getauxval,
                 Some(value) if value == OsStr::new("sem_post") => Family::SemPost,
                 Some(value) if value == OsStr::new("thrd_current") => Family::ThrdCurrent,
+                Some(value) if value == OsStr::new("pthread_kill_invalid_unset_log") => {
+                    Family::PthreadKillInvalidUnsetLog
+                }
                 Some(value) if value == OsStr::new("malloc_free") => Family::MallocFree,
                 Some(value) if value == OsStr::new("fread_mem") => Family::FreadMem,
                 Some(value) if value == OsStr::new("fscanf_fd") => Family::FscanfFd,
@@ -1143,7 +1164,7 @@ fn parse_args() -> Config {
                 Some(value) if value == OsStr::new("io_cancel_points") => Family::IoCancelPoints,
                 value => panic!(
                     "unknown family {value:?}; expected nl_langinfo, fpclassify, fpclassifyf, memrchr, memcpy_strlen, tdelete, getrandom, getauxval, \
-                     sem_post, thrd_current, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
+                     sem_post, thrd_current, pthread_kill_invalid_unset_log, malloc_free, fread_mem, fscanf_fd, mtx_trylock, getaddrinfo_hosts, sinhf_coshf, tanhf, bounded_len, \
                      gethostbyaddr, gethostbyname, snprintf, sscanf, wcsnrtombs, strcasestr, isa_kernels, or io_cancel_points"
                 ),
             };
@@ -1153,7 +1174,7 @@ fn parse_args() -> Config {
                  [--fl-so PATH] [--verify-only] [--pin-quietest N] [--fl-deepbind] \
                  [--families a,b,c] \
                  [--family \
-                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
+                  nl_langinfo|fpclassify|fpclassifyf|memrchr|memcpy_strlen|tdelete|getrandom|getauxval|sem_post|thrd_current|pthread_kill_invalid_unset_log|malloc_free|fread_mem|fscanf_fd|mtx_trylock|\
                   getaddrinfo_hosts|sinhf_coshf|tanhf|bounded_len|gethostbyaddr|gethostbyname|snprintf|\
                   sscanf|\
                   wcsnrtombs|strcasestr|isa_kernels|io_cancel_points]"
@@ -2810,6 +2831,73 @@ fn measure_thrd_current_case(host: ThrdCurrentFn, fl: ThrdCurrentFn) -> CaseResu
         fl_null_b,
         glibc_null_a,
         glibc_null_b,
+    )
+}
+
+#[derive(Clone, Copy)]
+struct PthreadKillInvalidArm {
+    function: PthreadKillFn,
+    thread: libc::pthread_t,
+}
+
+#[inline(never)]
+fn run_pthread_kill_invalid_batch(arm: PthreadKillInvalidArm, reps: usize) -> i64 {
+    let mut accumulator = 0i64;
+    for index in 0..reps {
+        let signal = PTHREAD_KILL_INVALID_SIGNALS[index & 1];
+        let result = unsafe { black_box(arm.function)(black_box(arm.thread), black_box(signal)) };
+        accumulator = accumulator.wrapping_add(i64::from(black_box(result)));
+    }
+    black_box(accumulator)
+}
+
+fn time_pthread_kill_invalid_batch(arm: PthreadKillInvalidArm) -> f64 {
+    let started = Instant::now();
+    black_box(run_pthread_kill_invalid_batch(
+        arm,
+        PTHREAD_KILL_INVALID_REPS,
+    ));
+    started.elapsed().as_secs_f64() * 1_000_000_000.0 / PTHREAD_KILL_INVALID_REPS as f64
+}
+
+fn time_pthread_kill_invalid_fl_null_pair(
+    arm: PthreadKillInvalidArm,
+    reverse_labels: bool,
+) -> (f64, f64) {
+    // Four chunks per label in A B B A B A A B order. Reversing labels on odd
+    // outer samples keeps the order balance exact across the retained sample
+    // set. Each label has equal total work and equal first/second temporal
+    // moments, so constant and linear drift cancel before the ratio is formed.
+    const LABEL_B: [bool; 8] = [false, true, true, false, true, false, false, true];
+    let mut a = 0.0;
+    let mut b = 0.0;
+    for label_b in LABEL_B {
+        let elapsed = time_pthread_kill_invalid_batch(arm);
+        if label_b ^ reverse_labels {
+            b += elapsed;
+        } else {
+            a += elapsed;
+        }
+    }
+    assert_eq!(PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL, 4);
+    let chunks = PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL as f64;
+    (a / chunks, b / chunks)
+}
+
+fn measure_pthread_kill_invalid_case(
+    host: PthreadKillInvalidArm,
+    fl: PthreadKillInvalidArm,
+) -> CaseResult {
+    measure_arm_case_with_null_timers(
+        "invalid_signal_local_rejection",
+        "FRANKENLIBC_LOG unset; alternating pthread_kill signal -1 and 65 semantic denials",
+        PTHREAD_KILL_INVALID_REPS,
+        host,
+        fl,
+        time_pthread_kill_invalid_batch,
+        time_pthread_kill_invalid_batch,
+        time_pthread_kill_invalid_batch,
+        Some(time_pthread_kill_invalid_fl_null_pair),
     )
 }
 
@@ -6414,6 +6502,235 @@ fn run_thrd_current(config: &Config) {
     // The loaded libc replacement owns process-global and TLS state. Keep it
     // resident until process exit rather than attempting an unsupported unload.
     if verdict == "INCOMPLETE" {
+        std::process::exit(2);
+    }
+}
+
+fn run_pthread_kill_invalid_unset_log(config: &Config) {
+    for name in ["FRANKENLIBC_LOG", "FRANKENLIBC_LOG_FILE"] {
+        assert!(
+            std::env::var_os(name).is_none(),
+            "{name} must be unset before loading FrankenLibC for the unset-sink overhead proof"
+        );
+    }
+    println!(
+        "UNSET_SINK_PRECONDITION FRANKENLIBC_LOG=unset FRANKENLIBC_LOG_FILE=unset verdict=pass"
+    );
+
+    let supplied_fl = sha256_file(&config.fl_so).expect("hash supplied FrankenLibC SO");
+    let fl_path =
+        CString::new(supplied_fl.path.as_os_str().as_bytes()).expect("FrankenLibC path has NUL");
+    let handle = dlopen_fl_so(config, &fl_path, "pthread_kill");
+    let fl_symbol = unsafe { libc::dlsym(handle, c"pthread_kill".as_ptr()) };
+    assert!(
+        !fl_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC pthread_kill")
+    );
+    let fl_errno_symbol = unsafe { libc::dlsym(handle, c"__errno_location".as_ptr()) };
+    assert!(
+        !fl_errno_symbol.is_null(),
+        "{}",
+        dl_error("dlsym FrankenLibC __errno_location")
+    );
+
+    let host: PthreadKillFn = linked_host_pthread_kill;
+    let fl: PthreadKillFn = unsafe { std::mem::transmute(fl_symbol) };
+    let host_errno: ErrnoLocationFn = linked_host_errno_location;
+    let fl_errno: ErrnoLocationFn = unsafe { std::mem::transmute(fl_errno_symbol) };
+    let incumbent_identity = symbol_object(host as *const () as *const c_void)
+        .expect("identify host pthread_kill object");
+    let fl_identity =
+        symbol_object(fl_symbol.cast_const()).expect("identify FrankenLibC pthread_kill object");
+    print_identity("INCUMBENT", &incumbent_identity);
+    print_identity("FL", &fl_identity);
+    println!("INCUMBENT_LINKAGE direct_process_link symbol=pthread_kill");
+    println!("FL_LINKAGE explicit_dlopen_local symbol=pthread_kill");
+    assert!(
+        incumbent_identity
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"libc.so")),
+        "incumbent resolved to {}, not host libc",
+        incumbent_identity.path.display()
+    );
+    assert_eq!(
+        fl_identity.sha256, supplied_fl.sha256,
+        "loaded FrankenLibC object differs from supplied object"
+    );
+    assert_eq!(
+        fl_identity.path, supplied_fl.path,
+        "dladdr resolved FrankenLibC pthread_kill to a different object path"
+    );
+    assert_ne!(
+        incumbent_identity.path, fl_identity.path,
+        "dladdr resolved both pthread_kill arms to the same object"
+    );
+    assert_ne!(
+        incumbent_identity.sha256, fl_identity.sha256,
+        "both arms resolve to byte-identical objects"
+    );
+    assert_ne!(
+        host as usize, fl as usize,
+        "both arms resolve to the same function address"
+    );
+    println!(
+        "ARM_DISTINCT symbol=pthread_kill incumbent_address={:#x} fl_address={:#x}",
+        host as usize, fl as usize,
+    );
+
+    // Use one real incumbent handle in both arms. FrankenLibC rejects these
+    // signal numbers before consulting `thread`, so this does not pretend a
+    // host-created handle exercises FrankenLibC's valid-signal lookup path.
+    let thread = unsafe { linked_host_pthread_self() };
+    let host_errno_slot = unsafe { host_errno() };
+    let fl_errno_slot = unsafe { fl_errno() };
+    assert!(!host_errno_slot.is_null(), "host errno slot is null");
+    assert!(!fl_errno_slot.is_null(), "FrankenLibC errno slot is null");
+    assert_ne!(
+        host_errno_slot, fl_errno_slot,
+        "host and FrankenLibC errno domains unexpectedly alias"
+    );
+    println!(
+        "ERRNO_DOMAINS symbol=pthread_kill host_slot={host_errno_slot:p} fl_slot={fl_errno_slot:p} distinct=true"
+    );
+    const HOST_ERRNO_SENTINEL: c_int = libc::EBUSY;
+    const FL_ERRNO_SENTINEL: c_int = libc::EINTR;
+    for signal in PTHREAD_KILL_INVALID_SIGNALS {
+        unsafe { *host_errno_slot = HOST_ERRNO_SENTINEL };
+        let host_result = unsafe { host(thread, signal) };
+        let host_errno_after = unsafe { *host_errno_slot };
+
+        unsafe {
+            *host_errno_slot = HOST_ERRNO_SENTINEL;
+            *fl_errno_slot = FL_ERRNO_SENTINEL;
+        }
+        let fl_result = unsafe { fl(thread, signal) };
+        let host_errno_after_fl = unsafe { *host_errno_slot };
+        let fl_errno_after = unsafe { *fl_errno_slot };
+        assert_eq!(
+            (host_result, host_errno_after),
+            (libc::EINVAL, HOST_ERRNO_SENTINEL),
+            "host pthread_kill invalid-signal contract failed for signal {signal}"
+        );
+        assert_eq!(
+            (fl_result, host_errno_after_fl, fl_errno_after),
+            (libc::EINVAL, HOST_ERRNO_SENTINEL, FL_ERRNO_SENTINEL),
+            "FrankenLibC pthread_kill invalid-signal contract failed for signal {signal}"
+        );
+    }
+    println!(
+        "INCUMBENT_COVERAGE_CONFORMANCE symbol=pthread_kill comparisons=4 \
+         signals=-1,65 return_value=EINVAL host_errno_preserved=true \
+         fl_errno_preserved=true verdict=pass"
+    );
+    let threads_pre_guard = observed_threads();
+    println!(
+        "THREADS_OBSERVED symbol=pthread_kill_invalid_unset_log phase=pre_guard count={threads_pre_guard}"
+    );
+    if config.verify_only {
+        println!(
+            "INCUMBENT_COVERAGE_VERIFY_ONLY symbol=pthread_kill_invalid_unset_log verdict=pass"
+        );
+        return;
+    }
+
+    let guard = HostWideBenchmarkGuard::new().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=guard_init error={error}");
+        std::process::exit(2);
+    });
+    let pre = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=pre_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", pre.contract_line("pre_measurement"));
+    let threads_pre = observed_threads();
+    assert_eq!(
+        threads_pre, threads_pre_guard,
+        "pthread_kill unset-sink observed thread count changed before measurement"
+    );
+    println!(
+        "UNSET_SINK_MEASUREMENT_PROTOCOL symbol=pthread_kill \
+         effect_reps_per_arm={PTHREAD_KILL_INVALID_REPS} \
+         fl_aa_chunk_reps={PTHREAD_KILL_INVALID_REPS} \
+         fl_aa_chunks_per_label={PTHREAD_KILL_INVALID_FL_NULL_CHUNKS_PER_LABEL} \
+         fl_aa_schedule=ABBABAAB_reversed_on_odd_samples \
+         incumbent_aa_reps_per_arm={PTHREAD_KILL_INVALID_REPS} \
+         retained_samples={} bootstrap_resamples={BOOTSTRAP_RESAMPLES}",
+        SAMPLES - WARMUPS,
+    );
+
+    let result = measure_pthread_kill_invalid_case(
+        PthreadKillInvalidArm {
+            function: host,
+            thread,
+        },
+        PthreadKillInvalidArm {
+            function: fl,
+            thread,
+        },
+    );
+
+    let threads_post = observed_threads();
+    assert_eq!(
+        threads_post, threads_pre,
+        "pthread_kill unset-sink observed thread count changed during measurement"
+    );
+    let post = guard.check_quiet().unwrap_or_else(|error| {
+        eprintln!("INCUMBENT_COVERAGE_BLOCKED phase=post_measurement error={error}");
+        std::process::exit(2);
+    });
+    println!("{}", post.contract_line("post_measurement"));
+    result.print(
+        "pthread_kill_invalid_unset_log",
+        &incumbent_identity.path,
+        threads_pre,
+        threads_post,
+    );
+
+    let fl_null_ci_half_width = (result.fl_null_high - result.fl_null_low) / 2.0;
+    let glibc_null_ci_half_width = (result.glibc_null_high - result.glibc_null_low) / 2.0;
+    let null_medians_hold = result.fl_null_holds && result.glibc_null_holds;
+    let null_precision_holds = fl_null_ci_half_width
+        <= PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH
+        && glibc_null_ci_half_width <= PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH;
+    let noninferiority_holds = result.effect_high <= PTHREAD_KILL_UNSET_LOG_MAX_RATIO;
+    let passes = null_medians_hold && null_precision_holds && noninferiority_holds;
+    let verdict = if passes { "PASS" } else { "BLOCKED" };
+    println!(
+        "UNSET_SINK_OVERHEAD_CONTRACT symbol=pthread_kill case={} \
+         candidate_over_incumbent_median={:.6} candidate_over_incumbent_ci95=[{:.6},{:.6}] \
+         max_candidate_over_incumbent={PTHREAD_KILL_UNSET_LOG_MAX_RATIO:.6} \
+         fl_aa_median={:.6} fl_aa_ci95=[{:.6},{:.6}] fl_aa_ci_half_width={fl_null_ci_half_width:.6} \
+         incumbent_aa_median={:.6} incumbent_aa_ci95=[{:.6},{:.6}] \
+         incumbent_aa_ci_half_width={glibc_null_ci_half_width:.6} \
+         aa_median_bounds=[{:.6},{:.6}] max_aa_ci_half_width={PTHREAD_KILL_UNSET_LOG_MAX_NULL_CI_HALF_WIDTH:.6} \
+         null_medians_hold={null_medians_hold} null_precision_holds={null_precision_holds} \
+         noninferiority_holds={noninferiority_holds} noise_policy=block verdict={verdict}",
+        result.label,
+        result.effect_median,
+        result.effect_low,
+        result.effect_high,
+        result.fl_null_median,
+        result.fl_null_low,
+        result.fl_null_high,
+        result.glibc_null_median,
+        result.glibc_null_low,
+        result.glibc_null_high,
+        1.0 - NULL_BIAS_TOLERANCE,
+        1.0 + NULL_BIAS_TOLERANCE,
+    );
+    println!(
+        "INCUMBENT_COVERAGE_VERDICT symbol=pthread_kill_invalid_unset_log \
+         verdict={verdict} cases=1 overhead_contract=noninferiority \
+         headline_case={} headline_ratio_median={:.6} \
+         threads_observed_pre={threads_pre} threads_observed_post={threads_post}",
+        result.label, result.effect_median,
+    );
+
+    // The loaded libc replacement owns process-global and TLS state. Keep it
+    // resident until process exit rather than attempting an unsupported unload.
+    if !passes {
         std::process::exit(2);
     }
 }
@@ -10871,6 +11188,35 @@ fn measure_arm_case_with_reps<A: Copy>(
     fl: A,
     time_batch: fn(A) -> f64,
 ) -> CaseResult {
+    measure_arm_case_with_null_timers(
+        label,
+        note,
+        reps_per_arm,
+        host,
+        fl,
+        time_batch,
+        time_batch,
+        time_batch,
+        None,
+    )
+}
+
+/// Run the shared six-cell schedule with an optional drift-balanced FL A/A
+/// timer. The paired timer still returns one observation per outer sample, so
+/// the bootstrap units remain independent at the same level as every other
+/// family rather than treating nested timing chunks as extra samples.
+#[allow(clippy::too_many_arguments)]
+fn measure_arm_case_with_null_timers<A: Copy>(
+    label: &'static str,
+    note: &'static str,
+    reps_per_arm: usize,
+    host: A,
+    fl: A,
+    effect_time_batch: fn(A) -> f64,
+    fl_null_time_batch: fn(A) -> f64,
+    host_null_time_batch: fn(A) -> f64,
+    fl_null_time_pair: Option<fn(A, bool) -> (f64, f64)>,
+) -> CaseResult {
     let retained = SAMPLES - WARMUPS;
     let mut fl_effect = Vec::with_capacity(retained);
     let mut glibc_effect = Vec::with_capacity(retained);
@@ -10889,29 +11235,32 @@ fn measure_arm_case_with_reps<A: Copy>(
 
         for slot in 0..3 {
             match (sample + slot) % 3 {
-                0 if sample % 2 == 0 => {
-                    fa = time_batch(fl);
-                    fb = time_batch(fl);
-                }
                 0 => {
-                    fb = time_batch(fl);
-                    fa = time_batch(fl);
+                    if let Some(time_pair) = fl_null_time_pair {
+                        (fa, fb) = time_pair(fl, sample % 2 != 0);
+                    } else if sample % 2 == 0 {
+                        fa = fl_null_time_batch(fl);
+                        fb = fl_null_time_batch(fl);
+                    } else {
+                        fb = fl_null_time_batch(fl);
+                        fa = fl_null_time_batch(fl);
+                    }
                 }
                 1 if sample % 2 == 0 => {
-                    ga = time_batch(host);
-                    gb = time_batch(host);
+                    ga = host_null_time_batch(host);
+                    gb = host_null_time_batch(host);
                 }
                 1 => {
-                    gb = time_batch(host);
-                    ga = time_batch(host);
+                    gb = host_null_time_batch(host);
+                    ga = host_null_time_batch(host);
                 }
                 2 if sample % 2 == 0 => {
-                    effect_fl = time_batch(fl);
-                    effect_glibc = time_batch(host);
+                    effect_fl = effect_time_batch(fl);
+                    effect_glibc = effect_time_batch(host);
                 }
                 2 => {
-                    effect_glibc = time_batch(host);
-                    effect_fl = time_batch(fl);
+                    effect_glibc = effect_time_batch(host);
+                    effect_fl = effect_time_batch(fl);
                 }
                 _ => unreachable!(),
             }
@@ -12051,6 +12400,7 @@ fn main() {
         Family::Getauxval => run_getauxval(&config),
         Family::SemPost => run_sem_post(&config),
         Family::ThrdCurrent => run_thrd_current(&config),
+        Family::PthreadKillInvalidUnsetLog => run_pthread_kill_invalid_unset_log(&config),
         Family::MallocFree => run_malloc_free(&config),
         Family::FreadMem => run_fread_mem(&config),
         Family::FscanfFd => run_fscanf_fd(&config),
