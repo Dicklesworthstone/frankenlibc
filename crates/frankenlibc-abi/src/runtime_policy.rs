@@ -2536,7 +2536,8 @@ static DENIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 /// formatting and file initialization.
 #[cold]
 fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecision) {
-    let symbol = if frankenlibc_membrane::heal::runtime_log_in_signal_context() {
+    let signal_context = frankenlibc_membrane::heal::runtime_log_signal_context();
+    let symbol = if signal_context.requires_signal_safe_path() {
         "runtime_policy"
     } else {
         active_trace_context().symbol
@@ -2550,6 +2551,7 @@ fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecisio
         decision.evidence_seqno,
         0,
         "runtime_policy",
+        signal_context,
     );
 }
 
@@ -2570,7 +2572,8 @@ pub(crate) fn record_semantic_deny(
     errno_value: c_int,
     reason: &'static str,
 ) {
-    let in_signal_handler = frankenlibc_membrane::heal::runtime_log_in_signal_context();
+    let signal_context = frankenlibc_membrane::heal::runtime_log_signal_context();
+    let signal_safe_path = signal_context.requires_signal_safe_path();
     // Preserve errno before selecting the process mode.  The normal-path
     // `mode()` call periodically re-reads the environment and may allocate or
     // lock while reporting an attempted mode switch.  pthread-style APIs
@@ -2578,7 +2581,7 @@ pub(crate) fn record_semantic_deny(
     // not leak an incidental errno change to the caller.  The signal path uses
     // only the already-resolved atomic mode and must not touch either TLS errno
     // slot.
-    let _errno_transparency = if in_signal_handler {
+    let _errno_transparency = if signal_safe_path {
         None
     } else {
         Some(ErrnoTransparencyGuard::capture())
@@ -2591,12 +2594,22 @@ pub(crate) fn record_semantic_deny(
         contention_hint: 0,
         bloom_negative: true,
     };
-    let mode = if in_signal_handler {
+    let mode = if signal_safe_path {
         resolved_mode()
     } else {
         mode()
     };
-    append_deny_record(mode, symbol, ctx, 0, 0, 0, errno_value, reason);
+    append_deny_record(
+        mode,
+        symbol,
+        ctx,
+        0,
+        0,
+        0,
+        errno_value,
+        reason,
+        signal_context,
+    );
 }
 
 #[cold]
@@ -2609,11 +2622,12 @@ fn append_deny_record(
     evidence_seqno: u64,
     errno_value: c_int,
     reason: &'static str,
+    signal_context: frankenlibc_membrane::heal::RuntimeSignalContext,
 ) {
-    let in_signal_handler = frankenlibc_membrane::heal::runtime_log_in_signal_context();
+    let signal_safe_path = signal_context.requires_signal_safe_path();
     // Evidence is post-decision telemetry. The raw signal path does not call
     // libc or mutate errno; capturing either errno slot there would touch TLS.
-    let _errno_transparency = if in_signal_handler {
+    let _errno_transparency = if signal_safe_path {
         None
     } else {
         Some(ErrnoTransparencyGuard::capture())
@@ -2624,18 +2638,60 @@ fn append_deny_record(
     }
     let seq = frankenlibc_membrane::heal::next_runtime_log_sequence();
     let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
-    let formatted = write!(
+    let formatted = write_deny_log_line(
+        &mut line,
+        seq,
+        mode,
+        symbol,
+        ctx,
+        policy_id,
+        risk_upper_bound_ppm,
+        evidence_seqno,
+        errno_value,
+        reason,
+        signal_context,
+    );
+    if formatted.is_err() {
+        frankenlibc_membrane::heal::note_runtime_log_drop();
+        return;
+    }
+    frankenlibc_membrane::heal::append_runtime_log_record(line.as_str());
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_deny_log_line(
+    line: &mut frankenlibc_membrane::heal::RuntimeLogBuffer,
+    seq: u64,
+    mode: SafetyLevel,
+    symbol: &str,
+    ctx: RuntimeContext,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    evidence_seqno: u64,
+    errno_value: c_int,
+    reason: &str,
+    signal_context: frankenlibc_membrane::heal::RuntimeSignalContext,
+) -> std::fmt::Result {
+    write!(
         line,
         "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"deny\",\
 \"seq\":{seq},\"pid\":{},\"runtime_mode\":\"{}\",\"api_family\":\"{:?}\",\
-\"signal_context\":{in_signal_handler},\"symbol\":",
+\"signal_context\":{},\"signal_context_known\":{},\"symbol\":",
         frankenlibc_membrane::heal::runtime_log_process_id(),
         runtime_mode_name(mode),
         ctx.family,
+        matches!(
+            signal_context,
+            frankenlibc_membrane::heal::RuntimeSignalContext::Inside
+        ),
+        !matches!(
+            signal_context,
+            frankenlibc_membrane::heal::RuntimeSignalContext::Unknown
+        ),
     )
-    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(&mut line, symbol))
+    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(line, symbol))
     .and_then(|()| line.write_str(",\"action\":\"Deny\",\"outcome\":\"deny\",\"reason\":"))
-    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(&mut line, reason))
+    .and_then(|()| frankenlibc_membrane::heal::write_runtime_log_json_string(line, reason))
     .and_then(|()| {
         write!(
             line,
@@ -2656,12 +2712,7 @@ fn append_deny_record(
             ",\"requested_bytes\":{},\"is_write\":{}}}",
             ctx.requested_bytes, ctx.is_write,
         )
-    });
-    if formatted.is_err() {
-        frankenlibc_membrane::heal::note_runtime_log_drop();
-        return;
-    }
-    frankenlibc_membrane::heal::append_runtime_log_record(line.as_str());
+    })
 }
 
 fn runtime_mode_name(mode: SafetyLevel) -> &'static str {
@@ -3307,7 +3358,7 @@ mod tests {
             .find("ErrnoTransparencyGuard::capture()")
             .expect("semantic-denial telemetry must preserve caller errno");
         let mode_at = body
-            .find("let mode = if in_signal_handler")
+            .find("let mode = if signal_safe_path")
             .expect("semantic-denial telemetry must select a runtime mode");
 
         assert!(
@@ -3315,6 +3366,38 @@ mod tests {
             "record_semantic_deny() captures errno after mode(), so mode-switch \
              sampling can clobber pthread-style caller errno"
         );
+    }
+
+    #[test]
+    fn unknown_signal_context_is_encoded_without_claiming_outside() {
+        let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
+        write_deny_log_line(
+            &mut line,
+            7,
+            SafetyLevel::Hardened,
+            "pthread_kill",
+            RuntimeContext {
+                family: ApiFamily::Signal,
+                addr_hint: 0,
+                requested_bytes: 0,
+                is_write: false,
+                contention_hint: 0,
+                bloom_negative: true,
+            },
+            0,
+            0,
+            0,
+            libc::EINVAL,
+            "invalid_signal_number",
+            frankenlibc_membrane::heal::RuntimeSignalContext::Unknown,
+        )
+        .unwrap();
+
+        let row: serde_json::Value = serde_json::from_str(line.as_str()).unwrap();
+        assert_eq!(row["seq"], 7);
+        assert_eq!(row["symbol"], "pthread_kill");
+        assert_eq!(row["signal_context"], false);
+        assert_eq!(row["signal_context_known"], false);
     }
 
     struct ModeSwitchCounterGuard {

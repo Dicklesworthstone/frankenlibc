@@ -174,32 +174,60 @@ pub fn write_runtime_log_json_string(output: &mut impl fmt::Write, value: &str) 
     output.write_char('"')
 }
 
-/// Install the allocation-free ABI probe that reports whether the calling
+/// What the allocation-free ABI probe knows about the calling context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSignalContext {
+    Outside,
+    Inside,
+    /// The bounded allocator-slot lookup could not identify the thread.
+    Unknown,
+}
+
+impl RuntimeSignalContext {
+    /// Unknown context takes the same allocation/TLS-free path as a confirmed
+    /// signal handler; only `Outside` may enter normal logging machinery.
+    #[must_use]
+    pub const fn requires_signal_safe_path(self) -> bool {
+        !matches!(self, Self::Outside)
+    }
+
+    #[must_use]
+    const fn is_inside(self) -> bool {
+        matches!(self, Self::Inside)
+    }
+
+    #[must_use]
+    const fn is_known(self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+
+/// Install the allocation-free ABI probe that classifies whether the calling
 /// thread is currently executing a user signal handler. Startup must install
 /// it before user code can register or run handlers.
-pub fn install_signal_context_probe(probe: fn() -> bool) {
+pub fn install_signal_context_probe(probe: fn() -> RuntimeSignalContext) {
     SIGNAL_CONTEXT_PROBE.store(probe as *const () as usize, Ordering::Release);
 }
 
 #[inline]
 #[allow(unsafe_code)]
-fn in_signal_handler_context() -> bool {
+fn runtime_signal_context() -> RuntimeSignalContext {
     let address = SIGNAL_CONTEXT_PROBE.load(Ordering::Acquire);
     if address == 0 {
-        return false;
+        return RuntimeSignalContext::Outside;
     }
-    // SAFETY: `install_signal_context_probe` stores only a live `fn() -> bool`
-    // code pointer, and the ABI that installs it remains loaded for the life
-    // of this membrane instance.
-    let probe = unsafe { std::mem::transmute::<usize, fn() -> bool>(address) };
+    // SAFETY: `install_signal_context_probe` stores only a live function with
+    // this exact signature, and the ABI that installs it remains loaded for
+    // the life of this membrane instance.
+    let probe = unsafe { std::mem::transmute::<usize, fn() -> RuntimeSignalContext>(address) };
     probe()
 }
 
 /// Read the startup-installed signal-context probe without allocation, locks,
 /// environment access, or Rust TLS.
 #[must_use]
-pub fn runtime_log_in_signal_context() -> bool {
-    in_signal_handler_context()
+pub fn runtime_log_signal_context() -> RuntimeSignalContext {
+    runtime_signal_context()
 }
 
 /// A thread-bound reentry guard. A rejected nested entry must not clear the
@@ -468,8 +496,9 @@ impl HealingPolicy {
         if !action.is_heal() {
             return;
         }
-        let in_signal_handler = in_signal_handler_context();
-        if in_signal_handler {
+        let signal_context = runtime_signal_context();
+        let signal_safe_path = signal_context.requires_signal_safe_path();
+        if signal_safe_path {
             match RUNTIME_LOG_FD.load(Ordering::Acquire) {
                 0.. => {}
                 RUNTIME_LOG_UNINITIALIZED | RUNTIME_LOG_INITIALIZING => {
@@ -482,7 +511,7 @@ impl HealingPolicy {
         // Never touch global-dynamic Rust TLS from a signal handler. Signal
         // records use only their stack buffer, atomics, and one O_APPEND
         // writev; nested/concurrent handlers therefore need no shared guard.
-        let _thread_guard = if in_signal_handler {
+        let _thread_guard = if signal_safe_path {
             None
         } else {
             let guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG);
@@ -496,8 +525,8 @@ impl HealingPolicy {
         // FRANKENLIBC_HEAL_LOG controls only the heap-backed diagnostic
         // ledger/ring. The deployed FRANKENLIBC_LOG sink is independent: when
         // configured, it must receive every repair even if the mirror is off.
-        let mirror_active = !in_signal_handler && self.healing_logging_active();
-        let runtime_sink_active = if in_signal_handler {
+        let mirror_active = !signal_safe_path && self.healing_logging_active();
+        let runtime_sink_active = if signal_safe_path {
             true
         } else {
             initialize_runtime_log_fd() >= 0
@@ -524,7 +553,8 @@ impl HealingPolicy {
                 action,
                 context,
                 runtime_mode,
-                signal_context: in_signal_handler,
+                signal_context: signal_context.is_inside(),
+                signal_context_known: signal_context.is_known(),
             },
         )
         .is_err()
@@ -539,7 +569,7 @@ impl HealingPolicy {
         // A signal handler may have interrupted either allocator or evidence
         // lock ownership on this thread. The deployed JSONL record above is
         // complete; do not enter the heap-backed diagnostic mirrors here.
-        if in_signal_handler {
+        if signal_safe_path {
             return;
         }
 
@@ -657,8 +687,8 @@ fn append_to_runtime_log(line: &str) {
 }
 
 fn append_to_runtime_log_with_limit(line: &str, rate_limited: bool) {
-    let in_signal_handler = in_signal_handler_context();
-    let fd = if in_signal_handler {
+    let signal_safe_path = runtime_signal_context().requires_signal_safe_path();
+    let fd = if signal_safe_path {
         RUNTIME_LOG_FD.load(Ordering::Acquire)
     } else {
         let Some(_guard) = LogReentryGuard::enter(&WRITING_RUNTIME_LOG) else {
@@ -823,6 +853,7 @@ struct RepairLogRecord<'a> {
     context: RepairLogContext,
     runtime_mode: &'static str,
     signal_context: bool,
+    signal_context_known: bool,
 }
 
 fn write_healing_log_line(
@@ -838,6 +869,7 @@ fn write_healing_log_line(
         context,
         runtime_mode,
         signal_context,
+        signal_context_known,
     } = record;
     let level = healing_log_level(action);
     let escalated = healing_action_escalated(action);
@@ -867,7 +899,10 @@ fn write_healing_log_line(
     {
         write!(output, ",\"address\":\"{address:#x}\"")?;
     }
-    write!(output, ",\"signal_context\":{signal_context},\"details\":")?;
+    write!(
+        output,
+        ",\"signal_context\":{signal_context},\"signal_context_known\":{signal_context_known},\"details\":"
+    )?;
     write_healing_action_details(output, action)?;
     output.write_str("}")
 }
@@ -973,6 +1008,7 @@ mod tests {
                 context: RepairLogContext::new(0, Some(0xdead_beef)),
                 runtime_mode: "hardened",
                 signal_context: false,
+                signal_context_known: true,
             },
         )
         .unwrap();
@@ -984,6 +1020,7 @@ mod tests {
         assert_eq!(row["errno"], 0);
         assert_eq!(row["address"], "0xdeadbeef");
         assert_eq!(row["signal_context"], false);
+        assert_eq!(row["signal_context_known"], true);
         assert_eq!(row["details"], serde_json::json!({}));
     }
 

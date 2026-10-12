@@ -165,9 +165,11 @@ fn in_signal_handler(slot: &AllocatorReentrySlot) -> bool {
     handler_sp != 0 && current_stack_address() <= handler_sp
 }
 
-/// `in_signal_handler` for the calling thread (false when it has no slot).
-pub(crate) fn in_signal_handler_now() -> bool {
-    current_allocator_reentry_slot().is_some_and(in_signal_handler)
+/// `in_signal_handler` for the calling thread. `None` means the bounded slot
+/// lookup could not identify this thread, not that it is known to be outside a
+/// handler; evidence callers must select their signal-safe path in that case.
+pub(crate) fn signal_handler_context_now() -> Option<bool> {
+    current_allocator_reentry_slot().map(in_signal_handler)
 }
 
 /// Marks a user signal handler running on this thread (bd-na6ede). While it
@@ -4745,7 +4747,7 @@ pub(crate) fn in_allocator_reentry_context() -> bool {
         .unwrap_or(true)
 }
 
-/// `(in_allocator_reentry_context(), in_signal_handler_now())` from ONE slot
+/// `(in_allocator_reentry_context(), signal_handler_context_now())` from ONE slot
 /// lookup. Under multi-threading the lookup is a keyed table probe, and the
 /// hardened string entry guard asked both questions on every call.
 pub(crate) fn allocator_reentry_and_signal_state() -> (bool, bool) {

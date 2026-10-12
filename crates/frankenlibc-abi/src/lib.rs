@@ -368,8 +368,12 @@ or OS does not provide (needs:";
 static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_stdio_init_entry;
 
 #[cfg(all(not(test), target_os = "linux"))]
-fn runtime_log_signal_context() -> bool {
-    malloc_abi::in_signal_handler_now()
+fn runtime_log_signal_context() -> frankenlibc_membrane::heal::RuntimeSignalContext {
+    match malloc_abi::signal_handler_context_now() {
+        Some(true) => frankenlibc_membrane::heal::RuntimeSignalContext::Inside,
+        Some(false) => frankenlibc_membrane::heal::RuntimeSignalContext::Outside,
+        None => frankenlibc_membrane::heal::RuntimeSignalContext::Unknown,
+    }
 }
 
 #[cfg(all(not(test), target_os = "linux"))]

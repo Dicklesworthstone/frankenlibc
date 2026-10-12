@@ -998,7 +998,7 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
             errno::EINVAL,
             "invalid_signal_number",
         );
-        if !frankenlibc_membrane::heal::runtime_log_in_signal_context() {
+        if !frankenlibc_membrane::heal::runtime_log_signal_context().requires_signal_safe_path() {
             runtime_policy::observe(ApiFamily::Signal, ValidationProfile::Fast, 5, true);
         }
         return -1;

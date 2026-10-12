@@ -397,6 +397,7 @@ if fixture_name == "fixture_hardened_first_heal":
                 entry.call,
                 entry.action,
                 entry.raw.get("signal_context"),
+                entry.raw.get("signal_context_known"),
             )
         if entry.event == "deny":
             return (
@@ -406,16 +407,17 @@ if fixture_name == "fixture_hardened_first_heal":
                 entry.raw.get("reason"),
                 entry.raw.get("errno"),
                 entry.raw.get("signal_context"),
+                entry.raw.get("signal_context_known"),
             )
         return (entry.event,)
 
-    normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False)
-    signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True)
+    normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False, True)
+    signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True, True)
     child_expected = [normal_deny, ("exit_summary",)]
     parent_expected = [signal_deny, normal_deny, normal_deny]
     if mode == "hardened":
-        signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True)
-        normal_repair = ("repair", "string_memory", "memcpy", "ClampSize", False)
+        signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True, True)
+        normal_repair = ("repair", "string_memory", "memcpy", "ClampSize", False, True)
         parent_expected = [
             signal_repair,
             signal_deny,

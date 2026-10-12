@@ -171,12 +171,21 @@ class LogParser:
                     "healing_action",
                     "errno",
                     "signal_context",
+                    "signal_context_known",
                     "details",
                 ]
             )
         elif event == "deny":
             required.extend(
-                ["api_family", "symbol", "reason", "errno", "policy_id", "signal_context"]
+                [
+                    "api_family",
+                    "symbol",
+                    "reason",
+                    "errno",
+                    "policy_id",
+                    "signal_context",
+                    "signal_context_known",
+                ]
             )
         elif event == "exit_summary":
             required.extend(
@@ -230,12 +239,20 @@ class LogParser:
                     f"{event} row {field} must be a hexadecimal address",
                     json.dumps(payload),
                 )
-        if event in {"repair", "deny"} and not isinstance(payload["signal_context"], bool):
-            raise ParseError(
-                line_num,
-                f"{event} row signal_context must be boolean",
-                json.dumps(payload),
-            )
+        if event in {"repair", "deny"}:
+            for field in ("signal_context", "signal_context_known"):
+                if not isinstance(payload[field], bool):
+                    raise ParseError(
+                        line_num,
+                        f"{event} row {field} must be boolean",
+                        json.dumps(payload),
+                    )
+            if payload["signal_context"] and not payload["signal_context_known"]:
+                raise ParseError(
+                    line_num,
+                    f"{event} row signal_context=true requires signal_context_known=true",
+                    json.dumps(payload),
+                )
         if event == "repair":
             errno = payload["errno"]
             if type(errno) is not int or not -(2**31) <= errno < 2**31:

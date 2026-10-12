@@ -60,6 +60,7 @@ class LogParserTests(unittest.TestCase):
                 "errno": 0,
                 "address": "0x1234",
                 "signal_context": False,
+                "signal_context_known": True,
                 "details": {"requested": 32, "clamped": 8},
             },
             {
@@ -81,6 +82,7 @@ class LogParserTests(unittest.TestCase):
                 "requested_bytes": 0,
                 "is_write": False,
                 "signal_context": False,
+                "signal_context_known": True,
             },
             {
                 "schema_version": "1.0",
@@ -139,6 +141,7 @@ class LogParserTests(unittest.TestCase):
             "errno": 22,
             "policy_id": 0,
             "signal_context": False,
+            "signal_context_known": True,
         }
         with self.assertRaises(self.log_parser.ParseError) as error:
             parser.parse_line(json.dumps(row))
@@ -156,6 +159,7 @@ class LogParserTests(unittest.TestCase):
             "healing_action": "ClampSize",
             "errno": 0,
             "signal_context": False,
+            "signal_context_known": True,
             "details": {"requested": 32, "clamped": 8},
         }
         with self.assertRaises(self.log_parser.ParseError) as error:
@@ -174,6 +178,7 @@ class LogParserTests(unittest.TestCase):
             "healing_action": "ClampSize",
             "errno": 0,
             "signal_context": False,
+            "signal_context_known": True,
             "details": {"requested": 32, "clamped": 8},
         }
         for symbol in ("", "   ", "unknown", "UNKNOWN", "UnKnOwN"):
@@ -193,6 +198,7 @@ class LogParserTests(unittest.TestCase):
             "symbol": "memcpy",
             "healing_action": "ClampSize",
             "signal_context": False,
+            "signal_context_known": True,
             "details": {"requested": 32, "clamped": 8},
         }
         with self.assertRaises(self.log_parser.ParseError) as error:
@@ -205,7 +211,7 @@ class LogParserTests(unittest.TestCase):
         entry = parser.parse_line(json.dumps({**row, "errno": 0}))
         self.assertEqual(entry.raw["errno"], 0)
 
-    def test_deployed_runtime_sink_rejects_missing_or_invalid_signal_context(self) -> None:
+    def test_deployed_runtime_sink_validates_signal_context_certainty(self) -> None:
         parser = self.log_parser.LogParser(strict=True)
         row = {
             "schema_version": "1.0",
@@ -221,10 +227,54 @@ class LogParserTests(unittest.TestCase):
         }
         with self.assertRaises(self.log_parser.ParseError):
             parser.parse_line(json.dumps(row))
-        for value in (0, 1, "false", None):
-            with self.subTest(value=value):
+        for field in ("signal_context", "signal_context_known"):
+            for value in (0, 1, "false", None):
+                with self.subTest(field=field, value=value):
+                    with self.assertRaises(self.log_parser.ParseError):
+                        parser.parse_line(
+                            json.dumps(
+                                {
+                                    **row,
+                                    "signal_context": False,
+                                    "signal_context_known": True,
+                                    field: value,
+                                }
+                            )
+                        )
+        for field in ("signal_context", "signal_context_known"):
+            with self.subTest(missing=field):
+                candidate = {
+                    **row,
+                    "signal_context": False,
+                    "signal_context_known": True,
+                }
+                del candidate[field]
                 with self.assertRaises(self.log_parser.ParseError):
-                    parser.parse_line(json.dumps({**row, "signal_context": value}))
+                    parser.parse_line(json.dumps(candidate))
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "signal_context": True,
+                        "signal_context_known": False,
+                    }
+                )
+            )
+        self.assertIn(
+            "signal_context=true requires signal_context_known=true",
+            str(error.exception),
+        )
+        unknown = parser.parse_line(
+            json.dumps(
+                {
+                    **row,
+                    "signal_context": False,
+                    "signal_context_known": False,
+                }
+            )
+        )
+        self.assertFalse(unknown.raw["signal_context_known"])
 
     def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence(self) -> None:
         parser = self.log_parser.LogParser(strict=True)
@@ -329,6 +379,7 @@ class LogParserTests(unittest.TestCase):
             "errno": 22,
             "policy_id": 0,
             "signal_context": False,
+            "signal_context_known": True,
         }
         for mode in ("strict", "off"):
             with self.subTest(mode=mode):

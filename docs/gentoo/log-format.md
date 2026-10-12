@@ -39,6 +39,7 @@ operation rather than the caller-visible alias; blank values and `unknown`
   "errno": 0,
   "address": "0x7ffc01234567",
   "signal_context": false,
+  "signal_context_known": true,
   "details": { "requested": 8192, "clamped": 4096 }
 }
 ```
@@ -69,7 +70,8 @@ reserved `runtime_policy` symbol instead:
   "errno": 22,
   "policy_id": 0,
   "addr_hint": "0x0",
-  "signal_context": false
+  "signal_context": false,
+  "signal_context_known": true
 }
 ```
 
@@ -77,6 +79,14 @@ reserved `runtime_policy` symbol instead:
 families use it for scalar descriptors or identifiers. It is emitted only in
 `hardened` mode. Strict and off rows omit the key entirely so enabling evidence
 does not expand address disclosure in non-hardening modes.
+
+Repair and denial rows always carry both signal-context fields. When
+`signal_context_known=true`, `signal_context` says whether the event was
+produced inside an interposed handler. A bounded per-thread marker lookup can
+fail without proving that execution is outside a handler; that case is encoded
+as `signal_context=false, signal_context_known=false` and still uses the same
+allocation-free, TLS-free producer path as a known handler context. The
+combination `signal_context=true, signal_context_known=false` is invalid.
 
 The final row is `event="exit_summary"`. It carries the next shared `seq` and
 contains `denials`, all healing
@@ -105,8 +115,8 @@ can still wait in the filesystem, so this is an async-signal-safe producer
 contract, not a hard real-time guarantee.
 `fixture_hardened_first_heal` induces both a `strlen` repair and a leaf
 `pthread_kill` semantic denial inside `SIGUSR1`, requires
-`signal_context=true` on both rows, and checks the exact parent/child event
-sequences and exit counters.
+`signal_context=true, signal_context_known=true` on both rows, and checks the
+exact parent/child event sequences and exit counters.
 
 Repair and denial output is bounded to 1,024 admitted rows per process-local
 rate window per monotonic second. Admission uses one packed atomic word and a
