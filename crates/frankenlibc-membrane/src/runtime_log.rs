@@ -17,6 +17,8 @@ const EINTR: i32 = 4;
 
 static WRITTEN: AtomicU64 = AtomicU64::new(0);
 static DROPPED: AtomicU64 = AtomicU64::new(0);
+static RATE_LIMITED: AtomicU64 = AtomicU64::new(0);
+static ADMISSION_CLOCK_FAILURES: AtomicU64 = AtomicU64::new(0);
 static SHORT_WRITES: AtomicU64 = AtomicU64::new(0);
 static OPEN_FAILURES: AtomicU64 = AtomicU64::new(0);
 /// One process-local namespace for every deployed runtime-log event.  This is
@@ -24,6 +26,15 @@ static OPEN_FAILURES: AtomicU64 = AtomicU64::new(0);
 /// outcomes even when the sink is disabled, while this number orders records
 /// that were actually attempted for the configured JSONL stream.
 static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Bound adverse-event output without heap state, locks, TLS, or libc. The
+/// packed word stores a truncated monotonic second and the number of records
+/// admitted during that second. 1024 maximum-size rows cap the configured
+/// sink at 4 MiB/s while retaining ample detail for ordinary fault diagnosis.
+const RATE_COUNT_BITS: u32 = 16;
+const RATE_COUNT_MASK: u64 = (1 << RATE_COUNT_BITS) - 1;
+pub const RATE_LIMIT_PER_SECOND: u64 = 1024;
+static RATE_WINDOW: AtomicU64 = AtomicU64::new(0);
 
 /// Reserve the next process-local event sequence number without allocating,
 /// locking, touching TLS, or entering libc.
@@ -37,6 +48,8 @@ pub fn next_runtime_log_sequence() -> u64 {
 pub struct RuntimeLogSnapshot {
     pub written_records: u64,
     pub dropped_records: u64,
+    pub rate_limited_records: u64,
+    pub admission_clock_failures: u64,
     pub short_writes: u64,
     pub open_failures: u64,
 }
@@ -44,12 +57,80 @@ pub struct RuntimeLogSnapshot {
 /// Read without allocating, locking, opening files, or formatting messages.
 #[must_use]
 pub fn runtime_log_snapshot() -> RuntimeLogSnapshot {
+    // The two reason counters are published subsets: their writers update
+    // DROPPED first and release the subset counter last. An acquire that
+    // observes either reason therefore also observes its aggregate increment.
+    let rate_limited_records = RATE_LIMITED.load(Ordering::Acquire);
+    let admission_clock_failures = ADMISSION_CLOCK_FAILURES.load(Ordering::Acquire);
     RuntimeLogSnapshot {
         written_records: WRITTEN.load(Ordering::Relaxed),
         dropped_records: DROPPED.load(Ordering::Relaxed),
+        rate_limited_records,
+        admission_clock_failures,
         short_writes: SHORT_WRITES.load(Ordering::Relaxed),
         open_failures: OPEN_FAILURES.load(Ordering::Relaxed),
     }
+}
+
+/// Reserve one record in the current monotonic-second output window. A false
+/// result is already reflected in both the rate-limited and aggregate dropped
+/// counters. The bounded compare-exchange loop intentionally sheds a record
+/// under extreme admission contention instead of spinning in a signal handler.
+pub(super) fn admit_record() -> bool {
+    admit_record_for_second(monotonic_second())
+}
+
+fn admit_record_for_second(second: Option<u64>) -> bool {
+    let Some(second) = second else {
+        note_admission_clock_failure();
+        return false;
+    };
+    if admit_record_at(&RATE_WINDOW, second) {
+        true
+    } else {
+        note_rate_limited();
+        false
+    }
+}
+
+fn admit_record_at(window: &AtomicU64, second: u64) -> bool {
+    let second = second & (u64::MAX >> RATE_COUNT_BITS);
+    for _ in 0..8 {
+        let current = window.load(Ordering::Relaxed);
+        let current_second = current >> RATE_COUNT_BITS;
+        let current_count = current & RATE_COUNT_MASK;
+        if current_second == second && current_count >= RATE_LIMIT_PER_SECOND {
+            return false;
+        }
+        let next = if current_second == second {
+            current + 1
+        } else {
+            (second << RATE_COUNT_BITS) | 1
+        };
+        if window
+            .compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn note_rate_limited() {
+    DROPPED.fetch_add(1, Ordering::Relaxed);
+    RATE_LIMITED.fetch_add(1, Ordering::Release);
+}
+
+fn note_admission_clock_failure() {
+    DROPPED.fetch_add(1, Ordering::Relaxed);
+    ADMISSION_CLOCK_FAILURES.fetch_add(1, Ordering::Release);
+}
+
+/// The child is a new process-local evidence stream even when it forks within
+/// the parent's current monotonic second.
+pub(super) fn reset_rate_limit_after_fork() {
+    RATE_WINDOW.store(0, Ordering::Relaxed);
 }
 
 /// Open only regular files. On Linux O_NONBLOCK prevents a configured FIFO
@@ -300,13 +381,55 @@ fn process_id_impl() -> u32 {
     std::process::id()
 }
 
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn monotonic_second() -> Option<u64> {
+    #[repr(C)]
+    struct KernelTimespec {
+        seconds: i64,
+        nanoseconds: i64,
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    const SYS_CLOCK_GETTIME: usize = 228;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_CLOCK_GETTIME: usize = 113;
+    const CLOCK_MONOTONIC: usize = 1;
+
+    let mut timestamp = KernelTimespec {
+        seconds: 0,
+        nanoseconds: 0,
+    };
+    let result = syscall4(
+        SYS_CLOCK_GETTIME,
+        CLOCK_MONOTONIC,
+        (&raw mut timestamp) as usize,
+        0,
+        0,
+    );
+    (result == 0 && timestamp.seconds >= 0).then_some(timestamp.seconds as u64)
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn monotonic_second() -> Option<u64> {
+    // The deployed async-signal-safe evidence contract is Linux-only. Fail
+    // closed elsewhere rather than silently running an unbounded sink.
+    None
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 #[allow(unsafe_code)]
 fn syscall4(number: usize, a: usize, b: usize, c: usize, d: usize) -> isize {
     let result: isize;
-    // SAFETY: callers pass a live path or two live iovecs; openat/writev
-    // validate descriptors and flags in the kernel. All syscall clobbers are
-    // declared. Do not use nomem/readonly: the kernel may read caller memory.
+    // SAFETY: pointer-bearing callers pass a live path, two live iovecs, or a
+    // writable KernelTimespec. The kernel validates descriptors, flags, and
+    // syscall arguments. All syscall clobbers are declared. Do not use
+    // nomem/readonly: the kernel may read or write caller memory.
     unsafe {
         std::arch::asm!(
             "syscall",
@@ -353,6 +476,44 @@ mod tests {
         let second = next_runtime_log_sequence();
         assert!(first > 0);
         assert!(second > first);
+    }
+
+    #[test]
+    fn rate_limit_admits_exact_budget_and_reopens_next_window() {
+        let window = AtomicU64::new(0);
+        for _ in 0..RATE_LIMIT_PER_SECOND {
+            assert!(admit_record_at(&window, 41));
+        }
+        assert!(!admit_record_at(&window, 41));
+        assert!(!admit_record_at(&window, 41));
+        assert!(admit_record_at(&window, 42));
+        assert_eq!(window.load(Ordering::Relaxed), (42 << RATE_COUNT_BITS) | 1);
+    }
+
+    #[test]
+    fn monotonic_rate_clock_is_available_on_deployed_linux_targets() {
+        #[cfg(all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ))]
+        {
+            let first = monotonic_second().expect("raw CLOCK_MONOTONIC syscall must succeed");
+            let second = monotonic_second().expect("raw CLOCK_MONOTONIC syscall must succeed");
+            assert!(second >= first);
+        }
+    }
+
+    #[test]
+    fn unavailable_rate_clock_is_counted_separately_from_rate_limiting() {
+        let before = runtime_log_snapshot();
+        assert!(!admit_record_for_second(None));
+        let after = runtime_log_snapshot();
+        assert_eq!(
+            after.admission_clock_failures,
+            before.admission_clock_failures + 1
+        );
+        assert_eq!(after.rate_limited_records, before.rate_limited_records);
+        assert!(after.dropped_records > before.dropped_records);
     }
 
     #[test]

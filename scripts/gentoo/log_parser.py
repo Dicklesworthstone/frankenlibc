@@ -179,7 +179,15 @@ class LogParser:
                 ["api_family", "symbol", "reason", "errno", "policy_id", "signal_context"]
             )
         elif event == "exit_summary":
-            required.extend(["denials", "runtime_log_written_records"])
+            required.extend(
+                [
+                    "denials",
+                    "runtime_log_written_records",
+                    "runtime_log_dropped_records",
+                    "runtime_log_rate_limited_records",
+                    "runtime_log_admission_clock_failures",
+                ]
+            )
 
         missing = [field for field in required if payload.get(field) is None]
         if missing:
@@ -247,6 +255,30 @@ class LogParser:
                 raise ParseError(
                     line_num,
                     f"repair row symbol is not canonical: {symbol!r}",
+                    json.dumps(payload),
+                )
+        elif event == "exit_summary":
+            for field in (
+                "denials",
+                "runtime_log_written_records",
+                "runtime_log_dropped_records",
+                "runtime_log_rate_limited_records",
+                "runtime_log_admission_clock_failures",
+            ):
+                if type(payload[field]) is not int or payload[field] < 0:
+                    raise ParseError(
+                        line_num,
+                        f"exit_summary row {field} must be a non-negative integer",
+                        json.dumps(payload),
+                    )
+            classified_drops = (
+                payload["runtime_log_rate_limited_records"]
+                + payload["runtime_log_admission_clock_failures"]
+            )
+            if classified_drops > payload["runtime_log_dropped_records"]:
+                raise ParseError(
+                    line_num,
+                    "exit_summary classified losses cannot exceed dropped records",
                     json.dumps(payload),
                 )
 

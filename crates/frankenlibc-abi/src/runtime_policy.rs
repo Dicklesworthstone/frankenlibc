@@ -2701,7 +2701,7 @@ extern "C" fn runtime_log_summary_at_exit() {
         frankenlibc_membrane::heal::note_runtime_log_drop();
         return;
     }
-    frankenlibc_membrane::heal::append_runtime_log_record(line.as_str());
+    frankenlibc_membrane::heal::append_runtime_log_summary_record(line.as_str());
 }
 
 /// Strict mode observation path: consult kernel for evidence but return passthrough.

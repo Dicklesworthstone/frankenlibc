@@ -352,7 +352,7 @@ if fixture_name == "fixture_hardened_first_heal":
     normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False)
     signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True)
     child_expected = [normal_deny, ("exit_summary",)]
-    parent_expected = [signal_deny, normal_deny, normal_deny, ("exit_summary",)]
+    parent_expected = [signal_deny, normal_deny, normal_deny]
     if mode == "hardened":
         signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True)
         normal_repair = ("repair", "string_memory", "memcpy", "ClampSize", False)
@@ -362,9 +362,14 @@ if fixture_name == "fixture_hardened_first_heal":
             normal_repair,
             normal_deny,
             normal_deny,
-            ("exit_summary",),
         ]
         child_expected = [normal_repair, normal_deny, ("exit_summary",)]
+
+    rate_limit = 1024
+    rate_limit_attempts = 1100
+    rate_limited = rate_limit_attempts - rate_limit
+    parent_expected.extend([normal_deny] * rate_limit)
+    parent_expected.append(("exit_summary",))
 
     parent_actual = [event_signature(entry) for entry in before_entries]
     child_actual = [event_signature(entry) for entry in entries]
@@ -385,13 +390,19 @@ if fixture_name == "fixture_hardened_first_heal":
         "total_heals": 2 if mode == "hardened" else 0,
         "size_clamps": 1 if mode == "hardened" else 0,
         "safe_defaults": 1 if mode == "hardened" else 0,
-        "denials": 3,
+        "denials": 3 + rate_limit_attempts,
+        "runtime_log_dropped_records": rate_limited,
+        "runtime_log_rate_limited_records": rate_limited,
+        "runtime_log_admission_clock_failures": 0,
     }
     expected_child_counters = {
         "total_heals": 3 if mode == "hardened" else 0,
         "size_clamps": 2 if mode == "hardened" else 0,
         "safe_defaults": 1 if mode == "hardened" else 0,
         "denials": 3,
+        "runtime_log_dropped_records": 0,
+        "runtime_log_rate_limited_records": 0,
+        "runtime_log_admission_clock_failures": 0,
     }
     for field, expected in expected_parent_counters.items():
         if parent_summary.get(field) != expected:

@@ -80,9 +80,10 @@ does not expand address disclosure in non-hardening modes.
 
 The final row is `event="exit_summary"`. It carries the next shared `seq` and
 contains `denials`, all healing
-counters, and the `runtime_log_*` written/dropped/short-write/open-failure
-counters. A successful fixture run must contain this row; its absence means the
-process did not reach normal teardown or the sink failed before the summary.
+counters, and the `runtime_log_*` written/dropped/rate-limited/admission-clock-
+failure/short-write/open-failure counters. A successful fixture run must
+contain this row; its absence means the process did not reach normal teardown
+or the sink failed before the summary.
 
 The sink is opened with append semantics during FrankenLibC's startup
 constructor, after mode resolution and before the runtime is published ready.
@@ -107,15 +108,31 @@ contract, not a hard real-time guarantee.
 `signal_context=true` on both rows, and checks the exact parent/child event
 sequences and exit counters.
 
-Repair and denial events are never sampled or rate-limited: suppressing an
-adverse decision would make the evidence contract misleading. Each generated
-repair, denial, or summary record is bounded to 1 KiB. Invalid/oversized
-records and writes that fail or short-write increment
+Repair and denial output is bounded to 1,024 admitted rows per process-local
+rate window per monotonic second. Admission uses one packed atomic word and a
+raw monotonic clock syscall on the supported Linux targets; it does not
+allocate, lock, or touch TLS. Rows beyond the budget (and rows shed after
+bounded admission contention) increment both
+`runtime_log_rate_limited_records` and the aggregate
+`runtime_log_dropped_records`. A failed or unavailable monotonic syscall drops
+the row and increments `runtime_log_admission_clock_failures` plus the aggregate
+dropped count instead. The exit summary bypasses admission so those losses
+remain observable. Sequence gaps are therefore expected and accounted for,
+rather than silently presented as complete adverse-event history. Ordinary
+fork child reopen starts a fresh process-local window; the documented
+clone-to-reopen signal interval can emit against the inherited window, so it
+is not part of the exact per-window bound.
+
+Each generated repair, denial, or summary record is bounded to 1 KiB. The
+generic sink accepts records below 4 KiB, which is why its defensive maximum-
+row budget is 4 MiB/s; current deployed producers are bounded to approximately
+1 MiB/s, plus the one unthrottled summary.
+Invalid/oversized records and writes that fail or short-write also increment
 `runtime_log_dropped_records`; sink-open failures increment
-`runtime_log_open_failures`. Allow decisions are not currently emitted, so
-there is no high-volume allow stream to rate-limit. `FRANKENLIBC_HEAL_LOG`
-controls only the heap-backed diagnostic ledger/ring; it cannot suppress the
-deployed file stream when `FRANKENLIBC_LOG` is configured.
+`runtime_log_open_failures`. Allow decisions are not currently emitted.
+`FRANKENLIBC_HEAL_LOG` controls only the heap-backed diagnostic ledger/ring; it
+cannot suppress an admitted deployed-file row when `FRANKENLIBC_LOG` is
+configured.
 
 ## Captured Call Schema
 
@@ -181,7 +198,11 @@ Parser normalization:
   `signal_context`.
 - `address` and `addr_hint`, when present, must be hexadecimal strings and are
   forbidden outside `hardened` mode.
-- `exit_summary` rows require `denials` and `runtime_log_written_records`.
+- `exit_summary` rows require non-negative integer `denials`,
+  `runtime_log_written_records`, `runtime_log_dropped_records`, and
+  `runtime_log_rate_limited_records` plus
+  `runtime_log_admission_clock_failures`; the sum of classified loss subsets
+  cannot exceed the aggregate dropped count.
 - Timestamp, when present, parseable as ISO8601.
 - Latency in `[0, 1_000_000_000]` ns.
 - Pointer fields under `result.ptr` must match `0x[0-9a-fA-F]+`.

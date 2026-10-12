@@ -322,7 +322,9 @@ impl HealingPolicy {
 \"double_frees\":{},\"foreign_frees\":{},\"realloc_as_mallocs\":{},\
 \"safe_defaults\":{},\"variant_upgrades\":{},\"healing_log_reentry_drops\":{},\
 \"runtime_log_written_records\":{},\"runtime_log_dropped_records\":{},\
-\"runtime_log_short_writes\":{},\"runtime_log_open_failures\":{}",
+\"runtime_log_rate_limited_records\":{},\"runtime_log_admission_clock_failures\":{},\
+\"runtime_log_short_writes\":{},\
+\"runtime_log_open_failures\":{}",
             n(&self.total_heals),
             n(&self.size_clamps),
             n(&self.null_truncations),
@@ -334,6 +336,8 @@ impl HealingPolicy {
             n(&self.healing_log_reentry_drops),
             sink.written_records,
             sink.dropped_records,
+            sink.rate_limited_records,
+            sink.admission_clock_failures,
             sink.short_writes,
             sink.open_failures,
         )
@@ -649,6 +653,10 @@ fn initialize_runtime_log_fd() -> i32 {
 /// back into the interposed write/cancellation path. Oversized and failed
 /// writes are counted; positive short writes are never retried piecemeal.
 fn append_to_runtime_log(line: &str) {
+    append_to_runtime_log_with_limit(line, true);
+}
+
+fn append_to_runtime_log_with_limit(line: &str, rate_limited: bool) {
     let in_signal_handler = in_signal_handler_context();
     let fd = if in_signal_handler {
         RUNTIME_LOG_FD.load(Ordering::Acquire)
@@ -657,14 +665,15 @@ fn append_to_runtime_log(line: &str) {
             runtime_log::note_dropped();
             return;
         };
-        return append_to_runtime_log_with_fd(initialize_runtime_log_fd(), line);
+        return append_to_runtime_log_with_fd(initialize_runtime_log_fd(), line, rate_limited);
     };
-    append_to_runtime_log_with_fd(fd, line);
+    append_to_runtime_log_with_fd(fd, line, rate_limited);
 }
 
-fn append_to_runtime_log_with_fd(fd: i32, line: &str) {
+fn append_to_runtime_log_with_fd(fd: i32, line: &str, rate_limited: bool) {
     match fd {
-        0.. => runtime_log::append_fd(fd, line),
+        0.. if !rate_limited || runtime_log::admit_record() => runtime_log::append_fd(fd, line),
+        0.. => {}
         RUNTIME_LOG_DISABLED => runtime_log::note_unavailable(),
         RUNTIME_LOG_UNINITIALIZED | RUNTIME_LOG_INITIALIZING => runtime_log::note_dropped(),
         _ => runtime_log::note_dropped(),
@@ -676,6 +685,13 @@ fn append_to_runtime_log_with_fd(fd: i32, line: &str) {
 /// denials, the process-exit counter summary).
 pub fn append_runtime_log_record(line: &str) {
     append_to_runtime_log(line);
+}
+
+/// Append the one process-exit summary without consuming the adverse-event
+/// rate budget. This record must remain observable because it reports how many
+/// repair/deny rows the limiter suppressed.
+pub fn append_runtime_log_summary_record(line: &str) {
+    append_to_runtime_log_with_limit(line, false);
 }
 
 /// Whether startup opened a live runtime evidence sink.
@@ -716,6 +732,7 @@ pub unsafe fn reopen_runtime_log_in_fork_child() {
         .and_then(|path| runtime_log::open_fd(&path))
         .unwrap_or(RUNTIME_LOG_DISABLED);
     let replaced = RUNTIME_LOG_FD.swap(reopened, Ordering::AcqRel);
+    runtime_log::reset_rate_limit_after_fork();
     runtime_log::close_fd(replaced);
 }
 
@@ -1496,6 +1513,8 @@ mod tests {
             "healing_log_reentry_drops",
             "runtime_log_written_records",
             "runtime_log_dropped_records",
+            "runtime_log_rate_limited_records",
+            "runtime_log_admission_clock_failures",
             "runtime_log_short_writes",
             "runtime_log_open_failures",
         ] {

@@ -9,7 +9,9 @@
  * probes and strict mode emits no repair rows. Invalid kill supplies one
  * deterministic semantic denial. Finally, the fixture rotates the runtime log
  * before fork: the child must reopen the current path rather than keep writing
- * through the parent's inherited open-file description.
+ * through the parent's inherited open-file description. A final one-second
+ * denial burst exhausts the production limiter and leaves the unthrottled
+ * exit summary to report the exact suppressed-record count.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -21,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
@@ -107,6 +110,36 @@ static int invalid_signal_is_denied(void) {
     return kill(getpid(), -1) == -1 && errno == EINVAL ? 0 : 2;
 }
 
+enum { RATE_LIMIT_ATTEMPTS = 1100 };
+
+static int exercise_runtime_log_rate_limit(void) {
+    const char *log_path = getenv("FRANKENLIBC_LOG");
+    if (!__frankenlibc_is_runtime_ready || !__frankenlibc_is_runtime_ready() ||
+        log_path == NULL || log_path[0] == '\0')
+        return 0;
+
+    /* Begin immediately after a monotonic-second transition so every denial
+     * competes for one fresh production rate window. Crossing another second
+     * makes the probe inconclusive and is a hard fixture failure. */
+    struct timespec before;
+    struct timespec start;
+    struct timespec finish;
+    if (clock_gettime(CLOCK_MONOTONIC, &before) != 0)
+        return 21;
+    do {
+        if (clock_gettime(CLOCK_MONOTONIC, &start) != 0)
+            return 21;
+    } while (start.tv_sec == before.tv_sec);
+
+    for (int attempt = 0; attempt < RATE_LIMIT_ATTEMPTS; attempt++) {
+        if (invalid_signal_is_denied() != 0)
+            return 22;
+    }
+    if (clock_gettime(CLOCK_MONOTONIC, &finish) != 0)
+        return 21;
+    return finish.tv_sec == start.tv_sec ? 0 : 23;
+}
+
 static int exercise_runtime_log_fork_reopen(void) {
     const char *log_path = getenv("FRANKENLIBC_LOG");
     if (!__frankenlibc_is_runtime_ready || !__frankenlibc_is_runtime_ready() ||
@@ -173,6 +206,10 @@ int main(void) {
      * still exercise the harmless invalid-signal contract. */
     if (invalid_signal_is_denied() != 0)
         return 2;
+
+    repair_rc = exercise_runtime_log_rate_limit();
+    if (repair_rc != 0)
+        return repair_rc;
 
     char *b = malloc(120);
     if (b == NULL) return 1;

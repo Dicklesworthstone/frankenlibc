@@ -2,7 +2,7 @@
   "schema_version": "log_parsing_validation_completion_contract.v1",
   "bead": "bd-2icq.19",
   "completion_debt_bead": "bd-2icq.19.1",
-  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
+  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, bounded runtime-log admission, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
   "next_audit_score_threshold": 800,
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
@@ -60,31 +60,31 @@
     {
       "kind": "parser_repair_symbol_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 243,
+      "line": 251,
       "anchor": "repair row symbol must be a non-empty canonical symbol"
     },
     {
       "kind": "parser_repair_errno_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 236,
+      "line": 244,
       "anchor": "repair row errno must be a signed 32-bit integer"
     },
     {
       "kind": "parser_event_sequence_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 206,
+      "line": 214,
       "anchor": "row seq must be a positive integer"
     },
     {
       "kind": "parser_hardened_address_disclosure_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 215,
+      "line": 223,
       "anchor": "row {field} is forbidden outside hardened mode"
     },
     {
       "kind": "parser_strict_error_policy",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 253,
+      "line": 285,
       "anchor": "def _handle_error"
     },
     {
@@ -120,20 +120,50 @@
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 172,
+      "line": 189,
       "anchor": "## Validation Rules"
     },
     {
       "kind": "runtime_event_sequence_generator",
       "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
-      "line": 31,
+      "line": 42,
       "anchor": "pub fn next_runtime_log_sequence"
     },
     {
       "kind": "runtime_event_sequence_unit_test",
       "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
-      "line": 351,
+      "line": 474,
       "anchor": "fn event_sequence_is_positive_and_process_global"
+    },
+    {
+      "kind": "runtime_rate_limit_admission",
+      "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
+      "line": 79,
+      "anchor": "pub(super) fn admit_record"
+    },
+    {
+      "kind": "runtime_rate_limit_unit_test",
+      "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
+      "line": 482,
+      "anchor": "fn rate_limit_admits_exact_budget_and_reopens_next_window"
+    },
+    {
+      "kind": "runtime_rate_clock_failure_unit_test",
+      "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
+      "line": 507,
+      "anchor": "fn unavailable_rate_clock_is_counted_separately_from_rate_limiting"
+    },
+    {
+      "kind": "runtime_summary_rate_limit_bypass",
+      "path": "crates/frankenlibc-membrane/src/heal.rs",
+      "line": 693,
+      "anchor": "pub fn append_runtime_log_summary_record"
+    },
+    {
+      "kind": "parser_rate_limit_summary_validation",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 281,
+      "anchor": "exit_summary classified losses cannot exceed dropped records"
     },
     {
       "kind": "unit_runtime_fixture_test",
@@ -156,55 +186,61 @@
     {
       "kind": "unit_missing_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 145,
+      "line": 147,
       "anchor": "def test_deployed_runtime_sink_rejects_missing_repair_symbol"
     },
     {
       "kind": "unit_invalid_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 163,
+      "line": 165,
       "anchor": "def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol"
     },
     {
       "kind": "unit_invalid_repair_errno_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 182,
+      "line": 184,
       "anchor": "def test_deployed_runtime_sink_rejects_missing_or_invalid_repair_errno"
     },
     {
       "kind": "unit_invalid_event_sequence_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 227,
+      "line": 229,
       "anchor": "def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence"
     },
     {
       "kind": "unit_concurrent_append_sequence_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 245,
+      "line": 250,
       "anchor": "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences"
+    },
+    {
+      "kind": "unit_rate_limit_summary_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 270,
+      "anchor": "def test_deployed_runtime_sink_validates_rate_limit_summary_counters"
     },
     {
       "kind": "unit_hardened_address_disclosure_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 262,
+      "line": 319,
       "anchor": "def test_deployed_runtime_sink_restricts_address_fields_to_hardened"
     },
     {
       "kind": "unit_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 295,
+      "line": 352,
       "anchor": "def test_invalid_json_raises_in_strict_mode"
     },
     {
       "kind": "unit_non_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 300,
+      "line": 357,
       "anchor": "def test_invalid_line_collected_in_non_strict_mode"
     },
     {
       "kind": "unit_stats_validator_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 307,
+      "line": 364,
       "anchor": "def test_stats_and_validator"
     },
     {
@@ -244,6 +280,12 @@
       "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)"
     },
     {
+      "kind": "deployed_fixture_rate_limit_summary_gate",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 395,
+      "anchor": "runtime_log_rate_limited_records"
+    },
+    {
       "kind": "completion_checker",
       "path": "scripts/check_log_parsing_validation_completion_contract.sh",
       "line": 2,
@@ -271,7 +313,9 @@
       "row {field} is forbidden outside hardened mode",
       "repair row errno must be a signed 32-bit integer",
       "repair row symbol must be a non-empty canonical symbol",
-      "repair row symbol is not canonical"
+      "repair row symbol is not canonical",
+      "runtime_log_admission_clock_failures",
+      "exit_summary classified losses cannot exceed dropped records"
     ],
     "validator": [
       "KNOWN_HEALING_ACTIONS",
@@ -299,6 +343,7 @@
       "def test_deployed_runtime_sink_rejects_missing_or_invalid_repair_errno",
       "def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence",
       "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences",
+      "def test_deployed_runtime_sink_validates_rate_limit_summary_counters",
       "def test_deployed_runtime_sink_restricts_address_fields_to_hardened",
       "def test_invalid_json_raises_in_strict_mode",
       "def test_invalid_line_collected_in_non_strict_mode",
@@ -309,12 +354,17 @@
       "positive process-local `seq`",
       "`addr_hint` is an opaque policy input",
       "Repair `errno` is selected by the repair decision itself",
+      "1,024 admitted rows per process-local",
+      "runtime_log_admission_clock_failures",
       "case-insensitive `unknown`",
       "Aliases record"
     ],
     "runtime_log": [
       "pub fn next_runtime_log_sequence",
-      "fn event_sequence_is_positive_and_process_global"
+      "fn event_sequence_is_positive_and_process_global",
+      "pub(super) fn admit_record",
+      "fn rate_limit_admits_exact_budget_and_reopens_next_window",
+      "fn unavailable_rate_clock_is_counted_separately_from_rate_limiting"
     ],
     "deployed_gate": [
       "all_entries = entries + before_entries",
@@ -322,6 +372,8 @@
       "runtime repair rows have invalid decision-owned errno values",
       "hardened fixture repair rows have invalid primary addresses",
       "denial rows disclosed hardened-only addr_hint values",
+      "runtime_log_rate_limited_records",
+      "runtime_log_admission_clock_failures",
       "invalid_repair_symbols",
       "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)",
       "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False)"
@@ -342,7 +394,7 @@
     {
       "missing_item_id": "tests.unit.primary",
       "status": "covered",
-      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, required signed 32-bit decision-owned repair errno, positive shared event-sequence validation including concurrent out-of-append-order rows, hardened-only address disclosure and hexadecimal address validation, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
+      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, required signed 32-bit decision-owned repair errno, positive shared event-sequence validation including concurrent out-of-append-order rows, bounded rate-limit admission and summary-counter invariants, hardened-only address disclosure and hexadecimal address validation, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
       "implementation_refs": [
         "parser_entry_model",
         "parser_file_iteration",
@@ -353,6 +405,7 @@
         "parser_hardened_address_disclosure_validation",
         "parser_repair_errno_validation",
         "parser_repair_symbol_validation",
+        "parser_rate_limit_summary_validation",
         "parser_strict_error_policy",
         "validator_integrity_checks",
         "stats_aggregation"
@@ -366,6 +419,9 @@
         "unit_invalid_repair_errno_test",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
+        "unit_rate_limit_summary_test",
+        "runtime_rate_limit_unit_test",
+        "runtime_rate_clock_failure_unit_test",
         "unit_hardened_address_disclosure_test",
         "unit_strict_error_test",
         "unit_non_strict_error_test",
@@ -382,7 +438,7 @@
     {
       "missing_item_id": "telemetry.primary",
       "status": "covered",
-      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, bounded adverse-event admission with an unthrottled loss summary, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
       "implementation_refs": [
         "stats_telemetry_snapshot",
         "validator_action_vocabulary",
@@ -390,12 +446,16 @@
         "schema_documentation",
         "schema_validation_rules",
         "runtime_event_sequence_generator",
+        "runtime_rate_limit_admission",
+        "runtime_summary_rate_limit_bypass",
+        "parser_rate_limit_summary_validation",
         "deployed_fixture_repair_symbol_gate",
         "deployed_fixture_event_sequence_gate",
         "deployed_fixture_repair_errno_gate",
         "deployed_fixture_repair_address_gate",
         "deployed_fixture_hardened_address_disclosure_gate",
         "deployed_fixture_repair_identity_gate",
+        "deployed_fixture_rate_limit_summary_gate",
         "completion_checker",
         "completion_harness"
       ],
@@ -406,6 +466,9 @@
         "unit_invalid_repair_symbol_test",
         "unit_invalid_repair_errno_test",
         "runtime_event_sequence_unit_test",
+        "runtime_rate_limit_unit_test",
+        "runtime_rate_clock_failure_unit_test",
+        "unit_rate_limit_summary_test",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
         "unit_hardened_address_disclosure_test",

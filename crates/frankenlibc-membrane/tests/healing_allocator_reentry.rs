@@ -172,8 +172,15 @@ fn child_probe() {
     let row: serde_json::Value = serde_json::from_str(&last).unwrap();
     assert_eq!(row["healing_action"], "ReturnSafeDefault");
     let sink = runtime_log_snapshot();
-    assert_eq!(sink.written_records, OUTER_RECORDS as u64 + 4);
-    assert_eq!(sink.dropped_records, 0);
+    let attempted_records = OUTER_RECORDS as u64 + 4;
+    assert_eq!(
+        sink.written_records + sink.dropped_records,
+        attempted_records
+    );
+    assert_eq!(
+        sink.dropped_records,
+        sink.rate_limited_records + sink.admission_clock_failures
+    );
     assert_eq!(sink.short_writes, 0);
     assert_eq!(sink.open_failures, 0);
 }
@@ -233,15 +240,23 @@ fn allocator_callbacks_do_not_reenter_evidence_locks() {
         .lines()
         .map(|line| serde_json::from_str(line).expect("damaged runtime JSONL"))
         .collect();
-    assert_eq!(rows.len(), OUTER_RECORDS + 4);
+    assert!((1024..=OUTER_RECORDS + 4).contains(&rows.len()));
     assert_eq!(rows[0]["warmup"], true);
     assert_eq!(rows[1]["probe"], true);
     assert_eq!(rows[2]["api_family"], "string_memory");
     assert_eq!(rows[2]["symbol"], "strlen");
     assert_eq!(rows[2]["healing_action"], "ReturnSafeDefault");
-    for (size, row) in rows[3..3 + OUTER_RECORDS].iter().enumerate() {
+    let mut previous_size = None;
+    for (index, row) in rows[3..].iter().enumerate() {
+        if row["healing_action"] == "ReturnSafeDefault" {
+            assert_eq!(index + 3, rows.len() - 1);
+            continue;
+        }
         assert_eq!(row["healing_action"], "ReallocAsMalloc");
-        assert_eq!(row["details"]["size"].as_u64(), Some(size as u64));
+        let size = row["details"]["size"].as_u64().unwrap();
+        if let Some(previous) = previous_size {
+            assert!(size > previous);
+        }
+        previous_size = Some(size);
     }
-    assert_eq!(rows.last().unwrap()["healing_action"], "ReturnSafeDefault");
 }

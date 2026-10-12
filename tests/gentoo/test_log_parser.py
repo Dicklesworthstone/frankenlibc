@@ -93,6 +93,8 @@ class LogParserTests(unittest.TestCase):
                 "total_heals": 1,
                 "runtime_log_written_records": 2,
                 "runtime_log_dropped_records": 0,
+                "runtime_log_rate_limited_records": 0,
+                "runtime_log_admission_clock_failures": 0,
                 "runtime_log_short_writes": 0,
                 "runtime_log_open_failures": 0,
             },
@@ -234,6 +236,9 @@ class LogParserTests(unittest.TestCase):
             "symbol": "process",
             "denials": 0,
             "runtime_log_written_records": 0,
+            "runtime_log_dropped_records": 0,
+            "runtime_log_rate_limited_records": 0,
+            "runtime_log_admission_clock_failures": 0,
         }
         with self.assertRaises(self.log_parser.ParseError):
             parser.parse_line(json.dumps(row))
@@ -252,12 +257,64 @@ class LogParserTests(unittest.TestCase):
             "symbol": "process",
             "denials": 0,
             "runtime_log_written_records": 0,
+            "runtime_log_dropped_records": 0,
+            "runtime_log_rate_limited_records": 0,
+            "runtime_log_admission_clock_failures": 0,
         }
         entries = [
             parser.parse_line(json.dumps({**row, "seq": seq}), line)
             for line, seq in enumerate((2, 1), 1)
         ]
         self.assertEqual([entry.raw["seq"] for entry in entries], [2, 1])
+
+    def test_deployed_runtime_sink_validates_rate_limit_summary_counters(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 1024,
+            "runtime_log_dropped_records": 3,
+            "runtime_log_rate_limited_records": 3,
+            "runtime_log_admission_clock_failures": 0,
+        }
+        entry = parser.parse_line(json.dumps(row))
+        self.assertEqual(entry.raw["runtime_log_rate_limited_records"], 3)
+        for field in (
+            "runtime_log_dropped_records",
+            "runtime_log_rate_limited_records",
+            "runtime_log_admission_clock_failures",
+        ):
+            with self.subTest(field=field):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, field: True}))
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, field: -1}))
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "runtime_log_dropped_records": 2,
+                        "runtime_log_rate_limited_records": 3,
+                    }
+                )
+            )
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(
+                json.dumps(
+                    {
+                        **row,
+                        "runtime_log_dropped_records": 3,
+                        "runtime_log_rate_limited_records": 2,
+                        "runtime_log_admission_clock_failures": 2,
+                    }
+                )
+            )
 
     def test_deployed_runtime_sink_restricts_address_fields_to_hardened(self) -> None:
         parser = self.log_parser.LogParser(strict=True)
