@@ -47,6 +47,7 @@ class LogParserTests(unittest.TestCase):
             {
                 "schema_version": "1.0",
                 "event": "repair",
+                "seq": 1,
                 "trace_id": "membrane::heal::0000000000000001",
                 "decision_id": 1,
                 "pid": 12345,
@@ -62,7 +63,7 @@ class LogParserTests(unittest.TestCase):
             {
                 "schema_version": "1.0",
                 "event": "deny",
-                "seq": 1,
+                "seq": 2,
                 "pid": 12345,
                 "runtime_mode": "hardened",
                 "api_family": "Signal",
@@ -82,6 +83,7 @@ class LogParserTests(unittest.TestCase):
             {
                 "schema_version": "1.0",
                 "event": "exit_summary",
+                "seq": 3,
                 "pid": 12345,
                 "runtime_mode": "hardened",
                 "symbol": "process",
@@ -123,6 +125,7 @@ class LogParserTests(unittest.TestCase):
         row = {
             "schema_version": "1.0",
             "event": "deny",
+            "seq": 1,
             "pid": 12345,
             "runtime_mode": "hardened",
             "api_family": "Signal",
@@ -140,6 +143,7 @@ class LogParserTests(unittest.TestCase):
         row = {
             "schema_version": "1.0",
             "event": "repair",
+            "seq": 1,
             "pid": 12345,
             "runtime_mode": "hardened",
             "api_family": "string_memory",
@@ -156,6 +160,7 @@ class LogParserTests(unittest.TestCase):
         row = {
             "schema_version": "1.0",
             "event": "repair",
+            "seq": 1,
             "pid": 12345,
             "runtime_mode": "hardened",
             "api_family": "string_memory",
@@ -173,6 +178,7 @@ class LogParserTests(unittest.TestCase):
         row = {
             "schema_version": "1.0",
             "event": "deny",
+            "seq": 1,
             "pid": 12345,
             "runtime_mode": "hardened",
             "api_family": "Signal",
@@ -187,6 +193,41 @@ class LogParserTests(unittest.TestCase):
             with self.subTest(value=value):
                 with self.assertRaises(self.log_parser.ParseError):
                     parser.parse_line(json.dumps({**row, "signal_context": value}))
+
+    def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 0,
+        }
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(json.dumps(row))
+        for value in (0, -1, True, 1.5, "1", None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "seq": value}))
+
+    def test_deployed_runtime_sink_accepts_out_of_append_order_sequences(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "exit_summary",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "symbol": "process",
+            "denials": 0,
+            "runtime_log_written_records": 0,
+        }
+        entries = [
+            parser.parse_line(json.dumps({**row, "seq": seq}), line)
+            for line, seq in enumerate((2, 1), 1)
+        ]
+        self.assertEqual([entry.raw["seq"] for entry in entries], [2, 1])
 
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

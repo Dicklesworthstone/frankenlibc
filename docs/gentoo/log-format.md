@@ -11,7 +11,12 @@ This document defines the JSONL schema accepted by:
 The runtime appends three event kinds to the path named by `FRANKENLIBC_LOG`.
 All use `schema_version="1.0"`, include `pid` and `runtime_mode`, and are valid
 independent JSON objects separated by newlines. The hot-path sink does not add a
-wall-clock timestamp or per-call latency; consumers must preserve file order.
+wall-clock timestamp or per-call latency.
+Every row also carries a positive process-local `seq` from one atomic namespace
+shared by repair, denial, and exit-summary producers. Concurrent writers can
+reserve numbers before an earlier writer reaches `writev`, so consumers that
+need causal presentation should sort by `(pid, seq)` rather than assuming
+physical append order is sequence order.
 
 Repair events include the healing action and its old/new values. The `symbol`
 is mandatory and names the non-empty canonical operation that actually
@@ -23,6 +28,7 @@ operation rather than the caller-visible alias; blank values and `unknown`
 {
   "schema_version": "1.0",
   "event": "repair",
+  "seq": 1,
   "pid": 12345,
   "runtime_mode": "hardened",
   "api_family": "string_memory",
@@ -57,7 +63,8 @@ reserved `runtime_policy` symbol instead:
 }
 ```
 
-The final row is `event="exit_summary"`. It contains `denials`, all healing
+The final row is `event="exit_summary"`. It carries the next shared `seq` and
+contains `denials`, all healing
 counters, and the `runtime_log_*` written/dropped/short-write/open-failure
 counters. A successful fixture run must contain this row; its absence means the
 process did not reach normal teardown or the sink failed before the summary.
@@ -149,8 +156,8 @@ Parser normalization:
 
 ## Validation Rules
 
-- Deployed runtime rows require `schema_version="1.0"`, `pid`, and
-  `runtime_mode=strict|hardened|off`.
+- Deployed runtime rows require `schema_version="1.0"`, a positive integer
+  process-local `seq`, `pid`, and `runtime_mode=strict|hardened|off`.
 - `repair` rows require `api_family`, a non-empty canonical `symbol` other than
   case-insensitive `unknown`, `healing_action`, `signal_context`, and `details`.
   Aliases record the canonical delegated operation.

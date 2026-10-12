@@ -253,6 +253,17 @@ if fixture_name == "fixture_hardened_first_heal":
             "instead of reopening the rotated path"
         )
     all_entries = entries + before_entries
+    for label, stream_entries in (("child", entries), ("parent", before_entries)):
+        sequences = [entry.raw.get("seq") for entry in stream_entries]
+        if any(type(seq) is not int or seq <= 0 for seq in sequences):
+            raise SystemExit(
+                f"{mode} {label} runtime log has invalid sequence values: {sequences!r}"
+            )
+        if len(sequences) != len(set(sequences)):
+            raise SystemExit(
+                f"{mode} {label} runtime log has duplicate sequence values: "
+                f"{sequences!r}"
+            )
     invalid_repair_symbols = [
         entry
         for entry in all_entries

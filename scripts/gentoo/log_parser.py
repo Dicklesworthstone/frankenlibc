@@ -158,7 +158,7 @@ class LogParser:
 
     @staticmethod
     def _validate_runtime_sink_row(payload: Dict[str, Any], line_num: int, event: str) -> None:
-        required = ["schema_version", "pid", "runtime_mode"]
+        required = ["schema_version", "seq", "pid", "runtime_mode"]
         if event == "repair":
             required.extend(
                 ["api_family", "symbol", "healing_action", "signal_context", "details"]
@@ -187,6 +187,12 @@ class LogParser:
             raise ParseError(
                 line_num,
                 f"invalid runtime_mode: {payload['runtime_mode']}",
+                json.dumps(payload),
+            )
+        if type(payload["seq"]) is not int or payload["seq"] <= 0:
+            raise ParseError(
+                line_num,
+                f"{event} row seq must be a positive integer",
                 json.dumps(payload),
             )
         if event in {"repair", "deny"} and not isinstance(payload["signal_context"], bool):

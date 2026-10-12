@@ -19,6 +19,18 @@ static WRITTEN: AtomicU64 = AtomicU64::new(0);
 static DROPPED: AtomicU64 = AtomicU64::new(0);
 static SHORT_WRITES: AtomicU64 = AtomicU64::new(0);
 static OPEN_FAILURES: AtomicU64 = AtomicU64::new(0);
+/// One process-local namespace for every deployed runtime-log event.  This is
+/// deliberately independent of heal and denial counters: those count semantic
+/// outcomes even when the sink is disabled, while this number orders records
+/// that were actually attempted for the configured JSONL stream.
+static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+/// Reserve the next process-local event sequence number without allocating,
+/// locking, touching TLS, or entering libc.
+#[must_use]
+pub fn next_runtime_log_sequence() -> u64 {
+    EVENT_SEQUENCE.fetch_add(1, Ordering::Relaxed) + 1
+}
 
 /// Process-local file-sink counters. A failed sink must not hide lost records.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -334,6 +346,14 @@ fn syscall4(number: usize, a: usize, b: usize, c: usize, d: usize) -> isize {
 mod tests {
     use super::*;
     use std::io::{Read, Seek, SeekFrom};
+
+    #[test]
+    fn event_sequence_is_positive_and_process_global() {
+        let first = next_runtime_log_sequence();
+        let second = next_runtime_log_sequence();
+        assert!(first > 0);
+        assert!(second > first);
+    }
 
     #[test]
     fn vectored_record_keeps_utf8_and_newline_together() {

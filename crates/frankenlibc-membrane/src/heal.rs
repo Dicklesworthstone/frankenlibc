@@ -6,7 +6,7 @@
 
 #[path = "runtime_log.rs"]
 mod runtime_log;
-pub use runtime_log::{RuntimeLogSnapshot, runtime_log_snapshot};
+pub use runtime_log::{RuntimeLogSnapshot, next_runtime_log_sequence, runtime_log_snapshot};
 
 use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION};
 use crate::util::NoPoisonMutex as Mutex;
@@ -479,9 +479,11 @@ impl HealingPolicy {
                 .fetch_add(1, Ordering::Relaxed)
                 + 1,
         );
+        let event_seq = next_runtime_log_sequence();
         let mut line = RuntimeLogBuffer::new();
         if write_healing_log_line(
             &mut line,
+            event_seq,
             decision_id,
             api_family,
             symbol,
@@ -764,6 +766,7 @@ fn write_healing_action_details(
 
 fn write_healing_log_line(
     output: &mut RuntimeLogBuffer,
+    event_seq: u64,
     decision_id: DecisionId,
     api_family: &'static str,
     symbol: &'static str,
@@ -774,7 +777,7 @@ fn write_healing_log_line(
     let escalated = healing_action_escalated(action);
     write!(
         output,
-        "{{\"event\":\"repair\",\"trace_id\":\"membrane::heal::{:016x}\",\
+        "{{\"event\":\"repair\",\"seq\":{event_seq},\"trace_id\":\"membrane::heal::{:016x}\",\
 \"decision_id\":{},\"schema_version\":\"{}\",\"pid\":{},\"bead_id\":\"{HEALING_BEAD_ID}\",\
 \"runtime_mode\":\"{}\",\"level\":\"{level}\",\"api_family\":",
         decision_id.as_u64(),
@@ -883,6 +886,7 @@ mod tests {
         let mut line = RuntimeLogBuffer::new();
         write_healing_log_line(
             &mut line,
+            7,
             DecisionId::from_raw(42),
             "string\nmemory",
             "str\"len\\probe",
@@ -892,6 +896,7 @@ mod tests {
         .unwrap();
         let row: Value = serde_json::from_str(line.as_str()).unwrap();
         assert_eq!(row["trace_id"], "membrane::heal::000000000000002a");
+        assert_eq!(row["seq"], 7);
         assert_eq!(row["api_family"], "string\nmemory");
         assert_eq!(row["symbol"], "str\"len\\probe");
         assert_eq!(row["signal_context"], false);

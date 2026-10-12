@@ -2618,10 +2618,11 @@ fn append_deny_record(
     } else {
         Some(ErrnoTransparencyGuard::capture())
     };
-    let seq = DENIALS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    DENIALS.fetch_add(1, AtomicOrdering::Relaxed);
     if !frankenlibc_membrane::heal::runtime_log_is_configured() {
         return;
     }
+    let seq = frankenlibc_membrane::heal::next_runtime_log_sequence();
     let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
     let formatted = write!(
         line,
@@ -2670,10 +2671,11 @@ extern "C" fn runtime_log_summary_at_exit() {
     if !frankenlibc_membrane::heal::runtime_log_is_configured() {
         return;
     }
+    let seq = frankenlibc_membrane::heal::next_runtime_log_sequence();
     let mut line = frankenlibc_membrane::heal::RuntimeLogBuffer::new();
     let formatted = write!(
         line,
-        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"exit_summary\",\
+        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"exit_summary\",\"seq\":{seq},\
 \"pid\":{},\"runtime_mode\":\"{}\",\"symbol\":\"process\",\"denials\":{},",
         frankenlibc_membrane::heal::runtime_log_process_id(),
         runtime_mode_name(resolved_mode()),

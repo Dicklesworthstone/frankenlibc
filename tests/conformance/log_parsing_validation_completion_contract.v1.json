@@ -16,6 +16,7 @@
     "validator": "scripts/gentoo/log_validator.py",
     "stats": "scripts/gentoo/log_stats.py",
     "unit_tests": "tests/gentoo/test_log_parser.py",
+    "runtime_log": "crates/frankenlibc-membrane/src/runtime_log.rs",
     "fixtures_dir": "tests/gentoo/fixtures/sample_logs",
     "runtime_fixture": "tests/gentoo/fixtures/sample_logs/valid_runtime.jsonl",
     "hook_fixture": "tests/gentoo/fixtures/sample_logs/valid_hook.jsonl",
@@ -59,13 +60,19 @@
     {
       "kind": "parser_repair_symbol_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 203,
+      "line": 209,
       "anchor": "repair row symbol must be a non-empty canonical symbol"
+    },
+    {
+      "kind": "parser_event_sequence_validation",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 195,
+      "anchor": "row seq must be a positive integer"
     },
     {
       "kind": "parser_strict_error_policy",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 213,
+      "line": 219,
       "anchor": "def _handle_error"
     },
     {
@@ -95,14 +102,26 @@
     {
       "kind": "schema_documentation",
       "path": "docs/gentoo/log-format.md",
-      "line": 16,
+      "line": 21,
       "anchor": "Repair events include"
     },
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-    "line": 150,
+      "line": 157,
       "anchor": "## Validation Rules"
+    },
+    {
+      "kind": "runtime_event_sequence_generator",
+      "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
+      "line": 31,
+      "anchor": "pub fn next_runtime_log_sequence"
+    },
+    {
+      "kind": "runtime_event_sequence_unit_test",
+      "path": "crates/frankenlibc-membrane/src/runtime_log.rs",
+      "line": 351,
+      "anchor": "fn event_sequence_is_positive_and_process_global"
     },
     {
       "kind": "unit_runtime_fixture_test",
@@ -125,43 +144,61 @@
     {
       "kind": "unit_missing_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 138,
+      "line": 141,
       "anchor": "def test_deployed_runtime_sink_rejects_missing_repair_symbol"
     },
     {
       "kind": "unit_invalid_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 154,
+      "line": 158,
       "anchor": "def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol"
+    },
+    {
+      "kind": "unit_invalid_event_sequence_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 197,
+      "anchor": "def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence"
+    },
+    {
+      "kind": "unit_concurrent_append_sequence_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 215,
+      "anchor": "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences"
     },
     {
       "kind": "unit_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 191,
+      "line": 232,
       "anchor": "def test_invalid_json_raises_in_strict_mode"
     },
     {
       "kind": "unit_non_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 196,
+      "line": 237,
       "anchor": "def test_invalid_line_collected_in_non_strict_mode"
     },
     {
       "kind": "unit_stats_validator_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 203,
+      "line": 244,
       "anchor": "def test_stats_and_validator"
     },
     {
       "kind": "deployed_fixture_repair_symbol_gate",
       "path": "scripts/c_fixture_suite.sh",
-    "line": 255,
+      "line": 255,
       "anchor": "all_entries = entries + before_entries"
+    },
+    {
+      "kind": "deployed_fixture_event_sequence_gate",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 264,
+      "anchor": "runtime log has duplicate sequence values"
     },
     {
       "kind": "deployed_fixture_repair_identity_gate",
       "path": "scripts/c_fixture_suite.sh",
-    "line": 297,
+      "line": 308,
       "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)"
     },
     {
@@ -188,6 +225,7 @@
       "def _handle_error",
       "__hook_event__",
       "missing required field(s)",
+      "row seq must be a positive integer",
       "repair row symbol must be a non-empty canonical symbol",
       "repair row symbol is not canonical"
     ],
@@ -214,17 +252,25 @@
       "def test_parse_deployed_runtime_sink_rows",
       "def test_deployed_runtime_sink_rejects_missing_repair_symbol",
       "def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol",
+      "def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence",
+      "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences",
       "def test_invalid_json_raises_in_strict_mode",
       "def test_invalid_line_collected_in_non_strict_mode",
       "def test_stats_and_validator"
     ],
     "format_doc": [
       "canonical operation that actually",
+      "positive process-local `seq`",
       "case-insensitive `unknown`",
       "Aliases record"
     ],
+    "runtime_log": [
+      "pub fn next_runtime_log_sequence",
+      "fn event_sequence_is_positive_and_process_global"
+    ],
     "deployed_gate": [
       "all_entries = entries + before_entries",
+      "runtime log has duplicate sequence values",
       "invalid_repair_symbols",
       "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)",
       "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False)"
@@ -245,13 +291,14 @@
     {
       "missing_item_id": "tests.unit.primary",
       "status": "covered",
-      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
+      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, positive shared event-sequence validation including concurrent out-of-append-order rows, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
       "implementation_refs": [
         "parser_entry_model",
         "parser_file_iteration",
         "parser_jsonl_line_normalization",
         "parser_runtime_and_hook_schema",
         "parser_runtime_sink_validation",
+        "parser_event_sequence_validation",
         "parser_repair_symbol_validation",
         "parser_strict_error_policy",
         "validator_integrity_checks",
@@ -263,6 +310,8 @@
         "unit_deployed_runtime_sink_test",
         "unit_missing_repair_symbol_test",
         "unit_invalid_repair_symbol_test",
+        "unit_invalid_event_sequence_test",
+        "unit_concurrent_append_sequence_test",
         "unit_strict_error_test",
         "unit_non_strict_error_test",
         "unit_stats_validator_test",
@@ -278,14 +327,16 @@
     {
       "missing_item_id": "telemetry.primary",
       "status": "covered",
-      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks canonical repair symbols in current and pre-fork logs plus the expected memcpy/string_memory/ClampSize repair.",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
       "implementation_refs": [
         "stats_telemetry_snapshot",
         "validator_action_vocabulary",
         "validator_integrity_checks",
         "schema_documentation",
         "schema_validation_rules",
+        "runtime_event_sequence_generator",
         "deployed_fixture_repair_symbol_gate",
+        "deployed_fixture_event_sequence_gate",
         "deployed_fixture_repair_identity_gate",
         "completion_checker",
         "completion_harness"
@@ -295,6 +346,9 @@
         "unit_deployed_runtime_sink_test",
         "unit_missing_repair_symbol_test",
         "unit_invalid_repair_symbol_test",
+        "runtime_event_sequence_unit_test",
+        "unit_invalid_event_sequence_test",
+        "unit_concurrent_append_sequence_test",
         "completion_harness"
       ],
       "telemetry_refs": [
