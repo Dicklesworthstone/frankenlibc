@@ -11753,6 +11753,247 @@ fn io_pgetevents_null_events_with_positive_nr_returns_efault() {
     assert_eq!(errno, libc::EFAULT);
 }
 
+#[repr(C)]
+struct CloneTailProbeContext {
+    write_fd: c_int,
+    require_child_tid: bool,
+    child_tid: c_int,
+}
+
+unsafe extern "C" fn clone_tail_probe_child(arg: *mut c_void) -> c_int {
+    let context = unsafe { &mut *arg.cast::<CloneTailProbeContext>() };
+    let child_tid_matches = if context.require_child_tid {
+        context.child_tid == unsafe { libc::syscall(libc::SYS_gettid) as c_int }
+    } else {
+        true
+    };
+    let marker = [u8::from(child_tid_matches)];
+    let _ = unsafe { libc::write(context.write_fd, marker.as_ptr().cast(), marker.len()) };
+    0
+}
+
+#[derive(Clone, Copy)]
+enum CloneEntry {
+    Public,
+    Internal,
+}
+
+#[derive(Clone, Copy)]
+enum CloneTailCase {
+    Omitted,
+    ParentTid,
+    ChildTid,
+}
+
+unsafe fn invoke_clone_tail_case(
+    entry: CloneEntry,
+    case: CloneTailCase,
+    stack_top: *mut c_void,
+    context: *mut CloneTailProbeContext,
+    parent_tid: *mut c_int,
+) -> c_int {
+    let flags = libc::SIGCHLD
+        | match case {
+            CloneTailCase::Omitted => 0,
+            CloneTailCase::ParentTid => libc::CLONE_PARENT_SETTID,
+            CloneTailCase::ChildTid => libc::CLONE_CHILD_SETTID,
+        };
+    let callback = Some(clone_tail_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+    match (entry, case) {
+        (CloneEntry::Public, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Internal, CloneTailCase::Omitted) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(callback, stack_top, flags, context.cast())
+        },
+        (CloneEntry::Public, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ParentTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                parent_tid.cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Public, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::unistd_abi::clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+        (CloneEntry::Internal, CloneTailCase::ChildTid) => unsafe {
+            frankenlibc_abi::glibc_internal_abi::__clone(
+                callback,
+                stack_top,
+                flags,
+                context.cast(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::null_mut::<c_void>(),
+                std::ptr::addr_of_mut!((*context).child_tid).cast::<c_void>(),
+            )
+        },
+    }
+}
+
+#[test]
+fn clone_exports_execute_four_arg_and_positional_tid_forms() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        for case in [
+            CloneTailCase::Omitted,
+            CloneTailCase::ParentTid,
+            CloneTailCase::ChildTid,
+        ] {
+            let mut pipe_fds = [-1; 2];
+            assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+            let mut stack = vec![0_u8; 1024 * 1024];
+            let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+            let mut context = CloneTailProbeContext {
+                write_fd: pipe_fds[1],
+                require_child_tid: matches!(case, CloneTailCase::ChildTid),
+                child_tid: -1,
+            };
+            let mut parent_tid = -1;
+            let pid = unsafe {
+                invoke_clone_tail_case(entry, case, stack_top, &mut context, &mut parent_tid)
+            };
+            assert!(pid > 0, "clone entry returned {pid}");
+            if matches!(case, CloneTailCase::ParentTid) {
+                assert_eq!(parent_tid, pid, "parent_tid slot was not forwarded");
+            }
+            assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+            assert!(libc::WIFEXITED(status));
+            assert_eq!(libc::WEXITSTATUS(status), 0);
+
+            let mut marker = [0_u8; 1];
+            assert_eq!(
+                unsafe { libc::read(pipe_fds[0], marker.as_mut_ptr().cast(), marker.len()) },
+                1
+            );
+            assert_eq!(marker[0], 1, "child_tid slot was not forwarded");
+            assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+struct CloneTlsProbeContext {
+    write_fd: c_int,
+    _padding: c_int,
+    observed_fs: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "C" fn clone_tls_probe_child(_arg: *mut c_void) -> c_int {
+    std::arch::naked_asm!(
+        "push rbx",
+        "mov rbx, rdi",
+        // arch_prctl(ARCH_GET_FS, &context.observed_fs)
+        "mov eax, 158",
+        "mov edi, 0x1003",
+        "lea rsi, [rbx + 8]",
+        "syscall",
+        "test rax, rax",
+        "jnz 2f",
+        // write(context.write_fd, &context.observed_fs, 8)
+        "mov edi, [rbx]",
+        "lea rsi, [rbx + 8]",
+        "mov edx, 8",
+        "mov eax, 1",
+        "syscall",
+        "cmp rax, 8",
+        "jne 2f",
+        "xor eax, eax",
+        "pop rbx",
+        "ret",
+        "2:",
+        "mov eax, 1",
+        "pop rbx",
+        "ret",
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn clone_exports_preserve_the_positional_tls_slot() {
+    for entry in [CloneEntry::Public, CloneEntry::Internal] {
+        let mut pipe_fds = [-1; 2];
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+        let mut stack = vec![0_u8; 1024 * 1024];
+        let stack_top = unsafe { stack.as_mut_ptr().add(stack.len()) }.cast::<c_void>();
+        let mut tls_storage = Box::new([0_u8; 4096]);
+        let tls_base = tls_storage.as_mut_ptr().cast::<c_void>();
+        let mut context = CloneTlsProbeContext {
+            write_fd: pipe_fds[1],
+            _padding: 0,
+            observed_fs: 0,
+        };
+        let callback = Some(clone_tls_probe_child as unsafe extern "C" fn(*mut c_void) -> c_int);
+        let flags = libc::SIGCHLD | libc::CLONE_SETTLS;
+        let pid = match entry {
+            CloneEntry::Public => unsafe {
+                frankenlibc_abi::unistd_abi::clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+            CloneEntry::Internal => unsafe {
+                frankenlibc_abi::glibc_internal_abi::__clone(
+                    callback,
+                    stack_top,
+                    flags,
+                    std::ptr::addr_of_mut!(context).cast(),
+                    std::ptr::null_mut::<c_void>(),
+                    tls_base,
+                )
+            },
+        };
+        assert!(pid > 0, "clone entry returned {pid}");
+        assert_eq!(unsafe { libc::close(pipe_fds[1]) }, 0);
+
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+
+        let mut observed_fs = 0_u64;
+        assert_eq!(
+            unsafe {
+                libc::read(
+                    pipe_fds[0],
+                    std::ptr::addr_of_mut!(observed_fs).cast(),
+                    std::mem::size_of::<u64>(),
+                )
+            },
+            std::mem::size_of::<u64>() as isize
+        );
+        assert_eq!(observed_fs, tls_base as u64, "TLS slot was not forwarded");
+        assert_eq!(unsafe { libc::close(pipe_fds[0]) }, 0);
+    }
+}
+
 #[test]
 fn clone3_null_args_returns_efault() {
     use frankenlibc_abi::unistd_abi::clone3;

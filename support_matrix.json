@@ -2298,9 +2298,9 @@
     {
       "symbol": "clone",
       "header": "<sched.h>",
-      "status": "RawSyscall",
-      "notes": "Raw clone syscall wrapper",
-      "module": "process_abi"
+      "status": "WrapsHostLibc",
+      "notes": "GNU variadic wrapper using host architecture stack trampoline with positional parent_tid/tls/child_tid slots",
+      "module": "unistd_abi"
     },
     {
       "symbol": "close",

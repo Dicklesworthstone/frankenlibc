@@ -23637,7 +23637,78 @@ pub unsafe extern "C" fn fexecve(
     }
 }
 
-/// Linux `clone` — create child process (raw syscall wrapper).
+const CLONE_PIDFD_FLAG: c_int = 0x0000_1000;
+
+/// Number of positional GNU clone tail slots that the caller must supply.
+///
+/// glibc's `clone` and `__clone` are aliases of one machine entry. Their
+/// conceptual tail is always `(parent_tid, tls, child_tid)`: later operands do
+/// not slide left when an earlier flag is absent. A caller using only
+/// `CLONE_SETTLS`, for example, supplies a null parent-tid placeholder followed
+/// by the TLS value. Reading through the highest required slot preserves that
+/// ABI while avoiding reads of genuinely omitted arguments in the common
+/// four-argument form.
+#[inline]
+pub(crate) const fn clone_tail_arity(flags: c_int) -> usize {
+    if flags & (libc::CLONE_CHILD_SETTID | libc::CLONE_CHILD_CLEARTID) != 0 {
+        3
+    } else if flags & libc::CLONE_SETTLS != 0 {
+        2
+    } else if flags & (libc::CLONE_PARENT_SETTID | CLONE_PIDFD_FLAG) != 0 {
+        1
+    } else {
+        0
+    }
+}
+
+type HostCloneFn = unsafe extern "C" fn(
+    Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    *mut c_void,
+    c_int,
+    *mut c_void,
+    ...
+) -> c_int;
+
+fn host_clone() -> Option<HostCloneFn> {
+    static FUNC: std::sync::LazyLock<Option<HostCloneFn>> = std::sync::LazyLock::new(|| {
+        let symbol = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
+        if symbol.is_null() {
+            None
+        } else {
+            // SAFETY: RTLD_NEXT resolved glibc's GNU clone entry point.
+            Some(unsafe { std::mem::transmute::<*mut c_void, HostCloneFn>(symbol) })
+        }
+    });
+    *FUNC
+}
+
+/// Call the host clone entry with exactly the tail arity represented by
+/// `tail_count`. The child never returns through this Rust frame: glibc's clone
+/// trampoline invokes `fn_ptr` on the caller-provided stack and exits with its
+/// result.
+pub(crate) unsafe fn clone_with_tail(
+    fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    stack: *mut c_void,
+    flags: c_int,
+    arg: *mut c_void,
+    tail: [*mut c_void; 3],
+    tail_count: usize,
+) -> c_int {
+    let Some(host_clone) = host_clone() else {
+        unsafe { set_abi_errno(libc::ENOSYS) };
+        return -1;
+    };
+    match tail_count {
+        0 => unsafe { host_clone(fn_ptr, stack, flags, arg) },
+        1 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0]) },
+        2 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1]) },
+        3 => unsafe { host_clone(fn_ptr, stack, flags, arg, tail[0], tail[1], tail[2]) },
+        _ => unreachable!("GNU clone has exactly three optional tail slots"),
+    }
+}
+
+/// GNU `clone` — create a child through the host's architecture-specific
+/// stack-switching trampoline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clone(
     fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
@@ -23646,39 +23717,12 @@ pub unsafe extern "C" fn clone(
     arg: *mut c_void,
     mut args: ...
 ) -> c_int {
-    // clone is extremely ABI-sensitive; delegate to glibc, with its optional
-    // ptid, tls and ctid arguments (read by glibc only under
-    // CLONE_PARENT_SETTID / CLONE_SETTLS / CLONE_CHILD_*TID; uninspected
-    // otherwise). Forwarding only four arguments broke those flags.
-    let (ptid, tls, ctid) = unsafe {
-        (
-            args.next_arg::<*mut c_void>(),
-            args.next_arg::<*mut c_void>(),
-            args.next_arg::<*mut c_void>(),
-        )
-    };
-    type CloneFn = unsafe extern "C" fn(
-        Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
-        *mut c_void,
-        c_int,
-        *mut c_void,
-        ...
-    ) -> c_int;
-    static FUNC: std::sync::LazyLock<Option<CloneFn>> = std::sync::LazyLock::new(|| {
-        let sym = unsafe { crate::dlfcn_abi::dlsym(libc::RTLD_NEXT, c"clone".as_ptr()) };
-        if sym.is_null() {
-            None
-        } else {
-            Some(unsafe { std::mem::transmute::<*mut c_void, CloneFn>(sym) })
-        }
-    });
-    match *FUNC {
-        Some(f) => unsafe { f(fn_ptr, stack, flags, arg, ptid, tls, ctid) },
-        None => {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            -1
-        }
+    let tail_count = clone_tail_arity(flags);
+    let mut tail = [std::ptr::null_mut(); 3];
+    for slot in &mut tail[..tail_count] {
+        *slot = unsafe { args.next_arg::<*mut c_void>() };
     }
+    unsafe { clone_with_tail(fn_ptr, stack, flags, arg, tail, tail_count) }
 }
 
 /// GNU `eaccess` / `euidaccess` — check access using effective UID/GID.

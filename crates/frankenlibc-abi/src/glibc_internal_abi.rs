@@ -3941,87 +3941,24 @@ pub unsafe extern "C" fn __bsd_getpgrp(pid: c_int) -> c_int {
     }
 }
 // __check_rhosts_file is a global variable, defined below as a static
-// __clone: glibc-compatible clone wrapper (must be asm — child runs on different stack).
-// Signature: __clone(fn, child_stack, flags, arg) -> pid_t or -1
-// x86_64 C ABI: rdi=fn, rsi=child_stack, edx=flags, rcx=arg
-#[cfg(target_arch = "x86_64")]
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-#[unsafe(naked)]
-pub unsafe extern "C" fn __clone(
-    _fn: *mut c_void,
-    _stack: *mut c_void,
-    _flags: c_int,
-    _arg: *mut c_void,
-) -> c_int {
-    std::arch::naked_asm!(
-        // Validate fn (rdi) and stack (rsi)
-        "test rdi, rdi",
-        "jz 90f",
-        "test rsi, rsi",
-        "jz 90f",
-        // Place fn and arg on child stack (rsi points to top, grows down)
-        "and rsi, -16", // align child stack to 16
-        "sub rsi, 16",
-        "mov [rsi], rdi",   // fn at [rsp] for child
-        "mov [rsi+8], rcx", // arg at [rsp+8] for child
-        // Rearrange for clone syscall:
-        // syscall(SYS_clone, flags, child_stack, ptid, ctid, newtls)
-        //   rax=56, rdi=flags, rsi=child_stack, rdx=ptid, r10=ctid, r8=newtls
-        "mov rdi, rdx", // flags (was in edx)
-        // rsi already has child_stack
-        "xor edx, edx",   // ptid = NULL
-        "xor r10d, r10d", // ctid = NULL
-        "xor r8d, r8d",   // newtls = NULL
-        "mov eax, 56",    // SYS_clone
-        "syscall",
-        // Check parent vs child
-        "test rax, rax",
-        "jz 10f", // child (rax==0)
-        "js 80f", // error (rax<0)
-        // Parent: return child pid
-        "ret",
-        // === Child path (on new stack) ===
-        "10:",
-        "xor ebp, ebp", // clear frame pointer
-        "pop rax",      // fn pointer
-        "pop rdi",      // arg
-        "call rax",     // call fn(arg)
-        "mov edi, eax", // exit status
-        "mov eax, 60",  // SYS_exit
-        "syscall",
-        "ud2",
-        // === Error: syscall failed ===
-        "80:",
-        "neg eax",      // rax was -errno, make positive
-        "mov edi, eax", // errno value
-        "push rdi",     // save errno across call
-        "call __errno_location",
-        "pop rdi",
-        "mov [rax], edi", // *__errno_location() = errno
-        "mov eax, -1",
-        "ret",
-        // === Error: EINVAL (null fn or stack) ===
-        "90:",
-        "mov edi, 22", // EINVAL
-        "push rdi",
-        "call __errno_location",
-        "pop rdi",
-        "mov [rax], edi",
-        "mov eax, -1",
-        "ret",
-    )
-}
-
-#[cfg(not(target_arch = "x86_64"))]
+// `__clone` is glibc's strong internal name for the same variadic machine ABI
+// exposed publicly as weak `clone`. Keep both front doors on one fixed helper
+// so x86_64, aarch64, and future host architectures use glibc's own
+// stack-switching trampoline and the same positional tail-slot rule.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __clone(
-    _fn: *mut c_void,
-    _stack: *mut c_void,
-    _flags: c_int,
-    _arg: *mut c_void,
+    fn_ptr: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    stack: *mut c_void,
+    flags: c_int,
+    arg: *mut c_void,
+    mut args: ...
 ) -> c_int {
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    -1
+    let tail_count = crate::unistd_abi::clone_tail_arity(flags);
+    let mut tail = [std::ptr::null_mut(); 3];
+    for slot in &mut tail[..tail_count] {
+        *slot = unsafe { args.next_arg::<*mut c_void>() };
+    }
+    unsafe { crate::unistd_abi::clone_with_tail(fn_ptr, stack, flags, arg, tail, tail_count) }
 }
 // __close: `close`, a cancellation point as in glibc.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
