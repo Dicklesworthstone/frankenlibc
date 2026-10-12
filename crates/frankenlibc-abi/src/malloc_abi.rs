@@ -26,7 +26,7 @@ use frankenlibc_membrane::arena::{AllocationArena, FreeResult};
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::fingerprint::{AllocationFingerprint, CANARY_SIZE, FINGERPRINT_SIZE};
 use frankenlibc_membrane::galois::PointerAbstraction;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::lattice::SafetyState;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 use frankenlibc_membrane::util::now_utc_iso_like;
@@ -5735,7 +5735,12 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // ARENA blocks (the log ring's buffer, made by an earlier hardened
         // call) to host realloc/free -- "corrupted size vs. prev_size".
         drop(reentry_guard);
-        global_healing_policy().record("allocator", "free", &action);
+        global_healing_policy().record(
+            "allocator",
+            "free",
+            &action,
+            RepairLogContext::new(0, Some(ptr as usize)),
+        );
     }
 }
 
@@ -6164,6 +6169,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 "allocator",
                 "realloc",
                 &HealingAction::ReallocAsMalloc { size },
+                RepairLogContext::new(0, Some(ptr as usize)),
             );
             return out;
         }
@@ -6233,6 +6239,7 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                     "allocator",
                     "realloc",
                     &HealingAction::ReallocAsMalloc { size },
+                    RepairLogContext::new(0, Some(ptr as usize)),
                 );
                 return unsafe { malloc(size) };
             }

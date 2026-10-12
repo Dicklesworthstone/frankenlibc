@@ -22,7 +22,7 @@ use std::ptr;
 use std::time::UNIX_EPOCH;
 
 use frankenlibc_membrane::check_oracle::CheckStage;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -2585,6 +2585,7 @@ unsafe fn write_c_buffer(
             requested: bytes.len() + 1,
             truncated: copy_len,
         },
+        RepairLogContext::new(0, Some(out as usize)),
     );
     Ok(true)
 }

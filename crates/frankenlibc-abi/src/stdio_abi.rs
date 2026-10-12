@@ -23,7 +23,7 @@ use frankenlibc_core::stdio::{
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::config::SafetyLevel;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, RuntimeDecision};
 
 use crate::errno_abi::set_abi_errno;
@@ -4865,6 +4865,7 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
                 requested: bound.unwrap_or(len).saturating_add(1),
                 truncated: len,
             },
+            RepairLogContext::new(0, Some(s as usize)),
         );
     }
 
@@ -6126,6 +6127,7 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
                 requested: len.saturating_add(1),
                 truncated: len,
             },
+            RepairLogContext::new(0, Some(s as usize)),
         );
     }
 
@@ -6848,6 +6850,7 @@ pub(crate) unsafe fn render_segments(
                                         "stdio",
                                         symbol,
                                         &frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault,
+                                        RepairLogContext::new(0, Some(ptr_val)),
                                     );
                                 }
                                 // No `else` branch: untracked allocations
@@ -8076,6 +8079,7 @@ unsafe fn direct_snprintf_s(
                         requested: size,
                         clamped: 0,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         } else {
@@ -8090,6 +8094,7 @@ unsafe fn direct_snprintf_s(
                         requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
                         truncated: copy_len,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         }
@@ -8941,6 +8946,7 @@ pub unsafe extern "C" fn snprintf(
                         requested: size,
                         clamped: 0,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         } else {
@@ -8955,6 +8961,7 @@ pub unsafe extern "C" fn snprintf(
                         requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
                         truncated: copy_len,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         }
@@ -9112,6 +9119,7 @@ pub unsafe extern "C" fn sprintf(
                     requested: total_len,
                     clamped: 0,
                 },
+                RepairLogContext::new(0, Some(str_buf as usize)),
             );
         } else {
             let max_payload = bound.saturating_sub(1);
@@ -9125,6 +9133,7 @@ pub unsafe extern "C" fn sprintf(
                         requested: total_len.saturating_add(1),
                         truncated: copy_len,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         }
@@ -10394,6 +10403,7 @@ pub unsafe extern "C" fn vsnprintf(
                         requested: size,
                         clamped: 0,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         } else {
@@ -10408,6 +10418,7 @@ pub unsafe extern "C" fn vsnprintf(
                         requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
                         truncated: copy_len,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         }
@@ -10541,6 +10552,7 @@ pub unsafe extern "C" fn vsprintf(
                     requested: total_len,
                     clamped: 0,
                 },
+                RepairLogContext::new(0, Some(str_buf as usize)),
             );
         } else {
             let max_payload = bound.saturating_sub(1);
@@ -10554,6 +10566,7 @@ pub unsafe extern "C" fn vsprintf(
                         requested: total_len.saturating_add(1),
                         truncated: copy_len,
                     },
+                    RepairLogContext::new(0, Some(str_buf as usize)),
                 );
             }
         }

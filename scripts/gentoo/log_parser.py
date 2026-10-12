@@ -165,7 +165,14 @@ class LogParser:
         required = ["schema_version", "seq", "pid", "runtime_mode"]
         if event == "repair":
             required.extend(
-                ["api_family", "symbol", "healing_action", "signal_context", "details"]
+                [
+                    "api_family",
+                    "symbol",
+                    "healing_action",
+                    "errno",
+                    "signal_context",
+                    "details",
+                ]
             )
         elif event == "deny":
             required.extend(
@@ -222,6 +229,13 @@ class LogParser:
                 json.dumps(payload),
             )
         if event == "repair":
+            errno = payload["errno"]
+            if type(errno) is not int or not -(2**31) <= errno < 2**31:
+                raise ParseError(
+                    line_num,
+                    "repair row errno must be a signed 32-bit integer",
+                    json.dumps(payload),
+                )
             symbol = payload["symbol"]
             if not isinstance(symbol, str) or not symbol.strip():
                 raise ParseError(

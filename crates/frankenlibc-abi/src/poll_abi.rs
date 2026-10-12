@@ -9,7 +9,7 @@ use std::ffi::{c_int, c_void};
 use frankenlibc_core::errno;
 use frankenlibc_core::poll as poll_core;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -102,6 +102,7 @@ pub(crate) unsafe fn poll_cp(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout
                     requested: nfds as usize,
                     clamped: clamped as usize,
                 },
+                RepairLogContext::new(0, None),
             );
             clamped
         } else {
@@ -207,6 +208,7 @@ pub(crate) unsafe fn ppoll_cp(
                     requested: nfds as usize,
                     clamped: clamped as usize,
                 },
+                RepairLogContext::new(0, None),
             );
             clamped
         } else {

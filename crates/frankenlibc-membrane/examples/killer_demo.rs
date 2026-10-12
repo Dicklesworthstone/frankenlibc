@@ -5,6 +5,7 @@
 
 use asupersync_conformance::logging::{ConformanceTestLogger, with_test_logger};
 use asupersync_conformance::{Checkpoint, SuiteResult, SuiteTestResult, TestCategory, TestResult};
+use frankenlibc_membrane::heal::RepairLogContext;
 use frankenlibc_membrane::{
     DecisionId, EvidenceLedger, HealingAction, HealingPolicy, PolicyId, RedactionPolicy,
     SafetyLevel, TraceId, ValidationEvidence, ValidationOutcome, ValidationPipeline,
@@ -344,7 +345,12 @@ fn run_membrane_mode(run_id: &str, mode: SafetyLevel) -> ScenarioArtifacts {
             ),
             (SafetyLevel::Hardened, ValidationOutcome::TemporalViolation(_)) => {
                 let action = HealingAction::ReturnSafeDefault;
-                healing_policy.record("allocator", "free", &action);
+                healing_policy.record(
+                    "allocator",
+                    "free",
+                    &action,
+                    RepairLogContext::new(0, Some(addr)),
+                );
                 ledger.record_healing(
                     &action,
                     TraceId::new(trace_id.clone()),
@@ -559,7 +565,12 @@ fn measure_membrane_ns(mode: SafetyLevel) -> u64 {
             && matches!(outcome, ValidationOutcome::TemporalViolation(_))
         {
             let policy = HealingPolicy::new();
-            policy.record("allocator", "free", &HealingAction::ReturnSafeDefault);
+            policy.record(
+                "allocator",
+                "free",
+                &HealingAction::ReturnSafeDefault,
+                RepairLogContext::new(0, Some(addr)),
+            );
         }
     }
     (started.elapsed().as_nanos() as u64) / u64::from(PERF_ITERS)

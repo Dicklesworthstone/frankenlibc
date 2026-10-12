@@ -6,8 +6,8 @@
 //! test rather than hanging the whole test runner.
 
 use frankenlibc_membrane::heal::{
-    HealingAction, append_runtime_log_record, global_healing_policy, initialize_runtime_log,
-    install_signal_context_probe, runtime_log_snapshot,
+    HealingAction, RepairLogContext, append_runtime_log_record, global_healing_policy,
+    initialize_runtime_log, install_signal_context_probe, runtime_log_snapshot,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -37,7 +37,12 @@ fn callback(allocating: bool) {
         return;
     }
     CALLBACKS.fetch_add(1, Ordering::Relaxed);
-    global_healing_policy().record("allocator", "free", &HealingAction::IgnoreForeignFree);
+    global_healing_policy().record(
+        "allocator",
+        "free",
+        &HealingAction::IgnoreForeignFree,
+        RepairLogContext::new(0, None),
+    );
     IN_CALLBACK.store(false, Ordering::Relaxed);
 }
 
@@ -108,7 +113,12 @@ fn child_probe() {
     ALLOCATIONS.store(0, Ordering::Relaxed);
     MODE.store(COUNT, Ordering::Relaxed);
     IN_SIGNAL_CONTEXT.store(true, Ordering::Relaxed);
-    policy.record("string_memory", "strlen", &HealingAction::ReturnSafeDefault);
+    policy.record(
+        "string_memory",
+        "strlen",
+        &HealingAction::ReturnSafeDefault,
+        RepairLogContext::new(0, Some(0)),
+    );
     IN_SIGNAL_CONTEXT.store(false, Ordering::Relaxed);
     MODE.store(0, Ordering::Relaxed);
     assert_eq!(
@@ -129,6 +139,7 @@ fn child_probe() {
             "allocator",
             "realloc",
             &HealingAction::ReallocAsMalloc { size },
+            RepairLogContext::new(0, None),
         );
     }
     let rows = policy.export_healing_log_jsonl();
@@ -151,7 +162,12 @@ fn child_probe() {
     }
     assert!(policy.export_healing_log_jsonl().is_empty());
     // The guard must have been restored, not left permanently suppressing logs.
-    policy.record("allocator", "free", &HealingAction::ReturnSafeDefault);
+    policy.record(
+        "allocator",
+        "free",
+        &HealingAction::ReturnSafeDefault,
+        RepairLogContext::new(0, None),
+    );
     let last = policy.export_healing_log_jsonl();
     let row: serde_json::Value = serde_json::from_str(&last).unwrap();
     assert_eq!(row["healing_action"], "ReturnSafeDefault");

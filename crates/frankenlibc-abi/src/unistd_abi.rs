@@ -10,7 +10,7 @@ use frankenlibc_core::errno;
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
 use frankenlibc_core::syscall;
 use frankenlibc_core::unistd as unistd_core;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::errno_abi::set_abi_errno;
@@ -449,7 +449,12 @@ fn maybe_clamp_io_len(
         requested,
         clamped: remaining,
     };
-    global_healing_policy().record("io_fd", symbol, &action);
+    global_healing_policy().record(
+        "io_fd",
+        symbol,
+        &action,
+        RepairLogContext::new(0, Some(addr)),
+    );
     (remaining, true)
 }
 

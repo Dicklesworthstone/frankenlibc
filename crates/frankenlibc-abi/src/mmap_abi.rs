@@ -10,7 +10,7 @@ use frankenlibc_core::errno;
 use frankenlibc_core::mmap;
 use frankenlibc_core::syscall;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -71,6 +71,7 @@ pub unsafe extern "C" fn mmap(
                     requested: requested as usize,
                     clamped: sanitized as usize,
                 },
+                RepairLogContext::new(0, Some(addr as usize)),
             );
             sanitized
         };
@@ -180,6 +181,7 @@ pub unsafe extern "C" fn mprotect(addr: *mut c_void, length: usize, prot: c_int)
                 requested: prot as usize,
                 clamped: sanitized as usize,
             },
+            RepairLogContext::new(0, Some(addr as usize)),
         );
         result = unsafe { syscall::sys_mprotect(addr as *mut u8, length, sanitized) };
     }
@@ -242,6 +244,7 @@ pub(crate) unsafe fn msync_cp(addr: *mut c_void, length: usize, flags: c_int) ->
                 requested: flags as usize,
                 clamped: sanitized as usize,
             },
+            RepairLogContext::new(0, Some(addr as usize)),
         );
         result = sync(sanitized);
     }
@@ -294,6 +297,7 @@ pub unsafe extern "C" fn madvise(addr: *mut c_void, length: usize, advice: c_int
                 requested: advice as usize,
                 clamped: sanitized as usize,
             },
+            RepairLogContext::new(0, Some(addr as usize)),
         );
         result = unsafe { syscall::sys_madvise(addr as *mut u8, length, sanitized) };
     }

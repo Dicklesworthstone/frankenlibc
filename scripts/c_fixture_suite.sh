@@ -281,8 +281,31 @@ if fixture_name == "fixture_hardened_first_heal":
             for entry in invalid_repair_symbols
         )
         raise SystemExit(f"runtime logs contain invalid repair symbols: {rendered}")
+    repair_rows = [entry.raw for entry in all_entries if entry.event == "repair"]
+    invalid_repair_errnos = [
+        row.get("errno")
+        for row in repair_rows
+        if type(row.get("errno")) is not int
+        or not -(2**31) <= row["errno"] < 2**31
+    ]
+    if invalid_repair_errnos:
+        raise SystemExit(
+            f"runtime repair rows have invalid decision-owned errno values: "
+            f"{invalid_repair_errnos!r}"
+        )
     denial_rows = [entry.raw for entry in all_entries if entry.event == "deny"]
     if mode == "hardened":
+        invalid_repair_addresses = [
+            row.get("address")
+            for row in repair_rows
+            if not isinstance(row.get("address"), str)
+            or re.fullmatch(r"0x[0-9a-fA-F]+", row["address"]) is None
+        ]
+        if invalid_repair_addresses:
+            raise SystemExit(
+                "hardened fixture repair rows have invalid primary addresses: "
+                f"{invalid_repair_addresses!r}"
+            )
         invalid_hints = [
             row.get("addr_hint")
             for row in denial_rows
@@ -294,6 +317,12 @@ if fixture_name == "fixture_hardened_first_heal":
                 f"hardened denial rows have invalid addr_hint values: {invalid_hints!r}"
             )
     else:
+        disclosed_addresses = [row["address"] for row in repair_rows if "address" in row]
+        if disclosed_addresses:
+            raise SystemExit(
+                f"{mode} repair rows disclosed hardened-only address values: "
+                f"{disclosed_addresses!r}"
+            )
         disclosed_hints = [row["addr_hint"] for row in denial_rows if "addr_hint" in row]
         if disclosed_hints:
             raise SystemExit(

@@ -44,6 +44,27 @@ impl HealingAction {
     }
 }
 
+/// Explicit provenance attached to a repair evidence row.
+///
+/// `errno` is the value selected by the repair decision itself. Zero means
+/// that the decision selected no errno; the ambient thread-local errno is
+/// never sampled or cleared. `address`, when present, is the primary address
+/// implicated by the repair. It is intentionally optional because some
+/// repairs concern only scalar arguments, and it is not complete provenance
+/// for operations involving multiple pointers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RepairLogContext {
+    pub errno: i32,
+    pub address: Option<usize>,
+}
+
+impl RepairLogContext {
+    #[must_use]
+    pub const fn new(errno: i32, address: Option<usize>) -> Self {
+        Self { errno, address }
+    }
+}
+
 const HEALING_LOG_CAPACITY: usize = 1024;
 const HEALING_BEAD_ID: &str = "bd-32e.4";
 
@@ -349,7 +370,13 @@ impl HealingPolicy {
     /// frame `F` is preserved.
     /// @separation-frame: `F` (non-counter memory is untouched).
     /// @separation-alias: `repair_apply`.
-    pub fn record(&self, api_family: &'static str, symbol: &'static str, action: &HealingAction) {
+    pub fn record(
+        &self,
+        api_family: &'static str,
+        symbol: &'static str,
+        action: &HealingAction,
+        context: RepairLogContext,
+    ) {
         if action.is_heal() {
             self.total_heals.fetch_add(1, Ordering::Relaxed);
         }
@@ -379,7 +406,7 @@ impl HealingPolicy {
             HealingAction::None => {}
         }
 
-        self.emit_healing_log(api_family, symbol, action);
+        self.emit_healing_log(api_family, symbol, action, context);
     }
 
     /// Decide healing for a copy/memory operation with bounds.
@@ -432,6 +459,7 @@ impl HealingPolicy {
         api_family: &'static str,
         symbol: &'static str,
         action: &HealingAction,
+        context: RepairLogContext,
     ) {
         if !action.is_heal() {
             return;
@@ -480,15 +508,20 @@ impl HealingPolicy {
                 + 1,
         );
         let event_seq = next_runtime_log_sequence();
+        let runtime_mode = runtime_mode_label();
         let mut line = RuntimeLogBuffer::new();
         if write_healing_log_line(
             &mut line,
-            event_seq,
-            decision_id,
-            api_family,
-            symbol,
-            action,
-            in_signal_handler,
+            RepairLogRecord {
+                event_seq,
+                decision_id,
+                api_family,
+                symbol,
+                action,
+                context,
+                runtime_mode,
+                signal_context: in_signal_handler,
+            },
         )
         .is_err()
         {
@@ -764,15 +797,31 @@ fn write_healing_action_details(
     }
 }
 
-fn write_healing_log_line(
-    output: &mut RuntimeLogBuffer,
+struct RepairLogRecord<'a> {
     event_seq: u64,
     decision_id: DecisionId,
     api_family: &'static str,
     symbol: &'static str,
-    action: &HealingAction,
+    action: &'a HealingAction,
+    context: RepairLogContext,
+    runtime_mode: &'static str,
     signal_context: bool,
+}
+
+fn write_healing_log_line(
+    output: &mut RuntimeLogBuffer,
+    record: RepairLogRecord<'_>,
 ) -> fmt::Result {
+    let RepairLogRecord {
+        event_seq,
+        decision_id,
+        api_family,
+        symbol,
+        action,
+        context,
+        runtime_mode,
+        signal_context,
+    } = record;
     let level = healing_log_level(action);
     let escalated = healing_action_escalated(action);
     write!(
@@ -784,7 +833,7 @@ fn write_healing_log_line(
         decision_id.as_u64(),
         MEMBRANE_SCHEMA_VERSION,
         runtime_log_process_id(),
-        runtime_mode_label(),
+        runtime_mode,
     )?;
     write_runtime_log_json_string(output, api_family)?;
     output.write_str(",\"symbol\":")?;
@@ -792,9 +841,16 @@ fn write_healing_log_line(
     write!(
         output,
         ",\"action\":\"Repair\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
-\"healing_action\":\"{}\",\"escalated\":{escalated},\"signal_context\":{signal_context},\"details\":",
+\"healing_action\":\"{}\",\"escalated\":{escalated},\"errno\":{}",
         healing_action_name(action),
+        context.errno,
     )?;
+    if runtime_mode == "hardened"
+        && let Some(address) = context.address
+    {
+        write!(output, ",\"address\":\"{address:#x}\"")?;
+    }
+    write!(output, ",\"signal_context\":{signal_context},\"details\":")?;
     write_healing_action_details(output, action)?;
     output.write_str("}")
 }
@@ -857,7 +913,12 @@ mod tests {
     use serde_json::Value;
 
     fn record_test(policy: &HealingPolicy, action: &HealingAction) {
-        policy.record("test", "healing_policy", action);
+        policy.record(
+            "test",
+            "healing_policy",
+            action,
+            RepairLogContext::new(0, None),
+        );
     }
 
     /// The FRANKENLIBC_LOG sink appends whole newline-terminated lines and
@@ -886,12 +947,16 @@ mod tests {
         let mut line = RuntimeLogBuffer::new();
         write_healing_log_line(
             &mut line,
-            7,
-            DecisionId::from_raw(42),
-            "string\nmemory",
-            "str\"len\\probe",
-            &HealingAction::ReturnSafeDefault,
-            false,
+            RepairLogRecord {
+                event_seq: 7,
+                decision_id: DecisionId::from_raw(42),
+                api_family: "string\nmemory",
+                symbol: "str\"len\\probe",
+                action: &HealingAction::ReturnSafeDefault,
+                context: RepairLogContext::new(0, Some(0xdead_beef)),
+                runtime_mode: "hardened",
+                signal_context: false,
+            },
         )
         .unwrap();
         let row: Value = serde_json::from_str(line.as_str()).unwrap();
@@ -899,6 +964,8 @@ mod tests {
         assert_eq!(row["seq"], 7);
         assert_eq!(row["api_family"], "string\nmemory");
         assert_eq!(row["symbol"], "str\"len\\probe");
+        assert_eq!(row["errno"], 0);
+        assert_eq!(row["address"], "0xdeadbeef");
         assert_eq!(row["signal_context"], false);
         assert_eq!(row["details"], serde_json::json!({}));
     }
@@ -1021,6 +1088,7 @@ mod tests {
                 requested: 32,
                 clamped: 8,
             },
+            RepairLogContext::new(0, Some(0x1234)),
         );
 
         let jsonl = policy.export_healing_log_jsonl();
@@ -1034,6 +1102,7 @@ mod tests {
         assert_eq!(row["decision_path"], "record");
         assert_eq!(row["outcome"], "repair");
         assert_eq!(row["healing_action"], "ClampSize");
+        assert_eq!(row["errno"], 0);
         assert_eq!(row["level"], "info");
         assert_eq!(row["details"]["requested"], 32);
         assert_eq!(row["details"]["clamped"], 8);

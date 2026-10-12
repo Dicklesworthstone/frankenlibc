@@ -36,10 +36,19 @@ operation rather than the caller-visible alias; blank values and `unknown`
   "action": "Repair",
   "outcome": "repair",
   "healing_action": "ClampSize",
+  "errno": 0,
+  "address": "0x7ffc01234567",
   "signal_context": false,
   "details": { "requested": 8192, "clamped": 4096 }
 }
 ```
+
+Repair `errno` is selected by the repair decision itself. Zero means that the
+decision selected no errno; the producer never samples or clears the ambient
+thread-local errno merely to populate evidence. The optional `address` is the
+primary address implicated by the repair, not complete provenance for an
+operation with multiple pointers. It is emitted only in `hardened` mode and is
+omitted when the call site cannot identify an address honestly.
 
 Semantic denial events identify the ABI symbol and reason. A generic policy
 denial emitted while signal-context tracing TLS is unavailable uses the
@@ -165,8 +174,9 @@ Parser normalization:
 - Deployed runtime rows require `schema_version="1.0"`, a positive integer
   process-local `seq`, `pid`, and `runtime_mode=strict|hardened|off`.
 - `repair` rows require `api_family`, a non-empty canonical `symbol` other than
-  case-insensitive `unknown`, `healing_action`, `signal_context`, and `details`.
-  Aliases record the canonical delegated operation.
+  case-insensitive `unknown`, `healing_action`, a signed 32-bit integer
+  decision-owned `errno`, `signal_context`, and `details`. Aliases record the
+  canonical delegated operation.
 - `deny` rows require `api_family`, `symbol`, `reason`, `errno`, `policy_id`, and
   `signal_context`.
 - `address` and `addr_hint`, when present, must be hexadecimal strings and are

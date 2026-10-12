@@ -57,6 +57,8 @@ class LogParserTests(unittest.TestCase):
                 "action": "Repair",
                 "outcome": "repair",
                 "healing_action": "ClampSize",
+                "errno": 0,
+                "address": "0x1234",
                 "signal_context": False,
                 "details": {"requested": 32, "clamped": 8},
             },
@@ -109,6 +111,8 @@ class LogParserTests(unittest.TestCase):
             ["memcpy", "kill", "__exit_summary__"],
         )
         self.assertEqual([entry.action for entry in entries], ["ClampSize", "Deny", None])
+        self.assertEqual(entries[0].raw["errno"], 0)
+        self.assertEqual(entries[0].raw["address"], "0x1234")
         self.assertTrue(all(entry.timestamp is None for entry in entries))
         self.assertEqual(self.log_validator.LogValidator().validate(entries), [])
 
@@ -148,6 +152,7 @@ class LogParserTests(unittest.TestCase):
             "runtime_mode": "hardened",
             "api_family": "string_memory",
             "healing_action": "ClampSize",
+            "errno": 0,
             "signal_context": False,
             "details": {"requested": 32, "clamped": 8},
         }
@@ -165,6 +170,7 @@ class LogParserTests(unittest.TestCase):
             "runtime_mode": "hardened",
             "api_family": "string_memory",
             "healing_action": "ClampSize",
+            "errno": 0,
             "signal_context": False,
             "details": {"requested": 32, "clamped": 8},
         }
@@ -172,6 +178,30 @@ class LogParserTests(unittest.TestCase):
             with self.subTest(symbol=symbol):
                 with self.assertRaises(self.log_parser.ParseError):
                     parser.parse_line(json.dumps({**row, "symbol": symbol}))
+
+    def test_deployed_runtime_sink_rejects_missing_or_invalid_repair_errno(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "seq": 1,
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "symbol": "memcpy",
+            "healing_action": "ClampSize",
+            "signal_context": False,
+            "details": {"requested": 32, "clamped": 8},
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("repair row missing required field(s): errno", str(error.exception))
+        for value in (False, True, 1.5, "0", -(2**31) - 1, 2**31, None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "errno": value}))
+        entry = parser.parse_line(json.dumps({**row, "errno": 0}))
+        self.assertEqual(entry.raw["errno"], 0)
 
     def test_deployed_runtime_sink_rejects_missing_or_invalid_signal_context(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

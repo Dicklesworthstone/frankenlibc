@@ -11,7 +11,7 @@ use std::sync::{Mutex, OnceLock};
 use frankenlibc_core::stdio::StdioStream;
 use frankenlibc_core::stdio::printf::{FormatSegment, parse_format_string};
 use frankenlibc_core::stdio::{ValueArgKind, count_printf_args, positional_printf_arg_plan};
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -24,7 +24,7 @@ fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
 }
 
-fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
+fn record_truncation(symbol: &'static str, requested: usize, truncated: usize, address: usize) {
     global_healing_policy().record(
         "wide_string",
         symbol,
@@ -32,7 +32,24 @@ fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
             requested,
             truncated,
         },
+        RepairLogContext::new(0, Some(address)),
     );
+}
+
+#[inline]
+fn bound_causing_address(
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+) -> usize {
+    match (primary_remaining, secondary_remaining) {
+        (None, Some(_)) => secondary_addr.unwrap_or(primary_addr),
+        (Some(primary), Some(secondary)) if secondary < primary => {
+            secondary_addr.unwrap_or(primary_addr)
+        }
+        _ => primary_addr,
+    }
 }
 
 /// Convert byte count to wchar count (assuming 4-byte wchar_t).
@@ -665,7 +682,12 @@ unsafe fn wcslen_validating(s: *const u32) -> usize {
             requested: limit.saturating_add(1),
             truncated: limit,
         };
-        global_healing_policy().record("wide_string", "wcslen", &action);
+        global_healing_policy().record(
+            "wide_string",
+            "wcslen",
+            &action,
+            RepairLogContext::new(0, Some(s as usize)),
+        );
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -743,7 +765,7 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
             let requested = src_len.saturating_add(1);
             match dst_bound {
                 Some(0) => {
-                    record_truncation("wcscpy", requested, 0);
+                    record_truncation("wcscpy", requested, 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
@@ -755,7 +777,12 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation("wcscpy", requested, copy_payload);
+                        let address = if copy_payload < src_len {
+                            dst as usize
+                        } else {
+                            src as usize
+                        };
+                        record_truncation("wcscpy", requested, copy_payload, address);
                     }
                     (copy_payload.saturating_add(1), truncated)
                 }
@@ -766,7 +793,7 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
                         }
                         *dst.add(src_len) = 0;
                         if !src_terminated {
-                            record_truncation("wcscpy", requested, src_len);
+                            record_truncation("wcscpy", requested, src_len, src as usize);
                         }
                         (requested, !src_terminated)
                     } else {
@@ -878,7 +905,7 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         // Check if we were clamped by dst size
         if repair && dst_bound.is_some() && n > max_copy {
             adverse = true;
-            record_truncation("wcsncpy", n, max_copy);
+            record_truncation("wcsncpy", n, max_copy, dst as usize);
         }
 
         // Pad with NULs
@@ -955,13 +982,13 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation("wcscat", src_len.saturating_add(1), 0);
+                    record_truncation("wcscat", src_len.saturating_add(1), 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation("wcscat", limit, limit.saturating_sub(1));
+                        record_truncation("wcscat", limit, limit.saturating_sub(1), dst as usize);
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -972,7 +999,17 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
                         *dst.add(dst_len.saturating_add(copy_payload)) = 0;
                         let truncated = !src_terminated || copy_payload < src_len;
                         if truncated {
-                            record_truncation("wcscat", src_len.saturating_add(1), copy_payload);
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(
+                                "wcscat",
+                                src_len.saturating_add(1),
+                                copy_payload,
+                                address,
+                            );
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -1350,7 +1387,12 @@ unsafe fn wcscmp_validating(s1: *const u32, s2: *const u32) -> c_int {
     };
 
     if adverse {
-        record_truncation("wcscmp", cmp_bound.unwrap_or(span), span);
+        record_truncation(
+            "wcscmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1433,7 +1475,12 @@ unsafe fn wcsncmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
     };
 
     if adverse {
-        record_truncation("wcsncmp", cmp_bound.unwrap_or(span), span);
+        record_truncation(
+            "wcsncmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1898,7 +1945,7 @@ unsafe fn wcschr_validating(s: *const u32, c: u32) -> *mut u32 {
     };
 
     if adverse {
-        record_truncation("wcschr", bound.unwrap_or(span), span);
+        record_truncation("wcschr", bound.unwrap_or(span), span, s as usize);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1993,7 +2040,7 @@ unsafe fn wcsrchr_validating(s: *const u32, c: u32) -> *mut u32 {
         }
     };
     if adverse {
-        record_truncation("wcsrchr", bound.unwrap_or(span), span);
+        record_truncation("wcsrchr", bound.unwrap_or(span), span, s as usize);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -2212,6 +2259,12 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
                 .unwrap_or(work)
                 .saturating_add(needle_bound.unwrap_or(0)),
             work,
+            bound_causing_address(
+                haystack as usize,
+                hay_bound,
+                Some(needle as usize),
+                needle_bound,
+            ),
         );
     }
     runtime_policy::observe(
@@ -2282,7 +2335,12 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         let max_dst = dst_bound.unwrap_or(usize::MAX);
         let limit = max_src.min(max_dst);
         if n > limit {
-            record_truncation("wmemcpy", n, limit);
+            record_truncation(
+                "wmemcpy",
+                n,
+                limit,
+                bound_causing_address(dst as usize, dst_bound, Some(src as usize), src_bound),
+            );
             (limit, true)
         } else {
             (n, false)
@@ -2361,7 +2419,12 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         if n > limit {
             copy_len = limit;
             clamped = true;
-            record_truncation("wmemmove", n, limit);
+            let address = if src_rem < dst_rem {
+                src as usize
+            } else {
+                dst as usize
+            };
+            record_truncation("wmemmove", n, limit, address);
         }
     }
 
@@ -2432,7 +2495,7 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
         if n > dst_rem {
             fill_len = dst_rem;
             clamped = true;
-            record_truncation("wmemset", n, dst_rem);
+            record_truncation("wmemset", n, dst_rem, dst as usize);
         }
     }
 
@@ -2525,7 +2588,12 @@ unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
         if n > limit {
             cmp_len = limit;
             clamped = true;
-            record_truncation("wmemcmp", n, limit);
+            let address = if s2_rem < s1_rem {
+                s2 as usize
+            } else {
+                s1 as usize
+            };
+            record_truncation("wmemcmp", n, limit, address);
         }
     }
 
@@ -2616,7 +2684,7 @@ unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
         if n > s_rem {
             scan_len = s_rem;
             clamped = true;
-            record_truncation("wmemchr", n, s_rem);
+            record_truncation("wmemchr", n, s_rem, s as usize);
         }
     }
 
@@ -2700,7 +2768,7 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation("wcsncat", copy_len.saturating_add(1), 0);
+                    record_truncation("wcsncat", copy_len.saturating_add(1), 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
@@ -2712,7 +2780,17 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
                     *dst.add(dst_len.saturating_add(actual_copy)) = 0;
                     let truncated = !src_terminated || actual_copy < copy_len;
                     if truncated {
-                        record_truncation("wcsncat", copy_len.saturating_add(1), actual_copy);
+                        let address = if actual_copy < copy_len {
+                            dst as usize
+                        } else {
+                            src as usize
+                        };
+                        record_truncation(
+                            "wcsncat",
+                            copy_len.saturating_add(1),
+                            actual_copy,
+                            address,
+                        );
                     }
                     (
                         dst_len.saturating_add(actual_copy).saturating_add(1),
@@ -3385,7 +3463,21 @@ fn maybe_clamp_wchars(
 
     match action {
         HealingAction::ClampSize { clamped, .. } => {
-            global_healing_policy().record("wide_string", symbol, &action);
+            // A destination is the primary pointer for copy operations; a
+            // strictly smaller source extent is the actual clamp cause. Equal
+            // extents remain attributed to the destination.
+            let address = match (src_remaining, dst_remaining) {
+                (Some(src_bound), Some(dst_bound)) if src_bound < dst_bound => src_addr,
+                (_, Some(_)) => dst_addr,
+                (Some(_), None) => src_addr,
+                (None, None) => dst_addr.or(src_addr),
+            };
+            global_healing_policy().record(
+                "wide_string",
+                symbol,
+                &action,
+                RepairLogContext::new(0, address),
+            );
             (bytes_to_wchars(clamped), true)
         }
         _ => (requested, false),
@@ -4140,7 +4232,7 @@ unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
     {
         let bounded = bytes_to_wchars(bytes).min(maxlen);
         if bounded < maxlen {
-            record_truncation("wcsnlen", maxlen, bounded);
+            record_truncation("wcsnlen", maxlen, bounded, s as usize);
         }
         limit = bounded;
     }
@@ -7455,7 +7547,7 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation("wcpcpy", requested, 0);
+                    record_truncation("wcpcpy", requested, 0, dst as usize);
                     (0usize, true)
                 }
                 Some(limit) => {
@@ -7467,7 +7559,12 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation("wcpcpy", requested, copy_payload);
+                        let address = if copy_payload < src_len {
+                            dst as usize
+                        } else {
+                            src as usize
+                        };
+                        record_truncation("wcpcpy", requested, copy_payload, address);
                     }
                     (copy_payload, truncated)
                 }
@@ -7720,7 +7817,12 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
     };
 
     if adverse {
-        record_truncation("wcscasecmp", cmp_bound.unwrap_or(span), span);
+        record_truncation(
+            "wcscasecmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -7791,7 +7893,12 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
     };
 
     if adverse {
-        record_truncation("wcsncasecmp", cmp_bound.unwrap_or(span), span);
+        record_truncation(
+            "wcsncasecmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -7855,7 +7962,7 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
         if n > s_rem {
             scan_len = s_rem;
             clamped = true;
-            record_truncation("wmemrchr", n, s_rem);
+            record_truncation("wmemrchr", n, s_rem, s as usize);
         }
     }
 

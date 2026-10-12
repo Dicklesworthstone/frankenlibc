@@ -11,7 +11,7 @@ use std::ffi::{c_char, c_int, c_void};
 
 use frankenlibc_core::process;
 use frankenlibc_core::syscall as raw_syscall;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::errno_abi::set_abi_errno;
@@ -392,6 +392,7 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
                     requested: status as usize,
                     clamped: c as usize,
                 },
+                RepairLogContext::new(0, None),
             );
         }
         c
@@ -543,6 +544,7 @@ pub(crate) unsafe fn waitpid_cp(
                     requested: options as usize,
                     clamped: sanitized as usize,
                 },
+                RepairLogContext::new(0, None),
             );
             opts = sanitized;
             repaired = true;

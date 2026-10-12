@@ -13,7 +13,7 @@ use std::sync::{
 };
 
 use frankenlibc_membrane::check_oracle::CheckStage;
-use frankenlibc_membrane::heal::{HealingAction, global_healing_policy};
+use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing_policy};
 use frankenlibc_membrane::runtime_math::clifford::{
     SimdIsa, SimdStringOperation, certify_simd_string_operation,
 };
@@ -2191,21 +2191,39 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
 fn maybe_clamp_copy_len(
     symbol: &'static str,
     requested: usize,
-    src_remaining: Option<usize>,
-    dst_remaining: Option<usize>,
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
     enable_repair: bool,
 ) -> (usize, bool) {
     if !enable_repair || requested == 0 {
         return (requested, false);
     }
 
-    let action = global_healing_policy().heal_copy_bounds(requested, src_remaining, dst_remaining);
+    let action =
+        global_healing_policy().heal_copy_bounds(requested, secondary_remaining, primary_remaining);
     match action {
         HealingAction::ClampSize {
             requested: _,
             clamped,
         } => {
-            global_healing_policy().record("string_memory", symbol, &action);
+            // The primary pointer is the destination for writes and the first
+            // operand for comparisons/scans. A strictly smaller secondary
+            // extent is the actual bound that caused the clamp; ties remain
+            // attributed to the primary operation pointer.
+            let address = bound_causing_address(
+                primary_addr,
+                primary_remaining,
+                secondary_addr,
+                secondary_remaining,
+            );
+            global_healing_policy().record(
+                "string_memory",
+                symbol,
+                &action,
+                RepairLogContext::new(0, Some(address)),
+            );
             (clamped, true)
         }
         _ => (requested, false),
@@ -2241,7 +2259,22 @@ pub fn clamp_destination_size_for_tests(
     clamp_destination_size_for_repair(requested, dst_remaining, repair)
 }
 
-fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
+fn bound_causing_address(
+    primary_addr: usize,
+    primary_remaining: Option<usize>,
+    secondary_addr: Option<usize>,
+    secondary_remaining: Option<usize>,
+) -> usize {
+    match (primary_remaining, secondary_remaining) {
+        (None, Some(_)) => secondary_addr.unwrap_or(primary_addr),
+        (Some(primary), Some(secondary)) if secondary < primary => {
+            secondary_addr.unwrap_or(primary_addr)
+        }
+        _ => primary_addr,
+    }
+}
+
+fn record_truncation(symbol: &'static str, requested: usize, truncated: usize, address: usize) {
     global_healing_policy().record(
         "string_memory",
         symbol,
@@ -2249,6 +2282,7 @@ fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
             requested,
             truncated,
         },
+        RepairLogContext::new(0, Some(address)),
     );
 }
 
@@ -4642,8 +4676,10 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
     let (copy_len, clamped) = maybe_clamp_copy_len(
         "memcpy",
         n,
-        src_rem,
+        dst as usize,
         dst_rem,
+        Some(src as usize),
+        src_rem,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -4756,8 +4792,10 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     let (copy_len, clamped) = maybe_clamp_copy_len(
         "memmove",
         n,
-        src_rem,
+        dst as usize,
         dst_rem,
+        Some(src as usize),
+        src_rem,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -4868,8 +4906,10 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     let (fill_len, clamped) = maybe_clamp_copy_len(
         "memset",
         n,
-        None,
+        dst as usize,
         dst_rem,
+        None,
+        None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if fill_len == 0 {
@@ -5047,7 +5087,9 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     let (cmp_len, _clamped) = maybe_clamp_copy_len(
         "memcmp",
         n,
+        s1 as usize,
         lhs_remaining,
+        Some(s2 as usize),
         rhs_remaining,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
@@ -5319,7 +5361,9 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
     let (scan_len, clamped) = maybe_clamp_copy_len(
         "memchr",
         n,
+        s as usize,
         known_remaining(s as usize),
+        None,
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
@@ -5455,7 +5499,9 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
     let (scan_len, clamped) = maybe_clamp_copy_len(
         "memrchr",
         n,
+        s as usize,
         known_remaining(s as usize),
+        None,
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
@@ -5538,6 +5584,7 @@ pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
                 "string_memory",
                 "strlen",
                 &HealingAction::ReturnSafeDefault,
+                RepairLogContext::new(0, Some(s as usize)),
             );
         }
         return 0;
@@ -5674,7 +5721,12 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
             requested: limit.saturating_add(1),
             truncated: limit,
         };
-        global_healing_policy().record("string_memory", "strlen", &action);
+        global_healing_policy().record(
+            "string_memory",
+            "strlen",
+            &action,
+            RepairLogContext::new(0, Some(s as usize)),
+        );
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -5807,7 +5859,7 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let span = len;
 
     if adverse {
-        record_truncation("strnlen", n, scan_limit);
+        record_truncation("strnlen", n, scan_limit, s as usize);
     }
     record_string_stage_outcome(
         &ordering,
@@ -5871,6 +5923,14 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
                 "string_memory",
                 "strcmp",
                 &HealingAction::ReturnSafeDefault,
+                RepairLogContext::new(
+                    0,
+                    Some(if s1.is_null() {
+                        s1 as usize
+                    } else {
+                        s2 as usize
+                    }),
+                ),
             );
         }
         record_string_stage_outcome(
@@ -5934,7 +5994,12 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     };
 
     if adverse {
-        record_truncation("strcmp", cmp_bound.unwrap_or(span), span);
+        record_truncation(
+            "strcmp",
+            cmp_bound.unwrap_or(span),
+            span,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     record_string_stage_outcome(
         &ordering,
@@ -6065,7 +6130,12 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
     let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
-        record_truncation("strncmp", n, cmp_limit);
+        record_truncation(
+            "strncmp",
+            n,
+            cmp_limit,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     record_string_stage_outcome(
         &ordering,
@@ -6177,7 +6247,7 @@ unsafe fn strcpy_core(
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(symbol, requested, 0);
+                    record_truncation(symbol, requested, 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
@@ -6189,7 +6259,12 @@ unsafe fn strcpy_core(
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation(symbol, requested, copy_payload);
+                        let address = if copy_payload < src_len {
+                            dst as usize
+                        } else {
+                            src as usize
+                        };
+                        record_truncation(symbol, requested, copy_payload, address);
                     }
                     (copy_payload.saturating_add(1), truncated)
                 }
@@ -6200,7 +6275,7 @@ unsafe fn strcpy_core(
                     *dst.add(src_len) = 0;
                     let truncated = !src_terminated;
                     if truncated {
-                        record_truncation(symbol, requested, src_len);
+                        record_truncation(symbol, requested, src_len, src as usize);
                     }
                     (src_len.saturating_add(1), truncated)
                 }
@@ -6369,6 +6444,7 @@ unsafe fn strncpy_core(
                         requested: n,
                         clamped: b,
                     },
+                    RepairLogContext::new(0, Some(dst as usize)),
                 );
                 b
             }
@@ -6392,6 +6468,7 @@ unsafe fn strncpy_core(
                         requested: n,
                         clamped: b,
                     },
+                    RepairLogContext::new(0, Some(src as usize)),
                 );
                 b
             }
@@ -6573,13 +6650,13 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation("strcat", src_len.saturating_add(1), 0);
+                    record_truncation("strcat", src_len.saturating_add(1), 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation("strcat", limit, limit.saturating_sub(1));
+                        record_truncation("strcat", limit, limit.saturating_sub(1), dst as usize);
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -6594,7 +6671,17 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
                         *dst.add(dst_len.saturating_add(copy_payload)) = 0;
                         let truncated = !src_terminated || copy_payload < src_len;
                         if truncated {
-                            record_truncation("strcat", src_len.saturating_add(1), copy_payload);
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(
+                                "strcat",
+                                src_len.saturating_add(1),
+                                copy_payload,
+                                address,
+                            );
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -6609,7 +6696,12 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
                     *dst.add(dst_len.saturating_add(src_len)) = 0;
                     let truncated = !src_terminated;
                     if truncated {
-                        record_truncation("strcat", src_len.saturating_add(1), src_len);
+                        record_truncation(
+                            "strcat",
+                            src_len.saturating_add(1),
+                            src_len,
+                            src as usize,
+                        );
                     }
                     (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
@@ -6755,13 +6847,13 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation("strncat", n.saturating_add(1), 0);
+                    record_truncation("strncat", n.saturating_add(1), 0, dst as usize);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation("strncat", limit, limit.saturating_sub(1));
+                        record_truncation("strncat", limit, limit.saturating_sub(1), dst as usize);
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -6778,7 +6870,17 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
                             !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
                         let truncated = hit_src_alloc_bound || copy_payload < src_len;
                         if truncated {
-                            record_truncation("strncat", n.saturating_add(1), copy_payload);
+                            let address = if copy_payload < src_len {
+                                dst as usize
+                            } else {
+                                src as usize
+                            };
+                            record_truncation(
+                                "strncat",
+                                n.saturating_add(1),
+                                copy_payload,
+                                address,
+                            );
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -6795,7 +6897,7 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
                         !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
                     let truncated = hit_src_alloc_bound;
                     if truncated {
-                        record_truncation("strncat", n.saturating_add(1), src_len);
+                        record_truncation("strncat", n.saturating_add(1), src_len, src as usize);
                     }
                     (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
@@ -6926,7 +7028,7 @@ unsafe fn strchr_locate(
     };
 
     if adverse {
-        record_truncation(symbol, bound.unwrap_or(span), span);
+        record_truncation(symbol, bound.unwrap_or(span), span, s as usize);
     }
     record_string_stage_outcome(
         &ordering,
@@ -7073,7 +7175,7 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         }
     };
     if adverse {
-        record_truncation("strrchr", bound.unwrap_or(span), span);
+        record_truncation("strrchr", bound.unwrap_or(span), span, s as usize);
     }
     record_string_stage_outcome(
         &ordering,
@@ -7405,6 +7507,12 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
                 .unwrap_or(work)
                 .saturating_add(needle_bound.unwrap_or(0)),
             work,
+            bound_causing_address(
+                haystack as usize,
+                hay_bound,
+                Some(needle as usize),
+                needle_bound,
+            ),
         );
     }
     record_string_stage_outcome(
@@ -8214,7 +8322,12 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
     let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
-        record_truncation("strncasecmp", n, cmp_limit);
+        record_truncation(
+            "strncasecmp",
+            n,
+            cmp_limit,
+            bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+        );
     }
     record_string_stage_outcome(
         &ordering,
@@ -9185,14 +9298,18 @@ pub unsafe extern "C" fn memmem(
     let (hay_scan, clamped_h) = maybe_clamp_copy_len(
         "memmem",
         haystack_len,
+        haystack as usize,
         known_remaining(haystack as usize),
+        None,
         None,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
     let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
         "memmem",
         needle_len,
+        needle as usize,
         known_remaining(needle as usize),
+        None,
         None,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
@@ -9308,8 +9425,10 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
     let (copy_len, clamped) = maybe_clamp_copy_len(
         "mempcpy",
         n,
-        known_remaining(src as usize),
+        dst as usize,
         known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
     if copy_len == 0 {
@@ -9706,8 +9825,10 @@ pub unsafe extern "C" fn memccpy(
     let (copy_len, clamped) = maybe_clamp_copy_len(
         "memccpy",
         n,
-        known_remaining(src as usize),
+        dst as usize,
         known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -9801,8 +9922,10 @@ pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
     let (set_len, clamped) = maybe_clamp_copy_len(
         "bzero",
         n,
-        None,
+        s as usize,
         known_remaining(s as usize),
+        None,
+        None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -10004,8 +10127,10 @@ pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isi
     let (swap_len, clamped) = maybe_clamp_copy_len(
         "swab",
         n,
-        known_remaining(src as usize),
+        dst as usize,
         known_remaining(dst as usize),
+        Some(src as usize),
+        known_remaining(src as usize),
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
     );
 
@@ -10332,7 +10457,7 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {
-        record_truncation("strlcpy", dstsize, dst_limit);
+        record_truncation("strlcpy", dstsize, dst_limit, dst as usize);
     }
 
     // SAFETY: bounded scan.
@@ -10467,7 +10592,7 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
     };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {
-        record_truncation("strlcat", dstsize, dst_limit);
+        record_truncation("strlcat", dstsize, dst_limit, dst as usize);
     }
 
     // SAFETY: bounded scan.

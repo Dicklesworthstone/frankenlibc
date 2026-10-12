@@ -281,7 +281,7 @@ fn posix_compatibility_no_heal_for_valid_string() {
 
 #[test]
 fn safety_healing_policy_counters_monotonic() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
 
     let policy = HealingPolicy::new();
@@ -304,7 +304,12 @@ fn safety_healing_policy_counters_monotonic() {
     ];
 
     for action in &actions {
-        policy.record("test", "hardened_mode_safety", action);
+        policy.record(
+            "test",
+            "hardened_mode_safety",
+            action,
+            RepairLogContext::new(0, None),
+        );
     }
 
     // All counters should have been incremented exactly once
@@ -324,14 +329,19 @@ fn safety_healing_policy_counters_monotonic() {
 
 #[test]
 fn safety_recording_none_does_not_increment() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
 
     let policy = HealingPolicy::new();
 
     // Recording HealingAction::None should NOT increment counters
     for _ in 0..100 {
-        policy.record("test", "hardened_mode_safety", &HealingAction::None);
+        policy.record(
+            "test",
+            "hardened_mode_safety",
+            &HealingAction::None,
+            RepairLogContext::new(0, None),
+        );
     }
 
     assert_eq!(
@@ -343,7 +353,7 @@ fn safety_recording_none_does_not_increment() {
 
 #[test]
 fn safety_concurrent_recording_preserves_count_integrity() {
-    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy};
+    use frankenlibc_membrane::heal::{HealingAction, HealingPolicy, RepairLogContext};
     use std::sync::atomic::Ordering;
     use std::sync::{Arc, Barrier};
     use std::thread;
@@ -363,6 +373,7 @@ fn safety_concurrent_recording_preserves_count_integrity() {
                     "test",
                     "hardened_mode_safety",
                     &HealingAction::ReturnSafeDefault,
+                    RepairLogContext::new(0, None),
                 );
             }
         }));
