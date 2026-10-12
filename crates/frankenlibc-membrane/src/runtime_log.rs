@@ -2,16 +2,16 @@
 //!
 //! On Linux x86_64/aarch64, the write path uses a raw writev syscall over
 //! borrowed bytes and one newline: no allocation, libc cancellation point,
-//! errno mutation, or write_all loop. Initialization and callers' formatting
-//! are separate and are NOT claimed to be async-signal-safe. The syscall
-//! count is bounded; a regular-file write can still wait for the filesystem.
+//! errno mutation, or write_all loop. Sink initialization is a separate,
+//! pre-signal operation. The syscall count is bounded; a regular-file write
+//! can still wait for the filesystem.
 
 use std::fs::File;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Includes the terminating newline. Oversized records are dropped, not cut
 /// into invalid UTF-8/JSON or split into independently interleavable writes.
-const MAX_RECORD_BYTES: usize = 4096;
+pub(super) const MAX_RECORD_BYTES: usize = 4096;
 const MAX_WRITE_ATTEMPTS: usize = 4;
 const EINTR: i32 = 4;
 
@@ -55,12 +55,28 @@ pub(super) fn open_file(path: &std::ffi::OsStr) -> Option<File> {
     file
 }
 
+/// Open a sink and transfer ownership of its descriptor to the process-wide
+/// atomic sink state. Process teardown closes it; fork-child replacement
+/// closes the inherited descriptor explicitly.
+pub(super) fn open_fd(path: &std::ffi::OsStr) -> Option<i32> {
+    use std::os::fd::IntoRawFd;
+
+    open_file(path).map(IntoRawFd::into_raw_fd)
+}
+
 /// Record an unavailable configured sink. An unset FRANKENLIBC_LOG is not a
 /// failed write: only unsuccessful opens count as unavailable output.
 pub(super) fn note_unavailable() {
     if OPEN_FAILURES.load(Ordering::Relaxed) != 0 {
         DROPPED.fetch_add(1, Ordering::Relaxed);
     }
+}
+
+/// Count a record that could not reach an initialized sink (for example, a
+/// signal arriving before constructor initialization or during another log
+/// write). This operation is allocation-free and lock-free.
+pub(super) fn note_dropped() {
+    DROPPED.fetch_add(1, Ordering::Relaxed);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,8 +112,17 @@ fn write_record_with(
     Err(WriteFailure::Io(EINTR))
 }
 
+#[cfg(test)]
 pub(super) fn append_line(file: &File, line: &str) {
-    match write_record_with(line, |body, newline| write_chunks(file, body, newline)) {
+    use std::os::fd::AsRawFd;
+
+    append_fd(file.as_raw_fd(), line);
+}
+
+/// Append through an already-owned raw descriptor. The caller guarantees the
+/// descriptor remains open for this call.
+pub(super) fn append_fd(fd: i32, line: &str) {
+    match write_record_with(line, |body, newline| write_chunks_fd(fd, body, newline)) {
         Ok(()) => {
             WRITTEN.fetch_add(1, Ordering::Relaxed);
         }
@@ -162,9 +187,7 @@ fn open_impl(path: &std::ffi::OsStr) -> Option<File> {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-fn write_chunks(file: &File, body: &[u8], newline: &[u8]) -> Result<usize, i32> {
-    use std::os::fd::AsRawFd;
-
+fn write_chunks_fd(fd: i32, body: &[u8], newline: &[u8]) -> Result<usize, i32> {
     #[repr(C)]
     struct IoVec {
         base: *const u8,
@@ -184,13 +207,7 @@ fn write_chunks(file: &File, body: &[u8], newline: &[u8]) -> Result<usize, i32> 
     const SYS_WRITEV: usize = 20;
     #[cfg(target_arch = "aarch64")]
     const SYS_WRITEV: usize = 66;
-    let result = syscall4(
-        SYS_WRITEV,
-        file.as_raw_fd() as usize,
-        vectors.as_ptr() as usize,
-        2,
-        0,
-    );
+    let result = syscall4(SYS_WRITEV, fd as usize, vectors.as_ptr() as usize, 2, 0);
     if result < 0 {
         Err((-result) as i32)
     } else {
@@ -202,10 +219,73 @@ fn write_chunks(file: &File, body: &[u8], newline: &[u8]) -> Result<usize, i32> 
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
-fn write_chunks(mut file: &File, body: &[u8], newline: &[u8]) -> Result<usize, i32> {
+#[allow(unsafe_code)]
+fn write_chunks_fd(fd: i32, body: &[u8], newline: &[u8]) -> Result<usize, i32> {
     use std::io::{IoSlice, Write};
+    use std::os::fd::FromRawFd;
+
+    // SAFETY: the caller owns a live descriptor for the duration of this
+    // call. ManuallyDrop prevents this borrowed wrapper from closing it.
+    let mut file = std::mem::ManuallyDrop::new(unsafe { File::from_raw_fd(fd) });
     file.write_vectored(&[IoSlice::new(body), IoSlice::new(newline)])
         .map_err(|error| error.raw_os_error().unwrap_or(5))
+}
+
+/// Close an inherited/replaced sink descriptor without entering libc.
+pub(super) fn close_fd(fd: i32) {
+    if fd < 0 {
+        return;
+    }
+    close_fd_impl(fd);
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn close_fd_impl(fd: i32) {
+    #[cfg(target_arch = "x86_64")]
+    const SYS_CLOSE: usize = 3;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_CLOSE: usize = 57;
+    let _ = syscall4(SYS_CLOSE, fd as usize, 0, 0, 0);
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+#[allow(unsafe_code)]
+fn close_fd_impl(fd: i32) {
+    use std::os::fd::FromRawFd;
+
+    // SAFETY: replacement transfers ownership of the old descriptor here.
+    drop(unsafe { File::from_raw_fd(fd) });
+}
+
+/// Process id without libc or allocation on the supported signal-safe path.
+pub(super) fn process_id() -> u32 {
+    process_id_impl()
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn process_id_impl() -> u32 {
+    #[cfg(target_arch = "x86_64")]
+    const SYS_GETPID: usize = 39;
+    #[cfg(target_arch = "aarch64")]
+    const SYS_GETPID: usize = 172;
+    syscall4(SYS_GETPID, 0, 0, 0, 0) as u32
+}
+
+#[cfg(not(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+)))]
+fn process_id_impl() -> u32 {
+    std::process::id()
 }
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -382,11 +462,13 @@ mod tests {
     #[test]
     #[allow(unsafe_code)]
     fn raw_write_failure_preserves_errno() {
+        use std::os::fd::AsRawFd;
+
         let file = File::open("/dev/null").unwrap();
         // Read-only descriptor: the kernel must return EBADF, without the
         // logging path overwriting the errno of the operation being repaired.
         unsafe { *libc::__errno_location() = libc::EDOM };
-        let result = write_record_with("{}", |a, b| write_chunks(&file, a, b));
+        let result = write_record_with("{}", |a, b| write_chunks_fd(file.as_raw_fd(), a, b));
         let after = unsafe { *libc::__errno_location() };
         assert_eq!(result, Err(WriteFailure::Io(libc::EBADF)));
         assert_eq!(after, libc::EDOM);

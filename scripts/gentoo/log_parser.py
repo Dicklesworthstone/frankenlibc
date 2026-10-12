@@ -160,9 +160,13 @@ class LogParser:
     def _validate_runtime_sink_row(payload: Dict[str, Any], line_num: int, event: str) -> None:
         required = ["schema_version", "pid", "runtime_mode"]
         if event == "repair":
-            required.extend(["api_family", "symbol", "healing_action", "details"])
+            required.extend(
+                ["api_family", "symbol", "healing_action", "signal_context", "details"]
+            )
         elif event == "deny":
-            required.extend(["api_family", "symbol", "reason", "errno", "policy_id"])
+            required.extend(
+                ["api_family", "symbol", "reason", "errno", "policy_id", "signal_context"]
+            )
         elif event == "exit_summary":
             required.extend(["denials", "runtime_log_written_records"])
 
@@ -183,6 +187,12 @@ class LogParser:
             raise ParseError(
                 line_num,
                 f"invalid runtime_mode: {payload['runtime_mode']}",
+                json.dumps(payload),
+            )
+        if event in {"repair", "deny"} and not isinstance(payload["signal_context"], bool):
+            raise ParseError(
+                line_num,
+                f"{event} row signal_context must be boolean",
                 json.dumps(payload),
             )
         if event == "repair":

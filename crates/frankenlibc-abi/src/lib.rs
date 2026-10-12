@@ -368,12 +368,22 @@ or OS does not provide (needs:";
 static FRANKENLIBC_ABI_INIT_ARRAY: extern "C" fn() = frankenlibc_abi_stdio_init_entry;
 
 #[cfg(all(not(test), target_os = "linux"))]
+fn runtime_log_signal_context() -> bool {
+    malloc_abi::in_signal_handler_now()
+}
+
+#[cfg(all(not(test), target_os = "linux"))]
 #[inline(never)]
 extern "C" fn frankenlibc_abi_stdio_init_entry() {
     // SAFETY: this runs during process initialization before user code and
     // publishes the stdio globals/aliases onto stable NativeFile storage while
     // patching host libio exit handling for the exported _IO symbols.
     stdio_abi::init_host_stdio_streams();
+    // Signal-time repair/deny evidence may not resolve environment variables,
+    // open files, or touch global-dynamic TLS. Connect it to the ABI's fixed
+    // atomic signal marker and open the configured sink before user code.
+    frankenlibc_membrane::heal::install_signal_context_probe(runtime_log_signal_context);
+    frankenlibc_membrane::heal::initialize_runtime_log();
     // aarch64: seed the pointer guard the native setjmp/longjmp asm reads (and
     // the stack canary) from AT_RANDOM here. The loader runs this constructor
     // before main whichever startup path runs, and owned startup does not seed

@@ -59,13 +59,13 @@
     {
       "kind": "parser_repair_symbol_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 193,
+      "line": 203,
       "anchor": "repair row symbol must be a non-empty canonical symbol"
     },
     {
       "kind": "parser_strict_error_policy",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 203,
+      "line": 213,
       "anchor": "def _handle_error"
     },
     {
@@ -101,7 +101,7 @@
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 121,
+    "line": 150,
       "anchor": "## Validation Rules"
     },
     {
@@ -125,44 +125,44 @@
     {
       "kind": "unit_missing_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 135,
+      "line": 138,
       "anchor": "def test_deployed_runtime_sink_rejects_missing_repair_symbol"
     },
     {
       "kind": "unit_invalid_repair_symbol_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 150,
+      "line": 154,
       "anchor": "def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol"
     },
     {
       "kind": "unit_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 166,
+      "line": 191,
       "anchor": "def test_invalid_json_raises_in_strict_mode"
     },
     {
       "kind": "unit_non_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 171,
+      "line": 196,
       "anchor": "def test_invalid_line_collected_in_non_strict_mode"
     },
     {
       "kind": "unit_stats_validator_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 178,
+      "line": 203,
       "anchor": "def test_stats_and_validator"
     },
     {
       "kind": "deployed_fixture_repair_symbol_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 259,
+    "line": 255,
       "anchor": "all_entries = entries + before_entries"
     },
     {
       "kind": "deployed_fixture_repair_identity_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 278,
-      "anchor": "if mode == \"hardened\" and not any("
+    "line": 297,
+      "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)"
     },
     {
       "kind": "completion_checker",
@@ -226,7 +226,8 @@
     "deployed_gate": [
       "all_entries = entries + before_entries",
       "invalid_repair_symbols",
-      "memcpy/string_memory/ClampSize repair"
+      "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)",
+      "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False)"
     ],
     "completion_checker": [
       "EXPECTED_MISSING_ITEMS",

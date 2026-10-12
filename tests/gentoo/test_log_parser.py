@@ -56,6 +56,7 @@ class LogParserTests(unittest.TestCase):
                 "action": "Repair",
                 "outcome": "repair",
                 "healing_action": "ClampSize",
+                "signal_context": False,
                 "details": {"requested": 32, "clamped": 8},
             },
             {
@@ -76,6 +77,7 @@ class LogParserTests(unittest.TestCase):
                 "addr_hint": "0xffffffffffffffff",
                 "requested_bytes": 0,
                 "is_write": False,
+                "signal_context": False,
             },
             {
                 "schema_version": "1.0",
@@ -127,6 +129,7 @@ class LogParserTests(unittest.TestCase):
             "reason": "invalid_signal_number",
             "errno": 22,
             "policy_id": 0,
+            "signal_context": False,
         }
         with self.assertRaises(self.log_parser.ParseError) as error:
             parser.parse_line(json.dumps(row))
@@ -141,6 +144,7 @@ class LogParserTests(unittest.TestCase):
             "runtime_mode": "hardened",
             "api_family": "string_memory",
             "healing_action": "ClampSize",
+            "signal_context": False,
             "details": {"requested": 32, "clamped": 8},
         }
         with self.assertRaises(self.log_parser.ParseError) as error:
@@ -156,12 +160,33 @@ class LogParserTests(unittest.TestCase):
             "runtime_mode": "hardened",
             "api_family": "string_memory",
             "healing_action": "ClampSize",
+            "signal_context": False,
             "details": {"requested": 32, "clamped": 8},
         }
         for symbol in ("", "   ", "unknown", "UNKNOWN", "UnKnOwN"):
             with self.subTest(symbol=symbol):
                 with self.assertRaises(self.log_parser.ParseError):
                     parser.parse_line(json.dumps({**row, "symbol": symbol}))
+
+    def test_deployed_runtime_sink_rejects_missing_or_invalid_signal_context(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "Signal",
+            "symbol": "kill",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+        }
+        with self.assertRaises(self.log_parser.ParseError):
+            parser.parse_line(json.dumps(row))
+        for value in (0, 1, "false", None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "signal_context": value}))
 
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

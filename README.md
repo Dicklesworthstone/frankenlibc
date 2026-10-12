@@ -3771,7 +3771,7 @@ What's *not* instrumented:
 - Per-string-byte processing counts (same)
 - Internal-controller intermediate values (only the snapshot hash is recorded)
 
-The granularity is every heal and deny, plus sampled allows, which gives meaningful aggregation without overwhelming the consumer.
+The deployed file stream records every heal and deny; it does not currently emit allowed decisions. The separate runtime-math evidence ledger retains its one-in-16384 sample of non-adverse decisions.
 
 ---
 

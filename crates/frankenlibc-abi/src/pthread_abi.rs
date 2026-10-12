@@ -7878,6 +7878,15 @@ pub unsafe extern "C-unwind" fn pthread_clockjoin_np(
 pub unsafe extern "C" fn pthread_kill(thread: libc::pthread_t, sig: c_int) -> c_int {
     // Validate signal number (0 is allowed for existence check).
     if !(0..=64).contains(&sig) {
+        runtime_policy::record_semantic_deny(
+            "pthread_kill",
+            ApiFamily::Signal,
+            0,
+            0,
+            false,
+            libc::EINVAL,
+            "invalid_signal_number",
+        );
         return libc::EINVAL;
     }
     match resolve_thread_tid(thread) {

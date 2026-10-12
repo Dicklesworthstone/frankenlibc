@@ -1,24 +1,21 @@
 /* fixture_hardened_first_heal.c — first heal of a hardened process must not
  * deadlock (bd-rc0923-epic-eeuy4f.9).
  *
- * The global healing policy is a lazily initialized object. Its constructor
- * used to read FRANKENLIBC_HEAL_LOG through Rust's std::env::var, which calls
- * FrankenLibC's own exported memcpy; hardened memcpy records a heal through the
- * same, still-initializing policy, and the process blocked forever inside the
- * very first memchr/memcpy that healed. The bounded memcpy below deliberately
- * requests more bytes than its two tracked allocations contain, making that
- * first repair deterministic. Host glibc and strict mode skip the deliberately
- * invalid call, so output remains byte-identical in the preload smoke battery.
- * The invalid kill also gives the runtime-log gate one deterministic semantic
- * denial without sending a signal or changing the fixture's output. When the
- * runtime log is configured, the fixture also rotates its path before fork:
- * the child must reopen the current path rather than keep writing through the
- * parent's inherited open-file description.
+ * This fixture now covers three related startup/evidence regressions. Its first
+ * repair attempt runs strlen(NULL) inside SIGUSR1, proving the sink was opened
+ * and the signal-context probe installed before user code. A bounded memcpy
+ * then requests more bytes than its tracked allocations contain, preserving
+ * the original first-heal deadlock regression. Host glibc skips both invalid
+ * probes and strict mode emits no repair rows. Invalid kill supplies one
+ * deterministic semantic denial. Finally, the fixture rotates the runtime log
+ * before fork: the child must reopen the current path rather than keep writing
+ * through the parent's inherited open-file description.
  */
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +24,56 @@
 #include <unistd.h>
 
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
+
+static volatile sig_atomic_t signal_handler_seen;
+static volatile sig_atomic_t signal_strlen_returned_zero;
+static volatile sig_atomic_t signal_pthread_kill_returned_einval;
+
+static void signal_strlen_probe(int signum) {
+    (void)signum;
+    size_t (*volatile strlen_fn)(const char *) = strlen;
+    int (*volatile pthread_kill_fn)(pthread_t, int) = pthread_kill;
+    const char *volatile null_string = NULL;
+    size_t result = strlen_fn(null_string);
+    int deny_result = pthread_kill_fn((pthread_t)0, -1);
+    signal_strlen_returned_zero = result == 0;
+    signal_pthread_kill_returned_einval = deny_result == EINVAL;
+    signal_handler_seen = 1;
+}
+
+static int exercise_signal_time_repair(void) {
+    /* Never expose the deliberate NULL call to host glibc. Both FrankenLibC
+     * modes run the same trampoline: strict returns the ABI fallback without
+     * repair evidence; hardened must emit one signal-safe repair row. */
+    if (!__frankenlibc_is_runtime_ready)
+        return 0;
+    if (!__frankenlibc_is_runtime_ready())
+        return 13;
+
+    struct sigaction action;
+    struct sigaction previous;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = signal_strlen_probe;
+    if (sigemptyset(&action.sa_mask) != 0)
+        return 14;
+    if (sigaction(SIGUSR1, &action, &previous) != 0)
+        return 15;
+
+    signal_handler_seen = 0;
+    signal_strlen_returned_zero = 0;
+    signal_pthread_kill_returned_einval = 0;
+    if (raise(SIGUSR1) != 0)
+        return 16;
+    if (!signal_handler_seen)
+        return 17;
+    if (!signal_strlen_returned_zero)
+        return 18;
+    if (!signal_pthread_kill_returned_einval)
+        return 20;
+    if (sigaction(SIGUSR1, &previous, NULL) != 0)
+        return 19;
+    return 0;
+}
 
 static int induce_hardened_bounds_repair(void) {
     const char *mode = getenv("FRANKENLIBC_MODE");
@@ -66,8 +113,8 @@ static int exercise_runtime_log_fork_reopen(void) {
         log_path == NULL || log_path[0] == '\0')
         return 0;
 
-    /* Open the lazy sink before rotation so the parent demonstrably owns a
-     * descriptor for the old inode when fork begins. */
+    /* Append a normal denial before rotation so the parent demonstrably owns
+     * and uses the startup-opened descriptor for the old inode. */
     if (invalid_signal_is_denied() != 0)
         return 5;
 
@@ -108,7 +155,13 @@ static int exercise_runtime_log_fork_reopen(void) {
 }
 
 int main(void) {
-    int repair_rc = induce_hardened_bounds_repair();
+    /* This must be the first repair attempt: it proves constructor-time sink
+     * setup rather than succeeding because a normal call primed the logger. */
+    int repair_rc = exercise_signal_time_repair();
+    if (repair_rc != 0)
+        return repair_rc;
+
+    repair_rc = induce_hardened_bounds_repair();
     if (repair_rc != 0)
         return repair_rc;
 

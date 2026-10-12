@@ -354,8 +354,10 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
 
     if pid == 0 {
-        // SAFETY: all fork guards are released, this is the sole surviving
-        // thread, and no user child handler has had a chance to emit evidence.
+        // SAFETY: all fork guards are released and this is the sole surviving
+        // thread. A pending signal can run first because signals are not masked
+        // across clone; reopen is therefore the first child-continuation step,
+        // not an absolute pre-signal-delivery guarantee.
         unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
         // The forking thread is the child's main thread: pthread_cancel of
         // it must reach glibc with glibc's handle for it.

@@ -176,6 +176,10 @@ for src in "${matched_sources[@]}"; do
   elif [[ "${name}" == "fixture_math" ]]; then
     ldflags="-lm"
   fi
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    cflags+=" -fno-builtin-strlen"
+    ldflags+=" -Wl,-z,now"
+  fi
 
   if "${compiler}" ${cflags} "${src}" -o "${bin}" ${ldflags} 2>"${RUN_DIR}/${name}_compile.log"; then
     echo "[OK] ${name}"
@@ -225,14 +229,6 @@ if issues:
     raise SystemExit(f"runtime log validation failed: {rendered}")
 if not any(entry.event == "exit_summary" for entry in entries):
     raise SystemExit("runtime log is missing exit_summary")
-if fixture_name == "fixture_hardened_first_heal" and not any(
-    entry.event == "deny"
-    and entry.call == "kill"
-    and entry.raw.get("reason") == "invalid_signal_number"
-    and entry.runtime_mode == mode
-    for entry in entries
-):
-    raise SystemExit("runtime log is missing the kill invalid_signal_number denial")
 if fixture_name == "fixture_hardened_first_heal":
     before_path = pathlib.Path(f"{log_path}.pre_fork")
     if not before_path.is_file():
@@ -273,21 +269,82 @@ if fixture_name == "fixture_hardened_first_heal":
             for entry in invalid_repair_symbols
         )
         raise SystemExit(f"runtime logs contain invalid repair symbols: {rendered}")
-    repair_entries = [entry for entry in entries if entry.event == "repair"]
-    repair_count = len(repair_entries)
-    if mode == "hardened" and not any(
-        entry.call == "memcpy"
-        and entry.raw.get("api_family") == "string_memory"
-        and entry.action == "ClampSize"
-        and entry.runtime_mode == "hardened"
-        for entry in repair_entries
-    ):
+    def event_signature(entry):
+        if entry.event == "repair":
+            return (
+                "repair",
+                entry.raw.get("api_family"),
+                entry.call,
+                entry.action,
+                entry.raw.get("signal_context"),
+            )
+        if entry.event == "deny":
+            return (
+                "deny",
+                entry.raw.get("api_family"),
+                entry.call,
+                entry.raw.get("reason"),
+                entry.raw.get("errno"),
+                entry.raw.get("signal_context"),
+            )
+        return (entry.event,)
+
+    normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False)
+    signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True)
+    child_expected = [normal_deny, ("exit_summary",)]
+    parent_expected = [signal_deny, normal_deny, normal_deny, ("exit_summary",)]
+    if mode == "hardened":
+        signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True)
+        normal_repair = ("repair", "string_memory", "memcpy", "ClampSize", False)
+        parent_expected = [
+            signal_repair,
+            signal_deny,
+            normal_repair,
+            normal_deny,
+            normal_deny,
+            ("exit_summary",),
+        ]
+        child_expected = [normal_repair, normal_deny, ("exit_summary",)]
+
+    parent_actual = [event_signature(entry) for entry in before_entries]
+    child_actual = [event_signature(entry) for entry in entries]
+    if parent_actual != parent_expected:
         raise SystemExit(
-            "hardened runtime log is missing the induced "
-            "memcpy/string_memory/ClampSize repair"
+            f"{mode} parent runtime event sequence mismatch: "
+            f"expected={parent_expected!r} actual={parent_actual!r}"
         )
-    if mode == "strict" and repair_count != 0:
-        raise SystemExit(f"strict runtime log unexpectedly contains {repair_count} repair rows")
+    if child_actual != child_expected:
+        raise SystemExit(
+            f"{mode} child runtime event sequence mismatch: "
+            f"expected={child_expected!r} actual={child_actual!r}"
+        )
+
+    parent_summary = before_entries[-1].raw
+    child_summary = entries[-1].raw
+    expected_parent_counters = {
+        "total_heals": 2 if mode == "hardened" else 0,
+        "size_clamps": 1 if mode == "hardened" else 0,
+        "safe_defaults": 1 if mode == "hardened" else 0,
+        "denials": 3,
+    }
+    expected_child_counters = {
+        "total_heals": 3 if mode == "hardened" else 0,
+        "size_clamps": 2 if mode == "hardened" else 0,
+        "safe_defaults": 1 if mode == "hardened" else 0,
+        "denials": 3,
+    }
+    for field, expected in expected_parent_counters.items():
+        if parent_summary.get(field) != expected:
+            raise SystemExit(
+                f"{mode} parent summary {field} expected {expected}, "
+                f"got {parent_summary.get(field)!r}"
+            )
+    for field, expected in expected_child_counters.items():
+        if child_summary.get(field) != expected:
+            raise SystemExit(
+                f"{mode} child summary {field} expected {expected}, "
+                f"got {child_summary.get(field)!r}"
+            )
 PY
 }
 

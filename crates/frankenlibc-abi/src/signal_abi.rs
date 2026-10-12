@@ -13,7 +13,7 @@ use frankenlibc_core::signal as signal_core;
 use frankenlibc_core::syscall;
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::hji_reachability::{HjiReachabilityController, ReachState};
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::errno_abi::set_abi_errno;
 use crate::runtime_policy;
@@ -839,6 +839,11 @@ pub fn exit_signal_critical_section() {
                 )
             };
             let mut ucontext = Some(replay_context);
+            // Replayed callbacks are user signal handlers too. They can call
+            // allocator and evidence entrypoints while the flush originates
+            // from a critical-section exit, so give them the same lock-free
+            // allocation/signal marker as immediate trampoline delivery.
+            let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
             // SAFETY: deferred delivery replays the previously registered handler on the same thread.
             unsafe {
                 dispatch_registered_handler(
@@ -980,14 +985,6 @@ pub unsafe extern "C" fn raise(signum: c_int) -> c_int {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
-    if matches!(decision.action, MembraneAction::Deny) {
-        unsafe { set_abi_errno(errno::EPERM) };
-        runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
-        return -1;
-    }
-
     if !signal_core::valid_signal(signum) && signum != 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
         runtime_policy::record_semantic_deny(
@@ -999,6 +996,16 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
             errno::EINVAL,
             "invalid_signal_number",
         );
+        if !frankenlibc_membrane::heal::runtime_log_in_signal_context() {
+            runtime_policy::observe(ApiFamily::Signal, ValidationProfile::Fast, 5, true);
+        }
+        return -1;
+    }
+
+    let (_, decision) =
+        runtime_policy::decide(ApiFamily::Signal, signum as usize, 0, false, true, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }

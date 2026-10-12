@@ -6,7 +6,8 @@
 //! test rather than hanging the whole test runner.
 
 use frankenlibc_membrane::heal::{
-    HealingAction, append_runtime_log_record, global_healing_policy, runtime_log_snapshot,
+    HealingAction, append_runtime_log_record, global_healing_policy, initialize_runtime_log,
+    install_signal_context_probe, runtime_log_snapshot,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -19,6 +20,11 @@ static MODE: AtomicU8 = AtomicU8::new(0);
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static CALLBACKS: AtomicU64 = AtomicU64::new(0);
 static IN_CALLBACK: AtomicBool = AtomicBool::new(false);
+static IN_SIGNAL_CONTEXT: AtomicBool = AtomicBool::new(false);
+
+fn test_signal_context() -> bool {
+    IN_SIGNAL_CONTEXT.load(Ordering::Relaxed)
+}
 
 struct ReenteringAllocator;
 
@@ -77,6 +83,7 @@ fn child_probe() {
         "first policy access allocated"
     );
     policy.set_healing_logging_enabled(true);
+    initialize_runtime_log();
 
     // Initialization may allocate. After opening, the actual write path must
     // not allocate a String just to add a newline or call through libc write.
@@ -93,6 +100,24 @@ fn child_probe() {
         "initialized sink allocated"
     );
     assert_eq!(runtime_log_snapshot().written_records, 2);
+
+    // The signal-selected repair producer must bypass heap-backed formatting,
+    // the evidence ledger, and the diagnostic ring. Its sole output is the
+    // preopened raw-fd JSONL record.
+    install_signal_context_probe(test_signal_context);
+    ALLOCATIONS.store(0, Ordering::Relaxed);
+    MODE.store(COUNT, Ordering::Relaxed);
+    IN_SIGNAL_CONTEXT.store(true, Ordering::Relaxed);
+    policy.record("string_memory", "strlen", &HealingAction::ReturnSafeDefault);
+    IN_SIGNAL_CONTEXT.store(false, Ordering::Relaxed);
+    MODE.store(0, Ordering::Relaxed);
+    assert_eq!(
+        ALLOCATIONS.load(Ordering::Relaxed),
+        0,
+        "signal-selected repair path allocated"
+    );
+    assert!(policy.export_healing_log_jsonl().is_empty());
+    assert_eq!(runtime_log_snapshot().written_records, 3);
 
     // Exercise first ring growth, ledger initialization, formatting, eviction,
     // export allocations and clear-time deallocation. Each real allocator
@@ -131,7 +156,7 @@ fn child_probe() {
     let row: serde_json::Value = serde_json::from_str(&last).unwrap();
     assert_eq!(row["healing_action"], "ReturnSafeDefault");
     let sink = runtime_log_snapshot();
-    assert_eq!(sink.written_records, OUTER_RECORDS as u64 + 3);
+    assert_eq!(sink.written_records, OUTER_RECORDS as u64 + 4);
     assert_eq!(sink.dropped_records, 0);
     assert_eq!(sink.short_writes, 0);
     assert_eq!(sink.open_failures, 0);
@@ -192,10 +217,13 @@ fn allocator_callbacks_do_not_reenter_evidence_locks() {
         .lines()
         .map(|line| serde_json::from_str(line).expect("damaged runtime JSONL"))
         .collect();
-    assert_eq!(rows.len(), OUTER_RECORDS + 3);
+    assert_eq!(rows.len(), OUTER_RECORDS + 4);
     assert_eq!(rows[0]["warmup"], true);
     assert_eq!(rows[1]["probe"], true);
-    for (size, row) in rows[2..2 + OUTER_RECORDS].iter().enumerate() {
+    assert_eq!(rows[2]["api_family"], "string_memory");
+    assert_eq!(rows[2]["symbol"], "strlen");
+    assert_eq!(rows[2]["healing_action"], "ReturnSafeDefault");
+    for (size, row) in rows[3..3 + OUTER_RECORDS].iter().enumerate() {
         assert_eq!(row["healing_action"], "ReallocAsMalloc");
         assert_eq!(row["details"]["size"].as_u64(), Some(size as u64));
     }

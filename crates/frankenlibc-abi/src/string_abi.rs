@@ -5533,7 +5533,7 @@ pub unsafe extern "C" fn __memrchr(s: *const c_void, c: c_int, n: usize) -> *mut
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if s.is_null() {
-        if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
+        if runtime_policy::is_runtime_ready() && runtime_policy::resolved_mode().heals_enabled() {
             global_healing_policy().record(
                 "string_memory",
                 "strlen",
