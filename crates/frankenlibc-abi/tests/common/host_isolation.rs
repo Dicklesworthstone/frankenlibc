@@ -9,7 +9,8 @@
 //! succeeded, and two fleet workers ran under those names for at least a week. The
 //! test still passed, since its assertions only fired when a call failed.
 //! `adjtimex(ADJ_OFFSET)` slewed the worker's clock the same way, and
-//! `kexec_load(0, 0, NULL, 0)` unloaded any staged kexec image.
+//! `kexec_load(0, 0, NULL, 0)` unloaded any staged kexec image, and
+//! `acct(NULL)` switched off any process accounting the host had enabled.
 //!
 //! ## How
 //!
@@ -23,6 +24,8 @@
 
 use std::ffi::{CStr, c_int};
 
+/// `CAP_SYS_PACCT` from <linux/capability.h> (gates `acct`).
+pub const CAP_SYS_PACCT: u32 = 20;
 /// `CAP_SYS_BOOT` from <linux/capability.h> (gates `kexec_load`).
 pub const CAP_SYS_BOOT: u32 = 22;
 /// `CAP_SYS_TIME` from <linux/capability.h> (gates modifying `adjtimex`).
