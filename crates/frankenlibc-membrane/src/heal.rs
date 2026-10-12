@@ -331,12 +331,14 @@ impl HealingPolicy {
         );
 
         let line = format!(
-            "{{\"trace_id\":\"{trace_id}\",\"decision_id\":{},\"schema_version\":\"{}\",\
-\"bead_id\":\"{HEALING_BEAD_ID}\",\"runtime_mode\":\"{}\",\"level\":\"{level}\",\
-\"api_family\":\"membrane-heal\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
+            "{{\"event\":\"repair\",\"trace_id\":\"{trace_id}\",\"decision_id\":{},\
+\"schema_version\":\"{}\",\"pid\":{},\"bead_id\":\"{HEALING_BEAD_ID}\",\
+\"runtime_mode\":\"{}\",\"level\":\"{level}\",\"api_family\":\"membrane-heal\",\
+\"symbol\":\"unknown\",\"action\":\"Repair\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
 \"healing_action\":\"{}\",\"escalated\":{escalated},\"details\":{}}}",
             decision_id.as_u64(),
             MEMBRANE_SCHEMA_VERSION,
+            std::process::id(),
             runtime_mode_label(),
             healing_action_name(action),
             healing_action_details_json(action)
@@ -667,6 +669,10 @@ mod tests {
         let jsonl = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(jsonl.trim()).expect("row must be valid JSON");
         assert_eq!(row["bead_id"], HEALING_BEAD_ID);
+        assert_eq!(row["event"], "repair");
+        assert_eq!(row["action"], "Repair");
+        assert_eq!(row["symbol"], "unknown");
+        assert!(row["pid"].as_u64().is_some_and(|pid| pid > 0));
         assert_eq!(row["api_family"], "membrane-heal");
         assert_eq!(row["decision_path"], "record");
         assert_eq!(row["outcome"], "repair");

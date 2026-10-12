@@ -22,6 +22,7 @@ KNOWN_HEALING_ACTIONS = {
     "ReallocAsMalloc",
     "ReturnSafeDefault",
     "UpgradeToSafeVariant",
+    "Deny",
     "hook_enable",
     "hook_disable",
     "hook_skip",
@@ -55,25 +56,56 @@ class LogValidator:
 
         if entry.latency_ns < 0 or entry.latency_ns > self.max_latency_ns:
             issues.append(
-                ValidationIssue("error", f"latency out of bounds: {entry.latency_ns}", entry.source_line, entry.call)
+                ValidationIssue(
+                    "error",
+                    f"latency out of bounds: {entry.latency_ns}",
+                    entry.source_line,
+                    entry.call,
+                )
             )
         elif entry.latency_ns > self.high_latency_ns:
             issues.append(
-                ValidationIssue("warning", f"high latency detected: {entry.latency_ns}", entry.source_line, entry.call)
+                ValidationIssue(
+                    "warning",
+                    f"high latency detected: {entry.latency_ns}",
+                    entry.source_line,
+                    entry.call,
+                )
             )
 
         if entry.action and entry.action not in self.known_actions:
-            issues.append(ValidationIssue("warning", f"unknown action: {entry.action}", entry.source_line, entry.call))
+            issues.append(
+                ValidationIssue(
+                    "warning",
+                    f"unknown action: {entry.action}",
+                    entry.source_line,
+                    entry.call,
+                )
+            )
 
         if entry.result and isinstance(entry.result, dict):
             ptr = entry.result.get("ptr")
             if isinstance(ptr, str) and ptr and not POINTER_RE.match(ptr):
-                issues.append(ValidationIssue("error", f"invalid pointer format: {ptr}", entry.source_line, entry.call))
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        f"invalid pointer format: {ptr}",
+                        entry.source_line,
+                        entry.call,
+                    )
+                )
 
-        ts = self._parse_timestamp(entry.timestamp)
-        if ts is None:
-            issues.append(ValidationIssue("error", f"invalid timestamp: {entry.timestamp}", entry.source_line, entry.call))
-        else:
+        ts = self._parse_timestamp(entry.timestamp) if entry.timestamp is not None else None
+        if entry.timestamp is not None and ts is None:
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    f"invalid timestamp: {entry.timestamp}",
+                    entry.source_line,
+                    entry.call,
+                )
+            )
+        elif ts is not None and entry.pid is not None:
             prev = self._last_ts_by_pid.get(entry.pid)
             if prev and ts < prev:
                 issues.append(

@@ -990,6 +990,15 @@ pub unsafe extern "C" fn kill(pid: libc::pid_t, signum: c_int) -> c_int {
 
     if !signal_core::valid_signal(signum) && signum != 0 {
         unsafe { set_abi_errno(errno::EINVAL) };
+        runtime_policy::record_semantic_deny(
+            "kill",
+            ApiFamily::Signal,
+            0,
+            0,
+            false,
+            errno::EINVAL,
+            "invalid_signal_number",
+        );
         runtime_policy::observe(ApiFamily::Signal, decision.profile, 5, true);
         return -1;
     }

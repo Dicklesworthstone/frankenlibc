@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicU64, Ordering as A
 use std::cell::{Cell, RefCell};
 
 use frankenlibc_core::syscall;
+use frankenlibc_membrane::MEMBRANE_SCHEMA_VERSION;
 use frankenlibc_membrane::check_oracle::CheckStage;
 use frankenlibc_membrane::config::SafetyLevel;
 use frankenlibc_membrane::decision_contract::{
@@ -2529,20 +2530,80 @@ pub(crate) fn decide_certified_memcmp(
 /// Membrane denials since process start.
 static DENIALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Count a denial and append its evidence record to `FRANKENLIBC_LOG` (if
-/// set). Denials are rare, so formatting the record unconditionally is fine.
+/// Count a denial and append its evidence record to `FRANKENLIBC_LOG` when the
+/// sink is configured. Denials are rare, but an unset sink still avoids record
+/// formatting and file initialization.
 #[cold]
 fn record_deny(mode: SafetyLevel, ctx: RuntimeContext, decision: &RuntimeDecision) {
-    let seq = DENIALS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
-    let line = format!(
-        "{{\"event\":\"deny\",\"seq\":{seq},\"runtime_mode\":\"{}\",\"api_family\":\"{:?}\",\
-\"policy_id\":{},\"risk_upper_bound_ppm\":{},\"evidence_seqno\":{},\"addr_hint\":\"{:#x}\",\
-\"requested_bytes\":{},\"is_write\":{}}}",
-        runtime_mode_name(mode),
-        ctx.family,
+    let symbol = active_trace_context().symbol;
+    append_deny_record(
+        mode,
+        symbol,
+        ctx,
         decision.policy_id,
         decision.risk_upper_bound_ppm,
         decision.evidence_seqno,
+        0,
+        "runtime_policy",
+    );
+}
+
+/// Record a denial performed by an ABI-specific semantic check after the
+/// generic runtime policy allowed the call to reach that check.
+///
+/// These checks are part of the deployed membrane too: invalid signals,
+/// unsupported encodings, and similar domain errors must not disappear from
+/// `FRANKENLIBC_LOG` merely because they are more precise than the generic
+/// pointer/risk context available to [`decide`].
+#[cold]
+pub(crate) fn record_semantic_deny(
+    symbol: &'static str,
+    family: ApiFamily,
+    addr_hint: usize,
+    requested_bytes: usize,
+    is_write: bool,
+    errno_value: c_int,
+    reason: &'static str,
+) {
+    let ctx = RuntimeContext {
+        family,
+        addr_hint,
+        requested_bytes,
+        is_write,
+        contention_hint: 0,
+        bloom_negative: true,
+    };
+    append_deny_record(mode(), symbol, ctx, 0, 0, 0, errno_value, reason);
+}
+
+#[cold]
+fn append_deny_record(
+    mode: SafetyLevel,
+    symbol: &'static str,
+    ctx: RuntimeContext,
+    policy_id: u32,
+    risk_upper_bound_ppm: u32,
+    evidence_seqno: u64,
+    errno_value: c_int,
+    reason: &'static str,
+) {
+    // Evidence is post-decision telemetry. Opening or writing the sink must
+    // not replace the errno that the ABI entrypoint selected for its caller.
+    let _errno_transparency = ErrnoTransparencyGuard::capture();
+    let seq = DENIALS.fetch_add(1, AtomicOrdering::Relaxed) + 1;
+    if std::env::var_os("FRANKENLIBC_LOG").is_none_or(|path| path.is_empty()) {
+        return;
+    }
+    let line = format!(
+        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"deny\",\
+\"seq\":{seq},\"pid\":{},\"runtime_mode\":\"{}\",\"api_family\":\"{:?}\",\
+\"symbol\":\"{symbol}\",\"action\":\"Deny\",\"outcome\":\"deny\",\"reason\":\"{reason}\",\
+\"errno\":{errno_value},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\
+\"evidence_seqno\":{evidence_seqno},\"addr_hint\":\"{:#x}\",\"requested_bytes\":{},\
+\"is_write\":{}}}",
+        std::process::id(),
+        runtime_mode_name(mode),
+        ctx.family,
         ctx.addr_hint,
         ctx.requested_bytes,
         ctx.is_write,
@@ -2570,7 +2631,8 @@ extern "C" fn runtime_log_summary_at_exit() {
         return;
     }
     let line = format!(
-        "{{\"event\":\"exit_summary\",\"pid\":{},\"runtime_mode\":\"{}\",\"denials\":{},{}}}",
+        "{{\"schema_version\":\"{MEMBRANE_SCHEMA_VERSION}\",\"event\":\"exit_summary\",\
+\"pid\":{},\"runtime_mode\":\"{}\",\"symbol\":\"process\",\"denials\":{},{}}}",
         std::process::id(),
         runtime_mode_name(mode()),
         DENIALS.load(AtomicOrdering::Relaxed),

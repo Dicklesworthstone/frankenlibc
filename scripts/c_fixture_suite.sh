@@ -198,13 +198,60 @@ passes=0
 fails=0
 total=0
 
+validate_runtime_log() {
+  local log_path="$1"
+  local fixture_name="$2"
+  local mode="$3"
+
+  python3 - "${ROOT}" "${log_path}" "${fixture_name}" "${mode}" <<'PY'
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+log_path = pathlib.Path(sys.argv[2])
+fixture_name = sys.argv[3]
+mode = sys.argv[4]
+sys.path.insert(0, str(root / "scripts/gentoo"))
+
+from log_parser import LogParser  # noqa: E402
+from log_validator import LogValidator  # noqa: E402
+
+entries = list(LogParser(strict=True).parse_file(log_path))
+if not entries:
+    raise SystemExit("runtime log is empty")
+issues = LogValidator().validate(entries)
+if issues:
+    rendered = "; ".join(f"line {issue.line}: {issue.message}" for issue in issues)
+    raise SystemExit(f"runtime log validation failed: {rendered}")
+if not any(entry.event == "exit_summary" for entry in entries):
+    raise SystemExit("runtime log is missing exit_summary")
+if fixture_name == "fixture_hardened_first_heal" and not any(
+    entry.event == "deny"
+    and entry.call == "kill"
+    and entry.raw.get("reason") == "invalid_signal_number"
+    and entry.runtime_mode == mode
+    for entry in entries
+):
+    raise SystemExit("runtime log is missing the kill invalid_signal_number denial")
+if fixture_name == "fixture_hardened_first_heal":
+    repair_count = sum(entry.event == "repair" for entry in entries)
+    if mode == "hardened" and repair_count == 0:
+        raise SystemExit("hardened runtime log is missing the induced repair")
+    if mode == "strict" and repair_count != 0:
+        raise SystemExit(f"strict runtime log unexpectedly contains {repair_count} repair rows")
+PY
+}
+
 run_fixture() {
   local mode="$1"
   local bin="$2"
   local name
   name="$(basename "${bin}")"
   local case_dir="${RUN_DIR}/${mode}/${name}"
+  local runtime_log="${case_dir}/runtime.jsonl"
   mkdir -p "${case_dir}"
+  : > "${runtime_log}"
+  : > "${case_dir}/runtime_log_validation.txt"
 
   total=$((total + 1))
   local start_ns
@@ -212,10 +259,22 @@ run_fixture() {
 
   set +e
   timeout "${TIMEOUT_SECONDS}" \
-    env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "${RUNNER_ARGV[@]}" "${bin}" \
+    env FRANKENLIBC_MODE="${mode}" FRANKENLIBC_LOG="${runtime_log}" \
+      LD_PRELOAD="${LIB_PATH}" "${RUNNER_ARGV[@]}" "${bin}" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e
+
+  if [[ "${rc}" -eq 0 ]]; then
+    set +e
+    validate_runtime_log "${runtime_log}" "${name}" "${mode}" \
+      > "${case_dir}/runtime_log_validation.txt" 2>&1
+    local validation_rc=$?
+    set -e
+    if [[ "${validation_rc}" -ne 0 ]]; then
+      rc=86
+    fi
+  fi
 
   local end_ns
   end_ns="$(date +%s%N)"
@@ -224,7 +283,7 @@ run_fixture() {
   echo "${rc}" > "${case_dir}/exit_code"
 
   local refs_json
-  refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
 
   if [[ "${rc}" -eq 0 ]]; then
     passes=$((passes + 1))
@@ -325,9 +384,13 @@ for pattern in (
     "strict/fixture_*/stdout.txt",
     "strict/fixture_*/stderr.txt",
     "strict/fixture_*/exit_code",
+    "strict/fixture_*/runtime.jsonl",
+    "strict/fixture_*/runtime_log_validation.txt",
     "hardened/fixture_*/stdout.txt",
     "hardened/fixture_*/stderr.txt",
     "hardened/fixture_*/exit_code",
+    "hardened/fixture_*/runtime.jsonl",
+    "hardened/fixture_*/runtime_log_validation.txt",
     "*_compile.log",
 ):
     paths.extend(sorted(run_dir.glob(pattern)))
@@ -345,6 +408,8 @@ for path in paths:
         kind = "stdout"
     elif rel.endswith("stderr.txt"):
         kind = "stderr"
+    elif rel.endswith("runtime_log_validation.txt"):
+        kind = "validation"
     elif rel.endswith("exit_code"):
         kind = "status"
     else:

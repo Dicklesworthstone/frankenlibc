@@ -34,25 +34,25 @@
     {
       "kind": "parser_file_iteration",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 43,
+      "line": 46,
       "anchor": "def parse_file"
     },
     {
       "kind": "parser_jsonl_line_normalization",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 50,
+      "line": 53,
       "anchor": "def parse_line"
     },
     {
       "kind": "parser_runtime_and_hook_schema",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 65,
+      "line": 68,
       "anchor": "def _normalize"
     },
     {
       "kind": "parser_strict_error_policy",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 118,
+      "line": 189,
       "anchor": "def _handle_error"
     },
     {
@@ -64,61 +64,61 @@
     {
       "kind": "validator_integrity_checks",
       "path": "scripts/gentoo/log_validator.py",
-      "line": 53,
+      "line": 54,
       "anchor": "def validate_entry"
     },
     {
       "kind": "stats_aggregation",
       "path": "scripts/gentoo/log_stats.py",
-      "line": 24,
+      "line": 26,
       "anchor": "def record"
     },
     {
       "kind": "stats_telemetry_snapshot",
       "path": "scripts/gentoo/log_stats.py",
-      "line": 43,
+      "line": 50,
       "anchor": "def to_dict"
     },
     {
       "kind": "schema_documentation",
       "path": "docs/gentoo/log-format.md",
-      "line": 30,
+      "line": 80,
       "anchor": "Required:"
     },
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 57,
+      "line": 109,
       "anchor": "## Validation Rules"
     },
     {
       "kind": "unit_runtime_fixture_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 29,
+      "line": 30,
       "anchor": "def test_parse_valid_runtime_log"
     },
     {
       "kind": "unit_hook_fixture_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 37,
+      "line": 38,
       "anchor": "def test_parse_valid_hook_log"
     },
     {
       "kind": "unit_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 44,
+      "line": 135,
       "anchor": "def test_invalid_json_raises_in_strict_mode"
     },
     {
       "kind": "unit_non_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 49,
+      "line": 140,
       "anchor": "def test_invalid_line_collected_in_non_strict_mode"
     },
     {
       "kind": "unit_stats_validator_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 56,
+      "line": 147,
       "anchor": "def test_stats_and_validator"
     },
     {

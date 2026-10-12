@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -40,6 +41,96 @@ class LogParserTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].call, "__hook_event__")
         self.assertEqual(entries[0].action, "hook_enable")
+
+    def test_parse_deployed_runtime_sink_rows(self) -> None:
+        rows = [
+            {
+                "schema_version": "1.0",
+                "event": "repair",
+                "trace_id": "membrane::heal::0000000000000001",
+                "decision_id": 1,
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "api_family": "membrane-heal",
+                "symbol": "unknown",
+                "action": "Repair",
+                "outcome": "repair",
+                "healing_action": "ClampSize",
+                "details": {"requested": 32, "clamped": 8},
+            },
+            {
+                "schema_version": "1.0",
+                "event": "deny",
+                "seq": 1,
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "api_family": "Signal",
+                "symbol": "kill",
+                "action": "Deny",
+                "outcome": "deny",
+                "reason": "invalid_signal_number",
+                "errno": 22,
+                "policy_id": 0,
+                "risk_upper_bound_ppm": 0,
+                "evidence_seqno": 0,
+                "addr_hint": "0xffffffffffffffff",
+                "requested_bytes": 0,
+                "is_write": False,
+            },
+            {
+                "schema_version": "1.0",
+                "event": "exit_summary",
+                "pid": 12345,
+                "runtime_mode": "hardened",
+                "symbol": "process",
+                "denials": 1,
+                "total_heals": 1,
+                "runtime_log_written_records": 2,
+                "runtime_log_dropped_records": 0,
+                "runtime_log_short_writes": 0,
+                "runtime_log_open_failures": 0,
+            },
+        ]
+        parser = self.log_parser.LogParser(strict=True)
+        entries = [
+            parser.parse_line(json.dumps(row), index)
+            for index, row in enumerate(rows, 1)
+        ]
+
+        self.assertEqual(
+            [entry.event for entry in entries], ["repair", "deny", "exit_summary"]
+        )
+        self.assertEqual(
+            [entry.call for entry in entries],
+            ["unknown", "kill", "__exit_summary__"],
+        )
+        self.assertEqual([entry.action for entry in entries], ["ClampSize", "Deny", None])
+        self.assertTrue(all(entry.timestamp is None for entry in entries))
+        self.assertEqual(self.log_validator.LogValidator().validate(entries), [])
+
+        stats = self.log_stats.LogStats()
+        stats.extend(entries)
+        snapshot = stats.to_dict()
+        self.assertEqual(
+            snapshot["by_event"], {"repair": 1, "deny": 1, "exit_summary": 1}
+        )
+        self.assertEqual(snapshot["by_mode"], {"hardened": 3})
+
+    def test_deployed_runtime_sink_rejects_missing_deny_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "Signal",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("deny row missing required field(s): symbol", str(error.exception))
 
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

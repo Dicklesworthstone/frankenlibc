@@ -17,6 +17,8 @@ class LogStats:
     total_entries: int = 0
     by_call: Dict[str, int] = field(default_factory=dict)
     by_action: Dict[str, int] = field(default_factory=dict)
+    by_event: Dict[str, int] = field(default_factory=dict)
+    by_mode: Dict[str, int] = field(default_factory=dict)
     latency_sum_ns: int = 0
     latency_max_ns: int = 0
     unique_pids: Set[int] = field(default_factory=set)
@@ -26,9 +28,14 @@ class LogStats:
         self.by_call[entry.call] = self.by_call.get(entry.call, 0) + 1
         if entry.action:
             self.by_action[entry.action] = self.by_action.get(entry.action, 0) + 1
+        if entry.event:
+            self.by_event[entry.event] = self.by_event.get(entry.event, 0) + 1
+        if entry.runtime_mode:
+            self.by_mode[entry.runtime_mode] = self.by_mode.get(entry.runtime_mode, 0) + 1
         self.latency_sum_ns += entry.latency_ns
         self.latency_max_ns = max(self.latency_max_ns, entry.latency_ns)
-        self.unique_pids.add(entry.pid)
+        if entry.pid is not None:
+            self.unique_pids.add(entry.pid)
 
     def extend(self, entries: Iterable[LogEntry]) -> None:
         for entry in entries:
@@ -45,6 +52,8 @@ class LogStats:
             "total_entries": self.total_entries,
             "by_call": dict(self.by_call),
             "by_action": dict(self.by_action),
+            "by_event": dict(self.by_event),
+            "by_mode": dict(self.by_mode),
             "latency_avg_ns": round(self.latency_avg_ns, 2),
             "latency_max_ns": self.latency_max_ns,
             "unique_pids": sorted(self.unique_pids),
