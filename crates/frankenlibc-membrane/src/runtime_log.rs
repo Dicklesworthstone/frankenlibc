@@ -33,7 +33,12 @@ static EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// sink at 4 MiB/s while retaining ample detail for ordinary fault diagnosis.
 const RATE_COUNT_BITS: u32 = 16;
 const RATE_COUNT_MASK: u64 = (1 << RATE_COUNT_BITS) - 1;
+const RATE_PROCESS_TRANSITION_BIT: u64 = 1 << 32;
 pub const RATE_LIMIT_PER_SECOND: u64 = 1024;
+/// Linux `getpid` returns the thread-group ID, so every thread in one process
+/// shares this identity while a non-`CLONE_VM` child observes that it inherited
+/// another process's limiter state and starts a fresh window automatically.
+static RATE_PROCESS_ID: AtomicU64 = AtomicU64::new(0);
 static RATE_WINDOW: AtomicU64 = AtomicU64::new(0);
 
 /// Reserve the next process-local event sequence number without allocating,
@@ -85,7 +90,7 @@ fn admit_record_for_second(second: Option<u64>) -> bool {
         note_admission_clock_failure();
         return false;
     };
-    if admit_record_at(&RATE_WINDOW, second) {
+    if admit_record_at(&RATE_PROCESS_ID, &RATE_WINDOW, process_id(), second) {
         true
     } else {
         note_rate_limited();
@@ -93,7 +98,51 @@ fn admit_record_for_second(second: Option<u64>) -> bool {
     }
 }
 
-fn admit_record_at(window: &AtomicU64, second: u64) -> bool {
+fn admit_record_at(process: &AtomicU64, window: &AtomicU64, process_id: u32, second: u64) -> bool {
+    // A process child created without CLONE_VM receives a private copy of the
+    // parent's atomics. Claiming the copied state under its own TGID clears the
+    // inherited budget before the first admission. Threads use the same TGID
+    // and therefore continue sharing one budget. The transition sentinel keeps
+    // two first-time callers from clearing admissions behind each other; as in
+    // the window CAS loop below, bounded contention sheds a record rather than
+    // spinning in a signal handler.
+    let owned_state = u64::from(process_id);
+    let transition_state = owned_state | RATE_PROCESS_TRANSITION_BIT;
+    let mut owns_window = false;
+    for _ in 0..8 {
+        let current_process = process.load(Ordering::Acquire);
+        if current_process == owned_state {
+            owns_window = true;
+            break;
+        }
+        if current_process == transition_state {
+            std::hint::spin_loop();
+            continue;
+        }
+        // A transition carries its owner's TGID. A fork-like child that
+        // inherited another process while it was between the CAS and publish
+        // may therefore take over instead of treating the sentinel as stuck
+        // forever. Reentry in the SAME process still follows the bounded-drop
+        // path above and cannot clear admissions behind the interrupted call.
+        if process
+            .compare_exchange_weak(
+                current_process,
+                transition_state,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+        {
+            window.store(0, Ordering::Relaxed);
+            process.store(owned_state, Ordering::Release);
+            owns_window = true;
+            break;
+        }
+    }
+    if !owns_window {
+        return false;
+    }
+
     let second = second & (u64::MAX >> RATE_COUNT_BITS);
     for _ in 0..8 {
         let current = window.load(Ordering::Relaxed);
@@ -131,6 +180,7 @@ fn note_admission_clock_failure() {
 /// the parent's current monotonic second.
 pub(super) fn reset_rate_limit_after_fork() {
     RATE_WINDOW.store(0, Ordering::Relaxed);
+    RATE_PROCESS_ID.store(u64::from(process_id()), Ordering::Release);
 }
 
 /// Open only regular files. On Linux O_NONBLOCK prevents a configured FIFO
@@ -480,14 +530,43 @@ mod tests {
 
     #[test]
     fn rate_limit_admits_exact_budget_and_reopens_next_window() {
+        let process = AtomicU64::new(0);
         let window = AtomicU64::new(0);
         for _ in 0..RATE_LIMIT_PER_SECOND {
-            assert!(admit_record_at(&window, 41));
+            assert!(admit_record_at(&process, &window, 17, 41));
         }
-        assert!(!admit_record_at(&window, 41));
-        assert!(!admit_record_at(&window, 41));
-        assert!(admit_record_at(&window, 42));
+        assert!(!admit_record_at(&process, &window, 17, 41));
+        assert!(!admit_record_at(&process, &window, 17, 41));
+        assert!(admit_record_at(&process, &window, 17, 42));
         assert_eq!(window.load(Ordering::Relaxed), (42 << RATE_COUNT_BITS) | 1);
+    }
+
+    #[test]
+    fn rate_limit_keys_windows_by_process_not_thread() {
+        let process = AtomicU64::new(0);
+        let window = AtomicU64::new(0);
+
+        for _ in 0..RATE_LIMIT_PER_SECOND {
+            assert!(admit_record_at(&process, &window, 101, 41));
+        }
+        // Another caller in the same TGID shares the exhausted budget.
+        assert!(!admit_record_at(&process, &window, 101, 41));
+
+        // A non-CLONE_VM child sees a different TGID in its copied state and
+        // receives a fresh budget even within the same monotonic second.
+        assert!(admit_record_at(&process, &window, 202, 41));
+        assert_eq!(process.load(Ordering::Acquire), 202);
+        assert_eq!(window.load(Ordering::Relaxed), (41 << RATE_COUNT_BITS) | 1);
+    }
+
+    #[test]
+    fn rate_limit_child_recovers_an_inherited_parent_transition() {
+        let process = AtomicU64::new(u64::from(101_u32) | RATE_PROCESS_TRANSITION_BIT);
+        let window = AtomicU64::new((41 << RATE_COUNT_BITS) | RATE_LIMIT_PER_SECOND);
+
+        assert!(admit_record_at(&process, &window, 202, 41));
+        assert_eq!(process.load(Ordering::Acquire), 202);
+        assert_eq!(window.load(Ordering::Relaxed), (41 << RATE_COUNT_BITS) | 1);
     }
 
     #[test]
