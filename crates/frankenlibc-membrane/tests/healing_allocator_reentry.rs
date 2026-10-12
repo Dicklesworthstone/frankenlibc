@@ -31,7 +31,7 @@ fn callback(allocating: bool) {
         return;
     }
     CALLBACKS.fetch_add(1, Ordering::Relaxed);
-    global_healing_policy().record(&HealingAction::IgnoreForeignFree);
+    global_healing_policy().record("allocator", "free", &HealingAction::IgnoreForeignFree);
     IN_CALLBACK.store(false, Ordering::Relaxed);
 }
 
@@ -100,7 +100,11 @@ fn child_probe() {
     // acquire a ring/ledger lock that the interrupted outer operation holds.
     MODE.store(REENTER, Ordering::Relaxed);
     for size in 0..OUTER_RECORDS {
-        policy.record(&HealingAction::ReallocAsMalloc { size });
+        policy.record(
+            "allocator",
+            "realloc",
+            &HealingAction::ReallocAsMalloc { size },
+        );
     }
     let rows = policy.export_healing_log_jsonl();
     policy.clear_healing_logs();
@@ -122,7 +126,7 @@ fn child_probe() {
     }
     assert!(policy.export_healing_log_jsonl().is_empty());
     // The guard must have been restored, not left permanently suppressing logs.
-    policy.record(&HealingAction::ReturnSafeDefault);
+    policy.record("allocator", "free", &HealingAction::ReturnSafeDefault);
     let last = policy.export_healing_log_jsonl();
     let row: serde_json::Value = serde_json::from_str(&last).unwrap();
     assert_eq!(row["healing_action"], "ReturnSafeDefault");

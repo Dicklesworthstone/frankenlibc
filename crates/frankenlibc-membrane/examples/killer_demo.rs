@@ -344,7 +344,7 @@ fn run_membrane_mode(run_id: &str, mode: SafetyLevel) -> ScenarioArtifacts {
             ),
             (SafetyLevel::Hardened, ValidationOutcome::TemporalViolation(_)) => {
                 let action = HealingAction::ReturnSafeDefault;
-                healing_policy.record(&action);
+                healing_policy.record("allocator", "free", &action);
                 ledger.record_healing(
                     &action,
                     TraceId::new(trace_id.clone()),
@@ -559,7 +559,7 @@ fn measure_membrane_ns(mode: SafetyLevel) -> u64 {
             && matches!(outcome, ValidationOutcome::TemporalViolation(_))
         {
             let policy = HealingPolicy::new();
-            policy.record(&HealingAction::ReturnSafeDefault);
+            policy.record("allocator", "free", &HealingAction::ReturnSafeDefault);
         }
     }
     (started.elapsed().as_nanos() as u64) / u64::from(PERF_ITERS)

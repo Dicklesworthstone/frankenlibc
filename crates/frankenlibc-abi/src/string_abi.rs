@@ -2189,6 +2189,7 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
 }
 
 fn maybe_clamp_copy_len(
+    symbol: &'static str,
     requested: usize,
     src_remaining: Option<usize>,
     dst_remaining: Option<usize>,
@@ -2204,7 +2205,7 @@ fn maybe_clamp_copy_len(
             requested: _,
             clamped,
         } => {
-            global_healing_policy().record(&action);
+            global_healing_policy().record("string_memory", symbol, &action);
             (clamped, true)
         }
         _ => (requested, false),
@@ -2240,11 +2241,15 @@ pub fn clamp_destination_size_for_tests(
     clamp_destination_size_for_repair(requested, dst_remaining, repair)
 }
 
-fn record_truncation(requested: usize, truncated: usize) {
-    global_healing_policy().record(&HealingAction::TruncateWithNull {
-        requested,
-        truncated,
-    });
+fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
+    global_healing_policy().record(
+        "string_memory",
+        symbol,
+        &HealingAction::TruncateWithNull {
+            requested,
+            truncated,
+        },
+    );
 }
 
 #[inline]
@@ -4635,6 +4640,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
     }
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memcpy",
         n,
         src_rem,
         dst_rem,
@@ -4748,6 +4754,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
     }
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memmove",
         n,
         src_rem,
         dst_rem,
@@ -4859,6 +4866,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     }
 
     let (fill_len, clamped) = maybe_clamp_copy_len(
+        "memset",
         n,
         None,
         dst_rem,
@@ -5037,6 +5045,7 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     }
 
     let (cmp_len, _clamped) = maybe_clamp_copy_len(
+        "memcmp",
         n,
         lhs_remaining,
         rhs_remaining,
@@ -5308,6 +5317,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
     }
 
     let (scan_len, clamped) = maybe_clamp_copy_len(
+        "memchr",
         n,
         known_remaining(s as usize),
         None,
@@ -5443,6 +5453,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
     }
 
     let (scan_len, clamped) = maybe_clamp_copy_len(
+        "memrchr",
         n,
         known_remaining(s as usize),
         None,
@@ -5523,7 +5534,11 @@ pub unsafe extern "C" fn __memrchr(s: *const c_void, c: c_int, n: usize) -> *mut
 pub unsafe extern "C" fn strlen(s: *const c_char) -> usize {
     if s.is_null() {
         if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
-            global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+            global_healing_policy().record(
+                "string_memory",
+                "strlen",
+                &HealingAction::ReturnSafeDefault,
+            );
         }
         return 0;
     }
@@ -5659,7 +5674,7 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
             requested: limit.saturating_add(1),
             truncated: limit,
         };
-        global_healing_policy().record(&action);
+        global_healing_policy().record("string_memory", "strlen", &action);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -5792,7 +5807,7 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let span = len;
 
     if adverse {
-        record_truncation(n, scan_limit);
+        record_truncation("strnlen", n, scan_limit);
     }
     record_string_stage_outcome(
         &ordering,
@@ -5852,7 +5867,11 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
         if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
-            global_healing_policy().record(&HealingAction::ReturnSafeDefault);
+            global_healing_policy().record(
+                "string_memory",
+                "strcmp",
+                &HealingAction::ReturnSafeDefault,
+            );
         }
         record_string_stage_outcome(
             &ordering,
@@ -5915,7 +5934,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     };
 
     if adverse {
-        record_truncation(cmp_bound.unwrap_or(span), span);
+        record_truncation("strcmp", cmp_bound.unwrap_or(span), span);
     }
     record_string_stage_outcome(
         &ordering,
@@ -6046,7 +6065,7 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
     let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
-        record_truncation(n, cmp_limit);
+        record_truncation("strncmp", n, cmp_limit);
     }
     record_string_stage_outcome(
         &ordering,
@@ -6080,7 +6099,11 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
 /// `Some`. Returns `None` only when the membrane denies the call. `strcpy` then
 /// returns the original `dst`; `stpcpy` returns the end pointer directly, so it no
 /// longer re-scans the just-copied string with a second `strlen` pass.
-unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_char> {
+unsafe fn strcpy_core(
+    symbol: &'static str,
+    dst: *mut c_char,
+    src: *const c_char,
+) -> Option<*mut c_char> {
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // decide() Allow with no clamp and heals off, so this is byte-identical to the
     // full body's non-repair branch — scan src, bulk-copy the payload, append the NUL,
@@ -6154,7 +6177,7 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(requested, 0);
+                    record_truncation(symbol, requested, 0);
                     (0, true)
                 }
                 Some(limit) => {
@@ -6166,7 +6189,7 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation(requested, copy_payload);
+                        record_truncation(symbol, requested, copy_payload);
                     }
                     (copy_payload.saturating_add(1), truncated)
                 }
@@ -6177,7 +6200,7 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
                     *dst.add(src_len) = 0;
                     let truncated = !src_terminated;
                     if truncated {
-                        record_truncation(requested, src_len);
+                        record_truncation(symbol, requested, src_len);
                     }
                     (src_len.saturating_add(1), truncated)
                 }
@@ -6217,7 +6240,7 @@ unsafe fn strcpy_core(dst: *mut c_char, src: *const c_char) -> Option<*mut c_cha
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
-    match unsafe { strcpy_core(dst, src) } {
+    match unsafe { strcpy_core("strcpy", dst, src) } {
         Some(_) => dst,
         None => std::ptr::null_mut(),
     }
@@ -6238,7 +6261,7 @@ pub unsafe extern "C" fn strcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
     // Single shared scan: `strcpy_core` already knows where it wrote the NUL, so
     // stpcpy no longer re-scans the copied string with a second strlen pass.
-    match unsafe { strcpy_core(dst, src) } {
+    match unsafe { strcpy_core("stpcpy", dst, src) } {
         Some(end) => end,
         None => std::ptr::null_mut(),
     }
@@ -6262,7 +6285,12 @@ pub unsafe extern "C" fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_
 /// in the common path) — the `stpncpy` result. Returns `None` only on membrane
 /// deny. `strncpy` returns the original `dst`; `stpncpy` returns `dst + offset`, so
 /// it no longer re-scans the just-written destination with a second `strnlen` pass.
-unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option<usize> {
+unsafe fn strncpy_core(
+    symbol: &'static str,
+    dst: *mut c_char,
+    src: *const c_char,
+    n: usize,
+) -> Option<usize> {
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no clamp (`safe_dst_len == safe_src_len == n`), so this
     // is byte-identical to the strict full body — scan src (bounded by `n`), bulk
@@ -6334,10 +6362,14 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
         match known_remaining(dst as usize) {
             Some(b) if b < n => {
                 adverse = true;
-                global_healing_policy().record(&HealingAction::ClampSize {
-                    requested: n,
-                    clamped: b,
-                });
+                global_healing_policy().record(
+                    "string_memory",
+                    symbol,
+                    &HealingAction::ClampSize {
+                        requested: n,
+                        clamped: b,
+                    },
+                );
                 b
             }
             _ => n,
@@ -6353,10 +6385,14 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
             // `strncpy(janname, tm->tm_zone, 9)`), not an over-read to repair.
             Some(b) if b < n && !unsafe { scan_c_string(src, Some(b)) }.1 => {
                 adverse = true;
-                global_healing_policy().record(&HealingAction::ClampSize {
-                    requested: n,
-                    clamped: b,
-                });
+                global_healing_policy().record(
+                    "string_memory",
+                    symbol,
+                    &HealingAction::ClampSize {
+                        requested: n,
+                        clamped: b,
+                    },
+                );
                 b
             }
             Some(b) if b < n => b,
@@ -6422,7 +6458,7 @@ unsafe fn strncpy_core(dst: *mut c_char, src: *const c_char, n: usize) -> Option
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strncpy(dst: *mut c_char, src: *const c_char, n: usize) -> *mut c_char {
-    match unsafe { strncpy_core(dst, src, n) } {
+    match unsafe { strncpy_core("strncpy", dst, src, n) } {
         Some(_) => dst,
         None => std::ptr::null_mut(),
     }
@@ -6450,7 +6486,7 @@ pub unsafe extern "C" fn stpncpy(dst: *mut c_char, src: *const c_char, n: usize)
 
     // Single shared scan: `strncpy_core` returns the terminating-NUL offset it
     // just wrote, so stpncpy no longer re-scans the destination with strnlen.
-    match unsafe { strncpy_core(dst, src, n) } {
+    match unsafe { strncpy_core("stpncpy", dst, src, n) } {
         // SAFETY: offset is bounded by `n` (and any clamped membrane bound).
         Some(offset) => unsafe { dst.add(offset) },
         None => std::ptr::null_mut(),
@@ -6537,13 +6573,13 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(src_len.saturating_add(1), 0);
+                    record_truncation("strcat", src_len.saturating_add(1), 0);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation(limit, limit.saturating_sub(1));
+                        record_truncation("strcat", limit, limit.saturating_sub(1));
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -6558,7 +6594,7 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
                         *dst.add(dst_len.saturating_add(copy_payload)) = 0;
                         let truncated = !src_terminated || copy_payload < src_len;
                         if truncated {
-                            record_truncation(src_len.saturating_add(1), copy_payload);
+                            record_truncation("strcat", src_len.saturating_add(1), copy_payload);
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -6573,7 +6609,7 @@ pub unsafe extern "C" fn strcat(dst: *mut c_char, src: *const c_char) -> *mut c_
                     *dst.add(dst_len.saturating_add(src_len)) = 0;
                     let truncated = !src_terminated;
                     if truncated {
-                        record_truncation(src_len.saturating_add(1), src_len);
+                        record_truncation("strcat", src_len.saturating_add(1), src_len);
                     }
                     (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
@@ -6719,13 +6755,13 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(n.saturating_add(1), 0);
+                    record_truncation("strncat", n.saturating_add(1), 0);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation(limit, limit.saturating_sub(1));
+                        record_truncation("strncat", limit, limit.saturating_sub(1));
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -6742,7 +6778,7 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
                             !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
                         let truncated = hit_src_alloc_bound || copy_payload < src_len;
                         if truncated {
-                            record_truncation(n.saturating_add(1), copy_payload);
+                            record_truncation("strncat", n.saturating_add(1), copy_payload);
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -6759,7 +6795,7 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
                         !src_terminated && src_bound.is_some_and(|b| b < n && src_len == b);
                     let truncated = hit_src_alloc_bound;
                     if truncated {
-                        record_truncation(n.saturating_add(1), src_len);
+                        record_truncation("strncat", n.saturating_add(1), src_len);
                     }
                     (dst_len.saturating_add(src_len).saturating_add(1), truncated)
                 }
@@ -6817,7 +6853,11 @@ unsafe fn strncat_validating(dst: *mut c_char, src: *const c_char, n: usize) -> 
 /// Returns `None` only when `s` is NULL or the membrane denies the call (the
 /// caller picks the fallback). Folding both entry points onto this eliminates
 /// strchrnul's old strchr()+strlen() double scan on a miss.
-unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool)> {
+unsafe fn strchr_locate(
+    symbol: &'static str,
+    s: *const c_char,
+    c: c_int,
+) -> Option<(*mut c_char, bool)> {
     // Strict-mode fast path (the DEFAULT deployed mode): strict passthrough forces
     // `decide()` Allow with no repair, so `bound` is `None` and the result is exactly the
     // page-safe raw `target`-or-NUL scan below. Skip the stage context + decide + observe +
@@ -6886,7 +6926,7 @@ unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool
     };
 
     if adverse {
-        record_truncation(bound.unwrap_or(span), span);
+        record_truncation(symbol, bound.unwrap_or(span), span);
     }
     record_string_stage_outcome(
         &ordering,
@@ -6905,7 +6945,7 @@ unsafe fn strchr_locate(s: *const c_char, c: c_int) -> Option<(*mut c_char, bool
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
-    match unsafe { strchr_locate(s, c) } {
+    match unsafe { strchr_locate("strchr", s, c) } {
         Some((located, true)) => located,
         _ => std::ptr::null_mut(),
     }
@@ -6929,7 +6969,7 @@ pub unsafe extern "C" fn strchrnul(s: *const c_char, c: c_int) -> *mut c_char {
 
     // Single shared scan: `strchr_locate` returns the target-or-NUL position
     // directly, so a miss no longer re-scans the whole string with strlen.
-    match unsafe { strchr_locate(s, c) } {
+    match unsafe { strchr_locate("strchrnul", s, c) } {
         Some((located, _found)) => located,
         // Membrane-denied: preserve the previous degraded-mode result (the old
         // strchr()=>NULL then strlen()=>0 path returned `s`).
@@ -7033,7 +7073,7 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         }
     };
     if adverse {
-        record_truncation(bound.unwrap_or(span), span);
+        record_truncation("strrchr", bound.unwrap_or(span), span);
     }
     record_string_stage_outcome(
         &ordering,
@@ -7360,6 +7400,7 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
 
     if adverse {
         record_truncation(
+            "strstr",
             hay_bound
                 .unwrap_or(work)
                 .saturating_add(needle_bound.unwrap_or(0)),
@@ -8173,7 +8214,7 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: us
     let adverse = repair && cmp_limit < n && hit_limit;
 
     if adverse {
-        record_truncation(n, cmp_limit);
+        record_truncation("strncasecmp", n, cmp_limit);
     }
     record_string_stage_outcome(
         &ordering,
@@ -9142,12 +9183,14 @@ pub unsafe extern "C" fn memmem(
     }
 
     let (hay_scan, clamped_h) = maybe_clamp_copy_len(
+        "memmem",
         haystack_len,
         known_remaining(haystack as usize),
         None,
         repair_enabled(mode.heals_enabled(), decision.action),
     );
     let (needle_scan, _clamped_n) = maybe_clamp_copy_len(
+        "memmem",
         needle_len,
         known_remaining(needle as usize),
         None,
@@ -9263,6 +9306,7 @@ pub unsafe extern "C" fn mempcpy(dst: *mut c_void, src: *const c_void, n: usize)
     }
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
+        "mempcpy",
         n,
         known_remaining(src as usize),
         known_remaining(dst as usize),
@@ -9660,6 +9704,7 @@ pub unsafe extern "C" fn memccpy(
     }
 
     let (copy_len, clamped) = maybe_clamp_copy_len(
+        "memccpy",
         n,
         known_remaining(src as usize),
         known_remaining(dst as usize),
@@ -9754,6 +9799,7 @@ pub unsafe extern "C" fn bzero(s: *mut c_void, n: usize) {
     }
 
     let (set_len, clamped) = maybe_clamp_copy_len(
+        "bzero",
         n,
         None,
         known_remaining(s as usize),
@@ -9956,6 +10002,7 @@ pub unsafe extern "C" fn swab(src: *const c_void, dst: *mut c_void, isize_n: isi
     }
 
     let (swap_len, clamped) = maybe_clamp_copy_len(
+        "swab",
         n,
         known_remaining(src as usize),
         known_remaining(dst as usize),
@@ -10285,7 +10332,7 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, dstsize: 
     };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {
-        record_truncation(dstsize, dst_limit);
+        record_truncation("strlcpy", dstsize, dst_limit);
     }
 
     // SAFETY: bounded scan.
@@ -10420,7 +10467,7 @@ pub unsafe extern "C" fn strlcat(dst: *mut c_char, src: *const c_char, dstsize: 
     };
     let (dst_limit, dst_clamped) = clamp_destination_size_for_repair(dstsize, dst_bound, repair);
     if dst_clamped {
-        record_truncation(dstsize, dst_limit);
+        record_truncation("strlcat", dstsize, dst_limit);
     }
 
     // SAFETY: bounded scan.

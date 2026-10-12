@@ -430,7 +430,12 @@ fn runtime_procfs_long(path: &str) -> Option<libc::c_long> {
         .and_then(|value| libc::c_long::try_from(value).ok())
 }
 
-fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (usize, bool) {
+fn maybe_clamp_io_len(
+    symbol: &'static str,
+    requested: usize,
+    addr: usize,
+    enable_repair: bool,
+) -> (usize, bool) {
     if !enable_repair || requested == 0 || addr == 0 {
         return (requested, false);
     }
@@ -444,7 +449,7 @@ fn maybe_clamp_io_len(requested: usize, addr: usize, enable_repair: bool) -> (us
         requested,
         clamped: remaining,
     };
-    global_healing_policy().record(&action);
+    global_healing_policy().record("io_fd", symbol, &action);
     (remaining, true)
 }
 
@@ -523,7 +528,8 @@ pub(crate) unsafe fn read_cp(fd: c_int, buf: *mut c_void, count: usize) -> libc:
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
+    let (effective_count, clamped) =
+        maybe_clamp_io_len("read", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for read(2); read is a cancellation point.
     let rc = unsafe {
         crate::pthread_abi::cancellation_point_syscall(
@@ -594,7 +600,8 @@ pub(crate) unsafe fn write_cp(fd: c_int, buf: *const c_void, count: usize) -> li
 
     let repair_enabled =
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_));
-    let (effective_count, clamped) = maybe_clamp_io_len(count, buf as usize, repair_enabled);
+    let (effective_count, clamped) =
+        maybe_clamp_io_len("write", count, buf as usize, repair_enabled);
     // SAFETY: raw fd/buffer/count for write(2); write is a cancellation point.
     let rc = unsafe {
         crate::pthread_abi::cancellation_point_syscall(
@@ -4672,8 +4679,9 @@ pub unsafe extern "C" fn syslog(priority: c_int, format: *const c_char, mut args
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("syslog", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     syslog_send(priority, &rendered);
 }
 
@@ -4702,8 +4710,9 @@ pub unsafe extern "C" fn vsyslog(priority: c_int, format: *const c_char, ap: *mu
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("vsyslog", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     syslog_send(priority, &rendered);
 }
 
@@ -27240,8 +27249,9 @@ pub unsafe extern "C" fn argp_error(state: *mut c_void, fmt: *const c_char, mut 
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-    let rendered =
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_printf("argp_error", &fmt_bytes, arg_buf.as_ptr(), extract_count)
+    };
     unsafe { argp_error_bytes(state.cast(), &rendered) };
 }
 
@@ -27299,7 +27309,14 @@ pub unsafe extern "C" fn argp_failure(
         let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
         let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
         extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        unsafe { super::stdio_abi::render_printf(&fmt_bytes, arg_buf.as_ptr(), extract_count) }
+        unsafe {
+            super::stdio_abi::render_printf(
+                "argp_failure",
+                &fmt_bytes,
+                arg_buf.as_ptr(),
+                extract_count,
+            )
+        }
     });
     unsafe { argp_failure_bytes(state.cast(), status, errnum, rendered.as_deref()) };
 }
@@ -31578,8 +31595,14 @@ pub unsafe extern "C" fn setproctitle(fmt: *const c_char, mut args: ...) {
         // the slot for an X87 spec carries the argument's ADDRESS, and this
         // loop could only ever have produced a value there.
         extract_syslog_args!(&segments, &mut args, &mut arg_buf, extract_count);
-        let body =
-            unsafe { crate::stdio_abi::render_printf(render_fmt, arg_buf.as_ptr(), extract_count) };
+        let body = unsafe {
+            crate::stdio_abi::render_printf(
+                "setproctitle",
+                render_fmt,
+                arg_buf.as_ptr(),
+                extract_count,
+            )
+        };
 
         if suppress_prefix {
             body

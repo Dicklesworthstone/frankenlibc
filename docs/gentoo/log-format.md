@@ -13,7 +13,11 @@ All use `schema_version="1.0"`, include `pid` and `runtime_mode`, and are valid
 independent JSON objects separated by newlines. The hot-path sink does not add a
 wall-clock timestamp or per-call latency; consumers must preserve file order.
 
-Repair events include the healing action and its old/new values:
+Repair events include the healing action and its old/new values. The `symbol`
+is mandatory and names the non-empty canonical operation that actually
+delegated to the repair. Aliases therefore log that canonical delegated
+operation rather than the caller-visible alias; blank values and `unknown`
+(in any letter case) are invalid.
 
 ```json
 {
@@ -21,8 +25,8 @@ Repair events include the healing action and its old/new values:
   "event": "repair",
   "pid": 12345,
   "runtime_mode": "hardened",
-  "api_family": "membrane-heal",
-  "symbol": "unknown",
+  "api_family": "string_memory",
+  "symbol": "memcpy",
   "action": "Repair",
   "outcome": "repair",
   "healing_action": "ClampSize",
@@ -118,7 +122,9 @@ Parser normalization:
 
 - Deployed runtime rows require `schema_version="1.0"`, `pid`, and
   `runtime_mode=strict|hardened|off`.
-- `repair` rows require `api_family`, `healing_action`, and `details`.
+- `repair` rows require `api_family`, a non-empty canonical `symbol` other than
+  case-insensitive `unknown`, `healing_action`, and `details`. Aliases record
+  the canonical delegated operation.
 - `deny` rows require `api_family`, `symbol`, `reason`, `errno`, and `policy_id`.
 - `exit_summary` rows require `denials` and `runtime_log_written_records`.
 - Timestamp, when present, parseable as ISO8601.

@@ -51,8 +51,8 @@ class LogParserTests(unittest.TestCase):
                 "decision_id": 1,
                 "pid": 12345,
                 "runtime_mode": "hardened",
-                "api_family": "membrane-heal",
-                "symbol": "unknown",
+                "api_family": "string_memory",
+                "symbol": "memcpy",
                 "action": "Repair",
                 "outcome": "repair",
                 "healing_action": "ClampSize",
@@ -102,7 +102,7 @@ class LogParserTests(unittest.TestCase):
         )
         self.assertEqual(
             [entry.call for entry in entries],
-            ["unknown", "kill", "__exit_summary__"],
+            ["memcpy", "kill", "__exit_summary__"],
         )
         self.assertEqual([entry.action for entry in entries], ["ClampSize", "Deny", None])
         self.assertTrue(all(entry.timestamp is None for entry in entries))
@@ -131,6 +131,37 @@ class LogParserTests(unittest.TestCase):
         with self.assertRaises(self.log_parser.ParseError) as error:
             parser.parse_line(json.dumps(row))
         self.assertIn("deny row missing required field(s): symbol", str(error.exception))
+
+    def test_deployed_runtime_sink_rejects_missing_repair_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "healing_action": "ClampSize",
+            "details": {"requested": 32, "clamped": 8},
+        }
+        with self.assertRaises(self.log_parser.ParseError) as error:
+            parser.parse_line(json.dumps(row))
+        self.assertIn("repair row missing required field(s): symbol", str(error.exception))
+
+    def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "repair",
+            "pid": 12345,
+            "runtime_mode": "hardened",
+            "api_family": "string_memory",
+            "healing_action": "ClampSize",
+            "details": {"requested": 32, "clamped": 8},
+        }
+        for symbol in ("", "   ", "unknown", "UNKNOWN", "UnKnOwN"):
+            with self.subTest(symbol=symbol):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(json.dumps({**row, "symbol": symbol}))
 
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)

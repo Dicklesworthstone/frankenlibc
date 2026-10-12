@@ -383,10 +383,14 @@ pub unsafe extern "C" fn _exit(status: c_int) -> ! {
     let clamped = if mode.heals_enabled() {
         let c = process::clamp_exit_status(status);
         if c != status {
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: status as usize,
-                clamped: c as usize,
-            });
+            global_healing_policy().record(
+                "process",
+                "_exit",
+                &HealingAction::ClampSize {
+                    requested: status as usize,
+                    clamped: c as usize,
+                },
+            );
         }
         c
     } else {
@@ -530,10 +534,14 @@ pub(crate) unsafe fn waitpid_cp(
             && !process::valid_wait_options(options)
         {
             let sanitized = process::sanitize_wait_options(options);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: options as usize,
-                clamped: sanitized as usize,
-            });
+            global_healing_policy().record(
+                "process",
+                "waitpid",
+                &HealingAction::ClampSize {
+                    requested: options as usize,
+                    clamped: sanitized as usize,
+                },
+            );
             opts = sanitized;
             repaired = true;
             continue;

@@ -160,7 +160,7 @@ class LogParser:
     def _validate_runtime_sink_row(payload: Dict[str, Any], line_num: int, event: str) -> None:
         required = ["schema_version", "pid", "runtime_mode"]
         if event == "repair":
-            required.extend(["api_family", "healing_action", "details"])
+            required.extend(["api_family", "symbol", "healing_action", "details"])
         elif event == "deny":
             required.extend(["api_family", "symbol", "reason", "errno", "policy_id"])
         elif event == "exit_summary":
@@ -185,6 +185,20 @@ class LogParser:
                 f"invalid runtime_mode: {payload['runtime_mode']}",
                 json.dumps(payload),
             )
+        if event == "repair":
+            symbol = payload["symbol"]
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ParseError(
+                    line_num,
+                    "repair row symbol must be a non-empty canonical symbol",
+                    json.dumps(payload),
+                )
+            if symbol != symbol.strip() or symbol.casefold() == "unknown":
+                raise ParseError(
+                    line_num,
+                    f"repair row symbol is not canonical: {symbol!r}",
+                    json.dumps(payload),
+                )
 
     def _handle_error(self, error: ParseError) -> Optional[LogEntry]:
         self.errors.append(error)

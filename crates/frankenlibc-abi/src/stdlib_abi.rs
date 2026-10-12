@@ -5440,6 +5440,7 @@ pub unsafe extern "C" fn error(status: c_int, errnum: c_int, fmt: *const c_char,
                 // For full printf compatibility, delegate to our printf engine.
                 let msg = unsafe {
                     crate::stdio_abi::vprintf_extract_and_render(
+                        "error",
                         f,
                         (&mut args) as *mut _ as *mut c_void,
                     )
@@ -5573,7 +5574,11 @@ pub unsafe extern "C" fn error_at_line(
         && let Ok(f) = std::str::from_utf8(&fmt_bytes)
     {
         let msg = unsafe {
-            crate::stdio_abi::vprintf_extract_and_render(f, (&mut args) as *mut _ as *mut c_void)
+            crate::stdio_abi::vprintf_extract_and_render(
+                "error_at_line",
+                f,
+                (&mut args) as *mut _ as *mut c_void,
+            )
         };
         let _ = write!(out, "{msg}");
     }

@@ -95,10 +95,14 @@ pub(crate) unsafe fn poll_cp(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout
     let actual_nfds = if !poll_core::valid_nfds(nfds) {
         if mode.heals_enabled() {
             let clamped = poll_core::clamp_poll_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
+            global_healing_policy().record(
+                "poll",
+                "poll",
+                &HealingAction::ClampSize {
+                    requested: nfds as usize,
+                    clamped: clamped as usize,
+                },
+            );
             clamped
         } else {
             unsafe { set_abi_errno(errno::EINVAL) };
@@ -196,10 +200,14 @@ pub(crate) unsafe fn ppoll_cp(
     let actual_nfds = if !poll_core::valid_nfds(nfds) {
         if mode.heals_enabled() {
             let clamped = poll_core::clamp_poll_nfds(nfds);
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: nfds as usize,
-                clamped: clamped as usize,
-            });
+            global_healing_policy().record(
+                "poll",
+                "ppoll",
+                &HealingAction::ClampSize {
+                    requested: nfds as usize,
+                    clamped: clamped as usize,
+                },
+            );
             clamped
         } else {
             unsafe { set_abi_errno(errno::EINVAL) };

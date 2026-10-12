@@ -2541,6 +2541,7 @@ unsafe fn free_addrinfo_node(node: *mut libc::addrinfo) {
 }
 
 unsafe fn write_c_buffer(
+    symbol: &'static str,
     out: *mut c_char,
     out_len: libc::socklen_t,
     text: &str,
@@ -2577,10 +2578,14 @@ unsafe fn write_c_buffer(
     }
     // SAFETY: output buffer has at least one byte because out_len > 0.
     unsafe { *out.add(copy_len) = 0 };
-    global_healing_policy().record(&HealingAction::TruncateWithNull {
-        requested: bytes.len() + 1,
-        truncated: copy_len,
-    });
+    global_healing_policy().record(
+        "resolver",
+        symbol,
+        &HealingAction::TruncateWithNull {
+            requested: bytes.len() + 1,
+            truncated: copy_len,
+        },
+    );
     Ok(true)
 }
 
@@ -3603,11 +3608,11 @@ unsafe fn getnameinfo_strict_fast(
 
     // SAFETY: caller-provided output buffers per the getnameinfo contract; `write_c_buffer` bounds
     // each write against `known_remaining` before copying.
-    match unsafe { write_c_buffer(host, hostlen, &host_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) } {
         Ok(_) => {}
         Err(err) => return err,
     }
-    match unsafe { write_c_buffer(serv, servlen, &serv_text, repair) } {
+    match unsafe { write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) } {
         Ok(_) => {}
         Err(err) => return err,
     }
@@ -3778,12 +3783,14 @@ unsafe fn getnameinfo_named(
         // SAFETY: write_c_buffer checks advertised and tracked output bounds.
         unsafe {
             write_c_buffer(
+                "getnameinfo",
                 host,
                 hostlen,
                 host_name.as_deref().unwrap_or(host_number),
                 false,
             )?;
             write_c_buffer(
+                "getnameinfo",
                 serv,
                 servlen,
                 service_name.as_deref().unwrap_or(serv_number),
@@ -4021,7 +4028,7 @@ unsafe fn getnameinfo_full(
 
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let host_truncated = unsafe {
-        match write_c_buffer(host, hostlen, &host_text, repair) {
+        match write_c_buffer("getnameinfo", host, hostlen, &host_text, repair) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(
@@ -4037,7 +4044,7 @@ unsafe fn getnameinfo_full(
     };
     // SAFETY: output buffers are caller-provided according to getnameinfo contract.
     let serv_truncated = unsafe {
-        match write_c_buffer(serv, servlen, &serv_text, repair) {
+        match write_c_buffer("getnameinfo", serv, servlen, &serv_text, repair) {
             Ok(truncated) => truncated,
             Err(err) => {
                 record_resolver_stage_outcome(

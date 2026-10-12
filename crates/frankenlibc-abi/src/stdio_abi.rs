@@ -4858,10 +4858,14 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
     };
     let (len, terminated) = unsafe { scan_c_str_len(s, bound) };
     if !terminated && repair {
-        global_healing_policy().record(&HealingAction::TruncateWithNull {
-            requested: bound.unwrap_or(len).saturating_add(1),
-            truncated: len,
-        });
+        global_healing_policy().record(
+            "stdio",
+            "fputs",
+            &HealingAction::TruncateWithNull {
+                requested: bound.unwrap_or(len).saturating_add(1),
+                truncated: len,
+            },
+        );
     }
 
     let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
@@ -6115,10 +6119,14 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
     let (len, terminated) = unsafe { scan_c_str_len(s, None) };
     if !terminated && repair {
-        global_healing_policy().record(&HealingAction::TruncateWithNull {
-            requested: len.saturating_add(1),
-            truncated: len,
-        });
+        global_healing_policy().record(
+            "stdio",
+            "puts",
+            &HealingAction::TruncateWithNull {
+                requested: len.saturating_add(1),
+                truncated: len,
+            },
+        );
     }
 
     // POSIX: puts writes s followed by a newline to stdout.
@@ -6479,8 +6487,13 @@ impl Drop for ScratchVec {
 /// For callers with no printf-style result (err/warn, syslog, argp,
 /// setproctitle): a render failure is dropped here, since leaving it armed would
 /// fail the next fast-path printf on this thread, which never renders.
-pub(crate) unsafe fn render_printf(fmt: &[u8], args: *const u64, max_args: usize) -> Vec<u8> {
-    let out = unsafe { render_printf_impl(fmt, args, max_args, false) };
+pub(crate) unsafe fn render_printf(
+    symbol: &'static str,
+    fmt: &[u8],
+    args: *const u64,
+    max_args: usize,
+) -> Vec<u8> {
+    let out = unsafe { render_printf_impl(symbol, fmt, args, max_args, false) };
     let _ = take_render_failure();
     out
 }
@@ -6501,6 +6514,7 @@ pub(crate) fn take_render_failure() -> Option<c_int> {
 /// printf), not bytes, so the multibyte truncation/padding is computed in
 /// wide-character units here.
 pub(crate) unsafe fn render_wprintf(
+    symbol: &'static str,
     segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
     args: *const u64,
     max_args: usize,
@@ -6511,10 +6525,11 @@ pub(crate) unsafe fn render_wprintf(
     // returns to the TLS pool on drop — every wide-printf caller below only reads
     // it by reference, so keeping it pooled saves a 256-byte alloc/free per call
     // (the narrow snprintf path already pools; this brings the wide family to parity).
-    unsafe { render_segments(segments, args, max_args, true) }
+    unsafe { render_segments(symbol, segments, args, max_args, true) }
 }
 
 unsafe fn render_printf_impl(
+    symbol: &'static str,
     fmt: &[u8],
     args: *const u64,
     max_args: usize,
@@ -6524,7 +6539,7 @@ unsafe fn render_printf_impl(
     // that already parsed the format (snprintf et al. parse it for arg counting)
     // can call render_segments directly and skip this redundant second parse.
     let segments = parse_format_string(fmt);
-    unsafe { render_segments(&segments, args, max_args, wide_output).into_vec() }
+    unsafe { render_segments(symbol, &segments, args, max_args, wide_output).into_vec() }
 }
 
 /// Append `src`, keeping a SHORT append out of the interposed `memcpy`.
@@ -6588,6 +6603,7 @@ fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
 /// `FormatSegments` they parsed for argument counting instead of re-parsing the
 /// format string a second time on every call.
 pub(crate) unsafe fn render_segments(
+    symbol: &'static str,
     segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
     args: *const u64,
     max_args: usize,
@@ -6828,7 +6844,11 @@ pub(crate) unsafe fn render_segments(
                                     && rem < size
                                 {
                                     should_write = false;
-                                    frankenlibc_membrane::heal::global_healing_policy().record(&frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault);
+                                    frankenlibc_membrane::heal::global_healing_policy().record(
+                                        "stdio",
+                                        symbol,
+                                        &frankenlibc_membrane::heal::HealingAction::ReturnSafeDefault,
+                                    );
                                 }
                                 // No `else` branch: untracked allocations
                                 // are not evidence of danger. (bd-xx2j1)
@@ -7032,6 +7052,7 @@ pub(crate) unsafe fn render_segments(
 /// `args` must point to at least `extract_count` extracted argument slots, and a
 /// bare-`%s` argument must be a valid NUL-terminated string per the C contract.
 unsafe fn bare_s_or_render<'a>(
+    symbol: &'static str,
     fmt_bytes: &'a [u8],
     segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
     args: *const u64,
@@ -7049,7 +7070,7 @@ unsafe fn bare_s_or_render<'a>(
     if !fmt_bytes.contains(&b'%') {
         return fmt_bytes;
     }
-    *hold = Some(unsafe { render_segments(segments, args, extract_count, false) });
+    *hold = Some(unsafe { render_segments(symbol, segments, args, extract_count, false) });
     hold.as_deref().unwrap()
 }
 
@@ -8048,20 +8069,28 @@ unsafe fn direct_snprintf_s(
             has_room = false;
             if size > 0 {
                 adverse = true;
-                global_healing_policy().record(&HealingAction::ClampSize {
-                    requested: size,
-                    clamped: 0,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                );
             }
         } else {
             let max_payload = safe_size.saturating_sub(1);
             if copy_len > max_payload {
                 copy_len = max_payload;
                 adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
-                    truncated: copy_len,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                );
             }
         }
     }
@@ -8877,8 +8906,15 @@ pub unsafe extern "C" fn snprintf(
             ),
             None => {
                 // Reuse the segments parsed above instead of re-parsing in render_printf.
-                let rendered =
-                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let rendered = unsafe {
+                    render_segments(
+                        "snprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
                 let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
                 _rendered_hold = rendered;
                 parts
@@ -8898,20 +8934,28 @@ pub unsafe extern "C" fn snprintf(
             has_room = false;
             if size > 0 {
                 adverse = true;
-                global_healing_policy().record(&HealingAction::ClampSize {
-                    requested: size,
-                    clamped: 0,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                );
             }
         } else {
             let max_payload = safe_size.saturating_sub(1);
             if copy_len > max_payload {
                 copy_len = max_payload;
                 adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
-                    truncated: copy_len,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "snprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                );
             }
         }
     }
@@ -9041,8 +9085,9 @@ pub unsafe extern "C" fn sprintf(
                 bytes.len().saturating_add(1),
             ),
             None => {
-                let rendered =
-                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let rendered = unsafe {
+                    render_segments("sprintf", &segments, arg_buf.as_ptr(), extract_count, false)
+                };
                 let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
                 _rendered_hold = rendered;
                 parts
@@ -9060,19 +9105,27 @@ pub unsafe extern "C" fn sprintf(
         if bound == 0 {
             has_room = false;
             adverse = true;
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: total_len,
-                clamped: 0,
-            });
+            global_healing_policy().record(
+                "stdio",
+                "sprintf",
+                &HealingAction::ClampSize {
+                    requested: total_len,
+                    clamped: 0,
+                },
+            );
         } else {
             let max_payload = bound.saturating_sub(1);
             if copy_len > max_payload {
                 copy_len = max_payload;
                 adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.saturating_add(1),
-                    truncated: copy_len,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "sprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.saturating_add(1),
+                        truncated: copy_len,
+                    },
+                );
             }
         }
     }
@@ -9184,6 +9237,7 @@ pub unsafe extern "C-unwind" fn fprintf(
         Some(DirectPrintfPayload::String(bytes)) => bytes,
         _ => unsafe {
             bare_s_or_render(
+                "fprintf",
                 fmt_bytes,
                 &segments,
                 arg_buf.as_ptr(),
@@ -9422,6 +9476,7 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
         Some(DirectPrintfPayload::String(bytes)) => bytes,
         _ => unsafe {
             bare_s_or_render(
+                "printf",
                 fmt_bytes,
                 &segments,
                 arg_buf.as_ptr(),
@@ -9636,6 +9691,7 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     let mut _bare_hold = None;
     let bytes = unsafe {
         bare_s_or_render(
+            "dprintf",
             fmt_bytes,
             &segments,
             arg_buf.as_ptr(),
@@ -9689,6 +9745,7 @@ pub unsafe extern "C" fn asprintf(
     let mut _bare_hold = None;
     let bytes = unsafe {
         bare_s_or_render(
+            "asprintf",
             fmt_bytes,
             &segments,
             arg_buf.as_ptr(),
@@ -10108,7 +10165,11 @@ pub(crate) fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
 
 /// Convenience: parse a format string, extract args from va_list, and render to a String.
 /// Used by `error()`, `err()`, `warn()`, and related functions.
-pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> String {
+pub(crate) unsafe fn vprintf_extract_and_render(
+    symbol: &'static str,
+    fmt: &str,
+    ap: *mut c_void,
+) -> String {
     let segments = parse_format_string(fmt.as_bytes());
     let needed = core_count_printf_args(&segments);
     let extract = std::cmp::min(needed, MAX_VA_ARGS);
@@ -10117,7 +10178,7 @@ pub(crate) unsafe fn vprintf_extract_and_render(fmt: &str, ap: *mut c_void) -> S
         unsafe { vprintf_extract_args(&segments, ap, &mut arg_buf, extract) };
     }
     // Reuse the segments parsed above instead of re-parsing in render_printf.
-    let rendered = unsafe { render_segments(&segments, arg_buf.as_ptr(), extract, false) };
+    let rendered = unsafe { render_segments(symbol, &segments, arg_buf.as_ptr(), extract, false) };
     let _ = take_render_failure(); // no printf-style result to fail (error()).
     String::from_utf8_lossy(&rendered).into_owned()
 }
@@ -10299,8 +10360,15 @@ pub unsafe extern "C" fn vsnprintf(
             ),
             None => {
                 // Reuse the segments parsed above instead of re-parsing in render_printf.
-                let rendered =
-                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let rendered = unsafe {
+                    render_segments(
+                        "vsnprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
                 let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
                 _rendered_hold = rendered;
                 parts
@@ -10319,20 +10387,28 @@ pub unsafe extern "C" fn vsnprintf(
             has_room = false;
             if size > 0 {
                 adverse = true;
-                global_healing_policy().record(&HealingAction::ClampSize {
-                    requested: size,
-                    clamped: 0,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "vsnprintf",
+                    &HealingAction::ClampSize {
+                        requested: size,
+                        clamped: 0,
+                    },
+                );
             }
         } else {
             let max_payload = safe_size.saturating_sub(1);
             if copy_len > max_payload {
                 copy_len = max_payload;
                 adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
-                    truncated: copy_len,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "vsnprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.min(size.saturating_sub(1)).saturating_add(1),
+                        truncated: copy_len,
+                    },
+                );
             }
         }
     }
@@ -10433,8 +10509,15 @@ pub unsafe extern "C" fn vsprintf(
                 bytes.len().saturating_add(1),
             ),
             None => {
-                let rendered =
-                    unsafe { render_segments(&segments, arg_buf.as_ptr(), extract_count, false) };
+                let rendered = unsafe {
+                    render_segments(
+                        "vsprintf",
+                        &segments,
+                        arg_buf.as_ptr(),
+                        extract_count,
+                        false,
+                    )
+                };
                 let parts = (rendered.as_ptr(), rendered.len(), false, rendered.len());
                 _rendered_hold = rendered;
                 parts
@@ -10451,19 +10534,27 @@ pub unsafe extern "C" fn vsprintf(
         if bound == 0 {
             has_room = false;
             adverse = true;
-            global_healing_policy().record(&HealingAction::ClampSize {
-                requested: total_len,
-                clamped: 0,
-            });
+            global_healing_policy().record(
+                "stdio",
+                "vsprintf",
+                &HealingAction::ClampSize {
+                    requested: total_len,
+                    clamped: 0,
+                },
+            );
         } else {
             let max_payload = bound.saturating_sub(1);
             if copy_len > max_payload {
                 copy_len = max_payload;
                 adverse = true;
-                global_healing_policy().record(&HealingAction::TruncateWithNull {
-                    requested: total_len.saturating_add(1),
-                    truncated: copy_len,
-                });
+                global_healing_policy().record(
+                    "stdio",
+                    "vsprintf",
+                    &HealingAction::TruncateWithNull {
+                        requested: total_len.saturating_add(1),
+                        truncated: copy_len,
+                    },
+                );
             }
         }
     }
@@ -10573,6 +10664,7 @@ pub unsafe extern "C-unwind" fn vfprintf(
         Some(DirectPrintfPayload::String(bytes)) => bytes,
         _ => unsafe {
             bare_s_or_render(
+                "vfprintf",
                 fmt_bytes,
                 &segments,
                 arg_buf.as_ptr(),
@@ -10779,6 +10871,7 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
         Some(DirectPrintfPayload::String(bytes)) => bytes,
         _ => unsafe {
             bare_s_or_render(
+                "vprintf",
                 fmt_bytes,
                 &segments,
                 arg_buf.as_ptr(),
@@ -10965,6 +11058,7 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
     let mut _bare_hold = None;
     let bytes = unsafe {
         bare_s_or_render(
+            "vdprintf",
             fmt_bytes,
             &segments,
             arg_buf.as_ptr(),
@@ -11033,6 +11127,7 @@ pub unsafe extern "C" fn vasprintf(
     let mut _bare_hold = None;
     let bytes = unsafe {
         bare_s_or_render(
+            "vasprintf",
             fmt_bytes,
             &segments,
             arg_buf.as_ptr(),

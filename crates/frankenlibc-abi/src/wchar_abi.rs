@@ -24,11 +24,15 @@ fn repair_enabled(heals_enabled: bool, action: MembraneAction) -> bool {
     heals_enabled || matches!(action, MembraneAction::Repair(_))
 }
 
-fn record_truncation(requested: usize, truncated: usize) {
-    global_healing_policy().record(&HealingAction::TruncateWithNull {
-        requested,
-        truncated,
-    });
+fn record_truncation(symbol: &'static str, requested: usize, truncated: usize) {
+    global_healing_policy().record(
+        "wide_string",
+        symbol,
+        &HealingAction::TruncateWithNull {
+            requested,
+            truncated,
+        },
+    );
 }
 
 /// Convert byte count to wchar count (assuming 4-byte wchar_t).
@@ -661,7 +665,7 @@ unsafe fn wcslen_validating(s: *const u32) -> usize {
             requested: limit.saturating_add(1),
             truncated: limit,
         };
-        global_healing_policy().record(&action);
+        global_healing_policy().record("wide_string", "wcslen", &action);
         runtime_policy::observe(
             ApiFamily::StringMemory,
             decision.profile,
@@ -739,7 +743,7 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
             let requested = src_len.saturating_add(1);
             match dst_bound {
                 Some(0) => {
-                    record_truncation(requested, 0);
+                    record_truncation("wcscpy", requested, 0);
                     (0, true)
                 }
                 Some(limit) => {
@@ -751,7 +755,7 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation(requested, copy_payload);
+                        record_truncation("wcscpy", requested, copy_payload);
                     }
                     (copy_payload.saturating_add(1), truncated)
                 }
@@ -762,7 +766,7 @@ unsafe fn wcscpy_validating(dst: *mut u32, src: *const u32) -> *mut u32 {
                         }
                         *dst.add(src_len) = 0;
                         if !src_terminated {
-                            record_truncation(requested, src_len);
+                            record_truncation("wcscpy", requested, src_len);
                         }
                         (requested, !src_terminated)
                     } else {
@@ -874,7 +878,7 @@ pub unsafe extern "C" fn wcsncpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         // Check if we were clamped by dst size
         if repair && dst_bound.is_some() && n > max_copy {
             adverse = true;
-            record_truncation(n, max_copy);
+            record_truncation("wcsncpy", n, max_copy);
         }
 
         // Pad with NULs
@@ -951,13 +955,13 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(src_len.saturating_add(1), 0);
+                    record_truncation("wcscat", src_len.saturating_add(1), 0);
                     (0, true)
                 }
                 Some(limit) => {
                     if !dst_terminated {
                         *dst.add(limit.saturating_sub(1)) = 0;
-                        record_truncation(limit, limit.saturating_sub(1));
+                        record_truncation("wcscat", limit, limit.saturating_sub(1));
                         (limit, true)
                     } else {
                         let available = limit.saturating_sub(dst_len.saturating_add(1));
@@ -968,7 +972,7 @@ pub unsafe extern "C" fn wcscat(dst: *mut u32, src: *const u32) -> *mut u32 {
                         *dst.add(dst_len.saturating_add(copy_payload)) = 0;
                         let truncated = !src_terminated || copy_payload < src_len;
                         if truncated {
-                            record_truncation(src_len.saturating_add(1), copy_payload);
+                            record_truncation("wcscat", src_len.saturating_add(1), copy_payload);
                         }
                         (
                             dst_len.saturating_add(copy_payload).saturating_add(1),
@@ -1346,7 +1350,7 @@ unsafe fn wcscmp_validating(s1: *const u32, s2: *const u32) -> c_int {
     };
 
     if adverse {
-        record_truncation(cmp_bound.unwrap_or(span), span);
+        record_truncation("wcscmp", cmp_bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1429,7 +1433,7 @@ unsafe fn wcsncmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
     };
 
     if adverse {
-        record_truncation(cmp_bound.unwrap_or(span), span);
+        record_truncation("wcsncmp", cmp_bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1894,7 +1898,7 @@ unsafe fn wcschr_validating(s: *const u32, c: u32) -> *mut u32 {
     };
 
     if adverse {
-        record_truncation(bound.unwrap_or(span), span);
+        record_truncation("wcschr", bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -1989,7 +1993,7 @@ unsafe fn wcsrchr_validating(s: *const u32, c: u32) -> *mut u32 {
         }
     };
     if adverse {
-        record_truncation(bound.unwrap_or(span), span);
+        record_truncation("wcsrchr", bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -2203,6 +2207,7 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
 
     if adverse {
         record_truncation(
+            "wcsstr",
             hay_bound
                 .unwrap_or(work)
                 .saturating_add(needle_bound.unwrap_or(0)),
@@ -2277,7 +2282,7 @@ pub unsafe extern "C" fn wmemcpy(dst: *mut u32, src: *const u32, n: usize) -> *m
         let max_dst = dst_bound.unwrap_or(usize::MAX);
         let limit = max_src.min(max_dst);
         if n > limit {
-            record_truncation(n, limit);
+            record_truncation("wmemcpy", n, limit);
             (limit, true)
         } else {
             (n, false)
@@ -2356,7 +2361,7 @@ pub unsafe extern "C" fn wmemmove(dst: *mut u32, src: *const u32, n: usize) -> *
         if n > limit {
             copy_len = limit;
             clamped = true;
-            record_truncation(n, limit);
+            record_truncation("wmemmove", n, limit);
         }
     }
 
@@ -2427,7 +2432,7 @@ pub unsafe extern "C" fn wmemset(dst: *mut u32, c: u32, n: usize) -> *mut u32 {
         if n > dst_rem {
             fill_len = dst_rem;
             clamped = true;
-            record_truncation(n, dst_rem);
+            record_truncation("wmemset", n, dst_rem);
         }
     }
 
@@ -2520,7 +2525,7 @@ unsafe fn wmemcmp_validating(s1: *const u32, s2: *const u32, n: usize) -> c_int 
         if n > limit {
             cmp_len = limit;
             clamped = true;
-            record_truncation(n, limit);
+            record_truncation("wmemcmp", n, limit);
         }
     }
 
@@ -2611,7 +2616,7 @@ unsafe fn wmemchr_validating(s: *const u32, c: u32, n: usize) -> *mut u32 {
         if n > s_rem {
             scan_len = s_rem;
             clamped = true;
-            record_truncation(n, s_rem);
+            record_truncation("wmemchr", n, s_rem);
         }
     }
 
@@ -2695,7 +2700,7 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(copy_len.saturating_add(1), 0);
+                    record_truncation("wcsncat", copy_len.saturating_add(1), 0);
                     (0, true)
                 }
                 Some(limit) => {
@@ -2707,7 +2712,7 @@ pub unsafe extern "C" fn wcsncat(dst: *mut u32, src: *const u32, n: usize) -> *m
                     *dst.add(dst_len.saturating_add(actual_copy)) = 0;
                     let truncated = !src_terminated || actual_copy < copy_len;
                     if truncated {
-                        record_truncation(copy_len.saturating_add(1), actual_copy);
+                        record_truncation("wcsncat", copy_len.saturating_add(1), actual_copy);
                     }
                     (
                         dst_len.saturating_add(actual_copy).saturating_add(1),
@@ -3362,6 +3367,7 @@ pub unsafe extern "C" fn wcstok(
 
 #[allow(dead_code)]
 fn maybe_clamp_wchars(
+    symbol: &'static str,
     requested: usize, // elements
     src_addr: Option<usize>,
     dst_addr: Option<usize>,
@@ -3379,7 +3385,7 @@ fn maybe_clamp_wchars(
 
     match action {
         HealingAction::ClampSize { clamped, .. } => {
-            global_healing_policy().record(&action);
+            global_healing_policy().record("wide_string", symbol, &action);
             (bytes_to_wchars(clamped), true)
         }
         _ => (requested, false),
@@ -4134,7 +4140,7 @@ unsafe fn wcsnlen_validating(s: *const libc::wchar_t, maxlen: usize) -> usize {
     {
         let bounded = bytes_to_wchars(bytes).min(maxlen);
         if bounded < maxlen {
-            record_truncation(maxlen, bounded);
+            record_truncation("wcsnlen", maxlen, bounded);
         }
         limit = bounded;
     }
@@ -6305,8 +6311,9 @@ pub unsafe extern "C" fn swprintf(
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("swprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -6337,8 +6344,9 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("wprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -6376,8 +6384,9 @@ pub unsafe extern "C" fn fwprintf(
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     extract_wprintf_args!(&segments, &mut args, &mut arg_buf, extract_count);
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("fwprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -6416,8 +6425,9 @@ pub unsafe extern "C" fn vswprintf(
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("vswprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -6443,8 +6453,9 @@ pub unsafe extern "C" fn vwprintf(
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("vwprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -6481,8 +6492,9 @@ pub unsafe extern "C" fn vfwprintf(
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
     unsafe { super::stdio_abi::vprintf_extract_args(&segments, ap, &mut arg_buf, extract_count) };
 
-    let rendered =
-        unsafe { super::stdio_abi::render_wprintf(&segments, arg_buf.as_ptr(), extract_count) };
+    let rendered = unsafe {
+        super::stdio_abi::render_wprintf("vfwprintf", &segments, arg_buf.as_ptr(), extract_count)
+    };
     if let Some(errno) = super::stdio_abi::take_render_failure() {
         unsafe { set_abi_errno(errno) };
         return -1;
@@ -7443,7 +7455,7 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
         if repair {
             match dst_bound {
                 Some(0) => {
-                    record_truncation(requested, 0);
+                    record_truncation("wcpcpy", requested, 0);
                     (0usize, true)
                 }
                 Some(limit) => {
@@ -7455,7 +7467,7 @@ pub unsafe extern "C" fn wcpcpy(dst: *mut u32, src: *const u32) -> *mut u32 {
                     *dst.add(copy_payload) = 0;
                     let truncated = !src_terminated || copy_payload < src_len;
                     if truncated {
-                        record_truncation(requested, copy_payload);
+                        record_truncation("wcpcpy", requested, copy_payload);
                     }
                     (copy_payload, truncated)
                 }
@@ -7708,7 +7720,7 @@ pub unsafe extern "C" fn wcscasecmp(s1: *const u32, s2: *const u32) -> c_int {
     };
 
     if adverse {
-        record_truncation(cmp_bound.unwrap_or(span), span);
+        record_truncation("wcscasecmp", cmp_bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -7779,7 +7791,7 @@ pub unsafe extern "C" fn wcsncasecmp(s1: *const u32, s2: *const u32, n: usize) -
     };
 
     if adverse {
-        record_truncation(cmp_bound.unwrap_or(span), span);
+        record_truncation("wcsncasecmp", cmp_bound.unwrap_or(span), span);
     }
     runtime_policy::observe(
         ApiFamily::StringMemory,
@@ -7843,7 +7855,7 @@ pub unsafe extern "C" fn wmemrchr(s: *const u32, c: u32, n: usize) -> *mut u32 {
         if n > s_rem {
             scan_len = s_rem;
             clamped = true;
-            record_truncation(n, s_rem);
+            record_truncation("wmemrchr", n, s_rem);
         }
     }
 

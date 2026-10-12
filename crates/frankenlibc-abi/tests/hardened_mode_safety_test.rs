@@ -304,7 +304,7 @@ fn safety_healing_policy_counters_monotonic() {
     ];
 
     for action in &actions {
-        policy.record(action);
+        policy.record("test", "hardened_mode_safety", action);
     }
 
     // All counters should have been incremented exactly once
@@ -331,7 +331,7 @@ fn safety_recording_none_does_not_increment() {
 
     // Recording HealingAction::None should NOT increment counters
     for _ in 0..100 {
-        policy.record(&HealingAction::None);
+        policy.record("test", "hardened_mode_safety", &HealingAction::None);
     }
 
     assert_eq!(
@@ -359,7 +359,11 @@ fn safety_concurrent_recording_preserves_count_integrity() {
         handles.push(thread::spawn(move || {
             barrier.wait();
             for _ in 0..250 {
-                policy.record(&HealingAction::ReturnSafeDefault);
+                policy.record(
+                    "test",
+                    "hardened_mode_safety",
+                    &HealingAction::ReturnSafeDefault,
+                );
             }
         }));
     }

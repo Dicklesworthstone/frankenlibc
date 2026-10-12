@@ -218,7 +218,7 @@ impl HealingPolicy {
     /// frame `F` is preserved.
     /// @separation-frame: `F` (non-counter memory is untouched).
     /// @separation-alias: `repair_apply`.
-    pub fn record(&self, action: &HealingAction) {
+    pub fn record(&self, api_family: &'static str, symbol: &'static str, action: &HealingAction) {
         if action.is_heal() {
             self.total_heals.fetch_add(1, Ordering::Relaxed);
         }
@@ -248,7 +248,7 @@ impl HealingPolicy {
             HealingAction::None => {}
         }
 
-        self.emit_healing_log(action);
+        self.emit_healing_log(api_family, symbol, action);
     }
 
     /// Decide healing for a copy/memory operation with bounds.
@@ -296,7 +296,12 @@ impl HealingPolicy {
         }
     }
 
-    fn emit_healing_log(&self, action: &HealingAction) {
+    fn emit_healing_log(
+        &self,
+        api_family: &'static str,
+        symbol: &'static str,
+        action: &HealingAction,
+    ) {
         if !action.is_heal() || self.healing_logging.load(Ordering::Relaxed) == 1 {
             return;
         }
@@ -326,15 +331,15 @@ impl HealingPolicy {
             action,
             trace_id.clone(),
             decision_id,
-            "membrane-heal",
-            "",
+            api_family,
+            symbol,
         );
 
         let line = format!(
             "{{\"event\":\"repair\",\"trace_id\":\"{trace_id}\",\"decision_id\":{},\
 \"schema_version\":\"{}\",\"pid\":{},\"bead_id\":\"{HEALING_BEAD_ID}\",\
-\"runtime_mode\":\"{}\",\"level\":\"{level}\",\"api_family\":\"membrane-heal\",\
-\"symbol\":\"unknown\",\"action\":\"Repair\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
+\"runtime_mode\":\"{}\",\"level\":\"{level}\",\"api_family\":\"{api_family}\",\
+\"symbol\":\"{symbol}\",\"action\":\"Repair\",\"decision_path\":\"record\",\"outcome\":\"repair\",\
 \"healing_action\":\"{}\",\"escalated\":{escalated},\"details\":{}}}",
             decision_id.as_u64(),
             MEMBRANE_SCHEMA_VERSION,
@@ -574,6 +579,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    fn record_test(policy: &HealingPolicy, action: &HealingAction) {
+        policy.record("test", "healing_policy", action);
+    }
+
     /// The FRANKENLIBC_LOG sink appends whole newline-terminated lines and
     /// keeps what the file already held (bd-rc0923-epic-eeuy4f.16).
     #[test]
@@ -638,12 +647,15 @@ mod tests {
     #[test]
     fn record_increments_counters() {
         let policy = HealingPolicy::new();
-        policy.record(&HealingAction::IgnoreDoubleFree);
-        policy.record(&HealingAction::IgnoreDoubleFree);
-        policy.record(&HealingAction::ClampSize {
-            requested: 10,
-            clamped: 5,
-        });
+        record_test(&policy, &HealingAction::IgnoreDoubleFree);
+        record_test(&policy, &HealingAction::IgnoreDoubleFree);
+        record_test(
+            &policy,
+            &HealingAction::ClampSize {
+                requested: 10,
+                clamped: 5,
+            },
+        );
 
         assert_eq!(policy.total_heals.load(Ordering::Relaxed), 3);
         assert_eq!(policy.double_frees.load(Ordering::Relaxed), 2);
@@ -693,19 +705,23 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::ClampSize {
-            requested: 32,
-            clamped: 8,
-        });
+        policy.record(
+            "string_memory",
+            "memcpy",
+            &HealingAction::ClampSize {
+                requested: 32,
+                clamped: 8,
+            },
+        );
 
         let jsonl = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(jsonl.trim()).expect("row must be valid JSON");
         assert_eq!(row["bead_id"], HEALING_BEAD_ID);
         assert_eq!(row["event"], "repair");
         assert_eq!(row["action"], "Repair");
-        assert_eq!(row["symbol"], "unknown");
+        assert_eq!(row["symbol"], "memcpy");
         assert!(row["pid"].as_u64().is_some_and(|pid| pid > 0));
-        assert_eq!(row["api_family"], "membrane-heal");
+        assert_eq!(row["api_family"], "string_memory");
         assert_eq!(row["decision_path"], "record");
         assert_eq!(row["outcome"], "repair");
         assert_eq!(row["healing_action"], "ClampSize");
@@ -727,7 +743,7 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::ReturnSafeDefault);
+        record_test(&policy, &HealingAction::ReturnSafeDefault);
 
         let jsonl = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(jsonl.trim()).expect("row must be valid JSON");
@@ -742,7 +758,7 @@ mod tests {
         policy.set_healing_logging_enabled(true);
         policy.clear_healing_logs();
 
-        policy.record(&HealingAction::None);
+        record_test(&policy, &HealingAction::None);
 
         assert!(
             policy.export_healing_log_jsonl().trim().is_empty(),
@@ -757,7 +773,7 @@ mod tests {
         policy.clear_healing_logs();
 
         for i in 0..(HEALING_LOG_CAPACITY + 32) {
-            policy.record(&HealingAction::ReallocAsMalloc { size: i });
+            record_test(&policy, &HealingAction::ReallocAsMalloc { size: i });
         }
 
         let row_count = policy
@@ -889,7 +905,7 @@ mod tests {
         policy.set_healing_logging_enabled(false); // avoid log noise
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         // Each counter should be exactly 1
@@ -906,7 +922,7 @@ mod tests {
 
         // HealingAction::None should NOT increment any counter
         let before_total = policy.total_heals.load(Ordering::Relaxed);
-        policy.record(&HealingAction::None);
+        record_test(&policy, &HealingAction::None);
         assert_eq!(
             policy.total_heals.load(Ordering::Relaxed),
             before_total,
@@ -944,7 +960,7 @@ mod tests {
         ];
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         let jsonl = policy.export_healing_log_jsonl();
@@ -991,7 +1007,7 @@ mod tests {
         ];
 
         for action in &actions {
-            policy.record(action);
+            record_test(&policy, action);
         }
 
         let rows = policy
@@ -1003,7 +1019,7 @@ mod tests {
         assert_eq!(rows.len(), actions.len());
         for row in rows {
             assert_eq!(row["outcome"], "repair");
-            assert_eq!(row["api_family"], "membrane-heal");
+            assert_eq!(row["api_family"], "test");
             assert!(
                 row["healing_action"]
                     .as_str()
@@ -1031,8 +1047,8 @@ mod tests {
         {
             let _guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
             let logs = policy.healing_logs.lock();
-            policy.record(&HealingAction::IgnoreDoubleFree);
-            policy.record(&HealingAction::None);
+            record_test(&policy, &HealingAction::IgnoreDoubleFree);
+            record_test(&policy, &HealingAction::None);
             assert_eq!(policy.total_heals.load(Ordering::Relaxed), 1);
             assert_eq!(policy.double_frees.load(Ordering::Relaxed), 1);
             assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
@@ -1041,7 +1057,7 @@ mod tests {
             assert!(policy.export_healing_log_jsonl().is_empty());
             policy.clear_healing_logs();
         }
-        policy.record(&HealingAction::ReturnSafeDefault);
+        record_test(&policy, &HealingAction::ReturnSafeDefault);
         let rows = policy.export_healing_log_jsonl();
         let row: Value = serde_json::from_str(&rows).unwrap();
         assert_eq!(row["healing_action"], "ReturnSafeDefault");
@@ -1055,8 +1071,8 @@ mod tests {
         first.set_healing_logging_enabled(true);
         second.set_healing_logging_enabled(true);
         let guard = LogReentryGuard::enter(&EMITTING_HEALING_LOG).unwrap();
-        first.record(&HealingAction::IgnoreDoubleFree);
-        second.record(&HealingAction::IgnoreForeignFree);
+        record_test(&first, &HealingAction::IgnoreDoubleFree);
+        record_test(&second, &HealingAction::IgnoreForeignFree);
         assert!(LogReentryGuard::enter(&EMITTING_HEALING_LOG).is_none());
         assert_eq!(first.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
         assert_eq!(second.healing_log_reentry_drops.load(Ordering::Relaxed), 1);
@@ -1083,7 +1099,7 @@ mod tests {
         let rows = std::thread::spawn(|| {
             let policy = HealingPolicy::new();
             policy.set_healing_logging_enabled(true);
-            policy.record(&HealingAction::IgnoreForeignFree);
+            record_test(&policy, &HealingAction::IgnoreForeignFree);
             assert_eq!(policy.healing_log_reentry_drops.load(Ordering::Relaxed), 0);
             policy.export_healing_log_jsonl()
         })

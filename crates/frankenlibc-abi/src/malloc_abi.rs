@@ -5735,7 +5735,7 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
         // ARENA blocks (the log ring's buffer, made by an earlier hardened
         // call) to host realloc/free -- "corrupted size vs. prev_size".
         drop(reentry_guard);
-        global_healing_policy().record(&action);
+        global_healing_policy().record("allocator", "free", &action);
     }
 }
 
@@ -6160,7 +6160,11 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
             }
             // Outside the guard: the healing log allocates (see `free`).
             drop(reentry_guard);
-            global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
+            global_healing_policy().record(
+                "allocator",
+                "realloc",
+                &HealingAction::ReallocAsMalloc { size },
+            );
             return out;
         }
         Some(slot) if slot.user_base == old_addr => slot.user_size,
@@ -6225,7 +6229,11 @@ pub unsafe extern "C" fn realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
                 // This repair is a new allocation, not allocator recursion.
                 // Let malloc retain its normal membrane ownership and policy.
                 drop(reentry_guard);
-                global_healing_policy().record(&HealingAction::ReallocAsMalloc { size });
+                global_healing_policy().record(
+                    "allocator",
+                    "realloc",
+                    &HealingAction::ReallocAsMalloc { size },
+                );
                 return unsafe { malloc(size) };
             }
             // Strict mode: cannot determine old size; treat as malloc

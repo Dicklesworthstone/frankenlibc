@@ -256,9 +256,36 @@ if fixture_name == "fixture_hardened_first_heal":
             "fork child kept the parent's inherited runtime-log descriptor "
             "instead of reopening the rotated path"
         )
-    repair_count = sum(entry.event == "repair" for entry in entries)
-    if mode == "hardened" and repair_count == 0:
-        raise SystemExit("hardened runtime log is missing the induced repair")
+    all_entries = entries + before_entries
+    invalid_repair_symbols = [
+        entry
+        for entry in all_entries
+        if entry.event == "repair"
+        and (
+            not isinstance(entry.raw.get("symbol"), str)
+            or not entry.raw["symbol"].strip()
+            or entry.raw["symbol"].strip().casefold() == "unknown"
+        )
+    ]
+    if invalid_repair_symbols:
+        rendered = ", ".join(
+            f"line {entry.source_line}: {entry.raw.get('symbol')!r}"
+            for entry in invalid_repair_symbols
+        )
+        raise SystemExit(f"runtime logs contain invalid repair symbols: {rendered}")
+    repair_entries = [entry for entry in entries if entry.event == "repair"]
+    repair_count = len(repair_entries)
+    if mode == "hardened" and not any(
+        entry.call == "memcpy"
+        and entry.raw.get("api_family") == "string_memory"
+        and entry.action == "ClampSize"
+        and entry.runtime_mode == "hardened"
+        for entry in repair_entries
+    ):
+        raise SystemExit(
+            "hardened runtime log is missing the induced "
+            "memcpy/string_memory/ClampSize repair"
+        )
     if mode == "strict" and repair_count != 0:
         raise SystemExit(f"strict runtime log unexpectedly contains {repair_count} repair rows")
 PY
