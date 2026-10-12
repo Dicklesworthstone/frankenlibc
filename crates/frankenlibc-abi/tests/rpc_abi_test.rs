@@ -21,6 +21,49 @@ unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
 }
 
 // ===========================================================================
+// Unsupported RPC status contracts
+// ===========================================================================
+
+#[test]
+fn unsupported_rpc_status_apis_return_failure_not_success() {
+    assert_eq!(
+        unsafe { _authenticate(std::ptr::null_mut(), std::ptr::null_mut()) },
+        7,
+        "_authenticate must return AUTH_FAILED"
+    );
+    assert_eq!(
+        unsafe {
+            callrpc(
+                std::ptr::null(),
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        17,
+        "callrpc must return RPC_UNKNOWNPROTO"
+    );
+    assert_eq!(
+        unsafe {
+            registerrpc(
+                0,
+                0,
+                0,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        -1,
+        "registerrpc must return its documented failure sentinel"
+    );
+}
+
+// ===========================================================================
 // DES crypto stubs
 // ===========================================================================
 

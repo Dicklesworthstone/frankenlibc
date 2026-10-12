@@ -54,7 +54,8 @@ pub struct Timeval {
 // ---------------------------------------------------------------------------
 // Sun RPC is a legacy subsystem. Instead of delegating to host glibc via
 // dlsym(RTLD_NEXT), we return deterministic safe defaults:
-//   - c_int → 0 (FALSE / failure)
+//   - boolean c_int → 0 (FALSE / failure)
+//   - status c_int → the API's explicit failure sentinel
 //   - *mut c_void → null (handle creation failed)
 //   - () → no-op
 //   - *mut c_char → null (no error string)
@@ -65,14 +66,24 @@ pub struct Timeval {
 ///
 /// Sun RPC is a legacy subsystem. Rather than delegating to host glibc,
 /// we return deterministic safe defaults directly:
-///   - c_int → 0 (FALSE / failure)
+///   - boolean c_int → 0 (FALSE / failure)
+///   - status c_int → the API's explicit failure sentinel
 ///   - *mut c_void → null (handle creation failed)
 ///   - () → no-op
 ///   - *mut c_char → null (no error string)
 ///   - c_ulong → 0
 ///   - u16 → 0
 macro_rules! rpc_stub {
-    // Pattern 1: function returning c_int
+    // Pattern 1: function returning an explicit c_int failure sentinel.
+    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int = $failure:expr) => {
+        abi_stub_contract!($name);
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
+            $( let _ = $pname; )*
+            $failure
+        }
+    };
+    // Pattern 2: boolean-style function returning FALSE.
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -81,7 +92,7 @@ macro_rules! rpc_stub {
             0
         }
     };
-    // Pattern 2: function returning *mut c_void
+    // Pattern 3: function returning *mut c_void
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_void) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -90,7 +101,7 @@ macro_rules! rpc_stub {
             std::ptr::null_mut()
         }
     };
-    // Pattern 3: function returning ()
+    // Pattern 4: function returning ()
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> ()) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -98,7 +109,7 @@ macro_rules! rpc_stub {
             $( let _ = $pname; )*
         }
     };
-    // Pattern 4: function returning c_ulong
+    // Pattern 5: function returning c_ulong
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_ulong) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -107,7 +118,7 @@ macro_rules! rpc_stub {
             0
         }
     };
-    // Pattern 5: function returning *mut c_char
+    // Pattern 6: function returning *mut c_char
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_char) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -116,7 +127,7 @@ macro_rules! rpc_stub {
             std::ptr::null_mut()
         }
     };
-    // Pattern 6: function returning u16
+    // Pattern 7: function returning u16
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> u16) => {
         abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2262,7 +2273,7 @@ pub unsafe extern "C" fn authdes_getucred(
     0
 }
 
-rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
+rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int = 7);
 
 // ===========================================================================
 // RPC client creation and error handling (14 symbols)
@@ -2333,7 +2344,7 @@ rpc_stub!(
         in_: *mut c_char,
         outproc: *mut c_void,
         out: *mut c_char,
-    ) -> c_int
+    ) -> c_int = 17
 );
 
 /// Broadcast an RPC call to all hosts on the local network.
@@ -2556,7 +2567,7 @@ rpc_stub!(
         progname: *mut c_void,
         inproc: *mut c_void,
         outproc: *mut c_void,
-    ) -> c_int
+    ) -> c_int = -1
 );
 
 /// Returns the file descriptor table size (same as getdtablesize).
