@@ -50,7 +50,7 @@ pub struct Timeval {
 }
 
 // ---------------------------------------------------------------------------
-// Native safe-default macro for RPC functions
+// Explicit safe-default stub macro for RPC functions
 // ---------------------------------------------------------------------------
 // Sun RPC is a legacy subsystem. Instead of delegating to host glibc via
 // dlsym(RTLD_NEXT), we return deterministic safe defaults:
@@ -61,7 +61,7 @@ pub struct Timeval {
 //   - c_ulong → 0
 //   - u16 → 0
 // This eliminates the last glibc call-through dependency for RPC symbols.
-/// Deterministic safe-default macro for RPC functions.
+/// Generate explicitly annotated deterministic safe-default RPC stubs.
 ///
 /// Sun RPC is a legacy subsystem. Rather than delegating to host glibc,
 /// we return deterministic safe defaults directly:
@@ -71,9 +71,10 @@ pub struct Timeval {
 ///   - *mut c_char → null (no error string)
 ///   - c_ulong → 0
 ///   - u16 → 0
-macro_rules! rpc_native {
+macro_rules! rpc_stub {
     // Pattern 1: function returning c_int
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
             $( let _ = $pname; )*
@@ -82,6 +83,7 @@ macro_rules! rpc_native {
     };
     // Pattern 2: function returning *mut c_void
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_void) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_void {
             $( let _ = $pname; )*
@@ -90,6 +92,7 @@ macro_rules! rpc_native {
     };
     // Pattern 3: function returning ()
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> ()) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) {
             $( let _ = $pname; )*
@@ -97,6 +100,7 @@ macro_rules! rpc_native {
     };
     // Pattern 4: function returning c_ulong
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_ulong) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_ulong {
             $( let _ = $pname; )*
@@ -105,6 +109,7 @@ macro_rules! rpc_native {
     };
     // Pattern 5: function returning *mut c_char
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_char) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_char {
             $( let _ = $pname; )*
@@ -113,6 +118,7 @@ macro_rules! rpc_native {
     };
     // Pattern 6: function returning u16
     ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> u16) => {
+        abi_stub_contract!($name);
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
         pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> u16 {
             $( let _ = $pname; )*
@@ -2198,9 +2204,9 @@ pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> 
 // RPC authentication (7 symbols)
 // ===========================================================================
 
-rpc_native!(authnone_create() -> *mut c_void);
+rpc_stub!(authnone_create() -> *mut c_void);
 
-rpc_native!(
+rpc_stub!(
     authunix_create(
         machname: *mut c_char,
         uid: c_int,
@@ -2210,7 +2216,7 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(authunix_create_default() -> *mut c_void);
+rpc_stub!(authunix_create_default() -> *mut c_void);
 
 /// Create a DES authentication handle. Returns NULL — DES is cryptographically broken.
 ///
@@ -2256,13 +2262,13 @@ pub unsafe extern "C" fn authdes_getucred(
     0
 }
 
-rpc_native!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
+rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int);
 
 // ===========================================================================
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_native!(
+rpc_stub!(
     clnt_create(
         host: *const c_char,
         prog: c_ulong,
@@ -2271,9 +2277,9 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
+rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 
-rpc_native!(
+rpc_stub!(
     clnttcp_create(
         raddr: *mut c_void,
         prog: c_ulong,
@@ -2284,7 +2290,7 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(
+rpc_stub!(
     clntudp_create(
         raddr: *mut c_void,
         prog: c_ulong,
@@ -2294,7 +2300,7 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(
+rpc_stub!(
     clntudp_bufcreate(
         raddr: *mut c_void,
         prog: c_ulong,
@@ -2306,7 +2312,7 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(
+rpc_stub!(
     clntunix_create(
         raddr: *mut c_void,
         prog: c_ulong,
@@ -2317,7 +2323,7 @@ rpc_native!(
     ) -> *mut c_void
 );
 
-rpc_native!(
+rpc_stub!(
     callrpc(
         host: *const c_char,
         prognum: c_ulong,
@@ -2363,7 +2369,7 @@ pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
     let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
 }
 
-rpc_native!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
+rpc_stub!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
 
 /// Print RPC client creation error to stderr. Native implementation.
 /// Reads from thread-local rpc_createerr (via __rpc_thread_createerr).
@@ -2425,7 +2431,7 @@ pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
     })
 }
 
-rpc_native!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
+rpc_stub!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
 
 #[cfg(feature = "owned-tls-cache")]
 static SPCREATEERR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
@@ -2491,7 +2497,7 @@ use frankenlibc_core::rpc::status_message as rpc_errstr;
 // RPC server / SVC (24 symbols)
 // ===========================================================================
 
-rpc_native!(
+rpc_stub!(
     svc_register(
         xprt: *mut c_void,
         prog: c_ulong,
@@ -2501,48 +2507,48 @@ rpc_native!(
     ) -> c_int
 );
 
-rpc_native!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
+rpc_stub!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
 
-rpc_native!(
+rpc_stub!(
     svc_sendreply(xprt: *mut c_void, xdr_results: *mut c_void, xdr_location: *mut c_void) -> c_int
 );
 
-rpc_native!(svc_run() -> ());
-rpc_native!(svc_exit() -> ());
+rpc_stub!(svc_run() -> ());
+rpc_stub!(svc_exit() -> ());
 
-rpc_native!(svc_getreq(rdfds: c_int) -> ());
-rpc_native!(svc_getreqset(readfds: *mut c_void) -> ());
-rpc_native!(svc_getreq_common(fd: c_int) -> ());
-rpc_native!(svc_getreq_poll(pfds: *mut c_void, nfds: c_int) -> ());
+rpc_stub!(svc_getreq(rdfds: c_int) -> ());
+rpc_stub!(svc_getreqset(readfds: *mut c_void) -> ());
+rpc_stub!(svc_getreq_common(fd: c_int) -> ());
+rpc_stub!(svc_getreq_poll(pfds: *mut c_void, nfds: c_int) -> ());
 
 // --- SVC error replies ---
 
-rpc_native!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
-rpc_native!(svcerr_decode(xprt: *mut c_void) -> ());
-rpc_native!(svcerr_noproc(xprt: *mut c_void) -> ());
-rpc_native!(svcerr_noprog(xprt: *mut c_void) -> ());
-rpc_native!(svcerr_progvers(xprt: *mut c_void, low_vers: c_ulong, high_vers: c_ulong) -> ());
-rpc_native!(svcerr_systemerr(xprt: *mut c_void) -> ());
-rpc_native!(svcerr_weakauth(xprt: *mut c_void) -> ());
+rpc_stub!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
+rpc_stub!(svcerr_decode(xprt: *mut c_void) -> ());
+rpc_stub!(svcerr_noproc(xprt: *mut c_void) -> ());
+rpc_stub!(svcerr_noprog(xprt: *mut c_void) -> ());
+rpc_stub!(svcerr_progvers(xprt: *mut c_void, low_vers: c_ulong, high_vers: c_ulong) -> ());
+rpc_stub!(svcerr_systemerr(xprt: *mut c_void) -> ());
+rpc_stub!(svcerr_weakauth(xprt: *mut c_void) -> ());
 
 // --- SVC transport creation ---
 
-rpc_native!(svcraw_create() -> *mut c_void);
-rpc_native!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_native!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_native!(svcudp_create(sock: c_int) -> *mut c_void);
+rpc_stub!(svcraw_create() -> *mut c_void);
+rpc_stub!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_stub!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_stub!(svcudp_create(sock: c_int) -> *mut c_void);
 
-rpc_native!(svcudp_bufcreate(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void);
+rpc_stub!(svcudp_bufcreate(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void);
 
-rpc_native!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
-rpc_native!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_native!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_stub!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
+rpc_stub!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
+rpc_stub!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 
 // ===========================================================================
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
 // ===========================================================================
 
-rpc_native!(
+rpc_stub!(
     registerrpc(
         prognum: c_ulong,
         versnum: c_ulong,
@@ -3015,6 +3021,8 @@ pub unsafe extern "C" fn pmap_rmtcall(
     17 // RPC_UNKNOWNPROTO
 }
 
+abi_stub_contract!(pmap_set);
+
 /// Register an RPC program with portmapper. Returns 0 (FALSE) — no portmapper support.
 ///
 /// # Safety
@@ -3028,6 +3036,8 @@ pub unsafe extern "C" fn pmap_set(
 ) -> c_int {
     0
 }
+
+abi_stub_contract!(pmap_unset);
 
 /// Unregister an RPC program from portmapper. Returns 0 (FALSE) — no portmapper support.
 ///

@@ -65,6 +65,32 @@ fn generate_maintenance_report(output_path: &Path) -> std::process::Output {
         .expect("failed to execute maintenance validator")
 }
 
+#[test]
+fn maintenance_generator_rejects_uncertain_and_upward_only_evidence() {
+    let root = repo_root();
+    let output = Command::new("python3")
+        .args([
+            root.join("scripts/generate_support_matrix_maintenance.py")
+                .to_str()
+                .unwrap(),
+            "--self-test-downgrade-only",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to execute maintenance validator self-test");
+    assert!(
+        output.status.success(),
+        "maintenance validator self-test failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Self-test: downgrade-only evidence: 16 cases passed"),
+        "focused malformed/duplicate/prose/non-promotion/stale/missing/mismatch controls did not run:\n{stdout}"
+    );
+}
+
 fn generate_maintenance_report_with_proof_manifest(
     output_path: &Path,
     proof_manifest_path: &Path,

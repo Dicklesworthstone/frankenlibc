@@ -7094,6 +7094,7 @@ pub unsafe extern "C" fn rcmd_af(
     -1
 }
 // register_printf_function: GNU extension for custom printf formatters — not supported
+abi_stub_contract!(register_printf_function);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_function(
     _spec: c_int,
@@ -7104,12 +7105,14 @@ pub unsafe extern "C" fn register_printf_function(
     -1
 }
 // register_printf_modifier: GNU extension — not supported
+abi_stub_contract!(register_printf_modifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_modifier(_str: *const WcharT) -> c_int {
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
 // register_printf_specifier: GNU extension — not supported
+abi_stub_contract!(register_printf_specifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_specifier(
     _spec: c_int,
@@ -7120,6 +7123,7 @@ pub unsafe extern "C" fn register_printf_specifier(
     -1
 }
 // register_printf_type: GNU extension — not supported
+abi_stub_contract!(register_printf_type);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };

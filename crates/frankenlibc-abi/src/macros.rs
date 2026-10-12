@@ -3,6 +3,19 @@
 //! Provides the `abi_fn!` macro that generates `#[cfg_attr(not(debug_assertions), unsafe(no_mangle))] pub unsafe extern "C" fn`
 //! wrappers with membrane validation hookpoints.
 
+/// Source-level marker for an exported ABI function that is intentionally a
+/// stub rather than an implementation.
+///
+/// The marker expands to no item, data, or executable code. Its sole purpose is
+/// to give mechanical source scanners an exact symbol-level contract instead
+/// of asking them to infer stub status from return values or comments. Keep the
+/// invocation immediately beside the export it describes, or in the generator
+/// rule that emits that export.
+#[allow(unused_macros)]
+macro_rules! abi_stub_contract {
+    ($symbol:ident) => {};
+}
+
 /// Generate an ABI-compatible extern "C" function with membrane validation hookpoint.
 ///
 /// # Usage
@@ -52,3 +65,5 @@ macro_rules! abi_fn {
 
 #[allow(unused_imports)]
 pub(crate) use abi_fn;
+#[allow(unused_imports)]
+pub(crate) use abi_stub_contract;

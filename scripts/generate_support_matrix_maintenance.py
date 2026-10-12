@@ -12,6 +12,7 @@ Three validation passes:
 
 Outputs a JSON maintenance report to stdout (or --output file).
 """
+import hashlib
 import json
 import os
 import re
@@ -295,6 +296,667 @@ def load_host_delegation_census(path: Path):
     return out
 
 
+def sha256_file(path: Path):
+    """Return a lowercase SHA-256 digest without normalizing file contents."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def strip_rust_noncode(text):
+    """Blank comments and string/character literals while preserving offsets.
+
+    Stub evidence must be an executable macro invocation.  In particular, a
+    doc comment, diagnostic string, or test fixture that merely spells
+    ``abi_stub_contract!(...)`` is not evidence about an exported symbol.
+    """
+    out = list(text)
+    i = 0
+    n = len(text)
+    raw_literal_pattern = re.compile(r'(?:br|r)(?P<hashes>#{0,255})"')
+    lifetime_pattern = re.compile(r"'[A-Za-z_]\w*")
+
+    def blank(start, end):
+        for index in range(start, min(end, n)):
+            if out[index] != "\n":
+                out[index] = " "
+
+    while i < n:
+        if text.startswith("//", i):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            blank(i, end)
+            i = end
+            continue
+        if text.startswith("/*", i):
+            start = i
+            depth = 1
+            i += 2
+            while i < n and depth:
+                if text.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif text.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            blank(start, i)
+            continue
+
+        # Raw strings and raw byte strings: r"...", r#"..."#, br"...".
+        raw = raw_literal_pattern.match(text, i)
+        if raw:
+            start = i
+            hashes = raw.group("hashes")
+            i = raw.end()
+            terminator = '"' + hashes
+            end = text.find(terminator, i)
+            i = n if end < 0 else end + len(terminator)
+            blank(start, i)
+            continue
+
+        prefix_len = 0
+        quote = None
+        if text.startswith('b"', i):
+            prefix_len, quote = 1, '"'
+        elif text.startswith("b'", i):
+            prefix_len, quote = 1, "'"
+        elif text[i] in ('"', "'"):
+            quote = text[i]
+        if quote is not None:
+            # A leading apostrophe in a lifetime is not a character literal.
+            if quote == "'" and prefix_len == 0 and lifetime_pattern.match(text, i):
+                i += 1
+                continue
+            start = i
+            i += prefix_len + 1
+            escaped = False
+            while i < n:
+                ch = text[i]
+                i += 1
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == quote:
+                    break
+            blank(start, i)
+            continue
+        i += 1
+    return "".join(out)
+
+
+def balanced_brace_end(source, open_brace):
+    """Return the exclusive end of a balanced brace block, or ``None``."""
+    depth = 0
+    for index in range(open_brace, len(source)):
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def scan_stub_contract_annotations(abi_source_dir: Path):
+    """Resolve direct and macro-generated concrete stub-contract markers."""
+    annotations = {}
+    errors = []
+    sources = {}
+    for path in sorted(abi_source_dir.glob("*.rs")):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"stub annotation source unreadable: {path}: {error}")
+            continue
+        sources[path] = (raw, strip_rust_noncode(raw))
+
+    direct_pattern = re.compile(
+        r"\babi_stub_contract!\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;"
+    )
+    generic_pattern = re.compile(
+        r"\babi_stub_contract!\s*\(\s*\$([A-Za-z_]\w*)\s*\)\s*;"
+    )
+    token_pattern = re.compile(r"\babi_stub_contract!\s*\(")
+    macro_pattern = re.compile(r"\bmacro_rules!\s+([A-Za-z_]\w*)\s*\{")
+    generator_macros = set()
+
+    for path, (raw, code) in sources.items():
+        accepted_starts = {
+            match.start() for match in direct_pattern.finditer(code)
+        } | {
+            match.start() for match in generic_pattern.finditer(code)
+        }
+        for match in token_pattern.finditer(code):
+            if match.start() not in accepted_starts:
+                line = code.count("\n", 0, match.start()) + 1
+                errors.append(
+                    f"malformed abi_stub_contract! annotation at {path}:{line}"
+                )
+
+        for match in direct_pattern.finditer(code):
+            symbol = match.group(1)
+            line = code.count("\n", 0, match.start()) + 1
+            following_export = re.compile(
+                rf"(?:(?:\s+)|(?://[/!]?[^\n]*(?:\n|$)))*"
+                rf"(?:#\[[^\]]*\]\s*)*"
+                rf"(?:pub\s+)?(?:unsafe\s+)?extern\s+\"C(?:-unwind)?\"\s+"
+                rf"fn\s+{re.escape(symbol)}\s*\("
+            )
+            if following_export.match(raw, match.end()) is None:
+                errors.append(
+                    f"abi_stub_contract for {symbol} is not immediately followed by "
+                    f"its exported function at {path}:{line}"
+                )
+            annotations.setdefault(symbol, []).append(
+                {
+                    "kind": "direct",
+                    "source": str(path),
+                    "line": line,
+                }
+            )
+
+        for match in macro_pattern.finditer(code):
+            end = balanced_brace_end(code, match.end() - 1)
+            if end is None:
+                errors.append(
+                    f"unbalanced macro_rules! {match.group(1)} at {path}:"
+                    f"{code.count(chr(10), 0, match.start()) + 1}"
+                )
+                continue
+            body = code[match.start():end]
+            if generic_pattern.search(body):
+                macro_name = match.group(1)
+                if re.search(r"\bfn\s+\$[A-Za-z_]\w*\s*\(", body) is None:
+                    errors.append(
+                        f"stub generator {macro_name} marks a symbol but emits no function "
+                        f"at {path}:{code.count(chr(10), 0, match.start()) + 1}"
+                    )
+                else:
+                    generator_macros.add(macro_name)
+
+    for macro_name in sorted(generator_macros):
+        invocation_pattern = re.compile(
+            rf"\b{re.escape(macro_name)}!\s*\(\s*([A-Za-z_]\w*)"
+        )
+        invocation_token = re.compile(rf"\b{re.escape(macro_name)}!\s*\(")
+        for path, (_raw, code) in sources.items():
+            accepted_starts = {
+                match.start() for match in invocation_pattern.finditer(code)
+            }
+            for match in invocation_token.finditer(code):
+                if match.start() not in accepted_starts:
+                    line = code.count("\n", 0, match.start()) + 1
+                    errors.append(
+                        f"malformed {macro_name}! stub generator invocation at {path}:{line}"
+                    )
+            for match in invocation_pattern.finditer(code):
+                symbol = match.group(1)
+                line = code.count("\n", 0, match.start()) + 1
+                annotations.setdefault(symbol, []).append(
+                    {
+                        "kind": "generated",
+                        "generator_macro": macro_name,
+                        "source": str(path),
+                        "line": line,
+                    }
+                )
+
+    for symbol, provenance in sorted(annotations.items()):
+        if len(provenance) > 1:
+            locations = ", ".join(
+                f"{row['source']}:{row['line']}" for row in provenance
+            )
+            errors.append(f"duplicate stub annotation for {symbol}: {locations}")
+
+    return {
+        "annotations": annotations,
+        "generator_macros": sorted(generator_macros),
+        "errors": errors,
+        "source_file_count": len(sources),
+    }
+
+
+def validate_host_delegation_census(path: Path, repo_root: Path, abi_source_dir: Path):
+    """Load positive host evidence, failing closed on stale/ambiguous input."""
+    result = {
+        "usable": False,
+        "rows": {},
+        "unknown_symbols": set(),
+        "errors": [],
+        "ambiguities": [],
+        "provenance": {
+            "path": str(path),
+            "artifact_sha256": None,
+            "schema_version": None,
+            "detector_version": None,
+            "source_tree_sha256": None,
+        },
+    }
+    if not path.is_file():
+        result["errors"].append(f"host delegation census missing: {path}")
+        return result
+    try:
+        result["provenance"]["artifact_sha256"] = sha256_file(path)
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        result["errors"].append(f"host delegation census unreadable: {path}: {error}")
+        return result
+    if not isinstance(data, dict):
+        result["errors"].append("host delegation census root must be an object")
+        return result
+
+    result["provenance"]["schema_version"] = data.get("schema_version")
+    if data.get("schema_version") != "host_delegation_census.v1":
+        result["errors"].append(
+            "host delegation census schema_version must be host_delegation_census.v1"
+        )
+    detector = data.get("detector")
+    if not isinstance(detector, dict):
+        result["errors"].append("host delegation census detector must be an object")
+        detector = {}
+    result["provenance"]["detector_version"] = detector.get("version")
+    result["provenance"]["source_tree_sha256"] = detector.get("source_tree_sha256")
+    if type(detector.get("version")) is not int or detector.get("version") < 4:
+        result["errors"].append("host delegation census detector version is invalid")
+    if not isinstance(detector.get("source_tree_sha256"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", detector.get("source_tree_sha256", "")
+    ):
+        result["errors"].append("host delegation census source_tree_sha256 is invalid")
+
+    hashes = data.get("source_file_hashes")
+    seen_paths = set()
+    if not isinstance(hashes, list) or not hashes:
+        result["errors"].append("host delegation census source_file_hashes is missing or empty")
+        hashes = []
+    for index, row in enumerate(hashes):
+        if not isinstance(row, dict):
+            result["errors"].append(f"source_file_hashes[{index}] must be an object")
+            continue
+        rel = row.get("path")
+        expected = row.get("sha256")
+        if not isinstance(rel, str) or not rel or rel in seen_paths:
+            result["errors"].append(
+                f"source_file_hashes[{index}] has an empty or duplicate path: {rel!r}"
+            )
+            continue
+        seen_paths.add(rel)
+        source_path = repo_root / rel
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            result["errors"].append(f"invalid source hash for {rel}")
+        elif not source_path.is_file():
+            result["errors"].append(f"census source file missing: {rel}")
+        elif sha256_file(source_path) != expected:
+            result["errors"].append(f"stale census source hash: {rel}")
+
+    expected_paths = {
+        str(path.relative_to(repo_root))
+        for path in abi_source_dir.glob("*.rs")
+        if path.is_file()
+    }
+    if seen_paths != expected_paths:
+        missing = sorted(expected_paths - seen_paths)
+        extra = sorted(seen_paths - expected_paths)
+        result["errors"].append(
+            "census source file set mismatch: "
+            f"missing={missing[:10]!r} extra={extra[:10]!r}"
+        )
+    declared_count = detector.get("source_file_count")
+    if type(declared_count) is not int or declared_count != len(hashes):
+        result["errors"].append(
+            "census detector source_file_count does not match source_file_hashes"
+        )
+
+    callsites = data.get("callsite_census")
+    callsites_by_id = {}
+    if not isinstance(callsites, list):
+        result["errors"].append("host delegation census callsite_census must be an array")
+        callsites = []
+    for index, row in enumerate(callsites):
+        if not isinstance(row, dict):
+            result["errors"].append(f"callsite_census[{index}] must be an object")
+            continue
+        callsite_id = row.get("id")
+        exported_symbol = row.get("exported_symbol")
+        exported_function_id = row.get("exported_function_id")
+        module = row.get("module")
+        source_path = row.get("path")
+        source_line = row.get("line")
+        helper_function = row.get("helper_function")
+        helper_function_id = row.get("helper_function_id")
+        host_symbol = row.get("host_symbol")
+        evidence = row.get("evidence")
+        expression = row.get("expression")
+        path = row.get("reachability_path")
+        hops = row.get("reachability_hops")
+        helper_identity = (
+            re.fullmatch(
+                r"([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)@(\d+)",
+                helper_function_id,
+            )
+            if isinstance(helper_function_id, str)
+            else None
+        )
+        source_line_matches = False
+        if isinstance(source_path, str) and type(source_line) is int and source_line > 0:
+            try:
+                source_lines = (repo_root / source_path).read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                source_line_matches = (
+                    source_line <= len(source_lines)
+                    and isinstance(expression, str)
+                    and bool(expression)
+                    and expression in source_lines[source_line - 1]
+                )
+            except OSError:
+                source_line_matches = False
+        valid = (
+            isinstance(callsite_id, str) and bool(callsite_id)
+            and isinstance(exported_symbol, str) and bool(exported_symbol)
+            and isinstance(exported_function_id, str) and bool(exported_function_id)
+            and isinstance(module, str) and bool(module)
+            and isinstance(source_path, str) and source_path in seen_paths
+            and type(source_line) is int and source_line > 0
+            and isinstance(helper_function, str) and bool(helper_function)
+            and isinstance(helper_function_id, str) and bool(helper_function_id)
+            and helper_identity is not None
+            and helper_identity.group(1) == Path(source_path).stem
+            and helper_identity.group(2) == helper_function
+            and host_symbol == exported_symbol
+            and evidence == f"{source_path}:{source_line}"
+            and source_line_matches
+            and isinstance(path, list) and bool(path)
+            and all(isinstance(value, str) and value for value in path)
+            and path[0] == exported_function_id
+            and path[-1] == helper_function_id
+            and type(hops) is int
+            and hops == len(path) - 1
+        )
+        if not valid:
+            result["errors"].append(
+                f"malformed host census callsite at callsite_census[{index}]"
+            )
+            continue
+        if callsite_id in callsites_by_id:
+            result["errors"].append(f"duplicate host census callsite id: {callsite_id}")
+            continue
+        callsites_by_id[callsite_id] = row
+
+    rows = data.get("symbol_census")
+    if not isinstance(rows, list):
+        result["errors"].append("host delegation census symbol_census must be an array")
+        rows = []
+    referenced_callsite_ids = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            result["errors"].append(f"symbol_census[{index}] must be an object")
+            continue
+        symbol = row.get("symbol")
+        module = row.get("module")
+        source = row.get("source")
+        function_id = row.get("function_id")
+        host_symbols = row.get("host_symbols")
+        kinds = row.get("delegation_kinds")
+        callsite_ids = row.get("callsite_ids")
+        callsite_count = row.get("callsite_count")
+        source_match = (
+            re.fullmatch(r"(.+):(\d+)", source)
+            if isinstance(source, str)
+            else None
+        )
+        source_path = source_match.group(1) if source_match else None
+        source_line = int(source_match.group(2)) if source_match else None
+        function_identity = (
+            re.fullmatch(
+                r"([A-Za-z_][A-Za-z0-9_]*)::([A-Za-z_][A-Za-z0-9_]*)@(\d+)",
+                function_id,
+            )
+            if isinstance(function_id, str)
+            else None
+        )
+        source_declares_function = False
+        if (
+            isinstance(source_path, str)
+            and source_line is not None
+            and source_line > 0
+            and function_identity is not None
+        ):
+            try:
+                source_lines = (repo_root / source_path).read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                source_declares_function = (
+                    source_line <= len(source_lines)
+                    and re.search(
+                        rf"\bfn\s+{re.escape(function_identity.group(2))}\s*\(",
+                        source_lines[source_line - 1],
+                    )
+                    is not None
+                )
+            except OSError:
+                source_declares_function = False
+        valid = (
+            isinstance(symbol, str) and bool(symbol)
+            and isinstance(module, str) and bool(module)
+            and isinstance(source, str) and bool(source)
+            and isinstance(function_id, str) and bool(function_id)
+            and source_match is not None
+            and source_path in seen_paths
+            and source_line is not None and source_line > 0
+            and Path(source_path).stem == module
+            and function_identity is not None
+            and function_identity.group(1) == module
+            and int(function_identity.group(3)) == source_line
+            and source_declares_function
+            and isinstance(host_symbols, list) and bool(host_symbols)
+            and all(isinstance(value, str) and value for value in host_symbols)
+            and host_symbols == [symbol]
+            and isinstance(kinds, list) and bool(kinds)
+            and all(isinstance(value, str) and value for value in kinds)
+            and isinstance(callsite_ids, list) and bool(callsite_ids)
+            and all(isinstance(value, str) and value for value in callsite_ids)
+            and type(callsite_count) is int
+            and callsite_count == len(callsite_ids)
+            and len(callsite_ids) == len(set(callsite_ids))
+        )
+        if not valid:
+            result["errors"].append(f"malformed host census row at symbol_census[{index}]")
+            continue
+        referenced_callsites = [callsites_by_id.get(value) for value in callsite_ids]
+        if any(value is None for value in referenced_callsites) or any(
+            value.get("exported_symbol") != symbol
+            or value.get("module") != module
+            or value.get("exported_function_id") != function_id
+            for value in referenced_callsites
+            if isinstance(value, dict)
+        ):
+            result["errors"].append(
+                f"host census row for {symbol} has missing or cross-symbol callsite ids"
+            )
+            continue
+        if symbol in result["rows"]:
+            result["errors"].append(f"duplicate host census row for {symbol}")
+            result["rows"].pop(symbol, None)
+            result["unknown_symbols"].add(symbol)
+            continue
+        if symbol not in result["unknown_symbols"]:
+            result["rows"][symbol] = row
+            referenced_callsite_ids.update(callsite_ids)
+
+    if referenced_callsite_ids != set(callsites_by_id):
+        result["errors"].append(
+            "host delegation census callsite ids are not an exact symbol-row partition"
+        )
+
+    unknown_edges = data.get("unknown_call_edges")
+    if not isinstance(unknown_edges, list):
+        result["errors"].append("host delegation census unknown_call_edges must be an array")
+        unknown_edges = []
+    summary = data.get("summary")
+    if not isinstance(summary, dict):
+        result["errors"].append("host delegation census summary must be an object")
+        summary = {}
+    declared_unknown = summary.get("unknown_call_edge_count")
+    if type(declared_unknown) is not int or declared_unknown != len(unknown_edges):
+        result["errors"].append(
+            "host delegation census unknown_call_edge_count is missing or inconsistent"
+        )
+    declared_callsites = summary.get("host_delegation_callsite_count")
+    if type(declared_callsites) is not int or declared_callsites != len(callsites):
+        result["errors"].append(
+            "host delegation census host_delegation_callsite_count is missing or inconsistent"
+        )
+    for index, row in enumerate(unknown_edges):
+        if not isinstance(row, dict):
+            result["errors"].append(f"unknown_call_edges[{index}] must be an object")
+            continue
+        candidates = []
+        for key in (
+            "reachable_exports",
+            "reachable_export_symbols",
+            "reachable_from_exported_symbols",
+            "exported_symbols",
+            "symbols",
+        ):
+            value = row.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+        for key in (
+            "symbol",
+            "exported_symbol",
+            "caller_export",
+            "caller_exported_symbol",
+        ):
+            value = row.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+        result["unknown_symbols"].update(
+            value for value in candidates if isinstance(value, str) and value
+        )
+        result["ambiguities"].append(
+            f"ambiguous census call edge at unknown_call_edges[{index}]"
+        )
+
+    result["usable"] = not result["errors"]
+    return result
+
+
+def build_downgrade_derivation(matrix_symbols, annotations, census):
+    """Derive only evidence-backed downgrades; never infer a promotion."""
+    matrix_by_symbol = {row["symbol"]: row for row in matrix_symbols}
+    errors = (
+        list(annotations.get("errors", []))
+        + list(census.get("errors", []))
+        + list(census.get("ambiguities", []))
+    )
+    for symbol in sorted(annotations.get("annotations", {})):
+        if symbol not in matrix_by_symbol:
+            errors.append(f"stub annotation names symbol absent from support matrix: {symbol}")
+    for symbol in sorted(census.get("rows", {})):
+        if symbol not in matrix_by_symbol:
+            errors.append(f"host census names symbol absent from support matrix: {symbol}")
+
+    rows = []
+    mismatches = []
+    for entry in sorted(matrix_symbols, key=lambda row: row["symbol"]):
+        symbol = entry["symbol"]
+        current = entry["status"]
+        module = entry.get("module", "unknown")
+        marker_rows = annotations.get("annotations", {}).get(symbol, [])
+        census_row = census.get("rows", {}).get(symbol)
+        derived = None
+        evidence_state = "none"
+        provenance = {}
+
+        if marker_rows:
+            derived = "Stub"
+            evidence_state = "explicit_stub_contract"
+            provenance["stub_contract"] = marker_rows
+        elif symbol in census.get("unknown_symbols", set()):
+            evidence_state = "ambiguous_census"
+        elif census.get("usable", False) and census_row is not None:
+            if census_row.get("module") != module:
+                evidence_state = "ambiguous_census"
+                errors.append(
+                    f"host census module mismatch for {symbol}: "
+                    f"matrix={module!r} census={census_row.get('module')!r}"
+                )
+            else:
+                derived = "WrapsHostLibc"
+                evidence_state = "observed_host_dependency"
+                provenance["host_census"] = {
+                    "source": census_row.get("source"),
+                    "host_symbols": census_row.get("host_symbols"),
+                    "delegation_kinds": census_row.get("delegation_kinds"),
+                    "callsite_count": census_row.get("callsite_count"),
+                    "callsite_ids": census_row.get("callsite_ids"),
+                }
+        elif not census.get("usable", False):
+            evidence_state = "unknown_census"
+
+        recommended = current
+        promotion_suppressed = False
+        mismatch = False
+        if derived is not None:
+            current_rank = STATUS_PROMOTION_RANK[current]
+            derived_rank = STATUS_PROMOTION_RANK[derived]
+            if derived_rank < current_rank:
+                recommended = derived
+                mismatch = True
+            elif derived_rank > current_rank:
+                promotion_suppressed = True
+        row = {
+            "symbol": symbol,
+            "module": module,
+            "current_status": current,
+            "evidence_state": evidence_state,
+            "derived_status": derived,
+            "recommended_status": recommended,
+            "promotion_suppressed": promotion_suppressed,
+            "downgrade_mismatch": mismatch,
+            "provenance": provenance,
+        }
+        rows.append(row)
+        if mismatch:
+            mismatches.append(row)
+
+    status = "pass" if not errors and not mismatches else "fail"
+    return {
+        "schema_version": "support_matrix_downgrade_derivation.v1",
+        "policy": {
+            "explicit_stub_contract_derives": "Stub",
+            "observed_host_dependency_derives": "WrapsHostLibc",
+            "absence_or_unknown_evidence": "retain-current-and-fail-closed",
+            "promotions_allowed": False,
+        },
+        "provenance": {
+            "abi_source_dir": str(ABI_SRC),
+            "stub_source_file_count": annotations.get("source_file_count", 0),
+            "stub_generator_macros": annotations.get("generator_macros", []),
+            "host_census": census.get("provenance", {}),
+        },
+        "summary": {
+            "status": status,
+            "symbol_count": len(rows),
+            "stub_annotation_count": len(annotations.get("annotations", {})),
+            "host_evidence_count": len(census.get("rows", {})),
+            "downgrade_mismatch_count": len(mismatches),
+            "promotion_suppressed_count": sum(
+                1 for row in rows if row["promotion_suppressed"]
+            ),
+            "evidence_error_count": len(errors),
+        },
+        "errors": errors,
+        "mismatches": mismatches,
+        "symbols": rows,
+    }
+
+
 def conformance_mode_passed(mode_entry):
     """True when a conformance-mode row has non-zero coverage and zero failures/errors."""
     if not isinstance(mode_entry, dict):
@@ -447,6 +1109,40 @@ def count_statuses_from_map(status_map):
     for status in status_map.values():
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def classify_stub_transitions(
+    current_status_map,
+    previous_status_map,
+    baseline_symbol_map_loaded,
+    stub_annotations,
+):
+    """Allow a new Stub label only when exact source provenance requires it."""
+    if not baseline_symbol_map_loaded:
+        return {
+            "new_stub_symbols": [],
+            "annotated_new_stub_symbols": [],
+            "unannotated_new_stub_symbols": [],
+            "status": "pass",
+        }
+    concrete_annotations = {
+        symbol
+        for symbol, provenance in stub_annotations.get("annotations", {}).items()
+        if len(provenance) == 1
+    }
+    new_stub_symbols = sorted(
+        symbol
+        for symbol, status in current_status_map.items()
+        if status == "Stub" and previous_status_map.get(symbol) != "Stub"
+    )
+    annotated = sorted(set(new_stub_symbols) & concrete_annotations)
+    unannotated = sorted(set(new_stub_symbols) - concrete_annotations)
+    return {
+        "new_stub_symbols": new_stub_symbols,
+        "annotated_new_stub_symbols": annotated,
+        "unannotated_new_stub_symbols": unannotated,
+        "status": "pass" if not unannotated else "fail",
+    }
 
 
 def load_promotion_triage(path: Path | None):
@@ -866,6 +1562,7 @@ def validate_status(
     module_analysis,
     host_delegation_entry,
     promotion_proof,
+    stub_contract_provenance=None,
 ):
     """Validate that a symbol's code matches its declared status.
 
@@ -880,8 +1577,16 @@ def validate_status(
         and module == promotion_proof.get("module")
         and promotion_proof.get("classification") in ACCEPTED_PROMOTION_PROOF_CLASSIFICATIONS
     )
+    explicit_stub_contract = (
+        isinstance(stub_contract_provenance, list)
+        and len(stub_contract_provenance) == 1
+    )
     body = extract_function_body(source, symbol)
     if body is None:
+        if status == "Stub":
+            if explicit_stub_contract:
+                return True, [], []
+            return False, ["Stub body not found and no explicit stub contract"], []
         warnings = [PROMOTION_PROOF_WARNING] if proof_available else []
         return True, [f"function body not found (may use alternate pattern)"], warnings
 
@@ -1175,10 +1880,12 @@ def validate_status(
             findings.append("GlibcCallThrough but no libc:: references found")
 
     elif status == "Stub":
-        # Should have stub patterns or deterministic failure return
-        has_stub = any(pat.search(body) for pat in STUB_PATTERNS)
+        # Source contracts are authoritative for deterministic ABI fallbacks;
+        # todo!/unimplemented! are retained only for legacy rows awaiting an
+        # explicit contract annotation.
+        has_stub = explicit_stub_contract or any(pat.search(body) for pat in STUB_PATTERNS)
         if not has_stub:
-            findings.append("Stub but no stub/unimplemented/todo pattern found")
+            findings.append("Stub but no explicit stub contract or stub pattern found")
 
     is_valid = len(findings) == 0
     return is_valid, findings, warnings
@@ -1214,15 +1921,30 @@ def main():
         help="Optional promotion triage manifest used to classify fixture-ratchet deltas",
     )
     parser.add_argument("--self-test", action="store_true", help="Run self-test")
+    parser.add_argument(
+        "--self-test-downgrade-only",
+        action="store_true",
+        help="Run focused downgrade-evidence self-test without loading repository artifacts",
+    )
     args = parser.parse_args()
 
+    if args.self_test_downgrade_only:
+        test_downgrade_only_evidence()
+        return
     if args.self_test:
         run_self_test()
         return
 
     previous_report = load_previous_report(Path(args.previous_report))
     conformance_by_symbol = load_conformance_matrix(Path(args.conformance_matrix))
-    host_delegation_by_symbol = load_host_delegation_census(Path(args.host_delegation_census))
+    host_census_path = Path(args.host_delegation_census)
+    host_delegation_by_symbol = load_host_delegation_census(host_census_path)
+    validated_host_census = validate_host_delegation_census(
+        host_census_path,
+        REPO_ROOT,
+        ABI_SRC,
+    )
+    stub_annotations = scan_stub_contract_annotations(ABI_SRC)
     promotion_proof_paths = parse_promotion_proof_manifest_paths(args.promotion_proof_manifest)
     promotion_proofs = load_promotion_proofs(promotion_proof_paths)
     promotion_triage_path = Path(args.promotion_triage_report) if args.promotion_triage_report else None
@@ -1232,6 +1954,11 @@ def main():
 
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
+    downgrade_derivation = build_downgrade_derivation(
+        symbols,
+        stub_annotations,
+        validated_host_census,
+    )
     fixture_map = load_fixtures()
 
     # Cache module sources
@@ -1284,6 +2011,7 @@ def main():
             module_analysis_cache.get(source_module, {}),
             host_delegation_by_symbol.get(sym),
             promotion_proofs.get(sym),
+            stub_annotations.get("annotations", {}).get(sym),
         )
         warnings += len(warn_list)
         if is_valid:
@@ -1473,7 +2201,12 @@ def main():
         new_symbols = []
         removed_symbols = []
 
-    no_new_stub_symbols = stub_count <= previous_stub_count
+    stub_transition_policy = classify_stub_transitions(
+        symbol_status_map,
+        previous_symbol_status_map,
+        baseline_symbol_map_loaded,
+        stub_annotations,
+    )
     native_delta = None
     if previous_native_coverage_pct is not None:
         native_delta = round(native_coverage_pct - previous_native_coverage_pct, 2)
@@ -1535,10 +2268,18 @@ def main():
         },
         "policy_checks": {
             "no_new_stub_symbols": {
-                "status": "pass" if no_new_stub_symbols else "fail",
+                "status": stub_transition_policy["status"],
                 "previous_stub_count": previous_stub_count,
                 "current_stub_count": stub_count,
                 "delta": stub_count - previous_stub_count,
+                "rule": "new Stub rows require one concrete abi_stub_contract! provenance record",
+                "new_stub_symbols": stub_transition_policy["new_stub_symbols"],
+                "annotated_new_stub_symbols": stub_transition_policy[
+                    "annotated_new_stub_symbols"
+                ],
+                "unannotated_new_stub_symbols": stub_transition_policy[
+                    "unannotated_new_stub_symbols"
+                ],
             },
             "reclassification_requires_conformance": {
                 "status": "pass" if not reclassification_violations else "fail",
@@ -1554,7 +2295,26 @@ def main():
                 "violation_count": fixture_coverage_ratchet["summary"]["violation_count"],
                 "promotion_triage_manifest_loaded": promotion_triage_loaded,
             },
+            "downgrade_only_evidence": {
+                "status": downgrade_derivation["summary"]["status"],
+                "stub_annotation_count": downgrade_derivation["summary"][
+                    "stub_annotation_count"
+                ],
+                "host_evidence_count": downgrade_derivation["summary"][
+                    "host_evidence_count"
+                ],
+                "downgrade_mismatch_count": downgrade_derivation["summary"][
+                    "downgrade_mismatch_count"
+                ],
+                "promotion_suppressed_count": downgrade_derivation["summary"][
+                    "promotion_suppressed_count"
+                ],
+                "evidence_error_count": downgrade_derivation["summary"][
+                    "evidence_error_count"
+                ],
+            },
         },
+        "downgrade_derivation": downgrade_derivation,
         "fixture_coverage_ratchet": fixture_coverage_ratchet,
         "status_distribution": {
             st: {
@@ -1601,6 +2361,13 @@ def main():
         print(
             f"Reclassification evidence: {len(reclassified_symbols)} changed, "
             f"violations={len(reclassification_violations)}",
+            file=sys.stderr,
+        )
+        print(
+            "Downgrade-only evidence: "
+            f"{downgrade_derivation['summary']['status']} "
+            f"mismatches={downgrade_derivation['summary']['downgrade_mismatch_count']} "
+            f"errors={downgrade_derivation['summary']['evidence_error_count']}",
             file=sys.stderr,
         )
         print(f"Warnings: {warnings}", file=sys.stderr)
@@ -1692,9 +2459,372 @@ def test_matrix_rollups():
     print(f"Self-test: matrix rollups: {passed} cases passed")
 
 
+def test_downgrade_only_evidence():
+    """Focused negative controls for source annotations and census evidence."""
+    import tempfile
+
+    passed = 0
+    with tempfile.TemporaryDirectory(prefix="frankenlibc-maintenance-selftest-") as raw_tmp:
+        tmp = Path(raw_tmp)
+
+        prose_dir = tmp / "prose"
+        prose_dir.mkdir()
+        (prose_dir / "demo.rs").write_text(
+            "// abi_stub_contract!(comment_only);\n"
+            "const PROSE: &str = \"abi_stub_contract!(string_only);\";\n"
+            "abi_stub_contract!(real_stub);\n"
+            "#[unsafe(no_mangle)]\n"
+            "pub unsafe extern \"C\" fn real_stub() -> i32 { -1 }\n",
+            encoding="utf-8",
+        )
+        prose = scan_stub_contract_annotations(prose_dir)
+        if set(prose["annotations"]) != {"real_stub"} or prose["errors"]:
+            raise AssertionError(f"false prose annotation accepted: {prose}")
+        passed += 1
+
+        malformed_dir = tmp / "malformed"
+        malformed_dir.mkdir()
+        (malformed_dir / "demo.rs").write_text(
+            'abi_stub_contract!("not_an_identifier");\n',
+            encoding="utf-8",
+        )
+        malformed = scan_stub_contract_annotations(malformed_dir)
+        if not any("malformed abi_stub_contract" in error for error in malformed["errors"]):
+            raise AssertionError(f"malformed annotation was not rejected: {malformed}")
+        passed += 1
+
+        duplicate_dir = tmp / "duplicate"
+        duplicate_dir.mkdir()
+        (duplicate_dir / "demo.rs").write_text(
+            "abi_stub_contract!(twice);\nabi_stub_contract!(twice);\n",
+            encoding="utf-8",
+        )
+        duplicate = scan_stub_contract_annotations(duplicate_dir)
+        if not any("duplicate stub annotation for twice" in error for error in duplicate["errors"]):
+            raise AssertionError(f"duplicate annotation was not rejected: {duplicate}")
+        passed += 1
+
+        generated_dir = tmp / "generated"
+        generated_dir.mkdir()
+        (generated_dir / "demo.rs").write_text(
+            "macro_rules! generated_stub {\n"
+            "    ($name:ident) => {\n"
+            "        abi_stub_contract!($name);\n"
+            "        #[unsafe(no_mangle)]\n"
+            "        pub unsafe extern \"C\" fn $name() {}\n"
+            "    };\n"
+            "}\n"
+            "generated_stub!(first);\ngenerated_stub!(second);\n",
+            encoding="utf-8",
+        )
+        generated = scan_stub_contract_annotations(generated_dir)
+        if set(generated["annotations"]) != {"first", "second"} or generated["errors"]:
+            raise AssertionError(f"generated annotations were not resolved: {generated}")
+        passed += 1
+
+        source_dir = tmp / "repo" / "crates" / "frankenlibc-abi" / "src"
+        source_dir.mkdir(parents=True)
+        source_file = source_dir / "demo.rs"
+        source_file.write_text(
+            'pub fn hosted() { resolve_host_symbol_raw("hosted"); }\n',
+            encoding="utf-8",
+        )
+        relative_source = "crates/frankenlibc-abi/src/demo.rs"
+        valid_row = {
+            "symbol": "hosted",
+            "module": "demo",
+            "source": f"{relative_source}:1",
+            "function_id": "demo::hosted@1",
+            "host_symbols": ["hosted"],
+            "delegation_kinds": ["resolve_host_symbol_raw_dynamic"],
+            "callsite_count": 1,
+            "callsite_ids": ["demo:hosted:1:001"],
+        }
+
+        def write_census(name, *, digest, rows, include_unknown=True):
+            census_path = tmp / name
+            callsites = [
+                {
+                    "id": callsite_id,
+                    "exported_symbol": row["symbol"],
+                    "exported_function_id": "demo::hosted@1",
+                    "module": "demo",
+                    "path": relative_source,
+                    "line": 1,
+                    "helper_function": "hosted",
+                    "helper_function_id": "demo::hosted@1",
+                    "host_symbol": row["symbol"],
+                    "evidence": f"{relative_source}:1",
+                    "expression": 'resolve_host_symbol_raw("hosted")',
+                    "reachability_path": ["demo::hosted@1"],
+                    "reachability_hops": 0,
+                }
+                for row in rows[:1]
+                for callsite_id in row.get("callsite_ids", [])
+            ]
+            body = {
+                "schema_version": "host_delegation_census.v1",
+                "detector": {
+                    "version": 4,
+                    "source_file_count": 1,
+                    "source_tree_sha256": "0" * 64,
+                },
+                "source_file_hashes": [
+                    {"path": relative_source, "sha256": digest}
+                ],
+                "symbol_census": rows,
+                "callsite_census": callsites,
+                "summary": {
+                    "host_delegation_callsite_count": len(callsites),
+                    "unknown_call_edge_count": 0,
+                },
+            }
+            if include_unknown:
+                body["unknown_call_edges"] = []
+            census_path.write_text(json.dumps(body), encoding="utf-8")
+            return census_path
+
+        stale_path = write_census(
+            "stale.json",
+            digest="f" * 64,
+            rows=[valid_row],
+        )
+        stale = validate_host_delegation_census(stale_path, tmp / "repo", source_dir)
+        if stale["usable"] or not any("stale census source hash" in error for error in stale["errors"]):
+            raise AssertionError(f"stale census was not rejected: {stale}")
+        passed += 1
+
+        missing_body_path = write_census(
+            "missing-body.json",
+            digest=sha256_file(source_file),
+            rows=[valid_row],
+            include_unknown=False,
+        )
+        missing_body = validate_host_delegation_census(
+            missing_body_path, tmp / "repo", source_dir
+        )
+        if missing_body["usable"] or not any(
+            "unknown_call_edges must be an array" in error
+            for error in missing_body["errors"]
+        ):
+            raise AssertionError(f"missing census body was not rejected: {missing_body}")
+        passed += 1
+
+        duplicate_census_path = write_census(
+            "duplicate-census.json",
+            digest=sha256_file(source_file),
+            rows=[valid_row, dict(valid_row)],
+        )
+        duplicate_census = validate_host_delegation_census(
+            duplicate_census_path, tmp / "repo", source_dir
+        )
+        if duplicate_census["usable"] or not any(
+            "duplicate host census row for hosted" in error
+            for error in duplicate_census["errors"]
+        ):
+            raise AssertionError(f"ambiguous census body was not rejected: {duplicate_census}")
+        passed += 1
+
+    absent = build_downgrade_derivation(
+        [{"symbol": "native", "module": "demo", "status": "Implemented"}],
+        {"annotations": {}, "errors": [], "source_file_count": 1},
+        {"usable": True, "rows": {}, "unknown_symbols": set(), "errors": [], "provenance": {}},
+    )
+    absent_row = absent["symbols"][0]
+    if absent_row["derived_status"] is not None or absent_row["recommended_status"] != "Implemented":
+        raise AssertionError(f"absence promoted or changed status: {absent_row}")
+    passed += 1
+
+    non_promotion = build_downgrade_derivation(
+        [{"symbol": "hosted", "module": "demo", "status": "Stub"}],
+        {"annotations": {}, "errors": [], "source_file_count": 1},
+        {
+            "usable": True,
+            "rows": {"hosted": valid_row},
+            "unknown_symbols": set(),
+            "errors": [],
+            "provenance": {},
+        },
+    )
+    non_promotion_row = non_promotion["symbols"][0]
+    if (
+        non_promotion_row["recommended_status"] != "Stub"
+        or not non_promotion_row["promotion_suppressed"]
+    ):
+        raise AssertionError(f"host evidence promoted Stub: {non_promotion_row}")
+    passed += 1
+
+    observed_amid_ambiguity = build_downgrade_derivation(
+        [{"symbol": "hosted", "module": "demo", "status": "Implemented"}],
+        {"annotations": {}, "errors": [], "source_file_count": 1},
+        {
+            "usable": True,
+            "rows": {"hosted": valid_row},
+            "unknown_symbols": {"other"},
+            "errors": [],
+            "ambiguities": ["unresolved edge for other"],
+            "provenance": {},
+        },
+    )
+    observed_row = observed_amid_ambiguity["symbols"][0]
+    if (
+        observed_row["derived_status"] != "WrapsHostLibc"
+        or observed_row["recommended_status"] != "WrapsHostLibc"
+        or observed_amid_ambiguity["summary"]["status"] != "fail"
+    ):
+        raise AssertionError(
+            "positive host evidence was lost behind unrelated ambiguity: "
+            f"{observed_amid_ambiguity}"
+        )
+    passed += 1
+
+    ambiguous_target = build_downgrade_derivation(
+        [{"symbol": "hosted", "module": "demo", "status": "Implemented"}],
+        {"annotations": {}, "errors": [], "source_file_count": 1},
+        {
+            "usable": True,
+            "rows": {"hosted": valid_row},
+            "unknown_symbols": {"hosted"},
+            "errors": [],
+            "ambiguities": ["unresolved edge for hosted"],
+            "provenance": {},
+        },
+    )
+    ambiguous_row = ambiguous_target["symbols"][0]
+    if (
+        ambiguous_row["derived_status"] is not None
+        or ambiguous_row["evidence_state"] != "ambiguous_census"
+        or ambiguous_target["summary"]["status"] != "fail"
+    ):
+        raise AssertionError(
+            f"symbol-local ambiguity did not suppress host derivation: {ambiguous_target}"
+        )
+    passed += 1
+
+    downgrade = build_downgrade_derivation(
+        [{"symbol": "annotated", "module": "demo", "status": "Implemented"}],
+        {
+            "annotations": {
+                "annotated": [{"kind": "direct", "source": "demo.rs", "line": 1}]
+            },
+            "errors": [],
+            "source_file_count": 1,
+        },
+        {"usable": False, "rows": {}, "unknown_symbols": set(), "errors": [], "provenance": {}},
+    )
+    if (
+        downgrade["summary"]["status"] != "fail"
+        or downgrade["summary"]["downgrade_mismatch_count"] != 1
+        or downgrade["symbols"][0]["recommended_status"] != "Stub"
+    ):
+        raise AssertionError(f"derived downgrade mismatch was not rejected: {downgrade}")
+    passed += 1
+
+    transition_annotations = {
+        "annotations": {
+            "truthful_stub": [
+                {"kind": "direct", "source": "demo.rs", "line": 1}
+            ]
+        }
+    }
+    truthful_transition = classify_stub_transitions(
+        {"truthful_stub": "Stub"},
+        {"truthful_stub": "Implemented"},
+        True,
+        transition_annotations,
+    )
+    unproven_transition = classify_stub_transitions(
+        {"unproven_stub": "Stub"},
+        {"unproven_stub": "Implemented"},
+        True,
+        transition_annotations,
+    )
+    if (
+        truthful_transition["status"] != "pass"
+        or truthful_transition["annotated_new_stub_symbols"] != ["truthful_stub"]
+        or unproven_transition["status"] != "fail"
+        or unproven_transition["unannotated_new_stub_symbols"] != ["unproven_stub"]
+    ):
+        raise AssertionError(
+            "new Stub provenance policy accepted the wrong transition: "
+            f"{truthful_transition}, {unproven_transition}"
+        )
+    passed += 1
+
+    stub_source = "pub extern \"C\" fn truthful_stub() -> i32 { -1 }\n"
+    accepted_stub = validate_status(
+        "truthful_stub",
+        "Stub",
+        "demo",
+        stub_source,
+        analyze_module_source(stub_source),
+        None,
+        None,
+        transition_annotations["annotations"]["truthful_stub"],
+    )
+    rejected_stub = validate_status(
+        "truthful_stub",
+        "Stub",
+        "demo",
+        stub_source,
+        analyze_module_source(stub_source),
+        None,
+        None,
+        None,
+    )
+    missing_stub = validate_status(
+        "missing_stub",
+        "Stub",
+        "demo",
+        stub_source,
+        analyze_module_source(stub_source),
+        None,
+        None,
+        None,
+    )
+    if accepted_stub[0] is not True or rejected_stub[0] is not False or missing_stub[0] is not False:
+        raise AssertionError(
+            "Stub validation did not require exact annotation provenance: "
+            f"accepted={accepted_stub}, rejected={rejected_stub}, missing={missing_stub}"
+        )
+    passed += 1
+
+    missing_census = validate_host_delegation_census(
+        Path("/definitely/missing/host-delegation-census.json"),
+        REPO_ROOT,
+        ABI_SRC,
+    )
+    if missing_census["usable"] or not missing_census["errors"]:
+        raise AssertionError(f"missing census was not rejected: {missing_census}")
+    passed += 1
+
+    current = scan_stub_contract_annotations(ABI_SRC)
+    generated_current = [
+        symbol
+        for symbol, rows in current["annotations"].items()
+        if any(row.get("generator_macro") == "rpc_stub" for row in rows)
+    ]
+    required_direct = {
+        "pmap_set",
+        "pmap_unset",
+        "register_printf_function",
+        "register_printf_modifier",
+        "register_printf_specifier",
+        "register_printf_type",
+    }
+    if len(generated_current) != 38 or not required_direct <= set(current["annotations"]):
+        raise AssertionError(
+            "current source annotations did not resolve all 38 rpc_stub invocations "
+            f"and six direct contracts: {current}"
+        )
+    passed += 1
+    print(f"Self-test: downgrade-only evidence: {passed} cases passed")
+
+
 def run_self_test():
     """Exercise the loader and the taxonomy checks that protect native claims."""
     test_matrix_rollups()
+    test_downgrade_only_evidence()
     print("Self-test: loading matrix...")
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])

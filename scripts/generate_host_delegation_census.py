@@ -9,6 +9,7 @@ calls to exported ABI entrypoints.
 from __future__ import annotations
 
 import argparse
+from collections import deque
 import hashlib
 import json
 import re
@@ -18,7 +19,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 2
+DETECTOR_VERSION = 4
 
 REQUIRED_ANCHORS = [
     "__libc_start_main",
@@ -50,11 +51,21 @@ THREAD_RAW_SYMBOLS = {
 }
 
 FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
-CALL_RE = re.compile(r"(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+CALL_PATH_RE = re.compile(
+    r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
 RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
 RAW_DYNAMIC_RE = re.compile(r"resolve_host_symbol_raw\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
 CACHED_LITERAL_RE = re.compile(r'resolve_host_symbol_cached\s*\([^,]+,\s*"([^"]+)"')
 RESOLVED_THREAD_RE = re.compile(r"\bresolved_thread_([A-Za-z0-9_]+)_raw\s*\(")
+PARAM_BINDING_RE = re.compile(
+    r"(?:^|[,(])\s*(?:mut\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*:"
+)
+LOCAL_BINDING_RE = re.compile(
+    r"\blet\s+(?:mut\s+)?(?:(?:Some|Ok|Err)\s*\(\s*)?"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+)
+EXPORT_NAME_RE = re.compile(r'export_name\s*=\s*"([^"]+)"')
 BROADER_REFERENCE_RE = re.compile(
     r"resolve_host_symbol_|delegate_to_host_|resolved_thread_|host_pthread_|"
     r"host_dlsym|host_dlvsym|dlvsym_next|host_dl_iterate_phdr_cached|"
@@ -67,8 +78,32 @@ class HostCall:
     path: str
     line: int
     function: str
+    function_id: str
     delegation_kind: str
     host_symbol: str
+    expression: str
+    evidence: str
+
+
+@dataclass(frozen=True)
+class FunctionCall:
+    caller_id: str
+    target_id: str
+    path: str
+    line: int
+    target_expression: str
+    expression: str
+    evidence: str
+
+
+@dataclass(frozen=True)
+class UnknownCall:
+    caller_id: str
+    path: str
+    line: int
+    target_expression: str
+    reason: str
+    candidate_function_ids: tuple[str, ...]
     expression: str
     evidence: str
 
@@ -88,13 +123,27 @@ class FunctionInfo:
         return self.path.stem
 
     @property
+    def identity(self) -> str:
+        return f"{self.module}::{self.name}@{self.start_line}"
+
+    @property
+    def is_call_graph_item(self) -> bool:
+        first_line = self.signature.splitlines()[0]
+        return first_line == first_line.lstrip()
+
+    @property
     def is_exported_abi(self) -> bool:
         signature = self.signature
         attrs = self.attr_text
         return (
-            'extern "C"' in signature
-            and ("no_mangle" in attrs or signature.lstrip().startswith("pub "))
+            ('extern "C"' in signature or 'extern "C-unwind"' in signature)
+            and ("no_mangle" in attrs or "export_name" in attrs)
         )
+
+    @property
+    def exported_symbol(self) -> str:
+        match = EXPORT_NAME_RE.search(self.attr_text)
+        return match.group(1) if match else self.name
 
 
 def repo_root() -> Path:
@@ -181,13 +230,25 @@ def strip_comments(line: str) -> str:
     return line.split("//", 1)[0]
 
 
+def function_body_line(function: FunctionInfo, line_no: int, raw_line: str) -> str:
+    """Return only executable body text for one parsed function line."""
+
+    if line_no < function.body_start_line:
+        return ""
+    line = strip_comments(raw_line)
+    if line_no == function.body_start_line:
+        opening_brace = line.find("{")
+        if opening_brace < 0:
+            return ""
+        return line[opening_brace + 1 :]
+    return line
+
+
 def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
     for line_no, raw_line in function.lines:
-        if line_no < function.body_start_line:
-            continue
-        line = strip_comments(raw_line)
+        line = function_body_line(function, line_no, raw_line)
         if not line.strip():
             continue
         for symbol in RAW_LITERAL_RE.findall(line):
@@ -196,6 +257,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
                     path=path,
                     line=line_no,
                     function=function.name,
+                    function_id=function.identity,
                     delegation_kind="resolve_host_symbol_raw_literal",
                     host_symbol=symbol,
                     expression=line.strip(),
@@ -208,6 +270,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
                     path=path,
                     line=line_no,
                     function=function.name,
+                    function_id=function.identity,
                     delegation_kind="resolve_host_symbol_cached_literal",
                     host_symbol=symbol,
                     expression=line.strip(),
@@ -220,6 +283,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
                     path=path,
                     line=line_no,
                     function=function.name,
+                    function_id=function.identity,
                     delegation_kind="resolve_host_symbol_raw_dynamic",
                     host_symbol="<dynamic>",
                     expression=line.strip(),
@@ -232,6 +296,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
                     path=path,
                     line=line_no,
                     function=function.name,
+                    function_id=function.identity,
                     delegation_kind="resolved_thread_raw_accessor",
                     host_symbol=THREAD_RAW_SYMBOLS.get(thread_key, f"pthread_{thread_key}"),
                     expression=line.strip(),
@@ -258,6 +323,7 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
                         path=path,
                         line=line_no,
                         function=function.name,
+                        function_id=function.identity,
                         delegation_kind=kind,
                         host_symbol=host_symbol,
                         expression=line.strip(),
@@ -267,69 +333,212 @@ def detect_host_calls(function: FunctionInfo, root: Path) -> list[HostCall]:
     return calls
 
 
-def direct_function_calls(function: FunctionInfo, known_functions: set[str]) -> set[str]:
-    called = set()
-    for _line_no, raw_line in function.lines:
-        for candidate in CALL_RE.findall(strip_comments(raw_line)):
-            if candidate in known_functions and candidate != function.name:
-                called.add(candidate)
-    return called
-
-
-def alias_callsites(function: FunctionInfo, targets: set[str], root: Path) -> list[HostCall]:
-    calls: list[HostCall] = []
-    path = rel(root, function.path)
-    for line_no, raw_line in function.lines:
-        if line_no < function.body_start_line:
+def function_indices(
+    functions: list[FunctionInfo],
+) -> tuple[
+    dict[str, FunctionInfo],
+    dict[tuple[str, str], list[str]],
+    dict[str, list[str]],
+]:
+    function_by_id = {function.identity: function for function in functions}
+    functions_by_module_and_name: dict[tuple[str, str], list[str]] = {}
+    functions_by_name: dict[str, list[str]] = {}
+    for function in functions:
+        # Rustfmt keeps module-level functions flush-left. Indented `fn` items
+        # are methods, nested functions, or macro bodies; treating those as
+        # module namespace entries is what made calls such as `drop(...)`
+        # collide with unrelated `Drop::drop` methods.
+        if not function.is_call_graph_item:
             continue
-        line = strip_comments(raw_line)
-        for target in sorted(targets):
-            if re.search(rf"(?<![\w.]){re.escape(target)}\s*\(", line):
-                calls.append(
-                    HostCall(
+        functions_by_module_and_name.setdefault(
+            (function.module, function.name), []
+        ).append(function.identity)
+        functions_by_name.setdefault(function.name, []).append(function.identity)
+    for identities in functions_by_module_and_name.values():
+        identities.sort()
+    for identities in functions_by_name.values():
+        identities.sort()
+    return function_by_id, functions_by_module_and_name, functions_by_name
+
+
+def qualified_target_module(
+    caller: FunctionInfo,
+    parts: list[str],
+    known_modules: set[str],
+) -> tuple[str | None, bool]:
+    """Return the exact file module for a source-local qualified call.
+
+    The second result says whether the expression claims to be source-local. A
+    local-looking path which cannot be represented by this flat-file scanner is
+    evidence of an unknown edge, not permission to fall back to a bare-name
+    match.
+    """
+
+    if len(parts) < 2:
+        return None, False
+    prefix = parts[:-1]
+    if prefix == ["self"]:
+        return caller.module, True
+    if prefix == ["super"] or prefix == ["crate"]:
+        return "lib", True
+    if len(prefix) == 1 and prefix[0] in known_modules:
+        return prefix[0], True
+    if len(prefix) == 2 and prefix[0] in {"crate", "super"}:
+        if prefix[1] in known_modules:
+            return prefix[1], True
+        return None, True
+    if prefix[0] in {"crate", "self", "super"}:
+        return None, True
+    return None, False
+
+
+def resolve_function_calls(
+    function: FunctionInfo,
+    functions_by_module_and_name: dict[tuple[str, str], list[str]],
+    functions_by_name: dict[str, list[str]],
+    known_modules: set[str],
+    root: Path,
+) -> tuple[list[FunctionCall], list[UnknownCall]]:
+    resolved: list[FunctionCall] = []
+    unknown: list[UnknownCall] = []
+    path = rel(root, function.path)
+    seen_resolved: set[tuple[int, str, str]] = set()
+    seen_unknown: set[tuple[int, str, str, tuple[str, ...]]] = set()
+    local_bindings = set(PARAM_BINDING_RE.findall(function.signature))
+
+    for line_no, raw_line in function.lines:
+        line = function_body_line(function, line_no, raw_line)
+        if not line:
+            continue
+        local_bindings.update(LOCAL_BINDING_RE.findall(line))
+        for target_expression in CALL_PATH_RE.findall(line):
+            parts = target_expression.split("::")
+            target_name = parts[-1]
+            # The opening signature is part of `function.lines`; preserve the
+            # previous detector's recursion exclusion and do not treat the
+            # declaration itself as a call edge.
+            if len(parts) == 1 and target_name == function.name:
+                continue
+            # A local value or parameter shadows an item with the same name.
+            # Function-pointer calls such as `let host_dlopen = ...; host_dlopen()`
+            # must not become edges to an unrelated module-level function.
+            if len(parts) == 1 and target_name in local_bindings:
+                continue
+            candidates: list[str]
+            reason: str | None = None
+
+            if len(parts) == 1:
+                candidates = functions_by_module_and_name.get(
+                    (function.module, target_name), []
+                )
+                if not candidates:
+                    # Bare names do not resolve into sibling modules without an
+                    # import. This lexical scanner intentionally refuses to
+                    # guess at `use` resolution from unrelated same-named items.
+                    continue
+                elif len(candidates) > 1:
+                    reason = "ambiguous_unqualified_local_target"
+            else:
+                target_module, claims_local = qualified_target_module(
+                    function, parts, known_modules
+                )
+                if not claims_local:
+                    continue
+                candidates = (
+                    functions_by_module_and_name.get((target_module, target_name), [])
+                    if target_module is not None
+                    else []
+                )
+                if not candidates:
+                    nonlocal_candidates = functions_by_name.get(target_name, [])
+                    if target_module is not None or len(nonlocal_candidates) <= 1:
+                        continue
+                    candidates = nonlocal_candidates
+                    reason = "unresolved_qualified_target"
+                elif len(candidates) > 1:
+                    reason = "ambiguous_qualified_target"
+
+            if reason is None and len(candidates) == 1:
+                target_id = candidates[0]
+                if target_id == function.identity:
+                    continue
+                key = (line_no, target_expression, target_id)
+                if key in seen_resolved:
+                    continue
+                seen_resolved.add(key)
+                resolved.append(
+                    FunctionCall(
+                        caller_id=function.identity,
+                        target_id=target_id,
                         path=path,
                         line=line_no,
-                        function=function.name,
-                        delegation_kind="alias_to_host_delegating_symbol",
-                        host_symbol=target,
+                        target_expression=target_expression,
                         expression=line.strip(),
                         evidence=f"{path}:{line_no}",
                     )
                 )
-    return calls
-
-
-def host_reaching_functions(
-    direct_host_calls: dict[str, list[HostCall]],
-    call_graph: dict[str, set[str]],
-) -> set[str]:
-    reaching = {name for name, calls in direct_host_calls.items() if calls}
-    changed = True
-    while changed:
-        changed = False
-        for name, callees in call_graph.items():
-            if name in reaching:
                 continue
-            if callees & reaching:
-                reaching.add(name)
-                changed = True
-    return reaching
+
+            candidate_ids = tuple(sorted(candidates))
+            key = (line_no, target_expression, reason or "ambiguous_target", candidate_ids)
+            if key in seen_unknown:
+                continue
+            seen_unknown.add(key)
+            unknown.append(
+                UnknownCall(
+                    caller_id=function.identity,
+                    path=path,
+                    line=line_no,
+                    target_expression=target_expression,
+                    reason=reason or "ambiguous_target",
+                    candidate_function_ids=candidate_ids,
+                    expression=line.strip(),
+                    evidence=f"{path}:{line_no}",
+                )
+            )
+    return resolved, unknown
 
 
-def reachable_host_helpers(
+def shortest_reachability_paths(
     start: str,
     call_graph: dict[str, set[str]],
-    host_reaching: set[str],
-) -> set[str]:
-    reachable: set[str] = set()
-    stack = list(call_graph.get(start, set()) & host_reaching)
-    while stack:
-        name = stack.pop()
-        if name in reachable or name == start:
+) -> dict[str, tuple[str, ...]]:
+    """Return one deterministic shortest call path to every reachable item."""
+
+    paths = {start: (start,)}
+    pending = deque([start])
+    while pending:
+        caller = pending.popleft()
+        for target in sorted(call_graph.get(caller, set())):
+            if target in paths:
+                continue
+            paths[target] = (*paths[caller], target)
+            pending.append(target)
+    return paths
+
+
+def reaches_host_symbol(
+    start: str,
+    host_symbol: str,
+    call_graph: dict[str, set[str]],
+    direct_host_calls: dict[str, list[HostCall]],
+) -> bool:
+    """Return whether `start` can reach a terminal resolver for `host_symbol`."""
+
+    pending = [start]
+    visited: set[str] = set()
+    while pending:
+        function_id = pending.pop()
+        if function_id in visited:
             continue
-        reachable.add(name)
-        stack.extend(call_graph.get(name, set()) & host_reaching)
-    return reachable
+        visited.add(function_id)
+        if any(
+            call.host_symbol == host_symbol
+            for call in direct_host_calls.get(function_id, [])
+        ):
+            return True
+        pending.extend(call_graph.get(function_id, set()) - visited)
+    return False
 
 
 def broader_references(source_files: list[Path], root: Path) -> list[dict[str, Any]]:
@@ -357,76 +566,95 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
     for path in source_files:
         functions.extend(parse_functions(path))
 
-    function_by_name = {function.name: function for function in functions}
-    known_functions = set(function_by_name)
+    (
+        function_by_id,
+        functions_by_module_and_name,
+        functions_by_name,
+    ) = function_indices(functions)
+    known_modules = {function.module for function in functions}
     direct_host_calls = {
-        function.name: detect_host_calls(function, root) for function in functions
+        function.identity: detect_host_calls(function, root) for function in functions
     }
+    call_edges: dict[str, list[FunctionCall]] = {}
+    direct_unknown_calls: dict[str, list[UnknownCall]] = {}
+    for function in functions:
+        resolved, unknown = resolve_function_calls(
+            function,
+            functions_by_module_and_name,
+            functions_by_name,
+            known_modules,
+            root,
+        )
+        call_edges[function.identity] = resolved
+        direct_unknown_calls[function.identity] = unknown
     call_graph = {
-        function.name: direct_function_calls(function, known_functions) for function in functions
+        function_id: {edge.target_id for edge in edges}
+        for function_id, edges in call_edges.items()
     }
 
     symbol_rows: list[dict[str, Any]] = []
     all_calls: list[dict[str, Any]] = []
     exported_functions = [function for function in functions if function.is_exported_abi]
-    host_reaching = host_reaching_functions(direct_host_calls, call_graph)
-    expanded_calls: dict[str, list[HostCall]] = {}
+    reachability_paths = {
+        function.identity: shortest_reachability_paths(function.identity, call_graph)
+        for function in exported_functions
+    }
+    expanded_calls: dict[str, list[tuple[HostCall, tuple[str, ...]]]] = {}
     for function in exported_functions:
-        calls = list(direct_host_calls[function.name])
-        helper_names = reachable_host_helpers(function.name, call_graph, host_reaching)
-        caller_names = {function.name, *helper_names}
-        for caller_name in sorted(
-            caller_names,
-            key=lambda name: (
-                rel(root, function_by_name[name].path),
-                function_by_name[name].start_line,
-                name,
+        function_id = function.identity
+        exported_symbol = function.exported_symbol
+        calls: list[tuple[HostCall, tuple[str, ...]]] = []
+        for target, witness_path in sorted(
+            reachability_paths[function_id].items(),
+            key=lambda identity: (
+                len(identity[1]),
+                identity[1],
             ),
         ):
-            caller = function_by_name[caller_name]
-            alias_targets = call_graph.get(caller_name, set()) & host_reaching
-            if caller_name == function.name:
-                alias_targets.discard(function.name)
-            calls.extend(alias_callsites(caller, alias_targets, root))
-        for target in sorted(
-            helper_names,
-            key=lambda name: (
-                rel(root, function_by_name[name].path),
-                function_by_name[name].start_line,
-                name,
-            ),
-        ):
-            calls.extend(direct_host_calls[target])
+            # A support-status downgrade requires semantic evidence that this
+            # ABI export can resolve/delegate to the same host symbol. Merely
+            # reaching allocator, errno, backtrace, panic-hook, or telemetry
+            # infrastructure is a dependency fact, not proof that the export's
+            # implementation wraps host libc.
+            for call in direct_host_calls[target]:
+                if call.host_symbol == exported_symbol:
+                    calls.append((call, witness_path))
         if calls:
-            expanded_calls[function.name] = calls
+            expanded_calls[function_id] = calls
 
     for function in sorted(exported_functions, key=lambda item: (rel(root, item.path), item.start_line)):
-        calls = expanded_calls.get(function.name, [])
+        calls = expanded_calls.get(function.identity, [])
         if not calls:
             continue
-        host_symbols = sorted({call.host_symbol for call in calls})
-        kinds = sorted({call.delegation_kind for call in calls})
+        exported_symbol = function.exported_symbol
+        host_symbols = sorted({call.host_symbol for call, _ in calls})
+        kinds = sorted({call.delegation_kind for call, _ in calls})
         callsite_ids = []
-        for idx, call in enumerate(calls, 1):
-            callsite_id = f"{function.module}:{function.name}:{function.start_line}:{idx:03d}"
+        for idx, (call, witness_path) in enumerate(calls, 1):
+            callsite_id = f"{function.module}:{exported_symbol}:{function.start_line}:{idx:03d}"
             callsite_ids.append(callsite_id)
             all_calls.append(
                 {
                     "id": callsite_id,
-                    "exported_symbol": function.name,
+                    "exported_symbol": exported_symbol,
+                    "exported_function_id": function.identity,
                     "module": function.module,
                     "path": call.path,
                     "line": call.line,
                     "helper_function": call.function,
+                    "helper_function_id": call.function_id,
                     "delegation_kind": call.delegation_kind,
                     "host_symbol": call.host_symbol,
+                    "reachability_path": list(witness_path),
+                    "reachability_hops": len(witness_path) - 1,
                     "expression": call.expression,
                     "evidence": call.evidence,
                 }
             )
         symbol_rows.append(
             {
-                "symbol": function.name,
+                "symbol": exported_symbol,
+                "function_id": function.identity,
                 "module": function.module,
                 "source": f"{rel(root, function.path)}:{function.start_line}",
                 "host_symbols": host_symbols,
@@ -436,8 +664,68 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
             }
         )
 
+    unknown_call_rows: list[dict[str, Any]] = []
+    exported_with_unknown_edges: set[str] = set()
+    for caller_id, unknown_calls in direct_unknown_calls.items():
+        caller = function_by_id[caller_id]
+        for idx, call in enumerate(unknown_calls, 1):
+            reachable_exports = []
+            for exported in exported_functions:
+                caller_path = reachability_paths[exported.identity].get(caller_id)
+                if caller_path is None:
+                    continue
+                symbol = exported.exported_symbol
+                candidate_can_delegate = any(
+                    reaches_host_symbol(
+                        candidate,
+                        symbol,
+                        call_graph,
+                        direct_host_calls,
+                    )
+                    for candidate in call.candidate_function_ids
+                )
+                unresolved_looks_delegating = (
+                    not call.candidate_function_ids
+                    and (
+                        symbol in call.target_expression
+                        or any(
+                            marker in call.target_expression
+                            for marker in ("host", "resolve", "delegate", "resolved")
+                        )
+                    )
+                )
+                if candidate_can_delegate or unresolved_looks_delegating:
+                    reachable_exports.append(symbol)
+            reachable_exports = sorted(set(reachable_exports))
+            if not reachable_exports:
+                continue
+            exported_with_unknown_edges.update(reachable_exports)
+            unknown_call_rows.append(
+                {
+                    "id": f"{caller.module}:{caller.name}:{caller.start_line}:unknown:{idx:03d}",
+                    "caller_function": caller.name,
+                    "caller_function_id": caller_id,
+                    "module": caller.module,
+                    "path": call.path,
+                    "line": call.line,
+                    "target_expression": call.target_expression,
+                    "reason": call.reason,
+                    "candidate_function_ids": list(call.candidate_function_ids),
+                    "caller_is_exported_abi": caller.is_exported_abi,
+                    "caller_exported_symbol": (
+                        caller.exported_symbol if caller.is_exported_abi else None
+                    ),
+                    "reachable_from_exported_symbols": reachable_exports,
+                    "expression": call.expression,
+                    "evidence": call.evidence,
+                }
+            )
+
     symbol_rows.sort(key=lambda row: (row["module"], row["symbol"]))
     all_calls.sort(key=lambda row: (row["module"], row["exported_symbol"], row["id"]))
+    unknown_call_rows.sort(
+        key=lambda row: (row["module"], row["caller_function"], row["line"], row["id"])
+    )
     module_counts: dict[str, int] = {}
     for row in symbol_rows:
         module_counts[row["module"]] = module_counts.get(row["module"], 0) + 1
@@ -453,12 +741,13 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "bead": BEAD_ID,
-        "description": "Source-derived census of exported ABI symbols whose default path reaches host libc/dynamic-loader resolver or delegate primitives.",
+        "description": "Source-derived census of exported ABI symbols with a call-graph witness to a resolver/delegate primitive for the same host symbol.",
         "detector": {
             "version": DETECTOR_VERSION,
             "abi_source_dir": rel(root, abi_source_dir),
             "source_file_count": len(source_files),
             "source_tree_sha256": source_tree_sha256(source_files, root),
+            "function_identity": "<module>::<function>@<one-based-start-line>",
         },
         "policy": {
             "required_anchor_symbols": REQUIRED_ANCHORS,
@@ -472,11 +761,20 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
                 "host_dl_iterate_phdr_cached",
                 "host_dladdr_cached",
             ],
+            "call_resolution": {
+                "unqualified": "Resolve only to one function with the same name in the caller's module.",
+                "qualified": "Resolve crate/self/super or scanned-module paths only to one exact module-qualified function.",
+                "local_bindings": "Function parameters and let-bound values shadow module items and are never treated as call-graph edges.",
+                "unknown": "Only ambiguous edges reachable from an exported ABI function and capable of hiding same-symbol host delegation are emitted; bare nonlocal names are never guessed.",
+            },
+            "status_derivation": "A row is emitted only when the exported symbol reaches terminal host evidence naming that same symbol; unrelated runtime dependencies cannot force WrapsHostLibc.",
         },
         "summary": {
             "exported_symbol_count": sum(1 for function in functions if function.is_exported_abi),
             "host_delegating_symbol_count": len(symbol_rows),
             "host_delegation_callsite_count": len(all_calls),
+            "unknown_call_edge_count": len(unknown_call_rows),
+            "exported_symbol_with_unknown_call_edge_count": len(exported_with_unknown_edges),
             "broader_source_reference_count": len(source_refs),
             "module_count": len(module_counts),
             "required_anchor_count": len(REQUIRED_ANCHORS),
@@ -489,6 +787,7 @@ def build_payload(root: Path, abi_source_dir: Path) -> dict[str, Any]:
         "required_anchor_symbols": required_anchor_rows,
         "symbol_census": symbol_rows,
         "callsite_census": all_calls,
+        "unknown_call_edges": unknown_call_rows,
         "broader_source_references": source_refs,
         "source_file_hashes": [
             {"path": rel(root, path), "sha256": file_sha256(path)} for path in source_files
