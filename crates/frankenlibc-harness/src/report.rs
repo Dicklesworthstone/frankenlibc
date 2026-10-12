@@ -243,6 +243,7 @@ const REALITY_REPORT_SCHEMA_VERSION: &str = "v1";
 pub struct RealityReport {
     pub schema_version: String,
     pub generated_at_utc: String,
+    pub source_commit: String,
     pub total_exported: u64,
     pub counts: RealityCounts,
     pub stubs: Vec<String>,
@@ -258,6 +259,18 @@ impl RealityReport {
             .as_str()
             .ok_or("missing generated_at_utc in support matrix")?
             .to_string();
+        let source_commit = matrix["source_commit"]
+            .as_str()
+            .ok_or("missing source_commit in support matrix")?
+            .to_string();
+        if !matches!(source_commit.len(), 40 | 64)
+            || !source_commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(
+                "support matrix source_commit must be a full 40- or 64-character Git object ID"
+                    .to_string(),
+            );
+        }
         let total_exported = matrix["total_exported"]
             .as_u64()
             .ok_or("missing total_exported in support matrix")?;
@@ -313,6 +326,7 @@ impl RealityReport {
         Ok(Self {
             schema_version: REALITY_REPORT_SCHEMA_VERSION.to_string(),
             generated_at_utc,
+            source_commit,
             total_exported,
             counts: RealityCounts {
                 implemented,
@@ -2120,6 +2134,7 @@ mod tests {
         format!(
             r#"{{
   "generated_at_utc": "2026-02-11T03:14:20Z",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "total_exported": {total_exported},
   "symbols": [
 {symbol_rows}
@@ -2143,6 +2158,10 @@ mod tests {
 
         assert_eq!(report.schema_version, "v1");
         assert_eq!(report.generated_at_utc, "2026-02-11T03:14:20Z");
+        assert_eq!(
+            report.source_commit,
+            "0123456789abcdef0123456789abcdef01234567"
+        );
         assert_eq!(report.total_exported, 6);
         assert_eq!(
             report.counts,
@@ -2174,6 +2193,7 @@ mod tests {
     fn rejects_missing_required_fields() {
         let json = r#"{
   "generated_at_utc": "2026-02-11T03:14:20Z",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "total_exported": 1,
   "symbols": [
     { "status": "Implemented" }
@@ -2182,6 +2202,26 @@ mod tests {
 
         let err = RealityReport::from_support_matrix_json_str(json).unwrap_err();
         assert!(err.contains("symbol missing symbol name"));
+    }
+
+    #[test]
+    fn rejects_missing_or_symbolic_source_commit() {
+        let missing = r#"{
+  "generated_at_utc": "2026-02-11T03:14:20Z",
+  "total_exported": 0,
+  "symbols": []
+}"#;
+        let err = RealityReport::from_support_matrix_json_str(missing).unwrap_err();
+        assert!(err.contains("missing source_commit"));
+
+        let symbolic = r#"{
+  "generated_at_utc": "2026-02-11T03:14:20Z",
+  "source_commit": "current",
+  "total_exported": 0,
+  "symbols": []
+}"#;
+        let err = RealityReport::from_support_matrix_json_str(symbolic).unwrap_err();
+        assert!(err.contains("full 40- or 64-character Git object ID"));
     }
 
     #[test]

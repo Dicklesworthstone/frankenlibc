@@ -121,6 +121,7 @@ fn unique_tmp_dir(stem: &str) -> TestResult<PathBuf> {
 fn write_sample_support_matrix(path: &Path) -> TestResult {
     let body = r#"{
   "generated_at_utc": "2026-05-14T00:00:00Z",
+  "source_commit": "0123456789abcdef0123456789abcdef01234567",
   "total_exported": 6,
   "symbols": [
     {"symbol": "zeta", "status": "Stub"},
@@ -166,6 +167,10 @@ fn validate_sample_report(report: &Value) -> TestResult {
     require(
         json_string(report, "generated_at_utc")? == "2026-05-14T00:00:00Z",
         "generated_at_utc must come from support matrix",
+    )?;
+    require(
+        json_string(report, "source_commit")? == "0123456789abcdef0123456789abcdef01234567",
+        "source_commit must come from support matrix",
     )?;
     require(
         json_u64(report, "total_exported")? == 6,
@@ -246,6 +251,10 @@ fn manifest_policy_pins_required_invariants() -> TestResult {
         (
             "support_matrix_symbol_count_mismatch_must_fail_closed",
             "support_matrix_symbol_count_mismatch_must_fail_closed must be true",
+        ),
+        (
+            "source_commit_must_be_full_git_oid",
+            "source_commit_must_be_full_git_oid must be true",
         ),
         (
             "must_preserve_support_reality_regeneration_bead",

@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -203,6 +204,83 @@ def load_matrix():
         matrix = json.load(f)
     validate_matrix_rollups(matrix)
     return matrix
+
+
+def validate_matrix_provenance(matrix):
+    """Require the matrix snapshot to include every committed ABI source change."""
+    source_commit = matrix.get("source_commit")
+    if not isinstance(source_commit, str) or re.fullmatch(
+        r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit
+    ) is None:
+        raise ValueError(
+            "support_matrix.json source_commit must be a full lowercase Git object ID"
+        )
+
+    generated_at_utc = matrix.get("generated_at_utc")
+    if not isinstance(generated_at_utc, str):
+        raise ValueError("support_matrix.json generated_at_utc must be an RFC 3339 timestamp")
+    try:
+        generated_at = datetime.fromisoformat(generated_at_utc.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(
+            "support_matrix.json generated_at_utc must be an RFC 3339 timestamp"
+        ) from error
+    if generated_at.tzinfo is None:
+        raise ValueError("support_matrix.json generated_at_utc must include a timezone")
+
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--verify", f"{source_commit}^{{commit}}"],
+            cwd=REPO_ROOT,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        newest_raw = subprocess.check_output(
+            [
+                "git",
+                "log",
+                "-1",
+                "--format=%H%x00%cI",
+                "--",
+                str(ABI_SRC.relative_to(REPO_ROOT)),
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError("unable to resolve support-matrix Git provenance") from error
+
+    try:
+        newest_commit, newest_timestamp = newest_raw.split("\0", 1)
+        newest_time = datetime.fromisoformat(newest_timestamp)
+    except ValueError as error:
+        raise ValueError("unable to parse newest ABI source commit provenance") from error
+
+    contains_newest = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", newest_commit, source_commit],
+        cwd=REPO_ROOT,
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    if contains_newest.returncode != 0:
+        raise ValueError(
+            "support_matrix.json source_commit predates the newest ABI source commit "
+            f"{newest_commit}"
+        )
+    if generated_at < newest_time:
+        raise ValueError(
+            "support_matrix.json generated_at_utc predates the newest ABI source commit "
+            f"timestamp {newest_timestamp}"
+        )
+
+    return {
+        "source_commit": source_commit,
+        "source_generated_at_utc": generated_at_utc,
+        "newest_abi_commit": newest_commit,
+        "newest_abi_commit_time": newest_timestamp,
+    }
 
 
 def load_fixtures():
@@ -1953,6 +2031,8 @@ def main():
     )
 
     matrix = load_matrix()
+    provenance = validate_matrix_provenance(matrix)
+    source_commit = provenance["source_commit"]
     symbols = matrix.get("symbols", [])
     downgrade_derivation = build_downgrade_derivation(
         symbols,
@@ -2216,6 +2296,10 @@ def main():
         "schema_version": "v1",
         "bead": "bd-3g4p",
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source_commit": source_commit,
+        "source_generated_at_utc": provenance["source_generated_at_utc"],
+        "newest_abi_commit": provenance["newest_abi_commit"],
+        "newest_abi_commit_time": provenance["newest_abi_commit_time"],
         "summary": {
             "total_symbols": total_symbols,
             "status_validated": status_valid,
@@ -2829,6 +2913,32 @@ def run_self_test():
     matrix = load_matrix()
     symbols = matrix.get("symbols", [])
     print(f"  {len(symbols)} symbols loaded")
+
+    print("Self-test: validating matrix provenance...")
+    provenance = validate_matrix_provenance(matrix)
+    if provenance["source_commit"] != matrix["source_commit"]:
+        raise AssertionError("validated source commit did not match the matrix")
+    from copy import deepcopy
+
+    stale = deepcopy(matrix)
+    stale["generated_at_utc"] = "1970-01-01T00:00:00Z"
+    try:
+        validate_matrix_provenance(stale)
+    except ValueError as error:
+        if "predates the newest ABI source commit" not in str(error):
+            raise AssertionError(f"wrong stale-timestamp rejection: {error}") from error
+    else:
+        raise AssertionError("stale matrix timestamp was accepted")
+    symbolic = deepcopy(matrix)
+    symbolic["source_commit"] = "current"
+    try:
+        validate_matrix_provenance(symbolic)
+    except ValueError as error:
+        if "full lowercase Git object ID" not in str(error):
+            raise AssertionError(f"wrong symbolic-commit rejection: {error}") from error
+    else:
+        raise AssertionError("symbolic matrix source commit was accepted")
+    print("  pass: current provenance accepted; stale and symbolic controls rejected")
 
     print("Self-test: loading fixtures...")
     fixtures = load_fixtures()

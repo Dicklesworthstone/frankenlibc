@@ -1,7 +1,8 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-06-03T21:45:00Z",
-  "library": "/data/tmp/cargo-target/release/libfrankenlibc_abi.so",
+  "generated_at_utc": "2026-10-12T18:35:28Z",
+  "source_commit": "2bc1eca9c7743ba9ce493bce5e29d69fe96f49b3",
+  "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
     "Implemented": "Native Rust code owns the entire operation. No host libc dependency. Full test coverage required.",
@@ -2726,11 +2727,11 @@
     },
     {
       "symbol": "daemon",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Native fork+setsid+chdir+dup2 via raw syscalls",
-      "hardened_semantics": "Native fork+setsid+chdir+dup2 via raw syscalls",
+      "strict_semantics": "Native daemon setup, with process creation delegated to the host fork lifecycle helper",
+      "hardened_semantics": "Same host-backed fork lifecycle with native setsid, chdir, and dup2 setup",
       "default_stub": false
     },
     {
@@ -4351,20 +4352,20 @@
     },
     {
       "symbol": "fork",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Raw Linux syscall for process control; POSIX errno on failure",
-      "hardened_semantics": "Raw syscall; validates argv/envp pointer arrays before execve",
+      "strict_semantics": "Delegates process creation to the host fork lifecycle helper; preserves POSIX errno on failure",
+      "hardened_semantics": "Same host-backed fork lifecycle with runtime policy gating",
       "default_stub": false
     },
     {
       "symbol": "forkpty",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
-      "strict_semantics": "Native forkpty via openpty + fork (SYS_clone) + login_tty; no glibc dependency",
-      "hardened_semantics": "Native forkpty; child sets up controlling terminal via login_tty",
+      "strict_semantics": "Native openpty and login_tty setup, with process creation delegated to the host fork lifecycle helper",
+      "hardened_semantics": "Same host-backed fork lifecycle; child sets up the controlling terminal through login_tty",
       "default_stub": false
     },
     {
@@ -15368,11 +15369,11 @@
     },
     {
       "symbol": "vfork",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "process_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Delegates to fork; identical on modern Linux",
-      "hardened_semantics": "Delegates to fork with membrane gating",
+      "strict_semantics": "Delegates to the host-backed fork lifecycle helper",
+      "hardened_semantics": "Same host-backed fork lifecycle with membrane gating",
       "default_stub": false
     },
     {
@@ -19138,12 +19139,12 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "_dl_find_object",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi"
     },
     {
@@ -19348,17 +19349,17 @@
     },
     {
       "symbol": "authnone_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create_default",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -19373,7 +19374,7 @@
     },
     {
       "symbol": "callrpc",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -19418,7 +19419,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -19433,7 +19434,7 @@
     },
     {
       "symbol": "clnt_perror",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -19448,32 +19449,32 @@
     },
     {
       "symbol": "clnt_sperror",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntraw_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "clnttcp_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_bufcreate",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntunix_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -20601,12 +20602,12 @@
     },
     {
       "symbol": "pmap_set",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_unset",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -20746,27 +20747,27 @@
     },
     {
       "symbol": "register_printf_function",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_modifier",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_specifier",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "register_printf_type",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi"
     },
     {
       "symbol": "registerrpc",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -21082,122 +21083,122 @@
     },
     {
       "symbol": "svc_exit",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_common",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_poll",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreqset",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_register",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_run",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_sendreply",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_unregister",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_auth",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_decode",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noproc",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noprog",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_progvers",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_systemerr",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_weakauth",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcfd_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcraw_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svctcp_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_bufcreate",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_enablecache",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunix_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcunixfd_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi"
     },
     {
@@ -33215,22 +33216,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2441,
-    "raw_syscall": 413,
-    "wraps_host_libc": 1265,
+    "implemented": 2399,
+    "raw_syscall": 410,
+    "wraps_host_libc": 1266,
     "glibc_call_through": 0,
-    "stub": 0
+    "stub": 44
   },
-  "implemented": 2441,
-  "raw_syscall": 413,
+  "implemented": 2399,
+  "raw_syscall": 410,
   "glibc_call_through": 0,
-  "stub": 0,
+  "stub": 44,
   "counts": {
-    "implemented": 2441,
-    "raw_syscall": 413,
+    "implemented": 2399,
+    "raw_syscall": 410,
     "glibc_call_through": 0,
-    "stub": 0,
-    "wraps_host_libc": 1265
+    "stub": 44,
+    "wraps_host_libc": 1266
   },
-  "wraps_host_libc": 1265
+  "wraps_host_libc": 1266
 }

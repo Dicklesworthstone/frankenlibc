@@ -3,9 +3,9 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`, whose own `generated_at_utc` is 2026-06-03. It was not regenerated on 2026-09-18 and is not evidence that current source behavior matches the labels.
-Reality snapshot: total_exported=4119, implemented=2441, raw_syscall=414, wraps_host_libc=1264, glibc_call_through=0, stub=0.
-Counts below reflect the checked-in support matrix symbol rows and will change as matrix drift fixes land. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; `Stub: 0` means zero support-taxonomy rows with status `Stub`, not zero no-op/fallback/bootstrap contracts in the codebase.
+The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-10-12, and it records the same full source commit as `support_matrix.json`.
+Reality snapshot: total_exported=4119, implemented=2399, raw_syscall=410, wraps_host_libc=1266, glibc_call_through=0, stub=44.
+Counts below reflect the checked-in support matrix symbol rows and will change as source-derived evidence lands. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; the explicit `Stub` rows are deterministic unsupported/failure contracts, while other no-op/fallback/bootstrap semantics remain separately classified by the overlay.
 Regenerate deterministically with:
 
 ```bash
@@ -15,13 +15,13 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 The checked taxonomy snapshot contains **4119 symbols**, classified as:
-- `Implemented`: 2441
-- `RawSyscall`: 414
-- `WrapsHostLibc`: 1264
+- `Implemented`: 2399
+- `RawSyscall`: 410
+- `WrapsHostLibc`: 1266
 - `GlibcCallThrough`: 0
-- `Stub`: 0
+- `Stub`: 44
 
-This means the checked taxonomy snapshot describes a **hybrid interposition profile** (mixed Rust-owned behavior, raw syscalls, and host-glibc delegation), not a full replacement profile. Deriving current labels from code remains open under `bd-rc0923-epic-eeuy4f.17`; taxonomy counts are not semantic-parity evidence.
+This means the checked taxonomy snapshot describes a **hybrid L0 interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and explicit unsupported contracts), not a full replacement profile. Conservative downgrade derivation is live; cfg/profile-aware native promotion and standalone admission remain open under `bd-rc0923-epic-eeuy4f.17`. Taxonomy counts are not semantic-parity evidence.
 
 Legend:
 - `Implemented`: Native Rust behavior, no host glibc dependency for that symbol
@@ -74,7 +74,7 @@ This file tracks the current staged parity profile, not a full replacement profi
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
 | `WrapsHostLibc` | `io_internal_abi`, `stdio_abi` |
 | `GlibcCallThrough` | none in current support matrix snapshot |
-| `Stub` | none (current exported surface) |
+| `Stub` | `rpc_abi` (40), `glibc_internal_abi` printf registration (4) |
 
 ## Hard-Parts Truth Table
 
@@ -90,11 +90,11 @@ Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generat
 ## Deterministic Stub Surface
 
 Current support-taxonomy `Stub` rows:
-- none
+- 40 SunRPC client/server/registration entrypoints and 4 printf registration entrypoints; the exact 44-symbol list is maintained in the README taxonomy section and `tests/conformance/reality_report.v1.json`.
 
 Current semantic fallback/no-op/bootstrap contracts:
 - Representative, non-exhaustive overlay: `tests/conformance/support_semantic_overlay.v1.json`
-- This overlay blocks treating support-matrix `Stub: 0` as proof of full semantic replacement until it becomes exhaustive and gated.
+- This overlay prevents treating the support taxonomy alone—regardless of stub count—as proof of full semantic replacement until semantic coverage becomes exhaustive and gated.
 
 ## Mode-Specific Parity Matrix
 

@@ -64,7 +64,7 @@ fi
 # 4. Validate report structure, compare stable sections against the canonical
 # artifact, emit logging, and check thresholds.
 python3 - "$GENERATED_REPORT" "$CANONICAL_REPORT" "$STRICT" "$TRACE_ID" "$LOG_FILE" "$TRACE_SYMBOL_EVENTS" <<'PY'
-import json, sys
+import json, re, sys
 from datetime import datetime, timezone
 
 report_path = sys.argv[1]
@@ -81,6 +81,10 @@ events = []
 stable_keys = [
     "schema_version",
     "bead",
+    "source_commit",
+    "source_generated_at_utc",
+    "newest_abi_commit",
+    "newest_abi_commit_time",
     "summary",
     "coverage_dashboard",
     "status_distribution",
@@ -111,6 +115,13 @@ with open(report_path) as f:
     report = json.load(f)
 with open(canonical_path) as f:
     canonical = json.load(f)
+
+source_commit = report.get("source_commit")
+if not isinstance(source_commit, str) or re.fullmatch(
+    r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit
+) is None:
+    print("FAIL: generated maintenance report source_commit is not a full Git object ID")
+    errors += 1
 
 generated_stable = {key: report.get(key) for key in stable_keys}
 canonical_stable = {key: canonical.get(key) for key in stable_keys}
