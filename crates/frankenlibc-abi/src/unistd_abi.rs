@@ -29917,23 +29917,34 @@ pub unsafe extern "C" fn pkey_set(_pkey: c_int, _rights: c_int) -> c_int {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn _Fork() -> c_int {
-    // _Fork is async-signal-safe fork (C23), no atfork handlers
-    let _pipeline_guard =
-        crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
-
-    let ret = syscall::sys_clone_fork(libc::SIGCHLD as usize);
-    if ret == Ok(0) {
+    // `_Fork` exists specifically for async-signal-safe fork-without-handlers.
+    // Do not route through sys_clone_fork: that wrapper repairs the core's
+    // thread-local tid cache. Do not take the membrane pipeline, resolve host
+    // pthread state, reopen the log, or run atfork callbacks either. POSIX
+    // permits only async-signal-safe operations in the child before exec; the
+    // inherited log descriptor remains usable, and its raw-getpid keyed
+    // limiter distinguishes the new process without a child-side hook.
+    let raw = unsafe {
+        syscall::syscall2(
+            syscall::SYS_CLONE,
+            libc::SIGCHLD as usize,
+            0, // fork-style clone: inherit the current stack
+        )
+    };
+    let ret = syscall::syscall_result(raw).map(|pid| pid as c_int);
+    if matches!(ret, Ok(0)) {
+        // One atomic generation increment lets later membrane lock users take
+        // over locks orphaned by vanished parent threads. It allocates nothing,
+        // touches no TLS, invokes no libc symbol, and cannot block.
         frankenlibc_membrane::util::note_fork_child();
-        // As in fork: the forking thread is the child's main thread.
-        crate::pthread_abi::remember_main_thread_host_handle();
     }
-
-    drop(_pipeline_guard);
 
     match ret {
         Ok(pid) => pid,
         Err(e) => {
-            unsafe { set_abi_errno(e) };
+            // Use the hidden initial-exec TLS leaf explicitly so this error
+            // branch stays auditable as signal-safe at the ABI boundary.
+            unsafe { crate::errno_abi::set_abi_errno_local(e) };
             -1
         }
     }

@@ -199,6 +199,9 @@ use frankenlibc_abi::unistd_abi::{
 };
 
 static SIGNAL_HIT: AtomicI32 = AtomicI32::new(0);
+static FORK_SIGNAL_TEST_LOCK: Mutex<()> = Mutex::new(());
+static FORK_SIGNAL_RESULT: AtomicI32 = AtomicI32::new(c_int::MIN);
+static FORK_SIGNAL_ERRNO: AtomicI32 = AtomicI32::new(0);
 const GAI_WAIT: c_int = 0;
 const GAI_NOWAIT: c_int = 1;
 const GAI_BADFLAGS_NEGATIVE_MODE: c_int = -1;
@@ -12015,6 +12018,165 @@ fn clone3_zero_size_returns_einval() {
     assert!(
         errno == libc::EINVAL || errno == libc::ENOSYS,
         "unexpected clone3 errno: {errno}"
+    );
+}
+
+unsafe extern "C" fn fork_signal_handler(_signal: c_int) {
+    let result = unsafe { frankenlibc_abi::unistd_abi::_Fork() };
+    if result == 0 {
+        // `_exit` is async-signal-safe and prevents the child from returning
+        // through the copied libtest signal frame.
+        unsafe { libc::_exit(0) };
+    }
+    let error = if result < 0 {
+        unsafe { std::ptr::read_volatile(__errno_location()) }
+    } else {
+        0
+    };
+    FORK_SIGNAL_ERRNO.store(error, Ordering::SeqCst);
+    FORK_SIGNAL_RESULT.store(result, Ordering::SeqCst);
+}
+
+struct ForkSignalHandlerRestore {
+    previous: libc::sigaction,
+}
+
+impl ForkSignalHandlerRestore {
+    fn install() -> Self {
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        action.sa_sigaction = fork_signal_handler as *const () as usize;
+        action.sa_flags = 0;
+        assert_eq!(unsafe { libc::sigemptyset(&mut action.sa_mask) }, 0);
+
+        let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { libc::sigaction(libc::SIGUSR2, &action, &mut previous) },
+            0
+        );
+        Self { previous }
+    }
+}
+
+impl Drop for ForkSignalHandlerRestore {
+    fn drop(&mut self) {
+        let rc = unsafe { libc::sigaction(libc::SIGUSR2, &self.previous, std::ptr::null_mut()) };
+        assert_eq!(rc, 0, "failed to restore SIGUSR2 disposition");
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_stress_executes_without_locks() {
+    const ITERATIONS: usize = 32;
+
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    for iteration in 0..ITERATIONS {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        assert_eq!(unsafe { libc::raise(libc::SIGUSR2) }, 0);
+
+        let pid = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        assert!(
+            pid > 0,
+            "signal iteration {iteration}: _Fork returned {pid}"
+        );
+        assert_eq!(
+            FORK_SIGNAL_ERRNO.load(Ordering::SeqCst),
+            0,
+            "signal iteration {iteration}: successful _Fork recorded errno"
+        );
+        let mut status = 0;
+        assert_eq!(unsafe { bounded_waitpid(pid, &mut status) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+    }
+}
+
+unsafe fn install_clone_eagain_seccomp_filter() -> c_int {
+    // `struct seccomp_data.nr` is the first 32-bit word. Load it, reject only
+    // clone(2) with EAGAIN, and allow every other syscall needed to return from
+    // the handler and report the result.
+    let mut filter = [
+        libc::sock_filter {
+            code: (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16,
+            jt: 0,
+            jf: 0,
+            k: 0,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 1,
+            k: libc::SYS_clone as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ERRNO | libc::EAGAIN as u32,
+        },
+        libc::sock_filter {
+            code: (libc::BPF_RET | libc::BPF_K) as u16,
+            jt: 0,
+            jf: 0,
+            k: libc::SECCOMP_RET_ALLOW,
+        },
+    ];
+    let mut program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_mut_ptr(),
+    };
+    if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 {
+        return -1;
+    }
+    unsafe {
+        libc::prctl(
+            libc::PR_SET_SECCOMP,
+            libc::SECCOMP_MODE_FILTER,
+            std::ptr::addr_of_mut!(program),
+        )
+    }
+}
+
+#[test]
+fn fork_from_signal_handler_forced_error_sets_errno() {
+    let _lock = FORK_SIGNAL_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let _restore = ForkSignalHandlerRestore::install();
+
+    let probe_pid = unsafe { libc::fork() };
+    assert!(probe_pid >= 0, "failed to fork seccomp probe process");
+    if probe_pid == 0 {
+        FORK_SIGNAL_RESULT.store(c_int::MIN, Ordering::SeqCst);
+        FORK_SIGNAL_ERRNO.store(0, Ordering::SeqCst);
+        if unsafe { install_clone_eagain_seccomp_filter() } != 0 {
+            unsafe { libc::_exit(2) };
+        }
+        if unsafe { libc::raise(libc::SIGUSR2) } != 0 {
+            unsafe { libc::_exit(3) };
+        }
+
+        let result = FORK_SIGNAL_RESULT.load(Ordering::SeqCst);
+        let handler_errno = FORK_SIGNAL_ERRNO.load(Ordering::SeqCst);
+        let caller_errno = unsafe { std::ptr::read_volatile(__errno_location()) };
+        let ok = result == -1 && handler_errno == libc::EAGAIN && caller_errno == libc::EAGAIN;
+        unsafe { libc::_exit(if ok { 0 } else { 1 }) };
+    }
+
+    let mut status = 0;
+    assert_eq!(
+        unsafe { bounded_waitpid(probe_pid, &mut status) },
+        probe_pid
+    );
+    assert!(libc::WIFEXITED(status));
+    assert_eq!(
+        libc::WEXITSTATUS(status),
+        0,
+        "seccomp-forced _Fork failure did not publish EAGAIN from the signal handler"
     );
 }
 

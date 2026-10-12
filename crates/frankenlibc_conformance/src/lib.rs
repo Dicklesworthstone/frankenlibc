@@ -1985,7 +1985,7 @@ fn glibc_internal_compat_wave03_actual(function: &str) -> Result<String, String>
             glibc_internal_compat_reset_host_errno();
             let rc = unsafe {
                 frankenlibc_abi::glibc_internal_abi::__clone(
-                    std::ptr::null_mut(),
+                    None,
                     std::ptr::null_mut(),
                     0,
                     std::ptr::null_mut(),
