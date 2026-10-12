@@ -10,14 +10,20 @@
  * first repair deterministic. Host glibc and strict mode skip the deliberately
  * invalid call, so output remains byte-identical in the preload smoke battery.
  * The invalid kill also gives the runtime-log gate one deterministic semantic
- * denial without sending a signal or changing the fixture's output.
+ * denial without sending a signal or changing the fixture's output. When the
+ * runtime log is configured, the fixture also rotates its path before fork:
+ * the child must reopen the current path rather than keep writing through the
+ * parent's inherited open-file description.
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
@@ -49,10 +55,71 @@ static int induce_hardened_bounds_repair(void) {
     return failed ? 4 : 0;
 }
 
+static int invalid_signal_is_denied(void) {
+    errno = 0;
+    return kill(getpid(), -1) == -1 && errno == EINVAL ? 0 : 2;
+}
+
+static int exercise_runtime_log_fork_reopen(void) {
+    const char *log_path = getenv("FRANKENLIBC_LOG");
+    if (!__frankenlibc_is_runtime_ready || !__frankenlibc_is_runtime_ready() ||
+        log_path == NULL || log_path[0] == '\0')
+        return 0;
+
+    /* Open the lazy sink before rotation so the parent demonstrably owns a
+     * descriptor for the old inode when fork begins. */
+    if (invalid_signal_is_denied() != 0)
+        return 5;
+
+    static const char suffix[] = ".pre_fork";
+    size_t path_len = strlen(log_path);
+    if (path_len + sizeof(suffix) > PATH_MAX)
+        return 6;
+    char before_fork[PATH_MAX];
+    memcpy(before_fork, log_path, path_len);
+    memcpy(before_fork + path_len, suffix, sizeof(suffix));
+
+    if (rename(log_path, before_fork) != 0)
+        return 7;
+    int replacement = open(log_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+    if (replacement < 0)
+        return 8;
+    if (close(replacement) != 0)
+        return 9;
+
+    pid_t child = fork();
+    if (child < 0)
+        return 10;
+    if (child == 0) {
+        int rc = induce_hardened_bounds_repair();
+        if (rc == 0)
+            rc = invalid_signal_is_denied();
+        /* exit(), rather than _exit(), is intentional: the child's DSO fini
+         * hook must append its exit_summary through the reopened sink. */
+        exit(rc);
+    }
+
+    int status = 0;
+    if (waitpid(child, &status, 0) != child)
+        return 11;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 12;
+    return 0;
+}
+
 int main(void) {
     int repair_rc = induce_hardened_bounds_repair();
     if (repair_rc != 0)
         return repair_rc;
+
+    repair_rc = exercise_runtime_log_fork_reopen();
+    if (repair_rc != 0)
+        return repair_rc;
+
+    /* Host glibc and callers without FRANKENLIBC_LOG skip the fork probe but
+     * still exercise the harmless invalid-signal contract. */
+    if (invalid_signal_is_denied() != 0)
+        return 2;
 
     char *b = malloc(120);
     if (b == NULL) return 1;
@@ -63,9 +130,6 @@ int main(void) {
         char *p = memchr(b, 'a', n), *q = memrchr(b, 'a', n), *r = memchr(b, '\n', n);
         sum += (p ? p - b : -1) + (q ? q - b : -1) + (r ? r - b : -1);
     }
-    errno = 0;
-    if (kill(getpid(), -1) != -1 || errno != EINVAL)
-        return 2;
     printf("fixture_hardened_first_heal: sum=%ld\n", sum);
     free(b);
     return 0;

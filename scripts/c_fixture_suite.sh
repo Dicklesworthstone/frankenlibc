@@ -234,6 +234,28 @@ if fixture_name == "fixture_hardened_first_heal" and not any(
 ):
     raise SystemExit("runtime log is missing the kill invalid_signal_number denial")
 if fixture_name == "fixture_hardened_first_heal":
+    before_path = pathlib.Path(f"{log_path}.pre_fork")
+    if not before_path.is_file():
+        raise SystemExit("runtime log fork probe is missing the pre-fork inode")
+    before_entries = list(LogParser(strict=True).parse_file(before_path))
+    before_issues = LogValidator().validate(before_entries)
+    if before_issues:
+        rendered = "; ".join(
+            f"line {issue.line}: {issue.message}" for issue in before_issues
+        )
+        raise SystemExit(f"pre-fork runtime log validation failed: {rendered}")
+    child_pids = {entry.pid for entry in entries if entry.pid is not None}
+    parent_pids = {entry.pid for entry in before_entries if entry.pid is not None}
+    if len(child_pids) != 1 or len(parent_pids) != 1:
+        raise SystemExit(
+            f"fork probe expected one child pid and one parent pid; "
+            f"child={sorted(child_pids)} parent={sorted(parent_pids)}"
+        )
+    if not child_pids.isdisjoint(parent_pids):
+        raise SystemExit(
+            "fork child kept the parent's inherited runtime-log descriptor "
+            "instead of reopening the rotated path"
+        )
     repair_count = sum(entry.event == "repair" for entry in entries)
     if mode == "hardened" and repair_count == 0:
         raise SystemExit("hardened runtime log is missing the induced repair")
@@ -283,7 +305,11 @@ run_fixture() {
   echo "${rc}" > "${case_dir}/exit_code"
 
   local refs_json
-  refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  if [[ -f "${runtime_log}.pre_fork" ]]; then
+    refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime.jsonl.pre_fork","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  else
+    refs_json="$(printf '["%s/%s/stdout.txt","%s/%s/stderr.txt","%s/%s/exit_code","%s/%s/runtime.jsonl","%s/%s/runtime_log_validation.txt"]' "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}" "${mode}" "${name}")"
+  fi
 
   if [[ "${rc}" -eq 0 ]]; then
     passes=$((passes + 1))
@@ -385,11 +411,13 @@ for pattern in (
     "strict/fixture_*/stderr.txt",
     "strict/fixture_*/exit_code",
     "strict/fixture_*/runtime.jsonl",
+    "strict/fixture_*/runtime.jsonl.pre_fork",
     "strict/fixture_*/runtime_log_validation.txt",
     "hardened/fixture_*/stdout.txt",
     "hardened/fixture_*/stderr.txt",
     "hardened/fixture_*/exit_code",
     "hardened/fixture_*/runtime.jsonl",
+    "hardened/fixture_*/runtime.jsonl.pre_fork",
     "hardened/fixture_*/runtime_log_validation.txt",
     "*_compile.log",
 ):
@@ -398,7 +426,7 @@ for pattern in (
 artifacts = []
 for path in paths:
     rel = path.relative_to(root).as_posix()
-    if rel.endswith(".jsonl"):
+    if rel.endswith(".jsonl") or rel.endswith(".jsonl.pre_fork"):
         kind = "log"
     elif rel.endswith("results.json"):
         kind = "report"

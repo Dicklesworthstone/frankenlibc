@@ -5503,6 +5503,9 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         syscall::sys_exit_group(0);
     }
 
+    // SAFETY: all fork guards are released, this is the sole surviving
+    // thread, and no user child handler has had a chance to emit evidence.
+    unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
     // Child: re-initialize via atfork_child before any further work.
     crate::pthread_abi::run_atfork_child(&atfork);
 
@@ -9344,6 +9347,9 @@ pub unsafe extern "C" fn forkpty(
     }
 
     if pid == 0 {
+        // SAFETY: all fork guards are released, this is the sole surviving
+        // thread, and no user child handler has had a chance to emit evidence.
+        unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
         crate::pthread_abi::run_atfork_parent(&atfork);

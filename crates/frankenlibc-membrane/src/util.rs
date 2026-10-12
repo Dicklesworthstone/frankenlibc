@@ -402,7 +402,8 @@ impl<T> LazyBox<T> {
     pub fn get(&self) -> Option<&T> {
         let ptr = self.ptr.load(Ordering::Acquire);
         // SAFETY: a non-null pointer came from `Box::into_raw` in
-        // `get_or_init`, is never replaced, and is freed only by `drop`.
+        // `get_or_init`; normal execution keeps it installed until `drop`.
+        // The child-only replacement contract separately excludes live refs.
         (!ptr.is_null()).then(|| unsafe { &*ptr })
     }
 
@@ -418,7 +419,8 @@ impl<T> LazyBox<T> {
             Ordering::AcqRel,
             Ordering::Acquire,
         ) {
-            // SAFETY: `fresh` is now the installed, never-replaced pointer.
+            // SAFETY: `fresh` is now installed and remains live during normal
+            // execution; the child-only replacement contract excludes refs.
             Ok(_) => unsafe { &*fresh },
             Err(installed) => {
                 // SAFETY: `fresh` lost the race and was never shared.
@@ -426,6 +428,28 @@ impl<T> LazyBox<T> {
                 // SAFETY: as in `get`.
                 unsafe { &*installed }
             }
+        }
+    }
+
+    /// Replace an initialized value in the single-threaded child immediately
+    /// after `fork`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must be executing in the freshly forked child before it has
+    /// created any threads, and the surviving thread must not hold a reference
+    /// returned by this `LazyBox`. References held by vanished parent threads
+    /// do not exist in the child's address space execution state. These
+    /// conditions make it safe to reclaim the inherited value after the atomic
+    /// replacement.
+    #[allow(unsafe_code)]
+    pub unsafe fn replace_in_fork_child(&self, value: T) {
+        let fresh = Box::into_raw(Box::new(value));
+        let inherited = self.ptr.swap(fresh, Ordering::AcqRel);
+        if !inherited.is_null() {
+            // SAFETY: the child-only contract above excludes live references
+            // in the surviving thread; `inherited` came from `Box::into_raw`.
+            drop(unsafe { Box::from_raw(inherited) });
         }
     }
 }
@@ -549,5 +573,20 @@ mod tests {
 
         drop(Arc::try_unwrap(lazy).ok().expect("sole owner"));
         assert_eq!(drops.load(Ordering::SeqCst), built, "winner freed on drop");
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn lazy_box_fork_child_replacement_drops_inherited_value() {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let lazy = LazyBox::new_with(Counted(drops.clone()));
+
+        // SAFETY: this single-threaded test models the freshly forked child;
+        // it holds no reference returned by `lazy` across the replacement.
+        unsafe { lazy.replace_in_fork_child(Counted(drops.clone())) };
+        assert_eq!(drops.load(Ordering::SeqCst), 1, "inherited value dropped");
+
+        drop(lazy);
+        assert_eq!(drops.load(Ordering::SeqCst), 2, "replacement dropped");
     }
 }

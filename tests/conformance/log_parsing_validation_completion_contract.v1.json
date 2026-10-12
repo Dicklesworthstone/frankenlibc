@@ -82,13 +82,13 @@
     {
       "kind": "schema_documentation",
       "path": "docs/gentoo/log-format.md",
-      "line": 80,
+      "line": 88,
       "anchor": "Required:"
     },
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 109,
+      "line": 117,
       "anchor": "## Validation Rules"
     },
     {

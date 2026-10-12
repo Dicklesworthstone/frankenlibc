@@ -54,6 +54,14 @@ counters, and the `runtime_log_*` written/dropped/short-write/open-failure
 counters. A successful fixture run must contain this row; its absence means the
 process did not reach normal teardown or the sink failed before the summary.
 
+The sink is opened lazily with append semantics. If a process forks after the
+sink has opened, the child reopens the configured path before user child
+handlers run. Parent and child therefore have distinct open-file descriptions,
+and a log path rotated before `fork()` is observed by the child instead of the
+child continuing to write through the parent's inherited descriptor. The
+`fixture_hardened_first_heal` gate rotates the path before forking and rejects
+overlapping parent/child PIDs across the two resulting JSONL files.
+
 ## Captured Call Schema
 
 The parser also accepts older, higher-volume call captures produced by tooling:

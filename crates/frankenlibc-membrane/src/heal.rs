@@ -425,6 +425,38 @@ pub fn append_runtime_log_record(line: &str) {
     append_to_runtime_log(line);
 }
 
+/// Reopen an already-initialized runtime evidence sink in a freshly forked
+/// child.
+///
+/// An unopened sink remains lazy, preserving the zero-work path for processes
+/// that never emit runtime evidence. An initialized `None` remains disabled.
+/// Only an inherited live file is reopened, so the child gets a distinct open
+/// file description and observes path rotation independently of the parent.
+///
+/// # Safety
+///
+/// This must run only in the freshly forked, single-threaded child after the
+/// allocator and membrane fork guards have been released, and before user
+/// child handlers can emit evidence. The surviving thread must not be inside
+/// [`append_runtime_log_record`] or [`HealingPolicy::record`].
+#[allow(unsafe_code)]
+pub unsafe fn reopen_runtime_log_in_fork_child() {
+    let Some(inherited) = RUNTIME_LOG.get() else {
+        return;
+    };
+    if inherited.is_none() {
+        return;
+    }
+
+    let reopened = std::env::var_os("FRANKENLIBC_LOG")
+        .filter(|path| !path.is_empty())
+        .and_then(|path| runtime_log::open_file(&path));
+    // SAFETY: the caller establishes the freshly-forked-child contract above,
+    // and this function holds no reference into `RUNTIME_LOG` after the
+    // `is_none` check has completed.
+    unsafe { RUNTIME_LOG.replace_in_fork_child(reopened) };
+}
+
 fn append_line(file: &std::fs::File, line: &str) {
     runtime_log::append_line(file, line);
 }
