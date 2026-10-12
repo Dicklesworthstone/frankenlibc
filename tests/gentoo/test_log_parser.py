@@ -229,6 +229,39 @@ class LogParserTests(unittest.TestCase):
         ]
         self.assertEqual([entry.raw["seq"] for entry in entries], [2, 1])
 
+    def test_deployed_runtime_sink_restricts_address_fields_to_hardened(self) -> None:
+        parser = self.log_parser.LogParser(strict=True)
+        row = {
+            "schema_version": "1.0",
+            "event": "deny",
+            "seq": 1,
+            "pid": 12345,
+            "api_family": "Signal",
+            "symbol": "kill",
+            "reason": "invalid_signal_number",
+            "errno": 22,
+            "policy_id": 0,
+            "signal_context": False,
+        }
+        for mode in ("strict", "off"):
+            with self.subTest(mode=mode):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(
+                        json.dumps({**row, "runtime_mode": mode, "addr_hint": "0x0"})
+                    )
+        for value in (0, "0", "0x", "0xgg", None):
+            with self.subTest(value=value):
+                with self.assertRaises(self.log_parser.ParseError):
+                    parser.parse_line(
+                        json.dumps(
+                            {**row, "runtime_mode": "hardened", "addr_hint": value}
+                        )
+                    )
+        entry = parser.parse_line(
+            json.dumps({**row, "runtime_mode": "hardened", "addr_hint": "0xdeadBEEF"})
+        )
+        self.assertEqual(entry.raw["addr_hint"], "0xdeadBEEF")
+
     def test_invalid_json_raises_in_strict_mode(self) -> None:
         parser = self.log_parser.LogParser(strict=True)
         with self.assertRaises(self.log_parser.ParseError):

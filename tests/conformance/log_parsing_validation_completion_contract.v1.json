@@ -30,49 +30,55 @@
     {
       "kind": "parser_entry_model",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 23,
+      "line": 27,
       "anchor": "class LogEntry"
     },
     {
       "kind": "parser_file_iteration",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 46,
+      "line": 50,
       "anchor": "def parse_file"
     },
     {
       "kind": "parser_jsonl_line_normalization",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 53,
+      "line": 57,
       "anchor": "def parse_line"
     },
     {
       "kind": "parser_runtime_and_hook_schema",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 68,
+      "line": 72,
       "anchor": "def _normalize"
     },
     {
       "kind": "parser_runtime_sink_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 160,
+      "line": 164,
       "anchor": "def _validate_runtime_sink_row"
     },
     {
       "kind": "parser_repair_symbol_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 209,
+      "line": 229,
       "anchor": "repair row symbol must be a non-empty canonical symbol"
     },
     {
       "kind": "parser_event_sequence_validation",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 195,
+      "line": 199,
       "anchor": "row seq must be a positive integer"
+    },
+    {
+      "kind": "parser_hardened_address_disclosure_validation",
+      "path": "scripts/gentoo/log_parser.py",
+      "line": 208,
+      "anchor": "row {field} is forbidden outside hardened mode"
     },
     {
       "kind": "parser_strict_error_policy",
       "path": "scripts/gentoo/log_parser.py",
-      "line": 219,
+      "line": 239,
       "anchor": "def _handle_error"
     },
     {
@@ -108,7 +114,7 @@
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 157,
+      "line": 163,
       "anchor": "## Validation Rules"
     },
     {
@@ -166,39 +172,51 @@
       "anchor": "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences"
     },
     {
-      "kind": "unit_strict_error_test",
+      "kind": "unit_hardened_address_disclosure_test",
       "path": "tests/gentoo/test_log_parser.py",
       "line": 232,
+      "anchor": "def test_deployed_runtime_sink_restricts_address_fields_to_hardened"
+    },
+    {
+      "kind": "unit_strict_error_test",
+      "path": "tests/gentoo/test_log_parser.py",
+      "line": 265,
       "anchor": "def test_invalid_json_raises_in_strict_mode"
     },
     {
       "kind": "unit_non_strict_error_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 237,
+      "line": 270,
       "anchor": "def test_invalid_line_collected_in_non_strict_mode"
     },
     {
       "kind": "unit_stats_validator_test",
       "path": "tests/gentoo/test_log_parser.py",
-      "line": 244,
+      "line": 277,
       "anchor": "def test_stats_and_validator"
     },
     {
       "kind": "deployed_fixture_repair_symbol_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 255,
+      "line": 256,
       "anchor": "all_entries = entries + before_entries"
     },
     {
       "kind": "deployed_fixture_event_sequence_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 264,
+      "line": 265,
       "anchor": "runtime log has duplicate sequence values"
+    },
+    {
+      "kind": "deployed_fixture_hardened_address_disclosure_gate",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 300,
+      "anchor": "denial rows disclosed hardened-only addr_hint values"
     },
     {
       "kind": "deployed_fixture_repair_identity_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 308,
+      "line": 328,
       "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)"
     },
     {
@@ -226,6 +244,7 @@
       "__hook_event__",
       "missing required field(s)",
       "row seq must be a positive integer",
+      "row {field} is forbidden outside hardened mode",
       "repair row symbol must be a non-empty canonical symbol",
       "repair row symbol is not canonical"
     ],
@@ -254,6 +273,7 @@
       "def test_deployed_runtime_sink_rejects_blank_or_unknown_repair_symbol",
       "def test_deployed_runtime_sink_rejects_missing_or_invalid_sequence",
       "def test_deployed_runtime_sink_accepts_out_of_append_order_sequences",
+      "def test_deployed_runtime_sink_restricts_address_fields_to_hardened",
       "def test_invalid_json_raises_in_strict_mode",
       "def test_invalid_line_collected_in_non_strict_mode",
       "def test_stats_and_validator"
@@ -261,6 +281,7 @@
     "format_doc": [
       "canonical operation that actually",
       "positive process-local `seq`",
+      "`addr_hint` is an opaque policy input",
       "case-insensitive `unknown`",
       "Aliases record"
     ],
@@ -271,6 +292,7 @@
     "deployed_gate": [
       "all_entries = entries + before_entries",
       "runtime log has duplicate sequence values",
+      "denial rows disclosed hardened-only addr_hint values",
       "invalid_repair_symbols",
       "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)",
       "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False)"
@@ -291,7 +313,7 @@
     {
       "missing_item_id": "tests.unit.primary",
       "status": "covered",
-      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, positive shared event-sequence validation including concurrent out-of-append-order rows, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
+      "description": "Checked-in unittest coverage exercises valid runtime JSONL, canonical deployed repair rows, positive shared event-sequence validation including concurrent out-of-append-order rows, hardened-only address disclosure and hexadecimal address validation, missing/blank/unknown repair-symbol rejection, hook normalization, strict malformed JSON failure, non-strict missing-field collection, stats aggregation, and validator success paths.",
       "implementation_refs": [
         "parser_entry_model",
         "parser_file_iteration",
@@ -299,6 +321,7 @@
         "parser_runtime_and_hook_schema",
         "parser_runtime_sink_validation",
         "parser_event_sequence_validation",
+        "parser_hardened_address_disclosure_validation",
         "parser_repair_symbol_validation",
         "parser_strict_error_policy",
         "validator_integrity_checks",
@@ -312,6 +335,7 @@
         "unit_invalid_repair_symbol_test",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
+        "unit_hardened_address_disclosure_test",
         "unit_strict_error_test",
         "unit_non_strict_error_test",
         "unit_stats_validator_test",
@@ -327,7 +351,7 @@
     {
       "missing_item_id": "telemetry.primary",
       "status": "covered",
-      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, hardened-only denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
       "implementation_refs": [
         "stats_telemetry_snapshot",
         "validator_action_vocabulary",
@@ -337,6 +361,7 @@
         "runtime_event_sequence_generator",
         "deployed_fixture_repair_symbol_gate",
         "deployed_fixture_event_sequence_gate",
+        "deployed_fixture_hardened_address_disclosure_gate",
         "deployed_fixture_repair_identity_gate",
         "completion_checker",
         "completion_harness"
@@ -349,6 +374,7 @@
         "runtime_event_sequence_unit_test",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
+        "unit_hardened_address_disclosure_test",
         "completion_harness"
       ],
       "telemetry_refs": [

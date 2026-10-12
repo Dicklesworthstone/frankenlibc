@@ -59,9 +59,15 @@ reserved `runtime_policy` symbol instead:
   "reason": "invalid_signal_number",
   "errno": 22,
   "policy_id": 0,
+  "addr_hint": "0x0",
   "signal_context": false
 }
 ```
+
+`addr_hint` is an opaque policy input, not necessarily a pointer: some API
+families use it for scalar descriptors or identifiers. It is emitted only in
+`hardened` mode. Strict and off rows omit the key entirely so enabling evidence
+does not expand address disclosure in non-hardening modes.
 
 The final row is `event="exit_summary"`. It carries the next shared `seq` and
 contains `denials`, all healing
@@ -163,6 +169,8 @@ Parser normalization:
   Aliases record the canonical delegated operation.
 - `deny` rows require `api_family`, `symbol`, `reason`, `errno`, `policy_id`, and
   `signal_context`.
+- `address` and `addr_hint`, when present, must be hexadecimal strings and are
+  forbidden outside `hardened` mode.
 - `exit_summary` rows require `denials` and `runtime_log_written_records`.
 - Timestamp, when present, parseable as ISO8601.
 - Latency in `[0, 1_000_000_000]` ns.

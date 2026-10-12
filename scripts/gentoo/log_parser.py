@@ -4,9 +4,13 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+
+
+HEX_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]+$")
 
 
 @dataclass
@@ -195,6 +199,22 @@ class LogParser:
                 f"{event} row seq must be a positive integer",
                 json.dumps(payload),
             )
+        for field in ("address", "addr_hint"):
+            if field not in payload:
+                continue
+            if payload["runtime_mode"] != "hardened":
+                raise ParseError(
+                    line_num,
+                    f"{event} row {field} is forbidden outside hardened mode",
+                    json.dumps(payload),
+                )
+            value = payload[field]
+            if not isinstance(value, str) or HEX_ADDRESS_RE.fullmatch(value) is None:
+                raise ParseError(
+                    line_num,
+                    f"{event} row {field} must be a hexadecimal address",
+                    json.dumps(payload),
+                )
         if event in {"repair", "deny"} and not isinstance(payload["signal_context"], bool):
             raise ParseError(
                 line_num,

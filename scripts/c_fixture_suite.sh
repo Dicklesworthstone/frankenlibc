@@ -209,6 +209,7 @@ validate_runtime_log() {
 
   python3 - "${ROOT}" "${log_path}" "${fixture_name}" "${mode}" <<'PY'
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -280,6 +281,25 @@ if fixture_name == "fixture_hardened_first_heal":
             for entry in invalid_repair_symbols
         )
         raise SystemExit(f"runtime logs contain invalid repair symbols: {rendered}")
+    denial_rows = [entry.raw for entry in all_entries if entry.event == "deny"]
+    if mode == "hardened":
+        invalid_hints = [
+            row.get("addr_hint")
+            for row in denial_rows
+            if not isinstance(row.get("addr_hint"), str)
+            or re.fullmatch(r"0x[0-9a-fA-F]+", row["addr_hint"]) is None
+        ]
+        if invalid_hints:
+            raise SystemExit(
+                f"hardened denial rows have invalid addr_hint values: {invalid_hints!r}"
+            )
+    else:
+        disclosed_hints = [row["addr_hint"] for row in denial_rows if "addr_hint" in row]
+        if disclosed_hints:
+            raise SystemExit(
+                f"{mode} denial rows disclosed hardened-only addr_hint values: "
+                f"{disclosed_hints!r}"
+            )
     def event_signature(entry):
         if entry.event == "repair":
             return (

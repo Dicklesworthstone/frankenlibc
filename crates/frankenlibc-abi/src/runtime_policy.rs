@@ -2640,9 +2640,21 @@ fn append_deny_record(
         write!(
             line,
             ",\"errno\":{errno_value},\"policy_id\":{policy_id},\"risk_upper_bound_ppm\":{risk_upper_bound_ppm},\
-\"evidence_seqno\":{evidence_seqno},\"addr_hint\":\"{:#x}\",\"requested_bytes\":{},\
-\"is_write\":{}}}",
-            ctx.addr_hint, ctx.requested_bytes, ctx.is_write,
+\"evidence_seqno\":{evidence_seqno}",
+        )
+    })
+    .and_then(|()| {
+        if mode == SafetyLevel::Hardened {
+            write!(line, ",\"addr_hint\":\"{:#x}\"", ctx.addr_hint)
+        } else {
+            Ok(())
+        }
+    })
+    .and_then(|()| {
+        write!(
+            line,
+            ",\"requested_bytes\":{},\"is_write\":{}}}",
+            ctx.requested_bytes, ctx.is_write,
         )
     });
     if formatted.is_err() {
