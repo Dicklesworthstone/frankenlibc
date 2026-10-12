@@ -8350,10 +8350,17 @@ pub unsafe extern "C" fn io_pgetevents(
 /// bytes. The kernel rejects calls with the wrong size for any of
 /// its known struct versions.
 ///
-/// Callers in Rust must be extremely careful: in the child branch,
-/// stack/TLS state may be unsafe to use until the kernel completes
-/// thread setup. Most usage should go through pthread_create or the
-/// portable libc clone wrapper instead.
+/// This ordinary return-style wrapper is usable in both parent and child only
+/// when `clone_args.stack == 0` and `clone_args.stack_size == 0`, so the kernel
+/// preserves the calling stack as it does for `fork`. A caller requesting a
+/// new stack (especially with `CLONE_VM` or `CLONE_VFORK`) must supply an
+/// architecture-specific assembly trampoline that never returns through this
+/// Rust frame; [`crate::process_abi::posix_spawn`] does that internally.
+///
+/// There is deliberately no generic Rust child epilogue here. In particular,
+/// process-local runtime-log admission recognizes a non-`CLONE_VM` child by
+/// its raw process ID on first use, without touching an arbitrary child stack
+/// or TLS configuration.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clone3(cl_args: *mut c_void, size: usize) -> libc::pid_t {
     if cl_args.is_null() {

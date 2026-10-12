@@ -12018,6 +12018,214 @@ fn clone3_zero_size_returns_einval() {
     );
 }
 
+const PROCESS_LOG_BOUNDARY_MODE: &str = "FRANKENLIBC_PROCESS_LOG_BOUNDARY_MODE";
+
+#[repr(C)]
+#[derive(Default)]
+struct Clone3Args {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+    set_tid: u64,
+    set_tid_size: u64,
+    cgroup: u64,
+}
+
+fn monotonic_second_for_process_log_probe() -> i64 {
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut now) },
+        0
+    );
+    now.tv_sec
+}
+
+fn run_process_log_boundary_driver() {
+    const RATE_LIMIT: usize = 1024;
+    const PARENT_ROW: &str = r#"{"probe":"parent-fill"}"#;
+    const CLONE3_ROW: &str = r#"{"probe":"clone3-child"}"#;
+    const PARENT_AFTER_SPAWN_ROW: &str = r#"{"probe":"parent-after-spawn"}"#;
+
+    let previous_second = monotonic_second_for_process_log_probe();
+    let start_second = loop {
+        let current = monotonic_second_for_process_log_probe();
+        if current != previous_second {
+            break current;
+        }
+        std::hint::spin_loop();
+    };
+
+    for _ in 0..RATE_LIMIT {
+        frankenlibc_membrane::heal::append_runtime_log_record(PARENT_ROW);
+    }
+    // Confirm the parent window is exhausted before exercising either child.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+
+    let mut clone_args = Clone3Args {
+        exit_signal: libc::SIGCHLD as u64,
+        ..Clone3Args::default()
+    };
+    let clone_pid = unsafe {
+        frankenlibc_abi::unistd_abi::clone3(
+            std::ptr::addr_of_mut!(clone_args).cast(),
+            std::mem::size_of::<Clone3Args>(),
+        )
+    };
+    assert!(clone_pid >= 0, "clone3 stack=0 failed: {clone_pid}");
+    if clone_pid == 0 {
+        frankenlibc_membrane::heal::append_runtime_log_record(CLONE3_ROW);
+        unsafe { libc::_exit(0) };
+    }
+    let mut clone_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(clone_pid, &mut clone_status, 0) },
+        clone_pid
+    );
+    assert!(libc::WIFEXITED(clone_status));
+    assert_eq!(libc::WEXITSTATUS(clone_status), 0);
+
+    let current_exe = std::env::current_exe().expect("current test executable");
+    let executable = CString::new(current_exe.as_os_str().as_bytes()).unwrap();
+    let argv_storage = [
+        executable.clone(),
+        CString::new("--exact").unwrap(),
+        CString::new("clone3_and_posix_spawn_keep_runtime_log_process_local").unwrap(),
+        CString::new("--nocapture").unwrap(),
+        CString::new("--test-threads=1").unwrap(),
+    ];
+    let mut argv: Vec<*mut c_char> = argv_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    argv.push(std::ptr::null_mut());
+
+    let mut env_storage: Vec<CString> = std::env::vars_os()
+        .filter(|(key, _)| key.as_os_str().as_bytes() != PROCESS_LOG_BOUNDARY_MODE.as_bytes())
+        .map(|(key, value)| {
+            let mut pair = key.as_os_str().as_bytes().to_vec();
+            pair.push(b'=');
+            pair.extend_from_slice(value.as_os_str().as_bytes());
+            CString::new(pair).expect("environment entry without NUL")
+        })
+        .collect();
+    env_storage.push(CString::new(format!("{PROCESS_LOG_BOUNDARY_MODE}=exec")).unwrap());
+    let mut envp: Vec<*mut c_char> = env_storage
+        .iter()
+        .map(|value| value.as_ptr().cast_mut())
+        .collect();
+    envp.push(std::ptr::null_mut());
+
+    let mut spawn_pid = -1;
+    let spawn_rc = unsafe {
+        frankenlibc_abi::process_abi::posix_spawn(
+            &mut spawn_pid,
+            executable.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            argv.as_ptr(),
+            envp.as_ptr(),
+        )
+    };
+    assert_eq!(spawn_rc, 0, "posix_spawn failed with errno {spawn_rc}");
+    let mut spawn_status = 0;
+    assert_eq!(
+        unsafe { libc::waitpid(spawn_pid, &mut spawn_status, 0) },
+        spawn_pid
+    );
+    assert!(libc::WIFEXITED(spawn_status));
+    assert_eq!(libc::WEXITSTATUS(spawn_status), 0);
+
+    // A pre-exec reset in the CLONE_VM child would clear this shared parent
+    // window and wrongly admit the row. The exec'd image, in contrast, has its
+    // own process state and must have admitted SPAWN_ROW above.
+    frankenlibc_membrane::heal::append_runtime_log_record(PARENT_AFTER_SPAWN_ROW);
+    assert_eq!(
+        monotonic_second_for_process_log_probe(),
+        start_second,
+        "process-log boundary probe crossed its one-second admission window"
+    );
+}
+
+#[test]
+fn clone3_and_posix_spawn_keep_runtime_log_process_local() {
+    match std::env::var(PROCESS_LOG_BOUNDARY_MODE).as_deref() {
+        Ok("driver") => run_process_log_boundary_driver(),
+        Ok("exec") => {
+            frankenlibc_membrane::heal::append_runtime_log_record(r#"{"probe":"spawn-exec"}"#);
+        }
+        _ => {
+            let name = c"frankenlibc-process-log-boundary";
+            let fd = unsafe { libc::syscall(libc::SYS_memfd_create, name.as_ptr(), 0) as c_int };
+            assert!(
+                fd >= 0,
+                "memfd_create failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut log = unsafe { std::fs::File::from_raw_fd(fd) };
+            let log_path = format!("/proc/self/fd/{fd}");
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("current test executable"),
+            )
+            .args([
+                "--exact",
+                "clone3_and_posix_spawn_keep_runtime_log_process_local",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PROCESS_LOG_BOUNDARY_MODE, "driver")
+            .env("FRANKENLIBC_LOG", log_path)
+            .output()
+            .expect("run process-log boundary driver");
+            assert!(
+                output.status.success(),
+                "driver failed: status={:?}\nstdout={}\nstderr={}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let mut contents = String::new();
+            log.read_to_string(&mut contents).unwrap();
+            let rows: Vec<&str> = contents.lines().collect();
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-fill"}"#)
+                    .count(),
+                1024
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"clone3-child"}"#)
+                    .count(),
+                1,
+                "stack=0 clone3 child did not receive a fresh PID-keyed budget"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"spawn-exec"}"#)
+                    .count(),
+                1,
+                "post-exec spawn image did not initialize its own log stream"
+            );
+            assert_eq!(
+                rows.iter()
+                    .filter(|row| **row == r#"{"probe":"parent-after-spawn"}"#)
+                    .count(),
+                0,
+                "CLONE_VM spawn child reset the parent's shared admission window"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // fchmodat2 / eventfd2 / rt_sigprocmask / rt_sigqueueinfo / rt_sigsuspend /
 // rt_tgsigqueueinfo
