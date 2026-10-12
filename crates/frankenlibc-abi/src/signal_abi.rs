@@ -717,6 +717,10 @@ unsafe fn dispatch_registered_handler(
 }
 
 unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
+    // This must be the first operation: the classification/depth reads below
+    // resolve Rust TLS and that resolution may allocate on a thread's first
+    // signal. Mark signal context before any such allocation can occur.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     let classification = with_signal_classification(|value| {
         SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
     });
@@ -727,9 +731,6 @@ unsafe extern "C" fn signal_handler_trampoline(signum: c_int) {
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
-    // The handler may allocate while its thread was interrupted holding an
-    // allocator lock: keep its allocations off every lock (bd-na6ede).
-    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, std::ptr::null_mut(), std::ptr::null_mut()) };
 }
@@ -739,6 +740,9 @@ unsafe extern "C" fn signal_siginfo_trampoline(
     info: *mut libc::siginfo_t,
     context: *mut c_void,
 ) {
+    // Keep marker installation ahead of every TLS access, matching the simple
+    // trampoline above.
+    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     let classification = with_signal_classification(|value| {
         SignalSafetyClassification::from_u8(value.load(Ordering::Relaxed))
     });
@@ -749,8 +753,6 @@ unsafe extern "C" fn signal_siginfo_trampoline(
         return;
     }
     SIGNAL_IMMEDIATE_DELIVERIES.fetch_add(1, Ordering::Relaxed);
-    // See `signal_handler_trampoline`.
-    let _alloc_scope = crate::malloc_abi::enter_signal_handler_alloc_scope();
     // SAFETY: dispatch uses the stored user handler for this signal number.
     unsafe { dispatch_registered_handler(signum, info, context) };
 }

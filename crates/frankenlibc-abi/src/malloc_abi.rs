@@ -190,6 +190,9 @@ impl Drop for SignalHandlerAllocScope {
     }
 }
 
+/// Kept out of line so the release-artifact signal gate can prove both kernel
+/// trampolines establish this marker before their first TLS-resolving call.
+#[inline(never)]
 pub(crate) fn enter_signal_handler_alloc_scope() -> SignalHandlerAllocScope {
     let slot = current_allocator_reentry_slot();
     let mut previous = 0;

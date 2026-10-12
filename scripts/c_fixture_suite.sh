@@ -161,6 +161,66 @@ if [[ "${#matched_sources[@]}" -eq 0 ]]; then
 fi
 
 for src in "${matched_sources[@]}"; do
+  if [[ "$(basename "${src}")" != "fixture_hardened_first_heal.c" ]]; then
+    continue
+  fi
+  if ! command -v objdump >/dev/null 2>&1; then
+    echo "c_fixture_suite: objdump is required for the signal-trampoline ordering gate" >&2
+    exit 2
+  fi
+  python3 - "${LIB_PATH}" "${RUN_DIR}/signal_trampoline_order.txt" <<'PY'
+import pathlib
+import re
+import subprocess
+import sys
+
+library = pathlib.Path(sys.argv[1])
+report_path = pathlib.Path(sys.argv[2])
+result = subprocess.run(
+    ["objdump", "-d", "-C", "--no-show-raw-insn", str(library)],
+    check=False,
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0:
+    raise SystemExit(f"objdump failed for {library}: {result.stderr.strip()}")
+
+required = (
+    "frankenlibc_abi::signal_abi::signal_handler_trampoline",
+    "frankenlibc_abi::signal_abi::signal_siginfo_trampoline",
+)
+first_calls = {}
+current = None
+for line in result.stdout.splitlines():
+    header = re.match(r"^[0-9a-fA-F]+ <(.+)>:$", line)
+    if header:
+        symbol = header.group(1)
+        current = next((name for name in required if symbol.startswith(name)), None)
+        continue
+    if current is not None and re.search(r"\b(?:callq?|bl)\b", line):
+        first_calls.setdefault(current, line.strip())
+        current = None
+
+errors = []
+for symbol in required:
+    call = first_calls.get(symbol)
+    if call is None:
+        errors.append(f"{symbol}: no call instruction found")
+    elif "malloc_abi::enter_signal_handler_alloc_scope" not in call:
+        errors.append(f"{symbol}: first call does not install signal marker: {call}")
+
+report_lines = [
+    f"library={library}",
+    *(f"{symbol}: {first_calls.get(symbol, 'MISSING')}" for symbol in required),
+]
+report_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+if errors:
+    raise SystemExit("; ".join(errors))
+print("[OK] signal trampolines install allocator marker before TLS-resolving calls")
+PY
+done
+
+for src in "${matched_sources[@]}"; do
   name="$(basename "${src}" .c)"
   name="${name%.cpp}"
   bin="${BIN_DIR}/${name}"
@@ -562,6 +622,7 @@ for rel in ("results.json", "trace.jsonl"):
         paths.append(p)
 
 for pattern in (
+    "signal_trampoline_order.txt",
     "strict/fixture_*/stdout.txt",
     "strict/fixture_*/stderr.txt",
     "strict/fixture_*/exit_code",

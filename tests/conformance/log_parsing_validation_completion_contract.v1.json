@@ -2,7 +2,7 @@
   "schema_version": "log_parsing_validation_completion_contract.v1",
   "bead": "bd-2icq.19",
   "completion_debt_bead": "bd-2icq.19.1",
-  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, bounded runtime-log admission, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
+  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, bounded runtime-log admission, signal-safe trampoline ordering, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
   "next_audit_score_threshold": 800,
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
@@ -17,6 +17,9 @@
     "stats": "scripts/gentoo/log_stats.py",
     "unit_tests": "tests/gentoo/test_log_parser.py",
     "runtime_log": "crates/frankenlibc-membrane/src/runtime_log.rs",
+    "runtime_allocator": "crates/frankenlibc-abi/src/malloc_abi.rs",
+    "runtime_signal": "crates/frankenlibc-abi/src/signal_abi.rs",
+    "deployed_fixture": "tests/integration/fixture_hardened_first_heal.c",
     "fixtures_dir": "tests/gentoo/fixtures/sample_logs",
     "runtime_fixture": "tests/gentoo/fixtures/sample_logs/valid_runtime.jsonl",
     "hook_fixture": "tests/gentoo/fixtures/sample_logs/valid_hook.jsonl",
@@ -160,6 +163,36 @@
       "anchor": "pub fn append_runtime_log_summary_record"
     },
     {
+      "kind": "runtime_signal_marker_anchor",
+      "path": "crates/frankenlibc-abi/src/malloc_abi.rs",
+      "line": 196,
+      "anchor": "pub(crate) fn enter_signal_handler_alloc_scope"
+    },
+    {
+      "kind": "runtime_signal_handler_marker_order",
+      "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+      "line": 719,
+      "anchor": "unsafe extern \"C\" fn signal_handler_trampoline"
+    },
+    {
+      "kind": "runtime_siginfo_handler_marker_order",
+      "path": "crates/frankenlibc-abi/src/signal_abi.rs",
+      "line": 738,
+      "anchor": "unsafe extern \"C\" fn signal_siginfo_trampoline"
+    },
+    {
+      "kind": "deployed_signal_trampoline_disassembly_gate",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 210,
+      "anchor": "first call does not install signal marker"
+    },
+    {
+      "kind": "deployed_fresh_worker_signal_probe",
+      "path": "tests/integration/fixture_hardened_first_heal.c",
+      "line": 48,
+      "anchor": "static void *signal_probe_worker"
+    },
+    {
       "kind": "parser_rate_limit_summary_validation",
       "path": "scripts/gentoo/log_parser.py",
       "line": 281,
@@ -246,43 +279,43 @@
     {
       "kind": "deployed_fixture_repair_symbol_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 256,
+      "line": 316,
       "anchor": "all_entries = entries + before_entries"
     },
     {
       "kind": "deployed_fixture_event_sequence_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 265,
+      "line": 325,
       "anchor": "runtime log has duplicate sequence values"
     },
     {
       "kind": "deployed_fixture_repair_errno_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 293,
+      "line": 353,
       "anchor": "runtime repair rows have invalid decision-owned errno values"
     },
     {
       "kind": "deployed_fixture_repair_address_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 306,
+      "line": 366,
       "anchor": "hardened fixture repair rows have invalid primary addresses"
     },
     {
       "kind": "deployed_fixture_hardened_address_disclosure_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 329,
+      "line": 389,
       "anchor": "denial rows disclosed hardened-only addr_hint values"
     },
     {
       "kind": "deployed_fixture_repair_identity_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 357,
+      "line": 417,
       "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)"
     },
     {
       "kind": "deployed_fixture_rate_limit_summary_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 395,
+      "line": 455,
       "anchor": "runtime_log_rate_limited_records"
     },
     {
@@ -366,6 +399,18 @@
       "fn rate_limit_admits_exact_budget_and_reopens_next_window",
       "fn unavailable_rate_clock_is_counted_separately_from_rate_limiting"
     ],
+    "runtime_allocator": [
+      "pub(crate) fn enter_signal_handler_alloc_scope"
+    ],
+    "runtime_signal": [
+      "unsafe extern \"C\" fn signal_handler_trampoline",
+      "unsafe extern \"C\" fn signal_siginfo_trampoline",
+      "This must be the first operation"
+    ],
+    "deployed_fixture": [
+      "static void *signal_probe_worker",
+      "first application action delivers its first signal"
+    ],
     "deployed_gate": [
       "all_entries = entries + before_entries",
       "runtime log has duplicate sequence values",
@@ -374,6 +419,8 @@
       "denial rows disclosed hardened-only addr_hint values",
       "runtime_log_rate_limited_records",
       "runtime_log_admission_clock_failures",
+      "first call does not install signal marker",
+      "signal trampolines install allocator marker before TLS-resolving calls",
       "invalid_repair_symbols",
       "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True)",
       "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False)"
@@ -438,7 +485,7 @@
     {
       "missing_item_id": "telemetry.primary",
       "status": "covered",
-      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, bounded adverse-event admission with an unthrottled loss summary, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, and the deployed C-fixture gate checks positive unique process-local event sequences, bounded adverse-event admission with an unthrottled loss summary, signal-marker installation before TLS resolution in both release trampolines, a fresh worker's first signal repair, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
       "implementation_refs": [
         "stats_telemetry_snapshot",
         "validator_action_vocabulary",
@@ -448,7 +495,11 @@
         "runtime_event_sequence_generator",
         "runtime_rate_limit_admission",
         "runtime_summary_rate_limit_bypass",
+        "runtime_signal_marker_anchor",
+        "runtime_signal_handler_marker_order",
+        "runtime_siginfo_handler_marker_order",
         "parser_rate_limit_summary_validation",
+        "deployed_signal_trampoline_disassembly_gate",
         "deployed_fixture_repair_symbol_gate",
         "deployed_fixture_event_sequence_gate",
         "deployed_fixture_repair_errno_gate",
@@ -469,6 +520,7 @@
         "runtime_rate_limit_unit_test",
         "runtime_rate_clock_failure_unit_test",
         "unit_rate_limit_summary_test",
+        "deployed_fresh_worker_signal_probe",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
         "unit_hardened_address_disclosure_test",

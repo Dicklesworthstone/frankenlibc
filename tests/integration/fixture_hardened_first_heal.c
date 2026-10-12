@@ -31,6 +31,7 @@ extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
 static volatile sig_atomic_t signal_handler_seen;
 static volatile sig_atomic_t signal_strlen_returned_zero;
 static volatile sig_atomic_t signal_pthread_kill_returned_einval;
+static volatile sig_atomic_t signal_worker_raise_failed;
 
 static void signal_strlen_probe(int signum) {
     (void)signum;
@@ -42,6 +43,16 @@ static void signal_strlen_probe(int signum) {
     signal_strlen_returned_zero = result == 0;
     signal_pthread_kill_returned_einval = deny_result == EINVAL;
     signal_handler_seen = 1;
+}
+
+static void *signal_probe_worker(void *unused) {
+    (void)unused;
+    /* This worker's first application action delivers its first signal. The
+     * trampoline must install the fixed allocator marker before resolving its
+     * per-thread classification/depth TLS for the first time. */
+    if (raise(SIGUSR1) != 0)
+        signal_worker_raise_failed = 1;
+    return NULL;
 }
 
 static int exercise_signal_time_repair(void) {
@@ -65,16 +76,22 @@ static int exercise_signal_time_repair(void) {
     signal_handler_seen = 0;
     signal_strlen_returned_zero = 0;
     signal_pthread_kill_returned_einval = 0;
-    if (raise(SIGUSR1) != 0)
+    signal_worker_raise_failed = 0;
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, signal_probe_worker, NULL) != 0)
         return 16;
-    if (!signal_handler_seen)
+    if (pthread_join(worker, NULL) != 0)
         return 17;
-    if (!signal_strlen_returned_zero)
+    if (signal_worker_raise_failed)
+        return 24;
+    if (!signal_handler_seen)
         return 18;
+    if (!signal_strlen_returned_zero)
+        return 19;
     if (!signal_pthread_kill_returned_einval)
         return 20;
     if (sigaction(SIGUSR1, &previous, NULL) != 0)
-        return 19;
+        return 25;
     return 0;
 }
 
