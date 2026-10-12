@@ -248,6 +248,17 @@ for src in "${matched_sources[@]}"; do
     echo "[FAIL] ${name} (compile error)"
     compile_fails=$((compile_fails + 1))
   fi
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    injector="${BIN_DIR}/${name}_fork_signal_injector.so"
+    if cc -O2 -Wall -Wextra -fPIC -shared -DFRANKENLIBC_FORK_SIGNAL_INJECTOR \
+      "${src}" -o "${injector}" -ldl -pthread \
+      2>"${RUN_DIR}/${name}_fork_signal_injector_compile.log"; then
+      echo "[OK] ${name}_fork_signal_injector"
+    else
+      echo "[FAIL] ${name}_fork_signal_injector (compile error)"
+      compile_fails=$((compile_fails + 1))
+    fi
+  fi
 done
 
 echo ""
@@ -413,7 +424,7 @@ if fixture_name == "fixture_hardened_first_heal":
 
     normal_deny = ("deny", "Signal", "kill", "invalid_signal_number", 22, False, True)
     signal_deny = ("deny", "Signal", "pthread_kill", "invalid_signal_number", 22, True, True)
-    child_expected = [normal_deny, ("exit_summary",)]
+    child_expected = [signal_deny, normal_deny, ("exit_summary",)]
     parent_expected = [signal_deny, normal_deny, normal_deny]
     if mode == "hardened":
         signal_repair = ("repair", "string_memory", "strlen", "ReturnSafeDefault", True, True)
@@ -425,7 +436,13 @@ if fixture_name == "fixture_hardened_first_heal":
             normal_deny,
             normal_deny,
         ]
-        child_expected = [normal_repair, normal_deny, ("exit_summary",)]
+        child_expected = [
+            signal_repair,
+            signal_deny,
+            normal_repair,
+            normal_deny,
+            ("exit_summary",),
+        ]
 
     rate_limit = 1024
     rate_limit_attempts = 1100
@@ -458,10 +475,10 @@ if fixture_name == "fixture_hardened_first_heal":
         "runtime_log_admission_clock_failures": 0,
     }
     expected_child_counters = {
-        "total_heals": 3 if mode == "hardened" else 0,
+        "total_heals": 4 if mode == "hardened" else 0,
         "size_clamps": 2 if mode == "hardened" else 0,
-        "safe_defaults": 1 if mode == "hardened" else 0,
-        "denials": 3,
+        "safe_defaults": 2 if mode == "hardened" else 0,
+        "denials": 4,
         "runtime_log_dropped_records": 0,
         "runtime_log_rate_limited_records": 0,
         "runtime_log_admission_clock_failures": 0,
@@ -488,6 +505,10 @@ run_fixture() {
   name="$(basename "${bin}")"
   local case_dir="${RUN_DIR}/${mode}/${name}"
   local runtime_log="${case_dir}/runtime.jsonl"
+  local preload="${LIB_PATH}"
+  if [[ "${name}" == "fixture_hardened_first_heal" ]]; then
+    preload="${LIB_PATH}:${BIN_DIR}/${name}_fork_signal_injector.so"
+  fi
   mkdir -p "${case_dir}"
   : > "${runtime_log}"
   : > "${case_dir}/runtime_log_validation.txt"
@@ -499,7 +520,7 @@ run_fixture() {
   set +e
   timeout "${TIMEOUT_SECONDS}" \
     env FRANKENLIBC_MODE="${mode}" FRANKENLIBC_LOG="${runtime_log}" \
-      LD_PRELOAD="${LIB_PATH}" "${RUNNER_ARGV[@]}" "${bin}" \
+      LD_PRELOAD="${preload}" "${RUNNER_ARGV[@]}" "${bin}" \
     > "${case_dir}/stdout.txt" 2> "${case_dir}/stderr.txt"
   local rc=$?
   set -e

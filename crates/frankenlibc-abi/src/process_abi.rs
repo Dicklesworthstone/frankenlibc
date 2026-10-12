@@ -269,6 +269,23 @@ pub(crate) fn clone_for_fork(host_fork: Option<HostForkFn>) -> Result<libc::pid_
     }
 }
 
+/// Blocks every blockable signal while a fork-like operation crosses from
+/// clone into child-side runtime-log reopening.
+///
+/// The guard restores the calling thread's exact prior mask when dropped in
+/// either process. Keeping this wrapper in the process module gives `fork`,
+/// `daemon`, and `forkpty` one implementation without exposing the spawn
+/// protocol module to unrelated ABI code.
+pub(crate) struct ForkSignalMaskGuard {
+    _inner: spawn_protocol::SignalMaskGuard,
+}
+
+impl ForkSignalMaskGuard {
+    pub(crate) fn block_all() -> Result<Self, c_int> {
+        spawn_protocol::SignalMaskGuard::block_all().map(|inner| Self { _inner: inner })
+    }
+}
+
 /// POSIX `fork` — create a child process.
 ///
 /// Calls registered `pthread_atfork` handlers and prepares the membrane
@@ -315,6 +332,24 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     // may allocate or free.
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // No application handler may run in the child between clone and runtime-
+    // log reopen: it would otherwise append through the parent's inherited
+    // open-file description. The raw signal-mask guard allocates nothing and
+    // restores the caller's exact mask independently in parent and child.
+    let signal_guard = match ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
+            return -1;
+        }
+    };
+
     let pid = clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
@@ -326,8 +361,11 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         Err(e) => {
             // Drop guards in failure path before returning so the parent
             // can resume normal env operations.
-            drop(_environ_guard);
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
             unsafe { set_abi_errno(e) };
             runtime_policy::observe(ApiFamily::Process, decision.profile, 50, true);
             return -1;
@@ -344,8 +382,8 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
         // by the forking thread before the clone.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -354,17 +392,19 @@ pub unsafe extern "C" fn fork() -> libc::pid_t {
     }
 
     if pid == 0 {
-        // SAFETY: all fork guards are released and this is the sole surviving
-        // thread. A pending signal can run first because signals are not masked
-        // across clone; reopen is therefore the first child-continuation step,
-        // not an absolute pre-signal-delivery guarantee.
+        // SAFETY: all fork guards are released, this is the sole surviving
+        // thread, and every blockable signal remains masked until the inherited
+        // sink is replaced below.
         unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
         // The forking thread is the child's main thread: pthread_cancel of
-        // it must reach glibc with glibc's handle for it.
+        // it must reach glibc with glibc's handle for it. Repair this state
+        // before a queued handler can run after the mask is restored.
         crate::pthread_abi::remember_main_thread_host_handle();
+        drop(signal_guard);
         // Child: run child handlers to reinitialize state.
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
+        drop(signal_guard);
         // Parent: run parent handlers to release locks.
         crate::pthread_abi::run_atfork_parent(&atfork);
     }

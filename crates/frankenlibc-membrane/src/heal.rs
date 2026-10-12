@@ -740,16 +740,18 @@ pub fn note_runtime_log_drop() {
 ///
 /// A disabled sink remains disabled. Only an inherited live file is reopened,
 /// so the child gets a distinct open file description and observes path
-/// rotation independently of the parent.
+/// rotation independently of the parent. If the configured replacement cannot
+/// be opened, the inherited descriptor remains live so evidence is not lost;
+/// the open-failure counter makes that fallback visible in the exit summary.
 ///
 /// # Safety
 ///
 /// This must run only in the freshly forked, single-threaded child after the
 /// allocator and membrane fork guards have been released. The surviving
 /// thread must not be inside [`append_runtime_log_record`] or
-/// [`HealingPolicy::record`]. Callers currently do not mask signals across the
-/// clone-to-reopen interval, so a pending handler can still emit one record to
-/// the inherited descriptor before this function runs.
+/// [`HealingPolicy::record`]. Fork-like callers must keep every blockable signal
+/// masked from immediately before clone until this function has replaced the
+/// inherited descriptor.
 #[allow(unsafe_code)]
 pub unsafe fn reopen_runtime_log_in_fork_child() {
     let inherited = RUNTIME_LOG_FD.load(Ordering::Acquire);
@@ -757,12 +759,16 @@ pub unsafe fn reopen_runtime_log_in_fork_child() {
         return;
     }
 
-    let reopened = std::env::var_os("FRANKENLIBC_LOG")
-        .filter(|path| !path.is_empty())
-        .and_then(|path| runtime_log::open_fd(&path))
-        .unwrap_or(RUNTIME_LOG_DISABLED);
-    let replaced = RUNTIME_LOG_FD.swap(reopened, Ordering::AcqRel);
     runtime_log::reset_rate_limit_after_fork();
+    let Some(path) = std::env::var_os("FRANKENLIBC_LOG").filter(|path| !path.is_empty()) else {
+        let replaced = RUNTIME_LOG_FD.swap(RUNTIME_LOG_DISABLED, Ordering::AcqRel);
+        runtime_log::close_fd(replaced);
+        return;
+    };
+    let Some(reopened) = runtime_log::open_fd(&path) else {
+        return;
+    };
+    let replaced = RUNTIME_LOG_FD.swap(reopened, Ordering::AcqRel);
     runtime_log::close_fd(replaced);
 }
 

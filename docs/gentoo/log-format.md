@@ -97,13 +97,23 @@ or the sink failed before the summary.
 
 The sink is opened with append semantics during FrankenLibC's startup
 constructor, after mode resolution and before the runtime is published ready.
-After a process forks, the child's first continuation step reopens the
-configured path, so ordinary post-fork work uses a distinct open-file
-description and observes a path rotated before `fork()`. Signals are not yet
-masked across the clone-to-reopen interval; a pending handler can therefore
-emit one early row through the inherited descriptor before reopen. The
-`fixture_hardened_first_heal` gate rotates the path before forking and rejects
-overlapping parent/child PIDs across the two resulting JSONL files.
+After a process forks, the child reopens the configured path before ordinary
+or user child work, so that work uses a distinct open-file description and
+observes a path rotated before `fork()`. `fork`, `daemon`, and `forkpty` mask
+every blockable signal immediately before clone, reopen the sink and repair the
+surviving thread's host identity in the child, then restore the exact prior
+mask before invoking user child handlers. A signal queued during that interval
+is therefore delivered only after successful child-local reopen.
+If the replacement path cannot be opened, the child keeps the inherited
+descriptor so evidence remains PID-attributable instead of being discarded;
+`runtime_log_open_failures` makes that weaker fallback visible in the exit
+summary. The `fixture_hardened_first_heal` gate uses a lower-preload host
+`pthread_atfork` callback to queue `SIGUSR1` after kernel clone but before host
+`fork` returns to FrankenLibC. It rotates the path before forking, requires the
+resulting signal-context rows only in the reopened child stream, rejects
+overlapping parent/child PIDs across the two successful-reopen JSONL files,
+and separately proves restored `SIGUSR2` delivery in both processes. `_Fork`
+and process-style `clone` variants do not yet carry this reopen guarantee.
 
 On Linux x86_64 and aarch64, repair and denial records emitted from an
 interposed signal-handler trampoline use a fixed 1 KiB stack formatter and one
@@ -129,9 +139,8 @@ the row and increments `runtime_log_admission_clock_failures` plus the aggregate
 dropped count instead. The exit summary bypasses admission so those losses
 remain observable. Sequence gaps are therefore expected and accounted for,
 rather than silently presented as complete adverse-event history. Ordinary
-fork child reopen starts a fresh process-local window; the documented
-clone-to-reopen signal interval can emit against the inherited window, so it
-is not part of the exact per-window bound.
+fork child reopen resets the process-local window before the saved signal mask
+is restored, so a queued handler uses the child's fresh admission budget.
 
 Each generated repair, denial, or summary record is bounded to 1 KiB. The
 generic sink accepts records below 4 KiB, which is why its defensive maximum-

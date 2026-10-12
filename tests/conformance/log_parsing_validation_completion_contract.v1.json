@@ -2,7 +2,7 @@
   "schema_version": "log_parsing_validation_completion_contract.v1",
   "bead": "bd-2icq.19",
   "completion_debt_bead": "bd-2icq.19.1",
-  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, explicit signal-context certainty, bounded runtime-log admission, signal-safe trampoline ordering, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
+  "description": "Completion-debt evidence binding for the Gentoo log parsing and validation infrastructure: parser behavior, canonical repair-symbol validation, explicit signal-context certainty, bounded runtime-log admission, signal-safe trampoline ordering, fork-to-reopen signal exclusion, aggregate telemetry extraction, deployed fixture gates, unit coverage, and a structured completion telemetry gate.",
   "next_audit_score_threshold": 800,
   "audit": {
     "pass_id": "2026-05-10T03-16-16Z",
@@ -22,6 +22,8 @@
     "runtime_policy": "crates/frankenlibc-abi/src/runtime_policy.rs",
     "runtime_allocator": "crates/frankenlibc-abi/src/malloc_abi.rs",
     "runtime_signal": "crates/frankenlibc-abi/src/signal_abi.rs",
+    "runtime_process": "crates/frankenlibc-abi/src/process_abi.rs",
+    "runtime_unistd": "crates/frankenlibc-abi/src/unistd_abi.rs",
     "signal_context_test": "crates/frankenlibc-membrane/tests/healing_allocator_reentry.rs",
     "deployed_fixture": "tests/integration/fixture_hardened_first_heal.c",
     "fixtures_dir": "tests/gentoo/fixtures/sample_logs",
@@ -133,7 +135,7 @@
     {
       "kind": "schema_validation_rules",
       "path": "docs/gentoo/log-format.md",
-      "line": 199,
+      "line": 208,
       "anchor": "## Validation Rules"
     },
     {
@@ -171,6 +173,36 @@
       "path": "crates/frankenlibc-membrane/src/heal.rs",
       "line": 723,
       "anchor": "pub fn append_runtime_log_summary_record"
+    },
+    {
+      "kind": "runtime_fork_signal_guard",
+      "path": "crates/frankenlibc-abi/src/process_abi.rs",
+      "line": 279,
+      "anchor": "pub(crate) struct ForkSignalMaskGuard"
+    },
+    {
+      "kind": "runtime_fork_signal_guard_wiring",
+      "path": "crates/frankenlibc-abi/src/process_abi.rs",
+      "line": 339,
+      "anchor": "let signal_guard = match ForkSignalMaskGuard::block_all()"
+    },
+    {
+      "kind": "runtime_daemon_signal_guard_wiring",
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "line": 5486,
+      "anchor": "let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all()"
+    },
+    {
+      "kind": "runtime_forkpty_signal_guard_wiring",
+      "path": "crates/frankenlibc-abi/src/unistd_abi.rs",
+      "line": 9357,
+      "anchor": "let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all()"
+    },
+    {
+      "kind": "runtime_fork_reopen_fallback",
+      "path": "crates/frankenlibc-membrane/src/heal.rs",
+      "line": 743,
+      "anchor": "rotation independently of the parent. If the configured replacement cannot"
     },
     {
       "kind": "runtime_signal_context_model",
@@ -235,8 +267,38 @@
     {
       "kind": "deployed_fresh_worker_signal_probe",
       "path": "tests/integration/fixture_hardened_first_heal.c",
-      "line": 48,
+      "line": 95,
       "anchor": "static void *signal_probe_worker"
+    },
+    {
+      "kind": "deployed_host_atfork_signal_injector",
+      "path": "tests/integration/fixture_hardened_first_heal.c",
+      "line": 42,
+      "anchor": "static void injector_child_callback"
+    },
+    {
+      "kind": "deployed_host_atfork_injector_build",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 253,
+      "anchor": "-DFRANKENLIBC_FORK_SIGNAL_INJECTOR"
+    },
+    {
+      "kind": "deployed_host_atfork_injector_preload",
+      "path": "scripts/c_fixture_suite.sh",
+      "line": 523,
+      "anchor": "LD_PRELOAD=\"${preload}\""
+    },
+    {
+      "kind": "deployed_fork_child_signal_mask_restore_probe",
+      "path": "tests/integration/fixture_hardened_first_heal.c",
+      "line": 267,
+      "anchor": "raise(SIGUSR2) == 0 && fork_signal_seen"
+    },
+    {
+      "kind": "deployed_fork_parent_signal_mask_restore_probe",
+      "path": "tests/integration/fixture_hardened_first_heal.c",
+      "line": 291,
+      "anchor": "raise(SIGUSR2) != 0 || !fork_signal_seen"
     },
     {
       "kind": "parser_rate_limit_summary_validation",
@@ -331,43 +393,43 @@
     {
       "kind": "deployed_fixture_repair_symbol_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 316,
+      "line": 327,
       "anchor": "all_entries = entries + before_entries"
     },
     {
       "kind": "deployed_fixture_event_sequence_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 325,
+      "line": 336,
       "anchor": "runtime log has duplicate sequence values"
     },
     {
       "kind": "deployed_fixture_repair_errno_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 353,
+      "line": 364,
       "anchor": "runtime repair rows have invalid decision-owned errno values"
     },
     {
       "kind": "deployed_fixture_repair_address_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 366,
+      "line": 377,
       "anchor": "hardened fixture repair rows have invalid primary addresses"
     },
     {
       "kind": "deployed_fixture_hardened_address_disclosure_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 389,
+      "line": 400,
       "anchor": "denial rows disclosed hardened-only addr_hint values"
     },
     {
       "kind": "deployed_fixture_repair_identity_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 419,
+      "line": 430,
       "anchor": "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True, True)"
     },
     {
       "kind": "deployed_fixture_rate_limit_summary_gate",
       "path": "scripts/c_fixture_suite.sh",
-      "line": 457,
+      "line": 474,
       "anchor": "runtime_log_rate_limited_records"
     },
     {
@@ -478,9 +540,22 @@
       "unsafe extern \"C\" fn signal_siginfo_trampoline",
       "This must be the first operation"
     ],
+    "runtime_process": [
+      "pub(crate) struct ForkSignalMaskGuard",
+      "let signal_guard = match ForkSignalMaskGuard::block_all()",
+      "remember_main_thread_host_handle();"
+    ],
+    "runtime_unistd": [
+      "let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all()",
+      "remember_main_thread_host_handle();"
+    ],
     "deployed_fixture": [
       "static void *signal_probe_worker",
-      "first application action delivers its first signal"
+      "first application action delivers its first signal",
+      "static void injector_child_callback",
+      "host_pthread_atfork(NULL, NULL, injector_child_callback)",
+      "raise(SIGUSR2) == 0 && fork_signal_seen",
+      "raise(SIGUSR2) != 0 || !fork_signal_seen"
     ],
     "deployed_gate": [
       "all_entries = entries + before_entries",
@@ -492,6 +567,8 @@
       "runtime_log_admission_clock_failures",
       "first call does not install signal marker",
       "signal trampolines install allocator marker before TLS-resolving calls",
+      "-DFRANKENLIBC_FORK_SIGNAL_INJECTOR",
+      "LD_PRELOAD=\"${preload}\"",
       "invalid_repair_symbols",
       "signal_repair = (\"repair\", \"string_memory\", \"strlen\", \"ReturnSafeDefault\", True, True)",
       "normal_repair = (\"repair\", \"string_memory\", \"memcpy\", \"ClampSize\", False, True)"
@@ -558,7 +635,7 @@
     {
       "missing_item_id": "telemetry.primary",
       "status": "covered",
-      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, the forced-unknown integration gate proves the allocation-free path and honest certainty bit, and the deployed C-fixture gate checks positive unique process-local event sequences, bounded adverse-event admission with an unthrottled loss summary, signal-marker installation before TLS resolution in both release trampolines, a fresh worker's first signal repair, known signal context on deployed rows, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
+      "description": "The stats aggregator converts parsed runtime and hook fixtures into a deterministic telemetry snapshot; the completion checker writes structured evidence, the forced-unknown integration gate proves the allocation-free path and honest certainty bit, and the deployed C-fixture gate checks positive unique process-local event sequences, bounded adverse-event admission with an unthrottled loss summary, signal-marker installation before TLS resolution in both release trampolines, live host-atfork signal exclusion across the ordinary-fork clone-to-reopen interval, restored SIGUSR2 delivery in parent and child, a fresh worker's first signal repair, known signal context on deployed rows, signed decision-owned repair errno, hardened-only repair addresses and denial address hints, canonical repair symbols in current and pre-fork logs, plus the expected memcpy/string_memory/ClampSize repair.",
       "implementation_refs": [
         "stats_telemetry_snapshot",
         "validator_action_vocabulary",
@@ -575,8 +652,16 @@
         "runtime_signal_marker_anchor",
         "runtime_signal_handler_marker_order",
         "runtime_siginfo_handler_marker_order",
+        "runtime_fork_signal_guard",
+        "runtime_fork_signal_guard_wiring",
+        "runtime_daemon_signal_guard_wiring",
+        "runtime_forkpty_signal_guard_wiring",
+        "runtime_fork_reopen_fallback",
         "parser_rate_limit_summary_validation",
         "deployed_signal_trampoline_disassembly_gate",
+        "deployed_host_atfork_signal_injector",
+        "deployed_host_atfork_injector_build",
+        "deployed_host_atfork_injector_preload",
         "deployed_fixture_repair_symbol_gate",
         "deployed_fixture_event_sequence_gate",
         "deployed_fixture_repair_errno_gate",
@@ -601,6 +686,9 @@
         "unit_signal_context_certainty_test",
         "unit_rate_limit_summary_test",
         "deployed_fresh_worker_signal_probe",
+        "deployed_host_atfork_signal_injector",
+        "deployed_fork_child_signal_mask_restore_probe",
+        "deployed_fork_parent_signal_mask_restore_probe",
         "unit_invalid_event_sequence_test",
         "unit_concurrent_append_sequence_test",
         "unit_hardened_address_disclosure_test",

@@ -5481,6 +5481,21 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         crate::membrane_state::ready_pipeline().map(|pipeline| pipeline.atfork_prepare());
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // Prevent a child handler from emitting through the parent's inherited
+    // runtime-log descriptor before the child can reopen the configured path.
+    let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+
     // SAFETY: fork via raw syscall
     let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
@@ -5490,9 +5505,13 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     }
     let pid = match pid {
         Ok(p) => p,
-        Err(_) => {
-            drop(_environ_guard);
+        Err(error) => {
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
             return -1;
         }
     };
@@ -5502,8 +5521,8 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
         // by the forking thread before the clone. See adopt_in_fork_child.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -5512,15 +5531,18 @@ pub unsafe extern "C" fn daemon(nochdir: c_int, noclose: c_int) -> c_int {
     }
 
     if pid > 0 {
+        drop(signal_guard);
         // Parent: run atfork_parent for symmetry with fork(), then exit.
         crate::pthread_abi::run_atfork_parent(&atfork);
         syscall::sys_exit_group(0);
     }
 
-    // SAFETY: all fork guards are released and this is the sole surviving
-    // thread. Signals are not masked across clone, so a pending handler can
-    // still run before this first child-continuation step.
+    // SAFETY: all fork guards are released, this is the sole surviving thread,
+    // and application signals remain masked until the inherited sink is
+    // replaced.
     unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
+    crate::pthread_abi::remember_main_thread_host_handle();
+    drop(signal_guard);
     // Child: re-initialize via atfork_child before any further work.
     crate::pthread_abi::run_atfork_child(&atfork);
 
@@ -9330,6 +9352,23 @@ pub unsafe extern "C" fn forkpty(
     let _environ_guard = crate::stdlib_abi::ENVIRON_LOCK.lock();
     let malloc_guard = crate::malloc_abi::malloc_fork_prepare();
 
+    // Keep application handlers out of the clone-to-reopen interval, exactly
+    // as the public fork path does.
+    let signal_guard = match crate::process_abi::ForkSignalMaskGuard::block_all() {
+        Ok(guard) => guard,
+        Err(error) => {
+            drop(malloc_guard);
+            drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            let _ = syscall::sys_close(master);
+            let _ = syscall::sys_close(slave);
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
+
     let pid = crate::process_abi::clone_for_fork(host_fork);
     drop(malloc_guard);
     if pid == Ok(0) {
@@ -9338,11 +9377,15 @@ pub unsafe extern "C" fn forkpty(
     }
     let pid = match pid {
         Ok(p) => p,
-        Err(_) => {
-            drop(_environ_guard);
+        Err(error) => {
             drop(_pipeline_guard);
+            drop(_environ_guard);
+            stdio_guard.release_in_parent();
             let _ = syscall::sys_close(master);
             let _ = syscall::sys_close(slave);
+            drop(signal_guard);
+            crate::pthread_abi::run_atfork_parent(&atfork);
+            unsafe { set_abi_errno(error) };
             return -1;
         }
     };
@@ -9352,8 +9395,8 @@ pub unsafe extern "C" fn forkpty(
         // by the forking thread before the clone. See adopt_in_fork_child.
         unsafe { crate::stdlib_abi::ENVIRON_LOCK.adopt_in_fork_child(parent_tid) };
     }
-    drop(_environ_guard);
     drop(_pipeline_guard);
+    drop(_environ_guard);
     // After the arena guard is gone: the child side allocates.
     if pid == 0 {
         stdio_guard.release_in_child();
@@ -9362,12 +9405,14 @@ pub unsafe extern "C" fn forkpty(
     }
 
     if pid == 0 {
-        // SAFETY: all fork guards are released and this is the sole surviving
-        // thread. Signals are not masked across clone, so a pending handler can
-        // still run before this first child-continuation step.
+        // SAFETY: all fork guards are released, this is the sole surviving
+        // thread, and application signals remain masked until reopen finishes.
         unsafe { frankenlibc_membrane::heal::reopen_runtime_log_in_fork_child() };
+        crate::pthread_abi::remember_main_thread_host_handle();
+        drop(signal_guard);
         crate::pthread_abi::run_atfork_child(&atfork);
     } else {
+        drop(signal_guard);
         crate::pthread_abi::run_atfork_parent(&atfork);
     }
 

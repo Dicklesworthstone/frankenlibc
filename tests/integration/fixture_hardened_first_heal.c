@@ -8,12 +8,14 @@
  * the original first-heal deadlock regression. Host glibc skips both invalid
  * probes and strict mode emits no repair rows. Invalid kill supplies one
  * deterministic semantic denial. Finally, the fixture rotates the runtime log
- * before fork: the child must reopen the current path rather than keep writing
- * through the parent's inherited open-file description. A final one-second
- * denial burst exhausts the production limiter and leaves the unthrottled
- * exit summary to report the exact suppressed-record count.
+ * before fork: a lower-preload host atfork callback queues SIGUSR1 inside the
+ * clone-to-FrankenLibC-return interval, and the resulting child signal rows
+ * must land only in the reopened current path. A final one-second denial burst
+ * exhausts the production limiter and leaves the unthrottled exit summary to
+ * report the exact suppressed-record count.
  */
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -26,12 +28,57 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef FRANKENLIBC_FORK_SIGNAL_INJECTOR
+
+typedef int (*host_pthread_atfork_fn)(void (*)(void), void (*)(void), void (*)(void));
+typedef pid_t (*host_getpid_fn)(void);
+typedef int (*host_kill_fn)(pid_t, int);
+
+static host_getpid_fn injector_host_getpid;
+static host_kill_fn injector_host_kill;
+static volatile sig_atomic_t injector_ready;
+static volatile sig_atomic_t injector_child_state;
+
+static void injector_child_callback(void) {
+    injector_child_state = 1;
+    if (injector_host_kill(injector_host_getpid(), SIGUSR1) != 0)
+        injector_child_state = 2;
+}
+
+int __frankenlibc_fork_signal_injector_ready(void) {
+    return injector_ready;
+}
+
+int __frankenlibc_fork_signal_injector_child_state(void) {
+    return injector_child_state;
+}
+
+__attribute__((constructor)) static void install_fork_signal_injector(void) {
+    host_pthread_atfork_fn host_pthread_atfork =
+        (host_pthread_atfork_fn)dlvsym(RTLD_NEXT, "pthread_atfork", "GLIBC_2.2.5");
+    injector_host_getpid = (host_getpid_fn)dlsym(RTLD_NEXT, "getpid");
+    injector_host_kill = (host_kill_fn)dlsym(RTLD_NEXT, "kill");
+    if (host_pthread_atfork != NULL && injector_host_getpid != NULL && injector_host_kill != NULL &&
+        host_pthread_atfork(NULL, NULL, injector_child_callback) == 0)
+        injector_ready = 1;
+}
+
+#else
+
 extern int __frankenlibc_is_runtime_ready(void) __attribute__((weak));
+extern int __frankenlibc_fork_signal_injector_ready(void) __attribute__((weak));
+extern int __frankenlibc_fork_signal_injector_child_state(void) __attribute__((weak));
 
 static volatile sig_atomic_t signal_handler_seen;
 static volatile sig_atomic_t signal_strlen_returned_zero;
 static volatile sig_atomic_t signal_pthread_kill_returned_einval;
 static volatile sig_atomic_t signal_worker_raise_failed;
+static volatile sig_atomic_t fork_signal_seen;
+
+static void fork_signal_probe(int signum) {
+    (void)signum;
+    fork_signal_seen = 1;
+}
 
 static void signal_strlen_probe(int signum) {
     (void)signum;
@@ -184,11 +231,50 @@ static int exercise_runtime_log_fork_reopen(void) {
     if (close(replacement) != 0)
         return 9;
 
+    struct sigaction fork_action;
+    struct sigaction previous_action;
+    struct sigaction interval_action;
+    struct sigaction previous_interval_action;
+    sigset_t probe_set;
+    sigset_t previous_mask;
+    memset(&fork_action, 0, sizeof(fork_action));
+    memset(&interval_action, 0, sizeof(interval_action));
+    fork_action.sa_handler = fork_signal_probe;
+    interval_action.sa_handler = signal_strlen_probe;
+    if (sigemptyset(&fork_action.sa_mask) != 0 || sigemptyset(&interval_action.sa_mask) != 0 ||
+        sigemptyset(&probe_set) != 0)
+        return 26;
+    if (sigaddset(&probe_set, SIGUSR1) != 0 || sigaddset(&probe_set, SIGUSR2) != 0)
+        return 27;
+    if (pthread_sigmask(SIG_UNBLOCK, &probe_set, &previous_mask) != 0)
+        return 28;
+    if (sigaction(SIGUSR2, &fork_action, &previous_action) != 0)
+        return 29;
+    if (sigaction(SIGUSR1, &interval_action, &previous_interval_action) != 0)
+        return 34;
+    int injector_present = __frankenlibc_fork_signal_injector_ready != NULL;
+    if (injector_present && !__frankenlibc_fork_signal_injector_ready())
+        return 35;
+    fork_signal_seen = 0;
+    signal_handler_seen = 0;
+    signal_strlen_returned_zero = 0;
+    signal_pthread_kill_returned_einval = 0;
+
     pid_t child = fork();
     if (child < 0)
         return 10;
     if (child == 0) {
-        int rc = induce_hardened_bounds_repair();
+        int rc = raise(SIGUSR2) == 0 && fork_signal_seen ? 0 : 30;
+        if (rc == 0 && injector_present &&
+            (__frankenlibc_fork_signal_injector_child_state == NULL ||
+             __frankenlibc_fork_signal_injector_child_state() != 1))
+            rc = 36;
+        if (rc == 0 && injector_present &&
+            (!signal_handler_seen || !signal_strlen_returned_zero ||
+             !signal_pthread_kill_returned_einval))
+            rc = 37;
+        if (rc == 0)
+            rc = induce_hardened_bounds_repair();
         if (rc == 0)
             rc = invalid_signal_is_denied();
         /* exit(), rather than _exit(), is intentional: the child's DSO fini
@@ -201,6 +287,15 @@ static int exercise_runtime_log_fork_reopen(void) {
         return 11;
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
         return 12;
+    fork_signal_seen = 0;
+    if (raise(SIGUSR2) != 0 || !fork_signal_seen)
+        return 31;
+    if (sigaction(SIGUSR2, &previous_action, NULL) != 0)
+        return 32;
+    if (sigaction(SIGUSR1, &previous_interval_action, NULL) != 0)
+        return 38;
+    if (pthread_sigmask(SIG_SETMASK, &previous_mask, NULL) != 0)
+        return 33;
     return 0;
 }
 
@@ -241,3 +336,5 @@ int main(void) {
     free(b);
     return 0;
 }
+
+#endif
