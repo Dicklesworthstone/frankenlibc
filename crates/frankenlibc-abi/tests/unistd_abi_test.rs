@@ -24,6 +24,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[path = "common/fd_capture.rs"]
 mod fd_capture;
 
+#[path = "common/host_isolation.rs"]
+mod host_isolation;
+
 /// Serializes all gai_*/getaddrinfo_a tests in this binary.
 ///
 /// host glibc's async-getaddrinfo machinery (gai_cancel, gai_error,
@@ -11505,32 +11508,38 @@ fn kexec_load_unprivileged_returns_known_errno() {
     // Rather than merely relax the assertion, compare against the host syscall —
     // this test had no oracle at all before, so it could only ever check fl
     // against a hardcoded guess about the environment.
-    unsafe { *libc::__errno_location() = 0 };
-    let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
-    let host_errno = unsafe { *libc::__errno_location() };
+    //
+    // Succeeding as root also really unloads the worker's staged kexec image.
+    // So both arms run on a thread with CAP_SYS_BOOT dropped and take the
+    // privilege-rejection path on every runner.
+    host_isolation::without_capability(host_isolation::CAP_SYS_BOOT, || {
+        unsafe { *libc::__errno_location() = 0 };
+        let host_rc = unsafe { libc::syscall(libc::SYS_kexec_load, 0_i64, 0_i64, 0_i64, 0_i64) };
+        let host_errno = unsafe { *libc::__errno_location() };
 
-    unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
-    let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
-    let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
+        unsafe { *frankenlibc_abi::errno_abi::__errno_location() = 0 };
+        let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
+        let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
 
-    assert_eq!(
-        i64::from(rc),
-        host_rc,
-        "kexec_load rc: fl={rc} host={host_rc}"
-    );
-    if host_rc == -1 {
         assert_eq!(
-            errno, host_errno,
-            "kexec_load errno: fl={errno} host={host_errno}"
+            i64::from(rc),
+            host_rc,
+            "kexec_load rc: fl={rc} host={host_rc}"
         );
-        assert!(
-            errno == libc::EPERM
-                || errno == libc::ENOSYS
-                || errno == libc::EINVAL
-                || errno == libc::EBUSY,
-            "unexpected kexec_load errno: {errno}"
-        );
-    }
+        if host_rc == -1 {
+            assert_eq!(
+                errno, host_errno,
+                "kexec_load errno: fl={errno} host={host_errno}"
+            );
+            assert!(
+                errno == libc::EPERM
+                    || errno == libc::ENOSYS
+                    || errno == libc::EINVAL
+                    || errno == libc::EBUSY,
+                "unexpected kexec_load errno: {errno}"
+            );
+        }
+    });
 }
 
 #[test]

@@ -12,6 +12,10 @@ use std::ffi::c_int;
 
 use frankenlibc_abi::unistd_abi as fl;
 
+#[path = "common/host_isolation.rs"]
+mod host_isolation;
+use host_isolation::{CAP_SYS_TIME, without_capability};
+
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 struct TimexQuery {
@@ -86,21 +90,28 @@ fn diff_ntp_adjtime_alias_matches_adjtimex() {
 #[test]
 fn diff_adjtimex_unprivileged_modify_returns_eperm() {
     // ADJ_OFFSET requires CAP_SYS_TIME. Both impls should fail
-    // with EPERM as a regular user.
-    let mut fl_t = TimexQuery {
-        modes: 0x0001, // ADJ_OFFSET
-        offset: 100,   // 100 us adjustment
-        ..Default::default()
-    };
-    let mut lc_t = fl_t;
-    let fl_v = unsafe { fl::adjtimex(&mut fl_t as *mut TimexQuery as *mut std::ffi::c_void) };
-    let fl_e = unsafe { *libc::__errno_location() };
-    let lc_v = unsafe { adjtimex(&mut lc_t) };
-    let lc_e = unsafe { *libc::__errno_location() };
-    if fl_v == -1 || lc_v == -1 {
+    // with EPERM as a regular user. As root (every rch worker) both
+    // calls would really slew the host clock, so the pair runs on a
+    // thread with CAP_SYS_TIME dropped and takes the EPERM path there too.
+    without_capability(CAP_SYS_TIME, || {
+        let mut fl_t = TimexQuery {
+            modes: 0x0001, // ADJ_OFFSET
+            offset: 100,   // 100 us adjustment
+            ..Default::default()
+        };
+        let mut lc_t = fl_t;
+        let fl_v = unsafe { fl::adjtimex(&mut fl_t as *mut TimexQuery as *mut std::ffi::c_void) };
+        let fl_e = unsafe { *libc::__errno_location() };
+        let lc_v = unsafe { adjtimex(&mut lc_t) };
+        let lc_e = unsafe { *libc::__errno_location() };
         assert_eq!(fl_v, lc_v, "ret: fl={fl_v} lc={lc_v}");
+        assert_eq!(
+            lc_v, -1,
+            "adjtimex(ADJ_OFFSET) without CAP_SYS_TIME must fail"
+        );
         assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
-    }
+        assert_eq!(lc_e, libc::EPERM);
+    });
 }
 
 #[test]
