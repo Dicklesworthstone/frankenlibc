@@ -6,6 +6,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_next_test.rs'
       - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-caller-lookup.yml'
@@ -13,6 +14,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_caller_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_next_test.rs'
       - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-caller-lookup.yml'
@@ -46,10 +48,14 @@ jobs:
       - name: Execute native and host caller-scope regressions
         run: |
           mkdir -p artifacts/native-caller
-          cargo test --keep-going -p frankenlibc-abi --test dlfcn_native_caller_test -- --nocapture \
-            2>&1 | tee "artifacts/native-caller/${FRANKENLIBC_MODE}.log"
-          grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' \
-            "artifacts/native-caller/${FRANKENLIBC_MODE}.log"
+          for target in dlfcn_native_caller_test dlfcn_native_next_test; do
+            log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
+            cargo test --keep-going -p frankenlibc-abi --test "$target" -- --nocapture \
+              2>&1 | tee "$log"
+            # Each target needs its own nonempty unfiltered parent result.
+            # Passing DEFAULT tests cannot conceal an empty NEXT target.
+            grep -E 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored; 0 measured; 0 filtered out' "$log"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -137,6 +137,9 @@ struct NativeDso {
     // Global visibility is ordered by promotion, not original mapping time.
     global_rank: usize,
     symbolic: bool,
+    // Original DT_NEEDED loader parent, never changed by later scope joins.
+    // Non-owning ID: it may retire before this DSO and is never reused.
+    loader: Option<usize>,
     // Caller-relative lookup memberships, not owning lifetime edges.
     lookup_scopes: Vec<lookup::LocalScope>,
     // DT_NEEDED order is the lookup scope; relocation-only providers are
@@ -625,6 +628,7 @@ fn map_object(
         global: false,
         global_rank: 0,
         symbolic,
+        loader: None,
         lookup_scopes: Vec::new(),
         dependencies: needed.clone(),
         needed,

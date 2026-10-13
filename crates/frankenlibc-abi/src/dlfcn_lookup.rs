@@ -5,6 +5,8 @@
 //! lose its LOCAL group. The public interpose exports remain unchanged.
 //! Scope membership holds IDs, never pointers or lifetime references; a
 //! successful DEFAULT lookup separately retains the selected native provider.
+//! NEXT uses only the tail of the caller's original load group. It neither
+//! searches unrelated globals nor creates an ordinary provider lifetime edge.
 
 use std::ffi::{CStr, c_char, c_void};
 
@@ -29,7 +31,24 @@ pub(super) struct LocalScope {
 /// Vec allocation follows the surrounding loader's abort-on-OOM contract.
 pub(super) fn attach_scope(dsos: &mut [NativeDso], root: usize, deepbind: bool) {
     let members = lookup_order(dsos, &[], root);
+    // First discovery assigns the actual DT_NEEDED parent, not just the
+    // outer group root. An inner ancestor can survive after that root retires.
+    // Determine parents before taking mutable borrows; cycles never assign
+    // a parent to the root or revisit a node already discovered by BFS.
+    let parents = members
+        .iter()
+        .enumerate()
+        .map(|(index, &id)| {
+            let parent = members[..index].iter().copied().find(|parent| {
+                dsos.iter().any(|dso| dso.id == *parent && dso.needed.contains(&id))
+            });
+            (id, parent)
+        })
+        .collect::<Vec<_>>();
     for dso in dsos.iter_mut().filter(|dso| members.contains(&dso.id)) {
+        if dso.state == super::InitState::Pending && dso.lookup_scopes.is_empty() {
+            dso.loader = parents.iter().find(|(id, _)| *id == dso.id).and_then(|(_, parent)| *parent);
+        }
         if !dso.lookup_scopes.iter().any(|scope| scope.root == root) {
             dso.lookup_scopes.push(LocalScope { root, deepbind });
         }
@@ -126,17 +145,30 @@ fn caller_id(dsos: &[NativeDso], return_pc: usize) -> Option<usize> {
         .map(|dso| dso.id)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Request {
+    Default,
+    Next,
+}
+
 unsafe fn dispatch(
     handle: *mut c_void,
     name: *const c_char,
     version: Option<*const c_char>,
     caller: usize,
 ) -> *mut c_void {
-    // Explicit handles keep the existing validation, version and ownership
-    // implementation. NEXT retains its existing route until its local-tail
-    // search is enabled; it must never be treated as DEFAULT.
-    if handle as usize != core::RTLD_DEFAULT {
-        return unsafe { forward(handle, name, version) };
+    // Explicit handles retain their existing validation and ownership path.
+    let request = match handle as usize {
+        core::RTLD_DEFAULT => Request::Default,
+        core::RTLD_NEXT => Request::Next,
+        _ => return unsafe { forward(handle, name, version) },
+    };
+    // A pending IFUNC's caller has not been published yet. Check reentry
+    // BEFORE caller identification, or that absence would send a native PC to
+    // the host loader. Recursive lookup remains unsupported during IFUNC.
+    if ifunc::active() {
+        abi::set_dlerror(core::ERR_SYMBOL_NOT_FOUND);
+        return std::ptr::null_mut();
     }
     let operation = OPERATIONS.lock();
     let id = registry()
@@ -152,7 +184,7 @@ unsafe fn dispatch(
     let result = if matches!(decision.action, MembraneAction::Deny) || ifunc::active() {
         None
     } else {
-        unsafe { validated_lookup(id, name, version) }
+        unsafe { validated_lookup(id, name, version, request) }
     };
     // None is failure; Some(NULL) is a successful zero-valued symbol/IFUNC.
     // Once a caller is recognized, a native miss never falls through to a
@@ -252,6 +284,28 @@ fn search_order(dsos: &[NativeDso], caller: usize) -> Option<Search> {
     }
 }
 
+/// NEXT is not DEFAULT with one definition omitted. Walk the original
+/// DT_NEEDED loader ancestry, then skip through the caller in that ancestor's
+/// breadth-first scope. Reopen/new-group memberships never reparent a DSO.
+/// Missing ancestors terminate the walk at the last surviving inner loader;
+/// scope pruning and successful DEFAULT lifetime edges are independent of it.
+fn next_order(dsos: &[NativeDso], caller: usize) -> Option<Vec<usize>> {
+    let mut root = caller;
+    let mut depth = 0;
+    loop {
+        let dso = dsos.iter().find(|dso| dso.id == root)?;
+        let Some(parent) = dso.loader else { break; };
+        if !dsos.iter().any(|dso| dso.id == parent) { break; }
+        depth += 1;
+        if depth >= dsos.len() { return None; }
+        root = parent;
+    }
+    let mut order = lookup_order(dsos, &[], root);
+    let skip = order.iter().position(|id| *id == caller)?.checked_add(1)?;
+    drop(order.drain(..skip));
+    Some(order)
+}
+
 /// Keep a mapping alive across TLS allocation or arbitrary host IFUNC code,
 /// without retaining it permanently if lookup fails. Drop outside the registry.
 fn pin(id: usize) -> Option<ResidentPin> {
@@ -265,6 +319,7 @@ unsafe fn validated_lookup(
     caller: usize,
     name: *const c_char,
     version: Option<*const c_char>,
+    request: Request,
 ) -> Option<*mut c_void> {
     let name = unsafe { bounded_name(name)? };
     let version = match version {
@@ -274,8 +329,20 @@ unsafe fn validated_lookup(
     let symbol_name = name.to_str().ok()?;
     let version_name = version.map(CStr::to_str).transpose().ok()?;
     let _caller_pin = pin(caller)?;
-    let search = search_order(&registry().lock().ok()?, caller)?;
-    if let Some(result) = native_search(caller, &search.before_host, symbol_name, version_name) {
+    if request == Request::Next {
+        let order = {
+            let dsos = registry().lock().ok()?;
+            next_order(&dsos, caller)?
+        };
+        // A local-tail miss is final. In particular, libc builtins, the host
+        // global scope and a later RTLD_GLOBAL plugin are NOT NEXT fallbacks.
+        return native_search(caller, &order, symbol_name, version_name, request).flatten();
+    }
+    let search = {
+        let dsos = registry().lock().ok()?;
+        search_order(&dsos, caller)?
+    };
+    if let Some(result) = native_search(caller, &search.before_host, symbol_name, version_name, request) {
         return result;
     }
     // The host global prefix already contains the interposed libc in L0/L1.
@@ -287,7 +354,7 @@ unsafe fn validated_lookup(
     if let Some(address) = unsafe { host_symbol(name, version) } {
         return Some(address);
     }
-    if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name) {
+    if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name, request) {
         return result;
     }
     if version_name.is_some_and(|version| !abi::version_supported(version.as_bytes())) {
@@ -339,6 +406,7 @@ fn native_search(
     order: &[usize],
     name: &str,
     version: Option<&str>,
+    request: Request,
 ) -> Option<Option<*mut c_void>> {
     let unique = unique::Transaction::new();
     let definition = {
@@ -367,13 +435,14 @@ fn native_search(
         }
         selected?
     };
-    Some(materialize(caller, definition, unique))
+    Some(materialize(caller, definition, unique, request))
 }
 
 fn materialize(
     caller: usize,
     definition: unique::Selection,
     unique: unique::Transaction,
+    request: Request,
 ) -> Option<*mut c_void> {
     let _provider_pin = pin(definition.provider)?;
     let address = if definition.symbol.is_tls() {
@@ -388,15 +457,20 @@ fn materialize(
     } else {
         let address = usize::try_from(definition.address()?).ok()?;
         if definition.symbol.is_ifunc() {
-            ifunc::resolve_symbol(caller, address)? as *mut c_void
+            // An indirect implementation may have a different provider. For
+            // NEXT, attach that safety edge to the selected resolver's DSO,
+            // not to the caller: lookup itself must not keep that DSO alive.
+            let owner = if request == Request::Default { caller } else { definition.provider };
+            ifunc::resolve_symbol(owner, address)? as *mut c_void
         } else {
             address as *mut c_void
         }
     };
     let mut dsos = registry().lock().ok()?;
     let requester = dsos.iter_mut().find(|dso| dso.id == caller)?;
-    let retain =
-        definition.provider != caller && !requester.dependencies.contains(&definition.provider);
+    let retain = request == Request::Default
+        && definition.provider != caller
+        && !requester.dependencies.contains(&definition.provider);
     if retain {
         requester.dependencies.try_reserve(1).ok()?;
     }
