@@ -2,15 +2,25 @@
 
 //! Differential conformance harness for `acct(2)`.
 //!
-//! Process accounting requires CAP_SYS_PACCT. Unprivileged callers
-//! must get -1 + EPERM from both fl and the kernel. Privileged
-//! callers can disable accounting with NULL.
+//! Process accounting requires CAP_SYS_PACCT. Without it, fl and the kernel
+//! must both return -1 + EPERM.
+//!
+//! Every call runs on a thread without CAP_SYS_PACCT
+//! ([`host_isolation::without_capability`]). rch workers run offloaded
+//! `cargo test` as root, and there `acct(NULL)` really switched off any
+//! process accounting the host had enabled, while `acct(path)` could switch it
+//! on. The kernel checks the capability before anything else, so without it
+//! both arms take the EPERM path for every caller, root included.
 //!
 //! Filed under [bd-xn6p8] follow-up.
 
-use std::ffi::{CString, c_int, c_long};
+use std::ffi::{CString, c_long};
 
 use frankenlibc_abi::unistd_abi as fl;
+
+#[path = "common/host_isolation.rs"]
+mod host_isolation;
+use host_isolation::{CAP_SYS_PACCT, without_capability};
 
 unsafe extern "C" {
     fn syscall(number: c_long, ...) -> c_long;
@@ -22,82 +32,50 @@ fn errno_now() -> i32 {
     unsafe { *libc::__errno_location() }
 }
 
-/// True when this process actually lacks the privilege these tests assume.
-///
-/// The hardcoded "-1 + EPERM" expectations below are only correct for an
-/// unprivileged caller. The rch build fleet runs its workers as root, where
-/// acct(2) SUCCEEDS, so asserting failure unconditionally made this gate
-/// permanently red there while fl was behaving correctly. The fl-vs-host
-/// comparison is the part that holds either way, and it is never skipped.
-fn unprivileged() -> bool {
-    // Bound to a local first: an `unsafe { .. }` block at the start of a
-    // function body parses as a statement, so `unsafe { .. } != 0` is a syntax
-    // error here even though it is fine in `if` position.
-    let euid = unsafe { libc::geteuid() };
-    euid != 0
-}
-
-/// Turn process accounting back off. Enabling it is a real, persistent side
-/// effect on the machine — as root the calls below genuinely switch accounting
-/// on — so anything that may have succeeded is undone here.
-fn disable_accounting_if_privileged() {
-    if !unprivileged() {
-        unsafe { syscall(SYS_ACCT, 0 as c_long) };
-    }
+/// Calls fl's `acct` and the raw syscall with `path` (NULL for `None`) on a
+/// thread without CAP_SYS_PACCT. Returns `((fl_ret, fl_errno), (sys_ret, sys_errno))`.
+fn acct_both(path: Option<&'static str>) -> ((i32, i32), (c_long, i32)) {
+    without_capability(CAP_SYS_PACCT, move || {
+        let path = path.map(|p| CString::new(p).unwrap());
+        let ptr = path.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
+        let fl_v = unsafe { fl::acct(ptr) };
+        let fl_e = errno_now();
+        let lc_v = unsafe { syscall(SYS_ACCT, ptr as c_long) };
+        let lc_e = errno_now();
+        ((fl_v, fl_e), (lc_v, lc_e))
+    })
 }
 
 #[test]
 fn diff_acct_unprivileged_returns_eperm() {
-    let path = CString::new("/var/log/pacct").unwrap();
-    let fl_v = unsafe { fl::acct(path.as_ptr()) };
-    let fl_e = errno_now();
-    let lc_v = unsafe { syscall(SYS_ACCT, path.as_ptr() as c_long) };
-    let lc_e = errno_now();
-    disable_accounting_if_privileged();
-
-    // The real contract: fl does whatever the kernel did.
+    let ((fl_v, fl_e), (lc_v, lc_e)) = acct_both(Some("/var/log/pacct"));
     assert_eq!(fl_v as c_long, lc_v, "acct ret: fl={fl_v} lc={lc_v}");
     assert_eq!(fl_e, lc_e, "acct errno: fl={fl_e} lc={lc_e}");
-    if unprivileged() {
-        assert_eq!(fl_v, -1, "unprivileged caller should fail");
-        assert!(
-            matches!(fl_e, libc::EPERM | libc::ENOSYS),
-            "expected EPERM or ENOSYS, got {fl_e}"
-        );
-    }
+    assert_eq!(fl_v, -1, "a caller without CAP_SYS_PACCT should fail");
+    assert!(
+        matches!(fl_e, libc::EPERM | libc::ENOSYS),
+        "expected EPERM or ENOSYS, got {fl_e}"
+    );
 }
 
 #[test]
 fn diff_acct_null_filename_returns_eperm_for_unprivileged() {
-    // NULL means "disable accounting". Without privilege both fail; WITH
-    // privilege both succeed, and the call is idempotent, so no cleanup is
-    // needed here — disabling twice is harmless.
-    let fl_v = unsafe { fl::acct(std::ptr::null()) };
-    let fl_e = errno_now();
-    let lc_v = unsafe { syscall(SYS_ACCT, 0 as c_long) };
-    let lc_e = errno_now();
+    // NULL means "disable accounting"; without the capability both refuse.
+    let ((fl_v, fl_e), (lc_v, lc_e)) = acct_both(None);
     assert_eq!(fl_v as c_long, lc_v);
     assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
-    if unprivileged() {
-        assert_eq!(fl_v, -1);
-    }
+    assert_eq!(fl_v, -1);
 }
 
 #[test]
 fn diff_acct_nonexistent_path_unprivileged_uniform_failure() {
-    let path = CString::new("/nonexistent/dir/pacct.log").unwrap();
-    let fl_v = unsafe { fl::acct(path.as_ptr()) };
-    let fl_e = errno_now();
-    let lc_v = unsafe { syscall(SYS_ACCT, path.as_ptr() as c_long) };
-    let lc_e = errno_now();
+    let ((fl_v, fl_e), (lc_v, lc_e)) = acct_both(Some("/nonexistent/dir/pacct.log"));
     assert_eq!(fl_v as c_long, lc_v);
     assert_eq!(fl_v, -1);
     // Could be EPERM (privilege check first) or ENOENT (path check first).
     // Both impls must agree.
     assert_eq!(fl_e, lc_e, "errno: fl={fl_e} lc={lc_e}");
 }
-
-fn _suppress_c_int_unused(_x: c_int) {}
 
 #[test]
 fn acct_diff_coverage_report() {
