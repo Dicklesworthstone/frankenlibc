@@ -16,6 +16,7 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 
 (
   cd "${ROOT}"
+  python3 "${GEN}" --self-test-cfg
   python3 "${GEN}" --output "${ARTIFACT}" --check
 )
 
@@ -41,6 +42,7 @@ summary = artifact.get("summary", {})
 symbols = artifact.get("symbol_census", [])
 callsites = artifact.get("callsite_census", [])
 anchors = artifact.get("required_anchor_symbols", [])
+profiles = artifact.get("profile_census", {})
 
 if summary.get("host_delegating_symbol_count") != len(symbols):
     errors.append("symbol_count_mismatch")
@@ -48,6 +50,58 @@ if summary.get("host_delegation_callsite_count") != len(callsites):
     errors.append("callsite_count_mismatch")
 if summary.get("required_anchor_present_count") != len([row for row in anchors if row.get("present")]):
     errors.append("anchor_count_mismatch")
+
+expected_profiles = {
+    "interpose-release-linux-x86_64",
+    "standalone-release-linux-x86_64",
+}
+if not isinstance(profiles, dict) or set(profiles) != expected_profiles:
+    errors.append("profile_census_shape_mismatch")
+    profiles = {}
+for profile_name, profile in profiles.items():
+    profile_summary = profile.get("summary", {})
+    cfg_diagnostics = profile.get("cfg_diagnostics", [])
+    dependencies = profile.get("host_dependencies_by_symbol", {})
+    terminal_counts = profile.get("reachable_terminal_counts_by_symbol", {})
+    terminal_sites = profile.get("terminal_host_callsites", [])
+    unknown_samples = profile.get("unknown_reachable_call_edge_samples", [])
+    blockers = profile.get("admission_blockers", [])
+    coverage = profile.get("coverage", {})
+    if profile.get("cfg_diagnostic_count") != len(cfg_diagnostics):
+        errors.append(f"{profile_name}:cfg_diagnostic_count_mismatch")
+    if profile_summary.get("exported_symbol_with_host_dependency_count") != len(dependencies):
+        errors.append(f"{profile_name}:host_dependency_symbol_count_mismatch")
+    if set(dependencies) != set(terminal_counts):
+        errors.append(f"{profile_name}:terminal_count_symbol_partition_mismatch")
+    if profile_summary.get("unique_terminal_host_callsite_count") != len(terminal_sites):
+        errors.append(f"{profile_name}:terminal_host_callsite_count_mismatch")
+    unknown_count = profile_summary.get("unknown_reachable_call_edge_count")
+    if not isinstance(unknown_count, int) or len(unknown_samples) > unknown_count:
+        errors.append(f"{profile_name}:unknown_edge_sample_count_invalid")
+    if profile_summary.get("standalone_admission_ready") != (not blockers):
+        errors.append(f"{profile_name}:admission_blocker_mismatch")
+    coverage_complete = (
+        coverage.get("support_matrix_row_count", 0) > 0
+        and coverage.get("missing_from_source_count") == 0
+        and coverage.get("missing_from_support_matrix_count") == 0
+        and not coverage.get("duplicate_source_symbols", [])
+        and not coverage.get("duplicate_support_matrix_symbols", [])
+    )
+    if coverage.get("complete") != coverage_complete:
+        errors.append(f"{profile_name}:coverage_completeness_mismatch")
+    for site in terminal_sites:
+        rel_path = site.get("path")
+        line = site.get("line")
+        if not isinstance(rel_path, str) or not isinstance(line, int) or line <= 0:
+            errors.append(f"{profile_name}:terminal_site_bad_location")
+            continue
+        full_path = root / rel_path
+        if not full_path.is_file():
+            errors.append(f"{profile_name}:terminal_site_missing_file:{rel_path}")
+            continue
+        text_lines = full_path.read_text(encoding="utf-8").splitlines()
+        if line > len(text_lines) or site.get("expression") not in text_lines[line - 1]:
+            errors.append(f"{profile_name}:terminal_site_bad_line:{rel_path}:{line}")
 
 missing_anchors = sorted(row.get("symbol") for row in anchors if not row.get("present"))
 if missing_anchors:
@@ -93,6 +147,9 @@ report = {
         "host_delegating_symbol_count": len(symbols),
         "host_delegation_callsite_count": len(callsites),
         "required_anchor_present_count": len([row for row in anchors if row.get("present")]),
+        "profile_census": {
+            name: profile.get("summary", {}) for name, profile in sorted(profiles.items())
+        },
     },
     "artifact_refs": [str(artifact_path.relative_to(root)), str(report_path.relative_to(root)), str(log_path.relative_to(root))],
 }
@@ -112,6 +169,8 @@ if errors:
     raise SystemExit("FAIL host delegation census: " + "; ".join(errors))
 print(
     "PASS host delegation census "
-    f"symbols={len(symbols)} callsites={len(callsites)} anchors={report['summary']['required_anchor_present_count']}"
+    f"symbols={len(symbols)} callsites={len(callsites)} "
+    f"anchors={report['summary']['required_anchor_present_count']} "
+    f"standalone_host_symbols={profiles['standalone-release-linux-x86_64']['summary']['exported_symbol_with_host_dependency_count']}"
 )
 PY
