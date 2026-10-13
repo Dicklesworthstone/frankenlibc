@@ -19,7 +19,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 14
+DETECTOR_VERSION = 15
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -415,9 +415,13 @@ def matching_delimiter(mask: str, opening: int, left: str, right: str) -> int | 
     return None
 
 
-def split_top_level(text: str) -> list[str]:
+def split_top_level_with_offsets(
+    text: str, delimiter: str = ","
+) -> list[tuple[int, str]]:
+    if len(delimiter) != 1:
+        raise ValueError("top-level delimiter must be one character")
     mask = rust_code_mask(text)
-    pieces: list[str] = []
+    pieces: list[tuple[int, str]] = []
     start = 0
     depths = {"(": 0, "[": 0, "{": 0}
     closing = {")": "(", "]": "[", "}": "{"}
@@ -426,11 +430,17 @@ def split_top_level(text: str) -> list[str]:
             depths[char] += 1
         elif char in closing:
             depths[closing[char]] -= 1
-        elif char == "," and not any(depths.values()):
-            pieces.append(text[start:idx].strip())
+        elif char == delimiter and not any(depths.values()):
+            leading = len(text[start:idx]) - len(text[start:idx].lstrip())
+            pieces.append((start + leading, text[start:idx].strip()))
             start = idx + 1
-    pieces.append(text[start:].strip())
+    leading = len(text[start:]) - len(text[start:].lstrip())
+    pieces.append((start + leading, text[start:].strip()))
     return pieces
+
+
+def split_top_level(text: str) -> list[str]:
+    return [piece for _, piece in split_top_level_with_offsets(text)]
 
 
 def attribute_spans(text: str, mask: str) -> list[tuple[int, int]]:
@@ -900,19 +910,107 @@ def parse_enum_constructors(text: str) -> set[tuple[str, str]]:
 def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]:
     """Model functions emitted by reviewed declaration macros.
 
-    Unknown macro token trees never create lexical bindings.  The one reviewed
-    declaration macro is instead represented by an explicit synthetic function
-    whose body calls the helper named after ``=>``.  Call-graph reachability can
-    then follow the same edge that the macro expansion emits.
+    Unknown macro token trees never create lexical bindings. Reviewed declaration
+    macros are represented by synthetic functions with the same exported names
+    and call edges as their expansions. This keeps coverage and host-dependency
+    propagation source-derived without needing rustc expansion output.
     """
 
     mask = rust_code_mask(text)
     closing_delimiters = {"(": ")", "[": "]", "{": "}"}
     functions: list[FunctionInfo] = []
+
+    definition_spans: list[tuple[int, int]] = []
+    definition_re = re.compile(
+        r"\bmacro_rules\s*!\s*[A-Za-z_][A-Za-z0-9_]*\s*([({\[])"
+    )
+    for definition in definition_re.finditer(mask):
+        opening = definition.start(1)
+        delimiter = definition.group(1)
+        end = matching_delimiter(
+            mask, opening, delimiter, closing_delimiters[delimiter]
+        )
+        if end is not None:
+            definition_spans.append((definition.start(), end))
+
+    def inside_definition(position: int) -> bool:
+        return any(start <= position < end for start, end in definition_spans)
+
+    def add_function(
+        name: str,
+        line_no: int,
+        body: str,
+        *,
+        exported: bool,
+    ) -> None:
+        signature = (
+            f'pub unsafe extern "C" fn {name}() {{ {body} }}'
+            if exported
+            else f"fn {name}() {{ {body} }}"
+        )
+        functions.append(
+            FunctionInfo(
+                name=name,
+                path=path,
+                start_line=line_no,
+                body_start_line=line_no,
+                signature=signature,
+                attr_text="#[unsafe(no_mangle)]" if exported else "",
+                lines=[(line_no, signature)],
+            )
+        )
+
+    def require_match(
+        pattern: str, statement: str, macro_name: str, line_no: int
+    ) -> re.Match[str]:
+        matched = re.fullmatch(pattern, statement, re.DOTALL)
+        if matched is None:
+            compact = " ".join(statement.split())
+            raise ValueError(
+                f"unrecognized {macro_name}! declaration at {path}:{line_no}: {compact}"
+            )
+        return matched
+
+    math_bulk_macros = {
+        "unary": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*\|[^|]*\|\s*(.+)",
+        "unary_one": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*\|[^|]*\|\s*(.+)",
+        "binary": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*\|[^|]*\|\s*(.+)",
+        "ternary": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*\|[^|]*\|\s*(.+)",
+        "with_reg": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\([^)]*\)\s*=\s*\|[^|]*\|\s*(.+)",
+        "to_int": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*->\s*.+?=\s*\|[^|]*\|\s*(.+)",
+        "two_to": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*->\s*.+?=\s*\|[^|]*\|\s*(.+)",
+        "three_to": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*->\s*.+?=\s*\|[^|]*\|\s*(.+)",
+        "fromfp": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*->\s*.+?=\s*([A-Za-z_:][A-Za-z0-9_:]*)",
+        "complex_unary": r"([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_:][A-Za-z0-9_:]*)",
+    }
+    math_helper_macros = {"ptr_in", "ptr_and_ld", "real_shim"}
+    math_target_macros = {"ptr_pair"}
+    finite_macros = {
+        "finite_unary_f64",
+        "finite_unary_f32",
+        "finite_unary_f128",
+        "finite_binary_f64",
+        "finite_binary_f32",
+        "finite_binary_f128",
+    }
+    rpc_macros = {"rpc_stub", "xdr_i32_prim", "xdr_narrow_prim", "xdr_i64_prim"}
+    unistd_leaf_macros = {
+        "xdr_stub",
+        "nss_files_end_stub",
+        "nss_files_set_void_stub",
+        "nss_files_set_stayopen_stub",
+        "nss_files_parse_stub",
+    }
+    unistd_errno_macros = {
+        "nss_files_get_ent_stub",
+        "nss_files_get_by_str_stub",
+        "nss_files_get_by_int_stub",
+    }
+
     for invocation in MACRO_INVOCATION_RE.finditer(mask):
-        macro_name = re.split(r"\s*::\s*", invocation.group(1))[-1]
-        if macro_name != "avx2_dispatch":
+        if inside_definition(invocation.start()):
             continue
+        macro_name = re.split(r"\s*::\s*", invocation.group(1))[-1]
         opening = invocation.start(2)
         delimiter = invocation.group(2)
         end = matching_delimiter(
@@ -922,24 +1020,153 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
             closing_delimiters[delimiter],
         )
         if end is None:
+            if macro_name in {
+                "avx2_dispatch",
+                *math_bulk_macros,
+                *math_helper_macros,
+                *math_target_macros,
+                "canonicalize",
+                *finite_macros,
+                *rpc_macros,
+                *unistd_leaf_macros,
+                *unistd_errno_macros,
+            }:
+                line_no = text.count("\n", 0, invocation.start()) + 1
+                raise ValueError(
+                    f"unterminated reviewed macro invocation at {path}:{line_no}"
+                )
             continue
-        declaration = AVX2_DISPATCH_DECL_RE.search(mask, opening + 1, end - 1)
-        if declaration is None:
+
+        body_start = opening + 1
+        body = text[body_start : end - 1]
+        body_mask = mask[body_start : end - 1]
+
+        if macro_name == "avx2_dispatch":
+            declaration = AVX2_DISPATCH_DECL_RE.search(body_mask)
+            if declaration is None:
+                line_no = text.count("\n", 0, invocation.start()) + 1
+                raise ValueError(
+                    f"unrecognized avx2_dispatch! declaration at {path}:{line_no}"
+                )
+            name, target = declaration.groups()
+            line_no = text.count("\n", 0, body_start + declaration.start()) + 1
+            add_function(name, line_no, f"{target}();", exported=False)
             continue
-        name, body = declaration.groups()
-        line_no = text.count("\n", 0, declaration.start()) + 1
-        synthetic = f"fn {name}() {{ {body}(); }}"
-        functions.append(
-            FunctionInfo(
-                name=name,
-                path=path,
-                start_line=line_no,
-                body_start_line=line_no,
-                signature=synthetic,
-                attr_text="",
-                lines=[(line_no, synthetic)],
+
+        if path.name == "math_abi.rs" and macro_name in math_bulk_macros:
+            for offset, statement in split_top_level_with_offsets(body, ";"):
+                if not statement:
+                    continue
+                line_no = text.count("\n", 0, body_start + offset) + 1
+                matched = require_match(
+                    math_bulk_macros[macro_name], statement, macro_name, line_no
+                )
+                groups = matched.groups()
+                if macro_name in {"unary", "complex_unary"}:
+                    first, second, helper, target = groups
+                    exported_names = (first, second)
+                else:
+                    first, helper, target = groups
+                    exported_names = (first,)
+                add_function(helper, line_no, f"{target};", exported=False)
+                for exported_name in exported_names:
+                    add_function(
+                        exported_name, line_no, f"{helper}();", exported=True
+                    )
+            continue
+
+        if path.name == "math_abi.rs" and macro_name in math_helper_macros:
+            for offset, statement in split_top_level_with_offsets(body, ";"):
+                if not statement:
+                    continue
+                line_no = text.count("\n", 0, body_start + offset) + 1
+                matched = require_match(
+                    r"([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)",
+                    statement,
+                    macro_name,
+                    line_no,
+                )
+                name, helper = matched.groups()
+                add_function(name, line_no, f"{helper}();", exported=True)
+            continue
+
+        if path.name == "math_abi.rs" and macro_name in math_target_macros:
+            for offset, statement in split_top_level_with_offsets(body, ";"):
+                if not statement:
+                    continue
+                line_no = text.count("\n", 0, body_start + offset) + 1
+                matched = require_match(
+                    r"([A-Za-z_]\w*)\s*=\s*([A-Za-z_:][A-Za-z0-9_:]*)",
+                    statement,
+                    macro_name,
+                    line_no,
+                )
+                name, target = matched.groups()
+                add_function(name, line_no, f"{target}();", exported=True)
+            continue
+
+        if path.name == "math_abi.rs" and macro_name == "canonicalize":
+            for offset, statement in split_top_level_with_offsets(body, ";"):
+                if not statement:
+                    continue
+                line_no = text.count("\n", 0, body_start + offset) + 1
+                matched = require_match(
+                    r"([A-Za-z_]\w*)", statement, macro_name, line_no
+                )
+                add_function(
+                    matched.group(1),
+                    line_no,
+                    "super::canonicalizef128();",
+                    exported=True,
+                )
+            continue
+
+        if path.name == "math_abi.rs" and macro_name in finite_macros:
+            line_no = text.count("\n", 0, body_start) + 1
+            parts = split_top_level(body)
+            if len(parts) != 2:
+                raise ValueError(
+                    f"unrecognized {macro_name}! declaration at {path}:{line_no}"
+                )
+            name_match = require_match(
+                r"([A-Za-z_]\w*)", parts[0], macro_name, line_no
             )
-        )
+            target_match = require_match(
+                r"([A-Za-z_:][A-Za-z0-9_:]*)", parts[1], macro_name, line_no
+            )
+            add_function(
+                name_match.group(1),
+                line_no,
+                f"{target_match.group(1)}();",
+                exported=True,
+            )
+            continue
+
+        if path.name == "rpc_abi.rs" and macro_name in rpc_macros:
+            line_no = text.count("\n", 0, body_start) + 1
+            name_match = require_match(
+                r"\s*([A-Za-z_]\w*)\s*\(.*", body, macro_name, line_no
+            )
+            calls = "xp32(); xg32();" if macro_name != "rpc_stub" else ""
+            add_function(name_match.group(1), line_no, calls, exported=True)
+            continue
+
+        if path.name == "unistd_abi.rs" and macro_name in {
+            *unistd_leaf_macros,
+            *unistd_errno_macros,
+        }:
+            line_no = text.count("\n", 0, body_start) + 1
+            name_match = re.match(r"\s*([A-Za-z_]\w*)\b", body)
+            if name_match is None:
+                raise ValueError(
+                    f"unrecognized {macro_name}! declaration at {path}:{line_no}"
+                )
+            calls = (
+                "nss_set_errnop_enoent();"
+                if macro_name in unistd_errno_macros
+                else ""
+            )
+            add_function(name_match.group(1), line_no, calls, exported=True)
     return functions
 
 
