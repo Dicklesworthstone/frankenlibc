@@ -19,7 +19,7 @@ from typing import Any
 
 SCHEMA_VERSION = "host_delegation_census.v1"
 BEAD_ID = "bd-smp21.1"
-DETECTOR_VERSION = 5
+DETECTOR_VERSION = 14
 
 PROFILE_INTERPOSE = "interpose-release-linux-x86_64"
 PROFILE_STANDALONE = "standalone-release-linux-x86_64"
@@ -53,9 +53,18 @@ THREAD_RAW_SYMBOLS = {
     "tryjoin_np": "pthread_tryjoin_np",
 }
 
-FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+FUNCTION_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\b")
 CALL_PATH_RE = re.compile(
     r"(?<![\w.])((?:[A-Za-z_][A-Za-z0-9_]*::)*[A-Za-z_][A-Za-z0-9_]*)\s*\("
+)
+MACRO_INVOCATION_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*!\s*([({\[])"
+)
+AVX2_DISPATCH_DECL_RE = re.compile(
+    r"\bunsafe\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+    r".*?=>\s*([A-Za-z_][A-Za-z0-9_]*)\s*;",
+    re.DOTALL,
 )
 RAW_LITERAL_RE = re.compile(r'resolve_host_symbol_raw\s*\(\s*"([^"]+)"')
 RAW_DYNAMIC_RE = re.compile(r"resolve_host_symbol_raw\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)")
@@ -80,6 +89,7 @@ MODULE_DECL_RE = re.compile(
     r"(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?|unsafe)\s+)*mod\s+"
     r"([A-Za-z_][A-Za-z0-9_]*)\s*;"
 )
+USE_ITEM_RE = re.compile(r"(?m)^(?:(?:pub(?:\([^)]*\))?)\s+)?use\s+([^;]+);")
 PATH_ATTRIBUTE_RE = re.compile(r'path\s*=\s*"([^"]+)"')
 RAW_STRING_START_RE = re.compile(r'(?:br|r)(?P<hashes>#{0,255})"')
 
@@ -105,6 +115,7 @@ class CfgProfile:
     features: frozenset[str]
     flags: frozenset[str]
     values: tuple[tuple[str, str], ...]
+    target_features: frozenset[str]
 
     @property
     def value_map(self) -> dict[str, str]:
@@ -115,6 +126,7 @@ class CfgProfile:
             "name": self.name,
             "features": sorted(self.features),
             "flags": sorted(self.flags),
+            "target_features": sorted(self.target_features),
             "values": dict(self.values),
         }
 
@@ -140,6 +152,7 @@ CFG_PROFILES = (
         name=PROFILE_INTERPOSE,
         features=frozenset(),
         flags=frozenset({"unix"}),
+        target_features=frozenset({"fxsr", "sse", "sse2", "x87"}),
         values=(
             ("target_arch", "x86_64"),
             ("target_endian", "little"),
@@ -154,6 +167,7 @@ CFG_PROFILES = (
         name=PROFILE_STANDALONE,
         features=frozenset({"standalone"}),
         flags=frozenset({"unix"}),
+        target_features=frozenset({"fxsr", "sse", "sse2", "x87"}),
         values=(
             ("target_arch", "x86_64"),
             ("target_endian", "little"),
@@ -255,9 +269,19 @@ def evaluate_cfg(expr: CfgExpr, profile: CfgProfile) -> bool | None:
         if expr.name == "feature":
             return expr.value in profile.features
         value_map = profile.value_map
-        return value_map.get(expr.name) == expr.value
+        if expr.name in value_map:
+            return value_map[expr.name] == expr.value
+        if expr.name == "target_feature":
+            return expr.value in profile.target_features
+        # All other unmodelled key/value predicates are unknown and must
+        # survive the source filter with a blocking diagnostic.
+        return None
     if expr.kind == "flag":
-        return expr.name in profile.flags
+        if expr.name in profile.flags:
+            return True
+        if expr.name in {"windows", "debug_assertions", "test"}:
+            return False
+        return None
     values = [evaluate_cfg(child, profile) for child in expr.children]
     if expr.name == "all":
         if any(value is False for value in values):
@@ -748,15 +772,188 @@ def source_tree_sha256(files: list[Path], root: Path) -> str:
     return digest.hexdigest()
 
 
+def parse_module_imports(text: str) -> dict[str, str]:
+    """Return simple module-scope function imports as local -> full path."""
+
+    imports: dict[str, str] = {}
+    masked = rust_code_mask(text)
+    for match in USE_ITEM_RE.finditer(masked):
+        expression = " ".join(match.group(1).split())
+        normalized = re.sub(r"\s*::\s*", "::", expression)
+        normalized = re.sub(r"\{\s*", "{", normalized)
+        normalized = re.sub(r"\s*\}", "}", normalized)
+        if "::{" in normalized and normalized.endswith("}"):
+            base, members = normalized.split("::{", 1)
+            members = members[:-1]
+            for member in members.split(","):
+                if not member or "{" in member or "}" in member or member == "self":
+                    continue
+                alias_parts = re.split(r"\s+as\s+", member.strip(), maxsplit=1)
+                original = re.sub(r"\s+", "", alias_parts[0])
+                local_name = alias_parts[1].strip() if len(alias_parts) == 2 else original
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name):
+                    imports[local_name] = f"{base}::{original}"
+            continue
+
+        alias_parts = re.split(r"\s+as\s+", expression, maxsplit=1)
+        original = re.sub(r"\s+", "", alias_parts[0])
+        local_name = (
+            alias_parts[1].strip()
+            if len(alias_parts) == 2
+            else original.rsplit("::", 1)[-1]
+        )
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", local_name):
+            imports[local_name] = original
+    return imports
+
+
+def resolve_import_target(imports: dict[str, str], expression: str) -> str | None:
+    """Expand module-local import aliases in one callable path."""
+
+    parts = expression.lstrip(":").split("::")
+    visited: set[str] = set()
+    while parts and parts[0] in imports:
+        head = parts[0]
+        if head in visited:
+            return None
+        visited.add(head)
+        replacement = imports[head].lstrip(":").split("::")
+        parts = [*replacement, *parts[1:]]
+    return "::".join(parts)
+
+
+def parse_declared_types(text: str) -> set[str]:
+    """Return nominal types declared directly in one source module."""
+
+    mask = rust_code_mask(text)
+    return set(
+        re.findall(
+            r"\b(?:struct|enum|union|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b",
+            mask,
+        )
+    )
+
+
+def parse_generated_associated_leaves(text: str) -> set[tuple[str, str]]:
+    """Return compiler-generated associated functions known to be host-free."""
+
+    mask = rust_code_mask(text)
+    spans = attribute_spans(text, mask)
+    generated: set[tuple[str, str]] = set()
+    declaration_re = re.compile(
+        r"(?m)^[ \t]*(?:(?:pub(?:\([^)]*\))?)\s+)?"
+        r"(?:struct|enum|union)\s+([A-Za-z_][A-Za-z0-9_]*)\b"
+    )
+    for declaration in declaration_re.finditer(mask):
+        cursor = declaration.start()
+        attributes: list[str] = []
+        for start, end in reversed(spans):
+            if end > cursor:
+                continue
+            if not only_trivia(mask, end, cursor):
+                break
+            attributes.append(text[start:end])
+            cursor = start
+        attribute_text = "\n".join(reversed(attributes))
+        for derive in re.findall(r"derive\s*\(([^)]*)\)", attribute_text, re.DOTALL):
+            if "Default" in {item.strip().rsplit("::", 1)[-1] for item in derive.split(",")}:
+                generated.add((declaration.group(1), "default"))
+    return generated
+
+
+def parse_enum_constructors(text: str) -> set[tuple[str, str]]:
+    """Return ``(enum, variant)`` constructors declared in one module."""
+
+    mask = rust_code_mask(text)
+    constructors: set[tuple[str, str]] = set()
+    for enum_match in re.finditer(r"\benum\s+([A-Za-z_][A-Za-z0-9_]*)\b", mask):
+        brace = mask.find("{", enum_match.end())
+        semicolon = mask.find(";", enum_match.end())
+        if brace < 0 or (semicolon >= 0 and semicolon < brace):
+            continue
+        close = matching_delimiter(mask, brace, "{", "}")
+        if close is None:
+            continue
+        body = text[brace + 1 : close - 1]
+        for variant in split_top_level(body):
+            variant_mask = rust_code_mask(variant)
+            cursor = 0
+            while cursor < len(variant_mask):
+                whitespace = re.match(r"\s*", variant_mask[cursor:])
+                cursor += len(whitespace.group(0)) if whitespace is not None else 0
+                if not variant_mask.startswith("#[", cursor):
+                    break
+                opening = variant_mask.find("[", cursor)
+                end = matching_delimiter(variant_mask, opening, "[", "]")
+                if end is None:
+                    cursor = len(variant_mask)
+                    break
+                cursor = end
+            name_match = re.match(
+                r"([A-Za-z_][A-Za-z0-9_]*)\b", variant_mask[cursor:]
+            )
+            if name_match is not None:
+                constructors.add((enum_match.group(1), name_match.group(1)))
+    return constructors
+
+
+def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]:
+    """Model functions emitted by reviewed declaration macros.
+
+    Unknown macro token trees never create lexical bindings.  The one reviewed
+    declaration macro is instead represented by an explicit synthetic function
+    whose body calls the helper named after ``=>``.  Call-graph reachability can
+    then follow the same edge that the macro expansion emits.
+    """
+
+    mask = rust_code_mask(text)
+    closing_delimiters = {"(": ")", "[": "]", "{": "}"}
+    functions: list[FunctionInfo] = []
+    for invocation in MACRO_INVOCATION_RE.finditer(mask):
+        macro_name = re.split(r"\s*::\s*", invocation.group(1))[-1]
+        if macro_name != "avx2_dispatch":
+            continue
+        opening = invocation.start(2)
+        delimiter = invocation.group(2)
+        end = matching_delimiter(
+            mask,
+            opening,
+            delimiter,
+            closing_delimiters[delimiter],
+        )
+        if end is None:
+            continue
+        declaration = AVX2_DISPATCH_DECL_RE.search(mask, opening + 1, end - 1)
+        if declaration is None:
+            continue
+        name, body = declaration.groups()
+        line_no = text.count("\n", 0, declaration.start()) + 1
+        synthetic = f"fn {name}() {{ {body}(); }}"
+        functions.append(
+            FunctionInfo(
+                name=name,
+                path=path,
+                start_line=line_no,
+                body_start_line=line_no,
+                signature=synthetic,
+                attr_text="",
+                lines=[(line_no, synthetic)],
+            )
+        )
+    return functions
+
+
 def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
     if text is None:
         text = path.read_text(encoding="utf-8")
     rows = text.splitlines()
+    mask_rows = rust_code_mask(text).splitlines()
+    if len(mask_rows) != len(rows):
+        raise ValueError(f"Rust lexical mask changed line count for {path}")
     functions: list[FunctionInfo] = []
     idx = 0
     while idx < len(rows):
-        line = rows[idx]
-        match = FUNCTION_RE.search(line)
+        match = FUNCTION_RE.search(mask_rows[idx])
         if not match:
             idx += 1
             continue
@@ -773,17 +970,60 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
         brace_balance = 0
         end_idx = idx
         seen_open = False
+        declaration_only = False
+        parameter_depth = 0
+        bracket_depth = 0
+        saw_parameter_list = False
+        parameters_closed = False
         body_start_line = idx + 1
         while end_idx < len(rows):
             current = rows[end_idx]
+            masked_current = mask_rows[end_idx]
             signature_lines.append(current)
-            if "{" in current and not seen_open:
-                seen_open = True
-                body_start_line = end_idx + 1
-            brace_balance += current.count("{") - current.count("}")
+            if end_idx == idx:
+                # Ignore enclosing syntax before the matched `fn` token. In
+                # particular, an inline `extern "C" { fn declaration(); }`
+                # must not mistake the extern block's brace for a body.
+                masked_current = masked_current[match.start() :]
+            body_offset: int | None = None
+            for offset, char in enumerate(masked_current):
+                if char == "(":
+                    parameter_depth += 1
+                    saw_parameter_list = True
+                    continue
+                if char == ")" and parameter_depth > 0:
+                    parameter_depth -= 1
+                    if saw_parameter_list and parameter_depth == 0:
+                        parameters_closed = True
+                    continue
+                if char == "[":
+                    bracket_depth += 1
+                    continue
+                if char == "]" and bracket_depth > 0:
+                    bracket_depth -= 1
+                    continue
+                if not parameters_closed or parameter_depth != 0 or bracket_depth != 0:
+                    continue
+                if char == ";":
+                    declaration_only = True
+                    break
+                if char == "{":
+                    seen_open = True
+                    body_start_line = end_idx + 1
+                    body_offset = offset
+                    break
+            if declaration_only:
+                break
+            if seen_open and body_offset is not None:
+                body_fragment = masked_current[body_offset:]
+                brace_balance += body_fragment.count("{") - body_fragment.count("}")
             if seen_open:
                 break
             end_idx += 1
+
+        if declaration_only:
+            idx = max(end_idx + 1, idx + 1)
+            continue
 
         function = FunctionInfo(
             name=match.group(1),
@@ -795,8 +1035,9 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
         )
         while end_idx < len(rows):
             current = rows[end_idx]
+            masked_current = mask_rows[end_idx]
             if end_idx != body_start_line - 1:
-                brace_balance += current.count("{") - current.count("}")
+                brace_balance += masked_current.count("{") - masked_current.count("}")
             function.lines.append((end_idx + 1, current))
             if seen_open and brace_balance <= 0:
                 break
@@ -804,6 +1045,7 @@ def parse_functions(path: Path, text: str | None = None) -> list[FunctionInfo]:
 
         functions.append(function)
         idx = max(end_idx + 1, idx + 1)
+    functions.extend(parse_generated_macro_functions(path, text))
     return functions
 
 
@@ -825,44 +1067,185 @@ def function_body_line(function: FunctionInfo, line_no: int, raw_line: str) -> s
     return line
 
 
+def function_body_lines(function: FunctionInfo) -> list[tuple[int, str, str]]:
+    """Return raw evidence plus a comment/literal-free executable view."""
+
+    raw_text = "\n".join(raw_line for _, raw_line in function.lines)
+    masked_lines = rust_code_mask(raw_text).split("\n")
+    if len(masked_lines) != len(function.lines):
+        raise ValueError(f"Rust lexical mask changed line count for {function.identity}")
+    return [
+        (
+            line_no,
+            function_body_line(function, line_no, raw_line),
+            function_body_line(function, line_no, masked_line),
+        )
+        for (line_no, raw_line), masked_line in zip(function.lines, masked_lines)
+    ]
+
+
+def scoped_call_paths(function: FunctionInfo) -> dict[int, list[tuple[str, bool]]]:
+    """Return call paths and whether a live lexical binding shadows each one.
+
+    Simple ``let`` bindings become visible only after their statement's
+    semicolon and disappear at the end of their brace scope.  Constructs this
+    lexical scanner cannot prove shadowing for remain conservative: the call is
+    not suppressed from host/call-graph analysis.
+    """
+
+    body_lines = function_body_lines(function)
+    body_text = "\n".join(line for _, _, line in body_lines)
+    macro_token_spans: list[tuple[int, int, str]] = []
+    closing_delimiters = {"(": ")", "[": "]", "{": "}"}
+    for invocation in MACRO_INVOCATION_RE.finditer(body_text):
+        macro_name = re.split(r"\s*::\s*", invocation.group(1))[-1]
+        opening = invocation.start(2)
+        delimiter = invocation.group(2)
+        end = matching_delimiter(
+            body_text,
+            opening,
+            delimiter,
+            closing_delimiters[delimiter],
+        )
+        if end is not None:
+            macro_token_spans.append((opening, end, macro_name))
+
+    def is_macro_token(position: int) -> bool:
+        return any(start <= position < end for start, end, _ in macro_token_spans)
+
+    active_scopes = [set(PARAM_BINDING_RE.findall(function.signature))]
+    scope_is_macro = [False]
+    pending_bindings = [set()]
+    next_scope_bindings: set[str] = set()
+    calls_by_line: dict[int, list[tuple[str, bool]]] = {}
+    line_offset = 0
+    for line_no, _, line in body_lines:
+        events: list[tuple[int, int, str, str | None]] = []
+        for binding in LOCAL_BINDING_RE.finditer(line):
+            if is_macro_token(line_offset + binding.start()):
+                continue
+            statement_start = max(
+                line.rfind(";", 0, binding.start()),
+                line.rfind("{", 0, binding.start()),
+            )
+            prefix = line[statement_start + 1 : binding.start()]
+            kind = (
+                "next_scope_binding"
+                if re.search(r"\b(?:if|while)\b", prefix)
+                or "&&" in prefix
+                or "||" in prefix
+                else "binding"
+            )
+            events.append((binding.start(), 1, kind, binding.group(1)))
+        for closure in re.finditer(r"\|([^|\n]*)\|", line):
+            if is_macro_token(line_offset + closure.start()):
+                continue
+            for parameter in closure.group(1).split(","):
+                binding = re.match(
+                    r"\s*(?:(?:mut|ref)\s+)?([A-Za-z_][A-Za-z0-9_]*)\b",
+                    parameter,
+                )
+                if binding is not None:
+                    events.append(
+                        (closure.end(), 1, "next_scope_binding", binding.group(1))
+                    )
+        for local_function in FUNCTION_RE.finditer(line):
+            if is_macro_token(line_offset + local_function.start()):
+                continue
+            events.append((local_function.start(), 1, "local_function", local_function.group(1)))
+        for call in CALL_PATH_RE.finditer(line):
+            events.append((call.start(), 2, "call", call.group(1)))
+        for position, char in enumerate(line):
+            if is_macro_token(line_offset + position):
+                continue
+            if char == "{":
+                events.append((position, 0, "open", None))
+            elif char == "}":
+                events.append((position, 0, "close", None))
+            elif char == ";":
+                events.append((position, 0, "semicolon", None))
+
+        for _, _, kind, value in sorted(events):
+            if kind == "open":
+                active_scopes.append(set(next_scope_bindings))
+                next_scope_bindings.clear()
+                scope_is_macro.append(False)
+                pending_bindings.append(set())
+            elif kind == "close":
+                if len(active_scopes) > 1:
+                    active_scopes.pop()
+                    scope_is_macro.pop()
+                    pending_bindings.pop()
+            elif kind == "semicolon":
+                active_scopes[-1].update(pending_bindings[-1])
+                pending_bindings[-1].clear()
+                next_scope_bindings.clear()
+            elif kind == "binding":
+                pending_bindings[-1].add(value or "")
+            elif kind == "next_scope_binding":
+                next_scope_bindings.add(value or "")
+            elif kind == "local_function":
+                target_scope = len(active_scopes) - 1
+                while target_scope > 0 and scope_is_macro[target_scope]:
+                    target_scope -= 1
+                active_scopes[target_scope].add(value or "")
+            else:
+                target_expression = value or ""
+                target_name = target_expression.rsplit("::", 1)[-1]
+                shadowed = "::" not in target_expression and any(
+                    target_name in scope for scope in active_scopes
+                )
+                calls_by_line.setdefault(line_no, []).append(
+                    (target_expression, shadowed)
+                )
+        line_offset += len(line) + 1
+    return calls_by_line
+
+
 def detect_host_calls(
     function: FunctionInfo,
     root: Path,
     *,
     include_libc_calls: bool = False,
+    module_imports: dict[str, str] | None = None,
 ) -> list[HostCall]:
     calls: list[HostCall] = []
     path = rel(root, function.path)
-    for line_no, raw_line in function.lines:
-        line = function_body_line(function, line_no, raw_line)
+    call_paths = scoped_call_paths(function)
+    for line_no, raw_line, line in function_body_lines(function):
         if not line.strip():
             continue
-        for symbol in RAW_LITERAL_RE.findall(line):
-            calls.append(
-                HostCall(
-                    path=path,
-                    line=line_no,
-                    function=function.name,
-                    function_id=function.identity,
-                    delegation_kind="resolve_host_symbol_raw_literal",
-                    host_symbol=symbol,
-                    expression=line.strip(),
-                    evidence=f"{path}:{line_no}",
+        expression = raw_line.strip()
+        for resolver in re.finditer(r"\bresolve_host_symbol_raw\s*\(", line):
+            literal = RAW_LITERAL_RE.match(raw_line, resolver.start())
+            if literal is not None:
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="resolve_host_symbol_raw_literal",
+                        host_symbol=literal.group(1),
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
                 )
-            )
-        for symbol in CACHED_LITERAL_RE.findall(line):
-            calls.append(
-                HostCall(
-                    path=path,
-                    line=line_no,
-                    function=function.name,
-                    function_id=function.identity,
-                    delegation_kind="resolve_host_symbol_cached_literal",
-                    host_symbol=symbol,
-                    expression=line.strip(),
-                    evidence=f"{path}:{line_no}",
+        for resolver in re.finditer(r"\bresolve_host_symbol_cached\s*\(", line):
+            literal = CACHED_LITERAL_RE.match(raw_line, resolver.start())
+            if literal is not None:
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="resolve_host_symbol_cached_literal",
+                        host_symbol=literal.group(1),
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
                 )
-            )
         if RAW_DYNAMIC_RE.search(line):
             calls.append(
                 HostCall(
@@ -872,7 +1255,7 @@ def detect_host_calls(
                     function_id=function.identity,
                     delegation_kind="resolve_host_symbol_raw_dynamic",
                     host_symbol="<dynamic>",
-                    expression=line.strip(),
+                    expression=expression,
                     evidence=f"{path}:{line_no}",
                 )
             )
@@ -885,7 +1268,7 @@ def detect_host_calls(
                     function_id=function.identity,
                     delegation_kind="resolved_thread_raw_accessor",
                     host_symbol=THREAD_RAW_SYMBOLS.get(thread_key, f"pthread_{thread_key}"),
-                    expression=line.strip(),
+                    expression=expression,
                     evidence=f"{path}:{line_no}",
                 )
             )
@@ -901,7 +1284,32 @@ def detect_host_calls(
                         function_id=function.identity,
                         delegation_kind="libc_crate_extern_call",
                         host_symbol=symbol,
-                        expression=line.strip(),
+                        expression=expression,
+                        evidence=f"{path}:{line_no}",
+                    )
+                )
+            for target_expression, shadowed in call_paths.get(line_no, []):
+                if shadowed:
+                    continue
+                imported_expression = resolve_import_target(
+                    module_imports or {}, target_expression
+                )
+                if (
+                    imported_expression is None
+                    or not imported_expression.startswith("libc::")
+                    or target_expression.lstrip(":").startswith("libc::")
+                ):
+                    continue
+                symbol = imported_expression.rsplit("::", 1)[-1]
+                calls.append(
+                    HostCall(
+                        path=path,
+                        line=line_no,
+                        function=function.name,
+                        function_id=function.identity,
+                        delegation_kind="libc_crate_imported_extern_call",
+                        host_symbol=symbol,
+                        expression=expression,
                         evidence=f"{path}:{line_no}",
                     )
                 )
@@ -928,7 +1336,7 @@ def detect_host_calls(
                         function_id=function.identity,
                         delegation_kind=kind,
                         host_symbol=host_symbol,
-                        expression=line.strip(),
+                        expression=expression,
                         evidence=f"{path}:{line_no}",
                     )
                 )
@@ -941,11 +1349,16 @@ def function_indices(
     dict[str, FunctionInfo],
     dict[tuple[str, str], list[str]],
     dict[str, list[str]],
+    dict[tuple[str, str], list[str]],
 ]:
     function_by_id = {function.identity: function for function in functions}
     functions_by_module_and_name: dict[tuple[str, str], list[str]] = {}
     functions_by_name: dict[str, list[str]] = {}
+    call_items_by_module_and_name: dict[tuple[str, str], list[str]] = {}
     for function in functions:
+        call_items_by_module_and_name.setdefault(
+            (function.module, function.name), []
+        ).append(function.identity)
         # Rustfmt keeps module-level functions flush-left. Indented `fn` items
         # are methods, nested functions, or macro bodies; treating those as
         # module namespace entries is what made calls such as `drop(...)`
@@ -960,11 +1373,18 @@ def function_indices(
         identities.sort()
     for identities in functions_by_name.values():
         identities.sort()
-    return function_by_id, functions_by_module_and_name, functions_by_name
+    for identities in call_items_by_module_and_name.values():
+        identities.sort()
+    return (
+        function_by_id,
+        functions_by_module_and_name,
+        functions_by_name,
+        call_items_by_module_and_name,
+    )
 
 
 def qualified_target_module(
-    caller: FunctionInfo,
+    caller_module: str,
     parts: list[str],
     known_modules: set[str],
     module_aliases: dict[str, str | None] | None = None,
@@ -981,7 +1401,7 @@ def qualified_target_module(
         return None, False
     prefix = parts[:-1]
     if prefix == ["self"]:
-        return caller.module, True
+        return caller_module, True
     if prefix == ["super"] or prefix == ["crate"]:
         return "lib", True
     if len(prefix) == 1 and prefix[0] in known_modules:
@@ -989,6 +1409,14 @@ def qualified_target_module(
     if len(prefix) == 1 and module_aliases is not None and prefix[0] in module_aliases:
         return module_aliases[prefix[0]], True
     if len(prefix) == 2 and prefix[0] in {"crate", "super"}:
+        if prefix[1] in known_modules:
+            return prefix[1], True
+        if module_aliases is not None and prefix[1] in module_aliases:
+            return module_aliases[prefix[1]], True
+        return None, True
+    if len(prefix) >= 2 and prefix[0] == "self":
+        return caller_module, True
+    if len(prefix) >= 3 and prefix[0] in {"crate", "super"}:
         if prefix[1] in known_modules:
             return prefix[1], True
         if module_aliases is not None and prefix[1] in module_aliases:
@@ -1003,10 +1431,15 @@ def resolve_function_calls(
     function: FunctionInfo,
     functions_by_module_and_name: dict[tuple[str, str], list[str]],
     functions_by_name: dict[str, list[str]],
+    call_items_by_module_and_name: dict[tuple[str, str], list[str]],
     known_modules: set[str],
     root: Path,
     *,
     module_aliases: dict[str, str | None] | None = None,
+    module_imports: dict[str, dict[str, str]] | None = None,
+    declared_types_by_module: dict[str, set[str]] | None = None,
+    enum_constructors: set[tuple[str, str, str]] | None = None,
+    generated_associated_leaves: set[tuple[str, str, str]] | None = None,
     conservative_nonlocal_unknown: bool = False,
 ) -> tuple[list[FunctionCall], list[UnknownCall]]:
     resolved: list[FunctionCall] = []
@@ -1014,14 +1447,46 @@ def resolve_function_calls(
     path = rel(root, function.path)
     seen_resolved: set[tuple[int, str, str]] = set()
     seen_unknown: set[tuple[int, str, str, tuple[str, ...]]] = set()
-    local_bindings = set(PARAM_BINDING_RE.findall(function.signature))
+    call_paths = scoped_call_paths(function)
 
-    for line_no, raw_line in function.lines:
-        line = function_body_line(function, line_no, raw_line)
+    def module_item_candidates(
+        module: str,
+        name: str,
+        visited: set[tuple[str, str]] | None = None,
+    ) -> list[str]:
+        """Resolve one module item, following explicit ``use`` re-exports."""
+
+        key = (module, name)
+        visited = set() if visited is None else visited
+        if key in visited:
+            return []
+        visited.add(key)
+        candidates = functions_by_module_and_name.get(key, [])
+        if candidates:
+            return candidates
+        imported_expression = (module_imports or {}).get(module, {}).get(name)
+        if imported_expression is None:
+            return []
+        imported_parts = imported_expression.split("::")
+        imported_module, claims_local = qualified_target_module(
+            module,
+            imported_parts,
+            known_modules,
+            module_aliases,
+        )
+        if not claims_local or imported_module is None:
+            return []
+        return module_item_candidates(
+            imported_module,
+            imported_parts[-1],
+            visited,
+        )
+
+    for line_no, raw_line, line in function_body_lines(function):
         if not line:
             continue
-        local_bindings.update(LOCAL_BINDING_RE.findall(line))
-        for target_expression in CALL_PATH_RE.findall(line):
+        expression = raw_line.strip()
+        for target_expression, shadowed in call_paths.get(line_no, []):
             parts = target_expression.split("::")
             target_name = parts[-1]
             # The opening signature is part of `function.lines`; preserve the
@@ -1032,38 +1497,87 @@ def resolve_function_calls(
             # A local value or parameter shadows an item with the same name.
             # Function-pointer calls such as `let host_dlopen = ...; host_dlopen()`
             # must not become edges to an unrelated module-level function.
-            if len(parts) == 1 and target_name in local_bindings:
+            if shadowed:
                 continue
             candidates: list[str]
             reason: str | None = None
 
             if len(parts) == 1:
-                candidates = functions_by_module_and_name.get(
-                    (function.module, target_name), []
-                )
+                imported_expression = (module_imports or {}).get(
+                    function.module, {}
+                ).get(target_name)
+                if imported_expression is not None:
+                    imported_parts = imported_expression.split("::")
+                    imported_name = imported_parts[-1]
+                    imported_module, claims_local = qualified_target_module(
+                        function.module,
+                        imported_parts,
+                        known_modules,
+                        module_aliases,
+                    )
+                    candidates = (
+                        module_item_candidates(imported_module, imported_name)
+                        if imported_module is not None
+                        else []
+                    )
+                    if claims_local and not candidates:
+                        reason = "unresolved_imported_target"
+                else:
+                    candidates = functions_by_module_and_name.get(
+                        (function.module, target_name), []
+                    )
                 if not candidates:
                     # Bare names do not resolve into sibling modules without an
                     # import. This lexical scanner intentionally refuses to
                     # guess at `use` resolution from unrelated same-named items.
-                    if not conservative_nonlocal_unknown:
+                    if reason == "unresolved_imported_target":
+                        pass
+                    elif not conservative_nonlocal_unknown:
                         continue
-                    candidates = functions_by_name.get(target_name, [])
-                    if not candidates:
-                        continue
-                    reason = "unresolved_unqualified_nonlocal_target"
+                    else:
+                        candidates = functions_by_name.get(target_name, [])
+                        if not candidates:
+                            continue
+                        reason = "unresolved_unqualified_nonlocal_target"
                 elif len(candidates) > 1:
                     reason = "ambiguous_unqualified_local_target"
             else:
-                target_module, claims_local = qualified_target_module(
-                    function, parts, known_modules, module_aliases
+                local_type = parts[-2]
+                local_types = (declared_types_by_module or {}).get(
+                    function.module, set()
                 )
+                if len(parts) == 2 and local_type in local_types:
+                    target_module, claims_local = function.module, True
+                else:
+                    target_module, claims_local = qualified_target_module(
+                        function.module, parts, known_modules, module_aliases
+                    )
                 if not claims_local:
                     continue
                 candidates = (
-                    functions_by_module_and_name.get((target_module, target_name), [])
+                    module_item_candidates(target_module, target_name)
                     if target_module is not None
                     else []
                 )
+                target_types = (declared_types_by_module or {}).get(
+                    target_module or "", set()
+                )
+                if (
+                    not candidates
+                    and target_module is not None
+                    and local_type in target_types
+                ):
+                    if (target_module, local_type, target_name) in (
+                        enum_constructors or set()
+                    ):
+                        continue
+                    if (target_module, local_type, target_name) in (
+                        generated_associated_leaves or set()
+                    ):
+                        continue
+                    candidates = call_items_by_module_and_name.get(
+                        (target_module, target_name), []
+                    )
                 if not candidates:
                     nonlocal_candidates = functions_by_name.get(target_name, [])
                     if conservative_nonlocal_unknown:
@@ -1092,7 +1606,7 @@ def resolve_function_calls(
                         path=path,
                         line=line_no,
                         target_expression=target_expression,
-                        expression=line.strip(),
+                        expression=expression,
                         evidence=f"{path}:{line_no}",
                     )
                 )
@@ -1111,7 +1625,7 @@ def resolve_function_calls(
                     target_expression=target_expression,
                     reason=reason or "ambiguous_target",
                     candidate_function_ids=candidate_ids,
-                    expression=line.strip(),
+                    expression=expression,
                     evidence=f"{path}:{line_no}",
                 )
             )
@@ -1186,6 +1700,10 @@ def analyze_host_dependencies(
     include_libc_calls: bool,
     callsite_namespace: str = "",
     module_aliases: dict[str, str | None] | None = None,
+    module_imports: dict[str, dict[str, str]] | None = None,
+    declared_types_by_module: dict[str, set[str]] | None = None,
+    enum_constructors: set[tuple[str, str, str]] | None = None,
+    generated_associated_leaves: set[tuple[str, str, str]] | None = None,
     conservative_nonlocal_unknown: bool = False,
 ) -> dict[str, Any]:
     """Build either the legacy downgrade view or a full dependency view."""
@@ -1194,6 +1712,7 @@ def analyze_host_dependencies(
         function_by_id,
         functions_by_module_and_name,
         functions_by_name,
+        call_items_by_module_and_name,
     ) = function_indices(functions)
     known_modules = {function.module for function in functions}
     direct_host_calls = {
@@ -1201,6 +1720,7 @@ def analyze_host_dependencies(
             function,
             root,
             include_libc_calls=include_libc_calls,
+            module_imports=(module_imports or {}).get(function.module),
         )
         for function in functions
     }
@@ -1211,9 +1731,14 @@ def analyze_host_dependencies(
             function,
             functions_by_module_and_name,
             functions_by_name,
+            call_items_by_module_and_name,
             known_modules,
             root,
             module_aliases=module_aliases,
+            module_imports=module_imports,
+            declared_types_by_module=declared_types_by_module,
+            enum_constructors=enum_constructors,
+            generated_associated_leaves=generated_associated_leaves,
             conservative_nonlocal_unknown=conservative_nonlocal_unknown,
         )
         call_edges[function.identity] = resolved
@@ -1515,6 +2040,9 @@ def support_matrix_coverage(
     )
     return {
         "support_matrix_path": "support_matrix.json",
+        "support_matrix_sha256": (
+            file_sha256(matrix_path) if matrix_path.is_file() else None
+        ),
         "support_matrix_row_count": len(matrix_symbols),
         "support_matrix_unique_symbol_count": len(matrix_set),
         "source_export_function_count": len(exported_functions),
@@ -1541,6 +2069,22 @@ def build_profile_census(
     functions: list[FunctionInfo] = []
     for path, text in filtered.items():
         functions.extend(parse_functions(path, text))
+    module_imports = {
+        path.stem: parse_module_imports(text) for path, text in filtered.items()
+    }
+    declared_types_by_module = {
+        path.stem: parse_declared_types(text) for path, text in filtered.items()
+    }
+    enum_constructors = {
+        (path.stem, enum_name, variant_name)
+        for path, text in filtered.items()
+        for enum_name, variant_name in parse_enum_constructors(text)
+    }
+    generated_associated_leaves = {
+        (path.stem, type_name, function_name)
+        for path, text in filtered.items()
+        for type_name, function_name in parse_generated_associated_leaves(text)
+    }
     analysis = analyze_host_dependencies(
         functions,
         root,
@@ -1548,6 +2092,10 @@ def build_profile_census(
         include_libc_calls=True,
         callsite_namespace=f"{profile.name}:",
         module_aliases=module_aliases,
+        module_imports=module_imports,
+        declared_types_by_module=declared_types_by_module,
+        enum_constructors=enum_constructors,
+        generated_associated_leaves=generated_associated_leaves,
         conservative_nonlocal_unknown=True,
     )
     coverage = support_matrix_coverage(root, analysis["exported_functions"])
@@ -1773,8 +2321,20 @@ pub extern "C" fn exported() -> i32 {
 #[cfg(all(target_os = "linux", target_arch = "x86_64", not(test)))]
 fn linux_release_only() {}
 
+#[cfg(target_feature = "sse2")]
+fn baseline_target_feature_is_retained() {}
+
+#[cfg(target_feature = "avx2")]
+fn unavailable_target_feature_is_removed() {}
+
 #[cfg(foo(bar))]
 fn unknown_predicate_is_retained() {}
+
+#[cfg(custom_host_path)]
+fn unknown_flag_is_retained() {}
+
+#[cfg(custom_host_mode = "enabled")]
+fn unknown_value_is_retained() {}
 
 #[cfg(not(feature = "standalone")]
 fn malformed_predicate_is_retained() {}
@@ -1828,12 +2388,38 @@ fn malformed_predicate_is_retained() {}
     )
     require("fn linux_release_only" in standalone, "known release cfg evaluated false")
     require(
+        "fn baseline_target_feature_is_retained" in standalone,
+        "baseline target feature evaluated false",
+    )
+    require(
+        "fn unavailable_target_feature_is_removed" not in standalone,
+        "unavailable target feature evaluated true",
+    )
+    require(
         "fn unknown_predicate_is_retained" in standalone
         and any(
             diagnostic.reason == "unsupported_cfg_predicate"
             for diagnostic in standalone_diagnostics
         ),
         "unknown cfg predicate did not fail closed",
+    )
+    require(
+        "fn unknown_flag_is_retained" in standalone
+        and any(
+            diagnostic.predicate == "custom_host_path"
+            and diagnostic.reason == "unsupported_cfg_predicate"
+            for diagnostic in standalone_diagnostics
+        ),
+        "unknown cfg flag did not fail closed",
+    )
+    require(
+        "fn unknown_value_is_retained" in standalone
+        and any(
+            diagnostic.predicate == 'custom_host_mode = "enabled"'
+            and diagnostic.reason == "unsupported_cfg_predicate"
+            for diagnostic in standalone_diagnostics
+        ),
+        "unknown cfg value did not fail closed",
     )
     require(
         "fn malformed_predicate_is_retained" in standalone
@@ -1844,7 +2430,7 @@ fn malformed_predicate_is_retained() {}
         "malformed cfg predicate did not fail closed",
     )
     require(
-        len(interpose_diagnostics) == len(standalone_diagnostics) == 2,
+        len(interpose_diagnostics) == len(standalone_diagnostics) == 4,
         "cfg diagnostics changed unexpectedly across profiles",
     )
     graph_source = r'''
@@ -1853,13 +2439,143 @@ pub extern "C" fn reaches_libc() -> i32 { helper() }
 fn helper() -> i32 { unsafe { libc::getuid() as i32 } }
 #[unsafe(no_mangle)]
 pub extern "C" fn unresolved_local_path() { crate::missing::call(); }
+
+use crate::imported_helper_module::imported_helper;
+use libc::getgid as imported_getgid;
+use ::libc::getppid as absolute_imported_getppid;
+use libc as host_libc;
+use host_libc::getuid as transitively_imported_getuid;
+use libc::getpid as macro_let_pid;
+use libc::getppid as macro_fn_pid;
+macro_rules! discard { ($($tokens:tt)*) => {}; }
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_imported_libc() -> i32 { imported_helper() }
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_imported_external_libc() -> i32 {
+    unsafe { imported_getgid() as i32 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_absolute_imported_external_libc() -> i32 {
+    unsafe { absolute_imported_getppid() as i32 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_transitively_imported_external_libc() -> i32 {
+    unsafe { transitively_imported_getuid() as i32 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_qualified_alias_external_libc() -> i32 {
+    unsafe { host_libc::getpid() as i32 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn imported_libc_shadow_is_not_a_call() -> i32 {
+    let imported_getgid = || 7;
+    imported_getgid()
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn imported_libc_initializer_is_a_call() -> i32 {
+    let imported_getgid = unsafe { imported_getgid() as i32 };
+    imported_getgid
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn imported_libc_after_scope_is_a_call() -> i32 {
+    { let imported_getgid = || 7; let _ = imported_getgid(); }
+    unsafe { imported_getgid() as i32 }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn conditional_import_shadow_is_not_a_call() -> i32 {
+    if true
+        && let Some(imported_getgid) = Some(|| 7)
+    {
+        return imported_getgid();
+    }
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn discarded_macro_let_does_not_shadow() -> i32 {
+    discard ! (let macro_let_pid = || 7;);
+    unsafe { macro_let_pid() as i32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn discarded_macro_fn_does_not_shadow() -> i32 {
+    discard! { fn macro_fn_pid() {} }
+    unsafe { macro_fn_pid() as i32 }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn known_dispatch_macro_emits_local_function() -> i32 {
+    avx2_dispatch! { unsafe fn generated_local() -> i32 => helper; }
+    generated_local()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn lexical_noise_is_not_a_call() -> i32 {
+    let _literal = "libc::getuid(";
+    /* libc::getppid(); */
+    9
+}
+
+struct LocalGuard;
+impl LocalGuard {
+    fn process_id() -> i32 { unsafe { libc::getppid() as i32 } }
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_associated_libc() -> i32 { LocalGuard::process_id() }
+
+enum LocalValue { Wrapped(i32), Empty }
+#[unsafe(no_mangle)]
+pub extern "C" fn enum_constructor_is_not_a_call() -> i32 {
+    let _value = LocalValue::Wrapped(7);
+    7
+}
+
+#[derive(Default)]
+struct DerivedLeaf;
+#[unsafe(no_mangle)]
+pub extern "C" fn derived_associated_leaf_is_not_a_call() -> i32 {
+    let _value = DerivedLeaf::default();
+    8
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn reaches_reexported_libc() -> i32 { native::forwarded_helper() }
 '''
     graph_functions = parse_functions(fake_path, graph_source)
+    imported_path = root / "scripts/imported_helper_module.rs"
+    graph_functions.extend(
+        parse_functions(
+            imported_path,
+            "fn imported_helper() -> i32 { unsafe { libc::getpid() as i32 } }\nfn generated_local() -> i32 { unsafe { libc::getuid() as i32 } }\n",
+        )
+    )
+    native_path = root / "scripts/native_module.rs"
+    native_source = "pub use crate::imported_helper_module::imported_helper as forwarded_helper;\n"
     graph = analyze_host_dependencies(
         graph_functions,
         root,
         same_symbol_only=False,
         include_libc_calls=True,
+        module_aliases={"native": native_path.stem},
+        module_imports={
+            fake_path.stem: parse_module_imports(graph_source),
+            native_path.stem: parse_module_imports(native_source),
+        },
+        declared_types_by_module={
+            fake_path.stem: parse_declared_types(graph_source),
+            imported_path.stem: set(),
+            native_path.stem: set(),
+        },
+        enum_constructors={
+            (fake_path.stem, enum_name, variant_name)
+            for enum_name, variant_name in parse_enum_constructors(graph_source)
+        },
+        generated_associated_leaves={
+            (fake_path.stem, type_name, function_name)
+            for type_name, function_name in parse_generated_associated_leaves(
+                graph_source
+            )
+        },
         conservative_nonlocal_unknown=True,
     )
     require(
@@ -1871,11 +2587,184 @@ pub extern "C" fn unresolved_local_path() { crate::missing::call(); }
     )
     require(
         any(
+            row["symbol"] == "reaches_imported_libc"
+            and row["host_symbols"] == ["getpid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not resolve a module-scope function import",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_imported_external_libc"
+            and row["host_symbols"] == ["getgid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not detect an imported libc extern call",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_absolute_imported_external_libc"
+            and row["host_symbols"] == ["getppid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not normalize an absolute libc import",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_transitively_imported_external_libc"
+            and row["host_symbols"] == ["getuid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not resolve a transitive libc import alias",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_qualified_alias_external_libc"
+            and row["host_symbols"] == ["getpid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not resolve a qualified libc crate alias",
+    )
+    require(
+        not any(
+            row["symbol"] == "imported_libc_shadow_is_not_a_call"
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner ignored a local binding shadowing a libc import",
+    )
+    require(
+        any(
+            row["symbol"] == "imported_libc_initializer_is_a_call"
+            and row["host_symbols"] == ["getgid"]
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner applied a let binding inside its own initializer",
+    )
+    require(
+        any(
+            row["symbol"] == "imported_libc_after_scope_is_a_call"
+            and row["host_symbols"] == ["getgid"]
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner retained a local binding after its scope ended",
+    )
+    require(
+        not any(
+            row["symbol"] == "conditional_import_shadow_is_not_a_call"
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner ignored a conditional binding in its body scope",
+    )
+    require(
+        any(
+            row["symbol"] == "discarded_macro_let_does_not_shadow"
+            and row["host_symbols"] == ["getpid"]
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner treated a discarded macro let-token as a live binding",
+    )
+    require(
+        any(
+            row["symbol"] == "discarded_macro_fn_does_not_shadow"
+            and row["host_symbols"] == ["getppid"]
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner treated a discarded macro fn-token as a live binding",
+    )
+    require(
+        any(
+            row["symbol"] == "known_dispatch_macro_emits_local_function"
+            and row["host_symbols"] == ["getuid"]
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner did not propagate a known macro-generated function body",
+    )
+    require(
+        not any(
+            row["symbol"] == "lexical_noise_is_not_a_call"
+            for row in graph["symbol_rows"]
+        ),
+        "host scanner treated a string or block comment as executable code",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_associated_libc"
+            and row["host_symbols"] == ["getppid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not resolve a local associated function",
+    )
+    require(
+        any(
+            row["symbol"] == "reaches_reexported_libc"
+            and row["host_symbols"] == ["getpid"]
+            for row in graph["symbol_rows"]
+        ),
+        "full dependency graph did not follow an explicit module re-export",
+    )
+    require(
+        not any(
+            row["caller_exported_symbol"]
+            in {
+                "enum_constructor_is_not_a_call",
+                "derived_associated_leaf_is_not_a_call",
+            }
+            for row in graph["unknown_calls"]
+        ),
+        "full dependency graph treated a parsed compiler-generated leaf as a call",
+    )
+    require(
+        any(
             row["caller_exported_symbol"] == "unresolved_local_path"
             and row["reason"] == "unresolved_qualified_target"
             for row in graph["unknown_calls"]
         ),
         "full dependency graph did not fail closed on an unresolved local path",
+    )
+    structural_source = r'''
+#[unsafe(no_mangle)]
+pub extern "C" fn brace_noise() -> i32 {
+    let _literal = "{";
+    // A comment containing unmatched braces must not absorb later functions: }}}
+    /* Nor may block-comment braces: { }} */
+    1
+}
+#[unsafe(no_mangle)]
+pub extern "C" fn after_brace_noise() -> i32 { 2 }
+
+fn generic_helper<R>(value: R, _array: [u8; 2]) -> R { value }
+
+unsafe extern "C" {
+    fn bodyless_foreign_declaration() -> i32;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn after_foreign_declaration() -> i32 { generic_helper(3, [0; 2]) }
+'''
+    structural_functions = parse_functions(fake_path, structural_source)
+    require(
+        [
+            function.exported_symbol
+            for function in structural_functions
+            if function.is_exported_abi
+        ]
+        == ["brace_noise", "after_brace_noise", "after_foreign_declaration"],
+        "function parser counted braces inside comments or literals",
+    )
+    require(
+        any(function.name == "generic_helper" for function in structural_functions),
+        "generic function declaration was not parsed",
+    )
+    require(
+        not any(
+            function.name == "bodyless_foreign_declaration"
+            for function in structural_functions
+        )
+        and any(
+            function.exported_symbol == "after_foreign_declaration"
+            for function in structural_functions
+        ),
+        "bodyless foreign declaration absorbed a later function definition",
     )
     print(f"PASS: cfg/profile scanner self-test ({checks} checks)")
     return 0

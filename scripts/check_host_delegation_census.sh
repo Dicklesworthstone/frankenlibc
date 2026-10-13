@@ -21,6 +21,7 @@ mkdir -p "${OUT_DIR}" "$(dirname "${REPORT}")" "$(dirname "${LOG}")"
 )
 
 python3 - "${ROOT}" "${ARTIFACT}" "${REPORT}" "${LOG}" <<'PY'
+import hashlib
 import json
 import pathlib
 import sys
@@ -37,6 +38,8 @@ if artifact.get("schema_version") != "host_delegation_census.v1":
     errors.append("schema_version_mismatch")
 if artifact.get("bead") != "bd-smp21.1":
     errors.append("bead_mismatch")
+if artifact.get("detector", {}).get("version") != 14:
+    errors.append("detector_version_mismatch")
 
 summary = artifact.get("summary", {})
 symbols = artifact.get("symbol_census", [])
@@ -67,6 +70,12 @@ for profile_name, profile in profiles.items():
     unknown_samples = profile.get("unknown_reachable_call_edge_samples", [])
     blockers = profile.get("admission_blockers", [])
     coverage = profile.get("coverage", {})
+    support_matrix_path = root / coverage.get("support_matrix_path", "")
+    recorded_matrix_sha256 = coverage.get("support_matrix_sha256")
+    if not support_matrix_path.is_file():
+        errors.append(f"{profile_name}:support_matrix_missing")
+    elif recorded_matrix_sha256 != hashlib.sha256(support_matrix_path.read_bytes()).hexdigest():
+        errors.append(f"{profile_name}:support_matrix_hash_mismatch")
     if profile.get("cfg_diagnostic_count") != len(cfg_diagnostics):
         errors.append(f"{profile_name}:cfg_diagnostic_count_mismatch")
     if profile_summary.get("exported_symbol_with_host_dependency_count") != len(dependencies):

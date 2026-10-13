@@ -3,16 +3,12 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-#[derive(Debug)]
-struct CallThroughSite {
-    module: String,
-    line: usize,
-    function: String,
-    source_kind: &'static str,
-}
-
-type SourceScanExceptions = BTreeMap<String, BTreeMap<String, BTreeSet<String>>>;
+const HOST_DELEGATION_CENSUS_REL: &str = "tests/conformance/host_delegation_census.v1.json";
+const HOST_DELEGATION_CENSUS_SCHEMA: &str = "host_delegation_census.v1";
+const HOST_DELEGATION_DETECTOR_VERSION: u64 = 14;
+const STANDALONE_CENSUS_PROFILE: &str = "standalone-release-linux-x86_64";
 
 #[derive(Debug, Clone, Copy)]
 struct StartupContractSpec {
@@ -427,220 +423,525 @@ fn hex_digest(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn extract_libc_call(fragment: &str) -> Option<&str> {
-    let bytes = fragment.as_bytes();
-    let mut end = 0;
-    for &byte in bytes {
-        if byte.is_ascii_lowercase() || byte == b'_' || (end > 0 && byte.is_ascii_digit()) {
-            end += 1;
-        } else {
-            break;
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let body = fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(body);
+    Ok(hex_digest(&hasher.finalize()))
+}
+
+fn abi_source_tree_sha256(root: &Path) -> Result<(usize, String), String> {
+    let source_dir = root.join("crates/frankenlibc-abi/src");
+    let entries = fs::read_dir(&source_dir)
+        .map_err(|err| format!("failed to read {}: {err}", source_dir.display()))?;
+    let mut source_files = Vec::new();
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| format!("failed to enumerate {}: {err}", source_dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            source_files.push(path);
         }
     }
-    if end == 0 {
+    source_files.sort();
+
+    let mut hasher = Sha256::new();
+    for path in &source_files {
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|err| format!("failed to relativize {}: {err}", path.display()))?;
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| format!("non-UTF-8 ABI source path: {}", path.display()))?;
+        let body =
+            fs::read(path).map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+        hasher.update(relative.as_bytes());
+        hasher.update([0]);
+        hasher.update(&body);
+        hasher.update([0]);
+    }
+
+    Ok((source_files.len(), hex_digest(&hasher.finalize())))
+}
+
+fn required_u64(value: &Value, pointer: &str, diagnostics: &mut Vec<String>) -> Option<u64> {
+    let Some(number) = value.pointer(pointer).and_then(Value::as_u64) else {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide integer {pointer}"
+        ));
         return None;
-    }
-
-    let rest = fragment[end..].trim_start();
-    if rest.starts_with('(') {
-        Some(&fragment[..end])
-    } else {
-        None
-    }
+    };
+    Some(number)
 }
 
-fn load_source_scan_exceptions(profile: &Value) -> SourceScanExceptions {
-    let mut exceptions = SourceScanExceptions::new();
-    let rows = profile
-        .pointer("/detection_rules/source_scan_exceptions")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    for row in rows {
-        let Some(module) = row.get("module").and_then(Value::as_str) else {
-            continue;
-        };
-        let Some(function) = row.get("function").and_then(Value::as_str) else {
-            continue;
-        };
-        let symbols = row
-            .get("symbols")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>();
-        if symbols.is_empty() {
-            continue;
-        }
-        exceptions
-            .entry(module.to_owned())
-            .or_default()
-            .entry(function.to_owned())
-            .or_default()
-            .extend(symbols);
-    }
-    exceptions
+fn required_array_len(value: &Value, pointer: &str, diagnostics: &mut Vec<String>) -> Option<u64> {
+    let Some(rows) = value.pointer(pointer).and_then(Value::as_array) else {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide array {pointer}"
+        ));
+        return None;
+    };
+    Some(rows.len() as u64)
 }
 
-fn extract_function_name(line: &str) -> Option<String> {
-    let fn_pos = line.find("fn ")?;
-    let after = &line[fn_pos + 3..];
-    let end = after
-        .bytes()
-        .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-        .count();
-    if end == 0 {
-        None
-    } else {
-        Some(after[..end].to_owned())
-    }
-}
-
-fn count_braces(line: &str) -> isize {
-    line.bytes().fold(0isize, |depth, byte| match byte {
-        b'{' => depth + 1,
-        b'}' => depth - 1,
-        _ => depth,
+fn checked_count_sum(
+    counts: impl IntoIterator<Item = u64>,
+    label: &str,
+    diagnostics: &mut Vec<String>,
+) -> Option<u64> {
+    counts.into_iter().try_fold(0u64, |total, count| {
+        total.checked_add(count).or_else(|| {
+            diagnostics.push(format!(
+                "- {HOST_DELEGATION_CENSUS_REL} {label} count overflow"
+            ));
+            None
+        })
     })
 }
 
-fn is_source_scan_exception(
-    module: &str,
-    current_fn: Option<&str>,
-    symbol: &str,
-    exceptions: &SourceScanExceptions,
-) -> bool {
-    current_fn
-        .and_then(|function| exceptions.get(module)?.get(function))
-        .is_some_and(|symbols| symbols.contains(symbol))
-}
+fn standalone_census_diagnostics(root: &Path) -> Vec<String> {
+    let census_path = root.join(HOST_DELEGATION_CENSUS_REL);
+    let mut diagnostics = Vec::new();
+    let body = match fs::read_to_string(&census_path) {
+        Ok(body) => body,
+        Err(err) => {
+            diagnostics.push(format!("- failed to read {}: {err}", census_path.display()));
+            return diagnostics;
+        }
+    };
+    let census: Value = match serde_json::from_str(&body) {
+        Ok(census) => census,
+        Err(err) => {
+            diagnostics.push(format!(
+                "- failed to parse {}: {err}",
+                census_path.display()
+            ));
+            return diagnostics;
+        }
+    };
 
-fn scan_call_throughs(abi_src: &Path, profile: &Value) -> Vec<CallThroughSite> {
-    let mut modules = fs::read_dir(abi_src)
-        .unwrap_or_else(|err| panic!("failed to read {}: {err}", abi_src.display())) // ubs:ignore — build.rs must hard-fail on missing ABI sources
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with("_abi.rs"))
+    if census.get("schema_version").and_then(Value::as_str) != Some(HOST_DELEGATION_CENSUS_SCHEMA) {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must use schema {HOST_DELEGATION_CENSUS_SCHEMA}"
+        ));
+    }
+    if census.pointer("/detector/version").and_then(Value::as_u64)
+        != Some(HOST_DELEGATION_DETECTOR_VERSION)
+    {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must use detector version {HOST_DELEGATION_DETECTOR_VERSION}"
+        ));
+    }
+    if census
+        .pointer("/detector/abi_source_dir")
+        .and_then(Value::as_str)
+        != Some("crates/frankenlibc-abi/src")
+    {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} has an unexpected ABI source directory"
+        ));
+    }
+
+    match abi_source_tree_sha256(root) {
+        Ok((source_file_count, source_tree_sha256)) => {
+            let recorded_count = census
+                .pointer("/detector/source_file_count")
+                .and_then(Value::as_u64);
+            if recorded_count != Some(source_file_count as u64) {
+                diagnostics.push(format!(
+                    "- {HOST_DELEGATION_CENSUS_REL} source_file_count is stale: recorded={} current={source_file_count}",
+                    recorded_count
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<missing>".to_owned())
+                ));
+            }
+            let recorded_hash = census
+                .pointer("/detector/source_tree_sha256")
+                .and_then(Value::as_str);
+            if recorded_hash != Some(source_tree_sha256.as_str()) {
+                diagnostics.push(format!(
+                    "- {HOST_DELEGATION_CENSUS_REL} ABI source hash is stale: regenerate it with scripts/generate_host_delegation_census.py"
+                ));
+            }
+        }
+        Err(err) => diagnostics.push(format!(
+            "- cannot verify {HOST_DELEGATION_CENSUS_REL} ABI source hash: {err}"
+        )),
+    }
+
+    let profile_pointer = format!("/profile_census/{STANDALONE_CENSUS_PROFILE}");
+    let Some(profile) = census.pointer(&profile_pointer) else {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide profile {STANDALONE_CENSUS_PROFILE}"
+        ));
+        return diagnostics;
+    };
+    if profile.pointer("/profile/name").and_then(Value::as_str) != Some(STANDALONE_CENSUS_PROFILE) {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile identity does not match {STANDALONE_CENSUS_PROFILE}"
+        ));
+    }
+    for (profile_key, cargo_env) in [
+        ("target_arch", "CARGO_CFG_TARGET_ARCH"),
+        ("target_endian", "CARGO_CFG_TARGET_ENDIAN"),
+        ("target_env", "CARGO_CFG_TARGET_ENV"),
+        ("target_family", "CARGO_CFG_TARGET_FAMILY"),
+        ("target_os", "CARGO_CFG_TARGET_OS"),
+        ("target_pointer_width", "CARGO_CFG_TARGET_POINTER_WIDTH"),
+        ("target_vendor", "CARGO_CFG_TARGET_VENDOR"),
+    ] {
+        let recorded = profile
+            .pointer(&format!("/profile/values/{profile_key}"))
+            .and_then(Value::as_str);
+        let current = std::env::var(cargo_env).ok();
+        if recorded != current.as_deref() {
+            diagnostics.push(format!(
+                "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} does not cover the current {profile_key}: recorded={} current={}",
+                recorded.unwrap_or("<missing>"),
+                current.as_deref().unwrap_or("<missing>")
+            ));
+        }
+    }
+    let recorded_flags = profile
+        .pointer("/profile/flags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if recorded_flags != BTreeSet::from(["unix".to_owned()])
+        || std::env::var_os("CARGO_CFG_UNIX").is_none()
+    {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} does not cover the current cfg flags: recorded={recorded_flags:?} current_unix={}",
+            std::env::var_os("CARGO_CFG_UNIX").is_some()
+        ));
+    }
+    let recorded_target_features = profile
+        .pointer("/profile/target_features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let active_target_features = std::env::var("CARGO_CFG_TARGET_FEATURE")
+        .unwrap_or_default()
+        .split(',')
+        .filter(|feature| !feature.is_empty())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if recorded_target_features != active_target_features {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} does not cover the active target features: recorded={recorded_target_features:?} current={active_target_features:?}"
+        ));
+    }
+    let recorded_features = profile
+        .pointer("/profile/features")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    if recorded_features != BTreeSet::from(["standalone".to_owned()]) {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} must cover exactly the standalone feature"
+        ));
+    }
+    let active_features = std::env::vars_os()
+        .filter_map(|(key, _)| {
+            let key = key.to_str()?;
+            key.strip_prefix("CARGO_FEATURE_")
+                .map(|feature| feature.to_ascii_lowercase().replace('_', "-"))
         })
-        .collect::<Vec<_>>();
-    modules.sort();
+        .filter(|feature| feature != "default")
+        .collect::<BTreeSet<_>>();
+    if recorded_features != active_features {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} does not cover the active Cargo features: recorded={recorded_features:?} current={active_features:?}"
+        ));
+    }
+    if std::env::var_os("CARGO_CFG_DEBUG_ASSERTIONS").is_some() {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} covers release builds, not debug-assertions builds"
+        ));
+    }
 
-    let exceptions = load_source_scan_exceptions(profile);
-    let mut sites = Vec::new();
-    for module_path in modules {
-        let module_name = module_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .trim_end_matches(".rs")
-            .to_owned();
-        let content = fs::read_to_string(&module_path)
-            .unwrap_or_else(|err| panic!("failed to read {}: {err}", module_path.display())); // ubs:ignore — build.rs must hard-fail on unreadable ABI sources
-
-        let mut brace_depth = 0isize;
-        let mut pending_fn: Option<String> = None;
-        let mut current_fn: Option<String> = None;
-        let mut current_fn_base_depth = 0isize;
-        for (lineno, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            if !trimmed.starts_with("//")
-                && let Some(fn_name) = extract_function_name(line)
-            {
-                pending_fn = Some(fn_name);
+    if profile
+        .pointer("/coverage/support_matrix_path")
+        .and_then(Value::as_str)
+        != Some("support_matrix.json")
+    {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} has an unexpected support-matrix path"
+        ));
+    }
+    let recorded_matrix_hash = profile
+        .pointer("/coverage/support_matrix_sha256")
+        .and_then(Value::as_str);
+    match file_sha256(&root.join("support_matrix.json")) {
+        Ok(current_matrix_hash) => {
+            if recorded_matrix_hash != Some(current_matrix_hash.as_str()) {
+                diagnostics.push(format!(
+                    "- {HOST_DELEGATION_CENSUS_REL} support-matrix hash is stale: regenerate it with scripts/generate_host_delegation_census.py"
+                ));
             }
-            let new_brace_depth = if trimmed.starts_with("//") {
-                brace_depth
+        }
+        Err(err) => diagnostics.push(format!(
+            "- cannot verify {HOST_DELEGATION_CENSUS_REL} support-matrix hash: {err}"
+        )),
+    }
+
+    let recorded_cfg_count = required_u64(profile, "/cfg_diagnostic_count", &mut diagnostics);
+    let cfg_count = required_array_len(profile, "/cfg_diagnostics", &mut diagnostics);
+    if recorded_cfg_count.is_some() && recorded_cfg_count != cfg_count {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} cfg_diagnostic_count does not match cfg_diagnostics"
+        ));
+    }
+
+    let recorded_host_count = required_u64(
+        profile,
+        "/summary/exported_symbol_with_host_dependency_count",
+        &mut diagnostics,
+    );
+    let host_count = profile
+        .pointer("/host_dependencies_by_symbol")
+        .and_then(Value::as_object)
+        .map(|rows| rows.len() as u64);
+    if host_count.is_none() {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide object /host_dependencies_by_symbol"
+        ));
+    }
+    if recorded_host_count.is_some() && recorded_host_count != host_count {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} exported_symbol_with_host_dependency_count does not match host_dependencies_by_symbol"
+        ));
+    }
+
+    let recorded_unknown_count = required_u64(
+        profile,
+        "/summary/unknown_reachable_call_edge_count",
+        &mut diagnostics,
+    );
+    let unknown_count = match profile
+        .pointer("/unknown_reachable_call_edge_counts_by_reason")
+        .and_then(Value::as_object)
+    {
+        Some(rows) => {
+            let mut counts = Vec::with_capacity(rows.len());
+            for (reason, value) in rows {
+                match value.as_u64() {
+                    Some(count) => counts.push(count),
+                    None => diagnostics.push(format!(
+                        "- {HOST_DELEGATION_CENSUS_REL} unknown-edge reason {reason} must have an integer count"
+                    )),
+                }
+            }
+            if counts.len() == rows.len() {
+                checked_count_sum(counts, "unknown reachable call-edge", &mut diagnostics)
             } else {
-                brace_depth + count_braces(line)
-            };
-            if current_fn.is_none()
-                && let Some(fn_name) = pending_fn.as_ref()
-                && new_brace_depth > brace_depth
-            {
-                current_fn = Some(fn_name.clone());
-                current_fn_base_depth = brace_depth;
-                pending_fn = None;
+                None
             }
-            if trimmed.starts_with("//") {
-                brace_depth = new_brace_depth;
-                continue;
-            }
-            let active_fn = current_fn.as_deref();
+        }
+        None => {
+            diagnostics.push(format!(
+                "- {HOST_DELEGATION_CENSUS_REL} must provide object /unknown_reachable_call_edge_counts_by_reason"
+            ));
+            None
+        }
+    };
+    if recorded_unknown_count.is_some() && recorded_unknown_count != unknown_count {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} unknown_reachable_call_edge_count does not match unknown_reachable_call_edge_counts_by_reason"
+        ));
+    }
 
-            let mut libc_search_from = 0;
-            while let Some(pos) = line[libc_search_from..].find("libc::") {
-                let abs_pos = libc_search_from + pos;
-                let after = &line[abs_pos + "libc::".len()..];
-                if let Some(function) = extract_libc_call(after)
-                    && function != "syscall"
-                    && !is_source_scan_exception(&module_name, active_fn, function, &exceptions)
-                {
-                    sites.push(CallThroughSite {
-                        module: module_name.clone(),
-                        line: lineno + 1,
-                        function: function.to_owned(),
-                        source_kind: "libc",
-                    });
-                }
-                libc_search_from = abs_pos + "libc::".len();
-            }
+    let coverage_complete = profile
+        .pointer("/coverage/complete")
+        .and_then(Value::as_bool);
+    if coverage_complete.is_none() {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide boolean /coverage/complete"
+        ));
+    }
+    let recorded_missing_source = required_u64(
+        profile,
+        "/coverage/missing_from_source_count",
+        &mut diagnostics,
+    );
+    let missing_source =
+        required_array_len(profile, "/coverage/missing_from_source", &mut diagnostics);
+    if recorded_missing_source.is_some() && recorded_missing_source != missing_source {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} missing_from_source_count does not match missing_from_source"
+        ));
+    }
+    let recorded_missing_matrix = required_u64(
+        profile,
+        "/coverage/missing_from_support_matrix_count",
+        &mut diagnostics,
+    );
+    let missing_matrix = required_array_len(
+        profile,
+        "/coverage/missing_from_support_matrix",
+        &mut diagnostics,
+    );
+    if recorded_missing_matrix.is_some() && recorded_missing_matrix != missing_matrix {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} missing_from_support_matrix_count does not match missing_from_support_matrix"
+        ));
+    }
+    let duplicate_source = required_array_len(
+        profile,
+        "/coverage/duplicate_source_symbols",
+        &mut diagnostics,
+    );
+    let duplicate_matrix = required_array_len(
+        profile,
+        "/coverage/duplicate_support_matrix_symbols",
+        &mut diagnostics,
+    );
+    let coverage_gap_count = match (
+        missing_source,
+        missing_matrix,
+        duplicate_source,
+        duplicate_matrix,
+    ) {
+        (Some(a), Some(b), Some(c), Some(d)) => checked_count_sum(
+            [a, b, c, d],
+            "support-matrix coverage gap",
+            &mut diagnostics,
+        ),
+        _ => None,
+    };
+    if let (Some(complete), Some(gap_count)) = (coverage_complete, coverage_gap_count)
+        && complete != (gap_count == 0)
+    {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} coverage.complete is inconsistent with the coverage arrays"
+        ));
+    }
 
-            if trimmed.contains("fn host_pthread_") {
-                if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
-                    current_fn = None;
-                }
-                brace_depth = new_brace_depth;
-                continue;
-            }
-            let mut host_search_from = 0;
-            while let Some(pos) = line[host_search_from..].find("host_pthread_") {
-                let abs_pos = host_search_from + pos;
-                let after = &line[abs_pos + "host_pthread_".len()..];
-                let bytes = after.as_bytes();
-                let mut end = 0;
-                for &byte in bytes {
-                    if byte.is_ascii_lowercase()
-                        || byte == b'_'
-                        || (end > 0 && byte.is_ascii_digit())
-                    {
-                        end += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if end > 0 {
-                    let wrapped = &after[..end];
-                    let rest = after[end..].trim_start();
-                    if rest.starts_with('(') && !wrapped.ends_with("_sym") {
-                        sites.push(CallThroughSite {
-                            module: module_name.clone(),
-                            line: lineno + 1,
-                            function: format!("pthread_{wrapped}"),
-                            source_kind: "host_pthread",
-                        });
-                    }
-                }
-                host_search_from = abs_pos + "host_pthread_".len();
-            }
-            if current_fn.is_some() && new_brace_depth <= current_fn_base_depth {
-                current_fn = None;
-            }
-            brace_depth = new_brace_depth;
+    let mut expected_blockers = BTreeMap::<String, u64>::new();
+    for (code, count) in [
+        ("cfg_analysis_incomplete", cfg_count),
+        ("reachable_host_dependencies", host_count),
+        ("unknown_reachable_call_edges", unknown_count),
+        ("support_matrix_coverage_incomplete", coverage_gap_count),
+    ] {
+        if let Some(count) = count
+            && count > 0
+        {
+            expected_blockers.insert(code.to_owned(), count);
         }
     }
 
-    sites
+    let mut recorded_blockers = BTreeMap::<String, u64>::new();
+    match profile.get("admission_blockers").and_then(Value::as_array) {
+        Some(rows) => {
+            for (index, row) in rows.iter().enumerate() {
+                let Some(code) = row.get("code").and_then(Value::as_str) else {
+                    diagnostics.push(format!(
+                        "- {HOST_DELEGATION_CENSUS_REL} blocker {index} has no code"
+                    ));
+                    continue;
+                };
+                let Some(count) = row.get("count").and_then(Value::as_u64) else {
+                    diagnostics.push(format!(
+                        "- {HOST_DELEGATION_CENSUS_REL} blocker {code} has no integer count"
+                    ));
+                    continue;
+                };
+                if count == 0 {
+                    diagnostics.push(format!(
+                        "- {HOST_DELEGATION_CENSUS_REL} blocker {code} must have a positive count"
+                    ));
+                }
+                if recorded_blockers.insert(code.to_owned(), count).is_some() {
+                    diagnostics.push(format!(
+                        "- {HOST_DELEGATION_CENSUS_REL} repeats blocker {code}"
+                    ));
+                }
+            }
+        }
+        None => diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} must provide admission_blockers as an array"
+        )),
+    }
+
+    if recorded_blockers != expected_blockers {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} blocker summary is inconsistent with the derived profile counts"
+        ));
+    }
+    let recorded_ready = profile
+        .pointer("/summary/standalone_admission_ready")
+        .and_then(Value::as_bool);
+    if recorded_ready != Some(recorded_blockers.is_empty()) {
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} standalone_admission_ready is inconsistent with admission_blockers"
+        ));
+    }
+    if !recorded_blockers.is_empty() {
+        let blocker_summary = recorded_blockers
+            .iter()
+            .map(|(code, count)| format!("{code}={count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        diagnostics.push(format!(
+            "- {HOST_DELEGATION_CENSUS_REL} profile {STANDALONE_CENSUS_PROFILE} blocks standalone admission: {blocker_summary}"
+        ));
+    }
+
+    diagnostics
+}
+
+fn standalone_census_regeneration_diagnostics(root: &Path) -> Vec<String> {
+    let script = root.join("scripts/generate_host_delegation_census.py");
+    let output = match Command::new("python3")
+        .arg(&script)
+        .arg("--check")
+        .current_dir(root)
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) => {
+            return vec![format!(
+                "- cannot execute {} --check with python3: {err}",
+                script.display()
+            )];
+        }
+    };
+    if output.status.success() {
+        return Vec::new();
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    let mut detail = Vec::new();
+    if !stdout.is_empty() {
+        detail.push(stdout);
+    }
+    if !stderr.is_empty() {
+        detail.push(stderr);
+    }
+    let detail = if detail.is_empty() {
+        format!("exit status {}", output.status)
+    } else {
+        detail.join(" | ")
+    };
+    vec![format!(
+        "- {HOST_DELEGATION_CENSUS_REL} does not match a fresh detector run: {detail}"
+    )]
 }
 
 fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
     let replacement_profile = load_json(&root.join("tests/conformance/replacement_profile.json"));
     let packaging_spec = load_json(&root.join("tests/conformance/packaging_spec.json"));
-    let support_matrix = load_json(&root.join("support_matrix.json"));
 
     let mut diagnostics = Vec::new();
 
@@ -692,74 +993,8 @@ fn standalone_policy_diagnostics(root: &Path) -> Vec<String> {
         );
     }
 
-    // Symbols with standalone_ready: true have cfg(feature = "standalone") guards
-    // that eliminate host delegation, so they're acceptable in standalone builds.
-    let forbidden_status_symbols = support_matrix
-        .get("symbols")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|row| {
-            let status = row.get("status").and_then(Value::as_str)?;
-            let standalone_ready = row
-                .get("standalone_ready")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            // Skip symbols that have standalone guards
-            if standalone_ready {
-                return None;
-            }
-            if status == "WrapsHostLibc" || status == "GlibcCallThrough" || status == "Stub" {
-                Some(
-                    row.get("symbol")
-                        .and_then(Value::as_str)
-                        .unwrap_or("<unknown>")
-                        .to_owned(),
-                )
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    if !forbidden_status_symbols.is_empty() {
-        let examples = forbidden_status_symbols
-            .iter()
-            .take(5)
-            .cloned()
-            .collect::<Vec<_>>()
-            .join(", ");
-        diagnostics.push(format!(
-            "- support_matrix.json still marks {} exported symbols as Interpose-only (examples: {examples})",
-            forbidden_status_symbols.len()
-        ));
-    }
-
-    let callthrough_sites = scan_call_throughs(
-        &root.join("crates/frankenlibc-abi/src"),
-        &replacement_profile,
-    );
-    if !callthrough_sites.is_empty() {
-        let mut modules = BTreeSet::new();
-        for site in &callthrough_sites {
-            modules.insert(site.module.clone());
-        }
-        let examples = callthrough_sites
-            .iter()
-            .take(5)
-            .map(|site| {
-                format!(
-                    "{}:{} {}::{}",
-                    site.module, site.line, site.source_kind, site.function
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        diagnostics.push(format!(
-            "- ABI source scan found {} host call-through sites across {} modules (examples: {examples})",
-            callthrough_sites.len(),
-            modules.len()
-        ));
-    }
+    diagnostics.extend(standalone_census_regeneration_diagnostics(root));
+    diagnostics.extend(standalone_census_diagnostics(root));
 
     diagnostics
 }
@@ -771,7 +1006,7 @@ fn enforce_standalone_policy(root: &Path) {
     }
 
     eprintln!(
-        "standalone feature requires a replacement-clean ABI.\n{}\nRun `bash scripts/check_replacement_guard.sh replacement` for the full report.",
+        "standalone feature requires a replacement-clean ABI.\n{}\nRun `bash scripts/check_host_delegation_census.sh` and `bash scripts/check_replacement_guard.sh replacement` for the full reports.",
         diagnostics.join("\n")
     );
     std::process::exit(1);
@@ -780,6 +1015,16 @@ fn enforce_standalone_policy(root: &Path) {
 fn emit_rerun_directives(repo_root: &Path, manifest_dir: &str) {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={manifest_dir}/version_scripts/libc.map");
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root.join(HOST_DELEGATION_CENSUS_REL).display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        repo_root
+            .join("scripts/generate_host_delegation_census.py")
+            .display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         repo_root.join("support_matrix.json").display()
