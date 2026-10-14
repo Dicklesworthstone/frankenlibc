@@ -990,7 +990,7 @@ fn pow_exp_specialcase(tmp: f64, mut sbits: u64, ki: u64) -> f64 {
 /// `exp(x + xtail)` rounded once, for an argument carried as a double-double
 /// (`exp10` passes x*ln10 this way). Overflow, underflow and subnormal results
 /// get pow's exact handling and FE flags.
-#[inline]
+#[inline(always)]
 pub(crate) fn exp_with_tail(x: f64, xtail: f64) -> f64 {
     pow_exp_inline(x, xtail, 0)
 }

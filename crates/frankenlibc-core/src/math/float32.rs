@@ -515,7 +515,7 @@ fn powf_ylogx(base: f32, exponent: f32) -> Option<(f64, bool)> {
     let mut ix = base.to_bits();
     let mut negate = false;
     if base < 0.0 {
-        if exponent.trunc() != exponent {
+        if libm::truncf(exponent) != exponent {
             return None;
         }
         // |y| >= 2^24 is always even.
@@ -1030,7 +1030,7 @@ pub fn lgammaf(x: f32) -> f32 {
 pub fn tgammaf(x: f32) -> f32 {
     // Negative-integer poles: glibc raises FE_INVALID (NaN); libm::tgammaf omits
     // the flag. (tgammaf(0) is handled by libm with FE_DIVBYZERO.)
-    if x < 0.0 && x.is_finite() && x == x.floor() {
+    if x < 0.0 && x.is_finite() && x == libm::floorf(x) {
         fe_invalid_f32();
     }
     // `libm::tgammaf` is ~7x slower than glibc; the in-tree f64 `tgamma` fast
@@ -1918,7 +1918,7 @@ mod tests {
         let mut worst = 0i64;
         let mut x = -44.0_f32;
         while x <= 38.0 {
-            if x != x.trunc() {
+            if x != libm::truncf(x) {
                 let (got, want) = (exp10f(x), libm::exp10f(x));
                 if got.is_finite() && want.is_finite() {
                     let u = (got.to_bits() as i64 - want.to_bits() as i64).abs();

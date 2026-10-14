@@ -2200,7 +2200,7 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
         // non-negative; `fract() == 0.0` proves integral, `< 2^64` proves the `as u64`
         // cast is exact. Byte-identical to `{:.prec$}` for integral values (~4.8x
         // faster, intf_iso). Non-integral / >= 2^64 values fall through unchanged.
-        if abs.fract() == 0.0 && abs < 18446744073709551616.0 {
+        if is_integral_f64(abs) && abs < 18446744073709551616.0 {
             let _ = write!(VecWriter(buf), "{}", abs as u64);
             buf.push(b'.');
             buf.extend(core::iter::repeat_n(b'0', precision));
@@ -2217,7 +2217,7 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
             // 2^precision built directly from the exponent field (exact, no powi call).
             let scale = f64::from_bits((1023u64 + precision as u64) << 52);
             let scaled = abs * scale;
-            if scaled.fract() == 0.0
+            if is_integral_f64(scaled)
                 && scaled < 18446744073709551616.0
                 && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
             {
@@ -2772,20 +2772,57 @@ fn pad(buf: &mut Vec<u8>, byte: u8, count: usize) {
     buf.extend(std::iter::repeat_n(byte, count));
 }
 
+#[inline]
+pub(crate) fn is_integral_f64(x: f64) -> bool {
+    let bits = x.to_bits() & !(1u64 << 63);
+    match (bits >> 52) as u32 {
+        0x7ff => false,
+        e if e >= 0x3ff + 52 => true,
+        e if e < 0x3ff => bits == 0,
+        e => bits & ((1u64 << (0x3ff + 52 - e)) - 1) == 0,
+    }
+}
+
+#[inline]
+fn round_ties_even_f64(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let sign = bits & (1u64 << 63);
+    let e = ((bits >> 52) & 0x7ff) as i32;
+    if e >= 1023 + 52 {
+        return x;
+    }
+    if e < 1023 {
+        let mag = f64::from_bits(bits & !(1u64 << 63));
+        let r = if mag > 0.5 { 1.0_f64 } else { 0.0_f64 };
+        return f64::from_bits(r.to_bits() | sign);
+    }
+    let frac_bits = 1075 - e;
+    let half = 1u64 << (frac_bits - 1);
+    let frac_mask = (1u64 << frac_bits) - 1;
+    let int_part = bits & !frac_mask;
+    let frac = bits & frac_mask;
+    let round_up = frac > half || (frac == half && (int_part & (1u64 << frac_bits)) != 0);
+    f64::from_bits(if round_up {
+        int_part + (1u64 << frac_bits)
+    } else {
+        int_part
+    })
+}
+
 /// `%f` / `%F` formatting: fixed-point decimal.
 fn format_f(value: f64, precision: usize, alt_form: bool) -> String {
     if precision == 0 {
         // Use Rust's Display to format the integer part rather than casting to u64,
         // which would saturate for values > u64::MAX (~1.8e19).
-        // round_ties_even implements IEEE 754 round-half-to-even (banker's rounding)
-        // per POSIX conformance requirements.
-        let rounded = value.round_ties_even();
+        // round_ties_even_f64 implements IEEE 754 round-half-to-even (banker's rounding)
+        // per POSIX conformance requirements without calling the exported `roundeven` symbol.
+        let rounded = round_ties_even_f64(value);
         if alt_form {
             alloc::format!("{rounded:.0}.")
         } else {
             alloc::format!("{rounded:.0}")
         }
-    } else if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    } else if is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         // Exact-integer fast path (see the bare-%f path in render_raw_float): a finite
         // integral value < 2^64 formats as its integer digits + `precision` zeros with
         // no flt2dec. Byte-identical to `{:.prec$}`; `fract()==0.0` excludes inf/nan and
@@ -2829,7 +2866,7 @@ fn try_format_f_dyadic(value: f64, precision: usize) -> Option<String> {
     // 2^precision built directly from the exponent field (exact, no powi).
     let scale = f64::from_bits((1023u64 + precision as u64) << 52);
     let scaled = value.abs() * scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return None;
     }
     let digits = (scaled as u128).checked_mul(5u128.pow(precision as u32))?;
@@ -3131,7 +3168,7 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
         // bench/test would silently bind it to glibc instead of the shipped path).
         // Same anti-pattern as bd-2g7oyh.370 (log2f) / bd-2g7oyh.371 (erf). This
         // branch is a near-unreachable fallback, but the convention holds.
-        let exp = libm::log10(value).floor() as i32;
+        let exp = libm::floor(libm::log10(value)) as i32;
         let use_f_style = exp >= -4 && exp < p as i32;
         if use_f_style {
             let frac_digits = (p as i32 - 1 - exp).max(0) as usize;

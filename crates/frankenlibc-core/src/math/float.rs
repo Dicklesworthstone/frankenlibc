@@ -855,9 +855,14 @@ pub fn significand(x: f64) -> f64 {
     libm::scalbn(x, -e)
 }
 
-/// GNU extension: base-10 exponential `10^x`.
-#[inline]
-pub fn exp10(x: f64) -> f64 {
+super::avx2_fma_dispatch! {
+    /// GNU extension: base-10 exponential `10^x`.
+    #[inline]
+    pub fn exp10(x: f64) -> f64 => exp10_body;
+}
+
+#[inline(always)]
+fn exp10_body(x: f64) -> f64 {
     // 10^x = exp(x*ln10) with x*ln10 carried as a double-double into exp's
     // kernel (glibc's exp/pow kernel, the tail added before its polynomial):
     // one rounding, ~0.52 ULP. The former 2^(x*log2 10) * (1 + e*ln2) form
@@ -969,7 +974,7 @@ mod tests {
         let mut worst = 0i64;
         let mut x: f64 = -50.0;
         while x <= 50.0 {
-            if x != x.trunc() {
+            if x != libm::trunc(x) {
                 let got = exp10(x);
                 let want = libm::exp10(x);
                 let u = if got == want {

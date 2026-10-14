@@ -51,7 +51,7 @@ mod tgamma_lanczos_research {
     }
     fn dd_div_ff(a: f64, b: f64) -> (f64, f64) {
         let q = a / b;
-        let r = (-q).mul_add(b, a);
+        let r = super::fma(-q, b, a);
         (q, r / b)
     }
 
@@ -72,7 +72,7 @@ mod tgamma_lanczos_research {
     fn lanczos_dd(z: f64) -> f64 {
         if z < 0.5 {
             let pi = std::f64::consts::PI;
-            return pi / ((pi * z).sin() * lanczos_dd(1.0 - z));
+            return pi / (super::sin(pi * z) * lanczos_dd(1.0 - z));
         }
         let z = z - 1.0;
         let mut acc = (LC[0], 0.0);
@@ -100,7 +100,7 @@ mod tgamma_lanczos_research {
             let mut worst = 0i64;
             let mut x: f64 = lo;
             while x <= hi {
-                if !(x <= 0.0 && x == x.trunc()) {
+                if !(x <= 0.0 && x == libm::trunc(x)) {
                     worst = worst.max(ulp(lanczos_dd(x), libm::tgamma(x)));
                 }
                 x += 0.0003;

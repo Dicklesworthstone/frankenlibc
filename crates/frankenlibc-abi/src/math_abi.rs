@@ -1949,7 +1949,7 @@ pub unsafe extern "C" fn erfcf(x: f32) -> f32 {
 pub unsafe extern "C" fn tgammaf(x: f32) -> f32 {
     let out = unary_entry_f32(x, 10, frankenlibc_core::math::tgammaf);
     if x.is_finite() {
-        if x < 0.0 && x == x.floor() {
+        if x < 0.0 && is_integral_f32(x) {
             set_domain_errno(); // negative integer: domain error
         } else if x == 0.0 || out.is_infinite() || out == 0.0 {
             set_range_errno(); // zero or overflow/underflow: range error
@@ -1980,7 +1980,7 @@ pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
         __signgam = sign;
     }
     let out = unary_entry_f32(x, 10, frankenlibc_core::math::lgammaf);
-    if x.is_finite() && ((x <= 0.0 && x == x.floor()) || out.is_infinite()) {
+    if x.is_finite() && ((x <= 0.0 && is_integral_f32(x)) || out.is_infinite()) {
         set_range_errno();
     }
     out
@@ -1995,7 +1995,7 @@ pub unsafe extern "C" fn lgammaf_r(x: f32, signgamp: *mut c_int) -> f32 {
         unsafe { *signgamp = sign };
     }
     if x.is_finite() {
-        if x <= 0.0 && x == x.floor() {
+        if x <= 0.0 && is_integral_f32(x) {
             set_domain_errno();
         } else if val.is_infinite() {
             set_range_errno();
@@ -3481,7 +3481,7 @@ pub unsafe extern "C" fn gammaf(x: f32) -> f32 {
     }
     let out = unary_entry_f32(x, 8, frankenlibc_core::math::gammaf);
     // lgamma poles at non-positive integers
-    if x.is_finite() && x <= 0.0 && x.fract() == 0.0 {
+    if x.is_finite() && x <= 0.0 && is_integral_f32(x) {
         set_range_errno();
     }
     out
@@ -3764,9 +3764,11 @@ fn c_log(re: f64, im: f64) -> (f64, f64) {
         // dominant terms {ax^2, ay^2, -1} are accumulated with error-free
         // Knuth 2Sum so only log1p's own rounding remains.
         let rr = ax * ax;
-        let rr_err = ax.mul_add(ax, -rr);
+        let rr_err =
+            hardware_fma(ax, ax, -rr).unwrap_or_else(|| frankenlibc_core::math::fma(ax, ax, -rr));
         let ii = ay * ay;
-        let ii_err = ay.mul_add(ay, -ii);
+        let ii_err =
+            hardware_fma(ay, ay, -ii).unwrap_or_else(|| frankenlibc_core::math::fma(ay, ay, -ii));
         // 2Sum(rr, -1), then 2Sum(., ii); fold residuals into the low word.
         let (p, e1) = two_sum(rr, -1.0);
         let (d_hi, e2) = two_sum(p, ii);
@@ -5708,7 +5710,7 @@ pub unsafe extern "C" fn cospi(x: f64) -> f64 {
     if x.abs() >= 9007199254740992.0 {
         return 1.0; // even integer → cos(pi*even)=+1
     }
-    let n = x.round();
+    let n = frankenlibc_membrane::util::round_f64(x);
     let r = x - n;
     let n_odd = (n as i64) & 1 != 0;
     if r == 0.0 {
@@ -5795,7 +5797,7 @@ pub unsafe extern "C" fn sinpi(x: f64) -> f64 {
         // even integer → sin(pi*even)=±0 with sign of x
         return if x.is_sign_negative() { -0.0 } else { 0.0 };
     }
-    let n = x.round();
+    let n = frankenlibc_membrane::util::round_f64(x);
     let r = x - n;
     let n_odd = (n as i64) & 1 != 0;
     if r == 0.0 {
@@ -7679,38 +7681,16 @@ fn pow2_exact(n: u32) -> f64 {
 
 /// Round in the requested FP_INT direction WITHOUT raising FP exceptions.
 /// `fromfp` must raise only FE_INVALID (the *x variants add FE_INEXACT
-/// explicitly), so the rounding itself must be flag-free. ceil/floor/trunc
-/// lower to suppress-precision roundsd; round-half-away/even are built from
-/// trunc + exact integer arithmetic (x - trunc(x) is exact; adding ±1 to an
-/// integer-valued f64 is exact). `f64::round` is NOT used: it raises INEXACT.
+/// explicitly), so the rounding itself must be flag-free and must not call
+/// the exported `ceil`/`floor`/`trunc` symbols on baseline x86-64.
 #[inline]
 fn fromfp_round(x: f64, rnd: c_int) -> f64 {
     match rnd {
-        FP_INT_UPWARD => x.ceil(),
-        FP_INT_DOWNWARD => x.floor(),
-        FP_INT_TOWARDZERO => x.trunc(),
-        FP_INT_TONEARESTFROMZERO => {
-            let t = x.trunc();
-            if (x - t).abs() >= 0.5 {
-                t + x.signum()
-            } else {
-                t
-            }
-        }
-        _ => {
-            // FP_INT_TONEAREST: round half to even.
-            let t = x.trunc();
-            let af = (x - t).abs();
-            if af < 0.5 {
-                t
-            } else if af > 0.5 {
-                t + x.signum()
-            } else if (t as i64) % 2 == 0 {
-                t // tie: t already even
-            } else {
-                t + x.signum()
-            }
-        }
+        FP_INT_UPWARD => frankenlibc_membrane::util::ceil_f64(x),
+        FP_INT_DOWNWARD => frankenlibc_membrane::util::floor_f64(x),
+        FP_INT_TOWARDZERO => frankenlibc_membrane::util::trunc_f64(x),
+        FP_INT_TONEARESTFROMZERO => frankenlibc_membrane::util::round_f64(x),
+        _ => roundeven_impl(x),
     }
 }
 
@@ -8843,7 +8823,7 @@ fn ieee754_scalb_f64(x: f64, n: f64) -> f64 {
         return x / -n;
     }
     if n != f64::from(n as i32) {
-        if n.trunc() != n {
+        if !is_integral_f64(n) {
             // Domain error. 0.0/0.0 both produces the NaN and raises FE_INVALID
             // in one operation; black_box keeps the compiler from folding it and
             // discarding the exception.
@@ -8874,7 +8854,7 @@ fn ieee754_scalb_f32(x: f32, n: f32) -> f32 {
         return x / -n;
     }
     if n != (n as i32) as f32 {
-        if n.trunc() != n {
+        if !is_integral_f32(n) {
             return core::hint::black_box(
                 core::hint::black_box(0.0_f32) / core::hint::black_box(0.0_f32),
             );
@@ -13516,7 +13496,7 @@ fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32
         }
         // compute n
         z = fscalbn(z, q0);
-        z -= 8.0 * (z * 0.125).floor();
+        z -= 8.0 * frankenlibc_membrane::util::floor_f64(z * 0.125);
         n = z as i32;
         z -= n as f64;
         ih = 0;

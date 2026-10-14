@@ -6709,7 +6709,7 @@ pub unsafe extern "C" fn modfl(x: f64, iptr: *mut f64) -> f64 {
             x
         };
     }
-    let int_part = x.trunc();
+    let int_part = frankenlibc_core::math::trunc(x);
     if !iptr.is_null() {
         unsafe { *iptr = int_part };
     }

@@ -277,7 +277,7 @@ pub fn fcvt_into(value: f64, ndigit: i32, out: &mut [u8]) -> (usize, i32, bool) 
             }
             return (1.min(out.len()), 1, negative);
         }
-        let floor_v = abs_val.floor();
+        let floor_v = libm::floor(abs_val);
         // `floor_v` is integral, so `{:.0}` yields its exact decimal digits with
         // no rounding (for both small and >2^53 values).
         let int_str = format!("{floor_v:.0}");
@@ -432,7 +432,7 @@ pub fn gcvt(value: f64, ndigit: i32, buf: &mut [u8]) -> usize {
 /// most `frac + 1` significant digits); otherwise returns `false` to fall back to flt2dec.
 fn try_build_integer_sci(value: f64, frac: usize, out: &mut String) -> bool {
     use core::fmt::Write as _;
-    if !(value.fract() == 0.0 && value.abs() < 18446744073709551616.0) {
+    if !(crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0) {
         return false;
     }
     let mag = value.abs() as u64;
@@ -492,7 +492,11 @@ fn dyadic_decimal_scale(value: f64) -> Option<usize> {
 fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
     use core::fmt::Write as _;
 
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
         return None;
     }
 
@@ -503,7 +507,7 @@ fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
 
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return None;
     }
     let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
@@ -554,7 +558,11 @@ fn try_build_dyadic_sci(value: f64, frac: usize) -> Option<String> {
 fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
     use core::fmt::Write as _;
 
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
         return None;
     }
 
@@ -565,7 +573,7 @@ fn try_build_dyadic_rust_sci(value: f64, frac: usize) -> Option<String> {
 
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return None;
     }
     let decimal = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32))?;
@@ -877,7 +885,7 @@ fn try_gcvt_exact_small_fixed(value: f64, ndigit: usize) -> Option<String> {
     }
 
     let twice = abs * 2.0;
-    if twice.fract() != 0.0 {
+    if !crate::stdio::printf::is_integral_f64(twice) {
         return None;
     }
     let twice = twice as u64;
@@ -1070,7 +1078,7 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
     // std flt2dec + the reshape. Byte-identical for these inputs (the digits are exact
     // and no rounding occurs when `digit_count - 1 <= ndigit`). `fract() == 0.0` also
     // excludes inf/nan, which fall through to the std path unchanged.
-    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    if crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         let mag = value.abs() as u64;
         let mut tmp = [0u8; 20];
         let mut n = mag;
@@ -1149,7 +1157,7 @@ pub fn render_pct_e(value: f64, ndigit: usize) -> String {
 pub fn render_pct_e_into(value: f64, ndigit: usize, buf: &mut Vec<u8>) {
     use core::fmt::Write as _;
     // Exact-integer fast path (no rounding); mirrors render_pct_e.
-    if value.fract() == 0.0 && value.abs() < 18446744073709551616.0 {
+    if crate::stdio::printf::is_integral_f64(value) && value.abs() < 18446744073709551616.0 {
         let mag = value.abs() as u64;
         let mut tmp = [0u8; 20];
         let mut n = mag;
@@ -1232,7 +1240,11 @@ fn push_c_exp_tail(buf: &mut Vec<u8>, exp: i32) {
 /// Buffer-writing twin of [`try_build_dyadic_sci`] — appends to `buf` and returns `true`
 /// iff it handled `value`. Byte-identical to the String version's `Some(..)` case.
 fn try_build_dyadic_sci_into(value: f64, frac: usize, buf: &mut Vec<u8>) -> bool {
-    if frac > 19 || !value.is_finite() || value == 0.0 || value.fract() == 0.0 {
+    if frac > 19
+        || !value.is_finite()
+        || value == 0.0
+        || crate::stdio::printf::is_integral_f64(value)
+    {
         return false;
     }
     let Some(decimal_scale) = dyadic_decimal_scale(value) else {
@@ -1243,7 +1255,7 @@ fn try_build_dyadic_sci_into(value: f64, frac: usize, buf: &mut Vec<u8>) -> bool
     }
     let binary_scale = f64::from_bits((1023u64 + decimal_scale as u64) << 52);
     let scaled = value.abs() * binary_scale;
-    if scaled.fract() != 0.0 || scaled >= 18446744073709551616.0 {
+    if !crate::stdio::printf::is_integral_f64(scaled) || scaled >= 18446744073709551616.0 {
         return false;
     }
     let Some(decimal) = (scaled as u128).checked_mul(5u128.pow(decimal_scale as u32)) else {
