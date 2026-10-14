@@ -668,7 +668,7 @@ pub unsafe extern "C" fn getsockopt(
     optval: *mut c_void,
     optlen: *mut u32,
 ) -> c_int {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -676,24 +676,30 @@ pub unsafe extern "C" fn getsockopt(
         return -1;
     }
 
-    if optlen.is_null()
-        || !tracked_region_fits(optlen.cast_const().cast(), std::mem::size_of::<u32>())
-    {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    let requested = unsafe { *optlen as usize };
-    if !optval.is_null() && !tracked_region_fits(optval.cast_const(), requested) {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
-
-    let (rc, adverse) = match unsafe {
-        raw_syscall::sys_getsockopt(sockfd, level, optname, optval as *mut u8, optlen)
-    } {
+    let result = if mode.heals_enabled() {
+        // Required-length import, error-path size publication and ownership
+        // of descriptor-valued results are handled together by the snapshot.
+        unsafe {
+            sockaddr_snapshot::getsockopt_hardened(sockfd, level, optname, optval, optlen)
+        }
+    } else {
+        // Preserve strict's existing guards and original kernel arguments.
+        if optlen.is_null()
+            || !tracked_region_fits(optlen.cast_const().cast(), std::mem::size_of::<u32>())
+        {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        let requested = unsafe { *optlen as usize };
+        if !optval.is_null() && !tracked_region_fits(optval.cast_const(), requested) {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        unsafe { raw_syscall::sys_getsockopt(sockfd, level, optname, optval as *mut u8, optlen) }
+    };
+    let (rc, adverse) = match result {
         Ok(()) => (0, false),
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -723,7 +729,7 @@ pub unsafe extern "C" fn getpeername(
     }
 
     let mut output = if mode.heals_enabled() {
-        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+        match sockaddr_snapshot::PreparedSockaddr::prepare_required(addr.cast(), addrlen) {
             Ok(output) => output,
             Err(error) => {
                 unsafe { set_abi_errno(error) };
@@ -778,7 +784,7 @@ pub unsafe extern "C" fn getsockname(
     }
 
     let mut output = if mode.heals_enabled() {
-        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+        match sockaddr_snapshot::PreparedSockaddr::prepare_required(addr.cast(), addrlen) {
             Ok(output) => output,
             Err(error) => {
                 unsafe { set_abi_errno(error) };
@@ -1098,7 +1104,7 @@ pub unsafe extern "C" fn getpeereid(
     euid: *mut libc::uid_t,
     egid: *mut libc::gid_t,
 ) -> c_int {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, s as usize, 0, true, true, 0);
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, s as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -1151,12 +1157,36 @@ pub unsafe extern "C" fn getpeereid(
         return -1;
     }
 
-    // SAFETY: both output pointers were checked for NULL above; the C caller
-    // contract requires writable uid_t/gid_t storage, and tracked short
-    // allocations were rejected before these writes.
-    unsafe {
-        *euid = cred.uid;
-        *egid = cred.gid;
+    if mode.heals_enabled() {
+        // SAFETY: sources are initialized owned scalars. The shared copier
+        // treats destinations as kernel-checked addresses, including unaligned
+        // and read-only memory. Preserve uid-before-gid partial-write ordering.
+        let published = unsafe {
+            iov_snapshot::copy_user_bytes(
+                (&cred.uid as *const libc::uid_t).cast(),
+                euid.cast(),
+                std::mem::size_of::<libc::uid_t>(),
+            )
+            .and_then(|()| {
+                iov_snapshot::copy_user_bytes(
+                    (&cred.gid as *const libc::gid_t).cast(),
+                    egid.cast(),
+                    std::mem::size_of::<libc::gid_t>(),
+                )
+            })
+        };
+        if let Err(error) = published {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, true);
+            return -1;
+        }
+    } else {
+        // SAFETY: strict retains the C caller's writable, aligned uid/gid
+        // contract after the original null and tracked-allocation guards.
+        unsafe {
+            *euid = cred.uid;
+            *egid = cred.gid;
+        }
     }
     runtime_policy::observe(ApiFamily::Socket, decision.profile, 10, false);
     0
