@@ -397,7 +397,7 @@ pub fn now_utc_iso_like() -> String {
 /// on baseline x86-64 (which lacks SSE4.1 `roundsd`; bd-rc0923-epic-eeuy4f.29).
 #[inline]
 #[must_use]
-pub(crate) fn trunc_f64(x: f64) -> f64 {
+pub fn trunc_f64(x: f64) -> f64 {
     let bits = x.to_bits();
     let exp = ((bits >> 52) & 0x7ff) as i32 - 1023;
     if exp < 0 {
@@ -414,7 +414,7 @@ pub(crate) fn trunc_f64(x: f64) -> f64 {
 /// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
 #[inline]
 #[must_use]
-pub(crate) fn floor_f64(x: f64) -> f64 {
+pub fn floor_f64(x: f64) -> f64 {
     if !x.is_finite() {
         return x;
     }
@@ -426,7 +426,7 @@ pub(crate) fn floor_f64(x: f64) -> f64 {
 /// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
 #[inline]
 #[must_use]
-pub(crate) fn ceil_f64(x: f64) -> f64 {
+pub fn ceil_f64(x: f64) -> f64 {
     if !x.is_finite() {
         return x;
     }
@@ -438,7 +438,7 @@ pub(crate) fn ceil_f64(x: f64) -> f64 {
 /// call on baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
 #[inline]
 #[must_use]
-pub(crate) fn round_f64(x: f64) -> f64 {
+pub fn round_f64(x: f64) -> f64 {
     if !x.is_finite() {
         return x;
     }
