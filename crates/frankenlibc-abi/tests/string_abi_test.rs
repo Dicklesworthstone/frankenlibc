@@ -3443,3 +3443,76 @@ fn bd_iiyioy_strchr_unbounded_avx2_conformance() {
         }
     }
 }
+
+#[test]
+fn bd_rc0923_epic_eeuy4f_28_hardened_memcmp_arena_bounds_and_quarantine_uaf() {
+    if std::env::var_os("FRANKENLIBC_HARDENED_MEMCMP_CHILD").is_none() {
+        let exe = std::env::current_exe().expect("current test executable");
+        let output = std::process::Command::new(exe)
+            .env("FRANKENLIBC_MODE", "hardened")
+            .env("FRANKENLIBC_HARDENED_MEMCMP_CHILD", "1")
+            .args([
+                "--exact",
+                "bd_rc0923_epic_eeuy4f_28_hardened_memcmp_arena_bounds_and_quarantine_uaf",
+                "--nocapture",
+            ])
+            .output()
+            .expect("spawn hardened child test");
+        assert!(
+            output.status.success(),
+            "hardened memcmp child failed:\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    signal_runtime_ready_for_tests();
+    assert!(
+        frankenlibc_abi::runtime_policy::mode().heals_enabled(),
+        "child process must run in hardened mode"
+    );
+
+    unsafe {
+        let a = frankenlibc_abi::malloc_abi::malloc(16).cast::<u8>();
+        let b = frankenlibc_abi::malloc_abi::malloc(16).cast::<u8>();
+        assert!(!a.is_null() && !b.is_null());
+        std::ptr::write_bytes(a, b'A', 16);
+        std::ptr::write_bytes(b, b'A', 16);
+
+        // Allocate 70 additional blocks to evict `a` and `b` from the 64-slot
+        // FALLBACK_ALLOC_PTRS ring. `memcmp_validating` must still resolve `a`
+        // and `b` through `AllocationArena` (`validate_ptr_in_slot`), not fall
+        // back to `known_remaining_for_certified_read`.
+        let mut fillers = Vec::with_capacity(70);
+        for _ in 0..70 {
+            let p = frankenlibc_abi::malloc_abi::malloc(24);
+            assert!(!p.is_null());
+            fillers.push(p);
+        }
+
+        // Compare with an over-read length `n = 64` when the 16 live bytes are equal:
+        // hardened `memcmp` must clamp `cmp_len` to 16 and return 0 without reading
+        // trailing canary/heap bytes past byte 16.
+        let live_eq = memcmp(a.cast(), b.cast(), 64);
+        assert_eq!(live_eq, 0, "hardened memcmp must clamp to 16-byte arena bound");
+
+        // Make `a[0]` differ from `b[0]`, then free `a` so it enters the arena
+        // quarantine (`SafetyState::Quarantined => Some(0)`). Hardened `memcmp`
+        // must clamp a quarantined UAF read to 0 bytes and return 0.
+        *a = b'Z';
+        assert_ne!(memcmp(a.cast(), b.cast(), 16), 0);
+        frankenlibc_abi::malloc_abi::free(a.cast());
+        let uaf_cmp = memcmp(a.cast(), b.cast(), 16);
+        assert_eq!(
+            uaf_cmp, 0,
+            "hardened memcmp must heal quarantined UAF to 0-length comparison"
+        );
+
+        frankenlibc_abi::malloc_abi::free(b.cast());
+        for p in fillers {
+            frankenlibc_abi::malloc_abi::free(p);
+        }
+    }
+}
+

@@ -20,7 +20,7 @@ use frankenlibc_membrane::runtime_math::clifford::{
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
-use crate::malloc_abi::{known_remaining, known_remaining_for_certified_read};
+use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use frankenlibc_core::syscall as raw_syscall;
 
@@ -2304,6 +2304,30 @@ fn stage_context_two(addr1: usize, addr2: usize) -> (bool, bool, [CheckStage; 7]
     let aligned = ((addr1 | addr2) & 0x7) == 0;
     let recent_page = (addr1 != 0 && crate::malloc_abi::check_ownership(addr1))
         || (addr2 != 0 && crate::malloc_abi::check_ownership(addr2));
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_from_remaining_one(
+    addr: usize,
+    rem: Option<usize>,
+) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = (addr & 0x7) == 0;
+    let recent_page = rem.is_some();
+    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    (aligned, recent_page, ordering)
+}
+
+#[inline]
+fn stage_context_from_remaining_two(
+    addr1: usize,
+    rem1: Option<usize>,
+    addr2: usize,
+    rem2: Option<usize>,
+) -> (bool, bool, [CheckStage; 7]) {
+    let aligned = ((addr1 | addr2) & 0x7) == 0;
+    let recent_page = rem1.is_some() || rem2.is_some();
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
     (aligned, recent_page, ordering)
 }
@@ -4761,9 +4785,9 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
 
     let dst_rem = known_remaining(dst as usize);
     let src_rem = known_remaining(src as usize);
-    let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
-    let recent_page = dst_rem.is_some() || src_rem.is_some();
-    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    let _trace_scope = runtime_policy::entrypoint_scope("memmove");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
@@ -4875,9 +4899,8 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
     };
 
     let dst_rem = known_remaining(dst as usize);
-    let aligned = (dst as usize) & 0x7 == 0;
-    let recent_page = dst_rem.is_some();
-    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+    let _trace_scope = runtime_policy::entrypoint_scope("memset");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(dst as usize, dst_rem);
 
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
@@ -5014,40 +5037,28 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 #[cold]
 #[inline(never)]
 unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
+    // Resolve `known_remaining` BEFORE entering the memcmp PCC scope. The
+    // read-only PCC sets `proof_carried_pointer_validation_active() == true`,
+    // which causes `validate_ptr_in_slot` to return `Unknown` and previously
+    // routed `memcmp_validating` through `known_remaining_for_certified_read`
+    // (skipping `AllocationArena` live bounds and `SafetyState::Quarantined =>
+    // Some(0)` UAF detection on hardened heap allocations, and scanning the
+    // 64-slot fallback table twice on every call; bd-rc0923-epic-eeuy4f.28,
+    // same ordering invariant as `strlen_validating` in bd-k3skh6).
+    let lhs_remaining = known_remaining(s1 as usize);
+    let rhs_remaining = known_remaining(s2 as usize);
+    let _ = crate::malloc_abi::known_remaining_for_certified_read;
     let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
-    // Take one coherent extent snapshot per operand and reuse it for both the
-    // runtime decision and the eventual hardened clamp. This path previously
-    // performed the two full lookups again after `decide`, while independently
-    // probing ownership for stage context. A resolved live/quarantined extent is
-    // already ownership evidence; only unresolved operands need the page-oracle
-    // fallback to preserve the old `recent_page` classification.
-    // The read-only memcmp PCC makes validate_ptr_in_slot return Unknown before
-    // touching the membrane. Prove that once and reuse the established fact for
-    // both operands and stage context instead of looking the same trace row up
-    // repeatedly through TLS.
     let certified_read = runtime_policy::active_memcmp_pcc_token();
     let certified_read_active = certified_read.is_some();
-    let (lhs_remaining, rhs_remaining) = if certified_read.is_some() {
-        (
-            known_remaining_for_certified_read(s1 as usize),
-            known_remaining_for_certified_read(s2 as usize),
-        )
-    } else {
-        (known_remaining(s1 as usize), known_remaining(s2 as usize))
-    };
     // In deployed builds a verified memcmp certificate makes StringMemory stage
     // ordering a compile-time passthrough and stage-outcome recording an
     // unconditional no-op. Do not enter those runtime-policy helpers merely to
     // obtain/discard those exact results. Unit tests retain the full route, and
     // the uncertified early-startup path still uses the generic machinery.
     let stage_context = (cfg!(test) || !certified_read_active).then(|| {
-        let aligned = ((s1 as usize | s2 as usize) & 0x7) == 0;
-        let recent_page = lhs_remaining.is_some()
-            || rhs_remaining.is_some()
-            || crate::malloc_abi::check_ownership(s1 as usize)
-            || crate::malloc_abi::check_ownership(s2 as usize);
-        let ordering =
-            runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
+        let (aligned, recent_page, ordering) =
+            stage_context_from_remaining_two(s1 as usize, lhs_remaining, s2 as usize, rhs_remaining);
         (ordering, aligned, recent_page)
     });
     let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
@@ -5318,9 +5329,9 @@ unsafe fn memccpy_page_bounded(dst: *mut u8, src: *const u8, c: u8, n: usize) ->
 #[cold]
 #[inline(never)]
 unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
-    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -5331,12 +5342,15 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         return std::ptr::null_mut();
     }
 
+    let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("memchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         n,
         false,
-        known_remaining(s as usize).is_none(),
+        rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5359,7 +5373,7 @@ unsafe fn memchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void
         "memchr",
         n,
         s as usize,
-        known_remaining(s as usize),
+        rem,
         None,
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
@@ -5456,9 +5470,9 @@ pub unsafe extern "C" fn memrchr(s: *const c_void, c: c_int, n: usize) -> *mut c
 #[cold]
 #[inline(never)]
 unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_void {
-    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if n == 0 || s.is_null() {
         if s.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -5469,12 +5483,15 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
         return std::ptr::null_mut();
     }
 
+    let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("memrchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         n,
         false,
-        known_remaining(s as usize).is_none(),
+        rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5497,7 +5514,7 @@ unsafe fn memrchr_validating(s: *const c_void, c: c_int, n: usize) -> *mut c_voi
         "memrchr",
         n,
         s as usize,
-        known_remaining(s as usize),
+        rem,
         None,
         None,
         mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)),
@@ -5802,11 +5819,8 @@ pub unsafe extern "C" fn strnlen(s: *const c_char, n: usize) -> usize {
 #[cold]
 #[inline(never)]
 unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
-    let aligned = (s as usize) & 0x7 == 0;
-    let recent_page = !s.is_null() && known_remaining(s as usize).is_some();
-    let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
-
     if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -5816,12 +5830,16 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
         return 0;
     }
 
+    let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strnlen");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         n,
         false,
-        known_remaining(s as usize).is_none(),
+        rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5839,7 +5857,7 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     let mut scan_limit = n;
     let mut adverse = false;
     if repair
-        && let Some(bound) = known_remaining(s as usize)
+        && let Some(bound) = rem
         && bound < scan_limit
     {
         scan_limit = bound;
@@ -5913,8 +5931,8 @@ pub unsafe extern "C" fn strcmp(s1: *const c_char, s2: *const c_char) -> c_int {
 #[cold]
 #[inline(never)]
 unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
-    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
         if runtime_policy::is_runtime_ready() && runtime_policy::mode().heals_enabled() {
             global_healing_policy().record(
                 "string_memory",
@@ -5939,12 +5957,18 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         return 0;
     }
 
+    let lhs_rem = known_remaining(s1 as usize);
+    let rhs_rem = known_remaining(s2 as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strcmp");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
         0,
         false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        lhs_rem.is_none() && rhs_rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5959,16 +5983,8 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let lhs_bound = if repair {
-        known_remaining(s1 as usize)
-    } else {
-        None
-    };
-    let rhs_bound = if repair {
-        known_remaining(s2 as usize)
-    } else {
-        None
-    };
+    let lhs_bound = if repair { lhs_rem } else { None };
+    let rhs_bound = if repair { rhs_rem } else { None };
     let cmp_bound = match (lhs_bound, rhs_bound) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (Some(a), None) => Some(a),
@@ -6060,8 +6076,8 @@ pub unsafe extern "C" fn strncmp(s1: *const c_char, s2: *const c_char, n: usize)
 #[cold]
 #[inline(never)]
 unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> c_int {
-    let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
     if s1.is_null() || s2.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(s1 as usize, s2 as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -6071,12 +6087,18 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
         return 0;
     }
 
+    let lhs_rem = known_remaining(s1 as usize);
+    let rhs_rem = known_remaining(s2 as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strncmp");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s1 as usize,
         n,
         false,
-        known_remaining(s1 as usize).is_none() && known_remaining(s2 as usize).is_none(),
+        lhs_rem.is_none() && rhs_rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -6091,16 +6113,8 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let lhs_bound = if repair {
-        known_remaining(s1 as usize)
-    } else {
-        None
-    };
-    let rhs_bound = if repair {
-        known_remaining(s2 as usize)
-    } else {
-        None
-    };
+    let lhs_bound = if repair { lhs_rem } else { None };
+    let rhs_bound = if repair { rhs_rem } else { None };
     let cmp_limit = match (lhs_bound, rhs_bound) {
         (Some(a), Some(b)) => a.min(b).min(n),
         (Some(a), None) => a.min(n),
@@ -6195,8 +6209,8 @@ unsafe fn strcpy_core(
         return Some(unsafe { dst.add(end) });
     }
 
-    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -6206,12 +6220,18 @@ unsafe fn strcpy_core(
         return Some(dst);
     }
 
+    let dst_rem = known_remaining(dst as usize);
+    let src_rem = known_remaining(src as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strcpy");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
         0,
         true,
-        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        dst_rem.is_none() && src_rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -6226,16 +6246,8 @@ unsafe fn strcpy_core(
     }
 
     let repair = repair_enabled(mode.heals_enabled(), decision.action);
-    let src_bound = if repair {
-        known_remaining(src as usize)
-    } else {
-        None
-    };
-    let dst_bound = if repair {
-        known_remaining(dst as usize)
-    } else {
-        None
-    };
+    let src_bound = if repair { src_rem } else { None };
+    let dst_bound = if repair { dst_rem } else { None };
 
     // SAFETY: strict mode follows libc semantics; hardened mode bounds reads/writes.
     let (copied_len, adverse) = unsafe {
@@ -6390,9 +6402,9 @@ unsafe fn strncpy_core(
         return Some(copy_len);
     }
 
-    let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
     if dst.is_null() || src.is_null() || n == 0 {
         if dst.is_null() || src.is_null() {
+            let (aligned, recent_page, ordering) = stage_context_two(dst as usize, src as usize);
             record_string_stage_outcome(
                 &ordering,
                 aligned,
@@ -6403,12 +6415,18 @@ unsafe fn strncpy_core(
         return Some(0);
     }
 
+    let dst_rem = known_remaining(dst as usize);
+    let src_rem = known_remaining(src as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strncpy");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
+
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         dst as usize,
         n,
         true,
-        known_remaining(dst as usize).is_none() && known_remaining(src as usize).is_none(),
+        dst_rem.is_none() && src_rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -6431,7 +6449,7 @@ unsafe fn strncpy_core(
     let mut adverse = false;
 
     let safe_dst_len = if repair {
-        match known_remaining(dst as usize) {
+        match dst_rem {
             Some(b) if b < n => {
                 adverse = true;
                 global_healing_policy().record(
@@ -6452,7 +6470,7 @@ unsafe fn strncpy_core(
     };
 
     let safe_src_len = if repair {
-        match known_remaining(src as usize) {
+        match src_rem {
             // strncpy stops reading at the NUL: a source shorter than `n` that
             // is terminated inside its allocation is the ordinary case (Python's
             // `strncpy(janname, tm->tm_zone, 9)`), not an over-read to repair.
@@ -6973,8 +6991,8 @@ unsafe fn strchr_locate(
         return Some((unsafe { s.add(i) } as *mut c_char, found_target));
     }
 
-    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -6984,13 +7002,17 @@ unsafe fn strchr_locate(
         return None;
     }
 
+    let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
     let target = c as c_char;
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
         false,
-        known_remaining(s as usize).is_none(),
+        rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -7005,7 +7027,7 @@ unsafe fn strchr_locate(
     }
 
     let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(s as usize)
+        rem
     } else {
         None
     };
@@ -7120,8 +7142,8 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         };
     }
 
-    let (aligned, recent_page, ordering) = stage_context_one(s as usize);
     if s.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_one(0, None);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -7131,13 +7153,17 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
         return std::ptr::null_mut();
     }
 
+    let rem = known_remaining(s as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strrchr");
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
+
     let target = c as c_char;
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         s as usize,
         0,
         false,
-        known_remaining(s as usize).is_none(),
+        rem.is_none(),
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -7152,7 +7178,7 @@ pub unsafe extern "C" fn strrchr(s: *const c_char, c: c_int) -> *mut c_char {
     }
 
     let bound = if repair_enabled(mode.heals_enabled(), decision.action) {
-        known_remaining(s as usize)
+        rem
     } else {
         None
     };
@@ -7409,8 +7435,8 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
 #[cold]
 #[inline(never)]
 unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
-    let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
     if haystack.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -7420,6 +7446,7 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
         return std::ptr::null_mut();
     }
     if needle.is_null() {
+        let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -7431,6 +7458,9 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
 
     let hay_known = known_remaining(haystack as usize);
     let needle_known = known_remaining(needle as usize);
+    let _trace_scope = runtime_policy::entrypoint_scope("strstr");
+    let (aligned, recent_page, ordering) =
+        stage_context_from_remaining_two(haystack as usize, hay_known, needle as usize, needle_known);
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         haystack as usize,
@@ -10635,11 +10665,22 @@ pub unsafe extern "C" fn strcoll(s1: *const c_char, s2: *const c_char) -> c_int 
         && !s1.is_null()
         && !s2.is_null()
     {
-        // SAFETY: strcoll's contract: NUL-terminated strings.
+        if std::ptr::eq(s1, s2) {
+            return 0;
+        }
+        let (bound1, bound2) = if runtime_policy::strict_passthrough_active() {
+            (None, None)
+        } else {
+            (known_remaining(s1 as usize), known_remaining(s2 as usize))
+        };
+        // SAFETY: page-safe scan (bounded by live/quarantined extent in hardened mode)
+        // avoids std::ffi::CStr::from_ptr's PLT hop into exported strlen_validating.
         let (a, b) = unsafe {
+            let (len1, _) = scan_c_string(s1, bound1);
+            let (len2, _) = scan_c_string(s2, bound2);
             (
-                std::ffi::CStr::from_ptr(s1).to_bytes(),
-                std::ffi::CStr::from_ptr(s2).to_bytes(),
+                std::slice::from_raw_parts(s1.cast::<u8>(), len1),
+                std::slice::from_raw_parts(s2.cast::<u8>(), len2),
             )
         };
         return tables.compare(a, b);
