@@ -46,6 +46,50 @@ jobs:
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ebr::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/existing-$mode.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/existing-$mode.log"
           done
+      - name: Execute coherent snapshots and reentrant cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum crates/frankenlibc-membrane/src/rcu.rs crates/frankenlibc-membrane/src/rcu_consistency_tests.rs | tee artifacts/ebr/rcu-source-sha256.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib rcu::consistency_tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/rcu-consistency-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/rcu-consistency-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib rcu::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/rcu-existing-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/rcu-existing-$mode.log"
+          done
+      - name: Reject split snapshot version mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, subprocess
+          source = Path('crates/frankenlibc-membrane/src/rcu.rs')
+          original = source.read_bytes()
+          start = original.index(b'    pub fn refresh(&mut self) {')
+          end = original.index(b'\n    /// Returns the epoch of the currently cached snapshot.', start)
+          mutant = (b'    pub fn refresh(&mut self) {\n'
+                    b'        self.cached_snapshot = self.cell.load();\n'
+                    b'        self.cached_epoch = self.cell.epoch();\n'
+                    b'    }\n')
+          try:
+              source.write_bytes(original[:start] + mutant + original[end:])
+              command = ['cargo', 'test', '-p', 'frankenlibc-membrane', '--lib',
+                         'rcu::consistency_tests::forced_refresh_does_not_hide_destructor_publication',
+                         '--', '--exact', '--nocapture', '--test-threads=1']
+              result = subprocess.run(command, env=dict(os.environ, FRANKENLIBC_MODE='hardened'),
+                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+              Path('artifacts/ebr/rcu-mutation.log').write_bytes(result.stdout)
+              print(result.stdout.decode(errors='replace'))
+              assert result.returncode != 0, 'split-version mutation incorrectly passed'
+              assert b'0 passed; 1 failed;' in result.stdout, 'mutation must compile and execute'
+              assert b'old snapshot must not be stamped with a later publication' in result.stdout
+          finally:
+              source.write_bytes(original)
+          PY
+          cargo test -p frankenlibc-membrane --lib rcu::consistency_tests:: -- --test-threads=1 2>&1 | tee artifacts/ebr/rcu-restored.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/ebr/rcu-restored.log
+          git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()
         with:
