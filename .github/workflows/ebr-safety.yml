@@ -30,15 +30,17 @@ jobs:
         with:
           shared-key: ebr-lifetime
           cache-on-failure: true
-      - name: Execute actual collector regressions
+      - name: Execute actual collector and mutex regressions
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/ebr
           git rev-parse HEAD | tee artifacts/ebr/source-commit.txt
           rustc --version --verbose | tee artifacts/ebr/rustc.txt
-          sha256sum crates/frankenlibc-membrane/src/ebr.rs crates/frankenlibc-membrane/tests/ebr_guard_lifetime_test.rs | tee artifacts/ebr/source-sha256.txt
+          sha256sum crates/frankenlibc-membrane/src/ebr.rs crates/frankenlibc-membrane/tests/ebr_guard_lifetime_test.rs crates/frankenlibc-membrane/src/util.rs crates/frankenlibc-membrane/src/util/fork_mutex.rs | tee artifacts/ebr/source-sha256.txt
           for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib util::fork_mutex::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/mutex-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/mutex-$mode.log"
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --test ebr_guard_lifetime_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/lifetimes-$mode.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/lifetimes-$mode.log"
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ebr::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/existing-$mode.log"

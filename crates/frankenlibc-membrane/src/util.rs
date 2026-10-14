@@ -1,6 +1,5 @@
 //! Shared utilities for the membrane crate.
 
-use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
@@ -111,129 +110,8 @@ pub fn note_fork_child() {
     FORK_GENERATION.fetch_add(1, Ordering::AcqRel);
 }
 
-/// The membrane's mutex: never poisons, and survives `fork` from a
-/// multithreaded parent (a lock held by a parent thread at the clone is taken
-/// over in the child rather than waited on forever). A futex word: 0 free,
-/// 1 held, 2 held with waiters; `holder_generation` is the fork generation the
-/// current holder locked it in.
-pub(crate) struct NoPoisonMutex<T> {
-    state: AtomicU32,
-    holder_generation: AtomicU32,
-    value: UnsafeCell<T>,
-}
-
-// SAFETY: access to `value` is serialized by `state` (a guard exists only
-// while the lock is held), exactly as for `std::sync::Mutex`.
-#[allow(unsafe_code)]
-unsafe impl<T: Send> Sync for NoPoisonMutex<T> {}
-// SAFETY: as above.
-#[allow(unsafe_code)]
-unsafe impl<T: Send> Send for NoPoisonMutex<T> {}
-
-impl<T> std::fmt::Debug for NoPoisonMutex<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NoPoisonMutex").finish_non_exhaustive()
-    }
-}
-
-/// Guard of a [`NoPoisonMutex`]; unlocks on drop.
-pub(crate) struct NoPoisonMutexGuard<'a, T> {
-    lock: &'a NoPoisonMutex<T>,
-    /// Guards are not `Send`, like `std::sync::MutexGuard`.
-    _not_send: std::marker::PhantomData<*const ()>,
-}
-
-impl<T> NoPoisonMutex<T> {
-    pub(crate) const fn new(value: T) -> Self {
-        Self {
-            state: AtomicU32::new(0),
-            holder_generation: AtomicU32::new(0),
-            value: UnsafeCell::new(value),
-        }
-    }
-
-    fn guard(&self) -> NoPoisonMutexGuard<'_, T> {
-        self.holder_generation
-            .store(FORK_GENERATION.load(Ordering::Acquire), Ordering::Release);
-        NoPoisonMutexGuard {
-            lock: self,
-            _not_send: std::marker::PhantomData,
-        }
-    }
-
-    /// Take over a lock whose holder belongs to an earlier fork generation.
-    fn try_take_orphan(&self) -> bool {
-        let generation = FORK_GENERATION.load(Ordering::Acquire);
-        let holder = self.holder_generation.load(Ordering::Acquire);
-        holder != generation
-            && self.state.load(Ordering::Acquire) != 0
-            && self
-                .holder_generation
-                .compare_exchange(holder, generation, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-    }
-
-    pub(crate) fn lock(&self) -> NoPoisonMutexGuard<'_, T> {
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            return self.guard();
-        }
-        loop {
-            if self.try_take_orphan() {
-                return self.guard();
-            }
-            if self.state.swap(2, Ordering::Acquire) == 0 {
-                return self.guard();
-            }
-            futex_wait(&self.state, 2);
-        }
-    }
-
-    pub(crate) fn try_lock(&self) -> Option<NoPoisonMutexGuard<'_, T>> {
-        if self
-            .state
-            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-            || self.try_take_orphan()
-        {
-            Some(self.guard())
-        } else {
-            None
-        }
-    }
-}
-
-impl<T> std::ops::Deref for NoPoisonMutexGuard<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        // SAFETY: the guard proves the lock is held by this thread.
-        #[allow(unsafe_code)]
-        unsafe {
-            &*self.lock.value.get()
-        }
-    }
-}
-
-impl<T> std::ops::DerefMut for NoPoisonMutexGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: the guard proves exclusive access.
-        #[allow(unsafe_code)]
-        unsafe {
-            &mut *self.lock.value.get()
-        }
-    }
-}
-
-impl<T> Drop for NoPoisonMutexGuard<'_, T> {
-    fn drop(&mut self) {
-        if self.lock.state.swap(0, Ordering::Release) == 2 {
-            futex_wake_one(&self.lock.state);
-        }
-    }
-}
+mod fork_mutex;
+pub(crate) use fork_mutex::{NoPoisonMutex, NoPoisonMutexGuard};
 
 /// Private FUTEX_WAIT on `word` while it equals `expected`. The membrane has
 /// no libc or core dependency, so the syscall is issued directly.
