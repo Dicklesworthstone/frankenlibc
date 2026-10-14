@@ -15,6 +15,12 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
+// Share the file-vector importer rather than maintaining a second iovec validator.
+#[path = "iov_snapshot.rs"]
+mod iov_snapshot;
+#[path = "msg_snapshot.rs"]
+mod msg_snapshot;
+
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
@@ -786,7 +792,7 @@ pub unsafe extern "C-unwind" fn sendmsg(
 /// Body of [`sendmsg`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -805,9 +811,25 @@ pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: 
         return -1;
     }
 
+    // Keep strict's original pointer/guard path. Hardened submits the same
+    // owned header and vectors that were validated, never the original graph.
+    let mut prepared = if mode.heals_enabled() {
+        match msg_snapshot::PreparedMessage::prepare(msg) {
+            Ok(message) => Some(message),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        None
+    };
+    let submitted = prepared.as_mut().map_or(msg, |message| message.as_mut_ptr().cast_const());
+
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_sendmsg(sockfd, msg as *const u8, flags)
+            raw_syscall::sys_sendmsg(sockfd, submitted.cast(), flags)
         })
     } {
         Ok(n) => (n, false),

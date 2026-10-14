@@ -1,0 +1,104 @@
+name: Socket message safety
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/socket_abi.rs'
+      - 'crates/frankenlibc-abi/src/msg_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/msg_snapshot_test.rs'
+      - 'crates/frankenlibc-abi/tests/socket_message_bounds_test.rs'
+      - '.github/workflows/socket-message-safety.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  messages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: membrane-access
+          cache-on-failure: true
+      - name: Execute exact production message importer
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-messages
+          git rev-parse HEAD | tee artifacts/socket-messages/source-commit.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test msg_snapshot_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/socket-messages/import-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed; 0 ignored;' "artifacts/socket-messages/import-$mode.log"
+            for name in header_and_vector_mutation_cannot_change_the_submitted_graph header_import_reports_unreadable_memory_without_dereferencing_it generic_kernel_copy_checks_both_ends_and_preserves_host_errno; do
+              grep -Fq "test $name ... ok" "artifacts/socket-messages/import-$mode.log"
+            done
+          done
+      - name: Execute isolated actual socket ABI cases
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-messages
+          cargo test -p frankenlibc-abi --test socket_message_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/socket-messages/abi-matrix.log
+          grep -Fq '82 isolated socket-message cases passed' artifacts/socket-messages/abi-matrix.log
+          grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/socket-messages/abi-matrix.log
+      - name: Preserve existing socket behavior
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-messages
+          status=0
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test socket_abi_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/socket-messages/existing-$mode.log" || status=1
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/socket-messages/existing-$mode.log" || status=1
+          done
+          exit "$status"
+      - name: Reject compiled unchecked-message mutation
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-messages
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          source = Path('crates/frankenlibc-abi/src/socket_abi.rs')
+          original = source.read_bytes()
+          start = original.index(b'pub(crate) unsafe fn sendmsg_cp(')
+          end = original.index(b'// recvmsg\n', start)
+          body = original[start:end]
+          needle = b'let mut prepared = if mode.heals_enabled() {'
+          assert body.count(needle) == 1
+          try:
+              mutant = body.replace(needle, b'let mut prepared = if false && mode.heals_enabled() {', 1)
+              source.write_bytes(original[:start] + mutant + original[end:])
+              command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_message_bounds_test',
+                         'socket_message_bounds_matrix', '--', '--exact', '--nocapture', '--test-threads=1']
+              for case in ['oversize', 'control-overrun', 'name-overrun']:
+                  result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                      timeout=900, env=dict(os.environ, FRANKENLIBC_MODE='hardened',
+                      FRANKENLIBC_RUNTIME_MATH='off', FRANKENLIBC_SOCKET_MESSAGE_CHILD=f'sendmsg:{case}'))
+                  Path(f'artifacts/socket-messages/mutation-{case}.log').write_bytes(result.stdout)
+                  print(result.stdout.decode(errors='replace'))
+                  assert result.returncode != 0, 'unchecked message mutation passed'
+                  assert b'0 passed; 1 failed;' in result.stdout, 'mutant must compile and execute'
+                  assert b'rejected input reached socket I/O' in result.stdout
+          finally:
+              source.write_bytes(original)
+          PY
+          cargo test -p frankenlibc-abi --test socket_message_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/socket-messages/restored.log
+          grep -Fq '82 isolated socket-message cases passed' artifacts/socket-messages/restored.log
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: socket-message-results
+          path: artifacts/socket-messages/**
+          if-no-files-found: error
