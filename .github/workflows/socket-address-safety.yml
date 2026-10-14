@@ -1,0 +1,102 @@
+name: Socket address safety
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/socket_abi.rs'
+      - 'crates/frankenlibc-abi/src/sockaddr_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/socket_address_bounds_test.rs'
+      - 'crates/frankenlibc-abi/tests/sockaddr_snapshot_test.rs'
+      - '.github/workflows/socket-address-safety.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  address-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: '2'
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: membrane-access
+          cache-on-failure: true
+      - name: Execute production capacity importer and existing socket suites
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-address
+          git rev-parse HEAD | tee artifacts/socket-address/source-commit.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test sockaddr_snapshot_test --test socket_abi_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/socket-address/tests-$mode.log"
+            grep -Fq 'test changed_caller_length_cannot_enlarge_the_submitted_capacity ... ok' "artifacts/socket-address/tests-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/socket-address/tests-$mode.log"
+          done
+      - name: Execute all entry points and their side-effect contracts
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-address
+          cargo test -p frankenlibc-abi --test socket_address_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/socket-address/abi.log
+          grep -Fq '227 isolated socket-address ABI cases passed' artifacts/socket-address/abi.log
+      - name: Catch compiled capacity, bounds, and descriptor-leak mutations
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/socket-address
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          helper = Path('crates/frankenlibc-abi/src/sockaddr_snapshot.rs')
+          veneer = Path('crates/frankenlibc-abi/src/socket_abi.rs')
+          originals = {p: p.read_bytes() for p in [helper, veneer]}
+          mutations = [
+              ('changed-capacity', helper,
+               b'if self.imported { &mut self.length } else { self.original }', b'self.original',
+               'sockaddr_snapshot_test', 'changed_caller_length_cannot_enlarge_the_submitted_capacity', None,
+               b'changed caller capacity reached kernel'),
+              ('unchecked-address', helper,
+               b'|| known_remaining(address as usize).is_some_and(|available| bytes > available)',
+               b'|| (false && known_remaining(address as usize).is_some_and(|available| bytes > available))',
+               'socket_address_bounds_test', 'socket_address_bounds_matrix', 'getsockname:short-address',
+               b'rejected address reached socket I/O'),
+              ('leaked-accept', veneer,
+               b'unsafe { raw_syscall::syscall1(libc::SYS_close as usize, fd as usize) };', b'let _ = fd;',
+               'socket_address_bounds_test', 'socket_address_bounds_matrix', 'accept:readonly-length',
+               b'failed accept leaked a descriptor'),
+          ]
+          try:
+              for label, path, old, new, target, test, selection, expected in mutations:
+                  for p, content in originals.items(): p.write_bytes(content)
+                  assert originals[path].count(old) == (2 if label == 'leaked-accept' else 1)
+                  path.write_bytes(originals[path].replace(old, new, 1))
+                  env = dict(os.environ, FRANKENLIBC_MODE='hardened')
+                  if selection: env['FRANKENLIBC_SOCKADDR_CHILD'] = selection
+                  result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', target,
+                      test, '--', '--exact', '--nocapture', '--test-threads=1'],
+                      env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+                  Path(f'artifacts/socket-address/mutation-{label}.log').write_bytes(result.stdout)
+                  print(result.stdout.decode(errors='replace'))
+                  assert result.returncode != 0 and b'0 passed; 1 failed;' in result.stdout, 'mutant must compile and execute'
+                  assert expected in result.stdout, (label, 'wrong failure')
+          finally:
+              for p, content in originals.items(): p.write_bytes(content)
+          PY
+          cargo test -p frankenlibc-abi --test socket_address_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/socket-address/restored.log
+          grep -Fq '227 isolated socket-address ABI cases passed' artifacts/socket-address/restored.log
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: socket-address-results
+          path: artifacts/socket-address/**
+          if-no-files-found: error

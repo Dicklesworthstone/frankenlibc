@@ -20,6 +20,8 @@ use crate::runtime_policy;
 mod iov_snapshot;
 #[path = "msg_snapshot.rs"]
 mod msg_snapshot;
+#[path = "sockaddr_snapshot.rs"]
+mod sockaddr_snapshot;
 
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
@@ -162,7 +164,7 @@ pub(crate) unsafe fn accept_cp(
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> c_int {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -170,18 +172,41 @@ pub(crate) unsafe fn accept_cp(
         return -1;
     }
 
-    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
+    let mut output = if mode.heals_enabled() {
+        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+            Ok(output) => output,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        sockaddr_snapshot::PreparedSockaddr::original(addrlen)
+    };
+    let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_accept(sockfd, addr as *mut u8, addrlen)
+            raw_syscall::sys_accept(sockfd, addr as *mut u8, submitted_length)
         })
     } {
-        Ok(fd) => (fd, false),
+        Ok(fd) => match unsafe { output.publish() } {
+            Ok(()) => (fd, false),
+            Err(error) => {
+                // The kernel returned a new descriptor, but the caller cannot
+                // observe a successful accept. Release it exactly once; raw
+                // close must not overwrite the publication error or cancel.
+                unsafe { raw_syscall::syscall1(libc::SYS_close as usize, fd as usize) };
+                unsafe { set_abi_errno(error) };
+                (-1, true)
+            }
+        },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             (-1, true)
@@ -473,7 +498,7 @@ pub(crate) unsafe fn recvfrom_cp(
     src_addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> isize {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, len, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -492,11 +517,24 @@ pub(crate) unsafe fn recvfrom_cp(
         return -1;
     }
 
-    if !unsafe { tracked_sockaddr_output_fits(src_addr, addrlen) } {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
+    let mut output = if mode.heals_enabled() {
+        match sockaddr_snapshot::PreparedSockaddr::prepare(src_addr, addrlen) {
+            Ok(output) => output,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        if !unsafe { tracked_sockaddr_output_fits(src_addr, addrlen) } {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        sockaddr_snapshot::PreparedSockaddr::original(addrlen)
+    };
+    let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
@@ -506,11 +544,17 @@ pub(crate) unsafe fn recvfrom_cp(
                 len,
                 flags,
                 src_addr as *mut u8,
-                addrlen,
+                submitted_length,
             )
         })
     } {
-        Ok(n) => (n, false),
+        Ok(n) => match unsafe { output.publish() } {
+                Ok(()) => (n, false),
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    (-1, true)
+                }
+            },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             (-1, true)
@@ -670,7 +714,7 @@ pub unsafe extern "C" fn getpeername(
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> c_int {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -678,15 +722,34 @@ pub unsafe extern "C" fn getpeername(
         return -1;
     }
 
-    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
+    let mut output = if mode.heals_enabled() {
+        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+            Ok(output) => output,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        sockaddr_snapshot::PreparedSockaddr::original(addrlen)
+    };
+    let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) =
-        match unsafe { raw_syscall::sys_getpeername(sockfd, addr as *mut u8, addrlen) } {
-            Ok(()) => (0, false),
+        match unsafe { raw_syscall::sys_getpeername(sockfd, addr as *mut u8, submitted_length) } {
+            Ok(()) => match unsafe { output.publish() } {
+                Ok(()) => (0, false),
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    (-1, true)
+                }
+            },
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 (-1, true)
@@ -706,7 +769,7 @@ pub unsafe extern "C" fn getsockname(
     addr: *mut libc::sockaddr,
     addrlen: *mut u32,
 ) -> c_int {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -714,15 +777,34 @@ pub unsafe extern "C" fn getsockname(
         return -1;
     }
 
-    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
+    let mut output = if mode.heals_enabled() {
+        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+            Ok(output) => output,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        sockaddr_snapshot::PreparedSockaddr::original(addrlen)
+    };
+    let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) =
-        match unsafe { raw_syscall::sys_getsockname(sockfd, addr as *mut u8, addrlen) } {
-            Ok(()) => (0, false),
+        match unsafe { raw_syscall::sys_getsockname(sockfd, addr as *mut u8, submitted_length) } {
+            Ok(()) => match unsafe { output.publish() } {
+                Ok(()) => (0, false),
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    (-1, true)
+                }
+            },
             Err(e) => {
                 unsafe { set_abi_errno(e) };
                 (-1, true)
@@ -932,7 +1014,7 @@ pub unsafe extern "C-unwind" fn accept4(
     addrlen: *mut u32,
     flags: c_int,
 ) -> c_int {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::Socket, sockfd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
@@ -940,18 +1022,41 @@ pub unsafe extern "C-unwind" fn accept4(
         return -1;
     }
 
-    if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
-        unsafe { set_abi_errno(errno::EFAULT) };
-        runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
-        return -1;
-    }
+    let mut output = if mode.heals_enabled() {
+        match sockaddr_snapshot::PreparedSockaddr::prepare(addr, addrlen) {
+            Ok(output) => output,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        if !unsafe { tracked_sockaddr_output_fits(addr, addrlen) } {
+            unsafe { set_abi_errno(errno::EFAULT) };
+            runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+            return -1;
+        }
+        sockaddr_snapshot::PreparedSockaddr::original(addrlen)
+    };
+    let submitted_length = output.as_mut_ptr();
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_accept4(sockfd, addr as *mut u8, addrlen, flags)
+            raw_syscall::sys_accept4(sockfd, addr as *mut u8, submitted_length, flags)
         })
     } {
-        Ok(fd) => (fd, false),
+        Ok(fd) => match unsafe { output.publish() } {
+            Ok(()) => (fd, false),
+            Err(error) => {
+                // The kernel returned a new descriptor, but the caller cannot
+                // observe a successful accept. Release it exactly once; raw
+                // close must not overwrite the publication error or cancel.
+                unsafe { raw_syscall::syscall1(libc::SYS_close as usize, fd as usize) };
+                unsafe { set_abi_errno(error) };
+                (-1, true)
+            }
+        },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             (-1, true)
