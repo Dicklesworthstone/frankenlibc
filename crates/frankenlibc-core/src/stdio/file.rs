@@ -1390,6 +1390,7 @@ impl StdioStream {
         };
 
         if pushed {
+            self.flags.io_started = true;
             self.flags.eof = false; // POSIX: ungetc clears EOF
             self.rewind_offset_one();
         }

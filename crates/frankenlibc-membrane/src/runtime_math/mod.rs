@@ -16,30 +16,14 @@ use crate::ids::{DecisionId, MEMBRANE_SCHEMA_VERSION, PolicyId, TraceId};
 /// Offered observations per change-point detector update.
 const CHANGEPOINT_CADENCE: u64 = 16;
 
-// Runtime controllers use fused arithmetic for deterministic state updates.
-// Calling `f64::mul_add` from a baseline x86-64 build is lowered through the
-// process's public `fma` symbol, which recursively crosses FrankenLibC's ABI
-// membrane. Keep controller arithmetic inside the membrane while retaining
-// exactly the same single-rounding operation on CPUs with FMA support.
-#[allow(unsafe_code)]
+// Runtime controllers use baseline IEEE-754 SSE2 arithmetic (`x * y + z`) for
+// deterministic state updates across all x86-64 CPUs without emitting VEX FMA
+// instructions outside the baseline ISA allow-list or lowering `f64::mul_add`
+// through the public `fma` ABI symbol (bd-rc0923-epic-eeuy4f.29).
 mod internal_fma {
     #[inline(always)]
     pub(super) fn mul_add(x: f64, y: f64, z: f64) -> f64 {
-        #[cfg(target_arch = "x86_64")]
-        {
-            #[target_feature(enable = "fma")]
-            fn fused(x: f64, y: f64, z: f64) -> f64 {
-                x.mul_add(y, z)
-            }
-
-            if std::is_x86_feature_detected!("fma") {
-                // SAFETY: the runtime feature check above proves that the CPU
-                // supports the instruction emitted by `fused`.
-                return unsafe { fused(x, y, z) };
-            }
-        }
-
-        x.mul_add(y, z)
+        x * y + z
     }
 
     #[inline(always)]
@@ -48,31 +32,10 @@ mod internal_fma {
         if repetitions == 0 {
             return;
         }
-
-        #[cfg(target_arch = "x86_64")]
-        {
-            #[target_feature(enable = "fma")]
-            fn fused_repeated(state: &mut [f64], sample: &[f64], alpha: f64, repetitions: u64) {
-                let decay = 1.0 - alpha;
-                for _ in 0..repetitions {
-                    for (value, observation) in state.iter_mut().zip(sample) {
-                        *value = value.mul_add(decay, alpha * observation);
-                    }
-                }
-            }
-
-            if std::is_x86_feature_detected!("fma") {
-                // SAFETY: the runtime feature check above proves that the CPU
-                // supports every fused operation in `fused_repeated`.
-                unsafe { fused_repeated(state, sample, alpha, repetitions) };
-                return;
-            }
-        }
-
         let decay = 1.0 - alpha;
         for _ in 0..repetitions {
             for (value, observation) in state.iter_mut().zip(sample) {
-                *value = value.mul_add(decay, alpha * observation);
+                *value = *value * decay + alpha * observation;
             }
         }
     }
@@ -3993,8 +3956,7 @@ impl RuntimeMathKernel {
                     // Quarantine barrier: evaluate on cadence.
                     if barrier.is_quarantine_cadence() {
                         let contention = crate::quarantine_controller::CONTENTION.current_peak();
-                        let lambda_latency =
-                            crate::quarantine_controller::current_lambda_latency();
+                        let lambda_latency = crate::quarantine_controller::current_lambda_latency();
                         barrier.evaluate_quarantine(depth, contention, risk_ppm, lambda_latency);
                     }
                     // Fragmentation barrier: allocator-family cadence check.

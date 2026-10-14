@@ -51,7 +51,7 @@ mod tgamma_lanczos_research {
     }
     fn dd_div_ff(a: f64, b: f64) -> (f64, f64) {
         let q = a / b;
-        let r = super::fma(-q, b, a);
+        let r = crate::math::fma(-q, b, a);
         (q, r / b)
     }
 
@@ -72,7 +72,7 @@ mod tgamma_lanczos_research {
     fn lanczos_dd(z: f64) -> f64 {
         if z < 0.5 {
             let pi = std::f64::consts::PI;
-            return pi / (super::sin(pi * z) * lanczos_dd(1.0 - z));
+            return pi / (crate::math::sin(pi * z) * lanczos_dd(1.0 - z));
         }
         let z = z - 1.0;
         let mut acc = (LC[0], 0.0);

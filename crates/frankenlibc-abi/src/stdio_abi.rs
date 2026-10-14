@@ -2033,7 +2033,63 @@ fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
     })
 }
 
+thread_local! {
+    static WIDE_IO_ACTIVE: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static WIDE_STREAM_CACHE: std::cell::Cell<(usize, u64, *mut StdioStream)> =
+        const { std::cell::Cell::new((usize::MAX, 0, std::ptr::null_mut())) };
+}
+
+struct WideIoGuard;
+
+impl Drop for WideIoGuard {
+    #[inline]
+    fn drop(&mut self) {
+        WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+}
+
+#[inline]
+pub(crate) fn with_wide_io_active<R>(f: impl FnOnce() -> R) -> R {
+    WIDE_IO_ACTIVE.with(|c| c.set(c.get().saturating_add(1)));
+    let _guard = WideIoGuard;
+    f()
+}
+
+#[inline]
+pub(crate) fn wide_io_active() -> bool {
+    WIDE_IO_ACTIVE.with(|c| c.get() != 0)
+}
+
+#[inline]
+fn wide_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
+        return None;
+    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    WIDE_STREAM_CACHE.with(|c| {
+        let (cid, cgen, p) = c.get();
+        if cid == key && !p.is_null() && cgen == cur_gen {
+            absorb_and_clear_read_window(unsafe { &mut *p });
+            Some(p)
+        } else {
+            None
+        }
+    })
+}
+
+#[inline]
+fn wide_cache_store(stream: *mut c_void, ptr: *mut StdioStream) {
+    let generation = REGISTRY_GEN.load(Ordering::Acquire);
+    WIDE_STREAM_CACHE.with(|c| {
+        c.set((stream as usize, generation, ptr));
+    });
+}
+
 fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
+    if wide_io_active() {
+        return;
+    }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     STREAM_CELL_CACHE.with(|c| {
         // Insert-at-front (most-recent-first), shifting the previous entries down one slot (the
@@ -2189,6 +2245,9 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
 /// registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
 fn write_cache_store(id: usize, ptr: *mut StdioStream) {
+    if wide_io_active() || unsafe { (*ptr).effective_orientation() } >= 0 {
+        return;
+    }
     let generation = REGISTRY_GEN.load(Ordering::Acquire);
     // Insert-at-front (most-recent-first), shifting the previous head to slot 1. `store`
     // only runs on a full cache miss (a lookup hit returns before storing), so `id` is not
@@ -2827,7 +2886,107 @@ pub(crate) fn stream_ext_info(stream: *mut c_void) -> Option<StreamExtInfo> {
 /// if fl does not own the stream.
 pub(crate) fn stream_set_orientation(stream: *mut c_void, mode: c_int) -> Option<c_int> {
     let id = canonical_stream_id(stream);
-    stream_cell(id).map(|cell| cell.lock().set_orientation(mode))
+    stream_cell(id).map(|cell| {
+        let mut s = cell.lock();
+        let prev = s.effective_orientation();
+        if mode > 0 && prev == 0 {
+            sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+        }
+        let next = s.set_orientation(mode);
+        if prev <= 0 && next > 0 {
+            REGISTRY_GEN.fetch_add(1, Ordering::Release);
+        }
+        next
+    })
+}
+
+/// Orient `stream` for a wide I/O operation (C99 7.24.2 / POSIX):
+/// - If already byte-oriented (`< 0`), sets the stream error indicator, sets `errno = EBADF`,
+///   and returns `false`.
+/// - Otherwise fixes the stream to wide orientation (`> 0`) and returns `true`.
+#[inline]
+pub(crate) fn orient_stream_wide(stream: *mut c_void) -> bool {
+    if stream.is_null() {
+        return false;
+    }
+    if wide_cache_lookup_by_stream(stream).is_some() {
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    let prev = s.effective_orientation();
+    if prev < 0 {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    if prev == 0 {
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+    }
+    let next = s.set_orientation(1);
+    if prev <= 0 && next > 0 {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+    }
+    if next > 0 && !s.is_mem_backed() && !is_cookie_stream(id) {
+        wide_cache_store(stream, &mut *s as *mut StdioStream);
+    }
+    next > 0
+}
+
+/// Orient `stream` for `ungetwc`: fixes an unoriented stream to wide (`> 0`),
+/// and returns `false` (without setting `ferror`) if the stream is already
+/// byte-oriented (`< 0`).
+#[inline]
+pub(crate) fn orient_stream_ungetwc(stream: *mut c_void) -> bool {
+    if stream.is_null() {
+        return false;
+    }
+    if wide_cache_lookup_by_stream(stream).is_some() {
+        return true;
+    }
+    let id = canonical_stream_id(stream);
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    let prev = s.effective_orientation();
+    if prev < 0 {
+        return false;
+    }
+    if prev == 0 {
+        sync_and_unregister_fast_fixed_mem_read(id, &mut s);
+    }
+    let next = s.set_orientation(1);
+    if prev <= 0 && next > 0 {
+        REGISTRY_GEN.fetch_add(1, Ordering::Release);
+    }
+    if next > 0 && !s.is_mem_backed() && !is_cookie_stream(id) {
+        wide_cache_store(stream, &mut *s as *mut StdioStream);
+    }
+    next > 0
+}
+
+/// Orient stream `id` for a narrow/byte I/O operation when not inside an
+/// internal wide-I/O delegation (`!wide_io_active()`).
+#[inline]
+fn orient_stream_byte_by_id(id: usize) -> bool {
+    if wide_io_active() {
+        return true;
+    }
+    let Some(cell) = stream_cell(id) else {
+        return true;
+    };
+    let mut s = cell.lock();
+    if s.effective_orientation() > 0 {
+        s.set_error();
+        unsafe { set_abi_errno(errno::EBADF) };
+        return false;
+    }
+    let _ = s.set_orientation(-1);
+    true
 }
 
 /// `__fsetlocking`: query/set the stream's locking mode, returning the mode in
@@ -3169,6 +3328,14 @@ unsafe fn write_bytes_without_runtime_policy(
             return 0;
         };
         let mut stream_obj = cell.lock();
+        if !wide_io_active() {
+            if stream_obj.effective_orientation() > 0 {
+                stream_obj.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                return 0;
+            }
+            let _ = stream_obj.set_orientation(-1);
+        }
         return unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) };
     }
 
@@ -3193,6 +3360,14 @@ unsafe fn write_bytes_without_runtime_policy(
     };
     let mut stream_guard = cell.lock();
     let stream_obj = &mut *stream_guard;
+    if !wide_io_active() {
+        if stream_obj.effective_orientation() > 0 {
+            stream_obj.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let _ = stream_obj.set_orientation(-1);
+    }
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
@@ -3489,7 +3664,7 @@ pub(crate) const fn stdin_stream_id() -> usize {
 }
 
 #[inline]
-fn active_stdout_stream() -> *mut c_void {
+pub(crate) fn active_stdout_stream() -> *mut c_void {
     // SAFETY: reading the exported `stdout` global is required to keep
     // output helpers coherent with later `fflush(stdout)` and redirection.
     unsafe {
@@ -3497,6 +3672,17 @@ fn active_stdout_stream() -> *mut c_void {
             io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
         } else {
             stdout
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn active_stdin_stream() -> *mut c_void {
+    unsafe {
+        if stdin.is_null() {
+            io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
+        } else {
+            stdin
         }
     }
 }
@@ -4057,7 +4243,9 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
         }
         // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
         // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
-        stream_cell_cache_store(stream, &cell);
+        if s.effective_orientation() < 0 {
+            stream_cell_cache_store(stream, &cell);
+        }
         let ok = unsafe { flush_stream(s) };
         sync_input_position(s);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !ok);
@@ -4104,6 +4292,10 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     }
 
     if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
         // Cache by FILE* so subsequent reads skip `canonical_stream_id` + `decide` (above).
         store_fgetc_mem_ptr_cache(stream, &cursor);
         if let Some(byte) = cursor.read_byte() {
@@ -4116,6 +4308,10 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
 
     if is_cookie_stream(id) {
         if !stream_exists(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        if !orient_stream_byte_by_id(id) {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
             return libc::EOF;
         }
@@ -4172,6 +4368,15 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     // Memory-backed streams: read directly from backing (no per-getc Vec).
     if s.is_mem_backed() {
@@ -4289,6 +4494,15 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
         };
         let mut s_guard = cell.lock();
         let s = &mut *s_guard;
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+                return libc::EOF;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if unsafe { cookie_buffer_write(id, s, &[byte]) } == 1 {
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, false);
             return c;
@@ -4316,6 +4530,15 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 5, true);
+            return libc::EOF;
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     // Memory-backed streams: write directly to backing.
     if s.is_mem_backed() {
@@ -4541,7 +4764,7 @@ pub(crate) unsafe fn read_cached_ascii_line_wide(
     stream: *mut c_void,
     dst: &mut [u32],
 ) -> Option<(usize, bool)> {
-    let p = write_cache_lookup_by_stream(stream)?;
+    let p = wide_cache_lookup_by_stream(stream)?;
     let result = unsafe { read_cached_ascii_line_wide_inner(p, dst) };
     mirror_raw_cached(stream, p);
     result
@@ -4662,6 +4885,10 @@ pub unsafe extern "C-unwind" fn fgets(
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
             return std::ptr::null_mut();
         }
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
 
         let mut written = 0usize;
         let mut had_error = false;
@@ -4724,6 +4951,15 @@ pub unsafe extern "C-unwind" fn fgets(
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return std::ptr::null_mut();
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     if max == 0 {
         unsafe { *buf = 0 };
@@ -4833,7 +5069,11 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
         let (len, _) = unsafe { scan_c_str_len(s, None) };
         let bytes = unsafe { std::slice::from_raw_parts(s as *const u8, len) };
         let written = unsafe { write_bytes_without_runtime_policy(id, stream, bytes) };
-        return if written == bytes.len() { 0 } else { libc::EOF };
+        return if written == bytes.len() && orient_stream_byte_by_id(id) {
+            0
+        } else {
+            libc::EOF
+        };
     }
 
     let _trace_scope = runtime_policy::entrypoint_scope("fputs");
@@ -4881,6 +5121,15 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
             return libc::EOF;
         };
         let mut stream_obj = cell.lock();
+        if !wide_io_active() {
+            if stream_obj.effective_orientation() > 0 {
+                stream_obj.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+                return libc::EOF;
+            }
+            let _ = stream_obj.set_orientation(-1);
+        }
         let adverse = unsafe { cookie_buffer_write(id, &mut stream_obj, bytes) } < bytes.len();
 
         runtime_policy::observe(
@@ -4911,6 +5160,15 @@ pub unsafe extern "C-unwind" fn fputs(s: *const c_char, stream: *mut c_void) -> 
     };
     let mut stream_guard = cell.lock();
     let stream_obj = &mut *stream_guard;
+    if !wide_io_active() {
+        if stream_obj.effective_orientation() > 0 {
+            stream_obj.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return libc::EOF;
+        }
+        let _ = stream_obj.set_orientation(-1);
+    }
 
     if stream_obj.is_mem_backed() {
         let written = stream_obj.mem_write(bytes);
@@ -5082,6 +5340,15 @@ pub unsafe extern "C-unwind" fn fread(
     // cursor ⇒ this is skipped and the `s.is_mem_backed()` branch below still handles them.
     // Byte-identical: reads the same bytes fgetc's cursor reads, over the same content snapshot.
     if let Some(cursor) = fast_fixed_mem_read(id) {
+        if !orient_stream_byte_by_id(id) {
+            runtime_policy::observe(
+                ApiFamily::Stdio,
+                decision.profile,
+                runtime_policy::scaled_cost(15, total),
+                true,
+            );
+            return 0;
+        }
         store_fgetc_mem_ptr_cache(stream, &cursor);
         let n = cursor.read_bytes(dst).unwrap_or(0);
         runtime_policy::observe(
@@ -5094,7 +5361,7 @@ pub unsafe extern "C-unwind" fn fread(
     }
 
     if is_cookie_stream(id) {
-        if !stream_exists(id) {
+        if !stream_exists(id) || !orient_stream_byte_by_id(id) {
             return 0;
         }
 
@@ -5163,6 +5430,14 @@ pub unsafe extern "C-unwind" fn fread(
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return 0;
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     // Memory-backed streams: read directly from the backing.
     if s.is_mem_backed() {
@@ -5242,6 +5517,15 @@ pub unsafe extern "C-unwind" fn fwrite(
             return 0;
         };
         let mut s = cell.lock();
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return 0;
+            }
+            let _ = s.set_orientation(-1);
+        }
         let written_total = unsafe { cookie_buffer_write(id, &mut s, src) };
         let adverse = written_total < total;
         let complete_items = written_total.checked_div(size).unwrap_or(0);
@@ -5273,6 +5557,15 @@ pub unsafe extern "C-unwind" fn fwrite(
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+            return 0;
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     // Memory-backed streams: write directly to the backing.
     if s.is_mem_backed() {
@@ -5571,7 +5864,9 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
     // Cache this non-cookie non-mem fd stream so subsequent fseek/read hit the MT fast path — a
     // pure seek loop (random-access I/O) otherwise never populates the cache and pays the map
     // lock(s) per call forever. Mirrors fgets/getdelim.
-    stream_cell_cache_store(stream, &cell);
+    if s.effective_orientation() < 0 {
+        stream_cell_cache_store(stream, &cell);
+    }
     // SAFETY: `s` uniquely borrowed under the stream lock; non-cookie non-mem fd (checked above).
     match unsafe { fd_seek_locked(s, offset, whence) } {
         Ok(()) => {
@@ -5914,8 +6209,18 @@ pub unsafe extern "C-unwind" fn ungetc(c: c_int, stream: *mut c_void) -> c_int {
     }
     if let Some(cell) = stream_cell(id) {
         let mut s = cell.lock();
+        if !wide_io_active() && s.effective_orientation() > 0 {
+            return libc::EOF;
+        }
         sync_and_unregister_fast_fixed_mem_read(id, &mut s);
-        if s.ungetc(c as u8) { c } else { libc::EOF }
+        if s.ungetc(c as u8) {
+            if !wide_io_active() {
+                let _ = s.set_orientation(-1);
+            }
+            c
+        } else {
+            libc::EOF
+        }
     } else {
         libc::EOF
     }
@@ -6159,7 +6464,7 @@ pub unsafe extern "C-unwind" fn puts(s: *const c_char) -> c_int {
 /// POSIX `getchar`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn getchar() -> c_int {
-    unsafe { fgetc(STDIN_SENTINEL as *mut c_void) }
+    unsafe { fgetc(active_stdin_stream()) }
 }
 
 // ---------------------------------------------------------------------------
@@ -8696,6 +9001,14 @@ unsafe fn try_write_direct_s_newline_stream(id: usize, payload: &[u8]) -> Option
     let cell = stream_cell(id)?;
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return Some(false);
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     if s.is_mem_backed() {
         let mut written = s.mem_write(payload);
@@ -9267,6 +9580,15 @@ pub unsafe extern "C-unwind" fn fprintf(
     let cell_opt = stream_cell(id);
     let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
     if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -9506,6 +9828,15 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
     let cell_opt = stream_cell(id);
     let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
     if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -10698,6 +11029,15 @@ pub unsafe extern "C-unwind" fn vfprintf(
     let cell_opt = stream_cell(id);
     let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
     if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -10905,6 +11245,15 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
     let cell_opt = stream_cell(id);
     let mut s_guard = cell_opt.as_ref().map(|c| c.lock());
     if let Some(s) = s_guard.as_deref_mut() {
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if s.is_mem_backed() {
             let written = s.mem_write(bytes);
             let adverse = written < total_len;
@@ -11442,6 +11791,14 @@ pub(crate) fn read_stream_for_scanf(id: usize, limit: usize) -> (ScanfReadBuf, S
     };
     let mut s_guard = cell.lock();
     let s = &mut *s_guard;
+    if !wide_io_active() {
+        if s.effective_orientation() > 0 {
+            s.set_error();
+            unsafe { set_abi_errno(errno::EBADF) };
+            return (ScanfReadBuf::take(), ScanfReadState::Memory);
+        }
+        let _ = s.set_orientation(-1);
+    }
 
     // Memory-backed streams: read directly (rewind handled by scanf_rewind_mem).
     if s.is_mem_backed() {
@@ -11781,9 +12138,9 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
     if format.is_null() {
         return -1;
     }
-    let stdin_ptr = STDIN_SENTINEL as *mut c_void;
-    let (_, decision) =
-        runtime_policy::decide(ApiFamily::Stdio, stdin_ptr as usize, 0, false, false, 0);
+    let stdin_ptr = active_stdin_stream();
+    let stdin_id = canonical_stream_id(stdin_ptr);
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, stdin_id, 0, false, false, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return -1;
@@ -11799,20 +12156,20 @@ pub unsafe extern "C-unwind" fn scanf(format: *const c_char, mut args: ...) -> c
         return rc;
     }
 
-    let (input_buf, scanf_seek_base) = read_stream_for_scanf(STDIN_SENTINEL, 8192);
+    let (input_buf, scanf_seek_base) = read_stream_for_scanf(stdin_id, 8192);
     if input_buf.is_empty() {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     }
 
     let Some((result, directives)) = scanf_core(&input_buf, format) else {
-        scanf_finish_consume(STDIN_SENTINEL, scanf_seek_base, &input_buf, 0);
+        scanf_finish_consume(stdin_id, scanf_seek_base, &input_buf, 0);
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
         return libc::EOF;
     };
 
     // Restore the bytes scanf did not parse (glibc consumes exactly the prefix).
-    scanf_finish_consume(STDIN_SENTINEL, scanf_seek_base, &input_buf, result.consumed);
+    scanf_finish_consume(stdin_id, scanf_seek_base, &input_buf, result.consumed);
 
     // Stores happen even when the call returns EOF: glibc has already written
     // any `%n` counts by then, and NULL through a `%m` conversion that failed.
@@ -11998,7 +12355,7 @@ pub unsafe extern "C-unwind" fn vfscanf(
 /// POSIX `vscanf` — scan formatted input from stdin with va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn vscanf(format: *const c_char, ap: *mut c_void) -> c_int {
-    unsafe { vfscanf(STDIN_SENTINEL as *mut c_void, format, ap) }
+    unsafe { vfscanf(active_stdin_stream(), format, ap) }
 }
 
 /// Write scanned values via raw va_list pointer (v* functions).
@@ -12902,6 +13259,15 @@ pub unsafe extern "C-unwind" fn getdelim(
         };
         let mut s_guard = cell.lock();
         let s = &mut *s_guard;
+        if !wide_io_active() {
+            if s.effective_orientation() > 0 {
+                s.set_error();
+                unsafe { set_abi_errno(errno::EBADF) };
+                runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+                return -1;
+            }
+            let _ = s.set_orientation(-1);
+        }
         if s.is_mem_backed() {
             sync_and_unregister_fast_fixed_mem_read(id, s);
         } else if !is_cookie_stream(id) {
@@ -14158,7 +14524,9 @@ pub unsafe extern "C" fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut usi
         return std::ptr::null_mut();
     }
 
-    let stream = StdioStream::new_mem_dynamic();
+    let mut stream = StdioStream::new_mem_dynamic();
+    // POSIX/glibc: open_memstream creates a byte-oriented stream from creation (_mode == -1).
+    stream.set_orientation(-1);
     let handle = register_memory_stream_with_native_handle(
         stream,
         io_internal_abi::NativeFileBacking::MemoryGrowing {

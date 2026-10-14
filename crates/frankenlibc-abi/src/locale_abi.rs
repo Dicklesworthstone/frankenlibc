@@ -2500,12 +2500,28 @@ struct LocaleSelection {
     categories: LocaleCategories,
 }
 
+#[derive(Clone, Copy)]
+struct CachedLocaleHandle {
+    handle: usize,
+    epoch: u64,
+    categories: LocaleCategories,
+}
+
+static LOCALE_OBJECTS_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
     // paths need neither a registry lock nor a dereference of a caller handle.
     // None denotes the LIVE global locale, not a frozen copy of it.
     static THREAD_LOCALE: std::cell::Cell<Option<LocaleSelection>> = const {
         std::cell::Cell::new(None)
+    };
+    // 2-entry per-thread MRU cache of custom `locale_t` handles so repeated
+    // `uselocale(loc)` / `*_l(..., loc)` calls resolve without taking the
+    // process-wide `locale_objects().lock()` mutex (bd-rc0923-epic-eeuy4f.30).
+    // Invalidated whenever `retire_locale` bumps `LOCALE_OBJECTS_EPOCH`.
+    static THREAD_HANDLE_CACHE: std::cell::Cell<[Option<CachedLocaleHandle>; 2]> = const {
+        std::cell::Cell::new([None, None])
     };
 }
 
@@ -2563,13 +2579,52 @@ fn categories_for_handle(handle: LocaleT) -> Option<LocaleCategories> {
     if handle == locale_handle_for(Charset::Utf8) {
         return Some([Resolved::Builtin(Charset::Utf8); locale_core::CATEGORY_COUNT]);
     }
-    let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
-    objects.iter().find_map(|object| {
-        let address = (&**object as *const LocaleObject)
-            .cast_mut()
-            .cast::<c_void>();
-        (address == handle).then_some(object.categories)
-    })
+    let key = handle as usize;
+    let epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+    if let Some(categories) = THREAD_HANDLE_CACHE.with(|cache| {
+        let slots = cache.get();
+        if let Some(entry) = slots[0]
+            && entry.handle == key
+            && entry.epoch == epoch
+        {
+            return Some(entry.categories);
+        }
+        if let Some(entry) = slots[1]
+            && entry.handle == key
+            && entry.epoch == epoch
+        {
+            cache.set([Some(entry), slots[0]]);
+            return Some(entry.categories);
+        }
+        None
+    }) {
+        return Some(categories);
+    }
+    let (found, live_epoch) = {
+        let objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+        let live_epoch = LOCALE_OBJECTS_EPOCH.load(Ordering::Relaxed);
+        let found = objects.iter().find_map(|object| {
+            let address = (&**object as *const LocaleObject)
+                .cast_mut()
+                .cast::<c_void>();
+            (address == handle).then_some(object.categories)
+        });
+        (found, live_epoch)
+    };
+    if let Some(categories) = found {
+        THREAD_HANDLE_CACHE.with(|cache| {
+            let slots = cache.get();
+            cache.set([
+                Some(CachedLocaleHandle {
+                    handle: key,
+                    epoch: live_epoch,
+                    categories,
+                }),
+                slots[0],
+            ]);
+        });
+    }
+    found
 }
 
 fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
@@ -2614,7 +2669,7 @@ fn store_locale(categories: LocaleCategories) -> Result<LocaleT, c_int> {
 fn retire_locale(handle: LocaleT) {
     let retired = {
         let mut objects = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
-        objects
+        let removed = objects
             .iter()
             .position(|object| {
                 (&**object as *const LocaleObject)
@@ -2622,7 +2677,11 @@ fn retire_locale(handle: LocaleT) {
                     .cast::<c_void>()
                     == handle
             })
-            .map(|index| objects.swap_remove(index))
+            .map(|index| objects.swap_remove(index));
+        if removed.is_some() {
+            LOCALE_OBJECTS_EPOCH.fetch_add(1, Ordering::Release);
+        }
+        removed
     };
     // Reclamation can enter the allocator; do it outside the registry lock.
     drop(retired);
@@ -3387,5 +3446,88 @@ mod tests {
         worker.join().unwrap();
         assert_eq!(active_charset(), Charset::Utf8);
         unsafe { uselocale(previous) };
+    }
+
+    #[test]
+    fn locale_objects_tls_handle_cache_and_invalidation() {
+        let loc_a = unsafe {
+            newlocale(
+                libc::LC_CTYPE_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        let loc_b = unsafe {
+            newlocale(
+                libc::LC_NUMERIC_MASK,
+                c"C.UTF-8".as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(!loc_a.is_null());
+        assert!(!loc_b.is_null());
+        assert_ne!(loc_a, c_locale_handle());
+        assert_ne!(loc_a, locale_handle_for(Charset::Utf8));
+        assert_ne!(loc_b, c_locale_handle());
+        assert_ne!(loc_b, locale_handle_for(Charset::Utf8));
+
+        // Populate both slots of the 2-entry TLS MRU cache.
+        let cats_a = categories_for_handle(loc_a).expect("loc_a should resolve");
+        let cats_b = categories_for_handle(loc_b).expect("loc_b should resolve");
+        assert_eq!(
+            resolved_charset(cats_a[locale_core::LC_CTYPE as usize]),
+            Charset::Utf8
+        );
+        assert_eq!(
+            resolved_charset(cats_b[locale_core::LC_NUMERIC as usize]),
+            Charset::Utf8
+        );
+
+        // Hold the non-reentrant registry mutex on the same thread while resolving
+        // both cached handles. If either call misses the TLS cache, locking
+        // `locale_objects()` on this thread would deadlock immediately.
+        {
+            let _held = locale_objects().lock().unwrap_or_else(|e| e.into_inner());
+            let hit_b1 = categories_for_handle(loc_b).expect("loc_b should hit TLS cache");
+            assert_eq!(
+                resolved_charset(hit_b1[locale_core::LC_NUMERIC as usize]),
+                Charset::Utf8
+            );
+            assert_eq!(
+                resolved_charset(hit_b1[locale_core::LC_CTYPE as usize]),
+                Charset::Ascii
+            );
+            let hit_a = categories_for_handle(loc_a).expect("loc_a should hit TLS cache");
+            assert_eq!(
+                resolved_charset(hit_a[locale_core::LC_CTYPE as usize]),
+                Charset::Utf8
+            );
+            assert_eq!(
+                resolved_charset(hit_a[locale_core::LC_NUMERIC as usize]),
+                Charset::Ascii
+            );
+            let hit_b2 = categories_for_handle(loc_b).expect("loc_b should hit TLS cache again");
+            assert_eq!(
+                resolved_charset(hit_b2[locale_core::LC_NUMERIC as usize]),
+                Charset::Utf8
+            );
+        }
+
+        // Retiring `loc_a` must bump `LOCALE_OBJECTS_EPOCH` and invalidate stale
+        // TLS cache entries while still allowing `loc_b` to re-populate on lookup.
+        let epoch_before = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+        unsafe { freelocale(loc_a) };
+        let epoch_after = LOCALE_OBJECTS_EPOCH.load(Ordering::Acquire);
+        assert!(epoch_after > epoch_before);
+        assert!(categories_for_handle(loc_a).is_none());
+        let repopulated_b =
+            categories_for_handle(loc_b).expect("loc_b should re-resolve after epoch bump");
+        assert_eq!(
+            resolved_charset(repopulated_b[locale_core::LC_NUMERIC as usize]),
+            Charset::Utf8
+        );
+
+        unsafe { freelocale(loc_b) };
+        assert!(categories_for_handle(loc_b).is_none());
     }
 }

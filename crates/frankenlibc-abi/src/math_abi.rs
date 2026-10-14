@@ -13175,15 +13175,15 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     let mut u = ax - BP[k];
     let v = ONE / (ax + BP[k]);
     let s = u * v;
-    let mut s_h = pow_hi59_f128(s);
+    let s_h = pow_hi59_f128(s);
     // t_h = ax + bp[k] high
     let mut t_h = pow_hi59_f128(ax + BP[k]);
     let mut t_l = ax - (t_h - BP[k]);
-    let mut s_l = v * ((u - s_h * t_h) - s_h * t_l);
+    let s_l = v * ((u - s_h * t_h) - s_h * t_l);
     // log(ax)
     let mut s2 = s * s;
     u = LN[0] + s2 * (LN[1] + s2 * (LN[2] + s2 * (LN[3] + s2 * LN[4])));
-    let mut vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
+    let vv = LD[0] + s2 * (LD[1] + s2 * (LD[2] + s2 * (LD[3] + s2 * (LD[4] + s2))));
     let mut r = s2 * s2 * u / vv;
     r += s_l * (s_h + s);
     s2 = s_h * s_h;
@@ -13191,7 +13191,7 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     t_l = r - ((t_h - 3.0) - s2);
     // u+v = s*(1+...)
     u = s_h * t_h;
-    let mut v2 = s_l * t_h + t_l * s;
+    let v2 = s_l * t_h + t_l * s;
     // 2/(3log2)*(s+...)
     let mut p_h = pow_hi59_f128(u + v2);
     let mut p_l = v2 - (p_h - u);
