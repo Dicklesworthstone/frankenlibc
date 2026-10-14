@@ -109,13 +109,22 @@ unsafe extern "C" fn native_dlvsym(
     unsafe { dlvsym_entry(handle, name, version, 0) }
 }
 
+/// Distinguish an unknown runtime name from an unsupported version of a
+/// known name. The latter must never escape into the generic builtin table
+/// or host lookup: that can mix incompatible allocator/FILE ownership domains.
+/// Native scoped definitions are searched before applying this fallback.
+pub(super) fn runtime_export(name: &str, version: Option<&str>) -> Option<Option<u64>> {
+    memory::address(name, None)?;
+    Some(memory::address(name, version))
+}
+
 /// Only native relocation fallback binds these bridges; a DSO-provided
 /// ordinary definition still wins the existing preemption/scope search.
 pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64> {
     // The same allocation/string frontends serve native relocations and
     // dynamically obtained pointers; do not mix an owned allocator with host free.
-    if let Some(address) = memory::address(name, version) {
-        return Some(address);
+    if let Some(address) = runtime_export(name, version) {
+        return address;
     }
     // Dynamically obtained introspection functions must understand native
     // handles. Host dlinfo cannot interpret our tagged IDs as link-map pointers.
@@ -360,14 +369,14 @@ unsafe fn validated_lookup(
     if let Some(result) = native_search(caller, &search.before_host, symbol_name, version_name, request) {
         return result;
     }
-    if let Some(address) = memory::address(symbol_name, version_name) {
-        // Match the existing native relocation namespace: scoped native
-        // definitions precede these runtime frontends. A dynamic lookup must
-        // not select a different allocator or bypass a GLOBAL interposition.
+    if let Some(address) = runtime_export(symbol_name, version_name) {
+        // Scoped definitions can supply their own versions, even one the
+        // runtime does not implement. Search them before finalizing refusal.
+        // A rejected runtime version is NOT a host lookup opportunity.
         if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name, request) {
             return result;
         }
-        return Some(address as *mut c_void);
+        return address.map(|address| address as *mut c_void);
     }
     // The host global prefix already contains the interposed libc in L0/L1.
     // This never loads another object or imports a host module ID into TLS.

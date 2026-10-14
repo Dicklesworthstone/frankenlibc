@@ -18,6 +18,7 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
       - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-caller-lookup.yml'
@@ -37,6 +38,7 @@ on:
       - 'crates/frankenlibc-abi/tests/dlfcn_native_memory_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_io_test.rs'
       - 'crates/frankenlibc-abi/tests/dlfcn_native_stdio_test.rs'
+      - 'crates/frankenlibc-abi/tests/dlfcn_native_memstream_test.rs'
       - 'crates/frankenlibc-abi/tests/common/dlsym_oracle.rs'
       - 'crates/frankenlibc-core/src/elf/**'
       - '.github/workflows/native-caller-lookup.yml'
@@ -70,7 +72,7 @@ jobs:
       - name: Execute native and host caller-scope regressions
         run: |
           mkdir -p artifacts/native-caller
-          for target in dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_io_test dlfcn_native_stdio_test; do
+          for target in dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test; do
             log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
             cargo test --no-fail-fast -p frankenlibc-abi --test "$target" -- --nocapture \
               2>&1 | tee "$log"
