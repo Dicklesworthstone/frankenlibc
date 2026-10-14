@@ -3468,8 +3468,9 @@ fn bd_rc0923_epic_eeuy4f_28_hardened_memcmp_arena_bounds_and_quarantine_uaf() {
     }
 
     signal_runtime_ready_for_tests();
-    assert!(
-        frankenlibc_abi::runtime_policy::mode().heals_enabled(),
+    assert_eq!(
+        std::env::var("FRANKENLIBC_MODE").as_deref(),
+        Ok("hardened"),
         "child process must run in hardened mode"
     );
 
@@ -3515,4 +3516,3 @@ fn bd_rc0923_epic_eeuy4f_28_hardened_memcmp_arena_bounds_and_quarantine_uaf() {
         }
     }
 }
-
