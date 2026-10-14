@@ -11151,7 +11151,7 @@ pub unsafe extern "C-unwind" fn vfprintf(
 
         // Cache the resolved fd stream so subsequent single-threaded printf/write calls
         // hit the inline fast path (try_fwrite_fast).
-        write_cache_store(id, s as *mut StdioStream);
+        write_cache_store(stream, id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -11367,7 +11367,7 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
 
         // Cache the resolved fd stream so subsequent single-threaded printf/write calls
         // hit the inline fast path (try_fwrite_fast).
-        write_cache_store(id, s as *mut StdioStream);
+        write_cache_store(stdout_ptr, id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
