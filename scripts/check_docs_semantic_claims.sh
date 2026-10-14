@@ -202,15 +202,29 @@ def count_lines(path):
         return -1
 
 def tracked_files(pathspec):
+    if (root / ".git").exists() and ".rch-target" not in os.environ.get("CARGO_TARGET_DIR", ""):
+        try:
+            output = subprocess.check_output(
+                ["git", "ls-files", "-z", "--", pathspec],
+                cwd=root,
+                stderr=subprocess.DEVNULL,
+            )
+            return sorted(
+                root / os.fsdecode(raw_path)
+                for raw_path in output.split(b"\0")
+                if raw_path
+            )
+        except Exception:
+            pass
     try:
-        output = subprocess.check_output(
-            ["git", "ls-files", "-z", "--", pathspec],
-            cwd=root,
-        )
+        glob_pat = pathspec.removeprefix(":(glob)")
         return sorted(
-            root / os.fsdecode(raw_path)
-            for raw_path in output.split(b"\0")
-            if raw_path
+            path
+            for path in root.glob(glob_pat)
+            if (path.is_file() or path.is_symlink())
+            and not path.name.startswith("zz_")
+            and "target" not in path.parts
+            and "c_probes" not in path.parts
         )
     except Exception as exc:
         errors.append(f"numeric claims: failed to list tracked files for {pathspec}: {exc}")

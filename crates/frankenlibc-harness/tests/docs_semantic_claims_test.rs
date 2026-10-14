@@ -273,3 +273,40 @@ fn stale_semantic_join_fails() {
         Some("fail")
     );
 }
+
+#[test]
+fn stale_overlay_taxonomy_counts_fails() {
+    let _guard = gate_mutex().lock().unwrap();
+    let root = workspace_root();
+    let canonical = root.join("tests/conformance/support_semantic_overlay.v1.json");
+    let mut overlay = load_json(&canonical);
+    let current = overlay["support_matrix_snapshot"]["status_counts"]["Implemented"]
+        .as_u64()
+        .unwrap_or(0);
+    overlay["support_matrix_snapshot"]["status_counts"]["Implemented"] =
+        serde_json::json!(current + 1);
+    let stale = unique_temp_path("docs-semantic-stale-overlay.json");
+    std::fs::write(&stale, serde_json::to_string_pretty(&overlay).unwrap() + "\n")
+        .expect("failed to write stale overlay fixture");
+
+    let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_OVERLAY", &stale)]);
+    let _ = std::fs::remove_file(&stale);
+    assert!(
+        !output.status.success(),
+        "stale semantic overlay status_counts should fail:\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = parse_stdout_report(&output);
+    assert_eq!(
+        report["checks"]["numeric_claim_freshness"].as_str(),
+        Some("fail")
+    );
+    assert!(report["errors"].as_array().unwrap().iter().any(|error| {
+        error
+            .as_str()
+            .unwrap_or_default()
+            .contains("does not match support_matrix.json")
+    }));
+}
+
