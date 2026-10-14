@@ -121,6 +121,8 @@ fn peer_pidfd_supported(fd: c_int) -> bool {
 #[test]
 fn socket_output_case() {
     let Ok(case) = std::env::var(CHILD) else { return; };
+    // Exercise the initialized allocator, not its startup bypass.
+    frankenlibc_abi::malloc_abi::signal_runtime_ready_for_tests();
     let entry = std::env::var("FRANKENLIBC_SOCKET_OUTPUT_ENTRY").unwrap();
     let sockets = pair();
     let fd = sockets[0].as_raw_fd();
@@ -208,6 +210,23 @@ fn socket_output_case() {
             let output = if case.starts_with("null") { ptr::null_mut() } else { value_ptr };
             expect_error(unsafe { get(fd, libc::SOL_SOCKET, libc::SO_TYPE, output, scalar.0.cast()) }, libc::EFAULT);
             assert_eq!(value, -1);
+        }
+        "reallocated-length" => {
+            // Strict free releases host storage; hardened free quarantines it.
+            // Neither state may poison a subsequent, separately owned output.
+            // Never dereference released strict storage to demand a UAF repair.
+            let previous = Tracked::new(4);
+            let address = previous.0 as usize;
+            drop(previous);
+            let expected = if std::env::var("FRANKENLIBC_MODE").unwrap() == "hardened" {
+                Some(0)
+            } else { None };
+            assert_eq!(malloc_abi::known_remaining(address), expected);
+            let scalar = Tracked::new(4);
+            unsafe { scalar.0.cast::<u32>().write(4) };
+            assert_eq!(unsafe { get(fd, libc::SOL_SOCKET, libc::SO_TYPE, value_ptr, scalar.0.cast()) }, 0);
+            assert_eq!(value, libc::SOCK_STREAM);
+            assert_eq!(unsafe { scalar.0.cast::<u32>().read() }, 4);
         }
         "stale-length" => {
             let mut scalar = Tracked::new(4);
@@ -328,12 +347,12 @@ fn required_outputs_are_process_isolated() {
         for entry in ["primary", "alias"] {
             for case in ["normal", "truncated", "zero-null", "bad-fd", "readonly-length",
                 "bad-fd-readonly-length", "readonly-value", "short-value", "short-length",
-                "null-value-short-length", "stale-length", "groups-size", "groups-readonly-length",
+                "null-value-short-length", "reallocated-length", "groups-size", "groups-readonly-length",
                 "pidfd", "pidfd-readonly-length", "pidfd-readonly-value"] {
                 run(mode, entry, case);
             }
             if mode == "hardened" {
-                for case in ["negative", "bad-length", "unreadable-length", "unaligned-length", "pidfd-short"] {
+                for case in ["negative", "bad-length", "unreadable-length", "unaligned-length", "pidfd-short", "stale-length"] {
                     run(mode, entry, case);
                 }
             }
@@ -351,6 +370,7 @@ fn required_outputs_are_process_isolated() {
     for case in ["credentials-bad-uid", "credentials-readonly-gid"] {
         run("hardened", "primary", case);
     }
+    assert_eq!(count, 100, "required-output matrix coverage changed");
     println!("Completed {count} process-isolated socket-output cases");
 }
 
