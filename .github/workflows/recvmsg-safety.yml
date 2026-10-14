@@ -1,0 +1,41 @@
+name: recvmsg safety
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/socket_abi.rs'
+      - 'crates/frankenlibc-abi/src/msg_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/recvmsg*.rs'
+      - 'crates/frankenlibc-abi/tests/socket_abi_test.rs'
+      - 'crates/frankenlibc-abi/Cargo.toml'
+      - 'crates/frankenlibc-core/src/syscall/**'
+      - 'crates/frankenlibc-membrane/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/validate_recvmsg_safety.sh'
+      - '.github/workflows/recvmsg-safety.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  receive-safety:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_BUILD_JOBS: '2'
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+      RUST_BACKTRACE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: membrane-access
+          cache-on-failure: true
+      - name: Compile, exercise both modes and aliases, and catch bypass mutations
+        run: bash scripts/validate_recvmsg_safety.sh --mutations

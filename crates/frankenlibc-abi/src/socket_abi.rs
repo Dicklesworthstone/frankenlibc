@@ -858,7 +858,7 @@ pub unsafe extern "C-unwind" fn recvmsg(
 /// Body of [`recvmsg`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
-    let (_, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
+    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -877,12 +877,41 @@ pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_
         return -1;
     }
 
+    // Share sendmsg's owned import. A stack header or iovec array must not
+    // bypass tracked receive-payload, source-address or ancillary bounds.
+    // Strict keeps the original descriptor graph and kernel output stores.
+    let mut prepared = if mode.heals_enabled() {
+        match msg_snapshot::PreparedMessage::prepare(msg.cast_const()) {
+            Ok(message) => Some(message),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
+                return -1;
+            }
+        }
+    } else {
+        None
+    };
+    let submitted = prepared.as_mut().map_or(msg, |message| message.as_mut_ptr());
+
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
-            raw_syscall::sys_recvmsg(sockfd, msg as *mut u8, flags)
+            raw_syscall::sys_recvmsg(sockfd, submitted.cast(), flags)
         })
     } {
-        Ok(n) => (n, false),
+        Ok(n) => {
+            if let Some(message) = prepared.as_ref() {
+                // The kernel has already written to the original payload/name/
+                // control buffers. Publish only returned scalar metadata, not
+                // the owned iovec pointer. Output faults are post-receive errors.
+                if let Err(error) = unsafe { message.copy_received_outputs(msg) } {
+                    unsafe { set_abi_errno(error) };
+                    runtime_policy::observe(ApiFamily::Socket, decision.profile, 12, true);
+                    return -1;
+                }
+            }
+            (n, false)
+        }
         Err(e) => {
             unsafe { set_abi_errno(e) };
             (-1, true)

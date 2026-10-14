@@ -6,7 +6,7 @@
 //! free. This does not promise an atomic snapshot of concurrent user writes.
 
 use std::ffi::{c_int, c_void};
-use std::mem::size_of;
+use std::mem::{offset_of, size_of};
 
 use super::iov_snapshot::{MAX_IOVECS, PreparedIovecs, copy_user_bytes};
 use crate::malloc_abi::known_remaining;
@@ -54,5 +54,53 @@ impl PreparedMessage {
     pub(super) fn as_mut_ptr(&mut self) -> *mut libc::msghdr {
         self.header.msg_iov = self.vectors.as_ptr().cast_mut();
         &mut self.header
+    }
+
+    /// Publish only the receive outputs; never copy our scratch pointer back to
+    /// the caller. Linux writes namelen (only for a non-null name), flags, then
+    /// controllen. Stop at the first fault, preserving that ordering and any
+    /// earlier writes. The socket may already have consumed data at this point.
+    ///
+    /// No preflight write is performed: a readable but read-only caller header
+    /// is allowed to reach the socket syscall and can fail on this copy-back,
+    /// as it can on Linux's own post-receive output stores.
+    ///
+    /// # Safety
+    /// Writable bytes of original must permit writes during this call. This
+    /// never constructs a Rust reference to caller memory; permission faults,
+    /// unaligned addresses and tracked bounds are handled by the kernel copier.
+    #[allow(dead_code)] // also compiled by the send-only importer test target
+    pub(super) unsafe fn copy_received_outputs(
+        &self,
+        original: *mut libc::msghdr,
+    ) -> Result<(), c_int> {
+        // Reject wraparound before computing any field address. The runtime's
+        // header import already checks this, but keep the copy-back total too.
+        if original.is_null() || (original as usize).checked_add(size_of::<libc::msghdr>()).is_none() {
+            return Err(libc::EFAULT);
+        }
+        // SAFETY: each source is an initialized scalar in our owned header.
+        // wrapping_add computes a remote address without asserting that the
+        // caller's pointer is in bounds or aligned. copy_user_bytes checks the
+        // destination range before making a fault-checked kernel copy.
+        unsafe {
+            if !self.header.msg_name.is_null() {
+                copy_user_bytes(
+                    (&self.header.msg_namelen as *const libc::socklen_t).cast(),
+                    original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_namelen)),
+                    size_of::<libc::socklen_t>(),
+                )?;
+            }
+            copy_user_bytes(
+                (&self.header.msg_flags as *const c_int).cast(),
+                original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_flags)),
+                size_of::<c_int>(),
+            )?;
+            copy_user_bytes(
+                (&self.header.msg_controllen as *const usize).cast(),
+                original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_controllen)),
+                size_of::<usize>(),
+            )
+        }
     }
 }
