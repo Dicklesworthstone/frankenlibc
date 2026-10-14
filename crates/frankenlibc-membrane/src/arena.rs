@@ -550,6 +550,22 @@ impl AllocationArena {
         user_ptr: *mut u8,
         batched: bool,
     ) -> (FreeResult, usize, Vec<QuarantineEntry>) {
+        struct FreeContentionGuard;
+        impl FreeContentionGuard {
+            #[inline]
+            fn enter() -> Self {
+                crate::quarantine_controller::CONTENTION.free_begin();
+                Self
+            }
+        }
+        impl Drop for FreeContentionGuard {
+            #[inline]
+            fn drop(&mut self) {
+                crate::quarantine_controller::CONTENTION.free_end();
+            }
+        }
+        let _contention_guard = FreeContentionGuard::enter();
+
         let user_base = user_ptr as usize;
         let shard_idx = self.shard_for(user_base);
 

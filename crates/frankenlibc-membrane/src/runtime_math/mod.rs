@@ -882,6 +882,12 @@ pub struct RuntimeKernelSnapshot {
     pub sos_barrier_provenance_value: i64,
     /// SOS barrier quarantine certificate value (milli-units, negative = violation).
     pub sos_barrier_quarantine_value: i64,
+    /// SOS barrier fragmentation certificate value (milli-units, negative = violation).
+    pub sos_barrier_fragmentation_value: i64,
+    /// SOS barrier thread-safety certificate value (milli-units, negative = violation).
+    pub sos_barrier_thread_safety_value: i64,
+    /// SOS barrier size-class certificate value (milli-units, negative = violation).
+    pub sos_barrier_size_class_value: i64,
     /// SOS barrier total violation count.
     pub sos_barrier_violations: u64,
     /// ADMM primal-dual gap (0..∞, lower is better).
@@ -3986,7 +3992,10 @@ impl RuntimeMathKernel {
                     }
                     // Quarantine barrier: evaluate on cadence.
                     if barrier.is_quarantine_cadence() {
-                        barrier.evaluate_quarantine(depth, 0, risk_ppm, 0);
+                        let contention = crate::quarantine_controller::CONTENTION.current_peak();
+                        let lambda_latency =
+                            crate::quarantine_controller::current_lambda_latency();
+                        barrier.evaluate_quarantine(depth, contention, risk_ppm, lambda_latency);
                     }
                     // Fragmentation barrier: allocator-family cadence check.
                     if matches!(family, ApiFamily::Allocator) && barrier.is_fragmentation_cadence()
@@ -4002,9 +4011,12 @@ impl RuntimeMathKernel {
                         let mfg_state =
                             u32::from(self.cached_mfg_state.load(Ordering::Relaxed)).min(3);
                         let thread_count = 32u32.saturating_add(mfg_state.saturating_mul(128));
+                        let live_contention =
+                            crate::quarantine_controller::CONTENTION.current_peak();
                         let concurrent_writers = 1u32
                             .saturating_add(u32::from(adverse))
-                            .saturating_add(mfg_state / 2);
+                            .saturating_add(mfg_state / 2)
+                            .max(live_contention);
                         let owner_conflict =
                             adverse && !profile.requires_full() && risk_ppm > 300_000;
                         let free_list_skew_ppm =
@@ -4997,6 +5009,9 @@ impl RuntimeMathKernel {
             sos_violation_count: sos_summary.violation_event_count,
             sos_barrier_provenance_value: sos_barrier_summary.provenance_value,
             sos_barrier_quarantine_value: sos_barrier_summary.quarantine_value,
+            sos_barrier_fragmentation_value: sos_barrier_summary.fragmentation_value,
+            sos_barrier_thread_safety_value: sos_barrier_summary.thread_safety_value,
+            sos_barrier_size_class_value: sos_barrier_summary.size_class_value,
             sos_barrier_violations: sos_barrier_summary.provenance_violations
                 + sos_barrier_summary.quarantine_violations
                 + sos_barrier_summary.fragmentation_violations

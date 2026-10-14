@@ -33,7 +33,7 @@
 //! This ensures the depth never hits the hard limits, providing a smooth
 //! interior-point constraint enforcement.
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering};
 
 /// Minimum quarantine depth (always hold at least this many blocks).
 pub const MIN_DEPTH: usize = 64;
@@ -94,6 +94,12 @@ impl ContentionSignal {
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |x| {
                 Some(x.saturating_sub(1))
             });
+    }
+
+    /// Read the current peak contention without resetting the epoch high-water mark.
+    #[must_use]
+    pub fn current_peak(&self) -> u32 {
+        self.peak_concurrent.load(Ordering::Relaxed)
     }
 
     /// Read and reset peak contention.
@@ -302,14 +308,25 @@ impl Default for QuarantineController {
 /// Global quarantine depth (atomically readable by all threads).
 pub static QUARANTINE_DEPTH: AtomicU64 = AtomicU64::new(DEFAULT_DEPTH as u64);
 
-/// Publish the controller's current depth to the global atomic.
+/// Global latency dual variable scaled into `[-128, 128]` for SOS barrier Invariant A.
+pub static QUARANTINE_LAMBDA_LATENCY: AtomicI64 = AtomicI64::new(1);
+
+/// Publish the controller's current depth and scaled dual latency multiplier to global atomics.
 pub fn publish_depth(controller: &QuarantineController) {
     QUARANTINE_DEPTH.store(controller.depth() as u64, Ordering::Release);
+    let scaled_lambda = ((controller.lambda_latency * 12.8).round() as i64).clamp(-128, 128);
+    QUARANTINE_LAMBDA_LATENCY.store(scaled_lambda, Ordering::Release);
 }
 
 /// Read the current quarantine depth (lock-free).
 pub fn current_depth() -> usize {
     QUARANTINE_DEPTH.load(Ordering::Acquire) as usize
+}
+
+/// Read the current scaled latency dual variable in `[-128, 128]` (lock-free).
+#[must_use]
+pub fn current_lambda_latency() -> i64 {
+    QUARANTINE_LAMBDA_LATENCY.load(Ordering::Acquire)
 }
 
 #[cfg(test)]
