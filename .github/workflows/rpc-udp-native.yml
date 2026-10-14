@@ -1,0 +1,53 @@
+name: Native UDP RPC
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/rpc*.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/tests/rpc*test.rs'
+      - 'crates/frankenlibc-core/src/rpc/**'
+      - '.github/workflows/rpc-udp-native.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-udp-rpc-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  udp-rpc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute bounded wire envelopes and existing RPC database contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess
+          root = pathlib.Path('artifacts/rpc'); root.mkdir(parents=True, exist_ok=True)
+          run = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-core', '--lib', 'rpc::',
+              '--', '--nocapture', '--test-threads=1'], stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT, timeout=900)
+          text = run.stdout.decode(errors='replace'); (root / 'core.log').write_text(text)
+          print(text[-16000:])
+          assert run.returncode == 0 and 'test result: ok. 33 passed; 0 failed;' in text
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-udp-rpc-results
+          path: artifacts/rpc/**
+          if-no-files-found: error
