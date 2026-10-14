@@ -183,8 +183,11 @@ pub(super) fn select(
         providers: std::cell::RefCell::new(Vec::new()),
         unique: None,
     };
+    // Share the extended allocation/string runtime with dynamic native
+    // lookups, only after ordinary scope and version selection have missed.
     if let Some(address) =
         frankenlibc_core::elf::SymbolLookup::lookup_versioned(&runtime, name, version)
+            .or_else(|| super::lookup::resolver_address(name, version))
     {
         return Some(Definition {
             address,

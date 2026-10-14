@@ -20,6 +20,9 @@ use super::{
 };
 use crate::runtime_policy;
 
+#[path = "dlfcn_memory.rs"]
+mod memory;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LocalScope {
     pub(super) root: usize,
@@ -109,6 +112,11 @@ unsafe extern "C" fn native_dlvsym(
 /// Only native relocation fallback binds these bridges; a DSO-provided
 /// ordinary definition still wins the existing preemption/scope search.
 pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64> {
+    // The same allocation/string frontends serve native relocations and
+    // dynamically obtained pointers; do not mix an owned allocator with host free.
+    if let Some(address) = memory::address(name, version) {
+        return Some(address);
+    }
     // Dynamically obtained introspection functions must understand native
     // handles. Host dlinfo cannot interpret our tagged IDs as link-map pointers.
     // Its compatibility versions are independent of dlsym's version set.
@@ -351,6 +359,15 @@ unsafe fn validated_lookup(
     };
     if let Some(result) = native_search(caller, &search.before_host, symbol_name, version_name, request) {
         return result;
+    }
+    if let Some(address) = memory::address(symbol_name, version_name) {
+        // Match the existing native relocation namespace: scoped native
+        // definitions precede these runtime frontends. A dynamic lookup must
+        // not select a different allocator or bypass a GLOBAL interposition.
+        if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name, request) {
+            return result;
+        }
+        return Some(address as *mut c_void);
     }
     // The host global prefix already contains the interposed libc in L0/L1.
     // This never loads another object or imports a host module ID into TLS.
