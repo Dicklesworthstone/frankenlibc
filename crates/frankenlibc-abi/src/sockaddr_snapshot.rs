@@ -162,9 +162,22 @@ pub(super) unsafe fn getsockopt_hardened(
         if value.is_null() {
             return Err(libc::EFAULT);
         }
+        // Both outputs must remain independently observable. Publishing the
+        // length over any descriptor byte could lose the sole handle to an
+        // installed fd while reporting success. Reject before resource creation.
+        let value_start = value as usize;
+        let value_end = value_start.checked_add(size_of::<c_int>()).ok_or(libc::EFAULT)?;
+        let length_start = length as usize;
+        let length_end = length_start.checked_add(size_of::<libc::socklen_t>()).ok_or(libc::EFAULT)?;
+        if value_start < length_end && length_start < value_end {
+            return Err(libc::EINVAL);
+        }
         let mut received: c_int = -1;
-        // SAFETY: SO_PEERPIDFD writes at most one int, then installs that fd.
-        // Both output addresses are owned, live, initialized scalar storage.
+        // The syscall sees a one-int scratch buffer, not the caller's possibly
+        // larger buffer. Its advertised capacity must describe that storage.
+        output.length = size_of::<c_int>() as libc::socklen_t;
+        // SAFETY: both output addresses are owned, live, initialized scalars;
+        // the advertised value extent is exactly the owned descriptor's size.
         unsafe {
             syscall::sys_getsockopt(
                 fd,
@@ -174,7 +187,13 @@ pub(super) unsafe fn getsockopt_hardened(
                 output.as_mut_ptr(),
             )
         }?;
+        if received < 0 { return Err(libc::EIO); }
         let mut owned = ReturnedFd(Some(received));
+        // Do not transfer an incomplete descriptor-valued result. Ownership
+        // already belongs to the guard, including when the new descriptor is 0.
+        if output.length != size_of::<c_int>() as libc::socklen_t {
+            return Err(libc::EIO);
+        }
         // SAFETY: publish in Linux's value-before-length order. Any fault after
         // descriptor creation retains ownership and closes it through the guard.
         unsafe {

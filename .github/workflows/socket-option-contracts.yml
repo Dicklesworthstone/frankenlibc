@@ -74,6 +74,45 @@ jobs:
           print('RESTORED: 28 actual-ABI filter cases passed')
           PY
           git diff --exit-code
+      - name: Execute descriptor ownership contracts and compiled leak regressions
+        if: ${{ !cancelled() }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/socket-options'); root.mkdir(parents=True, exist_ok=True)
+          source = pathlib.Path('crates/frankenlibc-abi/src/sockaddr_snapshot.rs'); original = source.read_bytes()
+          command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'socket_peer_descriptor_test',
+              'peer_descriptors_are_process_isolated', '--', '--exact', '--nocapture', '--test-threads=1']
+          def execute(label, selection=None):
+              env = dict(os.environ)
+              if selection: env['FRANKENLIBC_PEER_DESCRIPTOR_SELECT'] = selection
+              run = subprocess.run(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+              text = run.stdout.decode(errors='replace'); (root / f'peer-{label}.log').write_text(text)
+              return run.returncode, text
+          code, text = execute('baseline')
+          assert code == 0 and 'PEER DESCRIPTOR ABI: 32 isolated cases passed' in text, text[-10000:]
+          print('PEER DESCRIPTOR ABI: 32 isolated cases passed')
+          try:
+              for label, old, new, case, evidence in [
+                  ('overlap', b'if value_start < length_end && length_start < value_end {',
+                   b'if false && value_start < length_end && length_start < value_end {',
+                   'overlap', 'overlapping descriptor outputs were accepted'),
+                  ('leaked-zero', b'if let Some(fd) = self.0.take() {',
+                   b'if let Some(fd) = self.0.take().filter(|_| false) {',
+                   'zero-fd-readonly-length', 'failed publication leaked descriptor zero'),
+              ]:
+                  assert original.count(old) == 1
+                  source.write_bytes(original.replace(old, new))
+                  code, text = execute(label, case)
+                  assert code != 0 and '0 passed; 1 failed;' in text and evidence in text, text[-10000:]
+                  print(f'COMPILED MUTANT CAUGHT: peer descriptor {label}')
+          finally:
+              source.write_bytes(original)
+          code, text = execute('restored')
+          assert code == 0 and 'PEER DESCRIPTOR ABI: 32 isolated cases passed' in text, text[-10000:]
+          print('RESTORED: 32 peer-descriptor ABI cases passed')
+          PY
+          git diff --exit-code
       - name: Execute existing socket and required-output contracts without suppressing failures
         if: ${{ !cancelled() }}
         run: |
