@@ -16,6 +16,11 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
+#[path = "iov_snapshot.rs"]
+mod iov_snapshot;
+#[path = "wait_snapshot.rs"]
+mod wait_snapshot;
+
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     len == 0
@@ -235,29 +240,28 @@ pub(crate) unsafe fn ppoll_cp(
         return reject_efault();
     }
 
-    // The kernel ppoll WRITES the remaining time back into the timeout struct.
-    // POSIX (and glibc) require ppoll to leave the caller's timeout unmodified,
-    // so we pass a local copy to the syscall — never the caller's pointer.
-    let mut local_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
+    // Own the timeout and (in hardened mode) the kernel-width signal mask.
+    // Prepare before entering the cancellation window; aliases still reach
+    // the same always-inlined cancellation-point body.
+    let mut input = match unsafe {
+        wait_snapshot::PreparedWait::prepare(timeout_ts, sigmask, mode.heals_enabled())
+    } {
+        Ok(input) => input,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Poll, decision.profile, 25, true);
+            return -1;
+        }
     };
-    let ts_ptr = if timeout_ts.is_null() {
-        std::ptr::null::<u8>()
-    } else {
-        local_ts = unsafe { *timeout_ts };
-        &local_ts as *const libc::timespec as *const u8
-    };
-
-    // Use SYS_ppoll with sigset size parameter.
-    let sigset_size = core::mem::size_of::<libc::c_ulong>();
+    let (ts_ptr, mask_ptr) = input.kernel_args();
+    let sigset_size = wait_snapshot::KERNEL_SIGSET_BYTES;
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             raw_syscall::sys_ppoll(
                 fds as *mut u8,
                 actual_nfds as usize,
                 ts_ptr,
-                sigmask as *const u8,
+                mask_ptr,
                 sigset_size,
             )
         })
@@ -459,27 +463,24 @@ pub(crate) unsafe fn pselect_cp(
         return reject_efault();
     }
 
-    // pselect6 expects a struct { sigset_t*, size_t } as the last parameter.
-    let sigset_size = core::mem::size_of::<libc::c_ulong>();
-    let sig_data: [usize; 2] = [sigmask as usize, sigset_size];
-    let sig_ptr = if sigmask.is_null() {
+    let mut input = match unsafe {
+        wait_snapshot::PreparedWait::prepare(timeout, sigmask, mode.heals_enabled())
+    } {
+        Ok(input) => input,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::Poll, decision.profile, 30, true);
+            return -1;
+        }
+    };
+    let (ts_ptr, mask_ptr) = input.kernel_args();
+    // pselect6 expects { kernel_sigset_t*, size_t }. Build this only after
+    // input stops moving, so it points to the same imported mask we own.
+    let sig_data: [usize; 2] = [mask_ptr as usize, wait_snapshot::KERNEL_SIGSET_BYTES];
+    let sig_ptr = if mask_ptr.is_null() {
         std::ptr::null::<[usize; 2]>()
     } else {
         &sig_data as *const [usize; 2]
-    };
-
-    // The kernel pselect6 WRITES the remaining time back into the timeout
-    // struct. POSIX (and glibc) require pselect to leave the caller's timeout
-    // unmodified, so we pass a local copy — never the caller's pointer.
-    let mut local_ts = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    let ts_ptr = if timeout.is_null() {
-        std::ptr::null::<u8>()
-    } else {
-        local_ts = unsafe { *timeout };
-        &local_ts as *const libc::timespec as *const u8
     };
 
     let (rc, adverse) = match unsafe {

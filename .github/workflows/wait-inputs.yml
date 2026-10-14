@@ -1,0 +1,114 @@
+name: Owned wait inputs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/poll_abi.rs'
+      - 'crates/frankenlibc-abi/src/wait_snapshot.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/wait_inputs_test.rs'
+      - 'crates/frankenlibc-abi/tests/poll_abi_test.rs'
+      - '.github/workflows/wait-inputs.yml'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: owned-wait-inputs-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  wait-inputs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+      FRANKENLIBC_RUNTIME_MATH: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: owned-wait-inputs
+          cache-on-failure: true
+      - name: Run actual wait ABI and existing event-loop regressions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/wait-inputs'); root.mkdir(parents=True, exist_ok=True)
+          failures = []
+          for mode in ['strict', 'hardened']:
+              for target in ['wait_inputs_test', 'poll_abi_test']:
+                  result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', target,
+                      '--', '--nocapture', '--test-threads=1'], env=dict(os.environ, FRANKENLIBC_MODE=mode),
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+                  text = result.stdout.decode(errors='replace')
+                  (root / f'{target}-{mode}.log').write_text(text)
+                  print(f'{mode}/{target}: exit={result.returncode}')
+                  print('\n'.join(line for line in text.splitlines() if 'test result:' in line or 'WAIT INPUT ABI:' in line))
+                  if result.returncode:
+                      failures.append(f'{mode}/{target}'); print(text[-12000:])
+                  if target == 'wait_inputs_test' and 'WAIT INPUT ABI: 186 isolated cases passed' not in text:
+                      failures.append(f'{mode}/missing execution evidence')
+          assert not failures, failures
+          PY
+      - name: Require compiled unsafe-read and borrowed-mask mutants to fail
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, pathlib, subprocess
+          root = pathlib.Path('artifacts/wait-inputs')
+          source = pathlib.Path('crates/frankenlibc-abi/src/wait_snapshot.rs'); original = source.read_bytes()
+          mutations = [
+              ('unsafe-read', b'if hardened {', b'if false && hardened {',
+               'wait_inputs_are_process_isolated', 'bad-timeout', 'wait input child failed hardened/ppoll/bad-timeout'),
+              ('borrowed-mask', b'prepared.mask = Mask::Owned(bits);', b'prepared.mask = Mask::Original(sigmask);',
+               'owned_controls_survive_caller_changes', None, 'signal snapshot lost ownership'),
+          ]
+          try:
+              for label, old, new, test, case, evidence in mutations:
+                  assert original.count(old) == 1
+                  source.write_bytes(original.replace(old, new))
+                  env = dict(os.environ)
+                  if case: env['FRANKENLIBC_WAIT_SELECT'] = case
+                  result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'wait_inputs_test',
+                      test, '--', '--exact', '--nocapture', '--test-threads=1'], env=env,
+                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+                  text = result.stdout.decode(errors='replace'); (root / f'{label}.log').write_text(text)
+                  assert result.returncode != 0 and '0 passed; 1 failed;' in text and evidence in text, text[-12000:]
+                  print(f'COMPILED MUTANT CAUGHT: {label}')
+          finally:
+              source.write_bytes(original)
+          result = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'wait_inputs_test',
+              '--', '--nocapture', '--test-threads=1'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+          text = result.stdout.decode(errors='replace'); (root / 'restored.log').write_text(text)
+          assert result.returncode == 0 and 'WAIT INPUT ABI: 186 isolated cases passed' in text, text[-12000:]
+          print('RESTORED: all wait-input regressions passed')
+          PY
+          git diff --exit-code
+      - name: Preserve exact tested source and compiler provenance
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p artifacts/wait-inputs
+          git rev-parse HEAD > artifacts/wait-inputs/revision.txt
+          rustc --version --verbose > artifacts/wait-inputs/rustc.txt
+          git archive --format=tar.gz HEAD > artifacts/wait-inputs/tested-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-wait-input-results
+          path: artifacts/wait-inputs/**
+          if-no-files-found: error
+          retention-days: 14
