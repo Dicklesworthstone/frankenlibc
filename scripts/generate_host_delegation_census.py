@@ -1144,11 +1144,27 @@ def parse_generated_macro_functions(path: Path, text: str) -> list[FunctionInfo]
 
         if path.name == "rpc_abi.rs" and macro_name in rpc_macros:
             line_no = text.count("\n", 0, body_start) + 1
-            name_match = require_match(
-                r"\s*([A-Za-z_]\w*)\s*\(.*", body, macro_name, line_no
-            )
-            calls = "xp32(); xg32();" if macro_name != "rpc_stub" else ""
-            add_function(name_match.group(1), line_no, calls, exported=True)
+            if macro_name == "rpc_stub":
+                # RPC stubs use a function-style signature. Check the whole
+                # invocation so malformed reviewed declarations fail closed.
+                declaration = require_match(
+                    r"\s*([A-Za-z_]\w*)\s*\(.*\)\s*->\s*"
+                    r"(?:c_int|c_ulong|u16|\(\)|\*\s*mut\s+c_void|"
+                    r"\*\s*mut\s+c_char)(?:\s*=\s*.+)?\s*",
+                    body, macro_name, line_no,
+                )
+                calls = ""
+            else:
+                # XDR primitive macros take (symbol, Rust type), NOT an
+                # RPC-style function signature. Both arguments must be
+                # present, and no trailing tokens may be silently ignored.
+                declaration = require_match(
+                    r"\s*([A-Za-z_]\w*)\s*,\s*"
+                    r"([A-Za-z_][A-Za-z0-9_:]*)\s*,?\s*",
+                    body, macro_name, line_no,
+                )
+                calls = "xp32(); xg32();"
+            add_function(declaration.group(1), line_no, calls, exported=True)
             continue
 
         if path.name == "unistd_abi.rs" and macro_name in {
@@ -2948,6 +2964,43 @@ pub extern "C" fn reaches_reexported_libc() -> i32 { native::forwarded_helper() 
         ),
         "full dependency graph did not fail closed on an unresolved local path",
     )
+    # Macro expansion models must match the actual rpc_abi.rs invocation
+    # syntax. A prior census stopped at xdr_i32_prim!(xdr_int, c_int).
+    rpc_macro_path = root / "crates/frankenlibc-abi/src/rpc_abi.rs"
+    rpc_macro_source = r"""
+rpc_stub!(clnt_call(x: *mut c_void) -> c_int = -1);
+rpc_stub!(clnt_destroy(x: *mut c_void) -> ());
+xdr_i32_prim!(xdr_int, c_int);
+xdr_narrow_prim!(xdr_short, i16);
+xdr_i64_prim!(xdr_hyper, i64);
+"""
+    generated_rpc = parse_generated_macro_functions(rpc_macro_path, rpc_macro_source)
+    require(
+        {function.name for function in generated_rpc}
+        == {"clnt_call", "clnt_destroy", "xdr_int", "xdr_short", "xdr_hyper"}
+        and all(function.is_exported_abi for function in generated_rpc),
+        "RPC/XDR macro-generated exports were not modeled",
+    )
+    require(
+        all(
+            "xp32();" in function.signature and "xg32();" in function.signature
+            for function in generated_rpc
+            if function.name.startswith("xdr_")
+        ),
+        "XDR macro-generated dependency edges were dropped",
+    )
+    for malformed_macro in (
+        "xdr_i32_prim!(xdr_int);",
+        "xdr_i64_prim!(xdr_hyper, i64, unexpected);",
+        "rpc_stub!(clnt_call);",
+    ):
+        try:
+            parse_generated_macro_functions(rpc_macro_path, malformed_macro)
+        except ValueError:
+            pass
+        else:
+            require(False, f"malformed macro accepted: {malformed_macro}")
+    require(True, "malformed reviewed RPC/XDR macros refuse to parse")
     structural_source = r'''
 #[unsafe(no_mangle)]
 pub extern "C" fn brace_noise() -> i32 {
