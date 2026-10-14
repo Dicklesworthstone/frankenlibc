@@ -5366,7 +5366,7 @@ fn validate_ptr_in_slot(
         return Some(PointerAbstraction::unknown(addr));
     }
     let pipeline = crate::membrane_state::ready_pipeline()?;
-    pipeline.validate(addr).abstraction()
+    pipeline.validate(addr).access_abstraction()
 }
 
 /// Cheaply check if an address is likely owned by the membrane.
@@ -5468,7 +5468,9 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
                     // design promises; before, these fell through to the
                     // fallback table, which still described the host block,
                     // and the access went ahead.
-                    SafetyState::Quarantined => Some(0),
+                    // An explicit integrity/bounds/security rejection must
+                    // not fall through to host-allocation fallback bounds.
+                    SafetyState::Quarantined | SafetyState::Invalid => Some(0),
                     _ => None,
                 })
                 .or_else(|| fallback_remaining(addr))
