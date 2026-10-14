@@ -1,0 +1,95 @@
+name: Vectored I/O safety
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/io_abi.rs'
+      - 'crates/frankenlibc-abi/src/iov_snapshot*.rs'
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/tests/iov_snapshot_test.rs'
+      - 'crates/frankenlibc-abi/tests/vectored_io_bounds_test.rs'
+      - '.github/workflows/vectored-io-safety.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vectors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: membrane-access
+          cache-on-failure: true
+      - name: Execute production descriptor importer
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/vectors
+          git rev-parse HEAD | tee artifacts/vectors/source-commit.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test iov_snapshot_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/vectors/import-$mode.log"
+            grep -Eq 'test result: ok\. 16 passed; 0 failed; 0 ignored;' "artifacts/vectors/import-$mode.log"
+          done
+      - name: Execute isolated real ABI cases
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/vectors
+          cargo test -p frankenlibc-abi --test vectored_io_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/abi-matrix.log
+          grep -Fq '84 isolated vectored-I/O cases passed' artifacts/vectors/abi-matrix.log
+          grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/vectors/abi-matrix.log
+      - name: Preserve existing I/O behavior
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/vectors
+          status=0
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test io_abi_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/vectors/existing-$mode.log" || status=1
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/vectors/existing-$mode.log" || status=1
+          done
+          exit "$status"
+      - name: Reject unchecked-original-vector mutation
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/vectors
+          python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          source = Path('crates/frankenlibc-abi/src/iov_snapshot.rs')
+          original = source.read_bytes()
+          needle = b'if !hardened || count <= 0 ||'
+          assert original.count(needle) == 1
+          try:
+              source.write_bytes(original.replace(needle, b'if true || !hardened || count <= 0 ||', 1))
+              command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'vectored_io_bounds_test',
+                         'vectored_io_bounds_matrix', '--', '--exact', '--nocapture', '--test-threads=1']
+              result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                  timeout=900, env=dict(os.environ, FRANKENLIBC_MODE='hardened',
+                  FRANKENLIBC_RUNTIME_MATH='off', FRANKENLIBC_VECTORED_BOUNDS_CHILD='writev:oversize'))
+              Path('artifacts/vectors/mutation.log').write_bytes(result.stdout)
+              print(result.stdout.decode(errors='replace'))
+              assert result.returncode != 0, 'unchecked vector mutation passed'
+              assert b'0 passed; 1 failed;' in result.stdout, 'mutant must compile and execute'
+              assert b'rejected input reached target I/O' in result.stdout
+          finally:
+              source.write_bytes(original)
+          PY
+          cargo test -p frankenlibc-abi --test vectored_io_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/restored.log
+          grep -Fq '84 isolated vectored-I/O cases passed' artifacts/vectors/restored.log
+          git diff --exit-code
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vectored-io-results
+          path: artifacts/vectors/**
+          if-no-files-found: error

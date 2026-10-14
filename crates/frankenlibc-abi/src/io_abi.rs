@@ -13,6 +13,9 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
+#[path = "iov_snapshot.rs"]
+mod iov_snapshot;
+
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
     known_remaining(ptr as usize).is_none_or(|remaining| len <= remaining)
@@ -453,7 +456,7 @@ pub unsafe extern "C-unwind" fn readv(
 /// Body of [`readv`] and its aliases (see [`fcntl_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn readv_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
-    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
+    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
@@ -470,11 +473,29 @@ pub(crate) unsafe fn readv_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int)
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_readv(fd, iov as *const u8, iovcnt)
@@ -505,7 +526,7 @@ pub unsafe extern "C-unwind" fn writev(
 /// Body of [`writev`] and its aliases (see [`fcntl_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn writev_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int) -> libc::ssize_t {
-    let (_, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
+    let (mode, decision) = runtime_policy::decide(ApiFamily::IoFd, fd as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
@@ -522,11 +543,29 @@ pub(crate) unsafe fn writev_cp(fd: c_int, iov: *const libc::iovec, iovcnt: c_int
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_writev(fd, iov as *const u8, iovcnt)
@@ -708,7 +747,7 @@ pub(crate) unsafe fn preadv_cp(
     iovcnt: c_int,
     offset: i64,
 ) -> libc::ssize_t {
-    let (_, decision) = runtime_policy::decide(
+    let (mode, decision) = runtime_policy::decide(
         ApiFamily::IoFd,
         fd as usize,
         iovcnt as usize,
@@ -733,11 +772,29 @@ pub(crate) unsafe fn preadv_cp(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
 
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
@@ -776,7 +833,7 @@ pub(crate) unsafe fn pwritev_cp(
     iovcnt: c_int,
     offset: i64,
 ) -> libc::ssize_t {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -795,11 +852,29 @@ pub(crate) unsafe fn pwritev_cp(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
 
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
@@ -839,7 +914,7 @@ pub(crate) unsafe fn preadv2_cp(
     offset: i64,
     flags: c_int,
 ) -> libc::ssize_t {
-    let (_, decision) = runtime_policy::decide(
+    let (mode, decision) = runtime_policy::decide(
         ApiFamily::IoFd,
         fd as usize,
         iovcnt as usize,
@@ -864,11 +939,29 @@ pub(crate) unsafe fn preadv2_cp(
     // over batches that can be empty, and a spurious -1 turns a no-op into an
     // error. Only the bounds check fl owns stays, and only when there is
     // something to bound; the rest is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
 
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
@@ -908,7 +1001,7 @@ pub(crate) unsafe fn pwritev2_cp(
     offset: i64,
     flags: c_int,
 ) -> libc::ssize_t {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, iovcnt as usize, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
@@ -931,11 +1024,29 @@ pub(crate) unsafe fn pwritev2_cp(
     // So only the bounds check fl actually owns stays here, and it runs solely
     // when there is something to bound. Everything else — a bad fd, a zero
     // count, a negative count, a NULL vector — is the kernel's to answer.
-    if iovcnt > 0 && !iov.is_null() && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) } {
+    // Strict mode retains the existing tracked-array guard and kernel path.
+    // Hardened mode imports descriptors even when the array itself is on the
+    // stack, then submits the SAME owned import that passed buffer validation.
+    if !mode.heals_enabled()
+        && iovcnt > 0
+        && !iov.is_null()
+        && !unsafe { tracked_iovecs_fit(iov, iovcnt as usize) }
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    let prepared = match iov_snapshot::PreparedIovecs::prepare(iov, iovcnt, mode.heals_enabled()) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    // Keep prepared alive across the existing cancellation point. Its raw
+    // mapping/pipe cleanup neither takes allocator locks nor changes ABI errno.
+    let iov = prepared.as_ptr();
 
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
