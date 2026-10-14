@@ -1,0 +1,67 @@
+name: Segment mapping
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/malloc_abi.rs'
+      - 'crates/frankenlibc-abi/src/segment_mapping.rs'
+      - 'scripts/check_segment_mapping.py'
+      - 'tests/segment_mapping_preload.c'
+      - '.github/workflows/segment-mapping.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  mapping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_TERM_COLOR: never
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: segment-mapping
+          cache-on-failure: true
+      - name: Prepare immutable allocator candidate
+        run: python3 scripts/check_segment_mapping.py prepare
+      - name: Execute mapping and allocator regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD | tee artifacts/segment-mapping/source-commit.txt
+          rustc --version --verbose | tee artifacts/segment-mapping/rustc.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --lib malloc_abi::segment_mapping::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/segment-mapping/mapping-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/segment-mapping/mapping-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test malloc_abi_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/segment-mapping/allocator-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/segment-mapping/allocator-$mode.log"
+          done
+      - name: Reject eager writable reservation mutation
+        run: python3 scripts/check_segment_mapping.py mutation
+      - name: Exercise deployed allocations, cross-thread free and fork
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/segment-mapping/release-build.log
+          cc -O2 -Wall -Wextra -Werror -fno-builtin -pthread tests/segment_mapping_preload.c -o artifacts/segment-mapping/probe
+          timeout 120 artifacts/segment-mapping/probe | tee artifacts/segment-mapping/glibc.json
+          for mode in strict hardened; do
+            timeout 120 env LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" FRANKENLIBC_MODE="$mode" artifacts/segment-mapping/probe | tee "artifacts/segment-mapping/preload-$mode.json"
+          done
+          sha256sum crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/src/segment_mapping.rs target/release/libfrankenlibc_abi.so | tee artifacts/segment-mapping/sha256.txt
+      - name: Export tested Git objects without moving any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/check_segment_mapping.py export
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: segment-mapping-results
+          path: artifacts/segment-mapping/**
+          if-no-files-found: error
