@@ -51,6 +51,9 @@ mod binding;
 #[path = "dlfcn_lookup.rs"]
 mod lookup;
 
+#[path = "dlfcn_open.rs"]
+mod open;
+
 #[path = "dlfcn_unique.rs"]
 mod unique;
 
@@ -126,6 +129,7 @@ struct NativeDso {
     _file: File,
     // dladdr strings must outlive a lookup and retain the requested pathname.
     name: CString,
+    open_metadata: open::Metadata,
     references: usize,
     // In-flight dependency staging retains mappings without inventing public
     // dlopen references that a concurrent dlclose could consume.
@@ -207,7 +211,7 @@ struct PreparedDso {
     needed_by_name: Vec<(String, Dependency)>,
     resident_pins: Vec<ResidentPin>,
     path: PathBuf,
-    search: SearchPaths,
+    search: Arc<SearchPaths>,
     inherited_rpaths: Vec<PathBuf>,
     lifecycle: lifecycle::Layout,
 }
@@ -372,7 +376,7 @@ fn prepare_file(
     // the requested pathname absolute before opening, so a later chdir cannot
     // rebase its relative directory while parsing or staging dependencies.
     let path = requested_path.to_owned();
-    let search = SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?;
+    let search = Arc::new(SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?);
     Some(PreparedDso {
         file,
         device,
@@ -621,6 +625,7 @@ fn map_object(
         inode: prepared.inode,
         _file: file,
         name: CString::new(prepared.path.as_os_str().as_bytes()).ok()?,
+        open_metadata: open::Metadata::new(prepared)?,
         references: 0,
         load_pins: 0,
         nodelete: prepared.flags & DF_1_NODELETE != 0,
@@ -740,7 +745,7 @@ impl SymbolLookup for Resolver<'_> {
         if version.is_some_and(|name| !super::version_supported(name.as_bytes())) {
             return None;
         }
-        if matches!(name, "dlsym" | "dlvsym") {
+        if matches!(name, "dlopen" | "dlsym" | "dlvsym") {
             return lookup::resolver_address(name, version);
         }
         let address = super::resolve_exported_symbol(name.as_bytes());
@@ -1015,70 +1020,7 @@ pub(super) fn reopen_native_soname(name: &[u8], flags: c_int) -> NativeReopen {
 }
 
 pub(super) fn load_native_dso(name: &[u8], flags: c_int) -> Option<*mut c_void> {
-    if ifunc::active() || process_exit::unloading() {
-        return None;
-    }
-    if name.is_empty() || name.contains(&0) {
-        return None;
-    }
-    // A loaded SONAME names its original image, even if its backing file has
-    // since been renamed, unlinked, or replaced. Do not reopen the filesystem
-    // before this lookup, and do not let RTLD_NOLOAD create a new object.
-    if !name.contains(&b'/') {
-        match reopen_native_soname(name, flags) {
-            NativeReopen::Opened(handle) => return Some(handle),
-            NativeReopen::Rejected => return None,
-            NativeReopen::Missing => {}
-        }
-    }
-    let context = SearchContext::process();
-    let executable = std::fs::read_link("/proc/self/exe").ok();
-    let origin = executable.as_deref().and_then(Path::parent);
-    // Do not fabricate an ORIGIN when /proc cannot identify the executable.
-    if name.contains(&b'$') && origin.is_none() {
-        return None;
-    }
-    let candidates =
-        SearchPaths::default().candidates(name, origin.unwrap_or(Path::new("/")), &[], &context)?;
-    // Explicit pathnames stay exact. Bare names use the immutable initial
-    // environment, native cache and default directories, not an implicit cwd.
-    // The context also suppresses environment/ORIGIN use in secure execution.
-    let (path, file, device, inode) = candidates.into_iter().find_map(|candidate| {
-        let path = absolute_path(&candidate)?;
-        open_file(&path).map(|(file, device, inode)| (path, file, device, inode))
-    })?;
-    {
-        let _operation = OPERATIONS.lock();
-        if process_exit::unloading() {
-            return None;
-        }
-        let mut dsos = registry().lock().ok()?;
-        if let Some(index) = dsos
-            .iter()
-            .position(|dso| dso.device == device && dso.inode == inode)
-        {
-            let handle = reopen(&mut dsos, index, flags)?;
-            let id = dsos[index].id;
-            drop(dsos);
-            initialize(id)?;
-            return Some(handle);
-        }
-    }
-    if flags & dlfcn_core::RTLD_NOLOAD != 0 {
-        return None;
-    }
-    let root = prepare_file(file, device, inode, &path, &context)?;
-    let group = prepare_group(root, &context)?;
-    // Slow file reads and dependency staging hold neither loader lock. Recheck
-    // resident identities atomically once the complete group is prepared.
-    let _operation = OPERATIONS.lock();
-    if process_exit::unloading() {
-        return None;
-    }
-    process_exit::install()?;
-    let result = publish_group(&group, flags)?;
-    initialize(native_dso_id_from_handle(result)?)?;
-    Some(result)
+    open::load(name, flags, None, &mut None)
 }
 
 /// Libraries owned by the host dynamic linker in an interpose (L0/L1)
@@ -1125,11 +1067,15 @@ pub(super) fn host_may_load_declined_object(name: &[u8]) -> bool {
     let Ok(object) = ElfLoader::new(0).parse(&bytes) else {
         return false;
     };
+    host_may_load_parsed_object(&object)
+}
+
+fn host_may_load_parsed_object(object: &LoadedObject) -> bool {
     object
         .needed_libraries
         .iter()
         .any(|needed| HOST_RUNTIME_SONAMES.contains(&needed.as_str()))
-        || imports_resolve_in_host_scope(&object)
+        || imports_resolve_in_host_scope(object)
 }
 
 /// True when `object` imports at least one non-weak symbol and the host's

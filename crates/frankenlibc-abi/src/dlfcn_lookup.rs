@@ -113,6 +113,7 @@ pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64>
         return None;
     }
     match name {
+        "dlopen" => Some(super::open::resolver_address()),
         "dlsym" => Some(native_dlsym as *const () as usize as u64),
         "dlvsym" => Some(native_dlvsym as *const () as usize as u64),
         _ => None,
@@ -136,7 +137,7 @@ unsafe extern "C" fn dlvsym_entry(
     unsafe { dispatch(handle, name, Some(version), caller) }
 }
 
-fn caller_id(dsos: &[NativeDso], return_pc: usize) -> Option<usize> {
+pub(super) fn caller_id(dsos: &[NativeDso], return_pc: usize) -> Option<usize> {
     // The return PC can be exactly at the end of an executable segment. Its
     // preceding call instruction still belongs to that segment.
     let call_pc = return_pc.checked_sub(1)?;
