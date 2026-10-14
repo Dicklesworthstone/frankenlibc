@@ -1651,6 +1651,24 @@ static NATIVE_STDIO_SLOT_ADDR: [AtomicUsize; 3] = [
     AtomicUsize::new(0),
 ];
 
+/// Base address of `&NATIVE_STREAM_REGISTRY.slots[0].file`, published once when
+/// the static registry is initialized. Used by `is_native_slot_ptr_lockfree`
+/// so single-threaded fast paths can verify that a `FILE*` points to one of our
+/// `NativeFile` slots with a single range-and-stride check instead of locking
+/// `NATIVE_STREAM_REGISTRY` or probing `NATIVE_FILE_BLOOM`.
+static NATIVE_SLOTS_FILE_BASE: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
+const NATIVE_SLOT_STRIDE: usize = std::mem::size_of::<StreamSlot>();
+const NATIVE_FILE_MAX_OFFSET: usize = (STREAM_REGISTRY_CAPACITY - 1) * NATIVE_SLOT_STRIDE;
+
+/// Lock-free check: returns `true` iff `stream` is the exact address of one of
+/// the `STREAM_REGISTRY_CAPACITY` `NativeFile` slots in `NATIVE_STREAM_REGISTRY`.
+#[inline]
+pub(crate) fn is_native_slot_ptr_lockfree(stream: *const c_void) -> bool {
+    let base = NATIVE_SLOTS_FILE_BASE.load(Ordering::Relaxed);
+    let offset = (stream as usize).wrapping_sub(base);
+    offset <= NATIVE_FILE_MAX_OFFSET && offset.is_multiple_of(NATIVE_SLOT_STRIDE)
+}
+
 /// Address of the std handle for `fd` (0..=2) without taking the registry
 /// lock, or 0 if the slot addresses are not published yet. Safe to call while
 /// the native registry lock is held.
@@ -1687,6 +1705,7 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
         NATIVE_FILE_BLOOM.insert(stdin_ptr as usize);
         NATIVE_FILE_BLOOM.insert(stdout_ptr as usize);
         NATIVE_FILE_BLOOM.insert(stderr_ptr as usize);
+        NATIVE_SLOTS_FILE_BASE.store(stdin_ptr as usize, Ordering::Relaxed);
 
         // Publish the reserved slot addresses for the lock-free `native_stdio_fd_for_ptr`
         // path. `get_mut` (not `&mut slots[i].file`) so an unoccupied slot publishes 0 and

@@ -1573,11 +1573,12 @@ fn resolve_flags_word(flags_word: usize) -> usize {
 /// cache is populated only from the locked slow path, so their first use is
 /// always mirrored.
 #[inline]
-fn mirror_raw_cached(stream: *mut c_void, p: *mut StdioStream) {
-    let handle = stream as usize;
-    if handle != 0 && !(STDIN_SENTINEL..0x2000_0000).contains(&handle) {
-        // SAFETY: `p` is the cache hit for `stream` (ST-gated, gen-valid).
-        mirror_stream_flags(handle, unsafe { &*p });
+fn mirror_raw_cached(_stream: *mut c_void, p: *mut StdioStream) {
+    // SAFETY: `p` is the cache hit for `stream` (ST-gated, gen-valid).
+    let s = unsafe { &*p };
+    let handle = read_window_handle(s);
+    if handle != 0 {
+        mirror_stream_flags(handle, s);
     }
 }
 
@@ -2186,8 +2187,8 @@ thread_local! {
     /// a process whose threads come from elsewhere (fl's own test binaries, whose
     /// Rust threads use glibc's pthread_create; raw clone) a global cache would
     /// be shared and torn across threads, where this one stays per thread.
-    static WRITE_CACHE: std::cell::Cell<[(usize, u64, *mut StdioStream); 2]> =
-        const { std::cell::Cell::new([(usize::MAX, 0, std::ptr::null_mut()); 2]) };
+    static WRITE_CACHE: std::cell::Cell<[(usize, usize, u64, *mut StdioStream); 2]> =
+        const { std::cell::Cell::new([(usize::MAX, usize::MAX, 0, std::ptr::null_mut()); 2]) };
 }
 
 /// Returns the cached `*mut StdioStream` for `id` iff single-threaded and the cache is
@@ -2200,7 +2201,7 @@ fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     WRITE_CACHE.with(|c| {
-        for (cid, cgen, p) in c.get() {
+        for (_, cid, cgen, p) in c.get() {
             if cid == id && !p.is_null() && cgen == cur_gen {
                 // SAFETY: ST-gated, gen-valid cache hit (see the callers).
                 absorb_and_clear_read_window(unsafe { &mut *p });
@@ -2212,16 +2213,9 @@ fn write_cache_lookup(id: usize) -> Option<*mut StdioStream> {
 }
 
 /// Pointer-keyed sibling of `write_cache_lookup`: resolve a raw `FILE*` to its cached
-/// `StdioStream*` WITHOUT calling `canonical_stream_id`. The cached id is exactly
-/// `canonical_stream_id(stream)`, which for both fl's own std streams (sentinel address)
-/// and fl-owned non-std streams equals `stream as usize` (a non-std id IS the pointer).
-/// So `cid == stream as usize` is a valid hit — and it skips `standard_stream_id`'s
-/// `native_stdio_fd_for_ptr` lock, which otherwise fires on EVERY fputs/fputc/fwrite to a
-/// non-std stream (fopen'd files/pipes) purely to rule out the 3 native glibc std FILE*s
-/// (~20ns uncontended lock, the dominant cost of the single-threaded write fast path vs
-/// glibc's lock-free append). A miss (rare: a genuine host-glibc std FILE* passed in, or
-/// first write) falls through to the `canonical_stream_id` path unchanged. Same ST +
-/// gen-validity soundness gates as `write_cache_lookup`.
+/// `StdioStream*` WITHOUT calling `canonical_stream_id`. Matches either the raw `FILE*`
+/// address (`cstream`, which for `stdin`/`stdout`/`stderr` is the `NativeFile` slot address
+/// while `cid` is the `0x1000_000x` sentinel) or the canonical id (`cid`).
 #[inline]
 fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream> {
     if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Acquire) == 0 {
@@ -2230,8 +2224,8 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
     WRITE_CACHE.with(|c| {
-        for (cid, cgen, p) in c.get() {
-            if cid == key && !p.is_null() && cgen == cur_gen {
+        for (cstream, cid, cgen, p) in c.get() {
+            if (cstream == key || cid == key) && !p.is_null() && cgen == cur_gen {
                 // SAFETY: ST-gated, gen-valid cache hit (see the callers).
                 absorb_and_clear_read_window(unsafe { &mut *p });
                 return Some(p);
@@ -2241,10 +2235,10 @@ fn write_cache_lookup_by_stream(stream: *mut c_void) -> Option<*mut StdioStream>
     })
 }
 
-/// Records the resolved `*mut StdioStream` for `id` (called on the slow path under the
-/// registry lock, capturing the gen so a later insert/remove invalidates it).
+/// Records the resolved `*mut StdioStream` for `(stream, id)` (called on the slow path
+/// under the registry lock, capturing the gen so a later insert/remove invalidates it).
 #[inline]
-fn write_cache_store(id: usize, ptr: *mut StdioStream) {
+fn write_cache_store(stream: *mut c_void, id: usize, ptr: *mut StdioStream) {
     if wide_io_active() || unsafe { (*ptr).effective_orientation() } >= 0 {
         return;
     }
@@ -2254,8 +2248,48 @@ fn write_cache_store(id: usize, ptr: *mut StdioStream) {
     // already resident — no duplicate slot. 2-way holds two hot streams (interleave-safe).
     WRITE_CACHE.with(|c| {
         let old = c.get();
-        c.set([(id, generation, ptr), old[0]]);
+        c.set([(stream as usize, id, generation, ptr), old[0]]);
     });
+}
+
+/// Lock-free single-threaded fast path for `fputc`/`putc`/`putchar`/`_IO_putc`:
+/// appends directly into the stream's published `_IO_write_ptr .. _IO_write_end`
+/// window (mirroring glibc's inline `_IO_putc_unlocked`).
+///
+/// Soundness:
+/// - `__libc_single_threaded != 0` guarantees no concurrent thread can race on the
+///   stream or its published window.
+/// - `is_native_slot_ptr_lockfree(stream)` verifies with a single range-and-stride
+///   check that `stream` is the exact address of one of our static `NativeFile`
+///   slots in `NATIVE_STREAM_REGISTRY`.
+/// - A non-empty write window (`_IO_write_ptr < _IO_write_end`) is published only
+///   for a live, byte-oriented, `BufMode::Full` writable fd stream whose storage
+///   is already allocated; line-buffered streams publish `_IO_write_end == _IO_write_ptr`,
+///   wide-oriented / memory-backed / cookie / closed streams publish `(0, 0)`, and
+///   every other stream operation absorbs (`commit_write_window`) or clears the
+///   window before mutating or flushing the buffer.
+#[inline]
+fn try_fputc_window(stream: *mut c_void, byte: u8) -> Option<c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || !io_internal_abi::is_native_slot_ptr_lockfree(stream)
+    {
+        return None;
+    }
+    let handle = stream as usize;
+    // SAFETY: `handle` is a valid `NativeFile` slot in `NATIVE_STREAM_REGISTRY`, and
+    // single-threaded execution guarantees exclusive access to its published window.
+    unsafe {
+        let write_ptr_slot = (handle + io_internal_abi::IO_WRITE_PTR_OFFSET) as *mut usize;
+        let write_end_slot = (handle + io_internal_abi::IO_WRITE_END_OFFSET) as *const usize;
+        let ptr = *write_ptr_slot;
+        let end = *write_end_slot;
+        if ptr < end {
+            *(ptr as *mut u8) = byte;
+            *write_ptr_slot = ptr + 1;
+            return Some(byte as c_int);
+        }
+    }
+    None
 }
 
 /// Single-threaded fast path for single-byte writes: if `id` resolves through the
@@ -2280,12 +2314,14 @@ fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
 
 /// Pointer-keyed sibling of `try_fputc_fast`: resolves via `write_cache_lookup_by_stream`
 /// so the fast path skips `canonical_stream_id`'s `native_stdio_fd_for_ptr` lock (measured
-/// ~6ns/call saved, ~21% of fd fputc). Same soundness gates.
+/// ~6ns/call saved, ~21% of fd fputc). Republishes the write window so subsequent `fputc`
+/// calls hit `try_fputc_window` directly without touching TLS.
 #[inline]
 fn try_fputc_fast_by_stream(stream: *mut c_void, byte: u8) -> Option<c_int> {
     let p = write_cache_lookup_by_stream(stream)?;
     // SAFETY: as `try_fputc_fast`.
     if unsafe { (*p).fast_putc(byte) } {
+        publish_read_window(unsafe { &*p });
         Some(byte as c_int)
     } else {
         None
@@ -2315,6 +2351,33 @@ fn try_fwrite_fast_by_stream(stream: *mut c_void, bytes: &[u8]) -> bool {
     }
 }
 
+/// Lock-free single-threaded fast path for `fgetc`/`getc`/`getchar`/`_IO_getc`:
+/// consumes directly from the stream's published `_IO_read_ptr .. _IO_read_end`
+/// window (mirroring glibc's inline `_IO_getc_unlocked`).
+#[inline]
+fn try_fgetc_window(stream: *mut c_void) -> Option<c_int> {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        || !io_internal_abi::is_native_slot_ptr_lockfree(stream)
+    {
+        return None;
+    }
+    let handle = stream as usize;
+    // SAFETY: `handle` is a valid `NativeFile` slot in `NATIVE_STREAM_REGISTRY`, and
+    // single-threaded execution guarantees exclusive access to its published window.
+    unsafe {
+        let read_ptr_slot = (handle + io_internal_abi::IO_READ_PTR_OFFSET) as *mut usize;
+        let read_end_slot = (handle + io_internal_abi::IO_READ_END_OFFSET) as *const usize;
+        let ptr = *read_ptr_slot;
+        let end = *read_end_slot;
+        if ptr < end {
+            let b = *(ptr as *const u8);
+            *read_ptr_slot = ptr + 1;
+            return Some(b as c_int);
+        }
+    }
+    None
+}
+
 /// Read sibling of `try_fputc_fast` for `fgetc`/`getc`: if `id` resolves through the
 /// gen-valid single-threaded cache to a clean readable fd stream with a byte already
 /// buffered, return it inline (skipping membrane + lock + lookup). `None` ⇒ full path
@@ -2328,12 +2391,18 @@ fn try_fgetc_fast(id: usize) -> Option<c_int> {
 }
 
 /// Pointer-keyed sibling of `try_fgetc_fast`: skips `canonical_stream_id`'s native lock on a
-/// hit (the read analog of the write fast-path win). Same soundness gates.
+/// hit (the read analog of the write fast-path win). Republishes the read window so
+/// subsequent `fgetc` or `getc_unlocked` calls hit `try_fgetc_window` directly.
 #[inline]
 fn try_fgetc_fast_by_stream(stream: *mut c_void) -> Option<c_int> {
     let p = write_cache_lookup_by_stream(stream)?;
     // SAFETY: as `try_fgetc_fast`.
-    unsafe { (*p).fast_getc() }.map(|b| b as c_int)
+    if let Some(b) = unsafe { (*p).fast_getc() } {
+        publish_read_window(unsafe { &*p });
+        Some(b as c_int)
+    } else {
+        None
+    }
 }
 
 /// Bulk read sibling of `try_fgetc_fast` for `fread`: fills `dst` inline iff all of it is
@@ -3380,7 +3449,7 @@ unsafe fn write_bytes_without_runtime_policy(
     // Cache this non-cookie, non-mem fd stream so subsequent single-threaded single-byte
     // writes hit the inline fast path (try_fputc_fast). This is the COMMON deployed path
     // (heals disabled), so the cache must be populated here, not only on the membrane path.
-    write_cache_store(id, stream_obj as *mut StdioStream);
+    write_cache_store(_stream, id, stream_obj as *mut StdioStream);
     // Also populate the MT-safe cell cache so THREADED writers skip the map lock per call
     // (try_write_fast_cell). Mirrors the fgetc slow path.
     stream_cell_cache_store(_stream, &cell);
@@ -4266,6 +4335,11 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
+    // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
+    // _IO_read_end` without TLS or mutex overhead when single-threaded.
+    if let Some(rc) = try_fgetc_window(stream) {
+        return rc;
+    }
     // Single-threaded inline read fast path: a byte already buffered for a cached, clean
     // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
     // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
@@ -4283,7 +4357,9 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     // `__libc_single_threaded`-gated and the mem cache only serves fmemopen — a THREADED
     // program's fd fgetc otherwise pays canonical_stream_id + decide + the registry map
     // lock PER BYTE (the 44x smoke residual). Gen-valid hit ⇒ per-stream lock only.
-    if let Some(rc) = try_fgetc_fast_cell(stream) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        && let Some(rc) = try_fgetc_fast_cell(stream)
+    {
         return rc;
     }
 
@@ -4395,7 +4471,7 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
     // Cache this non-cookie, non-mem fd stream so subsequent single-threaded fgetc calls
     // hit the inline read fast path (try_fgetc_fast) — mirrors the write side. Also
     // populate the MT-safe cell cache so THREADED callers skip the map lock per byte.
-    write_cache_store(id, s as *mut StdioStream);
+    write_cache_store(stream, id, s as *mut StdioStream);
     stream_cell_cache_store(stream, &cell);
 
     // Try buffered read first (into a stack byte, no per-getc Vec).
@@ -4452,6 +4528,11 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
 pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let byte = c as u8;
 
+    // Lock-free published write-window fast path: appends directly into `_IO_write_ptr ..
+    // _IO_write_end` without TLS or mutex overhead when single-threaded.
+    if let Some(rc) = try_fputc_window(stream, byte) {
+        return rc;
+    }
     // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
     // for repeated writes to the same Full-buffered fd stream). Pointer-keyed so a hit
     // also skips `canonical_stream_id`'s native lock; `id` is computed lazily on miss.
@@ -4463,7 +4544,9 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     // MT-safe cell-cache write fast path: the ST cache above is `__libc_single_threaded`-gated,
     // so a THREADED fputc otherwise pays canonical_stream_id + the registry map lock per byte.
     // Gen-valid hit ⇒ append the byte under this stream's lock only (fast_write of 1 byte).
-    if try_write_fast_cell(stream, &[byte]) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
+        && try_write_fast_cell(stream, &[byte])
+    {
         return byte as c_int;
     }
 
@@ -4556,7 +4639,8 @@ pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
 
     // Cache this resolved non-cookie, non-mem fd stream so subsequent single-threaded
     // single-byte writes to it skip the membrane + lock + lookup (see try_fputc_fast).
-    write_cache_store(id, s as *mut StdioStream);
+    write_cache_store(stream, id, s as *mut StdioStream);
+    stream_cell_cache_store(stream, &cell);
 
     let single_byte = [byte];
     let write_result = match s.buffer_write(&single_byte) {
@@ -4998,7 +5082,7 @@ pub unsafe extern "C-unwind" fn fgets(
         // Cache this non-cookie, non-mem fd stream so subsequent fgets/fgetc/fread hit the
         // pointer-keyed fast path — a pure `fgets` loop (read a file line by line) otherwise
         // never populates the cache and pays the per-line locks forever. Mirrors fgetc/fread.
-        write_cache_store(id, s as *mut StdioStream);
+        write_cache_store(stream, id, s as *mut StdioStream);
         // MT-safe cell cache: a threaded fgets loop warms this once then skips the map lock.
         stream_cell_cache_store(stream, &cell);
     }
@@ -5458,7 +5542,7 @@ pub unsafe extern "C-unwind" fn fread(
 
     // Cache this non-cookie, non-mem fd stream so subsequent single-threaded reads hit the
     // inline fast path (try_fread_fast / try_fgetc_fast).
-    write_cache_store(id, s as *mut StdioStream);
+    write_cache_store(stream, id, s as *mut StdioStream);
     // MT-safe cell cache: a threaded fread loop warms this once then skips the map lock.
     stream_cell_cache_store(stream, &cell);
 
@@ -9618,7 +9702,7 @@ pub unsafe extern "C-unwind" fn fprintf(
 
         // Cache the resolved fd stream so subsequent single-threaded printf/write calls
         // hit the inline fast path (try_fwrite_fast).
-        write_cache_store(id, s as *mut StdioStream);
+        write_cache_store(stream, id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -9866,7 +9950,7 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
 
         // Cache the resolved fd stream so subsequent single-threaded printf/write calls
         // hit the inline fast path (try_fwrite_fast).
-        write_cache_store(id, s as *mut StdioStream);
+        write_cache_store(stdout_ptr, id, s as *mut StdioStream);
         let write_result = match s.buffer_write(bytes) {
             Some(result) => result,
             None => {
@@ -13281,7 +13365,7 @@ pub unsafe extern "C-unwind" fn getdelim(
         } else if !is_cookie_stream(id) {
             // Cache the non-cookie non-mem fd stream so subsequent getdelim/getline hit the
             // fast path — a pure getline loop otherwise never populates the cache. See fgets.
-            write_cache_store(id, s as *mut StdioStream);
+            write_cache_store(stream, id, s as *mut StdioStream);
             // MT-safe cell cache: a threaded getline loop warms this once then skips the map lock.
             stream_cell_cache_store(stream, &cell);
         }

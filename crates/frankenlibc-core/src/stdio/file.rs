@@ -876,6 +876,7 @@ impl StdioStream {
         if !self.open_flags.readable
             || self.is_mem_backed()
             || self.flags.last_write
+            || self.flags.orientation > 0
             || self.ungetc_byte.is_some()
             || !self.read_pushback.is_empty()
         {
@@ -898,7 +899,7 @@ impl StdioStream {
     /// Whether this stream can ever publish a [`write_window`](Self::write_window):
     /// a writable stream [reported as buffered](Self::reports_buffered).
     pub fn write_window_capable(&self) -> bool {
-        self.open_flags.writable && self.reports_buffered()
+        self.open_flags.writable && self.reports_buffered() && self.flags.orientation <= 0
     }
 
     /// The write buffer a caller may fill in place, as `(base address, bytes
@@ -927,6 +928,7 @@ impl StdioStream {
         self.flags.io_started = true;
         self.flags.last_write = true;
         self.flags.eof = false;
+        let _ = self.flags.set_orientation(-1);
         self.offset = self.offset.saturating_add(added as i64);
     }
 
@@ -951,6 +953,7 @@ impl StdioStream {
         self.buffer.consume(n);
         self.flags.io_started = true;
         self.flags.last_write = false;
+        let _ = self.flags.set_orientation(-1);
         self.advance_offset(n);
     }
 
