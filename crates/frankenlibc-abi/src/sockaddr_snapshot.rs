@@ -47,6 +47,32 @@ impl PreparedSockaddr {
         buffer: *mut c_void,
         length: *mut libc::socklen_t,
     ) -> Result<Self, c_int> {
+        Self::prepare_units(buffer, length, 1)
+    }
+
+    /// Linux SO_GET_FILTER measures optlen in sock_filter instructions, not
+    /// bytes. Keep the imported count for the syscall and its output; convert
+    /// only the extent used for membrane validation. Other options keep their
+    /// existing byte-capacity contract, not a global change to socklen_t.
+    pub(super) fn prepare_option(
+        buffer: *mut c_void,
+        length: *mut libc::socklen_t,
+        level: c_int,
+        option: c_int,
+    ) -> Result<Self, c_int> {
+        let unit = if level == libc::SOL_SOCKET && option == libc::SO_GET_FILTER {
+            size_of::<libc::sock_filter>()
+        } else {
+            1
+        };
+        Self::prepare_units(buffer, length, unit)
+    }
+
+    fn prepare_units(
+        buffer: *mut c_void,
+        length: *mut libc::socklen_t,
+        unit: usize,
+    ) -> Result<Self, c_int> {
         let mut prepared = Self { original: length, length: 0, imported: true };
         // SAFETY: destination is our initialized scalar. Caller storage is
         // a kernel-copy address, never a Rust dereference or aligned reference.
@@ -61,7 +87,7 @@ impl PreparedSockaddr {
         // the syscall rather than treating it as a huge positive buffer span.
         // Null buffers retain each option/syscall's own kernel semantics.
         if !buffer.is_null() && prepared.length <= c_int::MAX as libc::socklen_t {
-            let bytes = prepared.length as usize;
+            let bytes = (prepared.length as usize).checked_mul(unit).ok_or(libc::EFAULT)?;
             if (buffer as usize).checked_add(bytes).is_none()
                 || known_remaining(buffer as usize).is_some_and(|available| bytes > available)
             {
@@ -124,7 +150,7 @@ pub(super) unsafe fn getsockopt_hardened(
     value: *mut c_void,
     length: *mut libc::socklen_t,
 ) -> Result<(), c_int> {
-    let mut output = PreparedSockaddr::prepare_required(value, length)?;
+    let mut output = PreparedSockaddr::prepare_option(value, length, level, option)?;
     let capacity = output.length;
 
     if level == libc::SOL_SOCKET && option == SO_PEERPIDFD && capacity <= c_int::MAX as u32 {
