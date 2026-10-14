@@ -68,10 +68,13 @@ mod process_exit;
 
 #[path = "dlfcn_info.rs"]
 mod introspection;
+pub(crate) use introspection::query as query_object_info;
+pub(super) use introspection::resolver_address as info_resolver_address;
 
 #[path = "dlfcn_inspection.rs"]
 mod inspection;
 pub(super) use inspection::address_info as native_address_info;
+pub(crate) use inspection::address_info_extra as native_address_info_extra;
 
 #[path = "dlfcn_phdr.rs"]
 mod phdr;

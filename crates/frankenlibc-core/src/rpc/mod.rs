@@ -12,6 +12,9 @@
 //! are skipped. Trailing inline `# ...` comments are stripped before
 //! tokenization.
 
+/// Bounded native ONC RPC message envelopes.
+pub mod wire;
+
 /// Parsed /etc/rpc entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcEntry {

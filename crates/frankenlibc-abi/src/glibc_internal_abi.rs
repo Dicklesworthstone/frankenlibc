@@ -5728,8 +5728,8 @@ pub unsafe extern "C" fn delete_module(name: *const c_char, flags: c_uint) -> c_
 }
 /// `dladdr1` — extended dladdr with extra info (ELF symbol/header).
 ///
-/// Native: delegates to `dladdr` for the base Dl_info lookup, then
-/// clears the extra_info pointer since we don't provide ELF details.
+/// Owned objects expose stable link maps and validated mapped ELF symbols.
+/// Host-owned objects retain the existing cached host resolver path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dladdr1(
     addr: *const c_void,
@@ -5737,6 +5737,11 @@ pub unsafe extern "C" fn dladdr1(
     extra_info: *mut *mut c_void,
     flags: c_int,
 ) -> c_int {
+    // Native metadata must be selected before the host path: ld.so neither
+    // owns these mappings nor knows their public ELF symbol records.
+    if unsafe { crate::dlfcn_abi::native_address_info_extra(addr, info.cast(), extra_info, flags) } {
+        return 1;
+    }
     // The host knows every object it loaded and returns its link_map /
     // ElfW(Sym) for RTLD_DL_LINKMAP / RTLD_DL_SYMENT. Callers dereference
     // them on success: CPython's faulthandler reads map->l_addr, and
@@ -5755,7 +5760,7 @@ pub unsafe extern "C" fn dladdr1(
             return rc;
         }
     }
-    // Objects only fl's own loader knows: dladdr's answer, no extra info.
+    // Retain the existing self/builtin fallback for otherwise unmatched addresses.
     if !extra_info.is_null() {
         unsafe { *extra_info = std::ptr::null_mut() };
     }
@@ -5839,11 +5844,16 @@ fn self_link_map() -> *const LinkMap {
 
 /// `dlinfo` — get dynamic linker information about a loaded object (bd-olgi).
 ///
-/// Supports RTLD_DI_LINKMAP (2) and RTLD_DI_ORIGIN (6) for the default/self
-/// handle. For other handles, delegates to host dlinfo if available.
-/// Returns -1 with errno set on error.
+/// Preserve the legacy null/self LINKMAP/ORIGIN extension. Live native and
+/// synthetic-main handles are inspected by the owning loader, never passed
+/// to host ld.so as tagged IDs. Non-null failures are reported via dlerror.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn dlinfo(handle: *mut c_void, request: c_int, info: *mut c_void) -> c_int {
+    if !handle.is_null() {
+        // The native router also translates our synthetic main handle and
+        // delegates genuinely host-owned handles without either loader lock.
+        return unsafe { crate::dlfcn_abi::query_object_info(handle, request, info) };
+    }
     if info.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;

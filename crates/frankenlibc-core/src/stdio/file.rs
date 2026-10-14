@@ -928,7 +928,7 @@ impl StdioStream {
         self.flags.io_started = true;
         self.flags.last_write = true;
         self.flags.eof = false;
-        let _ = self.flags.set_orientation(-1);
+        let _ = self.set_orientation(-1);
         self.offset = self.offset.saturating_add(added as i64);
     }
 
@@ -953,7 +953,7 @@ impl StdioStream {
         self.buffer.consume(n);
         self.flags.io_started = true;
         self.flags.last_write = false;
-        let _ = self.flags.set_orientation(-1);
+        let _ = self.set_orientation(-1);
         self.advance_offset(n);
     }
 
@@ -1554,7 +1554,7 @@ impl StdioStream {
                 if let Some(ref backing) = self.mem_backing {
                     self.offset = backing.position() as i64;
                 } else {
-                    self.advance_offset(1);
+                    self.advance_offset(result.len());
                 }
                 return result;
             }
@@ -1595,7 +1595,7 @@ impl StdioStream {
                 if let Some(ref backing) = self.mem_backing {
                     self.offset = backing.position() as i64;
                 } else {
-                    self.advance_offset(1);
+                    self.advance_offset(w);
                 }
                 return w;
             }
@@ -1659,6 +1659,47 @@ impl StdioStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn committed_read_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(3, OpenFlags { readable: true, ..Default::default() });
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        stream.consume_window(0);
+        assert_eq!(stream.set_orientation(0), 0);
+        stream.consume_window(2);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        assert_eq!(stream.read_window(), Some(b"c".as_slice()));
+    }
+
+    #[test]
+    fn committed_write_window_sets_sticky_byte_orientation() {
+        let mut stream = StdioStream::new(3, OpenFlags { writable: true, ..Default::default() });
+        assert!(stream.buffer_write(b"a").is_some());
+        stream.set_offset(1);
+        let (_, used, capacity) = stream.write_window().unwrap();
+        assert_eq!(used, 1);
+        assert!(capacity > used);
+        stream.commit_write_window(used + 1);
+        assert_eq!(stream.flags.orientation, -1);
+        assert_eq!(stream.set_orientation(1), -1);
+        assert_eq!(stream.offset(), 2);
+        stream.commit_write_window(used + 1);
+        assert_eq!(stream.offset(), 2, "repeated absorption must not double count");
+    }
+
+    #[test]
+    fn wide_streams_do_not_publish_byte_windows() {
+        let mut stream = StdioStream::new(3, OpenFlags {
+            readable: true, writable: true, ..Default::default()
+        });
+        assert_eq!(stream.set_orientation(1), 1);
+        assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+        assert!(stream.read_window().is_none());
+        assert!(!stream.write_window_capable());
+        assert_eq!(stream.set_orientation(-1), 1);
+    }
 
     #[test]
     fn test_parse_mode_read() {
