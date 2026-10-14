@@ -8,6 +8,8 @@ on:
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/src/string_abi.rs'
       - 'crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs'
+      - 'scripts/check_membrane_access.py'
+      - 'tests/integration/fixture_membrane_access.c'
       - '.github/workflows/membrane-access.yml'
   workflow_dispatch:
 
@@ -17,10 +19,6 @@ permissions:
 jobs:
   access:
     if: github.ref == 'refs/heads/main'
-    # BEGIN ACCESS CANDIDATE
-    permissions:
-      contents: write
-    # END ACCESS CANDIDATE
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -29,59 +27,26 @@ jobs:
       RUST_BACKTRACE: 1
     steps:
       - uses: actions/checkout@v4
-      # BEGIN ACCESS CANDIDATE
-      - name: Apply immutable reviewed access candidates
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/access/source
-          test "$(git hash-object crates/frankenlibc-membrane/src/ptr_validator.rs)" = 63f2abeb75075585287009e63336f54ea1549f38
-          test "$(git hash-object crates/frankenlibc-abi/src/malloc_abi.rs)" = ba1894d1dc2d866e4220bf3ffb54dfb80029fb0b
-          for sha in 63263e2acb434e7870c95f426eade6e3a74a0fce 763aee94918629a452578a4b146e097e68874abc; do
-            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq .content | base64 --decode > "$RUNNER_TEMP/$sha.patch"
-            test "$(git hash-object "$RUNNER_TEMP/$sha.patch")" = "$sha"
-            git apply --check --whitespace=error-all "$RUNNER_TEMP/$sha.patch"
-            git apply --whitespace=error-all "$RUNNER_TEMP/$sha.patch"
-          done
-      # END ACCESS CANDIDATE
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly-2026-08-31
           components: rustfmt
-      # BEGIN ACCESS CANDIDATE
-      - name: Publish exact candidate source objects, not validation claims
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustfmt --edition 2024 crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs crates/frankenlibc-membrane/tests/validation_outcome_access_test.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs
-          for path in crates/frankenlibc-membrane/src/ptr_validator.rs crates/frankenlibc-membrane/src/ptr_validator_access_tests.rs crates/frankenlibc-membrane/tests/validation_outcome_access_test.rs crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs; do
-            mkdir -p "artifacts/access/source/$(dirname "$path")"
-            cp "$path" "artifacts/access/source/$path"
-            blob=$(jq -Rs '{content: ., encoding:"utf-8"}' "$path" | gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input - --jq .sha)
-            test "$blob" = "$(git hash-object "$path")"
-            printf '%s %s\n' "$blob" "$path" | tee -a artifacts/access/candidate-blobs.txt
-          done
-          git diff --check
-          git diff > artifacts/access/runtime.diff
-      - uses: actions/upload-artifact@v4
-        with:
-          name: membrane-access-candidate-source
-          path: artifacts/access/**
-          if-no-files-found: error
-      # END ACCESS CANDIDATE
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: membrane-access
           cache-on-failure: true
-      - name: Execute access verdict and lifetime regressions in both modes
+      - name: Record committed source identity
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/access
+          git rev-parse HEAD | tee artifacts/access/source-commit.txt
+          sha256sum crates/frankenlibc-membrane/src/ptr_validator.rs crates/frankenlibc-abi/src/malloc_abi.rs crates/frankenlibc-abi/tests/hardened_integrity_bounds_test.rs | tee artifacts/access/source-sha256.txt
+          git diff --exit-code
+      - name: Execute access verdict and lifetime regressions in both modes
+        shell: bash
+        run: |
+          set -euo pipefail
           rustc --version --verbose | tee artifacts/access/rustc.txt
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ptr_validator::access_tests:: -- --test-threads=1 2>&1 | tee "artifacts/access/slots-$mode.log"
@@ -129,6 +94,13 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/malloc.log
           cargo test -p frankenlibc-membrane --lib ptr_validator::tests:: -- --test-threads=1 2>&1 | tee artifacts/access/pipeline.log
           grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/access/pipeline.log
+      - name: Execute deployed memory and string access matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p frankenlibc-abi --release 2>&1 | tee artifacts/access/release-build.log
+          python3 scripts/check_membrane_access.py target/release/libfrankenlibc_abi.so --output artifacts/access/preload 2>&1 | tee artifacts/access/preload.log
+          git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()
         with:

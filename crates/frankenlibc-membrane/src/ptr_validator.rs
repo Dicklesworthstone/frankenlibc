@@ -13,6 +13,10 @@
 
 #![allow(unsafe_code)]
 
+#[cfg(test)]
+#[path = "ptr_validator_access_tests.rs"]
+mod access_tests;
+
 use crate::arena::{AllocationArena, ArenaSlot, FreeResult};
 use crate::bloom::PointerBloomFilter;
 use crate::check_oracle::CheckStage;
@@ -172,6 +176,47 @@ impl ValidationOutcome {
             | Self::Denied(a) => Some(*a),
             Self::Null => Some(PointerAbstraction::null()),
             Self::Bypassed => None,
+        }
+    }
+
+    /// Project the verdict into an abstraction used to authorize memory access.
+    ///
+    /// `abstraction()` retains allocation metadata for diagnostics. A failed
+    /// fingerprint or canary check can therefore carry a slot whose recorded
+    /// state is still `Valid`. Access consumers must not turn that metadata
+    /// back into permission to use the allocation.
+    ///
+    /// Keep quarantined allocations recognizable, but expose no usable bytes.
+    /// A `Freed` temporal record is deliberately left unchanged: unlike a
+    /// quarantined block, its storage may already belong to a new host allocation.
+    /// Bounds consumers must ignore that stale extent and consult current
+    /// ownership (as `known_remaining` does), not clamp the new owner's access.
+    /// Explicit `Denied` and `Invalid` verdicts still take precedence over any
+    /// recorded state, including `Freed` or `Unknown`.
+    ///
+    /// This is a snapshot, not a lifetime guard. Foreign and bypassed pointers
+    /// do not acquire a proof of accessibility through this projection.
+    #[must_use]
+    pub fn access_abstraction(&self) -> Option<PointerAbstraction> {
+        use crate::lattice::SafetyState;
+
+        match self {
+            Self::TemporalViolation(a) if a.state == SafetyState::Freed => Some(*a),
+            Self::TemporalViolation(a) | Self::Invalid(a) | Self::Denied(a) => {
+                let state = if matches!(self, Self::TemporalViolation(_))
+                    && a.state == SafetyState::Quarantined
+                {
+                    SafetyState::Quarantined
+                } else {
+                    SafetyState::Invalid
+                };
+                Some(PointerAbstraction {
+                    state,
+                    remaining: Some(0),
+                    ..*a
+                })
+            }
+            _ => self.abstraction(),
         }
     }
 
@@ -2040,7 +2085,16 @@ impl ValidationPipeline {
                     slot.state,
                 )
             } else {
-                (0, crate::lattice::SafetyState::Invalid)
+                // Geometry must not erase lifetime. A retired raw block can
+                // be reused by the host, including its former header/canary.
+                // Keep Freed so ABI consumers can consult the new owner; keep
+                // Quarantined so still-owned metadata remains inaccessible.
+                let state = match slot.state {
+                    crate::lattice::SafetyState::Freed
+                    | crate::lattice::SafetyState::Quarantined => slot.state,
+                    _ => crate::lattice::SafetyState::Invalid,
+                };
+                (0, state)
             };
         PointerAbstraction::validated(addr, state, slot.user_base, remaining, slot.generation)
     }
