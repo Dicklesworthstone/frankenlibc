@@ -3,9 +3,9 @@
 //! These are legacy ONC RPC functions from glibc's `<rpc/rpc.h>`, `<rpc/xdr.h>`,
 //! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
 //! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
-//! pure Rust. RPC client/server/auth functions return deterministic safe
-//! defaults (null handles, 0/failure status) since Sun RPC is a legacy
-//! subsystem and the internal RPC runtime state is not needed.
+//! pure Rust. IPv4 UDP clients, AUTH_NONE, and portmapper v2 lookup/registration
+//! have native implementations. Other RPC transports, server operations, and
+//! legacy authentication constructors retain their explicitly limited behavior.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
@@ -18,6 +18,9 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
+
+#[path = "rpc_udp.rs"]
+mod rpc_udp;
 
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
@@ -2215,7 +2218,11 @@ pub unsafe extern "C" fn xdr_key_netstres(xdrs: *mut c_void, p: *mut c_void) -> 
 // RPC authentication (7 symbols)
 // ===========================================================================
 
-rpc_stub!(authnone_create() -> *mut c_void);
+/// Return the process-lifetime native AUTH_NONE authenticator.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authnone_create() -> *mut c_void {
+    rpc_udp::authnone()
+}
 
 rpc_stub!(
     authunix_create(
@@ -2301,27 +2308,31 @@ rpc_stub!(
     ) -> *mut c_void
 );
 
-rpc_stub!(
-    clntudp_create(
-        raddr: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        wait: Timeval,
-        sockp: *mut c_int,
-    ) -> *mut c_void
-);
+/// Create an IPv4 UDP RPC client with native XDR and retransmission handling.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntudp_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    wait: Timeval,
+    sockp: *mut c_int,
+) -> *mut c_void {
+    unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, 0, 0) }
+}
 
-rpc_stub!(
-    clntudp_bufcreate(
-        raddr: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        wait: Timeval,
-        sockp: *mut c_int,
-        sendsz: c_uint,
-        recvsz: c_uint,
-    ) -> *mut c_void
-);
+/// Create an IPv4 UDP RPC client with explicit bounded transport buffers.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntudp_bufcreate(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    wait: Timeval,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, sendsz, recvsz) }
+}
 
 rpc_stub!(
     clntunix_create(
@@ -2998,18 +3009,18 @@ pub unsafe extern "C" fn pmap_getmaps(_address: *mut c_void) -> *mut c_void {
     std::ptr::null_mut()
 }
 
-/// Get the port for an RPC program. Returns 0 — no portmapper support.
+/// Get a program's port from the remote portmapper v2 service.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pmap_getport(
-    _address: *mut c_void,
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proto: c_uint,
+    address: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proto: c_uint,
 ) -> u16 {
-    0
+    unsafe { rpc_udp::getport(address, prog, vers, proto) }
 }
 
 /// Perform a remote procedure call via portmapper. Returns RPC_UNKNOWNPROTO (17).
@@ -3032,31 +3043,27 @@ pub unsafe extern "C" fn pmap_rmtcall(
     17 // RPC_UNKNOWNPROTO
 }
 
-abi_stub_contract!(pmap_set);
-
-/// Register an RPC program with portmapper. Returns 0 (FALSE) — no portmapper support.
+/// Register a program with the local portmapper v2 service.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pmap_set(
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proto: c_int,
-    _port: u16,
+    prog: c_ulong,
+    vers: c_ulong,
+    proto: c_int,
+    port: u16,
 ) -> c_int {
-    0
+    rpc_udp::registration(prog, vers, proto, port, false)
 }
 
-abi_stub_contract!(pmap_unset);
-
-/// Unregister an RPC program from portmapper. Returns 0 (FALSE) — no portmapper support.
+/// Unregister a program/version from the local portmapper v2 service.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_unset(_prog: c_ulong, _vers: c_ulong) -> c_int {
-    0
+pub unsafe extern "C" fn pmap_unset(prog: c_ulong, vers: c_ulong) -> c_int {
+    rpc_udp::registration(prog, vers, 0, 0, true)
 }
 
 // ===========================================================================
