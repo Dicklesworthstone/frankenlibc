@@ -206,7 +206,7 @@ fn uncertainty_radius_ns(n: u64, threshold_ns: u64) -> u64 {
     }
     let eps = (RADIUS_COEFF / (n as f64).sqrt()).max(0.0);
     let inflation = 1.0 + eps;
-    let radius = ((inflation - 1.0) * threshold_ns as f64).ceil();
+    let radius = crate::util::ceil_f64((inflation - 1.0) * threshold_ns as f64);
     radius.max(0.0) as u64
 }
 

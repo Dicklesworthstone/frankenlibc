@@ -274,7 +274,7 @@ impl QuarantineController {
         let mut sorted: Vec<u64> = self.latencies[..n].to_vec();
         sorted.sort_unstable();
 
-        let p99_idx = ((n as f64) * 0.99).ceil() as usize;
+        let p99_idx = crate::util::ceil_f64((n as f64) * 0.99) as usize;
         sorted[p99_idx.min(n - 1)] as f64
     }
 
@@ -314,7 +314,8 @@ pub static QUARANTINE_LAMBDA_LATENCY: AtomicI64 = AtomicI64::new(1);
 /// Publish the controller's current depth and scaled dual latency multiplier to global atomics.
 pub fn publish_depth(controller: &QuarantineController) {
     QUARANTINE_DEPTH.store(controller.depth() as u64, Ordering::Release);
-    let scaled_lambda = ((controller.lambda_latency * 12.8).round() as i64).clamp(-128, 128);
+    let scaled_lambda =
+        (crate::util::round_f64(controller.lambda_latency * 12.8) as i64).clamp(-128, 128);
     QUARANTINE_LAMBDA_LATENCY.store(scaled_lambda, Ordering::Release);
 }
 

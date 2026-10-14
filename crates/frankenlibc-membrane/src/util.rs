@@ -393,9 +393,71 @@ pub fn now_utc_iso_like() -> String {
     )
 }
 
+/// Bitwise IEEE-754 truncation toward zero without emitting a `trunc@PLT` call
+/// on baseline x86-64 (which lacks SSE4.1 `roundsd`; bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub(crate) fn trunc_f64(x: f64) -> f64 {
+    let bits = x.to_bits();
+    let exp = ((bits >> 52) & 0x7ff) as i32 - 1023;
+    if exp < 0 {
+        return f64::from_bits(bits & (1u64 << 63));
+    }
+    if exp >= 52 {
+        return x;
+    }
+    let mask = (1u64 << (52 - exp)) - 1;
+    f64::from_bits(bits & !mask)
+}
+
+/// Bitwise IEEE-754 floor toward `-inf` without emitting a `floor@PLT` call on
+/// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub(crate) fn floor_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    if x < t { t - 1.0 } else { t }
+}
+
+/// Bitwise IEEE-754 ceil toward `+inf` without emitting a `ceil@PLT` call on
+/// baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub(crate) fn ceil_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    if x > t { t + 1.0 } else { t }
+}
+
+/// Bitwise IEEE-754 round-half-away-from-zero without emitting a `round@PLT`
+/// call on baseline x86-64 (bd-rc0923-epic-eeuy4f.29).
+#[inline]
+#[must_use]
+pub(crate) fn round_f64(x: f64) -> f64 {
+    if !x.is_finite() {
+        return x;
+    }
+    let t = trunc_f64(x);
+    let rem = (x - t).abs();
+    if rem >= 0.5 {
+        if x.is_sign_negative() {
+            t - 1.0
+        } else {
+            t + 1.0
+        }
+    } else {
+        t
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::LazyBox;
+    use super::{LazyBox, ceil_f64, floor_f64, round_f64, trunc_f64};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -466,5 +528,42 @@ mod tests {
 
         drop(lazy);
         assert_eq!(drops.load(Ordering::SeqCst), 2, "replacement dropped");
+    }
+
+    #[test]
+    fn bitwise_f64_rounding_helpers_match_ieee754() {
+        let samples = [
+            0.0,
+            -0.0,
+            0.25,
+            -0.25,
+            0.5,
+            -0.5,
+            0.499_999_999_999_999_94,
+            -0.499_999_999_999_999_94,
+            1.0,
+            -1.0,
+            1.5,
+            -1.5,
+            2.5,
+            -2.5,
+            12.8,
+            -12.8,
+            4_503_599_627_370_495.5,
+            -4_503_599_627_370_495.5,
+            4_503_599_627_370_496.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for x in samples {
+            assert_eq!(trunc_f64(x).to_bits(), x.trunc().to_bits(), "trunc({x})");
+            assert_eq!(floor_f64(x).to_bits(), x.floor().to_bits(), "floor({x})");
+            assert_eq!(ceil_f64(x).to_bits(), x.ceil().to_bits(), "ceil({x})");
+            assert_eq!(round_f64(x).to_bits(), x.round().to_bits(), "round({x})");
+        }
+        assert!(trunc_f64(f64::NAN).is_nan());
+        assert!(floor_f64(f64::NAN).is_nan());
+        assert!(ceil_f64(f64::NAN).is_nan());
+        assert!(round_f64(f64::NAN).is_nan());
     }
 }

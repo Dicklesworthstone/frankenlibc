@@ -216,7 +216,8 @@ impl ConformalRiskController {
         let active = &mut scratch[..self.fill];
 
         // Quantile index: ceil((1 - alpha) * (fill + 1)) - 1.
-        let raw_rank = ((1.0 - TARGET_ALPHA) * (self.fill as f64 + 1.0)).ceil() as usize;
+        let raw_rank =
+            crate::util::ceil_f64((1.0 - TARGET_ALPHA) * (self.fill as f64 + 1.0)) as usize;
         if raw_rank > self.fill {
             return f64::INFINITY;
         }

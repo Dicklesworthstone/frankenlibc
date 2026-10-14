@@ -73,11 +73,11 @@ impl PointerBloomFilter {
 
         // Optimal bit count: m = -n * ln(p) / (ln2)^2
         let ln2 = std::f64::consts::LN_2;
-        let m = (-n * fp_rate.ln() / (ln2 * ln2)).ceil() as usize;
+        let m = crate::util::ceil_f64(-n * fp_rate.ln() / (ln2 * ln2)) as usize;
         let m = m.max(64); // minimum 64 bits
 
         // Optimal hash count: k = (m/n) * ln2
-        let k = ((m as f64 / n) * ln2).ceil() as u32;
+        let k = crate::util::ceil_f64((m as f64 / n) * ln2) as u32;
         let k = k.clamp(1, 16); // clamp to reasonable range
 
         // Round up to whole u64 words, and ensure it's a power of 2 for double hashing
