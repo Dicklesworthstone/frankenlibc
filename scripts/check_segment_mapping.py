@@ -16,6 +16,8 @@ import urllib.request
 SOURCE = Path('crates/frankenlibc-abi/src/malloc_abi.rs')
 HELPER = Path('crates/frankenlibc-abi/src/segment_mapping.rs')
 ORIGINAL = '989cc87b8d26856e9c725c65117100160cdf9d63'
+UTIL = Path('crates/frankenlibc-membrane/src/util.rs')
+UTIL_ORIGINAL = '9afef4bcbdb7552c28ef5a61e76945ab05a99721'
 OUT = Path('artifacts/segment-mapping')
 
 
@@ -90,7 +92,16 @@ def prepare():
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / 'original-malloc.rs').write_bytes(original)
     SOURCE.write_text(s)
-    (OUT / 'candidate.patch').write_bytes(subprocess.check_output(['git', 'diff', '--', str(SOURCE)]))
+    # The ABI already calls these shared no-self-interposition helpers. Their
+    # crate-private visibility currently prevents any ABI build from linking.
+    util = UTIL.read_bytes()
+    assert blob(util) == UTIL_ORIGINAL, 'shared math helpers changed: review first'
+    (OUT / 'original-util.rs').write_bytes(util)
+    visible = util.decode()
+    for name in ['trunc_f64', 'floor_f64', 'ceil_f64', 'round_f64']:
+        visible = replace_once(visible, f'pub(crate) fn {name}(', f'pub fn {name}(')
+    UTIL.write_text(visible)
+    (OUT / 'candidate.patch').write_bytes(subprocess.check_output(['git', 'diff', '--', str(SOURCE), str(UTIL)]))
     print('Candidate allocator blob:', blob(SOURCE.read_bytes()), flush=True)
     for line in Path('.beads/issues.jsonl').open():
         row = json.loads(line)
@@ -100,7 +111,7 @@ def prepare():
 
 def export():
     objects = []
-    for path in [SOURCE, HELPER]:
+    for path in [SOURCE, HELPER, UTIL]:
         data = path.read_bytes()
         request = urllib.request.Request(
             f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs',

@@ -5,6 +5,8 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/src/segment_mapping.rs'
+      - 'crates/frankenlibc-membrane/src/util.rs'
+      - 'crates/frankenlibc-abi/tests/membrane_rounding_link_test.rs'
       - 'scripts/check_segment_mapping.py'
       - 'tests/segment_mapping_preload.c'
       - '.github/workflows/segment-mapping.yml'
@@ -36,6 +38,10 @@ jobs:
           set -euo pipefail
           git rev-parse HEAD | tee artifacts/segment-mapping/source-commit.txt
           rustc --version --verbose | tee artifacts/segment-mapping/rustc.txt
+          cargo test -p frankenlibc-membrane --lib util::tests:: -- --test-threads=1 2>&1 | tee artifacts/segment-mapping/shared-util.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/segment-mapping/shared-util.log
+          cargo test -p frankenlibc-abi --test membrane_rounding_link_test -- --test-threads=1 2>&1 | tee artifacts/segment-mapping/shared-math.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed;' artifacts/segment-mapping/shared-math.log
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --lib malloc_abi::segment_mapping::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/segment-mapping/mapping-$mode.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/segment-mapping/mapping-$mode.log"
