@@ -202,6 +202,37 @@ impl PreparedIovecs {
     }
 }
 
+/// Copy descriptor bytes through the existing fault-checked kernel routes.
+/// Both ends may be untrusted user addresses. No Rust reference is formed to
+/// either extent. Short copies are errors and can have partially written the
+/// destination, just as with kernel copy_to_user; this is not an atomic store.
+///
+/// # Safety
+/// Any readable source bytes must be initialized. Any writable destination must
+/// permit byte writes for the duration of this call, without violating Rust
+/// aliasing; permission faults are reported rather than dereferenced in Rust.
+#[allow(dead_code)] // also compiled by the file-I/O parent, which imports only iovecs
+pub(super) unsafe fn copy_user_bytes(
+    source: *const u8,
+    destination: *mut u8,
+    bytes: usize,
+) -> Result<(), c_int> {
+    if bytes == 0 {
+        return Ok(());
+    }
+    for address in [source as usize, destination as usize] {
+        if address == 0 || address.checked_add(bytes).is_none()
+            || crate::malloc_abi::known_remaining(address)
+                .is_some_and(|available| bytes > available)
+        {
+            return Err(errno::EFAULT);
+        }
+    }
+    // SAFETY: the casts only carry addresses. The copy helpers do not form
+    // iovec references or require iovec alignment/a multiple-of-iovec size.
+    unsafe { copy_descriptors(source.cast(), destination.cast(), bytes) }
+}
+
 /// Fault-safe descriptor import. Short copies are errors; no incomplete array
 /// may reach validation or the target I/O syscall. No host errno side effects.
 unsafe fn copy_descriptors(
@@ -216,14 +247,14 @@ unsafe fn copy_descriptors(
     let pid = match kernel_result(unsafe { syscall::syscall0(libc::SYS_getpid as usize) }) {
         Ok(pid) => pid,
         Err(errno::ENOSYS | errno::EPERM | errno::EACCES) => {
-            // SAFETY: the fallback uses the same exclusively owned destination.
+            // SAFETY: the fallback uses the same kernel-checked byte extents.
             return unsafe { copy_descriptors_with_pipe(source, destination, bytes) };
         }
         Err(error) => return Err(error),
     };
-    // SAFETY: local/remote are live initialized descriptors. The local extent is
-    // exclusively owned by the caller. Linux validates the possibly-invalid
-    // remote address and returns EFAULT instead of dereferencing it in userspace.
+    // SAFETY: local/remote are live initialized descriptors. Linux validates
+    // both the local write extent and the remote read extent, returning EFAULT
+    // instead of dereferencing a possibly-invalid user address in Rust.
     let copied = kernel_result(unsafe {
         syscall::syscall6(
             libc::SYS_process_vm_readv as usize,
@@ -242,7 +273,7 @@ unsafe fn copy_descriptors(
         // Do not cache availability globally: syscall policy can differ by
         // thread, and process identity/policy can change across fork.
         Err(errno::ENOSYS | errno::EPERM | errno::EACCES) => {
-            // SAFETY: identical exclusively owned destination extent.
+            // SAFETY: identical kernel-checked source and destination extents.
             unsafe { copy_descriptors_with_pipe(source, destination, bytes) }
         }
         Err(error) => Err(error),
@@ -307,13 +338,13 @@ unsafe fn copy_descriptors_with_pipe(
         }
         let mut drained = 0;
         while drained < written {
-            // SAFETY: this destination range is inside the exclusively owned
-            // import. It receives only bytes already copied into the pipe.
+            // SAFETY: destination is only a kernel-copy address. Wrapping
+            // arithmetic forms no Rust reference to possibly-invalid storage.
             let read = kernel_result(unsafe {
                 syscall::syscall3(
                     libc::SYS_read as usize,
                     pipe.0[0] as usize,
-                    destination.cast::<u8>().add(offset + drained) as usize,
+                    destination.cast::<u8>().wrapping_add(offset + drained) as usize,
                     written - drained,
                 )
             })?;
