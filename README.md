@@ -3875,8 +3875,8 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,809 native/direct-syscall rows (68.2%), 1,266 host-backed wrapper rows (30.7%), and 44 explicit stubs (1.1%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,793 |
-| `crates/frankenlibc-abi/src/` | 81 Rust files, 202,792 lines |
+| Tracked Rust files in `crates/` | 2,801 |
+| `crates/frankenlibc-abi/src/` | 84 Rust files, 203,698 lines |
 | `crates/frankenlibc-membrane/src/` | 110 Rust files, 81,013 lines |
 | `crates/frankenlibc-core/src/` | 197 Rust files, 1,163,007 lines including generated codec tables |
 | Runtime math controllers | 71 modules |

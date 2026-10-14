@@ -350,6 +350,27 @@ if isinstance(support, dict):
     )
     generated_date = str(support.get("generated_at_utc", ""))[:10]
     expect_numeric_claim("FEATURE_PARITY", "support_snapshot_date", f"`generated_at_utc` is {generated_date}")
+    if isinstance(overlay, dict):
+        overlay_counts = overlay.get("support_matrix_snapshot", {}).get("status_counts", {})
+        support_counts = support.get("counts", {})
+        status_map = {
+            "Implemented": "implemented",
+            "RawSyscall": "raw_syscall",
+            "WrapsHostLibc": "wraps_host_libc",
+            "GlibcCallThrough": "glibc_call_through",
+            "Stub": "stub",
+        }
+        for key, count_key in status_map.items():
+            if overlay_counts.get(key) != support_counts.get(count_key):
+                fail(
+                    "numeric_claim_freshness",
+                    f"support_semantic_overlay: status_counts.{key}={overlay_counts.get(key)} does not match support_matrix.json counts.{count_key}={support_counts.get(count_key)}",
+                    doc_surface="support_semantic_overlay",
+                    symbol_or_section=f"status_counts.{key}",
+                    previous_claim=str(overlay_counts.get(key)),
+                    generated_claim=str(support_counts.get(count_key)),
+                    failure_signature="stale_overlay_taxonomy_counts",
+                )
 
 stale_numeric_patterns = {
     "old_cli_contract_count": r"\b68 such manifests\b|\b68 CLI-contract",
