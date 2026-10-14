@@ -261,6 +261,8 @@ fn resolve_exported_symbol(symbol: &[u8]) -> *mut c_void {
         b"dlerror" => (dlerror as unsafe extern "C" fn() -> *const c_char as usize) as *mut c_void,
         b"dl_iterate_phdr" => dl_iterate_phdr as *const () as *mut c_void,
         b"dladdr" => dladdr as *const () as *mut c_void,
+        b"dlinfo" => crate::glibc_internal_abi::dlinfo as *const () as *mut c_void,
+        b"dladdr1" => crate::glibc_internal_abi::dladdr1 as *const () as *mut c_void,
         b"malloc" => {
             (crate::malloc_abi::malloc as unsafe extern "C" fn(usize) -> *mut c_void as usize)
                 as *mut c_void
@@ -419,6 +421,23 @@ unsafe fn resolve_main_program_symbol(
     resolve_native_dso_symbol(main_program_handle(), symbol_name, None).flatten()
 }
 
+// This API family has its own compatibility versions. Outer None means a
+// different symbol; Some(None) is a recognized name with an unsupported
+// version. Do not fall through to the generic GLIBC builtin allowlist then.
+fn introspection_export(symbol: &[u8], version: &[u8]) -> Option<Option<*mut c_void>> {
+    let name = match symbol {
+        b"dlinfo" => "dlinfo",
+        b"dladdr1" => "dladdr1",
+        _ => return None,
+    };
+    let supported = std::str::from_utf8(version).ok().and_then(|version| {
+        native::info_resolver_address(name, Some(version))
+    });
+    // Return the public wrapper, not the private plugin bridge: unversioned
+    // and compatibility-version lookups must name the same public function.
+    Some(supported.map(|_| resolve_exported_symbol(symbol)))
+}
+
 unsafe fn resolve_main_program_versioned_symbol(
     symbol: *const c_char,
     version: *const c_char,
@@ -427,6 +446,9 @@ unsafe fn resolve_main_program_versioned_symbol(
 ) -> Option<*mut c_void> {
     #[cfg(feature = "standalone")]
     let _ = (symbol, version);
+    if let Some(result) = introspection_export(symbol_name, version_name) {
+        return result;
+    }
     if version_supported(version_name) {
         let native = resolve_exported_symbol(symbol_name);
         if !native.is_null() {
@@ -454,6 +476,7 @@ fn close_main_program_handle() -> c_int {
 
 #[path = "dlfcn_native.rs"]
 mod native;
+pub(crate) use native::{native_address_info_extra, query_object_info};
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
 use native::{
@@ -884,6 +907,15 @@ pub unsafe extern "C" fn dlvsym(
         let version_name = unsafe { std::slice::from_raw_parts(version as *const u8, version_len) };
         // The libc-version allowlist applies only to this exported-symbol scope.
         if is_main_program_handle(handle) || is_rtld_default(handle) {
+            if let Some(result) = introspection_export(symbol_name, version_name) {
+                return match result {
+                    Some(address) => { clear_dlerror(); address }
+                    None => {
+                        set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
+                        std::ptr::null_mut()
+                    }
+                };
+            }
             if version_supported(version_name) {
                 let sym = resolve_exported_symbol(symbol_name);
                 if !sym.is_null() {
