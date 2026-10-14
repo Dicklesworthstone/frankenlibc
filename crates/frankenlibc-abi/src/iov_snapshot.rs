@@ -21,7 +21,7 @@ use frankenlibc_core::{errno, syscall};
 
 const INLINE_IOVECS: usize = 8;
 // Linux UIO_MAXIOV, on the x86_64 and aarch64 targets supported by the raw veneer.
-const MAX_IOVECS: usize = 1024;
+pub(super) const MAX_IOVECS: usize = 1024;
 const EMPTY_IOVEC: libc::iovec = libc::iovec {
     iov_base: ptr::null_mut(),
     iov_len: 0,
@@ -106,6 +106,20 @@ impl PreparedIovecs {
             return Ok(Self { storage: Storage::Original(iov), count: 0 });
         }
         Self::snapshot_with(iov, count as usize, crate::malloc_abi::known_remaining)
+    }
+
+    /// vmsplice's count is size_t, not readv's signed int. Preserve oversized
+    /// values for the original syscall instead of truncating them into a valid
+    /// import count (or zero). The caller passes the unchanged count to Linux.
+    pub(super) fn prepare_unsigned(
+        iov: *const libc::iovec,
+        count: usize,
+        hardened: bool,
+    ) -> Result<Self, c_int> {
+        if count > MAX_IOVECS {
+            return Ok(Self { storage: Storage::Original(iov), count: 0 });
+        }
+        Self::prepare(iov, count as c_int, hardened)
     }
 
     fn snapshot_with(

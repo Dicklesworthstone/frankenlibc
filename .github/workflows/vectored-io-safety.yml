@@ -8,6 +8,7 @@ on:
       - 'crates/frankenlibc-abi/src/malloc_abi.rs'
       - 'crates/frankenlibc-abi/tests/iov_snapshot_test.rs'
       - 'crates/frankenlibc-abi/tests/vectored_io_bounds_test.rs'
+      - 'crates/frankenlibc-abi/tests/vmsplice_bounds_test.rs'
       - '.github/workflows/vectored-io-safety.yml'
   workflow_dispatch:
 permissions:
@@ -36,7 +37,7 @@ jobs:
           git rev-parse HEAD | tee artifacts/vectors/source-commit.txt
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test iov_snapshot_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/vectors/import-$mode.log"
-            grep -Eq 'test result: ok\. 16 passed; 0 failed; 0 ignored;' "artifacts/vectors/import-$mode.log"
+            grep -Eq 'test result: ok\. 17 passed; 0 failed; 0 ignored;' "artifacts/vectors/import-$mode.log"
           done
       - name: Execute isolated real ABI cases
         if: ${{ !cancelled() }}
@@ -46,6 +47,14 @@ jobs:
           cargo test -p frankenlibc-abi --test vectored_io_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/abi-matrix.log
           grep -Fq '84 isolated vectored-I/O cases passed' artifacts/vectors/abi-matrix.log
           grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/vectors/abi-matrix.log
+      - name: Execute bidirectional vmsplice cases
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/vectors
+          cargo test -p frankenlibc-abi --test vmsplice_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/vmsplice-matrix.log
+          grep -Fq '42 isolated vmsplice cases passed' artifacts/vectors/vmsplice-matrix.log
+          grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' artifacts/vectors/vmsplice-matrix.log
       - name: Preserve existing I/O behavior
         if: ${{ !cancelled() }}
         run: |
@@ -81,11 +90,24 @@ jobs:
               assert result.returncode != 0, 'unchecked vector mutation passed'
               assert b'0 passed; 1 failed;' in result.stdout, 'mutant must compile and execute'
               assert b'rejected input reached target I/O' in result.stdout
+              for direction in ['to-pipe', 'from-pipe']:
+                  command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'vmsplice_bounds_test',
+                             'vmsplice_bounds_matrix', '--', '--exact', '--nocapture', '--test-threads=1']
+                  result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                      timeout=900, env=dict(os.environ, FRANKENLIBC_MODE='hardened',
+                      FRANKENLIBC_RUNTIME_MATH='off', FRANKENLIBC_VMSPLICE_BOUNDS_CHILD=f'{direction}:oversize'))
+                  Path(f'artifacts/vectors/vmsplice-mutation-{direction}.log').write_bytes(result.stdout)
+                  print(result.stdout.decode(errors='replace'))
+                  assert result.returncode != 0, 'unchecked vmsplice mutation passed'
+                  assert b'0 passed; 1 failed;' in result.stdout, 'vmsplice mutant must compile and execute'
+                  assert b'rejected input reached pipe I/O' in result.stdout
           finally:
               source.write_bytes(original)
           PY
           cargo test -p frankenlibc-abi --test vectored_io_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/restored.log
           grep -Fq '84 isolated vectored-I/O cases passed' artifacts/vectors/restored.log
+          cargo test -p frankenlibc-abi --test vmsplice_bounds_test -- --nocapture --test-threads=1 2>&1 | tee artifacts/vectors/vmsplice-restored.log
+          grep -Fq '42 isolated vmsplice cases passed' artifacts/vectors/vmsplice-restored.log
           git diff --exit-code
       - uses: actions/upload-artifact@v4
         if: always()

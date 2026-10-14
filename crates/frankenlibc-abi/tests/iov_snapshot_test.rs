@@ -13,3 +13,15 @@ mod malloc_abi {
 
 #[path = "../src/iov_snapshot.rs"]
 mod iov_snapshot;
+
+#[test]
+fn full_width_segment_counts_never_truncate_into_an_import() {
+    let invalid = std::ptr::without_provenance::<libc::iovec>(1);
+    for count in [0, 1025, i32::MAX as usize + 1, usize::MAX] {
+        let prepared = iov_snapshot::PreparedIovecs::prepare_unsigned(invalid, count, true)
+            .unwrap();
+        assert_eq!(prepared.as_ptr(), invalid);
+    }
+    let strict = iov_snapshot::PreparedIovecs::prepare_unsigned(invalid, 1, false).unwrap();
+    assert_eq!(strict.as_ptr(), invalid);
+}

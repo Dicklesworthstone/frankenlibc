@@ -1146,18 +1146,41 @@ pub unsafe extern "C-unwind" fn vmsplice(
     nr_segs: usize,
     flags: c_uint,
 ) -> libc::ssize_t {
-    let (_, decision) =
+    let (mode, decision) =
         runtime_policy::decide(ApiFamily::IoFd, fd as usize, nr_segs, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EPERM) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
-    if nr_segs > 0 && (iov.is_null() || !unsafe { tracked_iovecs_fit(iov, nr_segs) }) {
+    // Linux rejects oversized counts before importing any descriptors. Do not
+    // inspect such arrays here or turn full-width counts into a bounds EFAULT.
+    if !mode.heals_enabled()
+        && nr_segs <= iov_snapshot::MAX_IOVECS
+        && nr_segs > 0
+        && (iov.is_null() || !unsafe { tracked_iovecs_fit(iov, nr_segs) })
+    {
         unsafe { set_abi_errno(errno::EFAULT) };
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
         return -1;
     }
+    // vmsplice accepts a full-width segment count. Do not narrow it to the
+    // signed readv count: invalid counts must reach the kernel unchanged.
+    // Import only descriptors; the caller still owns the payload lifetime and
+    // must honor vmsplice's page-retention and SPLICE_F_GIFT contracts.
+    let prepared = match iov_snapshot::PreparedIovecs::prepare_unsigned(
+        iov,
+        nr_segs,
+        mode.heals_enabled(),
+    ) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+            return -1;
+        }
+    };
+    let iov = prepared.as_ptr();
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
             syscall::sys_vmsplice(fd, iov as *const u8, nr_segs, flags)
