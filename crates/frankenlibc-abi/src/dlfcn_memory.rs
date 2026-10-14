@@ -7,10 +7,14 @@
 
 use crate::{malloc_abi as allocation, string_abi as strings};
 
+#[path = "dlfcn_io.rs"]
+mod io;
+
 /// Only the real baseline symbol version for this target is advertised. A
 /// private/future version is not interchangeable with an unversioned lookup.
 /// Callers perform native DSO scope/preemption checks before this fallback.
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
+    if let Some(address) = io::address(name, version) { return Some(address); }
     let baseline = if cfg!(target_arch = "aarch64") { "GLIBC_2.17" } else { "GLIBC_2.2.5" };
     if version.is_some_and(|version| version != baseline) {
         return None;
