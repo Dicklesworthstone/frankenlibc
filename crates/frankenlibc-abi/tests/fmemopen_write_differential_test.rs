@@ -14,6 +14,15 @@ use frankenlibc_abi::stdio_abi as fl;
 unsafe extern "C" {
     fn fmemopen(buf: *mut libc::c_void, size: usize, mode: *const libc::c_char) -> *mut libc::FILE;
     fn fputs(s: *const libc::c_char, stream: *mut libc::FILE) -> libc::c_int;
+    fn fwrite(
+        ptr: *const libc::c_void,
+        size: usize,
+        nmemb: usize,
+        stream: *mut libc::FILE,
+    ) -> usize;
+    fn ftell(stream: *mut libc::FILE) -> libc::c_long;
+    fn fseek(stream: *mut libc::FILE, offset: libc::c_long, whence: libc::c_int) -> libc::c_int;
+    fn ferror(stream: *mut libc::FILE) -> libc::c_int;
     fn fflush(stream: *mut libc::FILE) -> libc::c_int;
     fn fclose(stream: *mut libc::FILE) -> libc::c_int;
     fn fgetc(stream: *mut libc::FILE) -> libc::c_int;
@@ -85,5 +94,124 @@ fn fmemopen_write_nul_terminates_like_glibc() {
                  fl={fbuf:02x?} glibc={gbuf:02x?} (fputs fl={fret} glibc={gret})"
             );
         }
+    }
+}
+
+#[test]
+fn fmemopen_write_overflow_deferred_to_flush_like_glibc() {
+    let mode_w = CString::new("w").unwrap();
+    let mode_wplus = CString::new("w+").unwrap();
+    let payload = CString::new("0123456789").unwrap();
+
+    // 1. fputs("0123456789") into cap=8: succeeds at write time (ftell=10, ferror=0),
+    // fails at fflush (returns EOF, ftell=8, ferror!=0), second fflush and fclose return 0.
+    unsafe {
+        let mut gbuf = [b'Z'; 8];
+        let mut fbuf = [b'Z'; 8];
+        let g = fmemopen(gbuf.as_mut_ptr().cast(), gbuf.len(), mode_w.as_ptr());
+        let f = fl::fmemopen(fbuf.as_mut_ptr().cast(), fbuf.len(), mode_w.as_ptr());
+
+        let gw = fputs(payload.as_ptr(), g);
+        let fw = fl::fputs(payload.as_ptr(), f);
+        assert!(
+            gw >= 0 && fw >= 0,
+            "fputs must succeed before flush: gw={gw} fw={fw}"
+        );
+        assert_eq!(
+            fl::ftell(f),
+            ftell(g),
+            "ftell before flush must match glibc (10)"
+        );
+        assert_eq!(
+            fl::ferror(f) != 0,
+            ferror(g) != 0,
+            "ferror before flush must be 0"
+        );
+
+        assert_eq!(
+            fl::fflush(f),
+            fflush(g),
+            "first fflush after overflow must return EOF"
+        );
+        assert_eq!(
+            fl::ftell(f),
+            ftell(g),
+            "ftell after failed fflush must clamp to cap (8)"
+        );
+        assert_eq!(
+            fl::ferror(f) != 0,
+            ferror(g) != 0,
+            "ferror after failed fflush must be set"
+        );
+        assert_eq!(fl::fflush(f), fflush(g), "second fflush must succeed");
+        assert_eq!(fl::fclose(f), fclose(g), "fclose after fflush must succeed");
+        assert_eq!(fbuf, gbuf);
+    }
+
+    // 2. fwrite("0123456789", 1, 10) into cap=8: returns 10, fails at fflush.
+    unsafe {
+        let mut gbuf = [b'Z'; 8];
+        let mut fbuf = [b'Z'; 8];
+        let g = fmemopen(gbuf.as_mut_ptr().cast(), gbuf.len(), mode_w.as_ptr());
+        let f = fl::fmemopen(fbuf.as_mut_ptr().cast(), fbuf.len(), mode_w.as_ptr());
+
+        let gw = fwrite(payload.as_ptr().cast(), 1, 10, g);
+        let fw = fl::fwrite(payload.as_ptr().cast(), 1, 10, f);
+        assert_eq!(fw, gw, "fwrite count before flush must match glibc (10)");
+        assert_eq!(fl::ftell(f), ftell(g));
+        assert_eq!(fl::fflush(f), fflush(g));
+        assert_eq!(fl::ftell(f), ftell(g));
+        assert_eq!(fl::fclose(f), fclose(g));
+        assert_eq!(fbuf, gbuf);
+    }
+
+    // 3. fclose without prior fflush reports the deferred overflow error (-1).
+    unsafe {
+        let mut gbuf = [b'Z'; 8];
+        let mut fbuf = [b'Z'; 8];
+        let g = fmemopen(gbuf.as_mut_ptr().cast(), gbuf.len(), mode_w.as_ptr());
+        let f = fl::fmemopen(fbuf.as_mut_ptr().cast(), fbuf.len(), mode_w.as_ptr());
+
+        assert!(fputs(payload.as_ptr(), g) >= 0);
+        assert!(fl::fputs(payload.as_ptr(), f) >= 0);
+        assert_eq!(
+            fl::fclose(f),
+            fclose(g),
+            "fclose on unflushed overflow must return EOF"
+        );
+        assert_eq!(fbuf, gbuf);
+    }
+
+    // 4. fseek after overflow fails on the first call (flushing the overflow) and succeeds on the second.
+    unsafe {
+        let mut gbuf = [b'Z'; 8];
+        let mut fbuf = [b'Z'; 8];
+        let g = fmemopen(gbuf.as_mut_ptr().cast(), gbuf.len(), mode_wplus.as_ptr());
+        let f = fl::fmemopen(fbuf.as_mut_ptr().cast(), fbuf.len(), mode_wplus.as_ptr());
+
+        assert!(fputs(payload.as_ptr(), g) >= 0);
+        assert!(fl::fputs(payload.as_ptr(), f) >= 0);
+        assert_eq!(fl::fseek(f, 2, libc::SEEK_SET), fseek(g, 2, libc::SEEK_SET));
+        assert_eq!(fl::ftell(f), ftell(g));
+        assert_eq!(fl::fseek(f, 2, libc::SEEK_SET), fseek(g, 2, libc::SEEK_SET));
+        assert_eq!(fl::ftell(f), ftell(g));
+        assert_eq!(fl::fclose(f), fclose(g));
+        assert_eq!(fbuf, gbuf);
+    }
+
+    // 5. Write exceeding BUFSIZ (9000 bytes) fails immediately at the write call.
+    unsafe {
+        let big = CString::new(vec![b'A'; 9000]).unwrap();
+        let mut gbuf = [b'Z'; 8];
+        let mut fbuf = [b'Z'; 8];
+        let g = fmemopen(gbuf.as_mut_ptr().cast(), gbuf.len(), mode_w.as_ptr());
+        let f = fl::fmemopen(fbuf.as_mut_ptr().cast(), fbuf.len(), mode_w.as_ptr());
+
+        assert_eq!(fl::fputs(big.as_ptr(), f), fputs(big.as_ptr(), g));
+        assert_eq!(fl::ftell(f), ftell(g));
+        assert_eq!(fl::ferror(f) != 0, ferror(g) != 0);
+        assert_eq!(fl::fflush(f), fflush(g));
+        assert_eq!(fl::fclose(f), fclose(g));
+        assert_eq!(fbuf, gbuf);
     }
 }

@@ -4040,6 +4040,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
 
     // Memory-backed streams: sync data, then clean up.
     if s.is_mem_backed() {
+        let flush_ok = s.mem_flush();
         sync_and_unregister_fast_fixed_mem_read(id, s);
         unsafe {
             sync_memstream_to_caller(id, s, true);
@@ -4062,7 +4063,7 @@ pub unsafe extern "C-unwind" fn fclose(stream: *mut c_void) -> c_int {
         }
         crate::wchar_abi::unregister_open_wmemstream(id);
         maybe_unregister_dynamic_native_stream(stream);
-        return 0;
+        return if flush_ok { 0 } else { libc::EOF };
     }
 
     let fd = s.fd();
@@ -4195,13 +4196,14 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
             let ok = if is_cookie_stream(id) {
                 unsafe { flush_cookie_stream(id, s) }
             } else if s.is_mem_backed() {
+                let flush_ok = s.mem_flush();
                 let _ = sync_fast_fixed_mem_read_to_stream(id, s);
                 unsafe {
                     sync_memstream_to_caller(id, s, false);
                     sync_fmemopen_full(id, s);
                     crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
                 }
-                true
+                flush_ok
             } else {
                 unsafe { flush_stream(s) }
             };
@@ -4232,14 +4234,15 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
         let s = &mut *s_guard;
         // Memory-backed streams: sync data to C caller's pointers (open_memstream).
         if s.is_mem_backed() {
+            let flush_ok = s.mem_flush();
             let _ = sync_fast_fixed_mem_read_to_stream(id, s);
             unsafe {
                 sync_memstream_to_caller(id, s, false);
                 sync_fmemopen_full(id, s);
                 crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
             }
-            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, false);
-            return 0;
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 8, !flush_ok);
+            return if flush_ok { 0 } else { libc::EOF };
         }
         // Cache this non-cookie non-mem fd stream so subsequent fflush/read/write hit the MT fast
         // path — a pure fflush loop otherwise never populates the cache. Mirrors fgets/fseek.
@@ -5846,10 +5849,15 @@ pub unsafe extern "C-unwind" fn fseek(stream: *mut c_void, offset: c_long, whenc
             runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, false);
             return 0;
         }
+        let flush_ok = s.mem_flush();
         unsafe {
             sync_memstream_to_caller(id, s, false);
             sync_fmemopen_full(id, s);
             crate::wchar_abi::sync_open_wmemstream_to_caller(id, s);
+        }
+        if !flush_ok {
+            runtime_policy::observe(ApiFamily::Stdio, decision.profile, 10, true);
+            return -1;
         }
         let new_pos = s.mem_seek(offset, whence);
         if new_pos < 0 {

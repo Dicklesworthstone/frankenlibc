@@ -379,6 +379,13 @@ pub struct StdioStream {
     read_pushback: VecDeque<u8>,
     /// Optional memory backing for fmemopen/open_memstream.
     mem_backing: Option<MemBacking>,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer since the last
+    /// flush on a `MemBacking::Fixed` (`fmemopen`) stream (bd-lamxlj).
+    mem_pending_write: usize,
+    /// Bytes accepted into the modelled `BUFSIZ` stdio buffer beyond the fixed
+    /// backing capacity since the last flush on a `MemBacking::Fixed` stream.
+    /// Reported as a flush error (`EOF`, `ferror`) on `fflush`/`fseek`/`fclose`.
+    mem_pending_overflow: usize,
     /// Opaque token naming the C `FILE` this stream is published through
     /// (0: none). The ABI layer uses it to find the handle whose glibc read
     /// window mirrors [`read_window`](Self::read_window).
@@ -417,6 +424,8 @@ impl StdioStream {
             read_pushback: VecDeque::new(),
             c_handle: 0,
             mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -432,6 +441,8 @@ impl StdioStream {
             read_pushback: VecDeque::new(),
             c_handle: 0,
             mem_backing: None,
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -458,6 +469,8 @@ impl StdioStream {
                 pos,
                 content_end: cl,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -488,6 +501,8 @@ impl StdioStream {
                 pos,
                 content_end: content_len,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -540,6 +555,8 @@ impl StdioStream {
                 data: Vec::new(),
                 pos: 0,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -559,6 +576,8 @@ impl StdioStream {
                 data: Vec::new(),
                 pos: 0,
             }),
+            mem_pending_write: 0,
+            mem_pending_overflow: 0,
         }
     }
 
@@ -1459,10 +1478,52 @@ impl StdioStream {
                 let last = data.len() - 1;
                 data[last] = 0;
             }
+            if matches!(backing, MemBacking::Fixed { .. }) {
+                let next_pending = self.mem_pending_write.saturating_add(data.len());
+                if n == data.len() && self.mem_pending_overflow == 0 {
+                    self.mem_pending_write = next_pending % BUFSIZ;
+                    self.offset = backing.position() as i64;
+                    return data.len();
+                }
+                if next_pending <= BUFSIZ {
+                    self.mem_pending_write = next_pending;
+                    self.mem_pending_overflow =
+                        self.mem_pending_overflow.saturating_add(data.len() - n);
+                    self.offset =
+                        backing.position().saturating_add(self.mem_pending_overflow) as i64;
+                    return data.len();
+                }
+                // Write exceeds glibc's 8192-byte (`BUFSIZ`) FILE buffer: flush
+                // immediately and report the short write / overflow at write time.
+                self.mem_pending_write = 0;
+                self.mem_pending_overflow = 0;
+                self.flags.error = true;
+                self.offset = backing.position() as i64;
+                return n;
+            }
             self.offset = backing.position() as i64;
             n
         } else {
             0
+        }
+    }
+
+    /// Flush staged writes on a memory-backed stream (`bd-lamxlj`).
+    ///
+    /// Returns `false` (and sets `error` + clamps `offset` to the backing
+    /// position) if bytes buffered in the modelled `BUFSIZ` window overflowed a
+    /// `MemBacking::Fixed` (`fmemopen`) stream since the last flush.
+    pub fn mem_flush(&mut self) -> bool {
+        self.mem_pending_write = 0;
+        if self.mem_pending_overflow > 0 {
+            self.mem_pending_overflow = 0;
+            if let Some(ref backing) = self.mem_backing {
+                self.offset = backing.position() as i64;
+            }
+            self.flags.error = true;
+            false
+        } else {
+            true
         }
     }
 
@@ -1559,6 +1620,9 @@ impl StdioStream {
     /// Seek within a memory-backed stream.
     /// Returns the new position on success, or -1 on failure.
     pub fn mem_seek(&mut self, offset: i64, whence: i32) -> i64 {
+        if !self.mem_flush() {
+            return -1;
+        }
         if let Some(ref mut backing) = self.mem_backing {
             if let Some(new_pos) = backing.seek(offset, whence) {
                 self.ungetc_byte = None;
