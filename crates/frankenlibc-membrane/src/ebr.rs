@@ -13,7 +13,8 @@ pub struct EbrCollector {
     /// Global epoch, incremented by `try_advance()`.
     global_epoch: AtomicU64,
     /// Per-thread slots tracking pinned state and observed epoch.
-    /// The Mutex is only taken during registration/deregistration and advance.
+    /// Serializes registration and the complete scan/advance/bucket handoff.
+    /// Pin/unpin take only their own slot's mutex, not this global mutex.
     slots: Mutex<Vec<Arc<EbrSlot>>>,
     /// Retired items awaiting reclamation, bucketed by retirement epoch.
     garbage: [Mutex<Vec<DeferredItem>>; 3],
@@ -27,10 +28,15 @@ pub struct EbrCollector {
 struct EbrSlot {
     /// Whether this slot is currently registered.
     active: AtomicBool,
-    /// Whether the thread is currently pinned (inside a guard).
-    pinned: AtomicBool,
-    /// The epoch the thread last observed.
-    observed_epoch: AtomicU64,
+    /// All guards of one handle share a counted pin. A nested pin must neither
+    /// refresh the oldest protected epoch nor let an inner drop unpin an outer
+    /// guard. The mutex also supports concurrent use of a shared handle.
+    pins: Mutex<EbrPinState>,
+}
+
+struct EbrPinState {
+    count: usize,
+    epoch: u64,
 }
 
 /// A deferred item waiting for reclamation.
@@ -46,7 +52,8 @@ pub struct EbrHandle<'a> {
     slot_id: usize,
 }
 
-/// RAII guard that pins the current epoch for the duration of its lifetime.
+/// RAII guard protecting an epoch for its entire lifetime, even if its handle
+/// is dropped. Overlapping guards of a handle retain the oldest pinned epoch.
 pub struct EbrGuard<'a> {
     collector: &'a EbrCollector,
     slot: Arc<EbrSlot>,
@@ -92,12 +99,14 @@ impl EbrCollector {
         let mut slots = self.slots.lock();
         let epoch = self.global_epoch.load(Ordering::Acquire);
 
-        // Reuse inactive slot.
+        // A guard may outlive its handle: pin() borrows the collector, not the
+        // handle. Only the registry's sole Arc proves that the old handle AND
+        // every old guard have gone. In particular, an old guard must never
+        // unpin a newly registered user of the same slot.
         for (i, slot) in slots.iter().enumerate() {
-            if !slot.active.load(Ordering::Relaxed) {
+            if !slot.active.load(Ordering::Acquire) && Arc::strong_count(slot) == 1 {
+                *slot.pins.lock() = EbrPinState { count: 0, epoch };
                 slot.active.store(true, Ordering::Release);
-                slot.pinned.store(false, Ordering::Release);
-                slot.observed_epoch.store(epoch, Ordering::Release);
                 return EbrHandle {
                     collector: self,
                     slot: Arc::clone(slot),
@@ -110,8 +119,7 @@ impl EbrCollector {
         let slot_id = slots.len();
         let slot = Arc::new(EbrSlot {
             active: AtomicBool::new(true),
-            pinned: AtomicBool::new(false),
-            observed_epoch: AtomicU64::new(epoch),
+            pins: Mutex::new(EbrPinState { count: 0, epoch }),
         });
         slots.push(Arc::clone(&slot));
         EbrHandle {
@@ -129,74 +137,62 @@ impl EbrCollector {
 
     /// Try to advance the global epoch.
     pub fn try_advance(&self) -> Option<u64> {
-        let current = self.global_epoch.load(Ordering::Acquire);
-
-        // Scope for the slots lock to avoid holding it during cleanup
-        let all_caught_up = {
+        let (new_epoch, items_to_clean) = {
+            // Keep the scan, epoch transition, and recycled-bucket handoff in
+            // one critical section. An old scanner must not publish a stale
+            // epoch or drain a bucket that a newer scanner has already reused.
             let slots = self.slots.lock();
-            slots.iter().all(|s| {
-                if !s.active.load(Ordering::Acquire) {
-                    return true;
-                }
-                if !s.pinned.load(Ordering::Acquire) {
-                    return true;
-                }
-                s.observed_epoch.load(Ordering::Acquire) >= current
-            })
-        };
-
-        if all_caught_up {
-            let new_epoch = current + 1;
-            self.global_epoch.store(new_epoch, Ordering::Release);
-
-            // Emit epoch advance event.
-            crate::alien_cs_metrics::emit_alien_cs_event(
-                crate::alien_cs_metrics::MetricEventKind::EbrEpochAdvance,
-                new_epoch,
-                "ebr",
-            );
-
-            // Reclaim garbage from two epochs ago.
-            // Items retired in epoch `e` are safe to reclaim once the global epoch
-            // has reached `e + 2`, because that implies all threads have observed
-            // at least epoch `e + 1`.
-            // The bucket for `current - 1` (the epoch we just completed) is `current % 3`.
-            // The bucket for `current - 2` (the one safe to reclaim) is `(current + 1) % 3`.
-            let reclaim_bucket = (current + 1) % 3;
-            let reclaim_bucket = reclaim_bucket as usize;
-
-            // Extract items while holding the bucket lock
-            let items_to_clean = {
-                let mut bucket = self.garbage[reclaim_bucket].lock();
-                std::mem::take(&mut *bucket)
-            };
-
-            let count = items_to_clean.len() as u64;
-
-            // Execute cleanups outside any locks
-            for item in items_to_clean {
-                (item.cleanup)();
-            }
-
-            if count > 0 {
-                self.total_reclaimed.fetch_add(count, Ordering::Relaxed);
+            let current = self.global_epoch.load(Ordering::Acquire);
+            let all_caught_up = slots.iter().all(|slot| {
+                let pins = slot.pins.lock();
+                // Do not skip inactive handles: an outstanding guard can
+                // still protect this epoch after its handle was dropped.
+                pins.count == 0 || pins.epoch >= current
+            });
+            if !all_caught_up {
+                drop(slots);
                 crate::alien_cs_metrics::emit_alien_cs_event(
-                    crate::alien_cs_metrics::MetricEventKind::EbrReclaim,
-                    count,
+                    crate::alien_cs_metrics::MetricEventKind::EbrGracePeriodDelay,
+                    current,
                     "ebr",
                 );
+                return None;
             }
 
-            Some(new_epoch)
-        } else {
-            // Grace period delayed — pinned threads blocking advance.
+            // Fail closed rather than wrap the epoch and misclassify old pins.
+            let new_epoch = current.checked_add(1)?;
+            // Preserve the existing conservative three-advance grace period:
+            // the previous contents of new_epoch % 3 belong to new_epoch - 3.
+            // Detach those contents BEFORE publishing new_epoch. Otherwise a
+            // concurrent retire in the newly published epoch could be swept
+            // up in this same cleanup, before its readers have quiesced.
+            let mut bucket = self.garbage[(new_epoch % 3) as usize].lock();
+            let items = std::mem::take(&mut *bucket);
+            self.global_epoch.store(new_epoch, Ordering::Release);
+            (new_epoch, items)
+        };
+
+        // Neither diagnostics nor arbitrary cleanup callbacks run under the
+        // registry, slot, or bucket locks. A callback may itself retire work,
+        // register a reader, or advance the collector.
+        crate::alien_cs_metrics::emit_alien_cs_event(
+            crate::alien_cs_metrics::MetricEventKind::EbrEpochAdvance,
+            new_epoch,
+            "ebr",
+        );
+        let count = items_to_clean.len() as u64;
+        for item in items_to_clean {
+            (item.cleanup)();
+        }
+        if count > 0 {
+            self.total_reclaimed.fetch_add(count, Ordering::Relaxed);
             crate::alien_cs_metrics::emit_alien_cs_event(
-                crate::alien_cs_metrics::MetricEventKind::EbrGracePeriodDelay,
-                current,
+                crate::alien_cs_metrics::MetricEventKind::EbrReclaim,
+                count,
                 "ebr",
             );
-            None
         }
+        Some(new_epoch)
     }
 
     /// Force-advance the epoch, retrying until successful.
@@ -211,12 +207,24 @@ impl EbrCollector {
 
     /// Retire an item for deferred reclamation.
     pub fn retire<F: FnOnce() + Send + 'static>(&self, cleanup: F) {
-        let epoch = self.global_epoch.load(Ordering::Acquire);
-        let bucket = (epoch % 3) as usize;
-        self.garbage[bucket].lock().push(DeferredItem {
+        // Allocate outside the bucket lock: allocator reentry must not wait
+        // for the same bucket. Keep the closure owned across epoch retries.
+        let item = DeferredItem {
             cleanup: Box::new(cleanup),
-        });
-        self.total_retired.fetch_add(1, Ordering::Relaxed);
+        };
+        loop {
+            let epoch = self.global_epoch.load(Ordering::Acquire);
+            let mut bucket = self.garbage[(epoch % 3) as usize].lock();
+            // A retire paused before locking may have selected a bucket from
+            // an old cycle. Pair this recheck with the handoff in try_advance.
+            if self.global_epoch.load(Ordering::Acquire) != epoch {
+                continue;
+            }
+            bucket.push(item);
+            // Publish the diagnostic before the bucket can be reclaimed.
+            self.total_retired.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
     }
 
     /// Get the number of active (registered) threads.
@@ -241,7 +249,7 @@ impl EbrCollector {
                 .count(),
             pinned_threads: slots
                 .iter()
-                .filter(|s| s.active.load(Ordering::Relaxed) && s.pinned.load(Ordering::Relaxed))
+                .filter(|s| s.pins.lock().count != 0)
                 .count(),
             total_retired: self.total_retired.load(Ordering::Relaxed),
             total_reclaimed: self.total_reclaimed.load(Ordering::Relaxed),
@@ -253,18 +261,16 @@ impl EbrCollector {
         }
     }
 
-    /// Pin a thread at the current epoch.
+    /// Pin a handle, retaining its oldest epoch until its final guard drops.
     fn pin(&self, slot: &EbrSlot) -> u64 {
-        let epoch = self.global_epoch.load(Ordering::Acquire);
-        if !slot.active.load(Ordering::Acquire) {
-            crate::alien_cs_metrics::emit_alien_cs_event(
-                crate::alien_cs_metrics::MetricEventKind::EbrInvariantViolation,
-                epoch,
-                "ebr",
-            );
-        }
-        slot.observed_epoch.store(epoch, Ordering::Release);
-        slot.pinned.store(true, Ordering::Release);
+        let epoch = {
+            let mut pins = slot.pins.lock();
+            if pins.count == 0 {
+                pins.epoch = self.global_epoch.load(Ordering::Acquire);
+            }
+            pins.count = pins.count.checked_add(1).expect("EBR guard count overflow");
+            pins.epoch
+        };
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::EbrPin,
             epoch,
@@ -273,10 +279,15 @@ impl EbrCollector {
         epoch
     }
 
-    /// Unpin a thread.
+    /// Release one guard; other guards of the same handle remain pinned.
     fn unpin(&self, slot: &EbrSlot) {
-        let epoch = slot.observed_epoch.load(Ordering::Acquire);
-        slot.pinned.store(false, Ordering::Release);
+        let epoch = {
+            let mut pins = slot.pins.lock();
+            // Each guard is constructed only after pin() increments the count;
+            // guards cannot be cloned, and each Drop consumes exactly one pin.
+            pins.count = pins.count.checked_sub(1).expect("unbalanced EBR guard");
+            pins.epoch
+        };
         crate::alien_cs_metrics::emit_alien_cs_event(
             crate::alien_cs_metrics::MetricEventKind::EbrUnpin,
             epoch,
@@ -302,6 +313,8 @@ impl Drop for EbrCollector {
 }
 
 impl<'a> EbrHandle<'a> {
+    /// Pin this registration. Overlapping guards keep its oldest epoch alive;
+    /// dropping a guard out of order, or dropping this handle first, is valid.
     pub fn pin(&self) -> EbrGuard<'a> {
         let epoch = self.collector.pin(&self.slot);
         EbrGuard {
@@ -319,8 +332,9 @@ impl<'a> EbrHandle<'a> {
 
 impl Drop for EbrHandle<'_> {
     fn drop(&mut self) {
+        // Deregistration is not unpinning: guards can legally outlive this
+        // handle and retain both their counted pin and their Arc to the slot.
         self.slot.active.store(false, Ordering::Release);
-        self.slot.pinned.store(false, Ordering::Release);
     }
 }
 

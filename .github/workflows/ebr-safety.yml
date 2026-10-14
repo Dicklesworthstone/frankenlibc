@@ -1,0 +1,52 @@
+name: EBR lifetime safety
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-membrane/**'
+      - 'Cargo.toml'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/ebr-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lifetime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_BUILD_JOBS: 2
+      RUST_BACKTRACE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ebr-lifetime
+          cache-on-failure: true
+      - name: Execute actual collector regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/ebr
+          git rev-parse HEAD | tee artifacts/ebr/source-commit.txt
+          rustc --version --verbose | tee artifacts/ebr/rustc.txt
+          sha256sum crates/frankenlibc-membrane/src/ebr.rs crates/frankenlibc-membrane/tests/ebr_guard_lifetime_test.rs | tee artifacts/ebr/source-sha256.txt
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --test ebr_guard_lifetime_test -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/lifetimes-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/lifetimes-$mode.log"
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-membrane --lib ebr::tests:: -- --nocapture --test-threads=1 2>&1 | tee "artifacts/ebr/existing-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed;' "artifacts/ebr/existing-$mode.log"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ebr-lifetime-results
+          path: artifacts/ebr/**
+          if-no-files-found: error
