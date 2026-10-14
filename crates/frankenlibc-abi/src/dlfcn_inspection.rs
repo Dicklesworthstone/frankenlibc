@@ -60,6 +60,22 @@ fn symbol_start(object: &LoadedObject, symbol: &Elf64Symbol, address: u64) -> Op
 /// `info` must be writable Dl_info storage. The caller must retain the DSO
 /// while using returned pointers, just as for host dladdr/dlsym pointers.
 pub(crate) unsafe fn address_info(address: *const c_void, info: *mut libc::Dl_info) -> bool {
+    unsafe { address_info_extra(address, info, std::ptr::null_mut(), 0) }
+}
+
+/// Shared dladdr/dladdr1 selection. Extra ELF pointers are backed by the DSO,
+/// not Rust's layout-unstable Elf64Symbol value or a stack-local copy.
+/// Unknown flags leave extra_info untouched, matching the host interface.
+///
+/// # Safety
+/// In addition to address_info's contract, extra_info, when non-null and the
+/// flag is recognized, must point to a writable pointer-sized output object.
+pub(crate) unsafe fn address_info_extra(
+    address: *const c_void,
+    info: *mut libc::Dl_info,
+    extra_info: *mut *mut c_void,
+    flags: std::ffi::c_int,
+) -> bool {
     if address.is_null() || info.is_null() {
         return false;
     }
@@ -86,7 +102,8 @@ pub(crate) unsafe fn address_info(address: *const c_void, info: *mut libc::Dl_in
         dli_saddr: std::ptr::null_mut(),
     };
     let mut best = None;
-    for symbol in &dso.object.dynsym {
+    let mut selected = None;
+    for (index, symbol) in dso.object.dynsym.iter().enumerate() {
         let Some(start) = symbol_start(&dso.object, symbol, address as usize as u64) else {
             continue;
         };
@@ -97,11 +114,22 @@ pub(crate) unsafe fn address_info(address: *const c_void, info: *mut libc::Dl_in
             continue;
         };
         best = Some(start);
+        selected = Some(index);
         result.dli_sname = name.as_ptr();
         result.dli_saddr = start as usize as *mut c_void;
     }
     // SAFETY: caller supplies valid writable storage; resident allocations
     // backing both strings cannot move while this registry guard is held.
     unsafe { info.write(result) };
+    if !extra_info.is_null() {
+        let extra = match flags {
+            1 => Some(selected.map_or(std::ptr::null_mut(), |index| dso.info.symbol(index))),
+            2 => Some(dso.info.address()),
+            _ => None,
+        };
+        // SAFETY: caller supplies pointer output storage for recognized flags.
+        // Both pointees remain stable until this object's eventual unload.
+        if let Some(extra) = extra { unsafe { extra_info.write(extra) }; }
+    }
     true
 }

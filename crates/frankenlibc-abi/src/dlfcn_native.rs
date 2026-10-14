@@ -66,6 +66,9 @@ mod cxa;
 #[path = "dlfcn_process_exit.rs"]
 mod process_exit;
 
+#[path = "dlfcn_info.rs"]
+mod introspection;
+
 #[path = "dlfcn_inspection.rs"]
 mod inspection;
 pub(super) use inspection::address_info as native_address_info;
@@ -129,6 +132,7 @@ struct NativeDso {
     _file: File,
     // dladdr strings must outlive a lookup and retain the requested pathname.
     name: CString,
+    info: introspection::Metadata,
     open_metadata: open::Metadata,
     references: usize,
     // In-flight dependency staging retains mappings without inventing public
@@ -619,12 +623,15 @@ fn map_object(
     let versions = versions::Table::parse(&prepared.bytes, &object)?;
     let tls_relocations = tls::take_relocations(&mut object);
     let phdrs = phdr::Headers::new(&object)?;
+    let name = CString::new(prepared.path.as_os_str().as_bytes()).ok()?;
+    let info = introspection::Metadata::new(&object, &name, &prepared.bytes)?;
     Some(NativeDso {
         id,
         device: prepared.device,
         inode: prepared.inode,
         _file: file,
-        name: CString::new(prepared.path.as_os_str().as_bytes()).ok()?,
+        name,
+        info,
         open_metadata: open::Metadata::new(prepared)?,
         references: 0,
         load_pins: 0,
@@ -742,6 +749,9 @@ impl SymbolLookup for Resolver<'_> {
                 return Some(address);
             }
         }
+        if matches!(name, "dlinfo" | "dladdr1") {
+            return introspection::resolver_address(name, version);
+        }
         if version.is_some_and(|name| !super::version_supported(name.as_bytes())) {
             return None;
         }
@@ -837,7 +847,8 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     // symbols that happen to be relocated. Validate against the named direct
     // provider's ORIGINAL image before any resolver, initializer or publication.
     for dso in &pending {
-        for requirement in &dso.versions.requirements {
+        let provider_requirements = &dso.versions.requirements;
+        for requirement in provider_requirements {
             let provider_id = dso
                 .needed_by_name
                 .iter()
@@ -965,6 +976,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
     initialization::select(&mut pending);
     phdr::published(pending.len());
     dsos.extend(pending);
+    introspection::refresh_links(&mut dsos);
     // Publish lookup membership only for a fully bound group. Neither failed
     // staging nor membership itself acquires a provider lifetime dependency.
     lookup::attach_scope(&mut dsos, root, flags & dlfcn_core::RTLD_DEEPBIND != 0);
@@ -1265,6 +1277,7 @@ fn collect_unreachable() -> Option<()> {
         cxa::finalize_owners(&ids)?;
         let mut dsos = registry().lock().ok()?;
         dsos.retain(|dso| !ids.contains(&dso.id));
+        introspection::refresh_links(&mut dsos);
         for dso in dsos.iter_mut() {
             dso.lookup_scopes.retain(|scope| !ids.contains(&scope.root));
         }

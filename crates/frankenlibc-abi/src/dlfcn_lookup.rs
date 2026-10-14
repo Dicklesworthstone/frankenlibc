@@ -109,6 +109,12 @@ unsafe extern "C" fn native_dlvsym(
 /// Only native relocation fallback binds these bridges; a DSO-provided
 /// ordinary definition still wins the existing preemption/scope search.
 pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64> {
+    // Dynamically obtained introspection functions must understand native
+    // handles. Host dlinfo cannot interpret our tagged IDs as link-map pointers.
+    // Its compatibility versions are independent of dlsym's version set.
+    if matches!(name, "dlinfo" | "dladdr1") {
+        return super::introspection::resolver_address(name, version);
+    }
     if version.is_some_and(|version| !matches!(version, "GLIBC_2.2.5" | "GLIBC_2.34")) {
         return None;
     }

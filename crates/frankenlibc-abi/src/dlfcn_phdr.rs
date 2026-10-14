@@ -49,6 +49,11 @@ impl std::fmt::Debug for Headers {
 }
 
 impl Headers {
+    /// Same immutable backing array for iteration and RTLD_DI_PHDR.
+    pub(super) fn as_ptr_len(&self) -> (*const libc::Elf64_Phdr, usize) {
+        (self.entries.as_ptr(), self.entries.len())
+    }
+
     pub(super) fn new(object: &LoadedObject) -> Option<Self> {
         let count = object.program_headers.len();
         if count == 0 || count > u16::MAX as usize {
