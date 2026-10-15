@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/native-rpc-frontends.yml'
       - 'crates/frankenlibc-abi/src/rpc*.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn_socket.rs'
       - 'crates/frankenlibc-abi/tests/rpc*_test.rs'
       - 'crates/frankenlibc-core/src/rpc/**'
   workflow_dispatch:

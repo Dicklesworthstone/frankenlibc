@@ -4,7 +4,7 @@
 //! cancellation points, membrane validation and errno must stay in the same
 //! runtime as the descriptor operations supplied by dlfcn_io.
 
-use crate::socket_abi as socket;
+use crate::{socket_abi as socket, unistd_abi as unistd};
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     let introduced = match name {
@@ -42,8 +42,10 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "recvfrom" => socket::recvfrom as *const (),
         "sendmsg" => socket::sendmsg as *const (),
         "recvmsg" => socket::recvmsg as *const (),
-        "sendmmsg" => socket::sendmmsg as *const (),
-        "recvmmsg" => socket::recvmmsg as *const (),
+        // Batched message operations live in unistd_abi, not socket_abi.
+        // Keep their real frontends instead of substituting single-message IO.
+        "sendmmsg" => unistd::sendmmsg as *const (),
+        "recvmmsg" => unistd::recvmmsg as *const (),
         _ => return None,
     };
     Some(function as usize as u64)
