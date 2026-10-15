@@ -13,11 +13,17 @@ mod socket;
 #[path = "dlfcn_event.rs"]
 mod event;
 
+#[path = "dlfcn_resolv.rs"]
+mod resolv;
+
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     if let Some(address) = socket::address(name, version) {
         return Some(address);
     }
     if let Some(address) = event::address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = resolv::address(name, version) {
         return Some(address);
     }
     // The newer *at and pipe2/dup3 interfaces predate AArch64's baseline,
