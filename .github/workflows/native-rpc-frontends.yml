@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/native-rpc-frontends.yml'
       - 'crates/frankenlibc-abi/src/rpc*.rs'
+      - 'crates/frankenlibc-abi/tests/rpc*_test.rs'
       - 'crates/frankenlibc-core/src/rpc/**'
   workflow_dispatch:
 permissions:
@@ -13,12 +14,9 @@ concurrency:
   group: native-rpc-frontends
   cancel-in-progress: false
 jobs:
-  integrate-and-test:
-    if: github.repository == 'Dicklesworthstone/frankenlibc' && github.ref == 'refs/heads/main'
+  execute:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    permissions:
-      contents: write
     env:
       CARGO_TERM_COLOR: never
       CARGO_BUILD_JOBS: 2
@@ -29,93 +27,29 @@ jobs:
         with:
           fetch-depth: 1
           clean: false
-      - name: Integrate reviewed constructor bodies without replacing surrounding source
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          root = Path('crates/frankenlibc-abi/src')
-          udp = root / 'rpc_udp.rs'
-          text = udp.read_text()
-          hook = '#[path = "rpc_auth_unix.rs"]\nmod auth_unix;\npub(super) use auth_unix::{create as authunix_create, create_default as authunix_create_default};\n\n'
-          if hook not in text:
-              anchor = 'unsafe extern "C" fn none_noop(_: *mut Auth) {}'
-              assert text.count(anchor) == 1, 'AUTH insertion point changed'
-              text = text.replace(anchor, hook + anchor, 1)
-              udp.write_text(text)
-          abi = root / 'rpc_abi.rs'
-          text = abi.read_text()
-          replacements = {
-              'authunix_create': '''/// Create owned AUTH_SYS credentials (not cryptographic authentication).
-          #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-          pub unsafe extern "C" fn authunix_create(
-              machname: *mut c_char, uid: c_int, gid: c_int, len: c_int, aup_gids: *mut c_int,
-          ) -> *mut c_void {
-              unsafe { rpc_udp::authunix_create(machname, uid, gid, len, aup_gids) }
-          }''',
-              'authunix_create_default': '''/// Create AUTH_SYS credentials from the effective process identity.
-          #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-          pub unsafe extern "C" fn authunix_create_default() -> *mut c_void {
-              unsafe { rpc_udp::authunix_create_default() }
-          }''',
-              'clnttcp_create': '''/// Create a native IPv4 TCP RPC client with bounded record framing.
-          /// Borrowed descriptors must already be connected and remain caller-owned.
-          #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-          pub unsafe extern "C" fn clnttcp_create(
-              raddr: *mut c_void, prog: c_ulong, vers: c_ulong, sockp: *mut c_int,
-              sendsz: c_uint, recvsz: c_uint,
-          ) -> *mut c_void {
-              unsafe { rpc_udp::create_tcp(raddr, prog, vers, sockp, sendsz, recvsz) }
-          }''',
-          }
-          for name, replacement in replacements.items():
-              pattern = r'rpc_stub!\(\s*' + re.escape(name) + r'\([^;]*?\)\s*->\s*\*mut c_void\s*\);'
-              if re.search(pattern, text):
-                  text, count = re.subn(pattern, lambda _: replacement, text)
-                  assert count == 1, f'{name}: expected one stub'
-              else:
-                  assert re.search(r'pub unsafe extern "C" fn ' + name + r'\(', text), f'{name}: missing'
-          abi.write_text(text)
-          PY
-          git diff --check
-          if ! git diff --quiet -- crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_udp.rs; then
-            test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$(git rev-parse HEAD)"
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -- crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_udp.rs
-            git commit -m 'feat(rpc): activate native AUTH_SYS and TCP public constructors'
-            git push origin HEAD:main
-          fi
-      - name: Capture source and relevant open beads
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p artifacts/native-rpc
-          git rev-parse HEAD > artifacts/native-rpc/source-commit.txt
-          tar -czf artifacts/native-rpc/rpc-source.tar.gz crates/frankenlibc-abi/src/rpc*.rs crates/frankenlibc-core/src/rpc .beads/issues.jsonl PLAN_TO_PORT_GLIBC_TO_RUST.md AGENTS.md Cargo.toml rust-toolchain.toml
-          python3 - <<'PY' > artifacts/native-rpc/open-rpc-beads.json
-          import json
-          from pathlib import Path
-          rows = [json.loads(line) for line in Path('.beads/issues.jsonl').read_text().splitlines() if line.strip()]
-          selected = [r for r in rows if r.get('status') not in ('closed','tombstone') and any(w in (r.get('title','')+' '+r.get('description','')).lower() for w in ('sunrpc', 'authunix', 'clnttcp', 'rpc client', 'rpc transport'))]
-          print(json.dumps(selected, indent=2))
-          PY
+          persist-credentials: false
       - name: Install repository-pinned Rust
         shell: bash
         run: |
           toolchain=$(python3 -c 'import tomllib; print(tomllib.load(open("rust-toolchain.toml", "rb"))["toolchain"]["channel"])')
           rustup toolchain install "$toolchain" --profile minimal
           rustc --version
-      - name: Execute native RPC tests in both modes
+          mkdir -p artifacts/native-rpc
+          git rev-parse HEAD > artifacts/native-rpc/source-commit.txt
+      - name: Execute production RPC frontends in both modes
         shell: bash
         run: |
           set -euo pipefail
           for mode in strict hardened; do
-            FRANKENLIBC_MODE=$mode cargo test -p frankenlibc-abi --lib --keep-going rpc_abi::rpc_udp -- --nocapture --test-threads=1 2>&1 | tee artifacts/native-rpc/$mode.log
+            FRANKENLIBC_MODE=$mode cargo test -p frankenlibc-abi --test rpc_tcp_frontend_test --no-fail-fast -- --nocapture --test-threads=1 2>&1 | tee artifacts/native-rpc/$mode.log
             grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/$mode.log
           done
+      - name: Execute safe wire and record parser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p frankenlibc-core --lib rpc::wire -- --nocapture 2>&1 | tee artifacts/native-rpc/wire.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/wire.log
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
