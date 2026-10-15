@@ -2224,17 +2224,19 @@ pub unsafe extern "C" fn authnone_create() -> *mut c_void {
     rpc_udp::authnone()
 }
 
-rpc_stub!(
-    authunix_create(
-        machname: *mut c_char,
-        uid: c_int,
-        gid: c_int,
-        len: c_int,
-        aup_gids: *mut c_int,
-    ) -> *mut c_void
-);
+/// Create owned AUTH_SYS credentials (not cryptographic authentication).
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authunix_create(
+    machname: *mut c_char, uid: c_int, gid: c_int, len: c_int, aup_gids: *mut c_int,
+) -> *mut c_void {
+    unsafe { rpc_udp::authunix_create(machname, uid, gid, len, aup_gids) }
+}
 
-rpc_stub!(authunix_create_default() -> *mut c_void);
+/// Create AUTH_SYS credentials from the effective process identity.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn authunix_create_default() -> *mut c_void {
+    unsafe { rpc_udp::authunix_create_default() }
+}
 
 /// Create a DES authentication handle. Returns NULL — DES is cryptographically broken.
 ///
@@ -2297,16 +2299,15 @@ rpc_stub!(
 
 rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 
-rpc_stub!(
-    clnttcp_create(
-        raddr: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        sockp: *mut c_int,
-        sendsz: c_uint,
-        recvsz: c_uint,
-    ) -> *mut c_void
-);
+/// Create a native IPv4 TCP RPC client with bounded record framing.
+/// Borrowed descriptors must already be connected and remain caller-owned.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clnttcp_create(
+    raddr: *mut c_void, prog: c_ulong, vers: c_ulong, sockp: *mut c_int,
+    sendsz: c_uint, recvsz: c_uint,
+) -> *mut c_void {
+    unsafe { rpc_udp::create_tcp(raddr, prog, vers, sockp, sendsz, recvsz) }
+}
 
 /// Create an IPv4 UDP RPC client with native XDR and retransmission handling.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]

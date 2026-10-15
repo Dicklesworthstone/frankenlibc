@@ -315,6 +315,10 @@ struct AuthOps {
     refresh: unsafe extern "C" fn(*mut Auth) -> c_int,
     destroy: unsafe extern "C" fn(*mut Auth),
 }
+#[path = "rpc_auth_unix.rs"]
+mod auth_unix;
+pub(super) use auth_unix::{create as authunix_create, create_default as authunix_create_default};
+
 unsafe extern "C" fn none_noop(_: *mut Auth) {}
 unsafe extern "C" fn none_marshal(_: *mut Auth, xdr: *mut Xdr) -> c_int {
     let mut word = 0;
