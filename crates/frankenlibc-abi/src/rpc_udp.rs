@@ -146,6 +146,24 @@ fn monotonic() -> Result<u64, RpcError> {
         .ok_or_else(|| RpcError::system(RPC_SYSTEMERROR, libc::EOVERFLOW))
 }
 
+/// One call budget shared by marshaling, credential refresh and transport IO.
+/// A zero timeout permits only the existing nonblocking initial send behavior.
+#[derive(Clone, Copy)]
+struct Deadline {
+    at: u64,
+    nonblocking: bool,
+}
+impl Deadline {
+    fn new(timeout: u64) -> Result<Self, RpcError> {
+        let at = monotonic()?.checked_add(timeout)
+            .ok_or_else(|| RpcError::system(RPC_SYSTEMERROR, libc::EINVAL))?;
+        Ok(Self { at, nonblocking: timeout == 0 })
+    }
+    fn check(self) -> Result<(), RpcError> {
+        if monotonic()? >= self.at { Err(RpcError::status(5)) } else { Ok(()) }
+    }
+}
+
 struct Socket {
     fd: c_int,
     owned: bool,
@@ -214,18 +232,29 @@ fn exchange(
     retry: u64,
     timeout: u64,
 ) -> Result<usize, RpcError> {
+    exchange_until(socket, peer, request, response, xid, retry, Deadline::new(timeout)?)
+}
+
+fn exchange_until(
+    socket: &Socket,
+    peer: &libc::sockaddr_in,
+    request: &[u8],
+    response: &mut [u8],
+    xid: u32,
+    retry: u64,
+    budget: Deadline,
+) -> Result<usize, RpcError> {
     if request.len() > MAX_DATAGRAM {
         return Err(RpcError::system(1, libc::EMSGSIZE));
     }
     let start = monotonic()?;
-    let deadline = start.checked_add(timeout)
-        .ok_or_else(|| RpcError::system(RPC_SYSTEMERROR, libc::EINVAL))?;
+    let deadline = budget.at;
     let mut next_send = start;
     let mut waiting_to_send = false;
     let mut first_send = true;
     loop {
         let now = monotonic()?;
-        if !first_send && now >= deadline {
+        if (!first_send || !budget.nonblocking) && now >= deadline {
             return Err(RpcError::status(5));
         }
         if first_send || now >= next_send || waiting_to_send {
@@ -390,72 +419,9 @@ impl Drop for Gate<'_> {
     fn drop(&mut self) { self.0.busy.store(false, Ordering::Release); }
 }
 
-unsafe fn invoke(
-    client: *mut Client, data: &mut Data, procedure: u64,
-    arguments: Option<XdrProc>, argument: *mut c_void,
-    results: Option<XdrProc>, result: *mut c_void, timeout: Timeval,
-) -> Result<(), RpcError> {
-    let timeout = nanos(data.timeout.unwrap_or(timeout), false)?;
-    let retry = nanos(data.retry, true)?;
-    let arguments = arguments.ok_or_else(|| RpcError::status(1))?;
-    let results = results.ok_or_else(|| RpcError::status(2))?;
-    let auth = unsafe { (*client).auth };
-    if auth.is_null() || unsafe { (*auth).operations.is_null() } {
-        return Err(RpcError::remote(RemoteError::Authentication(7)));
-    }
-    let xid = data.next_xid.take().unwrap_or_else(transaction_id);
-    data.xid = xid;
-    wire::encode_call_prefix(&mut data.send, xid, data.program, data.version, procedure as u32)
-        .map_err(|_| RpcError::status(1))?;
-    let mut xdr: Xdr = unsafe { std::mem::zeroed() };
-    // SAFETY: the XDR stream's capacity is the exact owned allocation remainder.
-    unsafe { super::xdrmem_create((&mut xdr as *mut Xdr).cast(),
-        data.send.as_mut_ptr().add(wire::CALL_PREFIX_BYTES).cast(),
-        (data.send.len() - wire::CALL_PREFIX_BYTES) as c_uint, super::XDR_ENCODE) };
-    // The public initializer has a void ABI and can decline a policy decision.
-    // Never dispatch a callback through the zeroed handle on that path.
-    if xdr.x_ops.is_null() { return Err(RpcError::status(1)); }
-    // Data is exclusively gated. Reentrant calls/control/free/destroy fail without
-    // accessing it; no Rust mutable reference to the AUTH or CLIENT is formed.
-    if unsafe { ((*(*auth).operations).marshal)(auth, &mut xdr) } == 0
-        || unsafe { arguments((&mut xdr as *mut Xdr).cast(), argument) } == 0 {
-        return Err(RpcError::status(1));
-    }
-    let used = wire::CALL_PREFIX_BYTES.checked_add(unsafe { super::mem_pos(&xdr) } as usize)
-        .filter(|&length| length <= data.send.len()).ok_or_else(|| RpcError::status(1))?;
-    let length = if let Some(stream) = &mut data.stream {
-        stream.exchange(&data.socket, &data.send[..used], &mut data.receive, xid, timeout)?
-    } else {
-        exchange(&data.socket, &data.peer, &data.send[..used], &mut data.receive, xid, retry, timeout)?
-    };
-    match wire::decode_reply(&data.receive[..length], xid).map_err(|_| RpcError::status(2))? {
-        Reply::Failure(error) => Err(RpcError::remote(error)),
-        Reply::Success { verifier_flavor, verifier, results: range } => {
-            let mut verifier_bytes = [0u8; wire::MAX_AUTH_BYTES];
-            verifier_bytes[..verifier.len()].copy_from_slice(&data.receive[verifier.clone()]);
-            let mut verifier = OpaqueAuth {
-                oa_flavor: verifier_flavor as c_int,
-                oa_base: verifier_bytes.as_mut_ptr().cast(),
-                oa_length: verifier.len() as c_uint,
-            };
-            if unsafe { ((*(*auth).operations).validate)(auth, &mut verifier) } == 0 {
-                return Err(RpcError::remote(RemoteError::Authentication(6)));
-            }
-            // SAFETY: range came from the bounded envelope parser; callbacks see
-            // only procedure results, not stale bytes or the verifier/header.
-            // Clear the previous ENCODE stream first: a denied initializer must
-            // not leave a valid-looking handle into the request buffer behind.
-            xdr = unsafe { std::mem::zeroed() };
-            unsafe { super::xdrmem_create((&mut xdr as *mut Xdr).cast(),
-                data.receive.as_mut_ptr().add(range.start).cast(), range.len() as c_uint, super::XDR_DECODE) };
-            if xdr.x_ops.is_null() { return Err(RpcError::status(2)); }
-            if unsafe { results((&mut xdr as *mut Xdr).cast(), result) } == 0 {
-                return Err(RpcError::status(2));
-            }
-            Ok(())
-        }
-    }
-}
+#[path = "rpc_call.rs"]
+mod invocation;
+use invocation::invoke;
 
 unsafe extern "C" fn call(client: *mut Client, procedure: u64, arguments: Option<XdrProc>,
     argument: *mut c_void, results: Option<XdrProc>, result: *mut c_void, timeout: Timeval) -> c_int {

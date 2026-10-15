@@ -16,6 +16,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   execute:
+    name: rpc-frontends
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -42,8 +43,10 @@ jobs:
         run: |
           set -euo pipefail
           for mode in strict hardened; do
-            FRANKENLIBC_MODE=$mode cargo test -p frankenlibc-abi --test rpc_tcp_frontend_test --no-fail-fast -- --nocapture --test-threads=1 2>&1 | tee artifacts/native-rpc/$mode.log
-            grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/$mode.log
+            for target in rpc_tcp_frontend_test rpc_auth_recovery_test; do
+              FRANKENLIBC_MODE=$mode cargo test -p frankenlibc-abi --test "$target" --no-fail-fast -- --nocapture --test-threads=1 2>&1 | tee artifacts/native-rpc/$mode-$target.log
+              grep -Eq 'test result: ok\. [1-9][0-9]* passed' artifacts/native-rpc/$mode-$target.log
+            done
           done
       - name: Execute safe wire and record parser tests
         shell: bash

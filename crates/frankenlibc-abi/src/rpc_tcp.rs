@@ -5,7 +5,7 @@
 //! fresh connection would be unsafe for non-idempotent procedures. Borrowed file
 //! descriptors are never reconfigured, reconnected, shut down, or closed here.
 
-use super::{RpcError, Socket, SECOND, kernel, monotonic};
+use super::{Deadline, RpcError, Socket, SECOND, kernel, monotonic};
 use frankenlibc_core::rpc::wire::records::{RecordDecoder, RecordError, fragment_header};
 use frankenlibc_core::syscall as raw;
 use std::ffi::c_int;
@@ -44,13 +44,12 @@ impl Stream {
         request: &[u8],
         response: &mut [u8],
         xid: u32,
-        timeout: u64,
+        budget: Deadline,
     ) -> Result<usize, RpcError> {
         if let Some(error) = self.failure {
             return Err(error);
         }
-        let deadline = monotonic()?.checked_add(timeout)
-            .ok_or_else(|| RpcError::system(12, libc::EINVAL))?;
+        let deadline = budget.at;
         let marker = fragment_header(request.len(), true).map_err(record_error)?;
         let mut sent = 0;
         for bytes in [marker.as_slice(), request] {
@@ -63,7 +62,7 @@ impl Stream {
                     Ok(now) => now,
                     Err(error) => return if sent == 0 { Err(error) } else { self.poison(error) },
                 };
-                if timeout != 0 && now >= deadline {
+                if !budget.nonblocking && now >= deadline {
                     let error = RpcError::status(5);
                     return if sent == 0 { Err(error) } else { self.poison(error) };
                 }
@@ -78,7 +77,7 @@ impl Stream {
                     Ok(0) => return self.poison(RpcError::system(3, libc::EPIPE)),
                     Ok(count) => { offset += count; sent += count; }
                     Err(libc::EINTR) => {
-                        if timeout == 0 {
+                        if budget.nonblocking {
                             let error = RpcError::status(5);
                             return if sent == 0 { Err(error) } else { self.poison(error) };
                         }
