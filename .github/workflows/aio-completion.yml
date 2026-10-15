@@ -1,0 +1,94 @@
+name: POSIX AIO completion
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/aio_completion.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-core/src/pthread/**'
+      - 'tests/integration/fixture_aio_completion*'
+      - 'scripts/check_aio_completion.py'
+      - '.github/workflows/aio-completion.yml'
+      - 'rust-toolchain.toml'
+  workflow_dispatch:
+# Temporary candidate publication: write only immutable Git blobs, never refs.
+# Removed when the verified large unistd source blob is committed to main.
+permissions:
+  contents: write
+concurrency:
+  group: aio-completion-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  completion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Apply exact reviewed AIO integration candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aio-completion
+          git rev-parse HEAD > artifacts/aio-completion/base-revision.txt
+          test "$(git hash-object crates/frankenlibc-abi/src/unistd_abi.rs)" = 5f897d426f88bdd38e0ad0c0fb47c1b13c1fe89d
+          for sha in 4cb7ddc46aeaf0daec2ca6bb9264b6a5fc9bc918 282ab8b44cd285aacdcbaa701eeb32a80e596e00; do
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq .content | base64 --decode > "artifacts/aio-completion/$sha.patch"
+            git apply --check "artifacts/aio-completion/$sha.patch"
+            git apply "artifacts/aio-completion/$sha.patch"
+          done
+          test "$(git hash-object crates/frankenlibc-abi/src/unistd_abi.rs)" = 2a20ee0046c3629b3d79947cba27113098b39319
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_completion.rs
+          git diff --check
+      - name: Execute actual release AIO exports in both feature configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in default owned-tls-cache; do
+            args=()
+            if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+            mkdir -p "artifacts/aio-completion/$feature"
+            cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "artifacts/aio-completion/$feature/build.log"
+            python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "artifacts/aio-completion/$feature/cases"
+            cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "artifacts/aio-completion/$feature/regression.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "artifacts/aio-completion/$feature/regression.log"
+          done
+      - name: Publish verified immutable source objects for direct integration
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in unistd_abi.rs aio_completion.rs; do
+            python3 - "$file" <<'PY' > artifacts/aio-completion/blob-request.json
+          import json, pathlib, sys
+          print(json.dumps({'content': pathlib.Path('crates/frankenlibc-abi/src', sys.argv[1]).read_text(), 'encoding': 'utf-8'}))
+          PY
+            sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input artifacts/aio-completion/blob-request.json --jq .sha)
+            test "$sha" = "$(git hash-object "crates/frankenlibc-abi/src/$file")"
+            echo "$file $sha" | tee -a artifacts/aio-completion/verified-source-blobs.txt
+            cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-completion/$file"
+          done
+          rustc --version --verbose > artifacts/aio-completion/rustc.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aio-completion-results
+          path: artifacts/aio-completion/
+          if-no-files-found: error
+          retention-days: 7
