@@ -217,14 +217,23 @@ pub extern "C" fn thrd_equal(lhs: ThrdT, rhs: ThrdT) -> c_int {
 ///
 /// Returns 0 on success, -1 if interrupted by a signal, or a negative value on error.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn thrd_sleep(
+pub unsafe extern "C-unwind" fn thrd_sleep(
     duration: *const libc::timespec,
     remaining: *mut libc::timespec,
 ) -> c_int {
     if !tracked_required_object_fits(duration) || !tracked_optional_object_fits(remaining) {
         return -2;
     }
-    match unsafe { raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8) } {
+    // Keep the window in this exported frame: delegating to the exported
+    // nanosleep would look like internal libc I/O to the caller-origin guard
+    // and suppress cancellation. Only the raw syscall is asynchronously
+    // cancellable; validation and result conversion hold no open window.
+    let result = unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_nanosleep(duration as *const u8, remaining as *mut u8)
+        })
+    };
+    match result {
         Ok(()) => 0,
         Err(e) => {
             if e == libc::EINTR {
