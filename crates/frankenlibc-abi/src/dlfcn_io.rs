@@ -7,7 +7,13 @@
 
 use crate::{errno_abi as errno, io_abi as io, unistd_abi as unistd};
 
+#[path = "dlfcn_socket.rs"]
+mod socket;
+
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
+    if let Some(address) = socket::address(name, version) {
+        return Some(address);
+    }
     // The newer *at and pipe2/dup3 interfaces predate AArch64's baseline,
     // but have their own compatibility versions on x86-64.
     let introduced = match name {
