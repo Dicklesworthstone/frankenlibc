@@ -15,16 +15,24 @@ type Callback = unsafe extern "C-unwind" fn(libc::sigval);
 #[derive(Clone, Copy)]
 pub(super) enum Notice {
     None,
-    Signal { signo: c_int, value: usize, pid: c_int, uid: u32 },
-    Thread { callback: Callback, value: usize },
+    Signal {
+        signo: c_int,
+        value: usize,
+        pid: c_int,
+        uid: u32,
+    },
+    Thread {
+        callback: Callback,
+        value: usize,
+    },
 }
 
 impl Notice {
     /// Snapshot the event; the attribute pointer is consumed by pthread_create
     /// during submission, not retained until I/O completion.
-    pub(super) unsafe fn read(event: *const libc::sigevent)
-        -> Result<(Self, *const libc::pthread_attr_t), c_int>
-    {
+    pub(super) unsafe fn read(
+        event: *const libc::sigevent,
+    ) -> Result<(Self, *const libc::pthread_attr_t), c_int> {
         if event.is_null() {
             return Ok((Self::None, std::ptr::null()));
         }
@@ -34,8 +42,12 @@ impl Notice {
         match event.sigev_notify {
             libc::SIGEV_NONE => Ok((Self::None, std::ptr::null())),
             libc::SIGEV_SIGNAL if (0..=64).contains(&event.sigev_signo) => Ok((
-                Self::Signal { signo: event.sigev_signo, value,
-                    pid: raw::sys_getpid(), uid: raw::sys_getuid() },
+                Self::Signal {
+                    signo: event.sigev_signo,
+                    value,
+                    pid: raw::sys_getpid(),
+                    uid: raw::sys_getuid(),
+                },
                 std::ptr::null(),
             )),
             libc::SIGEV_THREAD => {
@@ -46,9 +58,8 @@ impl Notice {
                 // the external C fixture asserts it using platform headers.
                 let bytes = (event as *const libc::sigevent).cast::<u8>();
                 let function = unsafe { bytes.add(16).cast::<usize>().read() };
-                let attributes = unsafe {
-                    bytes.add(24).cast::<*const libc::pthread_attr_t>().read()
-                };
+                let attributes =
+                    unsafe { bytes.add(24).cast::<*const libc::pthread_attr_t>().read() };
                 if function == 0 {
                     return Err(libc::EINVAL);
                 }
@@ -65,11 +76,39 @@ impl Notice {
         match self {
             Self::None => {}
             Self::Thread { callback, value } => {
+                // A failed pipe/socket write can leave SIGPIPE pending on the
+                // internal I/O worker. A notification thread must not inherit
+                // that implementation signal when user code changes its mask.
+                let pipe_signal = 1_u64 << (libc::SIGPIPE - 1);
+                let zero = libc::timespec {
+                    tv_sec: 0,
+                    tv_nsec: 0,
+                };
+                // SAFETY: the mask and relative zero timeout are live stack
+                // objects; the signal-info output is optional. This worker
+                // blocked application signals before executing the I/O.
+                let _ = unsafe {
+                    raw::sys_rt_sigtimedwait(
+                        (&pipe_signal as *const u64).cast::<u8>(),
+                        std::ptr::null_mut(),
+                        (&zero as *const libc::timespec).cast::<u8>(),
+                        8,
+                    )
+                };
                 // SAFETY: this invocation is in its own detached worker, after
                 // all request/batch ownership has been released.
-                unsafe { callback(libc::sigval { sival_ptr: value as *mut c_void }) };
+                unsafe {
+                    callback(libc::sigval {
+                        sival_ptr: value as *mut c_void,
+                    })
+                };
             }
-            Self::Signal { signo, value, pid, uid } => {
+            Self::Signal {
+                signo,
+                value,
+                pid,
+                uid,
+            } => {
                 // Linux siginfo_t's union begins at offset 16 on LP64. Do not
                 // confuse the header padding at 12 with the si_pid field.
                 #[repr(C)]
@@ -83,12 +122,23 @@ impl Notice {
                     value: usize,
                     reserved: [u8; 96],
                 }
-                const { assert!(std::mem::size_of::<QueuedInfo>() == 128); }
-                let info = QueuedInfo { signo, error: 0, code: libc::SI_ASYNCIO,
-                    padding: 0, pid, uid, value, reserved: [0; 96] };
+                const {
+                    assert!(std::mem::size_of::<QueuedInfo>() == 128);
+                }
+                let info = QueuedInfo {
+                    signo,
+                    error: 0,
+                    code: libc::SI_ASYNCIO,
+                    padding: 0,
+                    pid,
+                    uid,
+                    value,
+                    reserved: [0; 96],
+                };
                 // SAFETY: the kernel copies a complete initialized siginfo.
-                let _ = unsafe { raw::sys_rt_sigqueueinfo(pid, signo,
-                    (&info as *const QueuedInfo).cast::<u8>()) };
+                let _ = unsafe {
+                    raw::sys_rt_sigqueueinfo(pid, signo, (&info as *const QueuedInfo).cast::<u8>())
+                };
             }
         }
     }
@@ -96,8 +146,16 @@ impl Notice {
 
 pub(super) fn wake(word: &AtomicU32) {
     // SAFETY: callers retain the word for the duration of the kernel operation.
-    let _ = unsafe { raw::sys_futex(word as *const AtomicU32 as *const u32,
-        libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG, c_int::MAX as u32, 0, 0, 0) };
+    let _ = unsafe {
+        raw::sys_futex(
+            word as *const AtomicU32 as *const u32,
+            libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
+            c_int::MAX as u32,
+            0,
+            0,
+            0,
+        )
+    };
 }
 
 pub(super) fn publish() {
@@ -109,9 +167,17 @@ pub(super) fn publish() {
 /// the cancellation window, rather than hiding the application caller here.
 pub(super) fn wait(expected: u32, timeout: *const libc::timespec) -> Result<(), c_int> {
     // SAFETY: EPOCH is static and timeout is null or a live caller stack value.
-    unsafe { raw::sys_futex(&EPOCH as *const AtomicU32 as *const u32,
-        libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG, expected, timeout as usize, 0, 0) }
-        .map(|_| ())
+    unsafe {
+        raw::sys_futex(
+            &EPOCH as *const AtomicU32 as *const u32,
+            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+            expected,
+            timeout as usize,
+            0,
+            0,
+        )
+    }
+    .map(|_| ())
 }
 
 /// Use pthread's start ABI, not std::thread's catch_unwind wrapper: a POSIX
@@ -123,19 +189,35 @@ pub(super) unsafe fn spawn(
 ) -> Result<(), c_int> {
     // SAFETY: C and C-unwind have the same machine ABI. The pointed-to entry
     // retains its unwind-capable frame even though pthread's slot is plain C.
-    let entry = unsafe { std::mem::transmute::<
-        unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
-        unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    >(entry) };
+    let entry = unsafe {
+        std::mem::transmute::<
+            unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
+            unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+        >(entry)
+    };
     let mut thread = 0;
     // SAFETY: attributes are read only during this call; the new thread owns
     // arg after successful creation, otherwise ownership stays with the caller.
-    let rc = unsafe { crate::pthread_abi::pthread_create(
-        &mut thread, attributes, Some(entry), arg) };
+    let rc =
+        unsafe { crate::pthread_abi::pthread_create(&mut thread, attributes, Some(entry), arg) };
     if rc == 0 { Ok(()) } else { Err(rc) }
 }
 
 pub(super) fn detach_current() {
+    // Keep I/O-generated SIGPIPE from terminating the application. POSIX
+    // allows notification threads to start with application signals blocked;
+    // keep glibc's SIGCANCEL/SIGSETXID (32/33) unblocked for pthread lifecycle.
+    let application_signals = u64::MAX & !((1_u64 << 31) | (1_u64 << 32));
+    // SAFETY: Linux LP64 uses an eight-byte kernel signal set. Unmaskable
+    // SIGKILL/SIGSTOP bits are ignored by the kernel.
+    let _ = unsafe {
+        raw::sys_rt_sigprocmask(
+            libc::SIG_SETMASK,
+            (&application_signals as *const u64).cast::<u8>(),
+            std::ptr::null_mut(),
+            8,
+        )
+    };
     let thread = crate::pthread_abi::native_pthread_self();
     // SAFETY: this worker has no external joiner. Attributes may already have
     // made it detached; in that case pthread_detach's EINVAL is harmless.
@@ -153,29 +235,49 @@ impl Group {
     /// now, consuming the supplied attributes while they are still live.
     pub(super) unsafe fn new(event: *const libc::sigevent) -> Result<Arc<Self>, c_int> {
         let (notice, attributes) = unsafe { Notice::read(event) }?;
-        let group = Arc::new(Self { remaining: AtomicU32::new(1),
-            signal: if matches!(notice, Notice::Thread { .. }) { Notice::None } else { notice } });
+        let group = Arc::new(Self {
+            remaining: AtomicU32::new(1),
+            signal: if matches!(notice, Notice::Thread { .. }) {
+                Notice::None
+            } else {
+                notice
+            },
+        });
         if matches!(notice, Notice::Thread { .. }) {
-            struct Waiter { group: Arc<Group>, notice: Notice }
+            struct Waiter {
+                group: Arc<Group>,
+                notice: Notice,
+            }
             unsafe extern "C-unwind" fn entry(arg: *mut c_void) -> *mut c_void {
                 detach_current();
                 // SAFETY: spawn transferred this allocation to exactly one worker.
                 let Waiter { group, notice } = *unsafe { Box::from_raw(arg.cast::<Waiter>()) };
                 loop {
                     let remaining = group.remaining.load(Ordering::Acquire);
-                    if remaining == 0 { break; }
+                    if remaining == 0 {
+                        break;
+                    }
                     // No public cancellation point or locks in this internal
                     // waiter. EINTR and racing completions simply recheck.
-                    let _ = unsafe { raw::sys_futex(
-                        &group.remaining as *const AtomicU32 as *const u32,
-                        libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-                        remaining, 0, 0, 0) };
+                    let _ = unsafe {
+                        raw::sys_futex(
+                            &group.remaining as *const AtomicU32 as *const u32,
+                            libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                            remaining,
+                            0,
+                            0,
+                            0,
+                        )
+                    };
                 }
                 drop(group);
                 unsafe { notice.deliver() };
                 std::ptr::null_mut()
             }
-            let waiter = Box::into_raw(Box::new(Waiter { group: Arc::clone(&group), notice }));
+            let waiter = Box::into_raw(Box::new(Waiter {
+                group: Arc::clone(&group),
+                notice,
+            }));
             if let Err(error) = unsafe { spawn(entry, waiter.cast(), attributes) } {
                 // SAFETY: creation failed, so no worker owns the allocation.
                 drop(unsafe { Box::from_raw(waiter) });

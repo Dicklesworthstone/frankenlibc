@@ -12,9 +12,8 @@ on:
       - '.github/workflows/aio-completion.yml'
       - 'rust-toolchain.toml'
   workflow_dispatch:
-# Temporary candidate publication writes immutable Git blobs, never refs.
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: aio-completion-${{ github.ref }}
   cancel-in-progress: false
@@ -37,22 +36,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Apply exact reviewed AIO integration candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Record exact source provenance
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/aio-completion
-          git rev-parse HEAD > artifacts/aio-completion/base-revision.txt
-          test "$(git hash-object crates/frankenlibc-abi/src/unistd_abi.rs)" = 5f897d426f88bdd38e0ad0c0fb47c1b13c1fe89d
-          sha=4cb7ddc46aeaf0daec2ca6bb9264b6a5fc9bc918
-          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq .content | base64 --decode > "artifacts/aio-completion/$sha.patch"
-          git apply --check "artifacts/aio-completion/$sha.patch"
-          git apply "artifacts/aio-completion/$sha.patch"
-          test "$(git hash-object crates/frankenlibc-abi/src/unistd_abi.rs)" = bee9219a149f8449c02b1eeb7ee159e271b5de3f
-          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_completion.rs
-          git diff --check
+          git rev-parse HEAD > artifacts/aio-completion/revision.txt
+          rustc --version --verbose > artifacts/aio-completion/rustc.txt
+          for file in unistd_abi.rs aio_completion.rs; do
+            git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/aio-completion/source-blobs.txt
+          done
       - name: Execute actual release AIO exports in both feature configurations
         shell: bash
         run: |
@@ -77,7 +70,7 @@ jobs:
           env = dict(os.environ, LD_PRELOAD=library, FRANKENLIBC_TEST_LIBRARY=library,
                      FRANKENLIBC_MODE='hardened', FRANKENLIBC_THREAD_NATIVE='0', RUST_BACKTRACE='1')
           results = []
-          for case in ['suspend-signal', 'batch-signal', 'list-signal', 'thread-exit']:
+          for case in ['suspend-signal', 'batch-signal', 'list-signal', 'thread-exit', 'thread-write-error']:
               for iteration in range(32):
                   result = subprocess.run([str(root / 'cases/fixture'), case], env=env, capture_output=True, timeout=12)
                   ok = result.returncode == 0 and result.stdout == f'PASS {case}\n'.encode() and not result.stderr
@@ -88,23 +81,8 @@ jobs:
                       raise SystemExit(f'FAIL {case}/{iteration}: {result.stderr.decode(errors="replace")}')
           print(f'Owned-TLS hardened stress: {len(results)} isolated cases passed')
           PY
-      - name: Publish verified immutable source objects for direct integration
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          for file in unistd_abi.rs aio_completion.rs; do
-            python3 - "$file" <<'PY' > artifacts/aio-completion/blob-request.json
-          import json, pathlib, sys
-          print(json.dumps({'content': pathlib.Path('crates/frankenlibc-abi/src', sys.argv[1]).read_text(), 'encoding': 'utf-8'}))
-          PY
-            sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input artifacts/aio-completion/blob-request.json --jq .sha)
-            test "$sha" = "$(git hash-object "crates/frankenlibc-abi/src/$file")"
-            echo "$file $sha" | tee -a artifacts/aio-completion/verified-source-blobs.txt
-            cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-completion/$file"
-          done
-          rustc --version --verbose > artifacts/aio-completion/rustc.txt
+      - name: Verify tests used the committed source unchanged
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/src/aio_completion.rs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

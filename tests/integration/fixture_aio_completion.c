@@ -126,6 +126,46 @@ static void signal_case(int fail) {
     no_notice();
 }
 
+static void write_error_callback(union sigval value) {
+    struct aiocb *request = value.sival_ptr;
+    check(aio_error(request) == EPIPE, "callback observes EPIPE");
+    check(aio_return(request) == -1, "callback observes failed write");
+    sigset_t pipe_signal;
+    sigemptyset(&pipe_signal); sigaddset(&pipe_signal, SIGPIPE);
+    check(pthread_sigmask(SIG_UNBLOCK, &pipe_signal, NULL) == 0,
+          "notification callback must not inherit I/O-generated pending SIGPIPE");
+    atomic_fetch_add_explicit(&callbacks, 1, memory_order_release);
+}
+
+static void write_error_case(int threaded) {
+    setup_request(0);
+    struct sigaction action;
+    memset(&action, 0, sizeof(action)); action.sa_handler = SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    check(sigaction(SIGPIPE, &action, NULL) == 0, "restore default SIGPIPE disposition");
+    sigset_t pipe_signal, current_mask;
+    sigemptyset(&pipe_signal); sigaddset(&pipe_signal, SIGPIPE);
+    check(pthread_sigmask(SIG_UNBLOCK, &pipe_signal, NULL) == 0, "caller leaves SIGPIPE unblocked");
+    check(close(pipes[0][0]) == 0, "remove pipe reader");
+    requests[0].aio_fildes = pipes[0][1];
+    requests[0].aio_buf = (void *)payload;
+    requests[0].aio_sigevent = signal_notice(requests);
+    if (threaded) {
+        requests[0].aio_sigevent.sigev_notify = SIGEV_THREAD;
+        requests[0].aio_sigevent.sigev_notify_function = write_error_callback;
+    }
+    check(aio_write(&requests[0]) == 0, "enqueue write to broken pipe");
+    if (threaded) await_count(&callbacks, 1);
+    else {
+        receive_notice(requests);
+        check(aio_error(&requests[0]) == EPIPE && aio_return(&requests[0]) == -1,
+              "broken-pipe AIO reports EPIPE rather than terminating the process");
+        no_notice();
+    }
+    check(pthread_sigmask(SIG_SETMASK, NULL, &current_mask) == 0 &&
+          sigismember(&current_mask, SIGPIPE) == 0, "worker does not change caller signal mask");
+}
+
 static void callback_cleanup(void *ignored) {
     (void)ignored;
     atomic_fetch_add_explicit(&cleaned, 1, memory_order_release);
@@ -330,7 +370,7 @@ static void timeout_case(void) {
 
 int main(int argc, char **argv) {
     check(argc == 2, "one case required"); alarm(8);
-    provider((void *)aio_read); provider((void *)aio_error); provider((void *)aio_return);
+    provider((void *)aio_read); provider((void *)aio_write); provider((void *)aio_error); provider((void *)aio_return);
     provider((void *)aio_suspend); provider((void *)lio_listio);
     provider((void *)aio_fsync); provider((void *)lio_listio64); provider((void *)aio_suspend64);
     sigemptyset(&notifications); sigaddset(&notifications, SIGRTMIN);
@@ -340,6 +380,8 @@ int main(int argc, char **argv) {
     use_large = strstr(name, "64") != NULL;
     if (strcmp(name, "signal-read") == 0) signal_case(0);
     else if (strcmp(name, "signal-error") == 0) signal_case(1);
+    else if (strcmp(name, "signal-write-error") == 0) write_error_case(0);
+    else if (strcmp(name, "thread-write-error") == 0) write_error_case(1);
     else if (strcmp(name, "thread-return") == 0) thread_case(0);
     else if (strcmp(name, "thread-exit") == 0) thread_case(1);
     else if (strcmp(name, "batch-signal") == 0) batch_case(0);

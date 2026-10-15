@@ -8,7 +8,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE = (
-    'signal-read signal-error thread-return thread-exit batch-signal batch-thread '
+    'signal-read signal-error signal-write-error thread-write-error '
+    'thread-return thread-exit batch-signal batch-thread '
     'empty errors timeout suspend-signal suspend-cancel suspend-pending '
     'suspend64-signal list-cancel list-pending list64-cancel list64-pending'
 ).split()

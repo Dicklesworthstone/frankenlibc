@@ -15767,6 +15767,9 @@ pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
 // aio_* — Implemented (native thread-based POSIX async I/O)
 // ---------------------------------------------------------------------------
 
+#[path = "aio_completion.rs"]
+mod aio_completion;
+
 /// POSIX AIO lio_listio opcodes.
 const LIO_READ: c_int = 0;
 const LIO_WRITE: c_int = 1;
@@ -15859,12 +15862,6 @@ unsafe fn aiocb_get_return(cb: *const c_void) -> isize {
     }
 }
 
-/// Global condvar for aio_suspend notification.
-/// Worker threads notify after completing an I/O operation, allowing
-/// aio_suspend to wake up and check completion status.
-static AIO_NOTIFY: std::sync::LazyLock<(std::sync::Mutex<u64>, std::sync::Condvar)> =
-    std::sync::LazyLock::new(|| (std::sync::Mutex::new(0), std::sync::Condvar::new()));
-
 /// Internal AIO operation type.
 #[derive(Clone, Copy)]
 enum AioOp {
@@ -15937,24 +15934,40 @@ unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
 }
 
 fn aio_notify_waiters() {
-    let (lock, cvar) = &*AIO_NOTIFY;
-    if let Ok(mut generation) = lock.lock() {
-        *generation = generation.wrapping_add(1);
-        cvar.notify_all();
-    }
+    aio_completion::publish();
 }
 
 /// Submit an async I/O operation.
 ///
-/// Reads parameters from the aiocb struct, marks it EINPROGRESS, then
-/// schedules the operation. In the owned-TLS replacement lane, complete the
-/// syscall synchronously: POSIX permits immediate completion, and avoiding
-/// `std::thread` keeps Rust's thread-spawn TLS out of the standalone artifact.
+/// Snapshot the notification before publishing completion. SIGEV_THREAD uses
+/// the I/O worker as its detached notification thread, consuming attributes
+/// during submission and allowing the callback to exit without returning.
 unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
+    unsafe { aio_submit_group(aiocbp, op, None) }
+}
+
+unsafe fn aio_submit_group(
+    aiocbp: *mut c_void,
+    op: AioOp,
+    group: Option<std::sync::Arc<aio_completion::Group>>,
+) -> c_int {
     let fd = unsafe { aiocb_i32(aiocbp, aiocb_off::FILDES) };
     let buf = unsafe { aiocb_ptr(aiocbp, aiocb_off::BUF) };
     let nbytes = unsafe { aiocb_usize(aiocbp, aiocb_off::NBYTES) };
     let offset = unsafe { aiocb_i64(aiocbp, aiocb_off::OFFSET) };
+
+    // SAFETY: the caller retains the platform aiocb through completion. Its
+    // sigevent begins at offset 32 on the supported Linux LP64 ABIs.
+    let event = unsafe { (aiocbp as *const u8).add(32).cast::<libc::sigevent>() };
+    let (notice, attributes) = match unsafe { aio_completion::Notice::read(event) } {
+        Ok(value) => value,
+        Err(error) => {
+            unsafe { aiocb_set_return(aiocbp, -1) };
+            unsafe { aiocb_set_error_atomic(aiocbp, error) };
+            unsafe { set_abi_errno(error) };
+            return -1;
+        }
+    };
 
     // Mark as in-progress before spawning the thread.
     unsafe { aiocb_set_return(aiocbp, 0) };
@@ -15962,89 +15975,53 @@ unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
 
     let buf_addr = buf as usize;
 
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-        {
-            struct AioWork {
-                aiocbp: usize,
-                fd: c_int,
-                buf_addr: usize,
-                nbytes: usize,
-                offset: i64,
-                op: AioOp,
-            }
-
-            unsafe extern "C" fn aio_worker_entry(arg: usize) -> usize {
-                let work = unsafe { Box::from_raw(arg as *mut AioWork) };
-                let cb = work.aiocbp as *mut c_void;
-                let result = aio_execute(work.fd, work.buf_addr, work.nbytes, work.offset, work.op);
-                unsafe { aio_complete(cb, result) };
-                aio_notify_waiters();
-                0
-            }
-
-            let work = Box::into_raw(Box::new(AioWork {
-                aiocbp: aiocbp as usize,
-                fd,
-                buf_addr,
-                nbytes,
-                offset,
-                op,
-            }));
-
-            crate::malloc_abi::note_native_thread_backend();
-
-            match unsafe {
-                frankenlibc_core::pthread::create_thread(
-                    aio_worker_entry as *const () as usize,
-                    work as usize,
-                    0,
-                )
-            } {
-                Ok(handle) => {
-                    let _ = unsafe { frankenlibc_core::pthread::detach_thread(handle) };
-                    0
-                }
-                Err(_) => {
-                    unsafe { drop(Box::from_raw(work)) };
-                    unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
-                    unsafe { set_abi_errno(errno::EAGAIN) };
-                    -1
-                }
-            }
-        }
-
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            let result = aio_execute(fd, buf_addr, nbytes, offset, op);
-            unsafe { aio_complete(aiocbp, result) };
-            aio_notify_waiters();
-            0
-        }
+    struct AioWork {
+        aiocbp: usize,
+        fd: c_int,
+        buf_addr: usize,
+        nbytes: usize,
+        offset: i64,
+        op: AioOp,
+        notice: aio_completion::Notice,
+        group: Option<std::sync::Arc<aio_completion::Group>>,
     }
 
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        // Transfer raw pointer addresses to the worker thread.
-        // POSIX guarantees the caller keeps the aiocb and buffer valid until
-        // aio_return is called, so these addresses remain valid.
-        let cb_addr = aiocbp as usize;
-        let spawn_result = std::thread::Builder::new()
-            .name("aio-worker".into())
-            .spawn(move || {
-                let cb = cb_addr as *mut c_void;
-                let result = aio_execute(fd, buf_addr, nbytes, offset, op);
-                unsafe { aio_complete(cb, result) };
-                aio_notify_waiters();
-            });
+    unsafe extern "C-unwind" fn aio_worker_entry(arg: *mut c_void) -> *mut c_void {
+        aio_completion::detach_current();
+        // SAFETY: successful creation transfers the allocation exactly once.
+        // Moving out frees it before any foreign callback can exit the thread.
+        let work = *unsafe { Box::from_raw(arg.cast::<AioWork>()) };
+        let result = aio_execute(work.fd, work.buf_addr, work.nbytes, work.offset, work.op);
+        unsafe { aio_complete(work.aiocbp as *mut c_void, result) };
+        // No further control-block/buffer accesses: an observer may now reap
+        // and free/reuse them, even before notification delivery finishes.
+        aio_notify_waiters();
+        if let Some(group) = work.group {
+            group.finish();
+        }
+        unsafe { work.notice.deliver() };
+        std::ptr::null_mut()
+    }
 
-        if spawn_result.is_err() {
+    if let Some(group) = &group {
+        group.reserve();
+    }
+    let work = Box::into_raw(Box::new(AioWork {
+        aiocbp: aiocbp as usize, fd, buf_addr, nbytes, offset, op, notice, group,
+    }));
+    match unsafe { aio_completion::spawn(aio_worker_entry, work.cast(), attributes) } {
+        Ok(()) => 0,
+        Err(_) => {
+            // SAFETY: no child exists when creation fails.
+            let work = unsafe { Box::from_raw(work) };
+            unsafe { aiocb_set_return(aiocbp, -1) };
             unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
+            aio_notify_waiters();
+            if let Some(group) = work.group {
+                group.finish();
+            }
             unsafe { set_abi_errno(errno::EAGAIN) };
             -1
-        } else {
-            0
         }
     }
 }
@@ -16125,9 +16102,8 @@ pub unsafe extern "C" fn aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int {
 /// Blocks until at least one aiocb in the list completes (error_code != EINPROGRESS),
 /// or the timeout expires. Returns 0 on success, -1 on timeout/error.
 ///
-/// A cancellation point, as in glibc: before each bounded wait it acts on a
-/// pending cancellation request, so a request that arrives while waiting is
-/// acted on within one wait slice (100 ms) rather than at once.
+/// The kernel wait is both interruptible and a cancellation point. Snapshot
+/// the completion epoch before inspecting requests to close the scan/wait race.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn aio_suspend(
     list: *const *const c_void,
@@ -16144,7 +16120,7 @@ pub(crate) unsafe fn aio_suspend_cp(
     nent: c_int,
     timeout: *const libc::timespec,
 ) -> c_int {
-    if list.is_null() || nent <= 0 {
+    if nent < 0 || (list.is_null() && nent != 0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -16171,9 +16147,9 @@ pub(crate) unsafe fn aio_suspend_cp(
         std::time::Instant::now().checked_add(dur)
     };
 
-    let (lock, cvar) = &*AIO_NOTIFY;
-
     loop {
+        let epoch = aio_completion::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+        let mut pending = false;
         // Check if any aiocb has completed.
         for i in 0..nent as usize {
             let cb = unsafe { *list.add(i) };
@@ -16183,36 +16159,35 @@ pub(crate) unsafe fn aio_suspend_cp(
             if unsafe { aiocb_error_atomic(cb) } != errno::EINPROGRESS {
                 return 0;
             }
+            pending = true;
         }
-
-        // Nothing has completed: this call would block, so it is where a
-        // pending cancellation acts. The window holds no lock (the condvar
-        // guard below is taken afresh each slice).
-        // SAFETY: an empty "syscall"; the window only switches the type.
-        unsafe { crate::pthread_abi::at_cancellation_point(|| ()) };
-
-        // Determine wait duration.
-        let wait_dur = if let Some(dl) = deadline {
+        if !pending {
+            return 0;
+        }
+        let interval = if let Some(dl) = deadline {
             let now = std::time::Instant::now();
             if now >= dl {
-                // Timeout expired.
                 unsafe { set_abi_errno(errno::EAGAIN) };
                 return -1;
             }
-            dl - now
+            let left = dl - now;
+            Some(libc::timespec { tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long })
         } else {
-            std::time::Duration::from_millis(100)
+            None
         };
-
-        // Wait on condvar with bounded duration.
-        let guard = match lock.lock() {
-            Ok(g) => g,
-            Err(_) => {
-                unsafe { set_abi_errno(errno::EINTR) };
+        let timeout = interval.as_ref().map_or(std::ptr::null(), |ts| ts as *const _);
+        // SAFETY: no lock or borrow crosses the async-cancel window. Keeping
+        // the window in this inlined body preserves the application's caller.
+        match unsafe { crate::pthread_abi::at_cancellation_point(||
+            aio_completion::wait(epoch, timeout)) }
+        {
+            Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => continue,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
                 return -1;
             }
-        };
-        let _ = cvar.wait_timeout(guard, wait_dur.min(std::time::Duration::from_millis(100)));
+        }
     }
 }
 
@@ -16224,11 +16199,13 @@ pub unsafe extern "C" fn aio_fsync(op: c_int, aiocbp: *mut c_void) -> c_int {
         return -1;
     }
 
-    let aio_op = if op == O_DSYNC_FLAG {
-        AioOp::Fdatasync
-    } else {
-        // O_SYNC or default → full fsync
-        AioOp::Fsync
+    let aio_op = match op {
+        O_DSYNC_FLAG => AioOp::Fdatasync,
+        O_SYNC_FLAG => AioOp::Fsync,
+        _ => {
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
     };
 
     unsafe { aio_submit(aiocbp, aio_op) }
@@ -16243,9 +16220,9 @@ pub unsafe extern "C" fn lio_listio(
     mode: c_int,
     list: *const *mut c_void,
     nent: c_int,
-    _sevp: *mut c_void,
+    sevp: *mut c_void,
 ) -> c_int {
-    if list.is_null() || nent < 0 {
+    if nent < 0 || (list.is_null() && nent != 0) {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
     }
@@ -16254,7 +16231,19 @@ pub unsafe extern "C" fn lio_listio(
         return -1;
     }
 
+    // LIO_WAIT must not even inspect sevp. For NOWAIT the group's owned
+    // reservation prevents early notification while the list is submitted.
+    let group = if mode == LIO_NOWAIT && !sevp.is_null() {
+        match unsafe { aio_completion::Group::new(sevp.cast()) } {
+            Ok(group) => Some(group),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                return -1;
+            }
+        }
+    } else { None };
     let mut had_error = false;
+    let mut resource_error = false;
 
     // Submit each request.
     for i in 0..nent as usize {
@@ -16269,22 +16258,26 @@ pub unsafe extern "C" fn lio_listio(
             LIO_WRITE => AioOp::Write,
             LIO_NOP => continue,
             _ => {
-                unsafe { set_abi_errno(errno::EINVAL) };
+                unsafe { aiocb_set_return(cb, -1) };
+                unsafe { aiocb_set_error_atomic(cb, errno::EINVAL) };
                 had_error = true;
                 continue;
             }
         };
 
-        if unsafe { aio_submit(cb, op) } != 0 {
+        if unsafe { aio_submit_group(cb, op, group.as_ref().map(std::sync::Arc::clone)) } != 0 {
             had_error = true;
+            resource_error |= current_abi_errno() == errno::EAGAIN;
         }
+    }
+    if let Some(group) = group {
+        group.finish();
     }
 
     if mode == LIO_WAIT {
         // Wait for all submitted operations to complete.
-        let (lock, cvar) = &*AIO_NOTIFY;
-
         loop {
+            let epoch = aio_completion::EPOCH.load(std::sync::atomic::Ordering::Acquire);
             let mut all_done = true;
             for i in 0..nent as usize {
                 let cb = unsafe { *list.add(i) };
@@ -16292,12 +16285,14 @@ pub unsafe extern "C" fn lio_listio(
                     continue;
                 }
                 let opcode = unsafe { aiocb_i32(cb, aiocb_off::LIO_OPCODE) };
-                if opcode == LIO_NOP {
+                if opcode != LIO_READ && opcode != LIO_WRITE {
                     continue;
                 }
-                if unsafe { aiocb_error_atomic(cb) } == errno::EINPROGRESS {
+                let error = unsafe { aiocb_error_atomic(cb) };
+                if error == errno::EINPROGRESS {
                     all_done = false;
-                    break;
+                } else if error != 0 {
+                    had_error = true;
                 }
             }
 
@@ -16305,15 +16300,23 @@ pub unsafe extern "C" fn lio_listio(
                 break;
             }
 
-            let guard = match lock.lock() {
-                Ok(g) => g,
-                Err(_) => break,
-            };
-            let _ = cvar.wait_timeout(guard, std::time::Duration::from_millis(50));
+            // Ordinary signals interrupt the wait, but glibc's lio_listio is
+            // not a cancellation point (its public declaration is noexcept).
+            // Do not introduce forced unwinding into existing C++ callers.
+            match aio_completion::wait(epoch, std::ptr::null()) {
+                Ok(()) | Err(libc::EAGAIN) => {}
+                Err(error) => {
+                    unsafe { set_abi_errno(error) };
+                    return -1;
+                }
+            }
         }
     }
 
-    if had_error { -1 } else { 0 }
+    if had_error {
+        unsafe { set_abi_errno(if resource_error { errno::EAGAIN } else { errno::EIO }) };
+        -1
+    } else { 0 }
 }
 
 // ---------------------------------------------------------------------------
