@@ -4,6 +4,9 @@
 //! XDR callbacks remain responsible for procedure-specific argument/results.
 //! AUTH_NONE is framing, not authentication or protection against spoofing.
 
+#[path = "records.rs"]
+pub mod records;
+
 use core::ops::Range;
 
 pub const CALL_PREFIX_BYTES: usize = 24;
