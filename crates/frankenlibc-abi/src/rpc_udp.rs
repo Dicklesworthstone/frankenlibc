@@ -1,4 +1,4 @@
-//! Native IPv4/UDP Sun RPC client, shared with the portmapper v2 client.
+//! Native IPv4 Sun RPC clients, shared with the portmapper v2 client.
 //!
 //! The public layouts follow glibc's LP64 rpc/clnt.h and rpc/auth.h. Wire
 //! parsing is safe core code; procedure callbacks use the existing native XDR.
@@ -19,6 +19,9 @@ use frankenlibc_core::rpc::wire::{self, RemoteError, Reply};
 use frankenlibc_core::syscall as raw;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
 
+#[path = "rpc_tcp.rs"]
+mod tcp;
+
 // Reuse the same tracked-bound, fault-checked copier as the socket importers.
 // Keep one implementation; do not introduce another process_vm/pipe fallback.
 #[path = "iov_snapshot.rs"]
@@ -27,6 +30,7 @@ mod user_copy;
 
 const DEFAULT_BUFFER: usize = 8800;
 const MAX_BUFFER: usize = 65536;
+const MAX_STREAM_BUFFER: usize = 16 * 1024 * 1024;
 const MAX_DATAGRAM: usize = 65507;
 const SECOND: u64 = 1_000_000_000;
 const RPC_SYSTEMERROR: c_int = 12;
@@ -75,6 +79,10 @@ fn creation_error(status: c_int, error: RpcError) {
     let value = CreateError { status, padding: 0, error };
     // SAFETY: the existing TLS accessor owns an aligned, initialized 32-byte slot.
     unsafe { super::__rpc_thread_createerr().cast::<CreateError>().write(value) };
+}
+
+pub(super) fn creation_status(status: c_int) {
+    creation_error(status, RpcError::status(status));
 }
 
 fn kernel(raw_value: usize) -> Result<usize, c_int> {
@@ -355,6 +363,7 @@ struct State {
 }
 struct Data {
     socket: Socket,
+    stream: Option<tcp::Stream>,
     peer: libc::sockaddr_in,
     program: u32,
     version: u32,
@@ -410,7 +419,11 @@ unsafe fn invoke(
     }
     let used = wire::CALL_PREFIX_BYTES.checked_add(unsafe { super::mem_pos(&xdr) } as usize)
         .filter(|&length| length <= data.send.len()).ok_or_else(|| RpcError::status(1))?;
-    let length = exchange(&data.socket, &data.peer, &data.send[..used], &mut data.receive, xid, retry, timeout)?;
+    let length = if let Some(stream) = &mut data.stream {
+        stream.exchange(&data.socket, &data.send[..used], &mut data.receive, xid, timeout)?
+    } else {
+        exchange(&data.socket, &data.peer, &data.send[..used], &mut data.receive, xid, retry, timeout)?
+    };
     match wire::decode_reply(&data.receive[..length], xid).map_err(|_| RpcError::status(2))? {
         Reply::Failure(error) => Err(RpcError::remote(error)),
         Reply::Success { verifier_flavor, verifier, results: range } => {
@@ -487,6 +500,9 @@ unsafe extern "C" fn control(client: *mut Client, request: c_int, information: *
     let state = unsafe { &*(*client).private };
     let Some(_gate) = Gate::enter(state) else { return 0; };
     let data = unsafe { &mut *state.data.get() };
+    // Retransmission timers are a datagram-only operation. Never pretend a
+    // reliable stream will retransmit an application request after a timeout.
+    if data.stream.is_some() && matches!(request, 4 | 5) { return 0; }
     let outcome: Result<(), RpcError> = (|| {
         match request {
             1 | 4 => {
@@ -500,7 +516,7 @@ unsafe extern "C" fn control(client: *mut Client, request: c_int, information: *
             6 => unsafe { publish(&data.socket.fd, information.cast()) }?,
             8 => data.socket.owned = true,
             9 => data.socket.owned = false,
-            // The LP64 glibc UDP controls use u_long, even though RPC wire words are 32-bit.
+            // The LP64 glibc controls use u_long, even though RPC wire words are 32-bit.
             10 => unsafe { publish(&(data.xid as u64), information.cast()) }?,
             11 => {
                 let next = unsafe { import::<u64>(information.cast()) }? as u32;
@@ -519,6 +535,17 @@ unsafe extern "C" fn control(client: *mut Client, request: c_int, information: *
 }
 static CLIENT_OPS: ClientOps = ClientOps { call, abort, geterr, freeres, destroy, control };
 
+/// One-shot convenience calls own their freshly constructed client. Keep the
+/// callback casts and the matching destruction in the CLIENT implementation.
+pub(super) unsafe fn call_once(client: *mut c_void, procedure: u64,
+    arguments: Option<XdrProc>, argument: *mut c_void,
+    results: Option<XdrProc>, result: *mut c_void) -> c_int {
+    let status = unsafe { call(client.cast(), procedure, arguments, argument,
+        results, result, Timeval { tv_sec: 25, tv_usec: 0 }) };
+    unsafe { destroy(client.cast()) };
+    status
+}
+
 struct CreateFailure {
     status: c_int,
     error: RpcError,
@@ -533,7 +560,7 @@ impl CreateFailure {
 }
 
 unsafe fn make_client(address: *mut c_void, program: u64, version: u64, retry: Timeval,
-    descriptor: *mut c_int, sendsize: c_uint, recvsize: c_uint) -> Result<*mut c_void, CreateFailure> {
+    descriptor: *mut c_int, sendsize: c_uint, recvsize: c_uint, stream: bool) -> Result<*mut c_void, CreateFailure> {
     nanos(retry, true)?;
     let mut peer = unsafe { import::<libc::sockaddr_in>(address.cast()) }?;
     let fd = unsafe { import(descriptor.cast_const()) }?;
@@ -542,22 +569,26 @@ unsafe fn make_client(address: *mut c_void, program: u64, version: u64, retry: T
     }
     let original_port = peer.sin_port;
     if peer.sin_port == 0 {
-        let port = portmap(&peer, program as u32, version as u32, libc::IPPROTO_UDP as u32, 0, 3).map_err(CreateFailure::portmapper)?;
+        let protocol = if stream { libc::IPPROTO_TCP } else { libc::IPPROTO_UDP };
+        let port = portmap(&peer, program as u32, version as u32, protocol as u32, 0, 3).map_err(CreateFailure::portmapper)?;
         peer.sin_port = port.to_be();
     }
     let size = |requested: c_uint, minimum: usize| -> Result<usize, RpcError> {
         let requested = if requested == 0 { DEFAULT_BUFFER } else { requested as usize };
+        let maximum = if stream { MAX_STREAM_BUFFER } else { MAX_BUFFER };
         let rounded = requested.checked_add(3).map(|n| n & !3)
-            .filter(|&n| n >= minimum && n <= MAX_BUFFER)
+            .filter(|&n| n >= minimum && n <= maximum)
             .ok_or_else(|| RpcError::system(RPC_SYSTEMERROR, libc::EINVAL))?;
         Ok(rounded)
     };
     let send = buffer(size(sendsize, wire::NULL_CALL_BYTES)?)?;
     let receive = buffer(size(recvsize, 24)?)?;
-    let socket = if fd == -1 { Socket::open()? } else { Socket::borrow(fd)? };
+    let socket = if stream { tcp::connect(&peer, fd)? }
+        else if fd == -1 { Socket::open()? } else { Socket::borrow(fd)? };
+    let stream = stream.then(|| tcp::Stream::new(receive.len()));
     let returned_fd = socket.fd;
     let state = boxed(State { busy: AtomicBool::new(false), data: UnsafeCell::new(Data {
-        socket, peer, program: program as u32, version: version as u32, xid: transaction_id(), next_xid: None,
+        socket, stream, peer, program: program as u32, version: version as u32, xid: transaction_id(), next_xid: None,
         retry, timeout: None, send, receive, error: RpcError::status(0),
     }) })?;
     let client = boxed(Client { auth: authnone().cast(), operations: &CLIENT_OPS,
@@ -574,10 +605,21 @@ unsafe fn make_client(address: *mut c_void, program: u64, version: u64, retry: T
 
 pub(super) unsafe fn create(address: *mut c_void, program: u64, version: u64, retry: Timeval,
     descriptor: *mut c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void {
+    unsafe { create_transport(address, program, version, retry, descriptor, sendsize, recvsize, false) }
+}
+
+pub(super) unsafe fn create_tcp(address: *mut c_void, program: u64, version: u64,
+    descriptor: *mut c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void {
+    unsafe { create_transport(address, program, version, Timeval { tv_sec: 1, tv_usec: 0 },
+        descriptor, sendsize, recvsize, true) }
+}
+
+unsafe fn create_transport(address: *mut c_void, program: u64, version: u64, retry: Timeval,
+    descriptor: *mut c_int, sendsize: c_uint, recvsize: c_uint, stream: bool) -> *mut c_void {
     let (_, decision) = super::runtime_policy::decide(ApiFamily::Socket, address as usize, 0, false, true, 0);
     let result = if matches!(decision.action, MembraneAction::Deny) {
         Err(CreateFailure::from(RpcError::system(RPC_SYSTEMERROR, libc::EACCES)))
-    } else { unsafe { make_client(address, program, version, retry, descriptor, sendsize, recvsize) } };
+    } else { unsafe { make_client(address, program, version, retry, descriptor, sendsize, recvsize, stream) } };
     super::runtime_policy::observe(ApiFamily::Socket, decision.profile, 100, result.is_err());
     match result {
         Ok(client) => client,
