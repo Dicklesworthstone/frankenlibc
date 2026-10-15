@@ -12,8 +12,13 @@ mkdir -p -- "$out"
 binary="$out/fixture"
 "${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -pthread \
   "$root/tests/integration/fixture_c11_thread_cancel.c" -ldl -o "$binary"
-cases=(sleep-values sleep-pending sleep-blocked sleep-disabled sleep-signal)
-for case in "${cases[@]}"; do
+"${CC:-cc}" -std=c11 -O2 -Wall -Wextra -Werror -pthread \
+  "$root/tests/integration/fixture_c11_thread_cancel_lifecycle.c" -ldl -o "$out/lifecycle"
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Werror -pthread \
+  "$root/tests/integration/fixture_c11_thread_cancel_cpp.cpp" -ldl -o "$out/cpp"
+count=0
+run_case() {
+  local binary=$1 case=$2 mode
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
     timeout 12s "$binary" "$case" > "$out/host-$case.out" 2> "$out/host-$case.err"
   for mode in strict hardened; do
@@ -28,5 +33,16 @@ for case in "${cases[@]}"; do
     diff -u "$out/host-$case.err" "$out/$mode-$case.err"
     echo "PASS $mode/$case"
   done
+  count=$((count + 1))
+}
+for case in sleep-values sleep-pending sleep-blocked sleep-disabled sleep-signal; do
+  run_case "$binary" "$case"
 done
-echo "C11 cancellation: ${#cases[@]} host cases and $((${#cases[@]} * 2)) candidate cases passed"
+for case in create-return create-exit create-pthread-exit create-cancel-pending \
+  create-cancel-blocked join-pending join-blocked; do
+  run_case "$out/lifecycle" "$case"
+done
+for case in cpp-return cpp-exit cpp-cancel; do
+  run_case "$out/cpp" "$case"
+done
+echo "C11 cancellation: $count host cases and $((count * 2)) candidate cases passed"
