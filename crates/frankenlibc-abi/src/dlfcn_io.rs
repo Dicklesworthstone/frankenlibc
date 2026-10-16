@@ -33,8 +33,17 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pipe2" | "dup3" => "GLIBC_2.9",
         _ => "GLIBC_2.2.5",
     };
-    let supported = if cfg!(target_arch = "aarch64") { "GLIBC_2.17" } else { introduced };
-    if version.is_some_and(|version| version != supported) { return None; }
+    let supported = if name == "fcntl64" {
+        // The exported large-file alias postdates both architecture baselines.
+        "GLIBC_2.28"
+    } else if cfg!(target_arch = "aarch64") {
+        "GLIBC_2.17"
+    } else {
+        introduced
+    };
+    if version.is_some_and(|version| version != supported) {
+        return None;
+    }
     // Taking a function address preserves its actual ABI: open/openat remain
     // C-variadic and cancellation points remain extern "C-unwind". There is
     // no fixed-arity shim that could read a nonexistent mode argument.
@@ -65,6 +74,19 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "dup3" => io::dup3 as *const (),
         "pipe" => io::pipe as *const (),
         "pipe2" => io::pipe2 as *const (),
+        // On ELF64 both names have the same layout. Preserve the existing
+        // variadic C-unwind entry rather than turning optional integer or
+        // flock-pointer arguments into a fixed-arity function-pointer call.
+        // Both routes retain the shared descriptor ledger and cancellation
+        // handling used by the rest of native plugin IO.
+        "fcntl" | "fcntl64" => unistd::fcntl64 as *const (),
+        "flock" => unistd::flock as *const (),
+        "lockf" => unistd::lockf as *const (),
+        "lockf64" => unistd::lockf64 as *const (),
+        "posix_fadvise" => unistd::posix_fadvise as *const (),
+        "posix_fadvise64" => unistd::posix_fadvise64 as *const (),
+        "posix_fallocate" => unistd::posix_fallocate as *const (),
+        "posix_fallocate64" => unistd::posix_fallocate64 as *const (),
         _ => return None,
     };
     Some(address as usize as u64)
