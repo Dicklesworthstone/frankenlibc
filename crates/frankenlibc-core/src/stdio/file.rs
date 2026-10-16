@@ -1173,6 +1173,7 @@ impl StdioStream {
         if let Some(backing) = self.mem_backing.as_mut() {
             let rem = backing.peek();
             if rem.is_empty() {
+                self.flags.eof = true;
                 return ReadUntil::Eof;
             }
             let outcome = match crate::string::mem::memchr(rem, delim, rem.len()) {
@@ -1185,6 +1186,10 @@ impl StdioStream {
                     let n = rem.len();
                     out.extend_from_slice(rem);
                     backing.consume(n);
+                    // Unlike a bounded read, getdelim keeps looking until
+                    // the delimiter or an attempted read past the end. The
+                    // final unterminated line therefore sets EOF immediately.
+                    self.flags.eof = true;
                     ReadUntil::Eof
                 }
             };
@@ -1275,6 +1280,7 @@ impl StdioStream {
             let rem = backing.peek();
             let rem_len = rem.len();
             if rem_len == 0 {
+                self.flags.eof = true;
                 return (written, ReadUntil::Eof);
             }
             let scan_len = rem_len.min(limit);
@@ -1288,10 +1294,12 @@ impl StdioStream {
             written += n;
             let outcome = if found {
                 ReadUntil::Found
-            } else if n < rem_len {
-                // Stopped at the destination limit; bytes remain in the backing.
+            } else if written == dst.len() {
+                // Filling the caller's request is not an attempt past EOF,
+                // even when its last byte is the last byte of the backing.
                 ReadUntil::NeedRefill
             } else {
+                self.flags.eof = true;
                 ReadUntil::Eof
             };
             (written, outcome)

@@ -151,3 +151,160 @@ fn ungetc_after_buffer_exhaustion_clears_eof_and_restores_one_byte() {
     assert_eq!(stream.offset(), 11);
     assert!(!stream.is_eof());
 }
+
+fn memory_input(bytes: &[u8]) -> StdioStream {
+    StdioStream::new_mem_fixed(
+        bytes.to_vec(),
+        bytes.len(),
+        OpenFlags {
+            readable: true,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn memory_delimited_reads_set_eof_only_after_a_failed_read() {
+    use frankenlibc_core::stdio::ReadUntil;
+    for bytes in [b"".as_slice(), b"tail", b"a\0b", b"last\n"] {
+        let mut stream = memory_input(bytes);
+        let mut output = Vec::new();
+        let result = stream.read_until_delim(b'\n', &mut output);
+        assert_eq!(output, bytes);
+        assert_eq!(stream.offset(), bytes.len() as i64);
+        assert!(!stream.is_error());
+        if bytes.ends_with(b"\n") {
+            assert_eq!(result, ReadUntil::Found);
+            assert!(
+                !stream.is_eof(),
+                "a delimiter at the end does not probe EOF"
+            );
+            output.clear();
+            assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+            assert!(output.is_empty());
+        } else {
+            assert_eq!(result, ReadUntil::Eof);
+        }
+        assert!(stream.is_eof());
+        stream.clear_err();
+        assert!(!stream.is_eof());
+        output.clear();
+        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert!(stream.is_eof() && output.is_empty());
+    }
+}
+
+#[test]
+fn memory_bounded_reads_distinguish_exact_fill_from_eof() {
+    use frankenlibc_core::stdio::ReadUntil;
+    for length in 0..9 {
+        for capacity in 0..12 {
+            let bytes = vec![b'x'; length];
+            let mut stream = memory_input(&bytes);
+            let mut output = vec![0xa5; capacity + 2];
+            let (count, result) = stream.read_into_slice(b'\n', &mut output[1..1 + capacity]);
+            assert_eq!(count, length.min(capacity));
+            assert!(output[1..1 + count].iter().all(|b| *b == b'x'));
+            assert_eq!(output[0], 0xa5);
+            assert!(output[1 + count..].iter().all(|b| *b == 0xa5));
+            assert_eq!(stream.offset(), count as i64);
+            assert_eq!(stream.is_eof(), capacity > length, "{length}/{capacity}");
+            assert_eq!(
+                result,
+                if capacity > length {
+                    ReadUntil::Eof
+                } else {
+                    ReadUntil::NeedRefill
+                }
+            );
+            assert!(!stream.is_error());
+        }
+    }
+}
+
+#[test]
+fn memory_delimiter_wins_over_capacity_and_end_of_backing() {
+    use frankenlibc_core::stdio::ReadUntil;
+    for bytes in [b"a\n".as_slice(), b"a\nrest"] {
+        for capacity in [2, 3, 12] {
+            let mut stream = memory_input(bytes);
+            let mut output = vec![0xa5; capacity];
+            assert_eq!(
+                stream.read_into_slice(b'\n', &mut output),
+                (2, ReadUntil::Found)
+            );
+            assert_eq!(&output[..2], b"a\n");
+            assert!(output[2..].iter().all(|b| *b == 0xa5));
+            assert!(!stream.is_eof());
+        }
+    }
+}
+
+#[test]
+fn memory_eof_recovers_through_pushback_and_seek_for_both_readers() {
+    use frankenlibc_core::stdio::ReadUntil;
+    for bounded in [false, true] {
+        let mut stream = memory_input(b"abc");
+        let mut output = Vec::new();
+        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert!(stream.is_eof());
+        assert!(stream.ungetc(b'\n'));
+        assert!(!stream.is_eof());
+        if bounded {
+            let mut output = [0; 2];
+            assert_eq!(
+                stream.read_into_slice(b'\n', &mut output),
+                (1, ReadUntil::Found)
+            );
+            assert_eq!(output[0], b'\n');
+        } else {
+            output.clear();
+            assert_eq!(
+                stream.read_until_delim(b'\n', &mut output),
+                ReadUntil::Found
+            );
+            assert_eq!(output, b"\n");
+        }
+        assert!(!stream.is_eof());
+        output.clear();
+        assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+        assert!(stream.is_eof());
+        assert_eq!(stream.mem_seek(0, 0), 0);
+        assert!(!stream.is_eof());
+        assert_eq!(stream.mem_read(3), b"abc");
+        assert!(!stream.is_eof());
+        assert!(stream.mem_read(1).is_empty());
+        assert!(stream.is_eof());
+    }
+}
+
+#[test]
+fn delimited_read_error_and_descriptor_refill_are_not_eof_observations() {
+    use frankenlibc_core::stdio::ReadUntil;
+    let mut output = Vec::new();
+    let mut stream = StdioStream::new_mem_fixed(
+        vec![1],
+        1,
+        OpenFlags {
+            writable: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(stream.read_until_delim(b'\n', &mut output), ReadUntil::Eof);
+    assert!(stream.is_error());
+    assert!(!stream.is_eof());
+    let mut stream = StdioStream::new(
+        8,
+        OpenFlags {
+            readable: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(stream.fill_read_buffer(b"abc"), 3);
+    assert_eq!(
+        stream.read_until_delim(b'\n', &mut output),
+        ReadUntil::NeedRefill
+    );
+    assert_eq!(output, b"abc");
+    assert!(!stream.is_eof());
+}
