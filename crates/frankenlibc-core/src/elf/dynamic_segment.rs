@@ -2,8 +2,10 @@
 //!
 //! Dynamic addresses are virtual addresses, not file offsets. Every table is
 //! translated through a file-backed PT_LOAD range before it is inspected or
-//! allocated. Hash tables bound dynsym; neither neighbouring table addresses
-//! nor relocation symbol indexes are used to guess its length.
+//! allocated. Hash tables bound dynsym when they contain exported symbols.
+//! An empty GNU hash does not count trailing imports: the undefined symbols
+//! referenced by validated relocations are additionally read, and their full
+//! range must still be backed by the file's PT_LOAD data.
 //!
 //! Layouts: System V gABI Dynamic Linking; LSB Symbol Versioning. This module
 //! does not implement a second relocation engine: it feeds the existing safe
@@ -457,27 +459,6 @@ pub(super) fn parse(
             return Err(invalid("inconsistent dynamic hash counts", *gnu_count));
         }
     }
-    let symbol_count = sysv
-        .as_ref()
-        .map(|(_, count)| *count)
-        .or_else(|| gnu.as_ref().map(|(_, count)| *count));
-    let dynsym = match (tags.get(DT_SYMTAB), symbol_count) {
-        (Some(address), Some(count)) if tags.required(DT_SYMENT)? == 24 => {
-            let (offset, _) = image.table(address, mul(count, 24)?)?;
-            parse_symbols(bytes, offset, mul(count, 24)?)?
-        }
-        (None, None) => Vec::new(),
-        _ => {
-            return Err(invalid(
-                "dynamic symbol table description",
-                DT_SYMTAB as u64,
-            ));
-        }
-    };
-    for symbol in &dynsym {
-        get_string(&dynstr, symbol.st_name)?;
-    }
-    let symbol_versions = versions(&image, &tags, &dynstr, dynsym.len())?;
     let dynamic_rela = tags.region(DT_RELA, DT_RELASZ, 24)?;
     let plt_rela = tags.region(DT_JMPREL, DT_PLTRELSZ, 24)?;
     if (dynamic_rela.is_some() && tags.get(DT_RELAENT) != Some(24))
@@ -494,6 +475,59 @@ pub(super) fn parse(
     };
     let mut rela_dyn = read_rela(dynamic_rela)?;
     let rela_plt = read_rela(plt_rela)?;
+    let hash_count = sysv
+        .as_ref()
+        .map(|(_, count)| *count)
+        .or_else(|| gnu.as_ref().map(|(_, count)| *count));
+    // GNU ld emits an empty GNU hash with symoffset=1 even when dynsym
+    // contains imports used by constructor/destructor-only DSOs. With no
+    // hashed chain, that offset is a lower bound, not the table's length.
+    // DT_HASH and nonempty GNU hashes remain authoritative; a relocation
+    // must never enlarge their symbol tables or invent additional exports.
+    let unhashed_imports = sysv.is_none()
+        && gnu
+            .as_ref()
+            .is_some_and(|(table, count)| *count == u64::from(table.header.symoffset));
+    let symbol_count = hash_count.map(|count| {
+        if unhashed_imports {
+            rela_dyn.iter().chain(&rela_plt).fold(count, |count, rela| {
+                count.max(u64::from(rela.symbol_index()) + 1)
+            })
+        } else {
+            count
+        }
+    });
+    let dynsym = match (tags.get(DT_SYMTAB), symbol_count) {
+        (Some(address), Some(count)) if tags.required(DT_SYMENT)? == 24 => {
+            // Check the complete file-backed range BEFORE allocating. Even
+            // a hostile UINT32_MAX relocation index cannot allocate gigabytes.
+            let (offset, _) = image.table(address, mul(count, 24)?)?;
+            parse_symbols(bytes, offset, mul(count, 24)?)?
+        }
+        (None, None) => Vec::new(),
+        _ => {
+            return Err(invalid(
+                "dynamic symbol table description",
+                DT_SYMTAB as u64,
+            ));
+        }
+    };
+    for (index, symbol) in dynsym.iter().enumerate() {
+        get_string(&dynstr, symbol.st_name)?;
+        if unhashed_imports && index as u64 >= hash_count.unwrap_or(0) && !symbol.is_undefined() {
+            return Err(invalid(
+                "defined symbol outside empty GNU hash",
+                index as u64,
+            ));
+        }
+    }
+    let symbol_versions = versions(&image, &tags, &dynstr, dynsym.len())?;
+    for rela in rela_dyn.iter().chain(&rela_plt) {
+        let index = rela.symbol_index();
+        if index != 0 && u64::from(index) >= dynsym.len() as u64 {
+            return Err(invalid("dynamic relocation symbol index", u64::from(index)));
+        }
+    }
     // DT_JMPREL may be a subset of DT_RELA. Keep each relocation in exactly
     // one table so eager application is not duplicated and lazy PLT stays lazy.
     if let (Some((start, size)), Some((plt, plt_size))) = (dynamic_rela, plt_rela) {
@@ -582,6 +616,121 @@ pub(super) fn parse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn import_only_fixture(plt: bool) -> Vec<u8> {
+        let (mut bytes, _) = fixture();
+        bytes[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
+        bytes[18..20].copy_from_slice(&62u16.to_le_bytes());
+        put32(&mut bytes, 20, 1);
+        put64(&mut bytes, 32, 64);
+        bytes[52..54].copy_from_slice(&64u16.to_le_bytes());
+        bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+        bytes[56..58].copy_from_slice(&2u16.to_le_bytes());
+        put32(&mut bytes, 120, 2); // PT_DYNAMIC
+        put32(&mut bytes, 124, 6);
+        put64(&mut bytes, 128, 0x160);
+        put64(&mut bytes, 136, 0x4160);
+        put64(&mut bytes, 152, 192);
+        put64(&mut bytes, 160, 192);
+        put64(&mut bytes, 168, 8);
+        gnu_fixture(&mut bytes, 0);
+        let mut tags = vec![
+            (DT_GNU_HASH, 0x4100),
+            (DT_SYMTAB, 0x4240),
+            (DT_SYMENT, 24),
+            (DT_STRTAB, 0x42a0),
+            (DT_STRSZ, 9),
+            (DT_RELA, 0x4300),
+            (DT_RELASZ, if plt { 24 } else { 48 }),
+            (DT_RELAENT, 24),
+        ];
+        if plt {
+            tags.extend([(DT_JMPREL, 0x4318), (DT_PLTRELSZ, 24), (DT_PLTREL, 7)]);
+        }
+        tags.push((0, 0));
+        let table = entries(&tags);
+        bytes[0x160..0x160 + table.len()].copy_from_slice(&table);
+        for (index, name) in [(1, 1), (2, 5)] {
+            let offset = 0x240 + index * 24;
+            put32(&mut bytes, offset, name);
+            bytes[offset + 4] = 0x12; // STB_GLOBAL, STT_FUNC, SHN_UNDEF
+        }
+        bytes[0x2a0..0x2a9].copy_from_slice(b"\0one\0two\0");
+        for index in 1..=2 {
+            let offset = 0x300 + (index - 1) * 24;
+            put64(&mut bytes, offset, 0x4380 + (index as u64 - 1) * 8);
+            put64(&mut bytes, offset + 8, (index as u64) << 32 | 1);
+        }
+        bytes
+    }
+
+    #[test]
+    fn empty_gnu_hash_retains_imports_used_by_rela_and_plt_without_sections() {
+        for plt in [false, true] {
+            let bytes = import_only_fixture(plt);
+            let object = super::super::ElfLoader::new(0).parse(&bytes).unwrap();
+            assert_eq!(object.dynsym.len(), 3);
+            assert!(object.dynsym.iter().all(|symbol| symbol.is_undefined()));
+            assert_eq!(
+                get_string(&object.dynstr, object.dynsym[1].st_name).unwrap(),
+                "one"
+            );
+            assert_eq!(
+                get_string(&object.dynstr, object.dynsym[2].st_name).unwrap(),
+                "two"
+            );
+            assert_eq!(object.rela_dyn.len() + object.rela_plt.len(), 2);
+            assert_eq!(object.rela_plt.len(), usize::from(plt));
+            assert!(object.section_headers.is_empty());
+        }
+    }
+
+    #[test]
+    fn empty_gnu_hash_rejects_unbacked_indexes_before_allocating() {
+        for plt in [false, true] {
+            let mut bytes = import_only_fixture(plt);
+            let offset = if plt { 0x320 } else { 0x308 };
+            put64(&mut bytes, offset, u64::from(u32::MAX) << 32 | 1);
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+            let mut bytes = import_only_fixture(plt);
+            // The symbol table starts in file data but its used entries
+            // extend into BSS. A PT_LOAD memory bound is not a file bound.
+            put64(&mut bytes, 0x178, 0x43e8);
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn empty_gnu_hash_never_synthesizes_exports_or_accepts_invalid_names() {
+        for plt in [false, true] {
+            let mut bytes = import_only_fixture(plt);
+            bytes[0x240 + 24 + 6] = 1; // A defined symbol is not an import.
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+            let mut bytes = import_only_fixture(plt);
+            put32(&mut bytes, 0x240 + 48, u32::MAX);
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+        }
+    }
+
+    #[test]
+    fn relocation_indexes_cannot_extend_nonempty_gnu_or_sysv_hash_counts() {
+        for plt in [false, true] {
+            let mut bytes = import_only_fixture(plt);
+            // Nonempty GNU hash: the chain explicitly ends at symbol one,
+            // so the relocation referencing symbol two must be rejected.
+            put32(&mut bytes, 280, 1);
+            put32(&mut bytes, 284, 1);
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+            let mut bytes = import_only_fixture(plt);
+            put64(&mut bytes, 0x160, DT_HASH as u64);
+            bytes[256..284].fill(0);
+            put32(&mut bytes, 256, 1);
+            put32(&mut bytes, 260, 2); // DT_HASH nchain is authoritative.
+            put32(&mut bytes, 264, 1);
+            assert!(super::super::ElfLoader::new(0).parse(&bytes).is_err());
+        }
+    }
 
     fn put32(bytes: &mut [u8], offset: usize, value: u32) {
         bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
