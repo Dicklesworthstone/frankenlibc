@@ -16,16 +16,30 @@ mod stdio;
 #[path = "dlfcn_pthread.rs"]
 mod pthread;
 
+#[path = "dlfcn_fortify.rs"]
+mod fortify;
+
 /// Only the real baseline symbol version for this target is advertised. A
 /// private/future version is not interchangeable with an unversioned lookup.
 /// Callers perform native DSO scope/preemption checks before this fallback.
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
-    if let Some(address) = io::address(name, version) { return Some(address); }
-    if let Some(address) = stdio::address(name, version) { return Some(address); }
+    if let Some(address) = fortify::address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = io::address(name, version) {
+        return Some(address);
+    }
+    if let Some(address) = stdio::address(name, version) {
+        return Some(address);
+    }
     if let Some(address) = pthread::address(name, version) {
         return Some(address);
     }
-    let baseline = if cfg!(target_arch = "aarch64") { "GLIBC_2.17" } else { "GLIBC_2.2.5" };
+    let baseline = if cfg!(target_arch = "aarch64") {
+        "GLIBC_2.17"
+    } else {
+        "GLIBC_2.2.5"
+    };
     if version.is_some_and(|version| version != baseline) {
         return None;
     }
