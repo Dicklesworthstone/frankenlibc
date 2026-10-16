@@ -31,6 +31,7 @@ impl BoundCalls {
         let index = match name {
             "dlsym" => 0,
             "dlvsym" => 1,
+            "dlopen" => 2,
             _ => return None,
         };
         if super::resolver_address(name, version).is_none() {
@@ -75,13 +76,14 @@ fn build(origin: usize) -> Option<Mapping> {
     let targets = [
         super::bound_dlsym_entry as *const () as usize,
         super::bound_dlvsym_entry as *const () as usize,
+        super::super::open::bound_entry as *const () as usize,
     ];
     for (index, target) in targets.into_iter().enumerate() {
         let bytes = machine_code(index, origin as u64, target as u64);
         if bytes.len() > SLOT {
             return None;
         }
-        // SAFETY: both slots are disjoint, in bounds and not yet published.
+        // SAFETY: all slots are disjoint, in bounds and not yet published.
         unsafe {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.add(index * SLOT), bytes.len())
         };
@@ -89,7 +91,7 @@ fn build(origin: usize) -> Option<Mapping> {
     #[cfg(target_arch = "aarch64")]
     // SAFETY: synchronize only the freshly written, mapped instruction slots.
     unsafe {
-        synchronize_instruction_cache(base as usize, 2 * SLOT)
+        synchronize_instruction_cache(base as usize, 3 * SLOT)
     };
     // SAFETY: the guard owns this entire mapping; it is never writable again.
     unsafe { raw_syscall::sys_mprotect(base, LENGTH, libc::PROT_READ | libc::PROT_EXEC) }.ok()?;
@@ -100,7 +102,7 @@ fn build(origin: usize) -> Option<Mapping> {
 fn machine_code(index: usize, origin: u64, target: u64) -> Vec<u8> {
     // ENDBR64; mov argument-register,[rsp]; mov origin-register,imm64;
     // mov rax,target; jmp rax. There is no synthetic return frame to unwind.
-    // dlsym: caller in rdx, origin in rcx; dlvsym: caller in rcx, origin in r8.
+    // dlsym/dlopen: caller in rdx, origin in rcx; dlvsym: rcx and r8.
     let mut code = vec![
         0xf3,
         0x0f,
@@ -108,10 +110,10 @@ fn machine_code(index: usize, origin: u64, target: u64) -> Vec<u8> {
         0xfa,
         0x48,
         0x8b,
-        if index == 0 { 0x14 } else { 0x0c },
+        if index != 1 { 0x14 } else { 0x0c },
         0x24,
     ];
-    code.extend_from_slice(if index == 0 {
+    code.extend_from_slice(if index != 1 {
         &[0x48, 0xb9]
     } else {
         &[0x49, 0xb8]
@@ -129,8 +131,8 @@ fn machine_code(index: usize, origin: u64, target: u64) -> Vec<u8> {
     // nop for aligned 64-bit literals. x0..x2 are otherwise untouched.
     let words: [u32; 6] = [
         0xd503245f,
-        if index == 0 { 0xaa1e03e2 } else { 0xaa1e03e3 },
-        if index == 0 { 0x58000083 } else { 0x58000084 },
+        if index != 1 { 0xaa1e03e2 } else { 0xaa1e03e3 },
+        if index != 1 { 0x58000083 } else { 0x58000084 },
         0x580000b0,
         0xd61f0200,
         0xd503201f,
