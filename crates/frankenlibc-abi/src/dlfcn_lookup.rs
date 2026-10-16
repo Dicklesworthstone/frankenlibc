@@ -23,6 +23,10 @@ use crate::runtime_policy;
 #[path = "dlfcn_memory.rs"]
 mod memory;
 
+#[path = "dlfcn_lookup_bridge.rs"]
+mod bridge;
+pub(super) use bridge::BoundCalls;
+
 #[derive(Clone, Copy, Debug)]
 pub(super) struct LocalScope {
     pub(super) root: usize,
@@ -43,14 +47,18 @@ pub(super) fn attach_scope(dsos: &mut [NativeDso], root: usize, deepbind: bool) 
         .enumerate()
         .map(|(index, &id)| {
             let parent = members[..index].iter().copied().find(|parent| {
-                dsos.iter().any(|dso| dso.id == *parent && dso.needed.contains(&id))
+                dsos.iter()
+                    .any(|dso| dso.id == *parent && dso.needed.contains(&id))
             });
             (id, parent)
         })
         .collect::<Vec<_>>();
     for dso in dsos.iter_mut().filter(|dso| members.contains(&dso.id)) {
         if dso.state == super::InitState::Pending && dso.lookup_scopes.is_empty() {
-            dso.loader = parents.iter().find(|(id, _)| *id == dso.id).and_then(|(_, parent)| *parent);
+            dso.loader = parents
+                .iter()
+                .find(|(id, _)| *id == dso.id)
+                .and_then(|(_, parent)| *parent);
         }
         if !dso.lookup_scopes.iter().any(|scope| scope.root == root) {
             dso.lookup_scopes.push(LocalScope { root, deepbind });
@@ -132,7 +140,12 @@ pub(super) fn resolver_address(name: &str, version: Option<&str>) -> Option<u64>
     if matches!(name, "dlinfo" | "dladdr1") {
         return super::introspection::resolver_address(name, version);
     }
-    if version.is_some_and(|version| !matches!(version, "GLIBC_2.2.5" | "GLIBC_2.34")) {
+    let baseline = if cfg!(target_arch = "aarch64") {
+        "GLIBC_2.17"
+    } else {
+        "GLIBC_2.2.5"
+    };
+    if version.is_some_and(|version| version != baseline && version != "GLIBC_2.34") {
         return None;
     }
     match name {
@@ -148,7 +161,7 @@ unsafe extern "C" fn dlsym_entry(
     name: *const c_char,
     caller: usize,
 ) -> *mut c_void {
-    unsafe { dispatch(handle, name, None, caller) }
+    unsafe { dispatch(handle, name, None, caller, None) }
 }
 
 unsafe extern "C" fn dlvsym_entry(
@@ -157,7 +170,37 @@ unsafe extern "C" fn dlvsym_entry(
     version: *const c_char,
     caller: usize,
 ) -> *mut c_void {
-    unsafe { dispatch(handle, name, Some(version), caller) }
+    unsafe { dispatch(handle, name, Some(version), caller, None) }
+}
+
+// The generated entries add immutable provenance without changing any C argument.
+unsafe extern "C" fn bound_dlsym_entry(
+    handle: *mut c_void,
+    name: *const c_char,
+    caller: usize,
+    origin: usize,
+) -> *mut c_void {
+    // SAFETY: forwarded arguments retain the public dlsym contract.
+    unsafe { dispatch(handle, name, None, caller, Some(origin)) }
+}
+
+unsafe extern "C" fn bound_dlvsym_entry(
+    handle: *mut c_void,
+    name: *const c_char,
+    version: *const c_char,
+    caller: usize,
+    origin: usize,
+) -> *mut c_void {
+    // SAFETY: forwarded arguments retain the public dlvsym contract.
+    unsafe { dispatch(handle, name, Some(version), caller, Some(origin)) }
+}
+
+pub(super) fn bound_resolver_address(
+    dso: &NativeDso,
+    name: &str,
+    version: Option<&str>,
+) -> Option<Option<u64>> {
+    dso.lookup_bridges.address(name, version)
 }
 
 pub(super) fn caller_id(dsos: &[NativeDso], return_pc: usize) -> Option<usize> {
@@ -180,6 +223,7 @@ unsafe fn dispatch(
     name: *const c_char,
     version: Option<*const c_char>,
     caller: usize,
+    origin: Option<usize>,
 ) -> *mut c_void {
     // Explicit handles retain their existing validation and ownership path.
     let request = match handle as usize {
@@ -195,12 +239,17 @@ unsafe fn dispatch(
         return std::ptr::null_mut();
     }
     let operation = OPERATIONS.lock();
-    let id = registry()
-        .lock()
-        .ok()
-        .and_then(|dsos| caller_id(&dsos, caller));
+    let id = registry().lock().ok().and_then(|dsos| {
+        caller_id(&dsos, caller)
+            .or_else(|| origin.filter(|id| dsos.iter().any(|dso| dso.id == *id)))
+    });
     let Some(id) = id else {
         drop(operation);
+        // Bound entries never turn a stale native origin into a host lookup.
+        if origin.is_some() {
+            abi::set_dlerror(core::ERR_SYMBOL_NOT_FOUND);
+            return std::ptr::null_mut();
+        }
         return unsafe { forward(handle, name, version) };
     };
     let (_, decision) =
@@ -318,10 +367,16 @@ fn next_order(dsos: &[NativeDso], caller: usize) -> Option<Vec<usize>> {
     let mut depth = 0;
     loop {
         let dso = dsos.iter().find(|dso| dso.id == root)?;
-        let Some(parent) = dso.loader else { break; };
-        if !dsos.iter().any(|dso| dso.id == parent) { break; }
+        let Some(parent) = dso.loader else {
+            break;
+        };
+        if !dsos.iter().any(|dso| dso.id == parent) {
+            break;
+        }
         depth += 1;
-        if depth >= dsos.len() { return None; }
+        if depth >= dsos.len() {
+            return None;
+        }
         root = parent;
     }
     let mut order = lookup_order(dsos, &[], root);
@@ -366,14 +421,47 @@ unsafe fn validated_lookup(
         let dsos = registry().lock().ok()?;
         search_order(&dsos, caller)?
     };
-    if let Some(result) = native_search(caller, &search.before_host, symbol_name, version_name, request) {
+    if let Some(result) = native_search(
+        caller,
+        &search.before_host,
+        symbol_name,
+        version_name,
+        request,
+    ) {
         return result;
     }
     if let Some(address) = runtime_export(symbol_name, version_name) {
         // Scoped definitions can supply their own versions, even one the
         // runtime does not implement. Search them before finalizing refusal.
         // A rejected runtime version is NOT a host lookup opportunity.
-        if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name, request) {
+        if let Some(result) = native_search(
+            caller,
+            &search.after_host,
+            symbol_name,
+            version_name,
+            request,
+        ) {
+            return result;
+        }
+        return address.map(|address| address as *mut c_void);
+    }
+    let bound = {
+        let dsos = registry().lock().ok()?;
+        bound_resolver_address(
+            dsos.iter().find(|dso| dso.id == caller)?,
+            symbol_name,
+            version_name,
+        )
+    };
+    if let Some(address) = bound {
+        // A custom native definition still preempts the runtime entry.
+        if let Some(result) = native_search(
+            caller,
+            &search.after_host,
+            symbol_name,
+            version_name,
+            request,
+        ) {
             return result;
         }
         return address.map(|address| address as *mut c_void);
@@ -387,7 +475,13 @@ unsafe fn validated_lookup(
     if let Some(address) = unsafe { host_symbol(name, version) } {
         return Some(address);
     }
-    if let Some(result) = native_search(caller, &search.after_host, symbol_name, version_name, request) {
+    if let Some(result) = native_search(
+        caller,
+        &search.after_host,
+        symbol_name,
+        version_name,
+        request,
+    ) {
         return result;
     }
     if version_name.is_some_and(|version| !abi::version_supported(version.as_bytes())) {
@@ -493,7 +587,11 @@ fn materialize(
             // An indirect implementation may have a different provider. For
             // NEXT, attach that safety edge to the selected resolver's DSO,
             // not to the caller: lookup itself must not keep that DSO alive.
-            let owner = if request == Request::Default { caller } else { definition.provider };
+            let owner = if request == Request::Default {
+                caller
+            } else {
+                definition.provider
+            };
             ifunc::resolve_symbol(owner, address)? as *mut c_void
         } else {
             address as *mut c_void

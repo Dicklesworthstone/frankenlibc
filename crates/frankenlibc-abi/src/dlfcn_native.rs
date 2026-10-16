@@ -153,6 +153,7 @@ struct NativeDso {
     loader: Option<usize>,
     // Caller-relative lookup memberships, not owning lifetime edges.
     lookup_scopes: Vec<lookup::LocalScope>,
+    lookup_bridges: lookup::BoundCalls,
     // DT_NEEDED order is the lookup scope; relocation-only providers are
     // lifetime edges, not additional members of a handle's lookup scope.
     needed: Vec<usize>,
@@ -383,7 +384,12 @@ fn prepare_file(
     // the requested pathname absolute before opening, so a later chdir cannot
     // rebase its relative directory while parsing or staging dependencies.
     let path = requested_path.to_owned();
-    let search = Arc::new(SearchPaths::parse(&bytes, &object, path.parent()?, context.secure)?);
+    let search = Arc::new(SearchPaths::parse(
+        &bytes,
+        &object,
+        path.parent()?,
+        context.secure,
+    )?);
     Some(PreparedDso {
         file,
         device,
@@ -645,6 +651,7 @@ fn map_object(
         symbolic,
         loader: None,
         lookup_scopes: Vec::new(),
+        lookup_bridges: lookup::BoundCalls::new(id),
         dependencies: needed.clone(),
         needed,
         needed_by_name,

@@ -176,22 +176,43 @@ pub(super) fn select(
             });
         }
     }
+    if let Some(address) = super::lookup::bound_resolver_address(dso, name, version) {
+        return address
+            .map(|address| Definition {
+                address,
+                size: None,
+                provider: None,
+                indirect: false,
+            })
+            .or_else(|| {
+                symbol.is_weak().then_some(Definition {
+                    address: 0,
+                    size: Some(0),
+                    provider: None,
+                    indirect: false,
+                })
+            });
+    }
     // A recognized runtime name owns its version decision. In particular,
     // the generic GLIBC allowlist must not resurrect malloc@GLIBC_2.34, and
     // an unsupported fmemopen version must not pick a host FILE producer.
     // Scoped DSO definitions above still win, including custom versions.
     if let Some(address) = super::lookup::runtime_export(name, version) {
-        return address.map(|address| Definition {
-            address,
-            size: None,
-            provider: None,
-            indirect: false,
-        }).or_else(|| symbol.is_weak().then_some(Definition {
-            address: 0,
-            size: Some(0),
-            provider: None,
-            indirect: false,
-        }));
+        return address
+            .map(|address| Definition {
+                address,
+                size: None,
+                provider: None,
+                indirect: false,
+            })
+            .or_else(|| {
+                symbol.is_weak().then_some(Definition {
+                    address: 0,
+                    size: Some(0),
+                    provider: None,
+                    indirect: false,
+                })
+            });
     }
     // Keep ordinary builtin fallback on the same ABI/version path too. An
     // empty scope cannot accidentally select a different native provider.
