@@ -5,8 +5,10 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/*semaphore*'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/dlfcn*'
       - 'crates/frankenlibc-abi/tests/*semaphore*'
+      - 'tests/integration/fixture_semaphore_wait.c'
       - '.github/workflows/native-semaphore.yml'
   workflow_dispatch:
 permissions:
@@ -27,9 +29,10 @@ jobs:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: |
           set -euo pipefail
-          cargo test -p frankenlibc-abi --test dlfcn_native_semaphore_test -- --test-threads=1
+          cargo test -p frankenlibc-abi --test dlfcn_native_semaphore_test --test semaphore_wait_test -- --test-threads=1
   validated-public-source:
-    if: github.event_name == 'push' && startsWith(github.event.head_commit.message, 'feat(loader): execute native semaphore lifecycle')
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'fix(semaphore): preserve tokens across cancellation and overflow')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -49,12 +52,12 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64, gzip, hashlib, json, pathlib, subprocess, urllib.request
-          url = 'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs/edb9a1fb2e116cfa8a5ce2d1d5656b6dd84c4db1'
+          url = 'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs/144ec9dc6f38da684628749fc67e5301c3f14bbf'
           with urllib.request.urlopen(url, timeout=30) as response:
               blob = json.load(response)
           data = gzip.decompress(base64.b64decode(blob['content']))
-          assert hashlib.sha256(data).hexdigest() == 'af134bd686ef4ae5e34b0620f0aa061785f6fbfb60dddef2060b3b081ced4029'
-          path = pathlib.Path('/tmp/public-named.patch')
+          assert hashlib.sha256(data).hexdigest() == '1ae2cbe226021f47cf044fc554e1b410ee9e7a330f39818ab5d2567272238773'
+          path = pathlib.Path('/tmp/public-semaphore.patch')
           path.write_bytes(data)
           subprocess.run(['git', 'apply', '--check', str(path)], check=True)
           subprocess.run(['git', 'apply', str(path)], check=True)
@@ -67,8 +70,11 @@ jobs:
           for mode in strict hardened; do
             FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
               --test named_semaphore_test --test dlfcn_native_semaphore_test \
-              --test conformance_diff_semaphore -- --test-threads=1 \
+              --test conformance_diff_semaphore --test semaphore_wait_test -- --test-threads=1 \
               2>&1 | tee "artifacts/semaphore/${mode}.log"
+            FL_SEM_WAIT_CHILD=public FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test semaphore_wait_test -- --test-threads=1 \
+              2>&1 | tee "artifacts/semaphore/public-${mode}.log"
           done
       - name: Upload validated blobs without modifying branch refs
         env:
@@ -76,7 +82,13 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64, hashlib, json, os, pathlib, subprocess, urllib.request
-          paths = ['crates/frankenlibc-abi/src/unistd_abi.rs', 'crates/frankenlibc-abi/tests/named_semaphore_test.rs']
+          paths = [
+              'crates/frankenlibc-abi/src/unistd_abi.rs',
+              'crates/frankenlibc-abi/src/glibc_internal_abi.rs',
+              'crates/frankenlibc-abi/src/dlfcn_semaphore.rs',
+              'crates/frankenlibc-abi/tests/named_semaphore_test.rs',
+              'crates/frankenlibc-abi/tests/dlfcn_native_semaphore_test.rs',
+          ]
           changed = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
           changed += subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', 'crates/'], text=True).splitlines()
           assert set(changed) == set(paths), changed

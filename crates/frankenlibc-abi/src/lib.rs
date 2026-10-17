@@ -478,5 +478,7 @@ pub mod rpc_abi;
 pub(crate) mod nss_module;
 #[cfg(not(test))]
 pub mod named_semaphore;
+#[cfg(not(test))]
+pub mod semaphore_wait;
 
 pub mod util;
