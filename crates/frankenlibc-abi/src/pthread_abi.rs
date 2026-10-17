@@ -158,14 +158,14 @@ const MUTEX_FLAG_PI: i32 = 1 << 10;
 const MUTEX_FLAG_INCONSISTENT: i32 = 1 << 11;
 /// Robust mutex unlocked while inconsistent: every later lock fails.
 const MUTEX_FLAG_NOTRECOVERABLE: i32 = 1 << 12;
-/// Flags that route a mutex off the private 0/1/2 fast path.
-const MUTEX_EXTENDED_FLAGS: i32 = MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI;
 /// `PTHREAD_PRIO_PROTECT` mutex; its priority ceiling is kept in
-/// `MUTEX_PRIOCEILING_MASK`. Not an extended flag: locking does not (yet) raise
-/// the owner to the ceiling, so it stays on the ordinary lock path.
+/// `MUTEX_PRIOCEILING_MASK`.
 const MUTEX_FLAG_PP: i32 = 1 << 13;
 const MUTEX_PRIOCEILING_SHIFT: u32 = 16;
 const MUTEX_PRIOCEILING_MASK: i32 = 0xff << MUTEX_PRIOCEILING_SHIFT;
+/// Flags that route a mutex off the private 0/1/2 fast path.
+const MUTEX_EXTENDED_FLAGS: i32 =
+    MUTEX_FLAG_PSHARED | MUTEX_FLAG_ROBUST | MUTEX_FLAG_PI | MUTEX_FLAG_PP;
 /// Linux SCHED_FIFO priority range (kernel MAX_RT_PRIO - 1), which glibc's
 /// `pthread_mutex_setprioceiling` validates against.
 const SCHED_FIFO_PRIO_MIN: c_int = 1;
@@ -2531,8 +2531,247 @@ fn mutex_owner_pid_ptr(mutex: *mut libc::pthread_mutex_t) -> Option<*mut AtomicI
 const FUTEX_PI_WAITERS: i32 = 0x8000_0000_u32 as i32;
 const FUTEX_PI_OWNER_DIED: i32 = 0x4000_0000;
 const FUTEX_PI_TID_MASK: i32 = 0x3fff_ffff;
-/// How often a waiter on a robust mutex re-checks that the owner is alive.
-const ROBUST_OWNER_POLL_NS: i64 = 20_000_000;
+/// How often a waiter on a robust mutex re-checks that the owner is alive when
+/// the owner dies without running TLS destructors (e.g. cross-process SIGKILL
+/// or `_exit`). Normal thread exit wakes waiters immediately via
+/// [`ROBUST_HELD_SET`]'s TLS destructor.
+const ROBUST_OWNER_POLL_NS: i64 = 1_000_000;
+/// Sentinel stored in `owner_pid` by [`RobustHeldSet::drop`] when a thread
+/// exits while still holding a robust mutex, before the kernel reaps its TID.
+const ROBUST_OWNER_EXITED_PID: i32 = -1;
+const MAX_TRACKED_ROBUST_MUTEXES: usize = 32;
+
+struct RobustHeldSet {
+    tid: i32,
+    len: usize,
+    mutexes: [usize; MAX_TRACKED_ROBUST_MUTEXES],
+}
+
+impl RobustHeldSet {
+    const fn new() -> Self {
+        Self {
+            tid: 0,
+            len: 0,
+            mutexes: [0; MAX_TRACKED_ROBUST_MUTEXES],
+        }
+    }
+
+    fn insert(&mut self, tid: i32, mutex: *mut libc::pthread_mutex_t) {
+        let addr = mutex as usize;
+        if addr == 0 {
+            return;
+        }
+        self.tid = tid;
+        if self.mutexes[..self.len].contains(&addr) {
+            return;
+        }
+        if self.len < MAX_TRACKED_ROBUST_MUTEXES {
+            self.mutexes[self.len] = addr;
+            self.len += 1;
+        }
+    }
+
+    fn remove(&mut self, mutex: *mut libc::pthread_mutex_t) {
+        let addr = mutex as usize;
+        if let Some(pos) = self.mutexes[..self.len].iter().position(|&m| m == addr) {
+            self.len -= 1;
+            self.mutexes[pos] = self.mutexes[self.len];
+            self.mutexes[self.len] = 0;
+        }
+    }
+}
+
+impl Drop for RobustHeldSet {
+    fn drop(&mut self) {
+        if self.len == 0 || self.tid <= 0 {
+            return;
+        }
+        let pid = raw_syscall::sys_getpid();
+        for i in 0..self.len {
+            let addr = self.mutexes[i];
+            if addr == 0 {
+                continue;
+            }
+            let mutex = addr as *mut libc::pthread_mutex_t;
+            if !is_managed_mutex(mutex) {
+                continue;
+            }
+            let Some(m) = ext_mutex_fields(mutex) else {
+                continue;
+            };
+            let raw_type = m.type_word.load(Ordering::Acquire);
+            if raw_type & MUTEX_FLAG_ROBUST == 0 {
+                continue;
+            }
+            if m.owner.load(Ordering::Acquire) == self.tid
+                && m.owner_pid.load(Ordering::Acquire) == pid
+            {
+                m.owner_pid
+                    .store(ROBUST_OWNER_EXITED_PID, Ordering::Release);
+                if raw_type & MUTEX_FLAG_PI == 0 {
+                    ext_futex_wake(m.word, raw_type, i32::MAX);
+                }
+            }
+        }
+        self.len = 0;
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TppThreadState {
+    base_policy: c_int,
+    base_prio: c_int,
+    priomax: c_int,
+    counts: [u32; SCHED_FIFO_PRIO_MAX as usize],
+}
+
+impl TppThreadState {
+    const fn new() -> Self {
+        Self {
+            base_policy: libc::SCHED_OTHER,
+            base_prio: 0,
+            priomax: 0,
+            counts: [0; SCHED_FIFO_PRIO_MAX as usize],
+        }
+    }
+}
+
+std::thread_local! {
+    static ROBUST_HELD_SET: std::cell::RefCell<RobustHeldSet> =
+        const { std::cell::RefCell::new(RobustHeldSet::new()) };
+    static THREAD_TPP_STATE: std::cell::Cell<TppThreadState> =
+        const { std::cell::Cell::new(TppThreadState::new()) };
+}
+
+fn remember_robust_mutex_held(tid: i32, mutex: *mut libc::pthread_mutex_t) {
+    let _ = ROBUST_HELD_SET.try_with(|cell| {
+        if let Ok(mut set) = cell.try_borrow_mut() {
+            set.insert(tid, mutex);
+        }
+    });
+}
+
+fn forget_robust_mutex_held(mutex: *mut libc::pthread_mutex_t) {
+    let _ = ROBUST_HELD_SET.try_with(|cell| {
+        if let Ok(mut set) = cell.try_borrow_mut() {
+            set.remove(mutex);
+        }
+    });
+}
+
+/// Acquire a `PTHREAD_PRIO_PROTECT` priority ceiling `ceiling` for `tid`,
+/// boosting the thread's scheduler priority if needed (or returning `EINVAL` /
+/// `EPERM` when the thread's priority exceeds `ceiling` or the kernel refuses
+/// the boost, e.g. `SCHED_OTHER` with `ceiling > 0`).
+fn tpp_acquire_ceiling(tid: i32, ceiling: c_int) -> c_int {
+    if !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&ceiling) {
+        return libc::EINVAL;
+    }
+    THREAD_TPP_STATE
+        .try_with(|cell| {
+            let mut state = cell.get();
+            if state.priomax == 0 {
+                let policy = match raw_syscall::sys_sched_getscheduler(tid) {
+                    Ok(p) => p,
+                    Err(e) => return e,
+                };
+                let mut param = libc::sched_param { sched_priority: 0 };
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_sched_getparam(
+                        tid,
+                        &mut param as *mut libc::sched_param as *mut u8,
+                    )
+                } {
+                    return e;
+                }
+                state.base_policy = policy;
+                state.base_prio = param.sched_priority;
+            }
+            if state.base_prio > ceiling {
+                return libc::EINVAL;
+            }
+            let idx = (ceiling - 1) as usize;
+            if state.counts[idx] == u32::MAX {
+                return libc::EAGAIN;
+            }
+            let old_effective = state.priomax.max(state.base_prio);
+            let new_priomax = state.priomax.max(ceiling);
+            let new_effective = new_priomax.max(state.base_prio);
+            if new_effective > old_effective {
+                let param = libc::sched_param {
+                    sched_priority: new_effective,
+                };
+                if let Err(e) = unsafe {
+                    raw_syscall::sys_sched_setscheduler(
+                        tid,
+                        state.base_policy,
+                        &param as *const libc::sched_param as *const u8,
+                    )
+                } {
+                    return e;
+                }
+            }
+            state.counts[idx] += 1;
+            state.priomax = new_priomax;
+            cell.set(state);
+            0
+        })
+        .unwrap_or(libc::EINVAL)
+}
+
+/// Release a previously acquired `PTHREAD_PRIO_PROTECT` priority ceiling
+/// `ceiling` for `tid`, lowering the thread's scheduler priority back to the
+/// next highest held ceiling (or its base priority).
+fn tpp_release_ceiling(tid: i32, ceiling: c_int) {
+    if !(SCHED_FIFO_PRIO_MIN..=SCHED_FIFO_PRIO_MAX).contains(&ceiling) {
+        return;
+    }
+    let _ = THREAD_TPP_STATE.try_with(|cell| {
+        let mut state = cell.get();
+        let idx = (ceiling - 1) as usize;
+        if state.counts[idx] == 0 {
+            return;
+        }
+        state.counts[idx] -= 1;
+        if state.counts[idx] == 0 && ceiling == state.priomax {
+            let old_effective = state.priomax.max(state.base_prio);
+            let mut next_max = 0;
+            for i in (0..idx).rev() {
+                if state.counts[i] > 0 {
+                    next_max = (i + 1) as c_int;
+                    break;
+                }
+            }
+            state.priomax = next_max;
+            let new_effective = state.priomax.max(state.base_prio);
+            if new_effective < old_effective {
+                let param = libc::sched_param {
+                    sched_priority: new_effective,
+                };
+                let _ = unsafe {
+                    raw_syscall::sys_sched_setscheduler(
+                        tid,
+                        state.base_policy,
+                        &param as *const libc::sched_param as *const u8,
+                    )
+                };
+            }
+        }
+        cell.set(state);
+    });
+}
+
+/// Replace `old_ceiling` with `new_ceiling` in `tid`'s held TPP set.
+fn tpp_change_ceiling(tid: i32, old_ceiling: c_int, new_ceiling: c_int) -> c_int {
+    if old_ceiling == new_ceiling {
+        return 0;
+    }
+    let rc = tpp_acquire_ceiling(tid, new_ceiling);
+    if rc == 0 {
+        tpp_release_ceiling(tid, old_ceiling);
+    }
+    rc
+}
 
 struct ExtMutex<'a> {
     word: &'a AtomicI32,
@@ -2566,7 +2805,8 @@ fn futex_private_bit(raw_type: i32) -> c_int {
 
 /// A recorded owner that no longer exists.
 fn mutex_owner_dead(pid: i32, tid: i32) -> bool {
-    pid > 0 && tid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH)
+    pid == ROBUST_OWNER_EXITED_PID
+        || (pid > 0 && tid > 0 && raw_syscall::sys_tgkill(pid, tid, 0) == Err(libc::ESRCH))
 }
 
 /// Nanoseconds from now until an absolute CLOCK_REALTIME deadline.
@@ -2621,7 +2861,7 @@ fn ext_futex_wake(word: &AtomicI32, raw_type: i32, count: i32) {
     };
 }
 
-/// Lock, trylock or timedlock a process-shared, robust or PI mutex.
+/// Lock, trylock or timedlock a process-shared, robust, PI or PP mutex.
 unsafe fn ext_mutex_lock(
     mutex: *mut libc::pthread_mutex_t,
     raw_type: i32,
@@ -2633,6 +2873,7 @@ unsafe fn ext_mutex_lock(
     };
     let mtype = raw_type & MUTEX_TYPE_MASK;
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let is_pp = raw_type & MUTEX_FLAG_PP != 0;
     let tid = core_self_tid();
     if m.type_word.load(Ordering::Acquire) & MUTEX_FLAG_NOTRECOVERABLE != 0 {
         return libc::ENOTRECOVERABLE;
@@ -2658,18 +2899,49 @@ unsafe fn ext_mutex_lock(
         }
         // A normal mutex (robust or not) relocked by its owner deadlocks, as in glibc.
     }
+    let pp_ceiling = if is_pp {
+        let ceil = (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK)
+            >> MUTEX_PRIOCEILING_SHIFT;
+        let pp_rc = tpp_acquire_ceiling(tid, ceil);
+        if pp_rc != 0 {
+            return pp_rc;
+        }
+        ceil
+    } else {
+        0
+    };
     let rc = if raw_type & MUTEX_FLAG_PI != 0 {
         ext_pi_acquire(&m, raw_type, tid, deadline, try_only)
     } else {
         ext_acquire(&m, raw_type, tid, deadline, try_only)
     };
     if rc != 0 && rc != libc::EOWNERDEAD {
+        if is_pp {
+            tpp_release_ceiling(tid, pp_ceiling);
+        }
         return rc;
+    }
+    if is_pp {
+        let current_ceil = (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK)
+            >> MUTEX_PRIOCEILING_SHIFT;
+        if current_ceil != pp_ceiling {
+            let change_rc = tpp_change_ceiling(tid, pp_ceiling, current_ceil);
+            if change_rc != 0 {
+                tpp_release_ceiling(tid, pp_ceiling);
+                if m.word.swap(0, Ordering::Release) == 2 {
+                    ext_futex_wake(m.word, raw_type, 1);
+                }
+                return change_rc;
+            }
+        }
     }
     m.owner.store(tid, Ordering::Release);
     m.owner_pid
         .store(raw_syscall::sys_getpid(), Ordering::Release);
     m.count.store(1, Ordering::Release);
+    if robust {
+        remember_robust_mutex_held(tid, mutex);
+    }
     if rc == libc::EOWNERDEAD {
         m.type_word
             .fetch_or(MUTEX_FLAG_INCONSISTENT, Ordering::AcqRel);
@@ -2818,16 +3090,21 @@ fn ext_pi_acquire(
     }
 }
 
-/// Unlock a process-shared, robust or PI mutex.
+/// Unlock a process-shared, robust, PI or PP mutex.
 unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> c_int {
     let Some(m) = ext_mutex_fields(mutex) else {
         return libc::EINVAL;
     };
     let mtype = raw_type & MUTEX_TYPE_MASK;
     let robust = raw_type & MUTEX_FLAG_ROBUST != 0;
+    let is_pp = raw_type & MUTEX_FLAG_PP != 0;
     let tid = core_self_tid();
     let owned = m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER;
-    if !owned && (robust || mtype != PTHREAD_MUTEX_NORMAL_TYPE || raw_type & MUTEX_FLAG_PI != 0) {
+    if !owned
+        && (robust
+            || mtype != PTHREAD_MUTEX_NORMAL_TYPE
+            || raw_type & (MUTEX_FLAG_PI | MUTEX_FLAG_PP) != 0)
+    {
         return libc::EPERM;
     }
     if mtype == PTHREAD_MUTEX_RECURSIVE_TYPE {
@@ -2837,12 +3114,20 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
             return 0;
         }
     }
+    let pp_ceiling = if is_pp {
+        (m.type_word.load(Ordering::Acquire) & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT
+    } else {
+        0
+    };
     let mut wake_all = false;
     if robust && raw_type & MUTEX_FLAG_INCONSISTENT != 0 {
         // Unlocked without pthread_mutex_consistent: the state is lost.
         m.type_word
             .fetch_or(MUTEX_FLAG_NOTRECOVERABLE, Ordering::AcqRel);
         wake_all = true;
+    }
+    if robust {
+        forget_robust_mutex_held(mutex);
     }
     m.owner.store(MUTEX_NO_OWNER, Ordering::Release);
     m.owner_pid.store(0, Ordering::Release);
@@ -2868,6 +3153,9 @@ unsafe fn ext_mutex_unlock(mutex: *mut libc::pthread_mutex_t, raw_type: i32) -> 
     }
     if m.word.swap(0, Ordering::Release) == 2 || wake_all {
         ext_futex_wake(m.word, raw_type, if wake_all { i32::MAX } else { 1 });
+    }
+    if is_pp {
+        tpp_release_ceiling(tid, pp_ceiling);
     }
     0
 }
@@ -3510,14 +3798,18 @@ pub unsafe extern "C" fn pthread_mutex_init(
         if decode_mutexattr_robust(word) == libc::PTHREAD_MUTEX_ROBUST {
             flags |= MUTEX_FLAG_ROBUST;
         }
-        // PTHREAD_PRIO_PROTECT records its ceiling (pthread_mutex_getprioceiling/
-        // setprioceiling), but locking does not raise the thread to it.
+        // PTHREAD_PRIO_PROTECT + PTHREAD_MUTEX_ROBUST is rejected with ENOTSUP
+        // by glibc's ___pthread_mutex_init.
         match decode_mutexattr_protocol(word) {
             libc::PTHREAD_PRIO_INHERIT => flags |= MUTEX_FLAG_PI,
             libc::PTHREAD_PRIO_PROTECT => {
-                flags |= MUTEX_FLAG_PP
-                    | ((decode_mutexattr_prioceiling(word) << MUTEX_PRIOCEILING_SHIFT)
-                        & MUTEX_PRIOCEILING_MASK);
+                if flags & MUTEX_FLAG_ROBUST != 0 {
+                    return libc::ENOTSUP;
+                }
+                let ceiling = decode_mutexattr_prioceiling(word)
+                    .clamp(SCHED_FIFO_PRIO_MIN, SCHED_FIFO_PRIO_MAX);
+                flags |=
+                    MUTEX_FLAG_PP | ((ceiling << MUTEX_PRIOCEILING_SHIFT) & MUTEX_PRIOCEILING_MASK);
             }
             _ => {}
         }
@@ -3966,8 +4258,13 @@ fn cond_futex_wait(
     let abstime = abstime.map(|ts| if ts.tv_sec < 0 { &expired } else { ts });
     let timed_op = match clock {
         Some(clock) => {
-            libc::FUTEX_WAIT_BITSET | cv.futex_private_flag()
-                | if clock == libc::CLOCK_REALTIME { libc::FUTEX_CLOCK_REALTIME } else { 0 }
+            libc::FUTEX_WAIT_BITSET
+                | cv.futex_private_flag()
+                | if clock == libc::CLOCK_REALTIME {
+                    libc::FUTEX_CLOCK_REALTIME
+                } else {
+                    0
+                }
         }
         None => core_condvar_timed_futex_op(cv),
     };
@@ -7493,6 +7790,46 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
     let Some(type_word) = prio_protect_type_word(mutex) else {
         return libc::EINVAL;
     };
+    let Some(m) = ext_mutex_fields(mutex) else {
+        return libc::EINVAL;
+    };
+    let tid = core_self_tid();
+    let raw_type = type_word.load(Ordering::Acquire);
+    if m.owner.load(Ordering::Acquire) == tid && tid != MUTEX_NO_OWNER {
+        match raw_type & MUTEX_TYPE_MASK {
+            PTHREAD_MUTEX_ERRORCHECK_TYPE => return libc::EDEADLK,
+            PTHREAD_MUTEX_RECURSIVE_TYPE => {
+                let prev_ceil = (raw_type & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+                let rc = tpp_change_ceiling(tid, prev_ceil, prioceiling);
+                if rc != 0 {
+                    return rc;
+                }
+                let previous = type_word
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+                        Some(
+                            (word & !MUTEX_PRIOCEILING_MASK)
+                                | (prioceiling << MUTEX_PRIOCEILING_SHIFT),
+                        )
+                    })
+                    .unwrap_or_else(|word| word);
+                if !old_ceiling.is_null() {
+                    // SAFETY: caller-provided output pointer, checked non-null.
+                    unsafe {
+                        *old_ceiling =
+                            (previous & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
+                    }
+                }
+                return 0;
+            }
+            _ => {}
+        }
+    }
+    // POSIX: locking the mutex in pthread_mutex_setprioceiling does not adhere
+    // to the priority protect protocol.
+    let lock_rc = ext_acquire(&m, raw_type, tid, None, false);
+    if lock_rc != 0 {
+        return lock_rc;
+    }
     let previous = type_word
         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
             Some((word & !MUTEX_PRIOCEILING_MASK) | (prioceiling << MUTEX_PRIOCEILING_SHIFT))
@@ -7503,6 +7840,9 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
         unsafe {
             *old_ceiling = (previous & MUTEX_PRIOCEILING_MASK) >> MUTEX_PRIOCEILING_SHIFT;
         }
+    }
+    if m.word.swap(0, Ordering::Release) == 2 {
+        ext_futex_wake(m.word, raw_type, 1);
     }
     0
 }

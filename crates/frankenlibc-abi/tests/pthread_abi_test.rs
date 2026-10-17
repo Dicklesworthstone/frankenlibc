@@ -735,8 +735,14 @@ fn cond_timedwait_negative_seconds_expire_without_overflow() {
         assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
         assert_eq!(pthread_mutex_lock(&mut mutex), 0);
         for seconds in [-1, i64::MIN] {
-            let deadline = libc::timespec { tv_sec: seconds, tv_nsec: 0 };
-            assert_eq!(pthread_cond_timedwait(&mut cond, &mut mutex, &deadline), libc::ETIMEDOUT);
+            let deadline = libc::timespec {
+                tv_sec: seconds,
+                tv_nsec: 0,
+            };
+            assert_eq!(
+                pthread_cond_timedwait(&mut cond, &mut mutex, &deadline),
+                libc::ETIMEDOUT
+            );
             assert_eq!(pthread_mutex_trylock(&mut mutex), libc::EBUSY);
         }
         assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
@@ -2864,7 +2870,59 @@ fn mutex_prioceiling_prio_protect_mutex_matches_host_libc() {
         }
         assert_eq!(get(&mutex), (0, 20));
 
+        // Locking a PTHREAD_PRIO_PROTECT mutex from a SCHED_OTHER thread cannot
+        // raise the thread's priority to the ceiling and returns EINVAL in
+        // glibc across lock, trylock, timedlock and clocklock.
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        assert_eq!(libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts), 0);
+        ts.tv_sec += 1;
+        let host_lock_rc = std::thread::spawn(move || {
+            let mut h_attr: libc::pthread_mutexattr_t = std::mem::zeroed();
+            assert_eq!(libc::pthread_mutexattr_init(&mut h_attr), 0);
+            assert_eq!(
+                libc::pthread_mutexattr_setprotocol(&mut h_attr, libc::PTHREAD_PRIO_PROTECT),
+                0
+            );
+            let mut h_m: libc::pthread_mutex_t = std::mem::zeroed();
+            assert_eq!(libc::pthread_mutex_init(&mut h_m, &h_attr), 0);
+            let rc = libc::pthread_mutex_lock(&mut h_m);
+            libc::pthread_mutex_destroy(&mut h_m);
+            libc::pthread_mutexattr_destroy(&mut h_attr);
+            rc
+        })
+        .join()
+        .expect("host thread");
+        assert_eq!(host_lock_rc, libc::EINVAL);
+        assert_eq!(pthread_mutex_lock(&mut mutex), host_lock_rc);
+        assert_eq!(pthread_mutex_trylock(&mut mutex), host_lock_rc);
+        assert_eq!(pthread_mutex_timedlock(&mut mutex, &ts), host_lock_rc);
+        assert_eq!(
+            pthread_mutex_clocklock(&mut mutex, libc::CLOCK_REALTIME, &ts),
+            host_lock_rc
+        );
+
+        // PTHREAD_PRIO_PROTECT + PTHREAD_MUTEX_ROBUST is rejected with ENOTSUP
+        // by pthread_mutex_init in glibc.
+        assert_eq!(
+            pthread_mutexattr_setrobust(&mut attr, libc::PTHREAD_MUTEX_ROBUST),
+            0
+        );
+        assert_eq!(
+            libc::pthread_mutexattr_setrobust(&mut host_attr, libc::PTHREAD_MUTEX_ROBUST),
+            0
+        );
+        let mut rob_pp: libc::pthread_mutex_t = std::mem::zeroed();
+        let mut host_rob_pp: libc::pthread_mutex_t = std::mem::zeroed();
+        let fl_init_rc = pthread_mutex_init(&mut rob_pp, &attr);
+        let host_init_rc = libc::pthread_mutex_init(&mut host_rob_pp, &host_attr);
+        assert_eq!(fl_init_rc, libc::ENOTSUP);
+        assert_eq!(fl_init_rc, host_init_rc);
+
         assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
+        libc::pthread_mutex_destroy(&mut host_mutex);
         pthread_mutexattr_destroy(&mut attr);
         libc::pthread_mutexattr_destroy(&mut host_attr);
     }
