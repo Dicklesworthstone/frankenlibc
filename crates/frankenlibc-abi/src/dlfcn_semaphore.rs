@@ -1,18 +1,18 @@
 //! One semaphore runtime for native plugins, with exact symbol versions.
-use crate::{named_semaphore as named, semaphore_wait as wait, unistd_abi as sem};
+use crate::{glibc_internal_abi, unistd_abi as sem};
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
     let function = match name {
-        "sem_open" => named::open as *const (),
-        "sem_close" => named::close as *const (),
-        "sem_unlink" => named::unlink as *const (),
+        "sem_open" => sem::sem_open as *const (),
+        "sem_close" => sem::sem_close as *const (),
+        "sem_unlink" => sem::sem_unlink as *const (),
         "sem_init" => sem::sem_init as *const (),
         "sem_destroy" => sem::sem_destroy as *const (),
-        "sem_post" => wait::post as *const (),
-        "sem_wait" => wait::wait as *const (),
+        "sem_post" => sem::sem_post as *const (),
+        "sem_wait" => sem::sem_wait as *const (),
         "sem_trywait" => sem::sem_trywait as *const (),
-        "sem_timedwait" => wait::timedwait as *const (),
-        "sem_clockwait" => wait::clockwait as *const (),
+        "sem_timedwait" => sem::sem_timedwait as *const (),
+        "sem_clockwait" => glibc_internal_abi::sem_clockwait as *const (),
         "sem_getvalue" => sem::sem_getvalue as *const (),
         _ => return None,
     };

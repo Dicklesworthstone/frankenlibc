@@ -6847,110 +6847,26 @@ unsafe fn resolve_sem_path(name: *const c_char) -> Result<CString, c_int> {
 
 /// POSIX `sem_open` — open/create a named semaphore.
 ///
-/// Native implementation using /dev/shm/sem.NAME + mmap. The mapped region
-/// contains a futex word compatible with our unnamed semaphore operations.
+/// Atomically publishes initialized storage and retains one reference-counted
+/// mapping per inode. O_CREAT never reinitializes an existing semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_open(name: *const c_char, oflag: c_int, mut args: ...) -> *mut c_void {
-    let path = match unsafe { resolve_sem_path(name) } {
-        Ok(p) => p,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void; // SEM_FAILED = (sem_t*)-1
-        }
-    };
-
-    // Extract optional mode and value when O_CREAT is set.
     let (mode, initial_value) = if (oflag & libc::O_CREAT) != 0 {
         let m = unsafe { args.next_arg::<libc::mode_t>() };
         let v = unsafe { args.next_arg::<c_uint>() };
         (m, v)
     } else {
-        (0o600 as libc::mode_t, 0u32)
+        (0, 0)
     };
-
-    if initial_value > SEM_VALUE_MAX {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return usize::MAX as *mut c_void;
-    }
-
-    // Open the backing file.
-    let fd = match unsafe {
-        syscall::sys_openat(
-            libc::AT_FDCWD,
-            path.as_ptr() as *const u8,
-            oflag | libc::O_RDWR | libc::O_CLOEXEC,
-            mode,
-        )
-    } {
-        Ok(fd) => fd,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void;
-        }
-    };
-
-    // If we created a new file, initialize it with the semaphore value.
-    let created = (oflag & libc::O_CREAT) != 0;
-    if created {
-        // Set file size to SEM_MMAP_SIZE.
-        if let Err(e) = unsafe { syscall::sys_ftruncate(fd, SEM_MMAP_SIZE as i64) } {
-            let _ = syscall::sys_close(fd);
-            unsafe { set_abi_errno(e) };
-            return usize::MAX as *mut c_void;
-        }
-    }
-
-    // mmap the file.
-    let ptr = match unsafe {
-        syscall::sys_mmap(
-            std::ptr::null_mut(),
-            SEM_MMAP_SIZE,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_SHARED,
-            fd,
-            0,
-        )
-    } {
-        Ok(p) => p as *mut c_void,
-        Err(_) => libc::MAP_FAILED,
-    };
-
-    // Close the fd — the mapping keeps the file open.
-    let _ = syscall::sys_close(fd);
-
-    if ptr == libc::MAP_FAILED {
-        unsafe { set_abi_errno(last_host_errno(errno::ENOMEM)) };
-        return usize::MAX as *mut c_void;
-    }
-
-    // If we just created the semaphore, initialize the futex word.
-    if created {
-        let atom = unsafe { &*(ptr as *const std::sync::atomic::AtomicI32) };
-        atom.store(initial_value as i32, std::sync::atomic::Ordering::Release);
-    }
-    // Named semaphores are shared between processes by definition.
-    unsafe { sem_shared_as_atomic(ptr) }
-        .store(SEM_SHARED_MARK, std::sync::atomic::Ordering::Release);
-
-    ptr
+    unsafe { crate::named_semaphore::open_values(name, oflag, mode, initial_value) }
 }
 
 /// POSIX `sem_close` — close a named semaphore.
 ///
-/// Unmaps the shared memory region. The backing file remains.
+/// Unmaps only the final local open reference; the backing name remains.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
-    if sem.is_null() || sem == libc::MAP_FAILED {
-        unsafe { set_abi_errno(errno::EINVAL) };
-        return -1;
-    }
-    match unsafe { syscall::sys_munmap(sem as *mut u8, SEM_MMAP_SIZE) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::named_semaphore::close(sem) }
 }
 
 /// POSIX `sem_unlink` — remove a named semaphore.
@@ -6959,21 +6875,7 @@ pub unsafe extern "C" fn sem_close(sem: *mut c_void) -> c_int {
 /// until all processes call `sem_close`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
-    let path = match unsafe { resolve_sem_path(name) } {
-        Ok(p) => p,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            return -1;
-        }
-    };
-
-    match unsafe { syscall::sys_unlinkat(libc::AT_FDCWD, path.as_ptr() as *const u8, 0) } {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    }
+    unsafe { crate::named_semaphore::unlink(name) }
 }
 
 /// POSIX `sem_init` — initialize an unnamed semaphore.
@@ -7012,95 +6914,13 @@ pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
 /// POSIX `sem_post` — increment the semaphore and wake one waiter.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_post(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // SeqCst, not Release: it must be ordered against the waiter load below and
-    // against the registering thread's SeqCst recheck in sem_wait. A Release
-    // increment paired with that load permits the store-buffering execution
-    // where neither side sees the other, i.e. a lost wake.
-    let old = atom.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    if old < 0 || old == i32::MAX {
-        // Overflow protection
-        atom.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        unsafe { set_abi_errno(libc::EOVERFLOW) };
-        return -1;
-    }
-    // Only syscall when somebody is actually blocked. Uncontended posts are the
-    // common case and were paying a FUTEX_WAKE each.
-    if unsafe { sem_waiters_as_atomic(sem) }.load(std::sync::atomic::Ordering::SeqCst) != 0 {
-        sem_futex_wake(sem, 1);
-    }
-    0
+    unsafe { crate::semaphore_wait::post(sem) }
 }
 
 /// POSIX `sem_wait` — decrement the semaphore, blocking if zero.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn sem_wait(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Uncontended fast path: never registers, so an immediately-available
-    // token costs no extra atomics.
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            break;
-        }
-    }
-
-    // Register BEFORE rechecking the value. With the matching SeqCst value
-    // increment and waiter load in sem_post, either the poster observes this
-    // registration and wakes us, or this thread observes the posted token and
-    // never sleeps. That ordering is what rules out the lost-wake
-    // store-buffering execution; registering after the recheck would reopen it.
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            let ret = sem_futex_wait(sem, val);
-            if ret < 0 {
-                let err = -ret;
-                if err == libc::EINTR {
-                    unsafe { set_abi_errno(libc::EINTR) };
-                    return -1;
-                }
-                if err != libc::EAGAIN {
-                    unsafe { set_abi_errno(err) };
-                    return -1;
-                }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::wait_cp(sem) }
 }
 
 /// POSIX `sem_trywait` — non-blocking decrement.
@@ -7137,47 +6957,7 @@ pub unsafe extern "C-unwind" fn sem_timedwait(
     sem: *mut c_void,
     abs_timeout: *const libc::timespec,
 ) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Register as a waiter before checking the value, as sem_wait does:
-    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
-    // unregistered sem_timedwait slept until its deadline after every post
-    // (CPython's multiprocessing Barrier, built on timed SemLock waits,
-    // stalled for its full timeouts).
-    let _registration = unsafe { sem_register_waiter(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::SeqCst);
-        if val > 0
-            && atom
-                .compare_exchange_weak(
-                    val,
-                    val - 1,
-                    std::sync::atomic::Ordering::AcqRel,
-                    std::sync::atomic::Ordering::Relaxed,
-                )
-                .is_ok()
-        {
-            return 0;
-        }
-        if val <= 0 {
-            if abs_timeout.is_null() {
-                unsafe { set_abi_errno(libc::EINVAL) };
-                return -1;
-            }
-            let ret = sem_futex_wait_timed(sem, val, abs_timeout);
-            if ret < 0 {
-                let err = -ret;
-                if err != libc::EAGAIN {
-                    unsafe { set_abi_errno(err) };
-                    return -1;
-                }
-                // EAGAIN is spurious wakeup or value mismatch — retry.
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::timed_cp(sem, libc::CLOCK_REALTIME, abs_timeout, true) }
 }
 
 /// POSIX `sem_getvalue` — read the current semaphore value.

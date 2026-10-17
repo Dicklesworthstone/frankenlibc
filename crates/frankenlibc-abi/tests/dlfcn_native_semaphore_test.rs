@@ -1,6 +1,6 @@
 //! Compiled C semaphore protocols, requiring native admission and a live host oracle.
 #![cfg(all(target_os = "linux", target_arch = "x86_64"))]
-use frankenlibc_abi::dlfcn_abi as dl;
+use frankenlibc_abi::{dlfcn_abi as dl, glibc_internal_abi, unistd_abi as sem};
 use frankenlibc_core::elf::ElfLoader;
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::process::Command;
@@ -126,14 +126,27 @@ int unnamed_and_cancellation(const char *unused) {
     CHECK(!pthread_join(thread,&result)&&result==PTHREAD_CANCELED&&atomic_load(&cleaned)==1);
     CHECK(!sem_post(&cancelled)&&!sem_trywait(&cancelled)&&!sem_destroy(&cancelled));return 0;
 }
-static const char *names[]={"sem_open","sem_close","sem_unlink","sem_init","sem_destroy","sem_post","sem_wait","sem_trywait","sem_timedwait","sem_getvalue"};
+static const char *names[]={"sem_open","sem_close","sem_unlink","sem_init","sem_destroy","sem_post","sem_wait","sem_trywait","sem_timedwait","sem_getvalue","sem_clockwait"};
 void *direct(int n) {
     switch(n) {
 #define ENTRY(i,fn) case i:return (void*)fn
         ENTRY(0,sem_open);ENTRY(1,sem_close);ENTRY(2,sem_unlink);ENTRY(3,sem_init);ENTRY(4,sem_destroy);
         ENTRY(5,sem_post);ENTRY(6,sem_wait);ENTRY(7,sem_trywait);ENTRY(8,sem_timedwait);ENTRY(9,sem_getvalue);
+        ENTRY(10,sem_clockwait);
     }return 0;
 }
+int clockwait_deadlines(const char *unused) {
+    (void)unused;sem_t s;CHECK(!sem_init(&s,0,1));
+    struct timespec bad={0,-1};errno=0;
+    CHECK(sem_clockwait(&s,CLOCK_MONOTONIC,&bad)==-1&&errno==EINVAL&&value(&s)==1);
+    struct timespec past={INT64_MIN,0};
+    CHECK(!sem_clockwait(&s,CLOCK_REALTIME,&past)&&value(&s)==0);
+    errno=0;CHECK(sem_clockwait(&s,CLOCK_MONOTONIC,&past)==-1&&errno==ETIMEDOUT);
+    CHECK(!sem_post(&s));errno=0;
+    CHECK(sem_clockwait(&s,CLOCK_BOOTTIME,&past)==-1&&errno==EINVAL&&value(&s)==1);
+    CHECK(!sem_trywait(&s)&&!sem_destroy(&s));return 0;
+}
+
 void *lookup(int n,const char *v) { return v?dlvsym(RTLD_DEFAULT,names[n],v):dlsym(RTLD_DEFAULT,names[n]); }
 "#;
 
@@ -189,6 +202,7 @@ impl Library {
             "sem_trywait",
             "sem_timedwait",
             "sem_getvalue",
+            "sem_clockwait",
         ] {
             assert!(
                 object
@@ -320,7 +334,10 @@ fn named_concurrent_creation_never_resets_published_state() {
 fn unnamed_waits_and_blocked_cancellation_preserve_state() {
     isolated(
         "unnamed_waits_and_blocked_cancellation_preserve_state",
-        |native| protocol(native, c"unnamed_and_cancellation"),
+        |native| {
+            protocol(native, c"unnamed_and_cancellation");
+            protocol(native, c"clockwait_deadlines");
+        },
     );
 }
 #[test]
@@ -363,12 +380,32 @@ fn semaphore_direct_and_dynamic_versions_select_one_provider() {
                     unsafe { std::mem::transmute(lib.symbol(c"direct")) };
                 let lookup: unsafe extern "C" fn(c_int, *const c_char) -> *mut c_void =
                     unsafe { std::mem::transmute(lib.symbol(c"lookup")) };
-                for n in 0..10 {
+                for n in 0..11 {
                     let expected = unsafe { direct(n) };
                     assert!(!expected.is_null());
+                    if native {
+                        let public = [
+                            sem::sem_open as *const (),
+                            sem::sem_close as *const (),
+                            sem::sem_unlink as *const (),
+                            sem::sem_init as *const (),
+                            sem::sem_destroy as *const (),
+                            sem::sem_post as *const (),
+                            sem::sem_wait as *const (),
+                            sem::sem_trywait as *const (),
+                            sem::sem_timedwait as *const (),
+                            sem::sem_getvalue as *const (),
+                            glibc_internal_abi::sem_clockwait as *const (),
+                        ];
+                        assert_eq!(expected, public[n as usize] as *mut c_void);
+                    }
                     for version in [
                         std::ptr::null(),
-                        c"GLIBC_2.2.5".as_ptr(),
+                        if n == 10 {
+                            c"GLIBC_2.30".as_ptr()
+                        } else {
+                            c"GLIBC_2.2.5".as_ptr()
+                        },
                         c"GLIBC_2.34".as_ptr(),
                     ] {
                         assert_eq!(unsafe { lookup(n, version) }, expected);
