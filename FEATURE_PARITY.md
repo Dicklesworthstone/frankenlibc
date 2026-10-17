@@ -3,8 +3,8 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-10-12, and it records the same full source commit as `support_matrix.json`.
-Reality snapshot: total_exported=4119, implemented=2399, raw_syscall=410, wraps_host_libc=1266, glibc_call_through=0, stub=44.
+The generated taxonomy snapshot in `tests/conformance/reality_report.v1.json` dates from 2026-10-12. The current matrix includes six later hosts-lookup reclassifications to `WrapsHostLibc`: installed NSS modules use the host dynamic loader. The generated snapshot does not yet include those six changes.
+Current matrix: total_exported=4119, implemented=2393, raw_syscall=410, wraps_host_libc=1272, glibc_call_through=0, stub=44.
 Counts below reflect the checked-in support matrix symbol rows and will change as source-derived evidence lands. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; the explicit `Stub` rows are deterministic unsupported/failure contracts, while other no-op/fallback/bootstrap semantics remain separately classified by the overlay.
 Regenerate deterministically with:
 
@@ -14,10 +14,10 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
   --output tests/conformance/reality_report.v1.json
 ```
 
-The checked taxonomy snapshot contains **4119 symbols**, classified as:
-- `Implemented`: 2399
+The current support matrix contains **4119 symbols**, classified as:
+- `Implemented`: 2393
 - `RawSyscall`: 410
-- `WrapsHostLibc`: 1266
+- `WrapsHostLibc`: 1272
 - `GlibcCallThrough`: 0
 - `Stub`: 44
 
@@ -82,8 +82,8 @@ Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generat
 
 - `startup`: `IMPLEMENTED_PARTIAL` — fixture-backed phase-0 startup path is exported but support-taxonomy rows remain host-backed for `__libc_start_main`, `__frankenlibc_startup_phase0`, and snapshot capture. Deferred scope: full native `csu`/TLS init-order hardening and secure-mode closure campaign.
 - `threading`: `IN_PROGRESS` — implemented scope: runtime-math threading routing and selected pthread semantics are live, including lifecycle and rwlock native routing. Deferred scope: close lifecycle/TLS stress beads.
-- `resolver`: `IMPLEMENTED_PARTIAL` — bootstrap numeric resolver ABI is exported; `getnameinfo` and `gai_strerror` are native, while `getaddrinfo` and `freeaddrinfo` remain host-backed in the support taxonomy. Deferred scope: full retry/cache/poisoning hardening campaign.
-- `nss`: `IMPLEMENTED_PARTIAL` — passwd/group reentrant APIs have native rows, while primary lookup APIs remain host-backed in `pwd_abi`/`grp_abi`. Deferred scope: hosts/backend breadth plus NSS concurrency/cache-coherence closure.
+- `resolver`: `IMPLEMENTED_PARTIAL` — numeric, files and DNS lookups use the native resolver; public forward/reverse hostname APIs also dispatch configured installed NSS modules through the host loader and therefore have host-backed taxonomy rows. Deferred scope: full retry/cache/poisoning hardening campaign.
+- `nss`: `IMPLEMENTED_PARTIAL` — configured hosts modules now share source-order/status actions with native files/DNS across `getaddrinfo`, `getnameinfo` and legacy hostent APIs. The module bridge supports `gethostbyname3_r`, `gethostbyname2_r`, IPv4 `gethostbyname_r`, and `gethostbyaddr2_r`/`gethostbyaddr_r`; aliases, multiple addresses, canonical-name output and ERANGE retries are retained. Standalone reports module sources unavailable, and modules exporting only tuple-based `gethostbyname4_r` are not supported. NSS concurrency/cache-coherence closure and standalone module support remain open under `bd-rc0923-epic-eeuy4f.19`.
 - `locale`: `IMPLEMENTED_PARTIAL` — implemented scope: bootstrap `setlocale`/`localeconv` C/POSIX path. Deferred scope: catalog, collation, and transliteration parity expansion.
 - `iconv`: `IMPLEMENTED_PARTIAL` — `iconv_open`/`iconv`/`iconv_close` are native and the implementation has grown far beyond the original four-codec phase-1 text (about 300 `Encoding` variants; `crates/frankenlibc-core/src/iconv/mod.rs` is ~54.5 kLOC, with generated tables in sibling files). Per-codec scope and remaining exclusions live in `tests/conformance/iconv_codec_scope_ledger.v1.json`.
 

@@ -6090,14 +6090,17 @@ fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
 
         for (policy, found) in [
             ("hosts: files\n", true),
-            // An unimplemented module is an unavailable source: continue.
-            ("hosts: myhostname files\n", true),
-            // Only a module fl does not implement: files is never consulted.
-            ("hosts: myhostname\n", false),
+            // A missing module is an unavailable source: continue.
+            ("hosts: frankenlibc_test_missing_nss files\n", true),
+            // Only a missing module: files is never consulted.
+            ("hosts: frankenlibc_test_missing_nss\n", false),
             // Explicitly empty: no sources at all.
             ("hosts:\n", false),
             // UNAVAIL=return stops before files.
-            ("hosts: myhostname [UNAVAIL=return] files\n", false),
+            (
+                "hosts: frankenlibc_test_missing_nss [UNAVAIL=return] files\n",
+                false,
+            ),
         ] {
             std::fs::write(&nsswitch, policy).expect("write nsswitch fixture");
             assert_eq!(forward() == 0, found, "getaddrinfo under {policy:?}");

@@ -20629,7 +20629,7 @@ pub(crate) fn init_stack_canary() {
 
 struct GetHostByName2State {
     hostent: libc::hostent,
-    buffer: [c_char; 1024],
+    buffer: Vec<c_char>,
 }
 
 // SAFETY: the owned-TLS experiment keys one boxed state value per thread id.
@@ -20643,7 +20643,7 @@ fn new_gethostbyname2_state() -> GetHostByName2State {
     GetHostByName2State {
         // SAFETY: zero is the C ABI empty value for hostent pointer/integer fields.
         hostent: unsafe { std::mem::zeroed() },
-        buffer: [0; 1024],
+        buffer: vec![0; 1024],
     }
 }
 
@@ -20669,27 +20669,49 @@ fn with_gethostbyname2_state<R>(callback: impl FnOnce(&mut GetHostByName2State) 
     }
 }
 
-/// `gethostbyname2` — IPv6-aware hostname lookup (C locale, /etc/hosts only).
+/// `gethostbyname2` — IPv4/IPv6 lookup through the configured hosts sources.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gethostbyname2(name: *const c_char, af: c_int) -> *mut c_void {
     with_gethostbyname2_state(|state| {
         let mut result: *mut libc::hostent = std::ptr::null_mut();
         let h_errno = unsafe { crate::resolv_abi::__h_errno_location() };
-        let rc = unsafe {
-            gethostbyname2_r(
-                name,
-                af,
-                (&mut state.hostent as *mut libc::hostent).cast(),
-                state.buffer.as_mut_ptr(),
-                state.buffer.len(),
-                (&mut result as *mut *mut libc::hostent).cast(),
-                h_errno,
-            )
-        };
-        if rc != 0 || result.is_null() {
+        loop {
+            let rc = unsafe {
+                gethostbyname2_r(
+                    name,
+                    af,
+                    (&mut state.hostent as *mut libc::hostent).cast(),
+                    state.buffer.as_mut_ptr(),
+                    state.buffer.len(),
+                    (&mut result as *mut *mut libc::hostent).cast(),
+                    h_errno,
+                )
+            };
+            if rc != libc::ERANGE {
+                return if rc == 0 {
+                    result.cast()
+                } else {
+                    std::ptr::null_mut()
+                };
+            }
+            // A module can successfully resolve an answer larger than the
+            // initial TLS buffer. Retry serialization with owned storage,
+            // bounded like the module scratch allocation itself.
+            let length = state.buffer.len();
+            let error = if length >= 1 << 24 {
+                libc::ERANGE
+            } else if state.buffer.try_reserve_exact(length).is_err() {
+                libc::ENOMEM
+            } else {
+                state.buffer.resize(length * 2, 0);
+                continue;
+            };
+            unsafe {
+                *crate::errno_abi::__errno_location() = error;
+                *h_errno = -1; // NETDB_INTERNAL
+            }
             return std::ptr::null_mut();
         }
-        result.cast()
     })
 }
 

@@ -15,12 +15,15 @@
 //! buffer, converting each result into fl's owned entry types. The policy --
 //! source order, status actions, group merge, initgroups de-duplication --
 //! lives in `frankenlibc_core::nss`.
+//! Hosts use the same module loader with `addrinfo::hosts_policy` for source
+//! order and actions. Forward/reverse hostent results, aliases, address lists,
+//! and the gethostbyname3_r canonical-name extension are copied before release.
 //!
 //! Loading needs the host dynamic loader, so standalone builds report every
 //! module source as unavailable (the switch then continues per its actions).
 
 use std::ffi::{CStr, c_char, c_int, c_long, c_void};
-use std::mem::MaybeUninit;
+use std::mem::{MaybeUninit, size_of};
 use std::sync::{Arc, Mutex};
 
 use frankenlibc_core::nss::{Answer, Database, Service, SourceKind, Status};
@@ -352,6 +355,279 @@ unsafe fn owned(ptr: *const c_char) -> Vec<u8> {
         // SAFETY: per the module ABI, result strings are NUL-terminated.
         unsafe { CStr::from_ptr(ptr) }.to_bytes().to_vec()
     }
+}
+
+/// Every pointer returned by a hosts module is copied before its scratch
+/// buffer is released. The canonical-name extension is distinct from h_name.
+pub(crate) struct HostEntry {
+    pub name: Vec<u8>,
+    pub canonical_name: Option<Vec<u8>>,
+    pub aliases: Vec<Vec<u8>>,
+    pub addresses: Vec<std::net::IpAddr>,
+}
+
+type HostAnswer = frankenlibc_core::addrinfo::hosts_policy::BackendResult<HostEntry, c_int>;
+
+/// # Safety
+/// The installed NSS module returned SUCCESS and its hostent fields follow
+/// the public NSS ABI, including NUL-terminated string and pointer arrays.
+unsafe fn host_from_c(host: &libc::hostent, family: c_int) -> Option<HostEntry> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let width = match family {
+        libc::AF_INET => 4,
+        libc::AF_INET6 => 16,
+        _ => return None,
+    };
+    if host.h_addrtype != family
+        || host.h_length != width
+        || host.h_name.is_null()
+        || host.h_addr_list.is_null()
+    {
+        return None;
+    }
+    let mut aliases = Vec::new();
+    if !host.h_aliases.is_null() {
+        for index in 0..MAX_SCRATCH / size_of::<usize>() {
+            // SAFETY: the module's successful result supplies a terminated table.
+            let alias = unsafe { *host.h_aliases.add(index) };
+            if alias.is_null() {
+                break;
+            }
+            aliases.push(unsafe { owned(alias) });
+            if index + 1 == MAX_SCRATCH / size_of::<usize>() {
+                return None;
+            }
+        }
+    }
+    let mut addresses = Vec::new();
+    for index in 0..MAX_SCRATCH / size_of::<usize>() {
+        // SAFETY: each address has h_length bytes; byte arrays need no alignment.
+        let address = unsafe { *host.h_addr_list.add(index) };
+        if address.is_null() {
+            break;
+        }
+        addresses.push(if family == libc::AF_INET {
+            IpAddr::V4(Ipv4Addr::from(unsafe { *address.cast::<[u8; 4]>() }))
+        } else {
+            IpAddr::V6(Ipv6Addr::from(unsafe { *address.cast::<[u8; 16]>() }))
+        });
+        if index + 1 == MAX_SCRATCH / size_of::<usize>() {
+            return None;
+        }
+    }
+    if addresses.is_empty() {
+        return None;
+    }
+    Some(HostEntry {
+        name: unsafe { owned(host.h_name) },
+        canonical_name: None,
+        aliases,
+        addresses,
+    })
+}
+
+fn host_answer(answer: Answer<HostEntry>, host_error: c_int) -> HostAnswer {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    match answer {
+        Answer::Found(entry) => BackendResult::Success(entry),
+        Answer::NotFound => BackendResult::NotFound(if host_error == 4 {
+            libc::EAI_NODATA
+        } else {
+            libc::EAI_NONAME
+        }),
+        Answer::TryAgain(_) => BackendResult::TryAgain(libc::EAI_AGAIN),
+        Answer::Unavailable(_) | Answer::BufferTooSmall => {
+            BackendResult::Unavailable(libc::EAI_FAIL)
+        }
+    }
+}
+
+/// Query the newest available hosts entry point. Falling back is only for an
+/// absent symbol, never for a negative answer from an implemented operation.
+pub(crate) fn gethostbyname(service: &[u8], name: &[u8], family: c_int) -> HostAnswer {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    if !matches!(family, libc::AF_INET | libc::AF_INET6) || name.contains(&0) {
+        return BackendResult::Unavailable(libc::EAI_FAIL);
+    }
+    let selected = module_function(service, "gethostbyname3_r")
+        .map(|address| (address, 3))
+        .or_else(|| module_function(service, "gethostbyname2_r").map(|address| (address, 2)))
+        .or_else(|| {
+            (family == libc::AF_INET)
+                .then(|| module_function(service, "gethostbyname_r"))
+                .flatten()
+                .map(|address| (address, 1))
+        });
+    let Some((address, version)) = selected else {
+        return BackendResult::Unavailable(libc::EAI_NONAME);
+    };
+    type Name3 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+        *mut *mut c_char,
+    ) -> c_int;
+    type Name2 = unsafe extern "C" fn(
+        *const c_char,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    type Name1 = unsafe extern "C" fn(
+        *const c_char,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    let mut key = name.to_vec();
+    key.push(0);
+    let mut out = MaybeUninit::<libc::hostent>::zeroed();
+    let out = out.as_mut_ptr();
+    let host_error = std::cell::Cell::new(0);
+    let canonical = std::cell::Cell::new(std::ptr::null_mut::<c_char>());
+    let result = with_scratch(
+        |buf, len, errno| {
+            let mut h_errno = 0;
+            let mut ttl = 0;
+            let mut canon = std::ptr::null_mut();
+            // SAFETY: selected symbol has the documented versioned NSS ABI;
+            // key and every output buffer remain alive throughout the call.
+            let status = unsafe {
+                match version {
+                    3 => {
+                        let f: Name3 = core::mem::transmute(address);
+                        f(
+                            key.as_ptr().cast(),
+                            family,
+                            out,
+                            buf,
+                            len,
+                            errno,
+                            &mut h_errno,
+                            &mut ttl,
+                            &mut canon,
+                        )
+                    }
+                    2 => {
+                        let f: Name2 = core::mem::transmute(address);
+                        f(
+                            key.as_ptr().cast(),
+                            family,
+                            out,
+                            buf,
+                            len,
+                            errno,
+                            &mut h_errno,
+                        )
+                    }
+                    _ => {
+                        let f: Name1 = core::mem::transmute(address);
+                        f(key.as_ptr().cast(), out, buf, len, errno, &mut h_errno)
+                    }
+                }
+            };
+            host_error.set(h_errno);
+            canonical.set(canon);
+            status
+        },
+        || {
+            // SAFETY: conversion runs only after SUCCESS, before scratch drops.
+            let mut entry = unsafe { host_from_c(&*out, family) }?;
+            if !canonical.get().is_null() {
+                entry.canonical_name = Some(unsafe { owned(canonical.get()) });
+            }
+            Some(entry)
+        },
+    );
+    host_answer(result, host_error.get())
+}
+
+pub(crate) fn gethostbyaddr(service: &[u8], address: std::net::IpAddr) -> HostAnswer {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    let selected = module_function(service, "gethostbyaddr2_r")
+        .map(|address| (address, true))
+        .or_else(|| module_function(service, "gethostbyaddr_r").map(|address| (address, false)));
+    let Some((function, extended)) = selected else {
+        return BackendResult::Unavailable(libc::EAI_NONAME);
+    };
+    type Addr2 = unsafe extern "C" fn(
+        *const c_void,
+        libc::socklen_t,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+    ) -> c_int;
+    type Addr1 = unsafe extern "C" fn(
+        *const c_void,
+        libc::socklen_t,
+        c_int,
+        *mut libc::hostent,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+    ) -> c_int;
+    let (family, bytes) = match address {
+        std::net::IpAddr::V4(ip) => (libc::AF_INET, ip.octets().to_vec()),
+        std::net::IpAddr::V6(ip) => (libc::AF_INET6, ip.octets().to_vec()),
+    };
+    let mut out = MaybeUninit::<libc::hostent>::zeroed();
+    let out = out.as_mut_ptr();
+    let host_error = std::cell::Cell::new(0);
+    let result = with_scratch(
+        |buf, len, errno| {
+            let mut h_errno = 0;
+            let mut ttl = 0;
+            // SAFETY: the module's version selects the exact NSS prototype.
+            let status = unsafe {
+                if extended {
+                    let f: Addr2 = core::mem::transmute(function);
+                    f(
+                        bytes.as_ptr().cast(),
+                        bytes.len() as libc::socklen_t,
+                        family,
+                        out,
+                        buf,
+                        len,
+                        errno,
+                        &mut h_errno,
+                        &mut ttl,
+                    )
+                } else {
+                    let f: Addr1 = core::mem::transmute(function);
+                    f(
+                        bytes.as_ptr().cast(),
+                        bytes.len() as libc::socklen_t,
+                        family,
+                        out,
+                        buf,
+                        len,
+                        errno,
+                        &mut h_errno,
+                    )
+                }
+            };
+            host_error.set(h_errno);
+            status
+        },
+        // SAFETY: conversion runs only after SUCCESS, before scratch drops.
+        || unsafe { host_from_c(&*out, family) },
+    );
+    host_answer(result, host_error.get())
 }
 
 /// # Safety
