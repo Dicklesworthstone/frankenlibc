@@ -1,63 +1,125 @@
-//! Shared semaphore acquisition and posting, for native plugins and C exports.
+//! Semaphore ABI over one packed, glibc-compatible state word.
 //!
-//! Absolute deadlines retain their kernel clock. Waiter registration remains
-//! live across cancellation, and an overflow never publishes an invalid value.
+//! Linux little-endian 64-bit sem_t stores tokens/waiters in the first eight
+//! bytes and a sharing selector at offset eight. The selector is zero for
+//! private storage and FUTEX_PRIVATE_FLAG for shared storage; its kernel flag
+//! is the inverse. Runtime layout is verified against independently loaded
+//! host entry points and separately exec'd processes, not a source translation.
+use frankenlibc_core::pthread::semaphore::SemaphoreState;
 use frankenlibc_core::syscall;
-use std::ffi::{c_int, c_void};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::ffi::{c_int, c_uint, c_void};
+
+#[cfg(not(all(
+    target_pointer_width = "64",
+    target_endian = "little",
+    target_has_atomic = "64"
+)))]
+compile_error!("the semaphore ABI requires little-endian 64-bit atomic storage");
 
 #[inline(always)]
-unsafe fn word(semaphore: *mut c_void) -> &'static AtomicI32 {
-    // SAFETY: callers provide aligned Linux sem_t storage of at least 32 bytes.
-    unsafe { &*semaphore.cast::<AtomicI32>() }
+unsafe fn state(semaphore: *mut c_void) -> &'static SemaphoreState {
+    // SAFETY: the ABI caller supplies a live initialized, eight-aligned sem_t.
+    unsafe { &*semaphore.cast::<SemaphoreState>() }
 }
 
 #[inline(always)]
-fn acquire(value: &AtomicI32) -> bool {
-    let mut old = value.load(Ordering::SeqCst);
-    while old > 0 {
-        match value.compare_exchange_weak(old, old - 1, Ordering::SeqCst, Ordering::Relaxed) {
-            Ok(_) => return true,
-            Err(observed) => old = observed,
-        }
-    }
-    false
+unsafe fn private_flag(semaphore: *mut c_void) -> c_int {
+    // SAFETY: the immutable sharing selector lives at offset eight. Initialization
+    // happens-before semaphore use; concurrent destruction/reinitialization is
+    // outside the caller's contract. Read it before publishing/consuming a token.
+    (unsafe { std::ptr::read(semaphore.cast::<u8>().add(8).cast::<c_int>()) })
+        ^ libc::FUTEX_PRIVATE_FLAG
 }
 
 /// # Safety
-/// `semaphore` points to a live initialized sem_t. The operation is signal-safe:
-/// it uses only atomics and a raw wake, never allocation or a process mutex.
+/// semaphore is writable, eight-aligned Linux sem_t storage, not currently used.
+pub(crate) unsafe fn init(semaphore: *mut c_void, shared: c_int, value: c_uint) -> c_int {
+    let Some(initial) = SemaphoreState::new(value) else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    };
+    if semaphore.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: initialize the complete public storage before it is shared. The
+    // packed atomic must never alias independently accessed 32-bit Rust atomics.
+    unsafe {
+        std::ptr::write(semaphore.cast::<SemaphoreState>(), initial);
+        std::ptr::write_bytes(semaphore.cast::<u8>().add(8), 0, 24);
+        std::ptr::write(
+            semaphore.cast::<u8>().add(8).cast::<c_int>(),
+            if shared == 0 {
+                0
+            } else {
+                libc::FUTEX_PRIVATE_FLAG
+            },
+        );
+    }
+    0
+}
+
+/// # Safety
+/// semaphore is initialized, with no blocked users. No owned resource exists
+/// in the object; in particular, destruction need not overwrite waiter state.
+pub(crate) unsafe fn destroy(semaphore: *mut c_void) -> c_int {
+    if semaphore.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        -1
+    } else {
+        0
+    }
+}
+
+/// # Safety
+/// semaphore is initialized and output points to writable int storage.
+pub(crate) unsafe fn getvalue(semaphore: *mut c_void, output: *mut c_int) -> c_int {
+    if semaphore.is_null() || output.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: preserve the complete atomic access width even while host users
+    // change the packed waiter count. output remains caller-owned writable memory.
+    unsafe { *output = state(semaphore).value() as c_int };
+    0
+}
+
+/// # Safety
+/// semaphore is initialized. This nonblocking operation is not a cancellation point.
+pub(crate) unsafe fn trywait(semaphore: *mut c_void) -> c_int {
+    if semaphore.is_null() {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    if unsafe { state(semaphore) }.try_acquire() {
+        0
+    } else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EAGAIN) };
+        -1
+    }
+}
+
+/// # Safety
+/// semaphore is initialized. Signal-safe: only atomics, immutable metadata and
+/// a raw wake are used. No memory access follows successful token publication.
 pub unsafe extern "C" fn post(semaphore: *mut c_void) -> c_int {
     if semaphore.is_null() {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
-    let value = unsafe { word(semaphore) };
-    let mut old = value.load(Ordering::Relaxed);
-    loop {
-        if old < 0 || old == i32::MAX {
-            unsafe { crate::errno_abi::set_abi_errno(libc::EOVERFLOW) };
-            return -1;
-        }
-        // SeqCst pairs with registration/recheck in the slow wait path. Do not
-        // increment then undo on overflow: observers can see that invalid state.
-        match value.compare_exchange_weak(old, old + 1, Ordering::SeqCst, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(observed) => old = observed,
-        }
-    }
-    let waiters = unsafe { &*semaphore.cast::<u8>().add(4).cast::<AtomicU32>() };
-    if waiters.load(Ordering::SeqCst) != 0 {
-        let _ = unsafe {
-            syscall::sys_futex(
-                semaphore.cast(),
-                libc::FUTEX_WAKE | crate::unistd_abi::sem_futex_private_flag(semaphore),
-                1,
-                0,
-                0,
-                0,
-            )
-        };
+    // SAFETY: cache the selector while the caller must still own live storage.
+    let private = unsafe { private_flag(semaphore) };
+    let Some(wake) = unsafe { state(semaphore) }.post() else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    };
+    // A last waiter may already have destroyed/unmapped the object. The packed
+    // publication carries the wake decision, so do not load sem_t again here.
+    if wake {
+        // SAFETY: the kernel validates the address; an already unmapped word is
+        // a harmless failed wake. No user-space dereference occurs after publish.
+        let _ =
+            unsafe { syscall::sys_futex(semaphore.cast(), libc::FUTEX_WAKE | private, 1, 0, 0, 0) };
     }
     0
 }
@@ -73,17 +135,21 @@ unsafe fn wait_common(
         return -1;
     }
     if mandatory_cancel {
-        // A pending cancel must act before taking even an available token.
-        // The existing caller-origin rule keeps libc-internal calls noncanceling.
-        // No semaphore state or guard exists yet when this window opens.
+        // SAFETY: no state or guard exists yet. The inlined caller-origin rule
+        // keeps internal libc operations noncanceling while honoring C callers.
         unsafe { crate::pthread_abi::at_cancellation_point(|| ()) };
     }
-    let value = unsafe { word(semaphore) };
-    if acquire(value) {
+    // SAFETY: all metadata is read before a successful acquisition can release
+    // the last reference to this storage. All state operations have one width.
+    let private = unsafe { private_flag(semaphore) };
+    let state = unsafe { state(semaphore) };
+    if state.try_acquire() {
         return 0;
     }
-    // Register before rechecking so a simultaneous post cannot miss our wake.
-    let _registration = unsafe { crate::unistd_abi::sem_register_waiter(semaphore) };
+    let Some(mut registration) = state.register() else {
+        unsafe { crate::errno_abi::set_abi_errno(libc::EAGAIN) };
+        return -1;
+    };
     let expired = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -91,10 +157,11 @@ unsafe fn wait_common(
     let deadline =
         deadline.map(|(clock, time)| (clock, if time.tv_sec < 0 { &expired } else { time }));
     loop {
-        if acquire(value) {
+        // Consuming a token and unregistering are one atomic transition. Drop
+        // is disarmed on success, but unregisters on timeout and forced unwind.
+        if registration.try_acquire() {
             return 0;
         }
-        let private = crate::unistd_abi::sem_futex_private_flag(semaphore);
         let (operation, timeout, bitset) = match deadline {
             None => (libc::FUTEX_WAIT | private, 0, 0),
             Some((clock, time)) => (
@@ -109,6 +176,8 @@ unsafe fn wait_common(
                 u32::MAX,
             ),
         };
+        // SAFETY: the kernel compares the low token word. Registration holds
+        // the semaphore alive through the wait; C-unwind runs its cleanup.
         let result = unsafe {
             crate::pthread_abi::at_cancellation_point(|| {
                 syscall::sys_futex(semaphore.cast(), operation, 0, timeout, 0, bitset)
@@ -124,17 +193,11 @@ unsafe fn wait_common(
     }
 }
 
-/// # Safety
-/// `semaphore` is initialized. Always inline through aliases to preserve the
-/// actual C caller's return address for cancellation classification.
 #[inline(always)]
 pub(crate) unsafe fn wait_cp(semaphore: *mut c_void) -> c_int {
     unsafe { wait_common(semaphore, None, true) }
 }
 
-/// # Safety
-/// `deadline` is a readable absolute timespec and `semaphore` is initialized.
-/// `mandatory_cancel` distinguishes POSIX timedwait from glibc clockwait's fast path.
 #[inline(always)]
 pub(crate) unsafe fn timed_cp(
     semaphore: *mut c_void,
@@ -146,6 +209,7 @@ pub(crate) unsafe fn timed_cp(
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
         return -1;
     }
+    // SAFETY: the caller provides a readable absolute timespec.
     let deadline = unsafe { &*deadline };
     if !(0..1_000_000_000).contains(&deadline.tv_nsec) {
         unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };

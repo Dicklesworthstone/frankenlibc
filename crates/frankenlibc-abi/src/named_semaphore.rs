@@ -9,7 +9,9 @@ use std::sync::Mutex;
 use frankenlibc_core::syscall;
 
 const LENGTH: usize = 32;
-const SHARED_MARK: u32 = 0x5345_4d53;
+// The public Linux sem_t selector uses 128 for shared storage, not a private
+// implementation magic. Ordinary glibc processes must be able to open this file.
+const SHARED_MARK: u32 = libc::FUTEX_PRIVATE_FLAG as u32;
 const MAX_VALUE: u32 = i32::MAX as u32;
 
 struct Descriptor(c_int);

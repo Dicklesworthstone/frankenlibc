@@ -6881,34 +6881,13 @@ pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
 /// POSIX `sem_init` — initialize an unnamed semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_init(sem: *mut c_void, pshared: c_int, value: c_uint) -> c_int {
-    if sem.is_null() || value > SEM_VALUE_MAX {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    // Zero the waiter counter too: a sem_t is often re-initialised over reused
-    // storage, and a stale nonzero count would keep sem_post on the syscall
-    // path for the life of the new semaphore.
-    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
-    unsafe { sem_shared_as_atomic(sem) }.store(
-        if pshared != 0 { SEM_SHARED_MARK } else { 0 },
-        std::sync::atomic::Ordering::Relaxed,
-    );
-    atom.store(value as i32, std::sync::atomic::Ordering::Release);
-    0
+    unsafe { crate::semaphore_wait::init(sem, pshared, value) }
 }
 
 /// POSIX `sem_destroy` — destroy an unnamed semaphore.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_destroy(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    // No resources to reclaim for futex-based semaphores, but clear the waiter
-    // counter so reused storage starts clean.
-    unsafe { sem_waiters_as_atomic(sem) }.store(0, std::sync::atomic::Ordering::Relaxed);
-    0
+    unsafe { crate::semaphore_wait::destroy(sem) }
 }
 
 /// POSIX `sem_post` — increment the semaphore and wake one waiter.
@@ -6926,29 +6905,7 @@ pub unsafe extern "C-unwind" fn sem_wait(sem: *mut c_void) -> c_int {
 /// POSIX `sem_trywait` — non-blocking decrement.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_trywait(sem: *mut c_void) -> c_int {
-    if sem.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    loop {
-        let val = atom.load(std::sync::atomic::Ordering::Acquire);
-        if val <= 0 {
-            unsafe { set_abi_errno(libc::EAGAIN) };
-            return -1;
-        }
-        if atom
-            .compare_exchange_weak(
-                val,
-                val - 1,
-                std::sync::atomic::Ordering::AcqRel,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-            .is_ok()
-        {
-            return 0;
-        }
-    }
+    unsafe { crate::semaphore_wait::trywait(sem) }
 }
 
 /// POSIX `sem_timedwait` — decrement with absolute timeout.
@@ -6963,14 +6920,7 @@ pub unsafe extern "C-unwind" fn sem_timedwait(
 /// POSIX `sem_getvalue` — read the current semaphore value.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sem_getvalue(sem: *mut c_void, sval: *mut c_int) -> c_int {
-    if sem.is_null() || sval.is_null() {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    let atom = unsafe { sem_as_atomic(sem) };
-    let val = atom.load(std::sync::atomic::Ordering::Relaxed);
-    unsafe { *sval = val.max(0) };
-    0
+    unsafe { crate::semaphore_wait::getvalue(sem, sval) }
 }
 
 // ---------------------------------------------------------------------------
