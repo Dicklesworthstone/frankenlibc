@@ -7,6 +7,7 @@
 pub mod cond;
 pub mod mutex;
 pub mod rwlock;
+pub mod semaphore;
 #[allow(unsafe_code)]
 pub mod thread;
 pub mod tls;
