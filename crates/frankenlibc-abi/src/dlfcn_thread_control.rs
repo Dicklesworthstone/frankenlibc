@@ -15,6 +15,11 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         };
     }
     let (function, first, merged) = match name {
+        "nanosleep" => (
+            crate::time_abi::nanosleep as *const (),
+            "GLIBC_2.2.5",
+            false,
+        ),
         "pthread_attr_init" => entry!(pthread_attr_init, "GLIBC_2.2.5", false),
         "pthread_attr_destroy" => entry!(pthread_attr_destroy, "GLIBC_2.2.5", false),
         "pthread_attr_getdetachstate" => entry!(pthread_attr_getdetachstate, "GLIBC_2.2.5", false),

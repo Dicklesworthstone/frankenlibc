@@ -20,11 +20,16 @@ mod pthread;
 mod fortify;
 #[path = "dlfcn_thread_control.rs"]
 mod thread_control;
+#[path = "dlfcn_semaphore.rs"]
+mod semaphore;
 
 /// Only the real baseline symbol version for this target is advertised. A
 /// private/future version is not interchangeable with an unversioned lookup.
 /// Callers perform native DSO scope/preemption checks before this fallback.
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
+    if let Some(address) = semaphore::address(name, version) {
+        return Some(address);
+    }
     if let Some(address) = thread_control::address(name, version) {
         return Some(address);
     }
