@@ -1765,11 +1765,9 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
         return false;
     }
     let ts = unsafe { &*abstime };
-    // POSIX pthread_cond_timedwait requires tv_nsec in [0, 10^9) AND
-    // tv_sec >= 0 — a CLOCK_REALTIME absolute deadline cannot be before
-    // the epoch. Without the tv_sec guard, `deadline - now` in
-    // futex_wait_timed would panic in debug (i64 subtract overflow) or
-    // wrap to a ~9e18-second "infinite" timeout in release. (bd-dc9mc)
+    // The remaining conversion-based mutex/rwlock/join paths require a
+    // nonnegative input. Condition waits validate nanoseconds separately and
+    // pass a clamped expired deadline to the kernel without epoch arithmetic.
     ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
 }
 
@@ -3951,13 +3949,33 @@ impl Drop for CondWaitGuard {
 /// wait is a cancellation point, so this and every function between it and
 /// the exported entry point is always inlined (see `at_cancellation_point`).
 #[inline(always)]
-fn cond_futex_wait(cv: &CondvarData, expected_seq: u32, abstime: Option<&libc::timespec>) -> c_int {
+fn cond_futex_wait(
+    cv: &CondvarData,
+    expected_seq: u32,
+    abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
+) -> c_int {
     let seq_addr = &cv.seq as *const _ as usize;
+    // A negative absolute time is already expired, not an invalid timespec.
+    // Linux rejects negative futex deadlines, so use the epoch while still
+    // taking the cancellation-point path and the normal unlock/relock guards.
+    let expired = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let abstime = abstime.map(|ts| if ts.tv_sec < 0 { &expired } else { ts });
+    let timed_op = match clock {
+        Some(clock) => {
+            libc::FUTEX_WAIT_BITSET | cv.futex_private_flag()
+                | if clock == libc::CLOCK_REALTIME { libc::FUTEX_CLOCK_REALTIME } else { 0 }
+        }
+        None => core_condvar_timed_futex_op(cv),
+    };
     let (futex_op, deadline, bitset) = match abstime {
         None => ((libc::FUTEX_WAIT | cv.futex_private_flag()) as usize, 0, 0),
         // libc::timespec is the kernel's 64-bit timespec on supported targets.
         Some(ts) => (
-            core_condvar_timed_futex_op(cv) as usize,
+            timed_op as usize,
             ts as *const libc::timespec as usize,
             u32::MAX as usize,
         ),
@@ -4031,6 +4049,7 @@ unsafe fn cond_wait_extended_mutex(
     mutex: *mut libc::pthread_mutex_t,
     raw_type: i32,
     abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
 ) -> c_int {
     let Some(m) = ext_mutex_fields(mutex) else {
         return libc::EINVAL;
@@ -4058,7 +4077,7 @@ unsafe fn cond_wait_extended_mutex(
         m.count.store(saved_count, Ordering::Release);
         return unlock_rc;
     }
-    let rc = cond_futex_wait(cv, expected_seq, abstime);
+    let rc = cond_futex_wait(cv, expected_seq, abstime, clock);
     let lock_rc = guard.finish();
     if lock_rc != 0 { lock_rc } else { rc }
 }
@@ -4071,6 +4090,7 @@ unsafe fn cond_wait_common(
     cond: *mut libc::pthread_cond_t,
     mutex: *mut libc::pthread_mutex_t,
     abstime: Option<&libc::timespec>,
+    clock: Option<c_int>,
 ) -> c_int {
     let managed_condvar = is_managed_condvar(cond);
     let managed_mutex = is_managed_mutex(mutex);
@@ -4082,7 +4102,7 @@ unsafe fn cond_wait_common(
     };
     let raw_type = read_mutex_type_word(mutex);
     if raw_type & MUTEX_EXTENDED_FLAGS != 0 {
-        return unsafe { cond_wait_extended_mutex(cond_ptr, mutex, raw_type, abstime) };
+        return unsafe { cond_wait_extended_mutex(cond_ptr, mutex, raw_type, abstime, clock) };
     }
     let Some(word_ptr) = mutex_word_ptr(mutex) else {
         return libc::EINVAL;
@@ -4133,7 +4153,7 @@ unsafe fn cond_wait_common(
     guard.prepared = true;
 
     // SAFETY: `cond_ptr` was validated above.
-    let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime);
+    let rc = cond_futex_wait(unsafe { &*cond_ptr }, expected_seq, abstime, clock);
     drop(guard);
     rc
 }
@@ -4159,7 +4179,7 @@ pub(crate) unsafe fn pthread_cond_wait_cp(
     if cond.is_null() || mutex.is_null() {
         return libc::EINVAL;
     }
-    unsafe { cond_wait_common(cond, mutex, None) }
+    unsafe { cond_wait_common(cond, mutex, None, None) }
 }
 
 /// POSIX `pthread_cond_signal`.
@@ -4401,11 +4421,13 @@ pub(crate) unsafe fn pthread_cond_timedwait_cp(
     if cond.is_null() || mutex.is_null() || abstime.is_null() {
         return libc::EINVAL;
     }
-    if !absolute_timespec_valid(abstime) {
+    // SAFETY: abstime is non-null and points to the caller's live timespec.
+    // Seconds may be negative: that requests an already-expired wait.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
         return libc::EINVAL;
     }
-    // SAFETY: abstime is non-null and was validated above.
-    unsafe { cond_wait_common(cond, mutex, Some(&*abstime)) }
+    // SAFETY: deadline nanoseconds are valid; the shared body handles expiry.
+    unsafe { cond_wait_common(cond, mutex, Some(&*abstime), None) }
 }
 
 /// glibc reserved-namespace alias for [`pthread_cond_timedwait`].
@@ -7626,8 +7648,9 @@ pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
 
 /// GNU `pthread_cond_clockwait` — clock-specific timed condvar wait.
 ///
-/// Native implementation: converts clock deadline to CLOCK_REALTIME and
-/// delegates to `pthread_cond_timedwait`.
+/// The requested clock selects the kernel's absolute futex deadline directly.
+/// Never convert between epochs or change the condition variable's stored
+/// clock: concurrent waits may choose different clocks on the same object.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn pthread_cond_clockwait(
     cond: *mut libc::pthread_cond_t,
@@ -7639,32 +7662,15 @@ pub unsafe extern "C-unwind" fn pthread_cond_clockwait(
         return libc::EINVAL;
     }
     if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
-        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
-    }
-    if !absolute_timespec_valid(abstime) {
         return libc::EINVAL;
     }
-    let managed_condvar = is_managed_condvar(cond);
-    let managed_mutex = is_managed_mutex(mutex);
-    if !managed_condvar || !managed_mutex {
+    // SAFETY: the caller supplies a live timespec; negative seconds mean past.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
         return libc::EINVAL;
     }
-    let Some(cond_ptr) = condvar_data_ptr(cond) else {
-        return libc::EINVAL;
-    };
-    let cond_clock =
-        condvar_clock_to_libc(unsafe { (&*cond_ptr).clock_id.load(Ordering::Acquire) as i32 });
-    let converted_deadline;
-    let effective_deadline = if cond_clock == clockid {
-        abstime
-    } else {
-        converted_deadline = match clock_convert_between(clockid, cond_clock, abstime) {
-            Ok(deadline) => deadline,
-            Err(err) => return err,
-        };
-        &converted_deadline
-    };
-    unsafe { pthread_cond_timedwait_cp(cond, mutex, effective_deadline) }
+    // SAFETY: the common path validates both synchronization objects and
+    // retains their normal cancellation, owner-death and relocking guards.
+    unsafe { cond_wait_common(cond, mutex, Some(&*abstime), Some(clockid)) }
 }
 
 // ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use frankenlibc_abi::{dlfcn_abi as dl, socket_abi as socket};
+use frankenlibc_abi::{dlfcn_abi as dl, socket_abi as socket, unistd_abi as unistd};
 use frankenlibc_core::elf::ElfLoader;
 
 #[path = "common/dlsym_oracle.rs"]
@@ -41,8 +41,8 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 20] {
         ("recvfrom", "GLIBC_2.2.5", socket::recvfrom as *const ()),
         ("sendmsg", "GLIBC_2.2.5", socket::sendmsg as *const ()),
         ("recvmsg", "GLIBC_2.2.5", socket::recvmsg as *const ()),
-        ("sendmmsg", "GLIBC_2.14", socket::sendmmsg as *const ()),
-        ("recvmmsg", "GLIBC_2.12", socket::recvmmsg as *const ()),
+        ("sendmmsg", "GLIBC_2.14", unistd::sendmmsg as *const ()),
+        ("recvmmsg", "GLIBC_2.12", unistd::recvmmsg as *const ()),
     ]
 }
 

@@ -48,6 +48,7 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pthread_mutexattr_getrobust" => entry!(pthread_mutexattr_getrobust, "GLIBC_2.12", true),
         "pthread_mutexattr_setrobust" => entry!(pthread_mutexattr_setrobust, "GLIBC_2.12", true),
         "pthread_mutex_consistent" => entry!(pthread_mutex_consistent, "GLIBC_2.12", true),
+        "pthread_cond_clockwait" => entry!(pthread_cond_clockwait, "GLIBC_2.30", true),
         "pthread_condattr_init" => entry!(pthread_condattr_init, "GLIBC_2.2.5", false),
         "pthread_condattr_destroy" => entry!(pthread_condattr_destroy, "GLIBC_2.2.5", false),
         "pthread_condattr_getclock" => entry!(pthread_condattr_getclock, "GLIBC_2.3.3", true),
@@ -84,7 +85,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "__sigsetjmp" => (cleanup_setjmp_address(), "GLIBC_2.2.5", false),
         _ => return None,
     };
-    let first = if cfg!(target_arch = "aarch64") {
+    // Explicit-clock waits postdate AArch64's baseline as well.
+    let first = if cfg!(target_arch = "aarch64") && first != "GLIBC_2.30" {
         "GLIBC_2.17"
     } else {
         first

@@ -721,40 +721,24 @@ fn condvar_broadcast_no_waiters() {
     }
 }
 
-// Regression for bd-dc9mc. Negative tv_sec in an absolute deadline must be
-// rejected at the API boundary — before the fix, the subsequent
-// `deadline.tv_sec - now.tv_sec` subtraction in futex_wait_timed would
-// panic ("attempt to subtract with overflow") in debug and wrap to a
-// ~9.2e18-second "infinite" timeout in release.
+// Regression for bd-dc9mc: an expired absolute deadline must not overflow
+// into an effectively infinite wait. Negative seconds are past timestamps,
+// not invalid input (also checked against live glibc in the native C suite).
 #[test]
-fn cond_timedwait_rejects_negative_tv_sec() {
+fn cond_timedwait_negative_seconds_expire_without_overflow() {
+    // SAFETY: initialized caller-owned condition/mutex storage; the mutex is
+    // held at entry and each timeout must return with it reacquired.
     unsafe {
         let mut cond: libc::pthread_cond_t = std::mem::zeroed();
         let mut mutex: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(pthread_cond_init(&mut cond, ptr::null()), 0);
         assert_eq!(pthread_mutex_init(&mut mutex, ptr::null()), 0);
         assert_eq!(pthread_mutex_lock(&mut mutex), 0);
-
-        let ts = libc::timespec {
-            tv_sec: -1,
-            tv_nsec: 0,
-        };
-        let rc = pthread_cond_timedwait(&mut cond, &mut mutex, &ts);
-        assert_eq!(rc, libc::EINVAL, "negative tv_sec must return EINVAL");
-
-        // Most extreme: tv_sec = i64::MIN — in buggy code this was the
-        // path that actually panicked in debug / wrapped in release.
-        let ts_min = libc::timespec {
-            tv_sec: i64::MIN,
-            tv_nsec: 0,
-        };
-        let rc2 = pthread_cond_timedwait(&mut cond, &mut mutex, &ts_min);
-        assert_eq!(
-            rc2,
-            libc::EINVAL,
-            "tv_sec=i64::MIN must return EINVAL without panicking"
-        );
-
+        for seconds in [-1, i64::MIN] {
+            let deadline = libc::timespec { tv_sec: seconds, tv_nsec: 0 };
+            assert_eq!(pthread_cond_timedwait(&mut cond, &mut mutex, &deadline), libc::ETIMEDOUT);
+            assert_eq!(pthread_mutex_trylock(&mut mutex), libc::EBUSY);
+        }
         assert_eq!(pthread_mutex_unlock(&mut mutex), 0);
         assert_eq!(pthread_mutex_destroy(&mut mutex), 0);
         assert_eq!(pthread_cond_destroy(&mut cond), 0);
