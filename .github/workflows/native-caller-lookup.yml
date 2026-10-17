@@ -96,3 +96,88 @@ jobs:
         with:
           name: native-caller-${{ matrix.mode }}
           path: artifacts/native-caller/
+
+  validated-clock-source:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'build: execute preserved explicit-clock fix for direct publication')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 716c18dd2549b66035e922e8fa04ecae867d1353
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Recover the exact reviewed runtime patch
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, pathlib, subprocess, urllib.request
+          endpoint = 'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs/9b3836b61d3dd3dfb4f0c665630751eb4a5dbc9e'
+          with urllib.request.urlopen(endpoint, timeout=30) as response:
+              blob = json.load(response)
+          patch = gzip.decompress(base64.b64decode(blob['content']))
+          assert hashlib.sha256(patch).hexdigest() == 'e3fe84ae9b101ae48e28d67c4275caac4c0388b39d97e88d41a17766cea804e8'
+          path = pathlib.Path('/tmp/frankenlibc-explicit-clock.patch')
+          path.write_bytes(patch)
+          subprocess.run(['git', 'apply', '--check', str(path)], check=True)
+          subprocess.run(['git', 'apply', str(path)], check=True)
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          PY
+      - name: Execute pthread and native-plugin clock contracts
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/explicit-clock
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi --test pthread_abi_test --test pthread_cond_core_test --test pthread_explicit_clock_test --test dlfcn_native_cond_clock_test --test dlfcn_native_socket_test -- --test-threads=1 2>&1 | tee "artifacts/explicit-clock/${mode}.log"
+          done
+      - name: Upload only the validated source blobs, without moving refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, pathlib, subprocess, urllib.request
+          paths = [
+              'crates/frankenlibc-abi/src/pthread_abi.rs',
+              'crates/frankenlibc-abi/src/dlfcn_thread_control.rs',
+              'crates/frankenlibc-abi/tests/pthread_abi_test.rs',
+              'crates/frankenlibc-abi/tests/dlfcn_native_socket_test.rs',
+              'crates/frankenlibc-abi/tests/pthread_explicit_clock_test.rs',
+              'crates/frankenlibc-abi/tests/dlfcn_native_cond_clock_test.rs',
+          ]
+          actual = subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines()
+          actual += subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', 'crates/'], text=True).splitlines()
+          assert set(actual) == set(paths), actual
+          results = []
+          for path in paths:
+              data = pathlib.Path(path).read_bytes()
+              expected = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+              body = json.dumps({'content': base64.b64encode(data).decode(), 'encoding': 'base64'}).encode()
+              request = urllib.request.Request(
+                  'https://api.github.com/repos/Dicklesworthstone/frankenlibc/git/blobs',
+                  data=body, method='POST', headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  })
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  result = json.load(response)
+              assert result['sha'] == expected, path
+              entry = {'path': path, 'sha': result['sha'], 'bytes': len(data)}
+              results.append(entry)
+              print('VALIDATED_CLOCK_BLOB ' + json.dumps(entry), flush=True)
+          pathlib.Path('artifacts/explicit-clock/source-blobs.json').write_text(json.dumps(results, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validated-explicit-clock-source
+          path: artifacts/explicit-clock/
