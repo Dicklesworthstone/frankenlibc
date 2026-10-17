@@ -1765,8 +1765,8 @@ fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
         return false;
     }
     let ts = unsafe { &*abstime };
-    // The remaining conversion-based mutex/rwlock/join paths require a
-    // nonnegative input. Condition waits validate nanoseconds separately and
+    // The remaining conversion-based mutex/join paths require a nonnegative
+    // input. Condition and rwlock waits validate nanoseconds separately and
     // pass a clamped expired deadline to the kernel without epoch arithmetic.
     ts.tv_sec >= 0 && (0..1_000_000_000).contains(&ts.tv_nsec)
 }
@@ -1824,6 +1824,43 @@ fn futex_wait_timed(
             &rel as *const libc::timespec as usize,
             0,
             0,
+        )
+    } {
+        Ok(_) => 0,
+        Err(errno) => {
+            unsafe { set_abi_errno(errno) };
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn futex_wait_absolute_clock(
+    word: &AtomicI32,
+    expected: i32,
+    deadline: &libc::timespec,
+    clockid: c_int,
+    private: bool,
+) -> c_int {
+    // The ABI validated the clock and nanoseconds. Negative seconds name an
+    // expired instant, but Linux rejects them: use the epoch instead. Passing
+    // the absolute timestamp directly also avoids overflow for time_t::MAX
+    // and lets the selected clock, not a sampled epoch offset, govern expiry.
+    let expired = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let deadline = if deadline.tv_sec < 0 { &expired } else { deadline };
+    let op = libc::FUTEX_WAIT_BITSET
+        | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 }
+        | if clockid == libc::CLOCK_REALTIME { libc::FUTEX_CLOCK_REALTIME } else { 0 };
+    // SAFETY: the caller's live, aligned atomic word and timespec outlive the
+    // syscall. This is not a cancellation point (rwlock acquisition is not one).
+    match unsafe {
+        raw_syscall::sys_futex(
+            word as *const AtomicI32 as *const u32,
+            op,
+            expected as u32,
+            deadline as *const libc::timespec as usize,
+            0,
+            u32::MAX,
         )
     } {
         Ok(_) => 0,
@@ -3347,6 +3384,7 @@ fn futex_rwlock_trywrlock(word: &AtomicI32) -> c_int {
 fn futex_rwlock_timed_rdlock(
     word: &AtomicI32,
     abstime: *const libc::timespec,
+    clockid: c_int,
     private: bool,
     wpref: Option<&AtomicI32>,
 ) -> c_int {
@@ -3365,7 +3403,8 @@ fn futex_rwlock_timed_rdlock(
             }
             continue;
         }
-        let rc = futex_wait_timed(word, state, abstime, private);
+        // SAFETY: the common ABI path validated this live deadline.
+        let rc = futex_wait_absolute_clock(word, state, unsafe { &*abstime }, clockid, private);
         if rc == 0 {
             continue;
         }
@@ -3385,6 +3424,7 @@ fn futex_rwlock_timed_rdlock(
 fn futex_rwlock_timed_wrlock(
     word: &AtomicI32,
     abstime: *const libc::timespec,
+    clockid: c_int,
     private: bool,
     wpref: Option<&AtomicI32>,
 ) -> c_int {
@@ -3403,7 +3443,8 @@ fn futex_rwlock_timed_wrlock(
             continue;
         }
         waiter.register(wpref);
-        let rc = futex_wait_timed(word, state, abstime, private);
+        // SAFETY: the common ABI path validated this live deadline.
+        let rc = futex_wait_absolute_clock(word, state, unsafe { &*abstime }, clockid, private);
         if rc == 0 {
             continue;
         }
@@ -7878,112 +7919,81 @@ pub unsafe extern "C" fn pthread_mutex_clocklock(
     unsafe { pthread_mutex_timedlock(mutex, &real_deadline) }
 }
 
-/// POSIX `pthread_rwlock_timedrdlock` — timed read lock.
-///
-/// Native implementation using futex with absolute timeout.
+/// Shared timed rwlock path: preserve the requested clock, static initializer,
+/// process-sharing flag, and the existing reader/writer preference policy.
+unsafe fn pthread_rwlock_wait_common(
+    rwlock: *mut libc::pthread_rwlock_t,
+    clockid: c_int,
+    abstime: *const libc::timespec,
+    write: bool,
+) -> c_int {
+    if rwlock.is_null() || abstime.is_null() {
+        return libc::EINVAL;
+    }
+    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
+        return libc::EINVAL;
+    }
+    // A free rwlock is acquired even with a past deadline. Validate the
+    // nanoseconds before touching the lock, but do not reject negative seconds.
+    if !(0..1_000_000_000).contains(&unsafe { (*abstime).tv_nsec }) {
+        return libc::EINVAL;
+    }
+    if !is_managed_rwlock(rwlock) {
+        return libc::EINVAL;
+    }
+    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
+        return libc::EINVAL;
+    };
+    let word = unsafe { &*word_ptr };
+    let private = rwlock_is_private(rwlock);
+    let preference = rwlock_writer_pref(rwlock);
+    if write {
+        futex_rwlock_timed_wrlock(word, abstime, clockid, private, preference)
+    } else {
+        futex_rwlock_timed_rdlock(word, abstime, clockid, private, preference)
+    }
+}
+
+/// POSIX `pthread_rwlock_timedrdlock` — read lock with an absolute realtime deadline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlock_timedrdlock(
     rwlock: *mut libc::pthread_rwlock_t,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if rwlock.is_null() || abstime.is_null() {
-        return libc::EINVAL;
-    }
-    if !absolute_timespec_valid(abstime) {
-        return libc::EINVAL;
-    }
-    if !is_managed_rwlock(rwlock) {
-        return libc::EINVAL;
-    }
-    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
-        return libc::EINVAL;
-    };
-    let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_rdlock(
-        word,
-        abstime,
-        rwlock_is_private(rwlock),
-        rwlock_writer_pref(rwlock),
-    )
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, false) }
 }
 
-/// POSIX `pthread_rwlock_timedwrlock` — timed write lock.
-///
-/// Native implementation using futex with absolute timeout.
+/// POSIX `pthread_rwlock_timedwrlock` — write lock with an absolute realtime deadline.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlock_timedwrlock(
     rwlock: *mut libc::pthread_rwlock_t,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if rwlock.is_null() || abstime.is_null() {
-        return libc::EINVAL;
-    }
-    if !absolute_timespec_valid(abstime) {
-        return libc::EINVAL;
-    }
-    if !is_managed_rwlock(rwlock) {
-        return libc::EINVAL;
-    }
-    let Some(word_ptr) = rwlock_word_ptr(rwlock) else {
-        return libc::EINVAL;
-    };
-    let word = unsafe { &*word_ptr };
-    futex_rwlock_timed_wrlock(
-        word,
-        abstime,
-        rwlock_is_private(rwlock),
-        rwlock_writer_pref(rwlock),
-    )
+    unsafe { pthread_rwlock_wait_common(rwlock, libc::CLOCK_REALTIME, abstime, true) }
 }
 
 /// GNU `pthread_rwlock_clockrdlock` — clock-specific timed read lock.
 ///
-/// Native implementation: converts clock deadline and uses futex timed wait.
+/// The kernel waits against the specified clock; no epoch conversion occurs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlock_clockrdlock(
     rwlock: *mut libc::pthread_rwlock_t,
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if rwlock.is_null() || abstime.is_null() {
-        return libc::EINVAL;
-    }
-    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
-        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
-    }
-    if clockid == libc::CLOCK_REALTIME {
-        return unsafe { pthread_rwlock_timedrdlock(rwlock, abstime) };
-    }
-    let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
-        Ok(deadline) => deadline,
-        Err(err) => return err,
-    };
-    unsafe { pthread_rwlock_timedrdlock(rwlock, &real_deadline) }
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, false) }
 }
 
 /// GNU `pthread_rwlock_clockwrlock` — clock-specific timed write lock.
 ///
-/// Native implementation: converts clock deadline and uses futex timed wait.
+/// Writer registration and timeout cleanup are shared with the realtime API.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_rwlock_clockwrlock(
     rwlock: *mut libc::pthread_rwlock_t,
     clockid: c_int,
     abstime: *const libc::timespec,
 ) -> c_int {
-    if rwlock.is_null() || abstime.is_null() {
-        return libc::EINVAL;
-    }
-    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
-        return libc::EINVAL; // bd-44y7sl: only REALTIME/MONOTONIC supported
-    }
-    if clockid == libc::CLOCK_REALTIME {
-        return unsafe { pthread_rwlock_timedwrlock(rwlock, abstime) };
-    }
-    let real_deadline = match clock_convert_to_realtime(clockid, abstime) {
-        Ok(deadline) => deadline,
-        Err(err) => return err,
-    };
-    unsafe { pthread_rwlock_timedwrlock(rwlock, &real_deadline) }
+    unsafe { pthread_rwlock_wait_common(rwlock, clockid, abstime, true) }
 }
 
 /// GNU `pthread_cond_clockwait` — clock-specific timed condvar wait.

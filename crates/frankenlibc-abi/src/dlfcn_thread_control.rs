@@ -81,6 +81,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         }
         "pthread_rwlock_timedrdlock" => entry!(pthread_rwlock_timedrdlock, "GLIBC_2.2.5", true),
         "pthread_rwlock_timedwrlock" => entry!(pthread_rwlock_timedwrlock, "GLIBC_2.2.5", true),
+        "pthread_rwlock_clockrdlock" => entry!(pthread_rwlock_clockrdlock, "GLIBC_2.30", true),
+        "pthread_rwlock_clockwrlock" => entry!(pthread_rwlock_clockwrlock, "GLIBC_2.30", true),
         "pthread_cancel" => entry!(pthread_cancel, "GLIBC_2.2.5", true),
         "pthread_testcancel" => entry!(pthread_testcancel, "GLIBC_2.2.5", true),
         "pthread_setcancelstate" => entry!(pthread_setcancelstate, "GLIBC_2.2.5", false),
