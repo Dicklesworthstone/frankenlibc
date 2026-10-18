@@ -1,0 +1,90 @@
+name: POSIX AIO queue
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/aio_*.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'tests/integration/fixture_aio*'
+      - 'scripts/check_aio*'
+      - '.github/workflows/aio-queue.yml'
+  workflow_dispatch:
+# Temporary qualification publishes immutable source blobs, never refs.
+permissions:
+  contents: write
+concurrency:
+  group: aio-queue-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Apply reviewed ABI integration candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aio-queue
+          git rev-parse HEAD > artifacts/aio-queue/revision.txt
+          test "$(git hash-object crates/frankenlibc-abi/src/unistd_abi.rs)" = 60c767a93de41dbe6bc577a8bd82d2cb381c3040
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/695e7d033407f6f8dc1f90eecf2e0208875bde52" --jq .content | base64 --decode > artifacts/aio-queue/integration.patch
+          git apply --check artifacts/aio-queue/integration.patch
+          git apply artifacts/aio-queue/integration.patch
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_queue.rs
+          git diff --check
+      - name: Execute queue and existing completion contracts in both builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in default owned-tls-cache; do
+            args=()
+            if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+            out="artifacts/aio-queue/$feature"
+            mkdir -p "$out"
+            cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$out/build.log"
+            cp target/release/libfrankenlibc_abi.so "$out/libfrankenlibc_abi.so"
+            python3 scripts/check_aio_queue.py "$PWD/$out/libfrankenlibc_abi.so" --output "$out/queue" --repeat 2
+            python3 scripts/check_aio_completion.py "$PWD/$out/libfrankenlibc_abi.so" --output "$out/completion"
+            cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$out/regression.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$out/regression.log"
+          done
+      - name: Publish only the tested immutable source objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in unistd_abi.rs aio_queue.rs; do
+            python3 - "$file" <<'PY' > artifacts/aio-queue/blob-request.json
+          import json, pathlib, sys
+          print(json.dumps({'content': pathlib.Path('crates/frankenlibc-abi/src', sys.argv[1]).read_text(), 'encoding': 'utf-8'}))
+          PY
+            sha=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input artifacts/aio-queue/blob-request.json --jq .sha)
+            test "$sha" = "$(git hash-object "crates/frankenlibc-abi/src/$file")"
+            echo "$file $sha" | tee -a artifacts/aio-queue/verified-source-blobs.txt
+            cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-queue/$file"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aio-queue-results
+          path: artifacts/aio-queue/
+          if-no-files-found: error
+          retention-days: 7
