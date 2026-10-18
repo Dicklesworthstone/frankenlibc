@@ -37,15 +37,18 @@ impl Request {
     // Only accepted requests own a group reservation. No queue/submission
     // lock may be held here: a signal handler or callback can run immediately.
     fn complete(&self, notify: bool) {
-        if self.completion.compare_exchange(
-            WAITING, COMPLETING, Ordering::AcqRel, Ordering::Acquire,
-        ).is_err() {
+        if self
+            .completion
+            .compare_exchange(WAITING, COMPLETING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return;
         }
         if let Some(group) = &self.group {
             group.finish();
         }
-        self.completion.store(if notify { NOTIFY } else { ABANDON }, Ordering::Release);
+        self.completion
+            .store(if notify { NOTIFY } else { ABANDON }, Ordering::Release);
         if matches!(self.notice, aio_completion::Notice::Thread { .. }) {
             aio_completion::wake(&self.completion);
         } else if notify {
@@ -62,63 +65,20 @@ impl Request {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum State {
-    Queued,
-    Running,
-    Canceled,
-}
-
-struct Pending {
-    request: Arc<Request>,
-    state: State,
-}
-
-struct Queue {
-    pending: Vec<Pending>,
-    // Includes workers whose creation has been reserved by a submitter.
-    workers: usize,
-    limit: usize,
-    expected: usize,
-    idle: Duration,
-    started: bool,
-}
-
-impl Queue {
-    const fn new() -> Self {
-        Self {
-            pending: Vec::new(), workers: 0, limit: 20, expected: 64,
-            idle: Duration::from_secs(1), started: false,
-        }
-    }
-
-    fn runnable(&self) -> Option<usize> {
-        self.pending.iter().enumerate().find_map(|(index, entry)| {
-            (entry.state == State::Queued && !self.pending[..index].iter().any(|earlier| {
-                earlier.state != State::Canceled && earlier.request.fd == entry.request.fd
-            })).then_some(index)
-        })
-    }
-
-    fn needs_worker(&self) -> bool {
-        let running = self.pending.iter().filter(|p| p.state == State::Running).count();
-        let ready = self.pending.iter().enumerate().filter(|(index, entry)| {
-            entry.state == State::Queued && !self.pending[..*index].iter().any(|earlier| {
-                earlier.state != State::Canceled && earlier.request.fd == entry.request.fd
-            })
-        }).count();
-        self.workers < self.limit && ready > self.workers - running
-    }
-}
+#[path = "aio_scheduler.rs"]
+mod scheduler;
+use scheduler::{Pending, Queue, State};
 
 // No blocking I/O, callbacks, pthread creation or cancellation points while
 // QUEUE is held. SUBMISSIONS serializes creation transactions, not execution;
 // this prevents accepting orphaned work behind a first-worker spawn failure.
-static QUEUE: Mutex<Queue> = Mutex::new(Queue::new());
+static QUEUE: Mutex<Queue<Arc<Request>>> = Mutex::new(Queue::new());
 static SUBMISSIONS: Mutex<()> = Mutex::new(());
 
-fn queue() -> MutexGuard<'static, Queue> {
-    QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+fn queue() -> MutexGuard<'static, Queue<Arc<Request>>> {
+    QUEUE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// GNU struct aioinit is eight consecutive C ints on the supported ABIs.
@@ -178,7 +138,11 @@ unsafe extern "C-unwind" fn callback_waiter(arg: *mut c_void) -> *mut c_void {
         let _ = unsafe {
             raw::sys_futex(
                 &request.completion as *const AtomicU32 as *const u32,
-                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG, ready, 0, 0, 0,
+                libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
+                ready,
+                0,
+                0,
+                0,
             )
         };
     };
@@ -216,12 +180,19 @@ unsafe extern "C-unwind" fn worker(_arg: *mut c_void) -> *mut c_void {
         };
         if let Some(request) = request {
             let result = aio_execute(
-                request.fd, request.buffer, request.length, request.offset, request.op,
+                request.fd,
+                request.buffer,
+                request.length,
+                request.offset,
+                request.op,
             );
             let error = if result < 0 { current_abi_errno() } else { 0 };
             {
                 let mut q = queue();
-                let index = q.pending.iter().position(|p| Arc::ptr_eq(&p.request, &request))
+                let index = q
+                    .pending
+                    .iter()
+                    .position(|p| Arc::ptr_eq(&p.request, &request))
                     .expect("running AIO retains queue ownership");
                 // SAFETY: running requests cannot be removed by aio_cancel.
                 unsafe { status(request.cb, result as isize, error) };
@@ -251,7 +222,10 @@ pub(super) unsafe fn submit(
     } {
         Ok(value) => value,
         Err(error) => {
-            unsafe { status(cb as usize, -1, error); set_abi_errno(error); }
+            unsafe {
+                status(cb as usize, -1, error);
+                set_abi_errno(error);
+            }
             return -1;
         }
     };
@@ -262,12 +236,18 @@ pub(super) unsafe fn submit(
         buffer: unsafe { aiocb_ptr(cb, aiocb_off::BUF) } as usize,
         length: unsafe { aiocb_usize(cb, aiocb_off::NBYTES) },
         offset: unsafe { aiocb_i64(cb, aiocb_off::OFFSET) },
-        op, notice, group, completion: AtomicU32::new(WAITING),
+        op,
+        notice,
+        group,
+        completion: AtomicU32::new(WAITING),
     });
     let submission = SUBMISSIONS.lock().unwrap_or_else(|p| p.into_inner());
     {
         let mut q = queue();
-        if q.pending.iter().any(|p| p.state != State::Canceled && p.request.cb == request.cb) {
+        if q.pending
+            .iter()
+            .any(|p| p.state != State::Canceled && p.request.cb == request.cb)
+        {
             // Undefined overlapping submission: do not corrupt the live result.
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
@@ -279,7 +259,10 @@ pub(super) unsafe fn submit(
             let _ = q.pending.try_reserve(expected);
         }
         if q.pending.try_reserve(1).is_err() {
-            unsafe { status(request.cb, -1, libc::EAGAIN); set_abi_errno(libc::EAGAIN); }
+            unsafe {
+                status(request.cb, -1, libc::EAGAIN);
+                set_abi_errno(libc::EAGAIN);
+            }
             return -1;
         }
     }
@@ -290,7 +273,10 @@ pub(super) unsafe fn submit(
             // SAFETY: failed creation did not transfer this allocation.
             drop(unsafe { Box::from_raw(argument) });
             request.abandon();
-            unsafe { status(request.cb, -1, libc::EAGAIN); set_abi_errno(libc::EAGAIN); }
+            unsafe {
+                status(request.cb, -1, libc::EAGAIN);
+                set_abi_errno(libc::EAGAIN);
+            }
             return -1;
         }
     }
@@ -300,30 +286,42 @@ pub(super) unsafe fn submit(
             group.reserve();
         }
         unsafe { status(request.cb, 0, libc::EINPROGRESS) };
-        q.pending.push(Pending { request: Arc::clone(&request), state: State::Queued });
+        q.pending.push(Pending {
+            request: Arc::clone(&request),
+            fd: request.fd,
+            state: State::Queued,
+        });
         q.started = true;
         let spawn = q.needs_worker();
-        if spawn { q.workers += 1; }
+        if spawn {
+            q.workers += 1;
+        }
         spawn
     };
     // Wake an existing idle worker; blocked same-fd requests need no new thread.
     aio_completion::publish();
     if spawn {
         // SAFETY: the pool worker takes no caller argument or callback attributes.
-        if unsafe { aio_completion::spawn(worker, std::ptr::null_mut(), std::ptr::null()) }.is_err() {
-            let failed = {
-                let mut q = queue();
-                q.workers -= 1;
-                if q.workers == 0 {
-                    if let Some(index) = q.pending.iter().position(|p| {
-                        p.state == State::Queued && Arc::ptr_eq(&p.request, &request)
-                    }) {
-                        unsafe { status(request.cb, -1, libc::EAGAIN) };
-                        q.pending.remove(index);
-                        true
-                    } else { false } // cancellation already completed admission
-                } else { false } // an existing worker owns eventual progress
-            };
+        if unsafe { aio_completion::spawn(worker, std::ptr::null_mut(), std::ptr::null()) }.is_err()
+        {
+            let failed =
+                {
+                    let mut q = queue();
+                    q.workers -= 1;
+                    if q.workers == 0 {
+                        if let Some(index) = q.pending.iter().position(|p| {
+                            p.state == State::Queued && Arc::ptr_eq(&p.request, &request)
+                        }) {
+                            unsafe { status(request.cb, -1, libc::EAGAIN) };
+                            q.pending.remove(index);
+                            true
+                        } else {
+                            false
+                        } // cancellation already completed admission
+                    } else {
+                        false
+                    } // an existing worker owns eventual progress
+                };
             drop(submission);
             if failed {
                 aio_completion::publish();
@@ -347,15 +345,19 @@ pub(super) unsafe fn cancel(fd: c_int, cb: *mut c_void) -> c_int {
     let mut running = false;
     {
         let mut q = queue();
-        if !cb.is_null() && q.pending.iter().any(|p| {
-            p.state != State::Canceled && p.request.cb == cb as usize && p.request.fd != fd
-        }) {
+        if !cb.is_null()
+            && q.pending.iter().any(|p| {
+                p.state != State::Canceled && p.request.cb == cb as usize && p.request.fd != fd
+            })
+        {
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         }
         for entry in &mut q.pending {
-            if entry.state == State::Canceled || entry.request.fd != fd
-                || (!cb.is_null() && entry.request.cb != cb as usize) {
+            if entry.state == State::Canceled
+                || entry.request.fd != fd
+                || (!cb.is_null() && entry.request.cb != cb as usize)
+            {
                 continue;
             }
             if entry.state == State::Running {
@@ -373,88 +375,11 @@ pub(super) unsafe fn cancel(fd: c_int, cb: *mut c_void) -> c_int {
         aio_completion::publish();
         drain_canceled(canceled);
     }
-    if running { super::AIO_NOTCANCELED }
-    else if canceled != 0 { super::AIO_CANCELED }
-    else { super::AIO_ALLDONE }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn pending(fd: c_int, state: State) -> Pending {
-        Pending {
-            request: Arc::new(Request {
-                cb: 0, fd, buffer: 0, length: 0, offset: 0, op: AioOp::Read,
-                notice: aio_completion::Notice::None, group: None,
-                completion: AtomicU32::new(WAITING),
-            }),
-            state,
-        }
-    }
-
-    #[test]
-    fn empty_pool_needs_no_worker() {
-        let q = Queue::new();
-        assert_eq!(q.runnable(), None);
-        assert!(!q.needs_worker());
-    }
-
-    #[test]
-    fn startup_reservations_do_not_starve_other_descriptors() {
-        let mut q = Queue::new();
-        q.workers = 1; // reserved but not yet scheduled by the kernel
-        q.pending.push(pending(10, State::Queued));
-        assert!(!q.needs_worker());
-        q.pending.push(pending(11, State::Queued));
-        assert!(q.needs_worker());
-    }
-
-    #[test]
-    fn same_descriptor_backlog_does_not_allocate_workers() {
-        let mut q = Queue::new();
-        q.workers = 1;
-        q.pending.push(pending(10, State::Running));
-        for _ in 0..1024 { q.pending.push(pending(10, State::Queued)); }
-        assert_eq!(q.runnable(), None);
-        assert!(!q.needs_worker());
-        q.pending.push(pending(11, State::Queued));
-        assert_eq!(q.runnable(), Some(1025));
-        assert!(q.needs_worker());
-    }
-
-    #[test]
-    fn cap_and_idle_capacity_are_both_respected() {
-        let mut q = Queue::new();
-        q.limit = 1;
-        q.workers = 1;
-        q.pending.push(pending(10, State::Running));
-        q.pending.push(pending(11, State::Queued));
-        assert!(!q.needs_worker());
-        q.limit = 2;
-        assert!(q.needs_worker());
-        q.workers = 2;
-        assert!(!q.needs_worker());
-    }
-
-    #[test]
-    fn canceled_snapshot_does_not_block_descriptor_reuse() {
-        let mut q = Queue::new();
-        q.pending.push(pending(10, State::Canceled));
-        q.pending.push(pending(10, State::Queued));
-        assert_eq!(q.runnable(), Some(1));
-        assert!(q.needs_worker());
-    }
-
-    #[test]
-    fn completion_and_abandonment_are_once_only() {
-        let p = pending(10, State::Queued);
-        p.request.complete(true);
-        p.request.complete(false);
-        assert_eq!(p.request.completion.load(Ordering::Acquire), NOTIFY);
-        let p = pending(11, State::Queued);
-        p.request.abandon();
-        p.request.complete(true);
-        assert_eq!(p.request.completion.load(Ordering::Acquire), ABANDON);
+    if running {
+        super::AIO_NOTCANCELED
+    } else if canceled != 0 {
+        super::AIO_CANCELED
+    } else {
+        super::AIO_ALLDONE
     }
 }

@@ -13,7 +13,7 @@ on:
       - 'rust-toolchain.toml'
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 concurrency:
   group: aio-pool-${{ github.ref }}
   cancel-in-progress: false
@@ -36,46 +36,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Qualify the small aio_init integration against its exact base
+      - name: Record exact committed source provenance
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/aio-pool
           git rev-parse HEAD > artifacts/aio-pool/revision.txt
           rustc --version --verbose > artifacts/aio-pool/rustc.txt
-          python3 - <<'PY'
-          import hashlib, pathlib
-          p = pathlib.Path('crates/frankenlibc-abi/src/unistd_abi.rs')
-          data = p.read_bytes()
-          assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == '2e6fb108e34a797826f6c254e4e25db119452810'
-          text = data.decode()
-          old = 'pub unsafe extern "C" fn aio_init(_init: *const c_void) {\n    // glibc hint struct; safe to ignore.\n}'
-          new = 'pub unsafe extern "C" fn aio_init(init: *const c_void) {\n    // SAFETY: the caller supplies a live GNU struct aioinit, consumed here.\n    unsafe { aio_queue::init(init) };\n}'
-          assert text.count(old) == 1
-          text = text.replace(old, new)
-          text = text.replace('/// `aio_init` — initialize AIO implementation (glibc extension, mostly no-op).', '/// `aio_init` — configure the bounded AIO pool before the first submission.')
-          text = text.replace('/// Snapshot the notification before publishing completion. SIGEV_THREAD uses\n/// the I/O worker as its detached notification thread, consuming attributes\n/// during submission and allowing the callback to exit without returning.', '/// Snapshot the notification before publishing completion. SIGEV_THREAD uses\n/// a separate detached notification waiter, consuming attributes during\n/// submission; callbacks never occupy a bounded I/O worker.')
-          p.write_text(text)
-          PY
-          python3 - <<'PYCODE'
-          import hashlib, pathlib
-          p = pathlib.Path('crates/frankenlibc-abi/src/aio_queue.rs')
-          data = p.read_bytes()
-          assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == 'da06adf27dd4bf725deca88dddd73add1284d06a'
-          text = data.decode()
-          start = text.index('#[derive(Clone, Copy, PartialEq, Eq)]')
-          end = text.index('// No blocking I/O, callbacks', start)
-          text = text[:start] + '#[path = "aio_scheduler.rs"]\nmod scheduler;\nuse scheduler::{Pending, Queue, State};\n\n' + text[end:]
-          text = text.replace('Mutex<Queue>', 'Mutex<Queue<Arc<Request>>>').replace("MutexGuard<'static, Queue>", "MutexGuard<'static, Queue<Arc<Request>>>")
-          old = 'q.pending.push(Pending { request: Arc::clone(&request), state: State::Queued });'
-          new = 'q.pending.push(Pending { request: Arc::clone(&request), fd: request.fd, state: State::Queued });'
-          assert text.count(old) == 1
-          text = text.replace(old, new)
-          text = text[:text.index('\n#[cfg(test)]\nmod tests {')] + '\n'
-          p.write_text(text)
-          PYCODE
-          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_queue.rs crates/frankenlibc-abi/src/aio_scheduler.rs
-          for file in aio_queue.rs aio_scheduler.rs unistd_abi.rs; do
+          for file in aio_queue.rs aio_scheduler.rs aio_completion.rs unistd_abi.rs; do
             cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-pool/$file"
             git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/aio-pool/source-blobs.txt
           done
@@ -94,34 +62,12 @@ jobs:
             python3 scripts/check_aio_queue.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/queue" --repeat 2
             python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/completion"
             cargo test -p frankenlibc-abi --test aio_scheduler_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/unit.log"
-            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/unit.log"
+            grep -Eq 'test result: ok\. 6 passed; 0 failed;' "$root/unit.log"
             cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/regression.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/regression.log"
           done
-      - name: Publish only tested immutable source blobs, never branch references
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, urllib.request
-          result = {}
-          for name in ['aio_queue.rs', 'aio_scheduler.rs', 'unistd_abi.rs']:
-              p = pathlib.Path('crates/frankenlibc-abi/src') / name
-              data = p.read_bytes()
-              assert data == (pathlib.Path('artifacts/aio-pool') / name).read_bytes()
-              expected = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
-              request = urllib.request.Request(
-                  f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs',
-                  data=json.dumps({'content': data.decode(), 'encoding': 'utf-8'}).encode(),
-                  headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}', 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}, method='POST')
-              with urllib.request.urlopen(request) as response:
-                  blob = json.load(response)
-              assert blob['sha'] == expected
-              result[str(p)] = expected
-          pathlib.Path('artifacts/aio-pool/published-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
-          print(json.dumps(result, indent=2))
-          PY
+      - name: Verify execution used unchanged committed sources
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/aio_queue.rs crates/frankenlibc-abi/src/aio_scheduler.rs crates/frankenlibc-abi/src/aio_completion.rs crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/tests/aio_scheduler_test.rs tests/integration/fixture_aio* scripts/check_aio*
       - uses: actions/upload-artifact@v4
         if: always()
         with:

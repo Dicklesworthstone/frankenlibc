@@ -15672,8 +15672,8 @@ fn aio_notify_waiters() {
 /// Submit an async I/O operation.
 ///
 /// Snapshot the notification before publishing completion. SIGEV_THREAD uses
-/// the I/O worker as its detached notification thread, consuming attributes
-/// during submission and allowing the callback to exit without returning.
+/// a separate detached notification waiter, consuming attributes during
+/// submission; callbacks never occupy a bounded I/O worker.
 unsafe fn aio_submit(aiocbp: *mut c_void, op: AioOp) -> c_int {
     unsafe { aio_submit_group(aiocbp, op, None) }
 }
@@ -25749,10 +25749,11 @@ pub unsafe extern "C" fn aio_fsync64(op: c_int, aiocbp: *mut c_void) -> c_int {
     unsafe { aio_fsync(op, aiocbp) }
 }
 
-/// `aio_init` — initialize AIO implementation (glibc extension, mostly no-op).
+/// `aio_init` — configure the bounded AIO pool before the first submission.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn aio_init(_init: *const c_void) {
-    // glibc hint struct; safe to ignore.
+pub unsafe extern "C" fn aio_init(init: *const c_void) {
+    // SAFETY: the caller supplies a live GNU struct aioinit, consumed here.
+    unsafe { aio_queue::init(init) };
 }
 
 /// `aio_read64` — LFS alias for aio_read (identical on 64-bit).

@@ -45,21 +45,30 @@ impl<T> Queue<T> {
     pub(super) fn runnable(&self) -> Option<usize> {
         self.pending.iter().enumerate().find_map(|(index, entry)| {
             (entry.state == State::Queued
-                && !self.pending[..index].iter().any(|earlier| {
-                    earlier.state != State::Canceled && earlier.fd == entry.fd
-                }))
+                && !self.pending[..index]
+                    .iter()
+                    .any(|earlier| earlier.state != State::Canceled && earlier.fd == entry.fd))
             .then_some(index)
         })
     }
 
     pub(super) fn needs_worker(&self) -> bool {
-        let running = self.pending.iter().filter(|p| p.state == State::Running).count();
-        let ready = self.pending.iter().enumerate().filter(|(index, entry)| {
-            entry.state == State::Queued
-                && !self.pending[..*index].iter().any(|earlier| {
-                    earlier.state != State::Canceled && earlier.fd == entry.fd
-                })
-        }).count();
+        let running = self
+            .pending
+            .iter()
+            .filter(|p| p.state == State::Running)
+            .count();
+        let ready = self
+            .pending
+            .iter()
+            .enumerate()
+            .filter(|(index, entry)| {
+                entry.state == State::Queued
+                    && !self.pending[..*index]
+                        .iter()
+                        .any(|earlier| earlier.state != State::Canceled && earlier.fd == entry.fd)
+            })
+            .count();
         self.workers < self.limit && ready > self.workers - running
     }
 }
@@ -69,7 +78,11 @@ mod tests {
     use super::*;
 
     fn pending(fd: c_int, state: State) -> Pending<c_int> {
-        Pending { request: fd, fd, state }
+        Pending {
+            request: fd,
+            fd,
+            state,
+        }
     }
 
     #[test]
