@@ -6,6 +6,7 @@ on:
       - 'crates/frankenlibc-abi/src/aio_*.rs'
       - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'crates/frankenlibc-abi/tests/aio_scheduler_test.rs'
       - 'tests/integration/fixture_aio*'
       - 'scripts/check_aio*'
       - '.github/workflows/aio-pool.yml'
@@ -56,8 +57,25 @@ jobs:
           text = text.replace('/// Snapshot the notification before publishing completion. SIGEV_THREAD uses\n/// the I/O worker as its detached notification thread, consuming attributes\n/// during submission and allowing the callback to exit without returning.', '/// Snapshot the notification before publishing completion. SIGEV_THREAD uses\n/// a separate detached notification waiter, consuming attributes during\n/// submission; callbacks never occupy a bounded I/O worker.')
           p.write_text(text)
           PY
-          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_queue.rs
-          for file in aio_queue.rs unistd_abi.rs; do
+          python3 - <<'PYCODE'
+          import hashlib, pathlib
+          p = pathlib.Path('crates/frankenlibc-abi/src/aio_queue.rs')
+          data = p.read_bytes()
+          assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == 'da06adf27dd4bf725deca88dddd73add1284d06a'
+          text = data.decode()
+          start = text.index('#[derive(Clone, Copy, PartialEq, Eq)]')
+          end = text.index('// No blocking I/O, callbacks', start)
+          text = text[:start] + '#[path = "aio_scheduler.rs"]\nmod scheduler;\nuse scheduler::{Pending, Queue, State};\n\n' + text[end:]
+          text = text.replace('Mutex<Queue>', 'Mutex<Queue<Arc<Request>>>').replace("MutexGuard<'static, Queue>", "MutexGuard<'static, Queue<Arc<Request>>>")
+          old = 'q.pending.push(Pending { request: Arc::clone(&request), state: State::Queued });'
+          new = 'q.pending.push(Pending { request: Arc::clone(&request), fd: request.fd, state: State::Queued });'
+          assert text.count(old) == 1
+          text = text.replace(old, new)
+          text = text[:text.index('\n#[cfg(test)]\nmod tests {')] + '\n'
+          p.write_text(text)
+          PYCODE
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/aio_queue.rs crates/frankenlibc-abi/src/aio_scheduler.rs
+          for file in aio_queue.rs aio_scheduler.rs unistd_abi.rs; do
             cp "crates/frankenlibc-abi/src/$file" "artifacts/aio-pool/$file"
             git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/aio-pool/source-blobs.txt
           done
@@ -73,9 +91,9 @@ jobs:
             cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
             cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
             python3 scripts/check_aio_pool.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/pool"
-            python3 scripts/check_aio_queue.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/queue"
+            python3 scripts/check_aio_queue.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/queue" --repeat 2
             python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/completion"
-            cargo test -p frankenlibc-abi --lib aio_queue::tests "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/unit.log"
+            cargo test -p frankenlibc-abi --test aio_scheduler_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/unit.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/unit.log"
             cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/regression.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/regression.log"
@@ -88,7 +106,7 @@ jobs:
           python3 - <<'PY'
           import hashlib, json, os, pathlib, urllib.request
           result = {}
-          for name in ['aio_queue.rs', 'unistd_abi.rs']:
+          for name in ['aio_queue.rs', 'aio_scheduler.rs', 'unistd_abi.rs']:
               p = pathlib.Path('crates/frankenlibc-abi/src') / name
               data = p.read_bytes()
               assert data == (pathlib.Path('artifacts/aio-pool') / name).read_bytes()
