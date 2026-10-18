@@ -4,6 +4,8 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -14,6 +16,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
@@ -237,6 +240,63 @@ static void retirement_race(void) {
     CHECK(pthread_barrier_destroy(&start)==0); CHECK(close(fd)==0);
 }
 
+/* Simultaneous admission must provision a second descriptor even when the
+ * first worker has been reserved but has not started running yet. */
+static void startup_burst(void) {
+    config(2,0); int baseline=tasks();
+    for (int round=0;round<8;round++) {
+        int p[2], q[2]; pair(p); pair(q);
+        struct aiocb first, second; char a=0,b=0;
+        request(&first,p[0],&a); request(&second,q[0],&b);
+        CHECK(write(q[1],"s",1)==1);
+        CHECK(ar(&first)==0); CHECK(ar(&second)==0);
+        completed(&second,&b,'s'); /* before releasing the blocked descriptor */
+        CHECK(write(p[1],"b",1)==1); completed(&first,&a,'b');
+        finish_pair(p); finish_pair(q);
+        for (int i=0;i<3000 && tasks()!=baseline;i++) pause_ms(1);
+        CHECK(tasks()==baseline);
+    }
+}
+
+struct rescue { int fd; _Atomic int go; };
+static void *rescue_worker(void *arg) {
+    struct rescue *s=arg;
+    while (!atomic_load_explicit(&s->go,memory_order_acquire)) pause_ms(1);
+    struct aiocb cb; char byte=0; request(&cb,s->fd,&byte);
+    CHECK(ar(&cb)==0); completed(&cb,&byte,'f');
+    return NULL;
+}
+static void spawn_failure(void) {
+    config(2,10); int fd=(int)syscall(SYS_memfd_create,"aio-failure",0); CHECK(fd>=0);
+    CHECK(write(fd,"f",1)==1);
+    struct rescue state={.fd=fd}; pthread_t rescue;
+    CHECK(pthread_create(&rescue,NULL,rescue_worker,&state)==0);
+    /* Fault injection is confined to this test's submitting thread. An
+     * already-created controller remains able to provision a recovery worker.
+     * This exercises real pthread_create failure, not a source-only mock. */
+    struct sock_filter code[]={
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EAGAIN),
+#ifdef SYS_clone3
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_clone3,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EAGAIN),
+#endif
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog filter={.len=(unsigned short)(sizeof code/sizeof code[0]),.filter=code};
+    CHECK(prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0)==0);
+    CHECK(prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&filter)==0);
+    struct aiocb failed; char byte=0; request(&failed,fd,&byte);
+    errno=0; CHECK(ar(&failed)==-1 && errno==EAGAIN);
+    atomic_store_explicit(&state.go,1,memory_order_release);
+    CHECK(pthread_join(rescue,NULL)==0);
+    /* A failed first admission must not strand later work, and an existing
+     * worker must accept work even when this caller cannot create threads. */
+    struct aiocb reused; request(&reused,fd,&byte);
+    CHECK(ar(&reused)==0); completed(&reused,&byte,'f'); CHECK(close(fd)==0);
+}
+
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(25); init_api();
     if (!strcmp(argv[1],"backlog")) backlog();
@@ -247,6 +307,8 @@ int main(int argc,char **argv) {
     else if (!strcmp(argv[1],"callback-progress")) callback_progress();
     else if (!strcmp(argv[1],"canceled-notifications")) canceled_notifications();
     else if (!strcmp(argv[1],"retirement-race")) retirement_race();
+    else if (!strcmp(argv[1],"startup-burst")) startup_burst();
+    else if (!strcmp(argv[1],"spawn-failure")) spawn_failure();
     else CHECK(0);
     printf("PASS %s\n",argv[1]); return 0;
 }

@@ -9,7 +9,8 @@ import subprocess
 import time
 
 CASES = ["backlog", "limit", "clamp", "default-limit", "idle-restart",
-         "callback-progress", "canceled-notifications", "retirement-race"]
+         "callback-progress", "canceled-notifications", "retirement-race",
+         "startup-burst", "spawn-failure"]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -38,7 +39,7 @@ def main():
             stdout, stderr, code = exc.stdout or b"", exc.stderr or b"", None
         passed = (code == 0 and stdout == f"PASS {case}\n".encode() and not stderr)
         if kind == "provider-negative":
-            passed = code == 1 and b"expected.st_dev==actual.st_dev" in stderr
+            passed = code == 1 and b"expected.st_dev == actual.st_dev" in stderr
         stem = f"{kind}-{mode}-{abi}-{iteration}-{case}"
         (out / f"{stem}.out").write_bytes(stdout)
         (out / f"{stem}.err").write_bytes(stderr)
