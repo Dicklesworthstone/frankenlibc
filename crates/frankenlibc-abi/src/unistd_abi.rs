@@ -15499,6 +15499,8 @@ pub unsafe extern "C" fn timer_getoverrun(timerid: *mut c_void) -> c_int {
 
 #[path = "aio_completion.rs"]
 mod aio_completion;
+#[path = "aio_queue.rs"]
+mod aio_queue;
 
 /// POSIX AIO lio_listio opcodes.
 const LIO_READ: c_int = 0;
@@ -15681,79 +15683,7 @@ unsafe fn aio_submit_group(
     op: AioOp,
     group: Option<std::sync::Arc<aio_completion::Group>>,
 ) -> c_int {
-    let fd = unsafe { aiocb_i32(aiocbp, aiocb_off::FILDES) };
-    let buf = unsafe { aiocb_ptr(aiocbp, aiocb_off::BUF) };
-    let nbytes = unsafe { aiocb_usize(aiocbp, aiocb_off::NBYTES) };
-    let offset = unsafe { aiocb_i64(aiocbp, aiocb_off::OFFSET) };
-
-    // SAFETY: the caller retains the platform aiocb through completion. Its
-    // sigevent begins at offset 32 on the supported Linux LP64 ABIs.
-    let event = unsafe { (aiocbp as *const u8).add(32).cast::<libc::sigevent>() };
-    let (notice, attributes) = match unsafe { aio_completion::Notice::read(event) } {
-        Ok(value) => value,
-        Err(error) => {
-            unsafe { aiocb_set_return(aiocbp, -1) };
-            unsafe { aiocb_set_error_atomic(aiocbp, error) };
-            unsafe { set_abi_errno(error) };
-            return -1;
-        }
-    };
-
-    // Mark as in-progress before spawning the thread.
-    unsafe { aiocb_set_return(aiocbp, 0) };
-    unsafe { aiocb_set_error_atomic(aiocbp, errno::EINPROGRESS) };
-
-    let buf_addr = buf as usize;
-
-    struct AioWork {
-        aiocbp: usize,
-        fd: c_int,
-        buf_addr: usize,
-        nbytes: usize,
-        offset: i64,
-        op: AioOp,
-        notice: aio_completion::Notice,
-        group: Option<std::sync::Arc<aio_completion::Group>>,
-    }
-
-    unsafe extern "C-unwind" fn aio_worker_entry(arg: *mut c_void) -> *mut c_void {
-        aio_completion::detach_current();
-        // SAFETY: successful creation transfers the allocation exactly once.
-        // Moving out frees it before any foreign callback can exit the thread.
-        let work = *unsafe { Box::from_raw(arg.cast::<AioWork>()) };
-        let result = aio_execute(work.fd, work.buf_addr, work.nbytes, work.offset, work.op);
-        unsafe { aio_complete(work.aiocbp as *mut c_void, result) };
-        // No further control-block/buffer accesses: an observer may now reap
-        // and free/reuse them, even before notification delivery finishes.
-        aio_notify_waiters();
-        if let Some(group) = work.group {
-            group.finish();
-        }
-        unsafe { work.notice.deliver() };
-        std::ptr::null_mut()
-    }
-
-    if let Some(group) = &group {
-        group.reserve();
-    }
-    let work = Box::into_raw(Box::new(AioWork {
-        aiocbp: aiocbp as usize, fd, buf_addr, nbytes, offset, op, notice, group,
-    }));
-    match unsafe { aio_completion::spawn(aio_worker_entry, work.cast(), attributes) } {
-        Ok(()) => 0,
-        Err(_) => {
-            // SAFETY: no child exists when creation fails.
-            let work = unsafe { Box::from_raw(work) };
-            unsafe { aiocb_set_return(aiocbp, -1) };
-            unsafe { aiocb_set_error_atomic(aiocbp, errno::EAGAIN) };
-            aio_notify_waiters();
-            if let Some(group) = work.group {
-                group.finish();
-            }
-            unsafe { set_abi_errno(errno::EAGAIN) };
-            -1
-        }
-    }
+    unsafe { aio_queue::submit(aiocbp, op, group) }
 }
 
 /// `aio_read` — initiate an asynchronous read operation.
@@ -15804,27 +15734,11 @@ pub unsafe extern "C" fn aio_return(aiocbp: *mut c_void) -> libc::ssize_t {
 
 /// `aio_cancel` — attempt to cancel outstanding asynchronous I/O operations.
 ///
-/// Since our worker threads perform blocking syscalls, we cannot truly cancel
-/// in-flight operations. Returns AIO_ALLDONE if already complete,
-/// AIO_NOTCANCELED if still in progress, or AIO_CANCELED if the aiocb is NULL
-/// (cancel-all mode, which we approximate).
+/// Queued requests are canceled and notified normally. Running syscalls keep
+/// ownership of their buffers and complete normally (AIO_NOTCANCELED).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn aio_cancel(fd: c_int, aiocbp: *mut c_void) -> c_int {
-    if aiocbp.is_null() {
-        // Cancel all outstanding operations on fd — we cannot truly cancel
-        // in-flight syscalls, so report AIO_NOTCANCELED.
-        let _ = fd;
-        return AIO_NOTCANCELED;
-    }
-
-    let err = unsafe { aiocb_error_atomic(aiocbp) };
-    if err == errno::EINPROGRESS {
-        // Operation is still running; we cannot interrupt a blocking syscall.
-        AIO_NOTCANCELED
-    } else {
-        // Already completed (success or failure).
-        AIO_ALLDONE
-    }
+    unsafe { aio_queue::cancel(fd, aiocbp) }
 }
 
 /// `aio_suspend` — wait for one or more asynchronous I/O operations to complete.

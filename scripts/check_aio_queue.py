@@ -9,6 +9,7 @@ import subprocess
 CASES = ('empty', 'cancel-one', 'cancel-all', 'cancel-thread', 'cancel-batch',
          'cancel-reuse', 'cancel-signal', 'fsync-barrier', 'cancel-fsync',
          'file-fsync', 'file-fdatasync', 'callback-progress', 'fifo')
+RACES = ('cancel-contended', 'cancel-complete-race', 'cancel-retire')
 
 
 def main() -> None:
@@ -31,7 +32,12 @@ def main() -> None:
         subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
                         '-pthread', *flags, str(root / 'tests/integration/fixture_aio_queue.c'),
                         '-lrt', '-ldl', '-o', str(binary)], check=True, env=env)
-        for case in CASES:
+        race_binary = (args.output / f'race-{interface}').resolve()
+        subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
+                        '-pthread', *flags, str(root / 'tests/integration/fixture_aio_queue_race.c'),
+                        '-lrt', '-ldl', '-o', str(race_binary)], check=True, env=env)
+        for case in (*CASES, *RACES):
+            executable = race_binary if case in RACES else binary
             for mode in ('host', 'strict', 'hardened'):
                 test_env = dict(env)
                 if mode != 'host':
@@ -40,7 +46,7 @@ def main() -> None:
                 for iteration in range(args.repeat):
                     name = f'{interface}-{mode}-{case}-{iteration}'
                     try:
-                        run = subprocess.run([str(binary), case], env=test_env, capture_output=True, timeout=12)
+                        run = subprocess.run([str(executable), case], env=test_env, capture_output=True, timeout=12)
                         stdout, stderr, code = run.stdout, run.stderr, run.returncode
                     except subprocess.TimeoutExpired as exc:
                         stdout, stderr, code = exc.stdout or b'', exc.stderr or b'', 124

@@ -9,12 +9,13 @@
 //! distinguishes an old notification worker from a new submission.
 
 use std::ffi::{c_int, c_void};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::{AioOp, aiocb_off, aio_execute, aio_completion, aiocb_i32, aiocb_ptr,
-    aiocb_usize, aiocb_i64, aiocb_set_error_atomic, aiocb_set_return,
-    current_abi_errno, set_abi_errno};
+use super::{
+    AioOp, aio_completion, aio_execute, aiocb_i32, aiocb_i64, aiocb_off, aiocb_ptr,
+    aiocb_set_error_atomic, aiocb_set_return, aiocb_usize, current_abi_errno, set_abi_errno,
+};
 use frankenlibc_core::syscall as raw;
 
 struct Request {
@@ -38,7 +39,9 @@ struct Pending {
 static QUEUE: Mutex<Vec<Pending>> = Mutex::new(Vec::new());
 
 fn queue() -> MutexGuard<'static, Vec<Pending>> {
-    QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    QUEUE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Publish the result as the LAST access to caller-owned storage. Must hold
@@ -57,7 +60,10 @@ fn start(request: &Arc<Request>) -> bool {
         let epoch = aio_completion::EPOCH.load(Ordering::Acquire);
         {
             let mut pending = queue();
-            let Some(index) = pending.iter().position(|p| Arc::ptr_eq(&p.request, request)) else {
+            let Some(index) = pending
+                .iter()
+                .position(|p| Arc::ptr_eq(&p.request, request))
+            else {
                 return false; // cancellation already published and removed it
             };
             if !pending[..index].iter().any(|p| p.request.fd == request.fd) {
@@ -73,7 +79,10 @@ fn start(request: &Arc<Request>) -> bool {
 fn finish(request: &Arc<Request>, result: isize, error: c_int) {
     {
         let mut pending = queue();
-        if let Some(index) = pending.iter().position(|p| Arc::ptr_eq(&p.request, request)) {
+        if let Some(index) = pending
+            .iter()
+            .position(|p| Arc::ptr_eq(&p.request, request))
+        {
             // SAFETY: this entry still owns completion, excluding aio_cancel.
             unsafe { status(request.cb, result, error) };
             pending.remove(index);
@@ -89,7 +98,13 @@ unsafe extern "C-unwind" fn worker(arg: *mut c_void) -> *mut c_void {
     // SAFETY: successful pthread creation transfers this allocation once.
     let request = *unsafe { Box::from_raw(arg.cast::<Arc<Request>>()) };
     if start(&request) {
-        let result = aio_execute(request.fd, request.buffer, request.length, request.offset, request.op);
+        let result = aio_execute(
+            request.fd,
+            request.buffer,
+            request.length,
+            request.offset,
+            request.op,
+        );
         // Capture syscall errno before any synchronization/allocator operation.
         let error = if result < 0 { current_abi_errno() } else { 0 };
         finish(&request, result as isize, error);
@@ -116,7 +131,10 @@ pub(super) unsafe fn submit(
     } {
         Ok(value) => value,
         Err(error) => {
-            unsafe { status(cb as usize, -1, error); set_abi_errno(error); }
+            unsafe {
+                status(cb as usize, -1, error);
+                set_abi_errno(error);
+            }
             return -1;
         }
     };
@@ -139,14 +157,20 @@ pub(super) unsafe fn submit(
             return -1;
         }
         if pending.try_reserve(1).is_err() {
-            unsafe { status(request.cb, -1, libc::EAGAIN); set_abi_errno(libc::EAGAIN); }
+            unsafe {
+                status(request.cb, -1, libc::EAGAIN);
+                set_abi_errno(libc::EAGAIN);
+            }
             return -1;
         }
         if let Some(group) = &request.group {
             group.reserve();
         }
         unsafe { status(request.cb, 0, libc::EINPROGRESS) };
-        pending.push(Pending { request: Arc::clone(&request), running: false });
+        pending.push(Pending {
+            request: Arc::clone(&request),
+            running: false,
+        });
     }
     let argument = Box::into_raw(Box::new(Arc::clone(&request)));
     // Consume attributes during submission, even for queued notifications.
@@ -175,7 +199,11 @@ pub(super) unsafe fn cancel(fd: c_int, cb: *mut c_void) -> c_int {
     let mut running = false;
     {
         let mut pending = queue();
-        if !cb.is_null() && pending.iter().any(|p| p.request.cb == cb as usize && p.request.fd != fd) {
+        if !cb.is_null()
+            && pending
+                .iter()
+                .any(|p| p.request.cb == cb as usize && p.request.fd != fd)
+        {
             unsafe { set_abi_errno(libc::EINVAL) };
             return -1;
         }
@@ -197,7 +225,11 @@ pub(super) unsafe fn cancel(fd: c_int, cb: *mut c_void) -> c_int {
     if canceled {
         aio_completion::publish();
     }
-    if running { super::AIO_NOTCANCELED }
-    else if canceled { super::AIO_CANCELED }
-    else { super::AIO_ALLDONE }
+    if running {
+        super::AIO_NOTCANCELED
+    } else if canceled {
+        super::AIO_CANCELED
+    } else {
+        super::AIO_ALLDONE
+    }
 }
