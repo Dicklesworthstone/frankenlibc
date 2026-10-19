@@ -1094,15 +1094,15 @@
       "text": "&& let Some(unwind_next) = resolved_thread_unwind_next_raw()"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6964",
-      "line": 6964,
+      "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6963",
+      "line": 6963,
       "module": "resolv_abi",
       "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
       "text": "let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") else {"
     },
     {
-      "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6967",
-      "line": 6967,
+      "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6966",
+      "line": 6966,
       "module": "resolv_abi",
       "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
       "text": "let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {"
@@ -2111,7 +2111,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 112,
-    "source_tree_sha256": "1125727b90be8fa50db0b9558323ecbdd3e0b7cd460090c63d7c66113be89828",
+    "source_tree_sha256": "eb6bf2ed41704128bfe3811666b8d6de4e4c8006784f3e302a46fa4eb703b7f8",
     "version": 15
   },
   "module_census": [
@@ -3010,7 +3010,7 @@
         "source_unique_export_symbol_count": 4609,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "8437bce66db2b540cd2a9c4318fa6951c79f7170ec78107e0228ddfef6532ba2",
+        "support_matrix_sha256": "3a6fd39e4dd79fbc9b20f907805fdcc106a94bdccbca344598e237aee541798d",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 8798,
@@ -12456,20 +12456,20 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6964",
+          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6963",
           "expression": "let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") else {",
-          "function_id": "resolv_abi::resolver_rdata_dialect@6944",
+          "function_id": "resolv_abi::resolver_rdata_dialect@6943",
           "host_symbol": "dlopen",
-          "line": 6964,
+          "line": 6963,
           "path": "crates/frankenlibc-abi/src/resolv_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6967",
+          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6966",
           "expression": "let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {",
-          "function_id": "resolv_abi::resolver_rdata_dialect@6944",
+          "function_id": "resolv_abi::resolver_rdata_dialect@6943",
           "host_symbol": "dlsym",
-          "line": 6967,
+          "line": 6966,
           "path": "crates/frankenlibc-abi/src/resolv_abi.rs"
         },
         {
@@ -13476,7 +13476,7 @@
         "source_unique_export_symbol_count": 4610,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "8437bce66db2b540cd2a9c4318fa6951c79f7170ec78107e0228ddfef6532ba2",
+        "support_matrix_sha256": "3a6fd39e4dd79fbc9b20f907805fdcc106a94bdccbca344598e237aee541798d",
         "support_matrix_unique_symbol_count": 4119
       },
       "function_count": 8786,
@@ -16721,20 +16721,20 @@
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6964",
+          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6963",
           "expression": "let Some(dlopen_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlopen\") else {",
-          "function_id": "resolv_abi::resolver_rdata_dialect@6944",
+          "function_id": "resolv_abi::resolver_rdata_dialect@6943",
           "host_symbol": "dlopen",
-          "line": 6964,
+          "line": 6963,
           "path": "crates/frankenlibc-abi/src/resolv_abi.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
-          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6967",
+          "evidence": "crates/frankenlibc-abi/src/resolv_abi.rs:6966",
           "expression": "let Some(dlsym_addr) = crate::host_resolve::resolve_host_symbol_raw(\"dlsym\") else {",
-          "function_id": "resolv_abi::resolver_rdata_dialect@6944",
+          "function_id": "resolv_abi::resolver_rdata_dialect@6943",
           "host_symbol": "dlsym",
-          "line": 6967,
+          "line": 6966,
           "path": "crates/frankenlibc-abi/src/resolv_abi.rs"
         },
         {
@@ -17172,7 +17172,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/resolv_abi.rs",
-      "sha256": "3aa1dd3ed21e4caac5b6078166cee2c9bfd10a12b108307698267033f7a7a167"
+      "sha256": "68abb84517b0579ae43f1a590389fb5a992e44dd84e6ddaf3b7dba2ce6eba8c7"
     },
     {
       "path": "crates/frankenlibc-abi/src/resolv_state.rs",
