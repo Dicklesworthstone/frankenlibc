@@ -4,9 +4,10 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/rpc*'
+      - 'crates/frankenlibc-abi/tests/rpc_svc_cache_test.rs'
       - 'crates/frankenlibc-core/src/rpc/**'
       - 'tests/integration/fixture_rpc_svc*'
-      - 'scripts/check_rpc_svc.py'
+      - 'scripts/check_rpc_svc*.py'
       - '.github/workflows/rpc-svc.yml'
   workflow_dispatch:
 permissions:
@@ -37,22 +38,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Qualify the exact reviewed RPC ABI integration
+      - name: Qualify the exact reviewed reply-cache integration
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts/rpc-svc/source
-          git rev-parse HEAD > artifacts/rpc-svc/revision.txt
-          rustc --version --verbose > artifacts/rpc-svc/rustc.txt
-          test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 064b25f3dd3d8ef301f5a2568654c256d6af9a6f
-          gh api repos/${{ github.repository }}/git/blobs/ceb7225652cebd81b796be3e5055f3c20d302993 --jq .content | base64 -d > artifacts/rpc-svc/integration.patch
-          git apply --check artifacts/rpc-svc/integration.patch
-          git apply artifacts/rpc-svc/integration.patch
-          rustfmt --edition 2024 crates/frankenlibc-abi/src/rpc_svc.rs
-          cp crates/frankenlibc-abi/src/rpc_svc.rs crates/frankenlibc-abi/src/rpc_abi.rs artifacts/rpc-svc/source/
-      - name: Execute real RPC services and existing ABI regressions
+          root=artifacts/rpc-svc
+          mkdir -p "$root/source"
+          git rev-parse HEAD > "$root/revision.txt"
+          rustc --version --verbose > "$root/rustc.txt"
+          test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 49798575be2489d2274a02e8297a3aa41d7c43f8
+          test "$(git hash-object crates/frankenlibc-abi/src/rpc_svc.rs)" = 7514113ae4941c8392eaee8048e8cf45b142228a
+          gh api repos/${{ github.repository }}/git/blobs/1bb43e5b8e12f0400c9598cd559885e872452195 --jq .content | base64 -d > "$root/integration.patch"
+          git apply --check "$root/integration.patch"
+          git apply "$root/integration.patch"
+          for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs; do
+            cp "crates/frankenlibc-abi/src/$file" "$root/source/"
+            git hash-object "crates/frankenlibc-abi/src/$file" >> "$root/source-blobs.txt"
+          done
+      - name: Execute release cache, services and existing ABI regressions
         shell: bash
         run: |
           set -euo pipefail
@@ -61,7 +66,10 @@ jobs:
           root=artifacts/rpc-svc
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+          python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cases"
+          cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"
+          grep -Eq 'test result: ok\. 8 passed; 0 failed;' "$root/cache-unit.log"
           cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture --test-threads=1 2>&1 | tee "$root/core.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/core.log"
           cargo test -p frankenlibc-abi --test rpc_abi_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/abi.log"
