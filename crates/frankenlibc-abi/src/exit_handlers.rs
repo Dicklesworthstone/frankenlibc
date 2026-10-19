@@ -184,7 +184,29 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
     }
 }
 
+/// Normal process termination destroys the calling thread's C++ TLS objects
+/// before process callbacks. The two registries below mirror registration in
+/// startup_abi::__cxa_thread_atexit_impl: the host owns its TLS/DSO pinning when
+/// interposing, while standalone and recursive-lookup fallbacks are owned here.
+/// Do not put this in finalize_cxa_handlers: dlclose is not thread termination.
+fn run_exiting_thread_dtors() {
+    #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
+    if let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__call_tls_dtors") {
+        // SAFETY: lookup excludes our export and returns the host's no-argument
+        // destructor driver. It removes each entry before invoking user code,
+        // so recursive exit and newly registered TLS destructors remain valid.
+        let drain: unsafe extern "C" fn() = unsafe { std::mem::transmute(address) };
+        unsafe { drain() };
+    }
+    // This is also needed for fallback registrations made during host lookup.
+    // invoke_tls_dtors drops the TLS borrow before entering each destructor.
+    crate::startup_abi::invoke_tls_dtors();
+}
+
 pub(super) fn run_exit_handlers(status: c_int) {
+    // No registry lock or extracted callback batch may cross TLS destruction.
+    // A TLS destructor can register process callbacks or recursively call exit.
+    run_exiting_thread_dtors();
     loop {
         let handler = EXIT_HANDLERS
             .lock()
