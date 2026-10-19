@@ -190,21 +190,41 @@ run_fixture_suite() {
   echo "${run_dir}/results.json"
 }
 
-# An emulated CPU must change no fixture outcome. Each fixture/mode exit code
-# is compared with a native run of the same suite against the same library: a
-# fixture that already fails natively is listed, not hidden, and fails this gate
-# only if the emulated CPU changes how it ends (an ISA fault is rc 132).
+# An emulated CPU must change no fixture outcome. Each fixture/mode exit code,
+# stdout, and stderr are compared with a native run of the same suite against
+# the same library: a fixture that already fails natively is listed, not hidden,
+# and fails this gate if the emulated CPU changes its exit code or output.
 native_results="$(run_fixture_suite native "")"
 for cpu in ${QEMU_CPUS}; do
   echo "[cpu=${cpu}] C fixture suite vs native"
   cpu_results="$(run_fixture_suite "${cpu}" "${QEMU} -cpu ${cpu}")"
   if python3 - "${native_results}" "${cpu_results}" "${cpu}" <<'PY'
 import json
+from pathlib import Path
+import re
 import sys
 
+def normalize_output(name, mode, stream, text):
+    if name == "fixture_malloc_stress" and mode == "hardened" and stream == "stdout":
+        return re.sub(r"checksum=\d+", "checksum=<nondet>", text)
+    return text
+
 def outcomes(path):
-    report = json.load(open(path, encoding="utf-8"))
-    return {(f["name"], f["mode"]): f["exit_code"] for f in report["fixtures"]}
+    p = Path(path)
+    run_dir = p.parent
+    report = json.loads(p.read_text(encoding="utf-8"))
+    out = {}
+    for f in report["fixtures"]:
+        name, mode = f["name"], f["mode"]
+        case_dir = run_dir / mode / name
+        stdout = (case_dir / "stdout.txt").read_text(encoding="utf-8", errors="replace") if (case_dir / "stdout.txt").exists() else ""
+        stderr = (case_dir / "stderr.txt").read_text(encoding="utf-8", errors="replace") if (case_dir / "stderr.txt").exists() else ""
+        out[(name, mode)] = (
+            f["exit_code"],
+            normalize_output(name, mode, "stdout", stdout),
+            normalize_output(name, mode, "stderr", stderr),
+        )
+    return out
 
 native, emulated, cpu = outcomes(sys.argv[1]), outcomes(sys.argv[2]), sys.argv[3]
 changed = 0
@@ -212,16 +232,26 @@ for key in sorted(native.keys() | emulated.keys()):
     want, got = native.get(key), emulated.get(key)
     if want != got:
         changed += 1
-        print(f"  CHANGED {key[0]} mode={key[1]}: native rc={want} cpu={cpu} rc={got}")
-    elif want != 0:
-        print(f"  note: {key[0]} mode={key[1]} rc={want} natively too (not an ISA failure)")
+        want_rc = want[0] if want else None
+        got_rc = got[0] if got else None
+        if want_rc != got_rc:
+            print(f"  CHANGED {key[0]} mode={key[1]}: native rc={want_rc} cpu={cpu} rc={got_rc}")
+        else:
+            stream_diff = []
+            if want[1] != got[1]:
+                stream_diff.append("stdout")
+            if want[2] != got[2]:
+                stream_diff.append("stderr")
+            print(f"  CHANGED {key[0]} mode={key[1]}: rc={got_rc} {', '.join(stream_diff)} differs on cpu={cpu}")
+    elif want[0] != 0:
+        print(f"  note: {key[0]} mode={key[1]} rc={want[0]} natively too (identical output)")
 print(f"  runs={len(emulated)} unchanged={len(emulated) - changed} changed={changed}")
 sys.exit(1 if changed else 0)
 PY
   then
-    echo "PASS: cpu=${cpu} every fixture ends as it does natively"
+    echo "PASS: cpu=${cpu} every fixture exit code, stdout, and stderr match native"
   else
-    echo "FAIL: cpu=${cpu} fixture outcomes differ from native"
+    echo "FAIL: cpu=${cpu} fixture outcomes or outputs differ from native"
     failures=$((failures + 1))
   fi
   for cmd in "/bin/echo baseline-isa" "/bin/ls -la /" "/usr/bin/sort ${corpus_dir}/sort.in" \

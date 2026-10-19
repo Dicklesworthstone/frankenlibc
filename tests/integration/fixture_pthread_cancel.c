@@ -472,6 +472,31 @@ static void cp_alias_sigtimedwait(void) {
   struct timespec t = {100, 0};
   f(&s, NULL, &t);
 }
+static void cp_thrd_sleep(void) {
+  int (*f)(const struct timespec *, struct timespec *) = sym("thrd_sleep");
+  struct timespec t = {100, 0};
+  f(&t, NULL);
+}
+static void cp_alias_sendmmsg(void) {
+  int (*f)(int, struct mmsghdr *, unsigned int, int) = sym("__sendmmsg");
+  struct iovec v = {"x", 1};
+  struct mmsghdr m = {0};
+  m.msg_hdr.msg_iov = &v;
+  m.msg_hdr.msg_iovlen = 1;
+  f(sockw, &m, 1, 0);
+}
+static void cp_alias_libc_system(void) {
+  int (*f)(const char *) = sym("__libc_system");
+  f("sleep 30");
+}
+static void cp_alias_libc_msgrcv(void) {
+  ssize_t (*f)(int, void *, size_t, long, int) = sym("__libc_msgrcv");
+  struct {
+    long type;
+    char text[8];
+  } m;
+  f(msq, &m, sizeof m.text, 0, 0);
+}
 
 // Points that do not block here: the request is already pending on entry.
 static void cp_pread(void) {
@@ -526,6 +551,25 @@ static void cp_copy_file_range(void) {
 static void cp_fallocate(void) { fallocate(regfd, 0, 0, 4096); }
 static void cp_sync_file_range(void) { sync_file_range(regfd, 0, 0, 0); }
 static void cp_tcdrain(void) { tcdrain(regfd); }
+static void cp_sem_wait_ready(void) {
+  sem_t s;
+  sem_init(&s, 0, 1);
+  sem_wait(&s);
+}
+static void cp_sem_timedwait_ready(void) {
+  sem_t s;
+  sem_init(&s, 0, 1);
+  struct timespec t = in_100s(CLOCK_REALTIME);
+  sem_timedwait(&s, &t);
+}
+static void cp_alias_libc_msgsnd_pending(void) {
+  int (*f)(int, const void *, size_t, int) = sym("__libc_msgsnd");
+  struct {
+    long type;
+    char text[1];
+  } m = {1, {'x'}};
+  f(msq, &m, sizeof m.text, IPC_NOWAIT);
+}
 
 // Calls fl implements with its own file I/O. glibc acts inside them; fl
 // does not, but must not abort the process either: testcancel acts.
@@ -753,9 +797,15 @@ static const struct cp_case blocking_points[] = {
     {"__waitpid", cp_alias_waitpid},
     {"__wait", cp_alias_wait},
     {"__sigtimedwait", cp_alias_sigtimedwait},
+    {"thrd_sleep", cp_thrd_sleep},
+    {"__sendmmsg", cp_alias_sendmmsg},
+    {"__libc_system", cp_alias_libc_system},
 };
 
 static const struct cp_case msgrcv_point = {"msgrcv", cp_msgrcv};
+static const struct cp_case alias_msgrcv_point = {"__libc_msgrcv", cp_alias_libc_msgrcv};
+static const struct cp_case alias_msgsnd_pending_point = {
+    "__libc_msgsnd", cp_alias_libc_msgsnd_pending};
 
 static const struct cp_case pending_points[] = {
     {"pread", cp_pread},
@@ -776,6 +826,9 @@ static const struct cp_case pending_points[] = {
     {"fallocate", cp_fallocate},
     {"sync_file_range", cp_sync_file_range},
     {"tcdrain", cp_tcdrain},
+    {"sem_wait(ready)", cp_sem_wait_ready},
+    {"sem_timedwait(ready)", cp_sem_timedwait_ready},
+    {"thrd_sleep", cp_thrd_sleep},
     {"getpwnam+testcancel", cp_getpwnam},
     {"getgrnam+testcancel", cp_getgrnam},
     {"getaddrinfo+testcancel", cp_getaddrinfo},
@@ -796,6 +849,8 @@ static void every_cancellation_point(void) {
   }
   if (msq >= 0) {
     run_point(&msgrcv_point, 0);
+    run_point(&alias_msgrcv_point, 0);
+    run_point(&alias_msgsnd_pending_point, 1);
   }
   for (size_t i = 0; i < sizeof pending_points / sizeof pending_points[0]; i++) {
     run_point(&pending_points[i], 1);

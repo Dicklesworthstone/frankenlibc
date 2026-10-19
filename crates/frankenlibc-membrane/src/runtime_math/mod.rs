@@ -3347,19 +3347,20 @@ impl RuntimeMathKernel {
                     LossState::DenyBiased | LossState::CostExplosion
                 ));
                 self.cached_loss_posterior_ppm.store(
-                    (summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0).round() as u64,
+                    crate::util::round_f64(summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0)
+                        as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_selected_action
                     .store(summary.recommended_action, Ordering::Relaxed);
                 self.cached_loss_selected_cost_milli.store(
-                    (summary.selected_expected_loss.max(0.0) * 1_000.0).round() as u64,
+                    crate::util::round_f64(summary.selected_expected_loss.max(0.0) * 1_000.0) as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_competing_action
                     .store(summary.competing_action, Ordering::Relaxed);
                 self.cached_loss_competing_cost_milli.store(
-                    (summary.competing_expected_loss.max(0.0) * 1_000.0).round() as u64,
+                    crate::util::round_f64(summary.competing_expected_loss.max(0.0) * 1_000.0) as u64,
                     Ordering::Relaxed,
                 );
                 match state {
@@ -5837,7 +5838,7 @@ fn score_to_milli(score: f64) -> u64 {
     if !score.is_finite() || score <= 0.0 {
         return 0;
     }
-    (score * 1000.0).round().clamp(0.0, u64::MAX as f64) as u64
+    crate::util::round_f64(score * 1000.0).clamp(0.0, u64::MAX as f64) as u64
 }
 
 fn pressure_signals_from_runtime(

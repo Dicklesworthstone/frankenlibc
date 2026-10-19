@@ -3334,6 +3334,11 @@ unsafe fn system_default_signal(sig: c_int) {
 /// runs during the forced unwind.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn system(command: *const c_char) -> c_int {
+    unsafe { system_cp(command) }
+}
+
+#[inline(always)]
+pub(crate) unsafe fn system_cp(command: *const c_char) -> c_int {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::Stdlib,
         command as usize,

@@ -8741,15 +8741,19 @@ pub unsafe extern "C-unwind" fn __recv(
     unsafe { crate::socket_abi::recv_cp(sockfd, buf, len, flags) }
 }
 
-/// `__sendmmsg` — internal sendmmsg alias.
+/// `__sendmmsg` — internal sendmmsg alias; a cancellation point as `sendmmsg` is.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sendmmsg(
+pub unsafe extern "C-unwind" fn __sendmmsg(
     sockfd: c_int,
     msgvec: *mut c_void,
     vlen: c_uint,
     flags: c_int,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_sendmmsg(sockfd, msgvec as *mut u8, vlen, flags)
+        })
+    } {
         Ok(v) => v,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10763,8 +10767,8 @@ pub unsafe extern "C" fn __libc_fork() -> i32 {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_system(command: *const c_char) -> c_int {
-    unsafe { crate::stdlib_abi::system(command) }
+pub unsafe extern "C-unwind" fn __libc_system(command: *const c_char) -> c_int {
+    unsafe { crate::stdlib_abi::system_cp(command) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -10802,15 +10806,18 @@ pub unsafe extern "C" fn __libc_secure_getenv(name: *const c_char) -> *mut c_cha
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_msgrcv(
+pub unsafe extern "C-unwind" fn __libc_msgrcv(
     msqid: c_int,
     msgp: *mut c_void,
     msgsz: usize,
     msgtyp: c_long,
     msgflg: c_int,
 ) -> isize {
-    match unsafe { raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg) }
-    {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_msgrcv(msqid, msgp as *mut u8, msgsz, msgtyp as isize, msgflg)
+        })
+    } {
         Ok(n) => n,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -10820,13 +10827,17 @@ pub unsafe extern "C" fn __libc_msgrcv(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __libc_msgsnd(
+pub unsafe extern "C-unwind" fn __libc_msgsnd(
     msqid: c_int,
     msgp: *const c_void,
     msgsz: usize,
     msgflg: c_int,
 ) -> c_int {
-    match unsafe { raw_syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg) } {
+    match unsafe {
+        crate::pthread_abi::at_cancellation_point(|| {
+            raw_syscall::sys_msgsnd(msqid, msgp as *const u8, msgsz, msgflg)
+        })
+    } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };

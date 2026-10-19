@@ -1423,6 +1423,14 @@
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
+      "symbol": "__asprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
       "symbol": "__chk_fail"
     },
     {
@@ -1432,6 +1440,14 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "__confstr_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__dprintf_chk"
     },
     {
       "capture_priority_score": 70,
@@ -1455,7 +1471,159 @@
       "module": "fortify_abi",
       "perf_class": "unknown",
       "status": "Implemented",
+      "symbol": "__fgets_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fgets_unlocked_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fgetws_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fgetws_unlocked_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fortify_fail"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fread_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fread_unlocked_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__fwprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__getcwd_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__getdomainname_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__getgroups_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__gethostname_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
       "symbol": "__getlogin_r_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__gets_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__getwd_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__longjmp_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__mbsnrtowcs_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__mbsrtowcs_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__mbstowcs_chk"
     },
     {
       "capture_priority_score": 70,
@@ -1480,6 +1648,262 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "__memset_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__open64_2"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__open_2"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__openat64_2"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__openat_2"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__poll_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__ppoll_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__pread64_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__pread_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__printf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__read_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__readlink_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__readlinkat_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__realpath_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__recv_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__recvfrom_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__snprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__sprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__syslog_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vasprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vdprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vfprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vfwprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vsnprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vsprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vsyslog_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__vwprintf_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__wcsnrtombs_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__wcsrtombs_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__wcstombs_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__wctomb_chk"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "fortify_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__wprintf_chk"
     },
     {
       "capture_priority_score": 70,
@@ -1688,14 +2112,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "monstartup"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "glibc_internal_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "profil"
     },
     {
       "capture_priority_score": 70,
@@ -3215,22 +3631,6 @@
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "Implemented",
-      "symbol": "gethostbyaddr"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "resolv_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "getnameinfo"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "resolv_abi",
-      "perf_class": "default",
-      "status": "Implemented",
       "symbol": "getservbyname"
     },
     {
@@ -3272,14 +3672,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "__rpc_thread_svc_pollfd"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "_authenticate"
     },
     {
       "capture_priority_score": 70,
@@ -3351,14 +3743,6 @@
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "callrpc"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "cbc_crypt"
     },
     {
@@ -3368,14 +3752,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "clnt_broadcast"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "clnt_create"
     },
     {
       "capture_priority_score": 70,
@@ -3399,14 +3775,6 @@
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "clnt_perror"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "clnt_spcreateerror"
     },
     {
@@ -3416,22 +3784,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "clnt_sperrno"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "clnt_sperror"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "clntraw_create"
     },
     {
       "capture_priority_score": 70,
@@ -3456,14 +3808,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "clntudp_create"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "clntunix_create"
     },
     {
       "capture_priority_score": 70,
@@ -4173,9 +4517,33 @@
       "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "stdio_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__isoc99_sscanf"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "stdio_abi",
+      "perf_class": "unknown",
+      "status": "Implemented",
+      "symbol": "__isoc99_vsscanf"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "stdio_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "sscanf"
+    },
+    {
+      "capture_priority_score": 70,
+      "fixture_covered": true,
+      "module": "stdio_abi",
+      "perf_class": "coldpath",
+      "status": "Implemented",
+      "symbol": "vsscanf"
     },
     {
       "capture_priority_score": 70,
@@ -5133,14 +5501,6 @@
       "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "unistd_abi",
-      "perf_class": "default",
-      "status": "Implemented",
-      "symbol": "crypt"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "crypt_checksalt"
@@ -5176,38 +5536,6 @@
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "crypt_gensalt_rn"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "crypt_preferred_method"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "crypt_r"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "crypt_ra"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "crypt_rn"
     },
     {
       "capture_priority_score": 70,
@@ -5509,14 +5837,6 @@
       "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "fcrypt"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "fexecve"
@@ -5576,14 +5896,6 @@
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "fmtmsg"
-    },
-    {
-      "capture_priority_score": 70,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "status": "Implemented",
-      "symbol": "forkpty"
     },
     {
       "capture_priority_score": 70,
@@ -5999,7 +6311,47 @@
       "module": "io_abi",
       "perf_class": "coldpath",
       "status": "RawSyscall",
+      "symbol": "dup2"
+    },
+    {
+      "capture_priority_score": 60,
+      "fixture_covered": true,
+      "module": "io_abi",
+      "perf_class": "coldpath",
+      "status": "RawSyscall",
       "symbol": "pipe"
+    },
+    {
+      "capture_priority_score": 60,
+      "fixture_covered": true,
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "status": "RawSyscall",
+      "symbol": "pread"
+    },
+    {
+      "capture_priority_score": 60,
+      "fixture_covered": true,
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "status": "RawSyscall",
+      "symbol": "pwrite"
+    },
+    {
+      "capture_priority_score": 60,
+      "fixture_covered": true,
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "status": "RawSyscall",
+      "symbol": "readv"
+    },
+    {
+      "capture_priority_score": 60,
+      "fixture_covered": true,
+      "module": "io_abi",
+      "perf_class": "syscall_veneer",
+      "status": "RawSyscall",
+      "symbol": "writev"
     },
     {
       "capture_priority_score": 60,
@@ -6183,14 +6535,6 @@
       "module": "process_abi",
       "perf_class": "unknown",
       "status": "RawSyscall",
-      "symbol": "clone"
-    },
-    {
-      "capture_priority_score": 60,
-      "fixture_covered": true,
-      "module": "process_abi",
-      "perf_class": "unknown",
-      "status": "RawSyscall",
       "symbol": "closefrom"
     },
     {
@@ -6208,14 +6552,6 @@
       "perf_class": "coldpath",
       "status": "RawSyscall",
       "symbol": "execvp"
-    },
-    {
-      "capture_priority_score": 60,
-      "fixture_covered": true,
-      "module": "process_abi",
-      "perf_class": "coldpath",
-      "status": "RawSyscall",
-      "symbol": "fork"
     },
     {
       "capture_priority_score": 60,
@@ -6248,14 +6584,6 @@
       "perf_class": "unknown",
       "status": "RawSyscall",
       "symbol": "setresuid"
-    },
-    {
-      "capture_priority_score": 60,
-      "fixture_covered": true,
-      "module": "process_abi",
-      "perf_class": "coldpath",
-      "status": "RawSyscall",
-      "symbol": "vfork"
     },
     {
       "capture_priority_score": 60,
@@ -6824,14 +7152,6 @@
       "perf_class": "syscall_veneer",
       "status": "RawSyscall",
       "symbol": "creat"
-    },
-    {
-      "capture_priority_score": 60,
-      "fixture_covered": true,
-      "module": "unistd_abi",
-      "perf_class": "default",
-      "status": "RawSyscall",
-      "symbol": "daemon"
     },
     {
       "capture_priority_score": 60,
@@ -7460,230 +7780,6 @@
     {
       "capture_priority_score": 40,
       "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__asprintf_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__dprintf_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fgets_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fgets_unlocked_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fgetws_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fgetws_unlocked_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fortify_fail"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fprintf_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fread_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fread_unlocked_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__fwprintf_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__getcwd_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__getdomainname_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__getgroups_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__gethostname_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__gets_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__getwd_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__longjmp_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__mbsnrtowcs_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__mbsrtowcs_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__mbstowcs_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__open64_2"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__open_2"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__openat64_2"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__openat_2"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__poll_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__ppoll_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__pread64_chk"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
@@ -7743,7 +7839,23 @@
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
+      "symbol": "_dl_find_object"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "glibc_internal_abi",
+      "perf_class": "unknown",
+      "status": "WrapsHostLibc",
       "symbol": "dlinfo"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "glibc_internal_abi",
+      "perf_class": "unknown",
+      "status": "WrapsHostLibc",
+      "symbol": "profil"
     },
     {
       "capture_priority_score": 40,
@@ -7869,6 +7981,14 @@
       "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "process_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "fork"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "process_abi",
       "perf_class": "default",
       "status": "WrapsHostLibc",
       "symbol": "posix_spawn"
@@ -7880,6 +8000,14 @@
       "perf_class": "default",
       "status": "WrapsHostLibc",
       "symbol": "posix_spawnp"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "process_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "vfork"
     },
     {
       "capture_priority_score": 40,
@@ -7951,6 +8079,14 @@
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "WrapsHostLibc",
+      "symbol": "pthread_once"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "pthread_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
       "symbol": "pthread_timedjoin_np"
     },
     {
@@ -7999,7 +8135,23 @@
       "module": "resolv_abi",
       "perf_class": "default",
       "status": "WrapsHostLibc",
+      "symbol": "gethostbyaddr"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "resolv_abi",
+      "perf_class": "default",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyname"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "resolv_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "getnameinfo"
     },
     {
       "capture_priority_score": 40,
@@ -8022,6 +8174,14 @@
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "_authenticate"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
       "status": "WrapsHostLibc",
       "symbol": "_rpc_dtablesize"
     },
@@ -8032,6 +8192,54 @@
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
       "symbol": "bindresvport"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "callrpc"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "clnt_create"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "clnt_perror"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "clnt_sperror"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "clntraw_create"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "clntunix_create"
     },
     {
       "capture_priority_score": 40,
@@ -8295,14 +8503,6 @@
       "module": "stdio_abi",
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
-      "symbol": "__isoc99_sscanf"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "stdio_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
       "symbol": "__isoc99_vfscanf"
     },
     {
@@ -8312,14 +8512,6 @@
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
       "symbol": "__isoc99_vscanf"
-    },
-    {
-      "capture_priority_score": 40,
-      "fixture_covered": true,
-      "module": "stdio_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__isoc99_vsscanf"
     },
     {
       "capture_priority_score": 40,
@@ -9285,9 +9477,81 @@
       "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
+      "perf_class": "unknown",
+      "status": "WrapsHostLibc",
+      "symbol": "clone"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
       "perf_class": "default",
       "status": "WrapsHostLibc",
       "symbol": "creat64"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "status": "WrapsHostLibc",
+      "symbol": "crypt"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "crypt_preferred_method"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "crypt_r"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "crypt_ra"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "crypt_rn"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "status": "WrapsHostLibc",
+      "symbol": "daemon"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "fcrypt"
+    },
+    {
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "default",
+      "status": "WrapsHostLibc",
+      "symbol": "forkpty"
     },
     {
       "capture_priority_score": 40,
@@ -10975,14 +11239,6 @@
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "_dl_find_object"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "glibc_internal_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "_dl_mcount_wrapper"
     },
     {
@@ -12384,22 +12640,6 @@
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "getgrnam_r"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "inet_abi",
-      "perf_class": "fast",
-      "status": "Implemented",
-      "symbol": "gethostbyaddr_r"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "inet_abi",
-      "perf_class": "fast",
-      "status": "Implemented",
-      "symbol": "gethostbyname_r"
     },
     {
       "capture_priority_score": 30,
@@ -15176,14 +15416,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "fmaf"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "math_abi",
-      "perf_class": "zero_cost",
-      "status": "Implemented",
-      "symbol": "fmaf128"
     },
     {
       "capture_priority_score": 30,
@@ -18879,14 +19111,6 @@
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "registerrpc"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "rexecoptions"
     },
     {
@@ -19071,30 +19295,6 @@
       "module": "rpc_abi",
       "perf_class": "unknown",
       "status": "Implemented",
-      "symbol": "svcfd_create"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "svcraw_create"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "svctcp_create"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
       "symbol": "svcudp_bufcreate"
     },
     {
@@ -19104,30 +19304,6 @@
       "perf_class": "unknown",
       "status": "Implemented",
       "symbol": "svcudp_create"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "svcudp_enablecache"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "svcunix_create"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "rpc_abi",
-      "perf_class": "unknown",
-      "status": "Implemented",
-      "symbol": "svcunixfd_create"
     },
     {
       "capture_priority_score": 30,
@@ -20392,22 +20568,6 @@
       "perf_class": "fast",
       "status": "Implemented",
       "symbol": "getgrouplist"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "gethostbyname2"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "gethostbyname2_r"
     },
     {
       "capture_priority_score": 30,
@@ -22199,14 +22359,6 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "Implemented",
-      "symbol": "xcrypt"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
       "symbol": "xcrypt_gensalt"
     },
     {
@@ -22216,14 +22368,6 @@
       "perf_class": "coldpath",
       "status": "Implemented",
       "symbol": "xcrypt_gensalt_r"
-    },
-    {
-      "capture_priority_score": 30,
-      "fixture_covered": false,
-      "module": "unistd_abi",
-      "perf_class": "coldpath",
-      "status": "Implemented",
-      "symbol": "xcrypt_r"
     },
     {
       "capture_priority_score": 30,
@@ -23149,14 +23293,6 @@
       "capture_priority_score": 20,
       "fixture_covered": false,
       "module": "io_abi",
-      "perf_class": "coldpath",
-      "status": "RawSyscall",
-      "symbol": "dup2"
-    },
-    {
-      "capture_priority_score": 20,
-      "fixture_covered": false,
-      "module": "io_abi",
       "perf_class": "syscall_veneer",
       "status": "RawSyscall",
       "symbol": "dup3"
@@ -23213,14 +23349,6 @@
       "capture_priority_score": 20,
       "fixture_covered": false,
       "module": "io_abi",
-      "perf_class": "syscall_veneer",
-      "status": "RawSyscall",
-      "symbol": "pread"
-    },
-    {
-      "capture_priority_score": 20,
-      "fixture_covered": false,
-      "module": "io_abi",
       "perf_class": "default",
       "status": "RawSyscall",
       "symbol": "preadv"
@@ -23237,14 +23365,6 @@
       "capture_priority_score": 20,
       "fixture_covered": false,
       "module": "io_abi",
-      "perf_class": "syscall_veneer",
-      "status": "RawSyscall",
-      "symbol": "pwrite"
-    },
-    {
-      "capture_priority_score": 20,
-      "fixture_covered": false,
-      "module": "io_abi",
       "perf_class": "default",
       "status": "RawSyscall",
       "symbol": "pwritev"
@@ -23256,14 +23376,6 @@
       "perf_class": "default",
       "status": "RawSyscall",
       "symbol": "pwritev2"
-    },
-    {
-      "capture_priority_score": 20,
-      "fixture_covered": false,
-      "module": "io_abi",
-      "perf_class": "syscall_veneer",
-      "status": "RawSyscall",
-      "symbol": "readv"
     },
     {
       "capture_priority_score": 20,
@@ -23296,14 +23408,6 @@
       "perf_class": "default",
       "status": "RawSyscall",
       "symbol": "vmsplice"
-    },
-    {
-      "capture_priority_score": 20,
-      "fixture_covered": false,
-      "module": "io_abi",
-      "perf_class": "syscall_veneer",
-      "status": "RawSyscall",
-      "symbol": "writev"
     },
     {
       "capture_priority_score": 20,
@@ -25036,206 +25140,6 @@
     {
       "capture_priority_score": 0,
       "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__pread_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__printf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__read_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__readlink_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__readlinkat_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__realpath_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__recv_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__recvfrom_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__snprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__sprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__syslog_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vasprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vdprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vfprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vfwprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vsnprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vsprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vsyslog_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__vwprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__wcsnrtombs_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__wcsrtombs_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__wcstombs_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__wctomb_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "fortify_abi",
-      "perf_class": "unknown",
-      "status": "WrapsHostLibc",
-      "symbol": "__wprintf_chk"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
@@ -26470,7 +26374,7 @@
       "fixture_covered": false,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_function"
     },
     {
@@ -26478,7 +26382,7 @@
       "fixture_covered": false,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_modifier"
     },
     {
@@ -26486,7 +26390,7 @@
       "fixture_covered": false,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_specifier"
     },
     {
@@ -26494,7 +26398,7 @@
       "fixture_covered": false,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_type"
     },
     {
@@ -26848,6 +26752,22 @@
       "perf_class": "coldpath",
       "status": "WrapsHostLibc",
       "symbol": "getgrent"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "inet_abi",
+      "perf_class": "fast",
+      "status": "WrapsHostLibc",
+      "symbol": "gethostbyaddr_r"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "inet_abi",
+      "perf_class": "fast",
+      "status": "WrapsHostLibc",
+      "symbol": "gethostbyname_r"
     },
     {
       "capture_priority_score": 0,
@@ -29637,6 +29557,14 @@
       "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "math_abi",
+      "perf_class": "zero_cost",
+      "status": "WrapsHostLibc",
+      "symbol": "fmaf128"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "math_abi",
       "perf_class": "hotpath",
       "status": "WrapsHostLibc",
       "symbol": "fmodf"
@@ -31463,14 +31391,6 @@
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "status": "WrapsHostLibc",
-      "symbol": "pthread_once"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "pthread_abi",
-      "perf_class": "coldpath",
-      "status": "WrapsHostLibc",
       "symbol": "pthread_rwlock_clockrdlock"
     },
     {
@@ -31576,6 +31496,62 @@
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
       "symbol": "host2netname"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "registerrpc"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svcfd_create"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svcraw_create"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svctcp_create"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svcudp_enablecache"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svcunix_create"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "rpc_abi",
+      "perf_class": "unknown",
+      "status": "Stub",
+      "symbol": "svcunixfd_create"
     },
     {
       "capture_priority_score": 0,
@@ -31864,14 +31840,6 @@
       "perf_class": "coldpath",
       "status": "WrapsHostLibc",
       "symbol": "vscanf"
-    },
-    {
-      "capture_priority_score": 0,
-      "fixture_covered": false,
-      "module": "stdio_abi",
-      "perf_class": "coldpath",
-      "status": "WrapsHostLibc",
-      "symbol": "vsscanf"
     },
     {
       "capture_priority_score": 0,
@@ -32343,6 +32311,22 @@
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "status": "WrapsHostLibc",
+      "symbol": "gethostbyname2"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "gethostbyname2_r"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
       "symbol": "getopt"
     },
     {
@@ -32700,6 +32684,22 @@
     {
       "capture_priority_score": 0,
       "fixture_covered": false,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "xcrypt"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
+      "module": "unistd_abi",
+      "perf_class": "coldpath",
+      "status": "WrapsHostLibc",
+      "symbol": "xcrypt_r"
+    },
+    {
+      "capture_priority_score": 0,
+      "fixture_covered": false,
       "module": "wchar_abi",
       "perf_class": "unknown",
       "status": "WrapsHostLibc",
@@ -32955,7 +32955,7 @@
     }
   ],
   "description": "Symbol-level latency baseline inventory across all exported symbols. Tracks strict/hardened/raw p50/p95/p99 capture coverage and pending gaps without fabricating measurements.",
-  "generated_at_utc": "2026-06-03T21:45:00Z",
+  "generated_at_utc": "2026-10-19T21:41:00Z",
   "ingestion": {
     "applied_observations": 342,
     "capture_map": "tests/conformance/symbol_latency_capture_map.v1.json",
@@ -33048,24 +33048,24 @@
       "total": 11
     },
     {
-      "fixture_covered": 36,
-      "fixture_uncovered": 42,
+      "fixture_covered": 61,
+      "fixture_uncovered": 17,
       "module": "fortify_abi",
       "status_breakdown": {
-        "Implemented": 25,
-        "WrapsHostLibc": 53
+        "Implemented": 78
       },
       "strict_hotpath": 0,
       "total": 78
     },
     {
-      "fixture_covered": 40,
-      "fixture_uncovered": 528,
+      "fixture_covered": 41,
+      "fixture_uncovered": 527,
       "module": "glibc_internal_abi",
       "status_breakdown": {
-        "Implemented": 337,
+        "Implemented": 335,
         "RawSyscall": 22,
-        "WrapsHostLibc": 209
+        "Stub": 4,
+        "WrapsHostLibc": 207
       },
       "strict_hotpath": 0,
       "total": 568
@@ -33096,15 +33096,15 @@
       "fixture_uncovered": 10,
       "module": "inet_abi",
       "status_breakdown": {
-        "Implemented": 9,
-        "WrapsHostLibc": 8
+        "Implemented": 7,
+        "WrapsHostLibc": 10
       },
       "strict_hotpath": 0,
       "total": 17
     },
     {
-      "fixture_covered": 1,
-      "fixture_uncovered": 26,
+      "fixture_covered": 6,
+      "fixture_uncovered": 21,
       "module": "io_abi",
       "status_breakdown": {
         "Implemented": 3,
@@ -33162,8 +33162,8 @@
       "fixture_uncovered": 1210,
       "module": "math_abi",
       "status_breakdown": {
-        "Implemented": 756,
-        "WrapsHostLibc": 509
+        "Implemented": 755,
+        "WrapsHostLibc": 510
       },
       "strict_hotpath": 0,
       "total": 1265
@@ -33189,20 +33189,20 @@
       "total": 15
     },
     {
-      "fixture_covered": 30,
+      "fixture_covered": 29,
       "fixture_uncovered": 0,
       "module": "process_abi",
       "status_breakdown": {
         "Implemented": 9,
-        "RawSyscall": 18,
-        "WrapsHostLibc": 3
+        "RawSyscall": 15,
+        "WrapsHostLibc": 5
       },
       "strict_hotpath": 0,
-      "total": 30
+      "total": 29
     },
     {
-      "fixture_covered": 87,
-      "fixture_uncovered": 54,
+      "fixture_covered": 88,
+      "fixture_uncovered": 53,
       "module": "pthread_abi",
       "status_breakdown": {
         "Implemented": 113,
@@ -33227,8 +33227,8 @@
       "fixture_uncovered": 0,
       "module": "resolv_abi",
       "status_breakdown": {
-        "Implemented": 6,
-        "WrapsHostLibc": 5
+        "Implemented": 4,
+        "WrapsHostLibc": 7
       },
       "strict_hotpath": 1,
       "total": 11
@@ -33248,7 +33248,8 @@
       "fixture_uncovered": 123,
       "module": "rpc_abi",
       "status_breakdown": {
-        "Implemented": 133,
+        "Implemented": 119,
+        "Stub": 14,
         "WrapsHostLibc": 26
       },
       "strict_hotpath": 0,
@@ -33329,12 +33330,12 @@
       "total": 70
     },
     {
-      "fixture_covered": 113,
-      "fixture_uncovered": 13,
+      "fixture_covered": 114,
+      "fixture_uncovered": 12,
       "module": "stdio_abi",
       "status_breakdown": {
-        "Implemented": 10,
-        "WrapsHostLibc": 116
+        "Implemented": 13,
+        "WrapsHostLibc": 113
       },
       "strict_hotpath": 11,
       "total": 126
@@ -33385,16 +33386,16 @@
       "total": 26
     },
     {
-      "fixture_covered": 203,
+      "fixture_covered": 204,
       "fixture_uncovered": 541,
       "module": "unistd_abi",
       "status_breakdown": {
-        "Implemented": 422,
-        "RawSyscall": 266,
-        "WrapsHostLibc": 56
+        "Implemented": 411,
+        "RawSyscall": 265,
+        "WrapsHostLibc": 69
       },
       "strict_hotpath": 0,
-      "total": 744
+      "total": 745
     },
     {
       "fixture_covered": 57,
@@ -33425,28 +33426,34 @@
   },
   "status_breakdown": {
     "Implemented": {
-      "fixture_covered": 697,
-      "fixture_uncovered": 1698,
+      "fixture_covered": 736,
+      "fixture_uncovered": 1683,
       "strict_hotpath": 114,
-      "total": 2395
+      "total": 2419
     },
     "RawSyscall": {
-      "fixture_covered": 162,
-      "fixture_uncovered": 252,
+      "fixture_covered": 163,
+      "fixture_uncovered": 247,
       "strict_hotpath": 0,
-      "total": 414
+      "total": 410
+    },
+    "Stub": {
+      "fixture_covered": 7,
+      "fixture_uncovered": 11,
+      "strict_hotpath": 0,
+      "total": 18
     },
     "WrapsHostLibc": {
-      "fixture_covered": 307,
-      "fixture_uncovered": 1003,
+      "fixture_covered": 293,
+      "fixture_uncovered": 979,
       "strict_hotpath": 38,
-      "total": 1310
+      "total": 1272
     }
   },
   "summary": {
     "capture_queue_size": 4119,
-    "fixture_covered_symbols": 1166,
-    "fixture_uncovered_symbols": 2953,
+    "fixture_covered_symbols": 1199,
+    "fixture_uncovered_symbols": 2920,
     "mode_percentile_measured_counts": {
       "hardened": {
         "p50": 16,
@@ -33487,7 +33494,7 @@
       "Implemented",
       "RawSyscall"
     ],
-    "target_symbols": 2809,
+    "target_symbols": 2829,
     "total_symbols": 4119
   },
   "symbols": [
@@ -38870,7 +38877,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -38888,7 +38895,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__asprintf_chk"
     },
     {
@@ -39005,7 +39012,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39023,7 +39030,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__dprintf_chk"
     },
     {
@@ -39140,7 +39147,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39158,7 +39165,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fgets_chk"
     },
     {
@@ -39185,7 +39192,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39203,7 +39210,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fgets_unlocked_chk"
     },
     {
@@ -39230,7 +39237,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39248,7 +39255,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fgetws_chk"
     },
     {
@@ -39275,7 +39282,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39293,7 +39300,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fgetws_unlocked_chk"
     },
     {
@@ -39320,7 +39327,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39338,7 +39345,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fortify_fail"
     },
     {
@@ -39365,7 +39372,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39383,7 +39390,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fprintf_chk"
     },
     {
@@ -39410,7 +39417,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39428,7 +39435,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fread_chk"
     },
     {
@@ -39455,7 +39462,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39473,7 +39480,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fread_unlocked_chk"
     },
     {
@@ -39500,7 +39507,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39518,7 +39525,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__fwprintf_chk"
     },
     {
@@ -39545,7 +39552,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39563,7 +39570,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__getcwd_chk"
     },
     {
@@ -39590,7 +39597,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39608,7 +39615,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__getdomainname_chk"
     },
     {
@@ -39635,7 +39642,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39653,7 +39660,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__getgroups_chk"
     },
     {
@@ -39680,7 +39687,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39698,7 +39705,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__gethostname_chk"
     },
     {
@@ -39770,7 +39777,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39788,7 +39795,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__gets_chk"
     },
     {
@@ -39815,7 +39822,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39833,7 +39840,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__getwd_chk"
     },
     {
@@ -39860,7 +39867,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39878,7 +39885,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__longjmp_chk"
     },
     {
@@ -39905,7 +39912,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39923,7 +39930,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__mbsnrtowcs_chk"
     },
     {
@@ -39950,7 +39957,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -39968,7 +39975,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__mbsrtowcs_chk"
     },
     {
@@ -39995,7 +40002,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40013,7 +40020,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__mbstowcs_chk"
     },
     {
@@ -40175,7 +40182,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40193,7 +40200,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__open64_2"
     },
     {
@@ -40220,7 +40227,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40238,7 +40245,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__open_2"
     },
     {
@@ -40265,7 +40272,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40283,7 +40290,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__openat64_2"
     },
     {
@@ -40310,7 +40317,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40328,7 +40335,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__openat_2"
     },
     {
@@ -40355,7 +40362,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40373,7 +40380,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__poll_chk"
     },
     {
@@ -40400,7 +40407,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40418,7 +40425,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__ppoll_chk"
     },
     {
@@ -40445,7 +40452,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
@@ -40463,7 +40470,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__pread64_chk"
     },
     {
@@ -40490,8 +40497,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40508,7 +40515,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__pread_chk"
     },
     {
@@ -40535,8 +40542,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40553,7 +40560,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__printf_chk"
     },
     {
@@ -40625,8 +40632,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40643,7 +40650,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__read_chk"
     },
     {
@@ -40670,8 +40677,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40688,7 +40695,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__readlink_chk"
     },
     {
@@ -40715,8 +40722,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40733,7 +40740,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__readlinkat_chk"
     },
     {
@@ -40760,8 +40767,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40778,7 +40785,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__realpath_chk"
     },
     {
@@ -40805,8 +40812,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40823,7 +40830,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__recv_chk"
     },
     {
@@ -40850,8 +40857,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40868,7 +40875,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__recvfrom_chk"
     },
     {
@@ -40895,8 +40902,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40913,7 +40920,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__snprintf_chk"
     },
     {
@@ -40940,8 +40947,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -40958,7 +40965,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__sprintf_chk"
     },
     {
@@ -41300,8 +41307,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41318,7 +41325,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__syslog_chk"
     },
     {
@@ -41390,8 +41397,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41408,7 +41415,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vasprintf_chk"
     },
     {
@@ -41435,8 +41442,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41453,7 +41460,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vdprintf_chk"
     },
     {
@@ -41480,8 +41487,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41498,7 +41505,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vfprintf_chk"
     },
     {
@@ -41525,8 +41532,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41543,7 +41550,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vfwprintf_chk"
     },
     {
@@ -41570,8 +41577,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41588,7 +41595,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vprintf_chk"
     },
     {
@@ -41615,8 +41622,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41633,7 +41640,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vsnprintf_chk"
     },
     {
@@ -41660,8 +41667,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41678,7 +41685,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vsprintf_chk"
     },
     {
@@ -41750,8 +41757,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41768,7 +41775,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vsyslog_chk"
     },
     {
@@ -41795,8 +41802,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -41813,7 +41820,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__vwprintf_chk"
     },
     {
@@ -42020,8 +42027,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -42038,7 +42045,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__wcsnrtombs_chk"
     },
     {
@@ -42065,8 +42072,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -42083,7 +42090,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__wcsrtombs_chk"
     },
     {
@@ -42110,8 +42117,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -42128,7 +42135,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__wcstombs_chk"
     },
     {
@@ -42155,8 +42162,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -42173,7 +42180,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__wctomb_chk"
     },
     {
@@ -42335,8 +42342,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "fortify_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -42353,7 +42360,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__wprintf_chk"
     },
     {
@@ -55250,8 +55257,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
-      "fixture_covered": false,
+      "capture_priority_score": 40,
+      "fixture_covered": true,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
       "shared_overhead_reference": {
@@ -55268,7 +55275,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "_dl_find_object"
     },
     {
@@ -62315,7 +62322,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "glibc_internal_abi",
       "perf_class": "unknown",
@@ -62333,7 +62340,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "profil"
     },
     {
@@ -63503,7 +63510,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_function"
     },
     {
@@ -63548,7 +63555,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_modifier"
     },
     {
@@ -63593,7 +63600,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_specifier"
     },
     {
@@ -63638,7 +63645,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "symbol": "register_printf_type"
     },
     {
@@ -68435,7 +68442,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "inet_abi",
       "perf_class": "fast",
@@ -68453,7 +68460,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyaddr_r"
     },
     {
@@ -68480,7 +68487,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "inet_abi",
       "perf_class": "fast",
@@ -68498,7 +68505,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyname_r"
     },
     {
@@ -69380,8 +69387,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 20,
-      "fixture_covered": false,
+      "capture_priority_score": 60,
+      "fixture_covered": true,
       "module": "io_abi",
       "perf_class": "coldpath",
       "shared_overhead_reference": {
@@ -69830,8 +69837,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 20,
-      "fixture_covered": false,
+      "capture_priority_score": 60,
+      "fixture_covered": true,
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "shared_overhead_reference": {
@@ -69965,8 +69972,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 20,
-      "fixture_covered": false,
+      "capture_priority_score": 60,
+      "fixture_covered": true,
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "shared_overhead_reference": {
@@ -70100,8 +70107,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 20,
-      "fixture_covered": false,
+      "capture_priority_score": 60,
+      "fixture_covered": true,
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "shared_overhead_reference": {
@@ -70370,8 +70377,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 20,
-      "fixture_covered": false,
+      "capture_priority_score": 60,
+      "fixture_covered": true,
       "module": "io_abi",
       "perf_class": "syscall_veneer",
       "shared_overhead_reference": {
@@ -106325,7 +106332,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "math_abi",
       "perf_class": "zero_cost",
@@ -106343,7 +106350,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fmaf128"
     },
     {
@@ -135639,51 +135646,6 @@
         }
       },
       "status": "RawSyscall",
-      "symbol": "clone"
-    },
-    {
-      "baseline": {
-        "hardened": {
-          "capture_state": "pending_symbol_benchmark",
-          "p50_ns": null,
-          "p95_ns": null,
-          "p99_ns": null,
-          "source": null
-        },
-        "raw": {
-          "capture_state": "pending_symbol_benchmark",
-          "p50_ns": null,
-          "p95_ns": null,
-          "p99_ns": null,
-          "source": null
-        },
-        "strict": {
-          "capture_state": "pending_symbol_benchmark",
-          "p50_ns": null,
-          "p95_ns": null,
-          "p99_ns": null,
-          "source": null
-        }
-      },
-      "capture_priority_score": 60,
-      "fixture_covered": true,
-      "module": "process_abi",
-      "perf_class": "unknown",
-      "shared_overhead_reference": {
-        "hardened": {
-          "membrane_validate_known_p50_ns": 3499.877,
-          "runtime_math_decide_observe_p50_ns": 153.193,
-          "runtime_math_decide_p50_ns": 168.302,
-          "runtime_math_observe_fast_p50_ns": 1.949
-        },
-        "strict": {
-          "membrane_validate_known_p50_ns": 4331.049,
-          "runtime_math_decide_observe_p50_ns": 205.5,
-          "runtime_math_decide_p50_ns": 187.404,
-          "runtime_math_observe_fast_p50_ns": 2.017
-        }
-      },
-      "status": "RawSyscall",
       "symbol": "closefrom"
     },
     {
@@ -135845,7 +135807,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 60,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "process_abi",
       "perf_class": "coldpath",
@@ -135863,7 +135825,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "symbol": "fork"
     },
     {
@@ -136565,7 +136527,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 60,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "process_abi",
       "perf_class": "coldpath",
@@ -136583,7 +136545,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "symbol": "vfork"
     },
     {
@@ -141650,8 +141612,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 40,
+      "fixture_covered": true,
       "module": "pthread_abi",
       "perf_class": "coldpath",
       "shared_overhead_reference": {
@@ -144575,7 +144537,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "resolv_abi",
       "perf_class": "default",
@@ -144593,7 +144555,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyaddr"
     },
     {
@@ -144665,7 +144627,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "resolv_abi",
       "perf_class": "coldpath",
@@ -144683,7 +144645,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "getnameinfo"
     },
     {
@@ -145160,7 +145122,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -145178,7 +145140,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "_authenticate"
     },
     {
@@ -145655,7 +145617,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -145673,7 +145635,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "callrpc"
     },
     {
@@ -145790,7 +145752,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -145808,7 +145770,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "clnt_create"
     },
     {
@@ -145925,7 +145887,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -145943,7 +145905,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "clnt_perror"
     },
     {
@@ -146060,7 +146022,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -146078,7 +146040,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "clnt_sperror"
     },
     {
@@ -146105,7 +146067,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -146123,7 +146085,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "clntraw_create"
     },
     {
@@ -146285,7 +146247,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -146303,7 +146265,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "clntunix_create"
     },
     {
@@ -147455,7 +147417,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -147473,7 +147435,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "registerrpc"
     },
     {
@@ -148535,7 +148497,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148553,7 +148515,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svcfd_create"
     },
     {
@@ -148580,7 +148542,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148598,7 +148560,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svcraw_create"
     },
     {
@@ -148625,7 +148587,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148643,7 +148605,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svctcp_create"
     },
     {
@@ -148760,7 +148722,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148778,7 +148740,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svcudp_enablecache"
     },
     {
@@ -148805,7 +148767,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148823,7 +148785,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svcunix_create"
     },
     {
@@ -148850,7 +148812,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "rpc_abi",
       "perf_class": "unknown",
@@ -148868,7 +148830,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "Stub",
       "symbol": "svcunixfd_create"
     },
     {
@@ -159380,7 +159342,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "stdio_abi",
       "perf_class": "unknown",
@@ -159398,7 +159360,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__isoc99_sscanf"
     },
     {
@@ -159515,7 +159477,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 40,
+      "capture_priority_score": 70,
       "fixture_covered": true,
       "module": "stdio_abi",
       "perf_class": "unknown",
@@ -159533,7 +159495,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "__isoc99_vsscanf"
     },
     {
@@ -163925,8 +163887,8 @@
           "source": null
         }
       },
-      "capture_priority_score": 0,
-      "fixture_covered": false,
+      "capture_priority_score": 70,
+      "fixture_covered": true,
       "module": "stdio_abi",
       "perf_class": "coldpath",
       "shared_overhead_reference": {
@@ -163943,7 +163905,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "symbol": "vsscanf"
     },
     {
@@ -181790,6 +181752,51 @@
           "source": null
         }
       },
+      "capture_priority_score": 40,
+      "fixture_covered": true,
+      "module": "unistd_abi",
+      "perf_class": "unknown",
+      "shared_overhead_reference": {
+        "hardened": {
+          "membrane_validate_known_p50_ns": 3499.877,
+          "runtime_math_decide_observe_p50_ns": 153.193,
+          "runtime_math_decide_p50_ns": 168.302,
+          "runtime_math_observe_fast_p50_ns": 1.949
+        },
+        "strict": {
+          "membrane_validate_known_p50_ns": 4331.049,
+          "runtime_math_decide_observe_p50_ns": 205.5,
+          "runtime_math_decide_p50_ns": 187.404,
+          "runtime_math_observe_fast_p50_ns": 2.017
+        }
+      },
+      "status": "WrapsHostLibc",
+      "symbol": "clone"
+    },
+    {
+      "baseline": {
+        "hardened": {
+          "capture_state": "pending_symbol_benchmark",
+          "p50_ns": null,
+          "p95_ns": null,
+          "p99_ns": null,
+          "source": null
+        },
+        "raw": {
+          "capture_state": "pending_symbol_benchmark",
+          "p50_ns": null,
+          "p95_ns": null,
+          "p99_ns": null,
+          "source": null
+        },
+        "strict": {
+          "capture_state": "pending_symbol_benchmark",
+          "p50_ns": null,
+          "p95_ns": null,
+          "p99_ns": null,
+          "source": null
+        }
+      },
       "capture_priority_score": 60,
       "fixture_covered": true,
       "module": "unistd_abi",
@@ -182015,7 +182022,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "default",
@@ -182033,7 +182040,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "crypt"
     },
     {
@@ -182285,7 +182292,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -182303,7 +182310,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "crypt_preferred_method"
     },
     {
@@ -182330,7 +182337,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -182348,7 +182355,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "crypt_r"
     },
     {
@@ -182375,7 +182382,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -182393,7 +182400,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "crypt_ra"
     },
     {
@@ -182420,7 +182427,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -182438,7 +182445,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "crypt_rn"
     },
     {
@@ -182555,7 +182562,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 60,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "default",
@@ -182573,7 +182580,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "symbol": "daemon"
     },
     {
@@ -184850,7 +184857,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -184868,7 +184875,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "fcrypt"
     },
     {
@@ -185435,7 +185442,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 70,
+      "capture_priority_score": 40,
       "fixture_covered": true,
       "module": "unistd_abi",
       "perf_class": "default",
@@ -185453,7 +185460,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "forkpty"
     },
     {
@@ -188315,7 +188322,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -188333,7 +188340,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyname2"
     },
     {
@@ -188360,7 +188367,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -188378,7 +188385,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "gethostbyname2_r"
     },
     {
@@ -210095,7 +210102,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -210113,7 +210120,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "xcrypt"
     },
     {
@@ -210230,7 +210237,7 @@
           "source": null
         }
       },
-      "capture_priority_score": 30,
+      "capture_priority_score": 0,
       "fixture_covered": false,
       "module": "unistd_abi",
       "perf_class": "coldpath",
@@ -210248,7 +210255,7 @@
           "runtime_math_observe_fast_p50_ns": 2.017
         }
       },
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "symbol": "xcrypt_r"
     },
     {

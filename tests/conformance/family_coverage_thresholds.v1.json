@@ -1,5 +1,5 @@
 {
-  "artifact_hash": "0eef9b1645ea6bacddf525bec26296860620145a7ca4106defebf355f6f1ab30",
+  "artifact_hash": "86d45148fd92d3560dd6c1c2a97e3c81513d36615ed30738dfc551f2287d3086",
   "bead": "bd-bp8fl.4.3",
   "coverage_model": {
     "direct_coverage_source": "symbol_fixture_coverage symbols with fixture_sources containing fixture_json",
@@ -11,7 +11,10 @@
       "L2": "blocked until standalone host-dependency evidence exists",
       "L3": "blocked until cross-environment standalone evidence exists"
     },
-    "target_statuses": ["Implemented", "RawSyscall"]
+    "target_statuses": [
+      "Implemented",
+      "RawSyscall"
+    ]
   },
   "gaps_requiring_fixture_beads": [
     {
@@ -64,7 +67,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:32.0<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:78.21<threshold:85.0|isolated:0.0<threshold:10.0",
       "family_id": "fortify_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 17,
@@ -72,10 +75,10 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:8.91<threshold:85.0|direct:8.91<threshold:25.0|isolated:0.0<threshold:10.0|dual_mode:8.91<threshold:15.0",
+      "failure_signature": "coverage_threshold:target:8.68<threshold:85.0|direct:8.68<threshold:25.0|isolated:0.0<threshold:10.0|dual_mode:8.68<threshold:15.0",
       "family_id": "glibc_internal_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 327,
+      "target_uncovered": 326,
       "threshold_id": "fct-glibc_internal_abi-v1"
     },
     {
@@ -96,18 +99,18 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:55.56<threshold:80.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:71.43<threshold:80.0|isolated:0.0<threshold:10.0",
       "family_id": "inet_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 4,
+      "target_uncovered": 2,
       "threshold_id": "fct-inet_abi-v1"
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:3.85<threshold:80.0|direct:3.85<threshold:25.0|isolated:3.85<threshold:10.0|dual_mode:3.85<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:23.08<threshold:80.0|direct:3.85<threshold:25.0|dual_mode:3.85<threshold:10.0",
       "family_id": "io_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 25,
+      "target_uncovered": 20,
       "threshold_id": "fct-io_abi-v1"
     },
     {
@@ -128,7 +131,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:0.0<threshold:20.0",
+      "failure_signature": "coverage_threshold:isolated:6.25<threshold:20.0",
       "family_id": "locale_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 0,
@@ -136,18 +139,10 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:0.0<threshold:10.0",
-      "family_id": "malloc_abi",
-      "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 0,
-      "threshold_id": "fct-malloc_abi-v1"
-    },
-    {
-      "decision": "fail",
-      "failure_signature": "coverage_threshold:target:6.88<threshold:85.0|direct:6.88<threshold:25.0|isolated:0.93<threshold:10.0|dual_mode:6.88<threshold:15.0",
+      "failure_signature": "coverage_threshold:target:6.89<threshold:85.0|direct:6.89<threshold:25.0|isolated:0.93<threshold:10.0|dual_mode:6.89<threshold:15.0",
       "family_id": "math_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 704,
+      "target_uncovered": 703,
       "threshold_id": "fct-math_abi-v1"
     },
     {
@@ -208,10 +203,10 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:25.56<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:22.69<threshold:85.0|direct:22.69<threshold:25.0|isolated:0.0<threshold:10.0",
       "family_id": "rpc_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 99,
+      "target_uncovered": 92,
       "threshold_id": "fct-rpc_abi-v1"
     },
     {
@@ -256,7 +251,7 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:60.0<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:69.23<threshold:85.0|isolated:0.0<threshold:10.0",
       "family_id": "stdio_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 4,
@@ -269,14 +264,6 @@
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
       "target_uncovered": 78,
       "threshold_id": "fct-stdlib_abi-v1"
-    },
-    {
-      "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:5.45<threshold:10.0",
-      "family_id": "string_abi",
-      "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 0,
-      "threshold_id": "fct-string_abi-v1"
     },
     {
       "decision": "fail",
@@ -296,10 +283,10 @@
     },
     {
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:28.2<threshold:85.0|isolated:0.87<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:27.51<threshold:85.0|isolated:1.18<threshold:10.0",
       "family_id": "unistd_abi",
       "next_step": "add direct+isolated dual-mode fixtures before advancing readiness claims",
-      "target_uncovered": 494,
+      "target_uncovered": 490,
       "threshold_id": "fct-unistd_abi-v1"
     },
     {
@@ -312,17 +299,17 @@
     }
   ],
   "input_digests": {
-    "conformance_coverage_baseline": "0fa209fc51a8e89d30cdd88e420cfed07e941f6178e3b58938f34646efbefaa0",
-    "conformance_coverage_snapshot": "9a8233321f757ff83e8820c7e601203fa4b69939b463dfc1410b7965a98824b6",
-    "fixture_coverage_prioritizer": "7f5df3790ae9a8593aa6fb46b4d33a001a7dba3640d504a118caeb492e9a427b",
+    "conformance_coverage_baseline": "f891e5fddce8820b09307993ed6d75f80f82bfb4d8cf911929fe728ec1c6aa99",
+    "conformance_coverage_snapshot": "a571c1d568d1d9096e41ccd68ce3fb34f6b7801c35fe0d8f1ca0264d719d21a8",
+    "fixture_coverage_prioritizer": "25f33b0209a6cb9de71d948e56bcfa65b7b3cc373de09a0ff5c0126668936c22",
     "hard_parts_e2e_failure_matrix": "d0a737d4a3f83545b68c83d497e1694383b0eb5706da3da646e2cbc1e678b2da",
-    "hard_parts_truth_table": "aab19fefe9fe1ba11f3a3d64e687b931a970d5405ce4d3b4832ebcc9d477f5f9",
-    "per_symbol_fixture_tests": "05ff6df5586967e73b5190bf6d62b77dc8273a6bd9379a94981200a86ee3ad6c",
-    "replacement_levels": "656aca0db32c7ba02ef42951fca3aad4ce4454883bc13566235eb894a39282d1",
-    "support_matrix": "a05fd669599458bf41f6e7b489431e4b723ede0f8d934e7352478a470549506f",
-    "symbol_fixture_coverage": "f07a4bfbcff20cd6f0b9c4bcf206ba6f22a1b4cb8a20c9856c3fa35970176cf3",
-    "user_workload_acceptance_matrix": "e1522428db6fb6f63c2a51cab24ec930cdcd52e8efdbe128794600d5e0336910",
-    "workload_matrix": "04f77e974c045a0016ffbe5abd7e602a94b44291c57084400751524acbc5b9ca"
+    "hard_parts_truth_table": "6b526f245a3c282877050d653bc75ff03a02cee815faa2345dc38af84626ccb7",
+    "per_symbol_fixture_tests": "2638447b3f22699b2118c2150e90534ee4aa7390886f1619efbe9f687a1fc6f1",
+    "replacement_levels": "94fc1e3fcaba326ba43081ceb03cf9317954bf7ef2ea6790b4097dbd9d637253",
+    "support_matrix": "c270f6bf4a856e9854753c203f324fe51aafdf72cc1b28eb5adcb856274fd695",
+    "symbol_fixture_coverage": "be8dbc1dc3101551e0da84c2c8d8328b45cf002dacbe162c5fb3e21b0284b0bc",
+    "user_workload_acceptance_matrix": "5b2dae3d33b1af8f33fdf743ab7c63318f90da7879910511c00205b6ebb5ac3e",
+    "workload_matrix": "9072d3bc58bd2c5674c63e8da6218d82530cb2b091b0abf840bf0af3e441764b"
   },
   "inputs": {
     "conformance_coverage_baseline": "tests/conformance/conformance_coverage_baseline.v1.json",
@@ -353,19 +340,19 @@
   "schema_version": "v1",
   "summary": {
     "claim_gate_decision": "blocked",
-    "fail_count": 37,
+    "fail_count": 35,
     "family_count": 40,
     "not_applicable_count": 2,
-    "pass_count": 1,
+    "pass_count": 3,
     "snapshot_paths": [
       "tests/conformance/conformance_coverage_snapshot.v1.json",
       "tests/conformance/symbol_fixture_coverage.v1.json",
       "tests/conformance/per_symbol_fixture_tests.v1.json"
     ],
-    "target_coverage_pct": 30.58,
-    "target_covered_symbols": 859,
-    "target_total_symbols": 2809,
-    "target_uncovered_symbols": 1950
+    "target_coverage_pct": 31.78,
+    "target_covered_symbols": 899,
+    "target_total_symbols": 2829,
+    "target_uncovered_symbols": 1930
   },
   "threshold_policy": {
     "base": {
@@ -406,7 +393,9 @@
       "family_id": "c11threads_abi",
       "fixture_count": {
         "fixture_cases": 15,
-        "fixture_file_refs": ["c11threads_ops.json"],
+        "fixture_file_refs": [
+          "c11threads_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -495,9 +484,13 @@
       "family_id": "ctype_abi",
       "fixture_count": {
         "fixture_cases": 37,
-        "fixture_file_refs": ["ctype_ops.json"],
+        "fixture_file_refs": [
+          "ctype_ops.json"
+        ],
         "fixture_files": 1,
-        "isolated_fixture_ids": ["fixture_ctype"],
+        "isolated_fixture_ids": [
+          "fixture_ctype"
+        ],
         "isolated_fixture_mentions": 11
       },
       "freshness_state": {
@@ -584,7 +577,9 @@
       "family_id": "dirent_abi",
       "fixture_count": {
         "fixture_cases": 9,
-        "fixture_file_refs": ["dirent_ops.json"],
+        "fixture_file_refs": [
+          "dirent_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -673,7 +668,9 @@
       "family_id": "dlfcn_abi",
       "fixture_count": {
         "fixture_cases": 1,
-        "fixture_file_refs": ["dlfcn_ops.json"],
+        "fixture_file_refs": [
+          "dlfcn_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -689,7 +686,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["startup"]
+        "subsystems": [
+          "startup"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 0,
@@ -851,7 +850,9 @@
       "family_id": "errno_abi",
       "fixture_count": {
         "fixture_cases": 5,
-        "fixture_file_refs": ["errno_ops.json"],
+        "fixture_file_refs": [
+          "errno_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -940,7 +941,9 @@
       "family_id": "fenv_abi",
       "fixture_count": {
         "fixture_cases": 11,
-        "fixture_file_refs": ["fenv_ops.json"],
+        "fixture_file_refs": [
+          "fenv_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1011,30 +1014,34 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 32.0,
-        "dual_mode_coverage_pct": 32.0,
-        "edge_case_symbol_pct": 12.0,
-        "errno_check_symbol_pct": 32.0,
-        "hardened_mode_coverage_pct": 32.0,
+        "direct_coverage_pct": 78.21,
+        "dual_mode_coverage_pct": 78.21,
+        "edge_case_symbol_pct": 47.44,
+        "errno_check_symbol_pct": 78.21,
+        "hardened_mode_coverage_pct": 78.21,
         "isolated_coverage_pct": 0.0,
-        "l0_replacement_pct": 32.0,
-        "l1_replacement_pct": 32.0,
+        "l0_replacement_pct": 78.21,
+        "l1_replacement_pct": 78.21,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 32.0,
-        "target_coverage_pct": 32.0
+        "strict_mode_coverage_pct": 78.21,
+        "target_coverage_pct": 78.21
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:32.0<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:78.21<threshold:85.0|isolated:0.0<threshold:10.0",
       "family_id": "fortify_abi",
       "fixture_count": {
-        "fixture_cases": 16,
+        "fixture_cases": 122,
         "fixture_file_refs": [
           "fortify_checked_wrapper_wave01.json",
           "fortify_checked_wrapper_wave02.json",
-          "fortify_checked_wrapper_wave03.json"
+          "fortify_checked_wrapper_wave03.json",
+          "fortify_checked_wrapper_wave04.json",
+          "fortify_checked_wrapper_wave05.json",
+          "fortify_checked_wrapper_wave06.json",
+          "fortify_checked_wrapper_wave07.json"
         ],
-        "fixture_files": 3,
+        "fixture_files": 7,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
       },
@@ -1048,22 +1055,27 @@
       },
       "hard_parts_risk": {
         "risk_level": "normal",
-        "risk_tags": ["buffer_boundary", "claim_blocked", "diagnostics_gap", "hardened_repair"],
+        "risk_tags": [
+          "buffer_boundary",
+          "claim_blocked",
+          "diagnostics_gap",
+          "hardened_repair"
+        ],
         "subsystems": []
       },
       "mode_coverage": {
-        "dual_mode_symbols": 8,
-        "hardened_or_both_symbols": 8,
-        "strict_or_both_symbols": 8
+        "dual_mode_symbols": 61,
+        "hardened_or_both_symbols": 61,
+        "strict_or_both_symbols": 61
       },
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 32.0
+          "coverage_pct": 78.21
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 32.0
+          "coverage_pct": 78.21
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -1075,8 +1087,8 @@
         }
       },
       "symbol_count": {
-        "covered": 8,
-        "target": 25,
+        "covered": 61,
+        "target": 78,
         "total": 78,
         "uncovered": 17
       },
@@ -1092,7 +1104,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 5,
-        "workload_domains": ["build_tools", "performance_sensitive", "shell_coreutils"],
+        "workload_domains": [
+          "build_tools",
+          "performance_sensitive",
+          "shell_coreutils"
+        ],
         "workload_ids": []
       }
     },
@@ -1104,24 +1120,24 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 8.91,
-        "dual_mode_coverage_pct": 8.91,
-        "edge_case_symbol_pct": 4.74,
-        "errno_check_symbol_pct": 8.91,
-        "hardened_mode_coverage_pct": 8.91,
+        "direct_coverage_pct": 8.68,
+        "dual_mode_coverage_pct": 8.68,
+        "edge_case_symbol_pct": 4.48,
+        "errno_check_symbol_pct": 8.68,
+        "hardened_mode_coverage_pct": 8.68,
         "isolated_coverage_pct": 0.0,
-        "l0_replacement_pct": 8.91,
-        "l1_replacement_pct": 8.91,
+        "l0_replacement_pct": 8.68,
+        "l1_replacement_pct": 8.68,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 8.91,
-        "target_coverage_pct": 8.91
+        "strict_mode_coverage_pct": 8.68,
+        "target_coverage_pct": 8.68
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:8.91<threshold:85.0|direct:8.91<threshold:25.0|isolated:0.0<threshold:10.0|dual_mode:8.91<threshold:15.0",
+      "failure_signature": "coverage_threshold:target:8.68<threshold:85.0|direct:8.68<threshold:25.0|isolated:0.0<threshold:10.0|dual_mode:8.68<threshold:15.0",
       "family_id": "glibc_internal_abi",
       "fixture_count": {
-        "fixture_cases": 64,
+        "fixture_cases": 62,
         "fixture_file_refs": [
           "glibc_internal_bootstrap_wave01.json",
           "glibc_internal_compat_wave02.json",
@@ -1151,18 +1167,18 @@
         "subsystems": []
       },
       "mode_coverage": {
-        "dual_mode_symbols": 32,
-        "hardened_or_both_symbols": 32,
-        "strict_or_both_symbols": 32
+        "dual_mode_symbols": 31,
+        "hardened_or_both_symbols": 31,
+        "strict_or_both_symbols": 31
       },
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 8.91
+          "coverage_pct": 8.68
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 8.91
+          "coverage_pct": 8.68
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -1174,10 +1190,10 @@
         }
       },
       "symbol_count": {
-        "covered": 32,
-        "target": 359,
+        "covered": 31,
+        "target": 357,
         "total": 568,
-        "uncovered": 327
+        "uncovered": 326
       },
       "threshold_id": "fct-glibc_internal_abi-v1",
       "thresholds": {
@@ -1191,7 +1207,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 7,
-        "workload_domains": ["build_tools", "diagnostics", "startup_linking"],
+        "workload_domains": [
+          "build_tools",
+          "diagnostics",
+          "startup_linking"
+        ],
         "workload_ids": []
       }
     },
@@ -1221,9 +1241,13 @@
       "family_id": "grp_abi",
       "fixture_count": {
         "fixture_cases": 4,
-        "fixture_file_refs": ["grp_ops.json"],
+        "fixture_file_refs": [
+          "grp_ops.json"
+        ],
         "fixture_files": 1,
-        "isolated_fixture_ids": ["fixture_nss"],
+        "isolated_fixture_ids": [
+          "fixture_nss"
+        ],
         "isolated_fixture_mentions": 2
       },
       "freshness_state": {
@@ -1237,7 +1261,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["nss"]
+        "subsystems": [
+          "nss"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 2,
@@ -1310,7 +1336,9 @@
       "family_id": "iconv_abi",
       "fixture_count": {
         "fixture_cases": 18,
-        "fixture_file_refs": ["iconv_phase1.json"],
+        "fixture_file_refs": [
+          "iconv_phase1.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1326,7 +1354,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["iconv"]
+        "subsystems": [
+          "iconv"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 3,
@@ -1381,25 +1411,27 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 55.56,
-        "dual_mode_coverage_pct": 55.56,
-        "edge_case_symbol_pct": 44.44,
-        "errno_check_symbol_pct": 55.56,
-        "hardened_mode_coverage_pct": 55.56,
+        "direct_coverage_pct": 71.43,
+        "dual_mode_coverage_pct": 71.43,
+        "edge_case_symbol_pct": 57.14,
+        "errno_check_symbol_pct": 71.43,
+        "hardened_mode_coverage_pct": 71.43,
         "isolated_coverage_pct": 0.0,
-        "l0_replacement_pct": 55.56,
-        "l1_replacement_pct": 55.56,
+        "l0_replacement_pct": 71.43,
+        "l1_replacement_pct": 71.43,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 55.56,
-        "target_coverage_pct": 55.56
+        "strict_mode_coverage_pct": 71.43,
+        "target_coverage_pct": 71.43
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:55.56<threshold:80.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:71.43<threshold:80.0|isolated:0.0<threshold:10.0",
       "family_id": "inet_abi",
       "fixture_count": {
         "fixture_cases": 10,
-        "fixture_file_refs": ["inet_ops.json"],
+        "fixture_file_refs": [
+          "inet_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1425,11 +1457,11 @@
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 55.56
+          "coverage_pct": 71.43
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 55.56
+          "coverage_pct": 71.43
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -1442,9 +1474,9 @@
       },
       "symbol_count": {
         "covered": 5,
-        "target": 9,
+        "target": 7,
         "total": 17,
-        "uncovered": 4
+        "uncovered": 2
       },
       "threshold_id": "fct-inet_abi-v1",
       "thresholds": {
@@ -1475,23 +1507,27 @@
         "edge_case_symbol_pct": 0.0,
         "errno_check_symbol_pct": 3.85,
         "hardened_mode_coverage_pct": 3.85,
-        "isolated_coverage_pct": 3.85,
-        "l0_replacement_pct": 3.85,
+        "isolated_coverage_pct": 23.08,
+        "l0_replacement_pct": 23.08,
         "l1_replacement_pct": 3.85,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
         "strict_mode_coverage_pct": 3.85,
-        "target_coverage_pct": 3.85
+        "target_coverage_pct": 23.08
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:3.85<threshold:80.0|direct:3.85<threshold:25.0|isolated:3.85<threshold:10.0|dual_mode:3.85<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:23.08<threshold:80.0|direct:3.85<threshold:25.0|dual_mode:3.85<threshold:10.0",
       "family_id": "io_abi",
       "fixture_count": {
         "fixture_cases": 1,
-        "fixture_file_refs": ["unistd_ops.json"],
+        "fixture_file_refs": [
+          "unistd_ops.json"
+        ],
         "fixture_files": 1,
-        "isolated_fixture_ids": ["fixture_io"],
-        "isolated_fixture_mentions": 1
+        "isolated_fixture_ids": [
+          "fixture_io"
+        ],
+        "isolated_fixture_mentions": 6
       },
       "freshness_state": {
         "decision": "fresh",
@@ -1514,7 +1550,7 @@
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 3.85
+          "coverage_pct": 23.08
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
@@ -1530,10 +1566,10 @@
         }
       },
       "symbol_count": {
-        "covered": 1,
+        "covered": 6,
         "target": 26,
         "total": 27,
-        "uncovered": 25
+        "uncovered": 20
       },
       "threshold_id": "fct-io_abi-v1",
       "thresholds": {
@@ -1577,7 +1613,9 @@
       "family_id": "io_internal_abi",
       "fixture_count": {
         "fixture_cases": 27,
-        "fixture_file_refs": ["io_internal_ops.json"],
+        "fixture_file_refs": [
+          "io_internal_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1666,7 +1704,9 @@
       "family_id": "isoc_abi",
       "fixture_count": {
         "fixture_cases": 2,
-        "fixture_file_refs": ["isoc_wide_scanf_ops.json"],
+        "fixture_file_refs": [
+          "isoc_wide_scanf_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -1742,7 +1782,7 @@
         "edge_case_symbol_pct": 37.5,
         "errno_check_symbol_pct": 100.0,
         "hardened_mode_coverage_pct": 100.0,
-        "isolated_coverage_pct": 0.0,
+        "isolated_coverage_pct": 6.25,
         "l0_replacement_pct": 100.0,
         "l1_replacement_pct": 100.0,
         "l2_replacement_pct": 0.0,
@@ -1751,14 +1791,19 @@
         "target_coverage_pct": 100.0
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:0.0<threshold:20.0",
+      "failure_signature": "coverage_threshold:isolated:6.25<threshold:20.0",
       "family_id": "locale_abi",
       "fixture_count": {
         "fixture_cases": 36,
-        "fixture_file_refs": ["locale_catalog_wave01.json", "locale_ops.json"],
+        "fixture_file_refs": [
+          "locale_catalog_wave01.json",
+          "locale_ops.json"
+        ],
         "fixture_files": 2,
-        "isolated_fixture_ids": [],
-        "isolated_fixture_mentions": 0
+        "isolated_fixture_ids": [
+          "fixture_cxx_runtime"
+        ],
+        "isolated_fixture_mentions": 1
       },
       "freshness_state": {
         "decision": "fresh",
@@ -1771,7 +1816,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["locale"]
+        "subsystems": [
+          "locale"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 16,
@@ -1831,7 +1878,7 @@
         "edge_case_symbol_pct": 40.0,
         "errno_check_symbol_pct": 100.0,
         "hardened_mode_coverage_pct": 100.0,
-        "isolated_coverage_pct": 0.0,
+        "isolated_coverage_pct": 10.0,
         "l0_replacement_pct": 100.0,
         "l1_replacement_pct": 100.0,
         "l2_replacement_pct": 0.0,
@@ -1839,15 +1886,20 @@
         "strict_mode_coverage_pct": 100.0,
         "target_coverage_pct": 100.0
       },
-      "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:0.0<threshold:10.0",
+      "decision": "pass",
+      "failure_signature": "none",
       "family_id": "malloc_abi",
       "fixture_count": {
         "fixture_cases": 20,
-        "fixture_file_refs": ["malloc_membrane_wave01.json", "malloc_membrane_wave02.json"],
+        "fixture_file_refs": [
+          "malloc_membrane_wave01.json",
+          "malloc_membrane_wave02.json"
+        ],
         "fixture_files": 2,
-        "isolated_fixture_ids": [],
-        "isolated_fixture_mentions": 0
+        "isolated_fixture_ids": [
+          "fixture_string"
+        ],
+        "isolated_fixture_mentions": 1
       },
       "freshness_state": {
         "decision": "fresh",
@@ -1915,21 +1967,21 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 6.88,
-        "dual_mode_coverage_pct": 6.88,
-        "edge_case_symbol_pct": 5.42,
-        "errno_check_symbol_pct": 6.88,
-        "hardened_mode_coverage_pct": 6.88,
+        "direct_coverage_pct": 6.89,
+        "dual_mode_coverage_pct": 6.89,
+        "edge_case_symbol_pct": 5.43,
+        "errno_check_symbol_pct": 6.89,
+        "hardened_mode_coverage_pct": 6.89,
         "isolated_coverage_pct": 0.93,
-        "l0_replacement_pct": 6.88,
-        "l1_replacement_pct": 6.88,
+        "l0_replacement_pct": 6.89,
+        "l1_replacement_pct": 6.89,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 6.88,
-        "target_coverage_pct": 6.88
+        "strict_mode_coverage_pct": 6.89,
+        "target_coverage_pct": 6.89
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:6.88<threshold:85.0|direct:6.88<threshold:25.0|isolated:0.93<threshold:10.0|dual_mode:6.88<threshold:15.0",
+      "failure_signature": "coverage_threshold:target:6.89<threshold:85.0|direct:6.89<threshold:25.0|isolated:0.93<threshold:10.0|dual_mode:6.89<threshold:15.0",
       "family_id": "math_abi",
       "fixture_count": {
         "fixture_cases": 93,
@@ -1939,7 +1991,9 @@
           "math_ops.json"
         ],
         "fixture_files": 3,
-        "isolated_fixture_ids": ["fixture_math"],
+        "isolated_fixture_ids": [
+          "fixture_math"
+        ],
         "isolated_fixture_mentions": 7
       },
       "freshness_state": {
@@ -1969,11 +2023,11 @@
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 6.88
+          "coverage_pct": 6.89
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 6.88
+          "coverage_pct": 6.89
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -1986,9 +2040,9 @@
       },
       "symbol_count": {
         "covered": 52,
-        "target": 756,
+        "target": 755,
         "total": 1265,
-        "uncovered": 704
+        "uncovered": 703
       },
       "threshold_id": "fct-math_abi-v1",
       "thresholds": {
@@ -2002,7 +2056,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 6,
-        "workload_domains": ["build_tools", "language_runtimes", "performance_sensitive"],
+        "workload_domains": [
+          "build_tools",
+          "language_runtimes",
+          "performance_sensitive"
+        ],
         "workload_ids": []
       }
     },
@@ -2032,7 +2090,9 @@
       "family_id": "mmap_abi",
       "fixture_count": {
         "fixture_cases": 8,
-        "fixture_file_refs": ["virtual_memory_ops.json"],
+        "fixture_file_refs": [
+          "virtual_memory_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2197,13 +2257,13 @@
       ],
       "coverage": {
         "direct_coverage_pct": 100.0,
-        "dual_mode_coverage_pct": 92.59,
-        "edge_case_symbol_pct": 77.78,
+        "dual_mode_coverage_pct": 91.67,
+        "edge_case_symbol_pct": 83.33,
         "errno_check_symbol_pct": 100.0,
-        "hardened_mode_coverage_pct": 92.59,
+        "hardened_mode_coverage_pct": 91.67,
         "isolated_coverage_pct": 0.0,
         "l0_replacement_pct": 100.0,
-        "l1_replacement_pct": 92.59,
+        "l1_replacement_pct": 91.67,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
         "strict_mode_coverage_pct": 100.0,
@@ -2213,7 +2273,7 @@
       "failure_signature": "coverage_threshold:isolated:0.0<threshold:20.0",
       "family_id": "process_abi",
       "fixture_count": {
-        "fixture_cases": 62,
+        "fixture_cases": 56,
         "fixture_file_refs": [
           "process_ops.json",
           "process_spawn_wait_tail.json",
@@ -2236,12 +2296,14 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["startup"]
+        "subsystems": [
+          "startup"
+        ]
       },
       "mode_coverage": {
-        "dual_mode_symbols": 25,
-        "hardened_or_both_symbols": 25,
-        "strict_or_both_symbols": 27
+        "dual_mode_symbols": 22,
+        "hardened_or_both_symbols": 22,
+        "strict_or_both_symbols": 24
       },
       "replacement_level_coverage": {
         "L0": {
@@ -2250,7 +2312,7 @@
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 92.59
+          "coverage_pct": 91.67
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -2262,9 +2324,9 @@
         }
       },
       "symbol_count": {
-        "covered": 27,
-        "target": 27,
-        "total": 30,
+        "covered": 24,
+        "target": 24,
+        "total": 29,
         "uncovered": 0
       },
       "threshold_id": "fct-process_abi-v1",
@@ -2322,8 +2384,12 @@
           "pthread_tls_keys.json"
         ],
         "fixture_files": 10,
-        "isolated_fixture_ids": ["fixture_pthread", "fixture_pthread_mutex_adversarial"],
-        "isolated_fixture_mentions": 12
+        "isolated_fixture_ids": [
+          "fixture_cxx_runtime",
+          "fixture_pthread",
+          "fixture_pthread_mutex_adversarial"
+        ],
+        "isolated_fixture_mentions": 13
       },
       "freshness_state": {
         "decision": "fresh",
@@ -2342,7 +2408,9 @@
           "pthread_cancellation",
           "threading"
         ],
-        "subsystems": ["threading"]
+        "subsystems": [
+          "threading"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 73,
@@ -2385,7 +2453,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 3,
-        "workload_domains": ["language_runtimes", "performance_sensitive", "threaded_services"],
+        "workload_domains": [
+          "language_runtimes",
+          "performance_sensitive",
+          "threaded_services"
+        ],
         "workload_ids": []
       }
     },
@@ -2415,9 +2487,13 @@
       "family_id": "pwd_abi",
       "fixture_count": {
         "fixture_cases": 4,
-        "fixture_file_refs": ["pwd_ops.json"],
+        "fixture_file_refs": [
+          "pwd_ops.json"
+        ],
         "fixture_files": 1,
-        "isolated_fixture_ids": ["fixture_nss"],
+        "isolated_fixture_ids": [
+          "fixture_nss"
+        ],
         "isolated_fixture_mentions": 2
       },
       "freshness_state": {
@@ -2431,7 +2507,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["nss"]
+        "subsystems": [
+          "nss"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 2,
@@ -2488,7 +2566,7 @@
       "coverage": {
         "direct_coverage_pct": 100.0,
         "dual_mode_coverage_pct": 100.0,
-        "edge_case_symbol_pct": 66.67,
+        "edge_case_symbol_pct": 50.0,
         "errno_check_symbol_pct": 100.0,
         "hardened_mode_coverage_pct": 100.0,
         "isolated_coverage_pct": 0.0,
@@ -2503,8 +2581,10 @@
       "failure_signature": "coverage_threshold:isolated:0.0<threshold:20.0",
       "family_id": "resolv_abi",
       "fixture_count": {
-        "fixture_cases": 12,
-        "fixture_file_refs": ["resolver_nss_core_wave01.json"],
+        "fixture_cases": 8,
+        "fixture_file_refs": [
+          "resolver_nss_core_wave01.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2520,12 +2600,15 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["nss", "resolver"]
+        "subsystems": [
+          "nss",
+          "resolver"
+        ]
       },
       "mode_coverage": {
-        "dual_mode_symbols": 6,
-        "hardened_or_both_symbols": 6,
-        "strict_or_both_symbols": 6
+        "dual_mode_symbols": 4,
+        "hardened_or_both_symbols": 4,
+        "strict_or_both_symbols": 4
       },
       "replacement_level_coverage": {
         "L0": {
@@ -2546,18 +2629,18 @@
         }
       },
       "symbol_count": {
-        "covered": 6,
-        "target": 6,
+        "covered": 4,
+        "target": 4,
         "total": 11,
         "uncovered": 0
       },
       "threshold_id": "fct-resolv_abi-v1",
       "thresholds": {
-        "min_direct_coverage_pct": 40.0,
+        "min_direct_coverage_pct": 50.0,
         "min_dual_mode_coverage_pct": 20.0,
         "min_isolated_coverage_pct": 20.0,
-        "min_target_coverage_pct": 90.0,
-        "reason": "base threshold: weak target families must reach 80% coverage; hard-parts family: higher direct, isolated, and dual-mode proof"
+        "min_target_coverage_pct": 100.0,
+        "reason": "base threshold: weak target families must reach 80% coverage; small family: require complete target coverage before readiness; hard-parts family: higher direct, isolated, and dual-mode proof"
       },
       "track": "resolver",
       "user_workload_exposure": {
@@ -2593,7 +2676,9 @@
       "family_id": "resource_abi",
       "fixture_count": {
         "fixture_cases": 11,
-        "fixture_file_refs": ["resource_ops.json"],
+        "fixture_file_refs": [
+          "resource_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2664,24 +2749,24 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 25.56,
-        "dual_mode_coverage_pct": 25.56,
-        "edge_case_symbol_pct": 17.29,
-        "errno_check_symbol_pct": 25.56,
-        "hardened_mode_coverage_pct": 25.56,
+        "direct_coverage_pct": 22.69,
+        "dual_mode_coverage_pct": 22.69,
+        "edge_case_symbol_pct": 13.45,
+        "errno_check_symbol_pct": 22.69,
+        "hardened_mode_coverage_pct": 22.69,
         "isolated_coverage_pct": 0.0,
-        "l0_replacement_pct": 25.56,
-        "l1_replacement_pct": 25.56,
+        "l0_replacement_pct": 22.69,
+        "l1_replacement_pct": 22.69,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 25.56,
-        "target_coverage_pct": 25.56
+        "strict_mode_coverage_pct": 22.69,
+        "target_coverage_pct": 22.69
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:25.56<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:22.69<threshold:85.0|direct:22.69<threshold:25.0|isolated:0.0<threshold:10.0",
       "family_id": "rpc_abi",
       "fixture_count": {
-        "fixture_cases": 68,
+        "fixture_cases": 54,
         "fixture_file_refs": [
           "rpc_legacy_network.json",
           "rpc_legacy_network_wave02.json",
@@ -2710,18 +2795,18 @@
         "subsystems": []
       },
       "mode_coverage": {
-        "dual_mode_symbols": 34,
-        "hardened_or_both_symbols": 34,
-        "strict_or_both_symbols": 34
+        "dual_mode_symbols": 27,
+        "hardened_or_both_symbols": 27,
+        "strict_or_both_symbols": 27
       },
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 25.56
+          "coverage_pct": 22.69
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 25.56
+          "coverage_pct": 22.69
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -2733,10 +2818,10 @@
         }
       },
       "symbol_count": {
-        "covered": 34,
-        "target": 133,
+        "covered": 27,
+        "target": 119,
         "total": 159,
-        "uncovered": 99
+        "uncovered": 92
       },
       "threshold_id": "fct-rpc_abi-v1",
       "thresholds": {
@@ -2750,7 +2835,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 8,
-        "workload_domains": ["legacy_network", "package_manager", "resolver_nss"],
+        "workload_domains": [
+          "legacy_network",
+          "package_manager",
+          "resolver_nss"
+        ],
         "workload_ids": []
       }
     },
@@ -2869,7 +2958,9 @@
       "family_id": "search_abi",
       "fixture_count": {
         "fixture_cases": 5,
-        "fixture_file_refs": ["search_ops.json"],
+        "fixture_file_refs": [
+          "search_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -2958,7 +3049,9 @@
       "family_id": "setjmp_abi",
       "fixture_count": {
         "fixture_cases": 6,
-        "fixture_file_refs": ["setjmp_ops.json"],
+        "fixture_file_refs": [
+          "setjmp_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3140,9 +3233,14 @@
       "family_id": "socket_abi",
       "fixture_count": {
         "fixture_cases": 34,
-        "fixture_file_refs": ["socket_network_wave01.json", "socket_ops.json"],
+        "fixture_file_refs": [
+          "socket_network_wave01.json",
+          "socket_ops.json"
+        ],
         "fixture_files": 2,
-        "isolated_fixture_ids": ["fixture_socket"],
+        "isolated_fixture_ids": [
+          "fixture_socket"
+        ],
         "isolated_fixture_mentions": 6
       },
       "freshness_state": {
@@ -3245,7 +3343,9 @@
       "hard_parts_risk": {
         "risk_level": "high",
         "risk_tags": [],
-        "subsystems": ["startup"]
+        "subsystems": [
+          "startup"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 0,
@@ -3318,7 +3418,9 @@
       "family_id": "stdbit_abi",
       "fixture_count": {
         "fixture_cases": 140,
-        "fixture_file_refs": ["stdbit_ops.json"],
+        "fixture_file_refs": [
+          "stdbit_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3389,30 +3491,32 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 60.0,
-        "dual_mode_coverage_pct": 50.0,
-        "edge_case_symbol_pct": 40.0,
-        "errno_check_symbol_pct": 60.0,
-        "hardened_mode_coverage_pct": 50.0,
+        "direct_coverage_pct": 69.23,
+        "dual_mode_coverage_pct": 61.54,
+        "edge_case_symbol_pct": 46.15,
+        "errno_check_symbol_pct": 69.23,
+        "hardened_mode_coverage_pct": 61.54,
         "isolated_coverage_pct": 0.0,
-        "l0_replacement_pct": 60.0,
-        "l1_replacement_pct": 50.0,
+        "l0_replacement_pct": 69.23,
+        "l1_replacement_pct": 61.54,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 60.0,
-        "target_coverage_pct": 60.0
+        "strict_mode_coverage_pct": 69.23,
+        "target_coverage_pct": 69.23
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:60.0<threshold:85.0|isolated:0.0<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:69.23<threshold:85.0|isolated:0.0<threshold:10.0",
       "family_id": "stdio_abi",
       "fixture_count": {
-        "fixture_cases": 116,
+        "fixture_cases": 134,
         "fixture_file_refs": [
           "scanf_conformance.json",
           "stdio_libio_symbols.json",
-          "stdio_libio_wave01.json"
+          "stdio_libio_wave01.json",
+          "stdio_libio_wave02.json",
+          "vsscanf_conformance.json"
         ],
-        "fixture_files": 3,
+        "fixture_files": 5,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
       },
@@ -3435,18 +3539,18 @@
         "subsystems": []
       },
       "mode_coverage": {
-        "dual_mode_symbols": 5,
-        "hardened_or_both_symbols": 5,
-        "strict_or_both_symbols": 6
+        "dual_mode_symbols": 8,
+        "hardened_or_both_symbols": 8,
+        "strict_or_both_symbols": 9
       },
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 60.0
+          "coverage_pct": 69.23
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 50.0
+          "coverage_pct": 61.54
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -3458,8 +3562,8 @@
         }
       },
       "symbol_count": {
-        "covered": 6,
-        "target": 10,
+        "covered": 9,
+        "target": 13,
         "total": 126,
         "uncovered": 4
       },
@@ -3475,7 +3579,12 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 2,
-        "workload_domains": ["build_tools", "package_manager", "shell_coreutils", "stdio_libio"],
+        "workload_domains": [
+          "build_tools",
+          "package_manager",
+          "shell_coreutils",
+          "stdio_libio"
+        ],
         "workload_ids": []
       }
     },
@@ -3586,7 +3695,7 @@
         "edge_case_symbol_pct": 53.64,
         "errno_check_symbol_pct": 100.0,
         "hardened_mode_coverage_pct": 88.18,
-        "isolated_coverage_pct": 5.45,
+        "isolated_coverage_pct": 10.91,
         "l0_replacement_pct": 100.0,
         "l1_replacement_pct": 88.18,
         "l2_replacement_pct": 0.0,
@@ -3594,8 +3703,8 @@
         "strict_mode_coverage_pct": 100.0,
         "target_coverage_pct": 100.0
       },
-      "decision": "fail",
-      "failure_signature": "coverage_threshold:isolated:5.45<threshold:10.0",
+      "decision": "pass",
+      "failure_signature": "none",
       "family_id": "string_abi",
       "fixture_count": {
         "fixture_cases": 253,
@@ -3621,8 +3730,12 @@
           "strlen_strict.json"
         ],
         "fixture_files": 19,
-        "isolated_fixture_ids": ["fixture_malloc", "fixture_malloc_stress", "fixture_string"],
-        "isolated_fixture_mentions": 8
+        "isolated_fixture_ids": [
+          "fixture_malloc",
+          "fixture_malloc_stress",
+          "fixture_string"
+        ],
+        "isolated_fixture_mentions": 14
       },
       "freshness_state": {
         "decision": "fresh",
@@ -3708,7 +3821,9 @@
       "family_id": "termios_abi",
       "fixture_count": {
         "fixture_cases": 8,
-        "fixture_file_refs": ["termios_ops.json"],
+        "fixture_file_refs": [
+          "termios_ops.json"
+        ],
         "fixture_files": 1,
         "isolated_fixture_ids": [],
         "isolated_fixture_mentions": 0
@@ -3872,24 +3987,24 @@
         "tests/conformance/fixture_coverage_prioritizer.v1.json"
       ],
       "coverage": {
-        "direct_coverage_pct": 27.91,
-        "dual_mode_coverage_pct": 26.6,
-        "edge_case_symbol_pct": 14.83,
-        "errno_check_symbol_pct": 27.91,
-        "hardened_mode_coverage_pct": 26.6,
-        "isolated_coverage_pct": 0.87,
-        "l0_replacement_pct": 28.2,
-        "l1_replacement_pct": 26.6,
+        "direct_coverage_pct": 27.22,
+        "dual_mode_coverage_pct": 25.89,
+        "edge_case_symbol_pct": 15.09,
+        "errno_check_symbol_pct": 27.22,
+        "hardened_mode_coverage_pct": 25.89,
+        "isolated_coverage_pct": 1.18,
+        "l0_replacement_pct": 27.51,
+        "l1_replacement_pct": 25.89,
         "l2_replacement_pct": 0.0,
         "l3_replacement_pct": 0.0,
-        "strict_mode_coverage_pct": 27.91,
-        "target_coverage_pct": 28.2
+        "strict_mode_coverage_pct": 27.22,
+        "target_coverage_pct": 27.51
       },
       "decision": "fail",
-      "failure_signature": "coverage_threshold:target:28.2<threshold:85.0|isolated:0.87<threshold:10.0",
+      "failure_signature": "coverage_threshold:target:27.51<threshold:85.0|isolated:1.18<threshold:10.0",
       "family_id": "unistd_abi",
       "fixture_count": {
-        "fixture_cases": 385,
+        "fixture_cases": 369,
         "fixture_file_refs": [
           "errno_ops.json",
           "mntent_ops.json",
@@ -3915,8 +4030,10 @@
           "unistd_process_filesystem_wave13.json"
         ],
         "fixture_files": 22,
-        "isolated_fixture_ids": ["fixture_io"],
-        "isolated_fixture_mentions": 6
+        "isolated_fixture_ids": [
+          "fixture_io"
+        ],
+        "isolated_fixture_mentions": 8
       },
       "freshness_state": {
         "decision": "fresh",
@@ -3937,18 +4054,18 @@
         "subsystems": []
       },
       "mode_coverage": {
-        "dual_mode_symbols": 183,
-        "hardened_or_both_symbols": 183,
-        "strict_or_both_symbols": 192
+        "dual_mode_symbols": 175,
+        "hardened_or_both_symbols": 175,
+        "strict_or_both_symbols": 184
       },
       "replacement_level_coverage": {
         "L0": {
           "claim_state": "measured_from_current_fixture_inventory",
-          "coverage_pct": 28.2
+          "coverage_pct": 27.51
         },
         "L1": {
           "claim_state": "requires strict+hardened fixture evidence",
-          "coverage_pct": 26.6
+          "coverage_pct": 25.89
         },
         "L2": {
           "claim_state": "blocked_until_standalone_host_dependency_evidence",
@@ -3960,10 +4077,10 @@
         }
       },
       "symbol_count": {
-        "covered": 194,
-        "target": 688,
-        "total": 744,
-        "uncovered": 494
+        "covered": 186,
+        "target": 676,
+        "total": 745,
+        "uncovered": 490
       },
       "threshold_id": "fct-unistd_abi-v1",
       "thresholds": {
@@ -4040,7 +4157,10 @@
           "semantic_divergence",
           "stateful_encoding"
         ],
-        "subsystems": ["iconv", "locale"]
+        "subsystems": [
+          "iconv",
+          "locale"
+        ]
       },
       "mode_coverage": {
         "dual_mode_symbols": 40,
@@ -4083,7 +4203,11 @@
       "user_workload_exposure": {
         "blocked_workload_count": 0,
         "prioritizer_rank": 4,
-        "workload_domains": ["language_runtimes", "locale_iconv", "shell_coreutils"],
+        "workload_domains": [
+          "language_runtimes",
+          "locale_iconv",
+          "shell_coreutils"
+        ],
         "workload_ids": []
       }
     }

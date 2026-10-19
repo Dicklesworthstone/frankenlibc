@@ -1,21 +1,21 @@
 {
   "schema_version": "v1",
   "bead": "bd-ldj.5",
-  "generated_at": "2026-06-04T23:48:35Z",
-  "report_hash": "214df0ee1d41f77d",
+  "generated_at": "2026-10-19T22:15:25Z",
+  "report_hash": "fadd017d9cc9fc0d",
   "summary": {
     "total_symbols": 4119,
-    "symbols_with_fixtures": 1164,
-    "symbols_without_fixtures": 2955,
-    "fixture_coverage_pct": 28.3,
-    "implemented_coverage_pct": 29.1,
-    "total_fixture_files": 127,
-    "total_cases": 2787,
+    "symbols_with_fixtures": 1190,
+    "symbols_without_fixtures": 2929,
+    "fixture_coverage_pct": 28.9,
+    "implemented_coverage_pct": 30.4,
+    "total_fixture_files": 132,
+    "total_cases": 2851,
     "total_format_issues": 0,
-    "symbols_with_edge_cases": 692,
-    "symbols_with_errno_checks": 1161,
-    "total_quality_issues": 2405,
-    "uncovered_action_count": 1952
+    "symbols_with_edge_cases": 721,
+    "symbols_with_errno_checks": 1187,
+    "total_quality_issues": 2387,
+    "uncovered_action_count": 1937
   },
   "fixture_file_analyses": [
     {
@@ -120,6 +120,38 @@
       "valid": true,
       "total_cases": 24,
       "unique_symbols": 12,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave04.json",
+      "family": "fortify/checked-wrapper",
+      "valid": true,
+      "total_cases": 18,
+      "unique_symbols": 9,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave05.json",
+      "family": "fortify/checked-wrapper",
+      "valid": true,
+      "total_cases": 12,
+      "unique_symbols": 6,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave06.json",
+      "family": "fortify/checked-wrapper",
+      "valid": true,
+      "total_cases": 14,
+      "unique_symbols": 7,
+      "issues": []
+    },
+    {
+      "file": "fortify_checked_wrapper_wave07.json",
+      "family": "fortify/checked-wrapper",
+      "valid": true,
+      "total_cases": 6,
+      "unique_symbols": 3,
       "issues": []
     },
     {
@@ -630,8 +662,8 @@
       "file": "stdio_libio_wave02.json",
       "family": "stdio/libio",
       "valid": true,
-      "total_cases": 24,
-      "unique_symbols": 12,
+      "total_cases": 26,
+      "unique_symbols": 13,
       "issues": []
     },
     {
@@ -976,6 +1008,14 @@
       "valid": true,
       "total_cases": 8,
       "unique_symbols": 4,
+      "issues": []
+    },
+    {
+      "file": "vsscanf_conformance.json",
+      "family": "vsscanf_conformance",
+      "valid": true,
+      "total_cases": 12,
+      "unique_symbols": 1,
       "issues": []
     },
     {
@@ -3602,7 +3642,7 @@
     },
     {
       "symbol": "__asprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -4741,7 +4781,7 @@
     },
     {
       "symbol": "__dprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5136,7 +5176,7 @@
     },
     {
       "symbol": "__fgets_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5156,7 +5196,7 @@
     },
     {
       "symbol": "__fgets_unlocked_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5176,7 +5216,7 @@
     },
     {
       "symbol": "__fgetws_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5196,7 +5236,7 @@
     },
     {
       "symbol": "__fgetws_unlocked_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5433,7 +5473,7 @@
     },
     {
       "symbol": "__fortify_fail",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5523,7 +5563,7 @@
     },
     {
       "symbol": "__fprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5613,7 +5653,7 @@
     },
     {
       "symbol": "__fread_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5633,7 +5673,7 @@
     },
     {
       "symbol": "__fread_unlocked_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -5767,7 +5807,7 @@
     },
     {
       "symbol": "__fwprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6095,7 +6135,7 @@
     },
     {
       "symbol": "__getcwd_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6128,7 +6168,7 @@
     },
     {
       "symbol": "__getdomainname_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6148,7 +6188,7 @@
     },
     {
       "symbol": "__getgroups_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6168,7 +6208,7 @@
     },
     {
       "symbol": "__gethostname_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6277,7 +6317,7 @@
     },
     {
       "symbol": "__gets_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -6310,7 +6350,7 @@
     },
     {
       "symbol": "__getwd_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -7514,7 +7554,7 @@
     },
     {
       "symbol": "__isoc99_sscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -7616,7 +7656,7 @@
     },
     {
       "symbol": "__isoc99_vsscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9048,7 +9088,7 @@
     },
     {
       "symbol": "__longjmp_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9194,7 +9234,7 @@
     },
     {
       "symbol": "__mbsnrtowcs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9214,7 +9254,7 @@
     },
     {
       "symbol": "__mbsrtowcs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9234,7 +9274,7 @@
     },
     {
       "symbol": "__mbstowcs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9955,7 +9995,7 @@
     },
     {
       "symbol": "__open64_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -9988,7 +10028,7 @@
     },
     {
       "symbol": "__open_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10021,7 +10061,7 @@
     },
     {
       "symbol": "__openat64_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10041,7 +10081,7 @@
     },
     {
       "symbol": "__openat_2",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10100,7 +10140,7 @@
     },
     {
       "symbol": "__poll_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10193,7 +10233,7 @@
     },
     {
       "symbol": "__ppoll_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10226,7 +10266,7 @@
     },
     {
       "symbol": "__pread64_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -10259,28 +10299,42 @@
     },
     {
       "symbol": "__pread_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__printf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -10967,15 +11021,22 @@
     },
     {
       "symbol": "__read_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -10993,28 +11054,42 @@
     },
     {
       "symbol": "__readlink_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__readlinkat_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -11034,15 +11109,22 @@
     },
     {
       "symbol": "__realpath_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -11060,28 +11142,42 @@
     },
     {
       "symbol": "__recv_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__recvfrom_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -12177,15 +12273,22 @@
     },
     {
       "symbol": "__snprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -12203,16 +12306,23 @@
     },
     {
       "symbol": "__sprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave04.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
       "edge_cases_covered": [],
-      "has_errno_check": false,
-      "quality_issues": []
+      "has_errno_check": true,
+      "quality_issues": [
+        "no edge cases detected"
+      ]
     },
     {
       "symbol": "__sqrt_finite",
@@ -13450,15 +13560,22 @@
     },
     {
       "symbol": "__syslog_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave07.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -13774,28 +13891,43 @@
     },
     {
       "symbol": "__vasprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__vdprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -13813,15 +13945,22 @@
     },
     {
       "symbol": "__vfprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -13839,28 +13978,43 @@
     },
     {
       "symbol": "__vfwprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave07.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__vprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -13878,28 +14032,42 @@
     },
     {
       "symbol": "__vsnprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__vsprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -13934,28 +14102,43 @@
     },
     {
       "symbol": "__vsyslog_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave07.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__vwprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave06.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -14171,28 +14354,42 @@
     },
     {
       "symbol": "__wcsnrtombs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
       "symbol": "__wcsrtombs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -14354,15 +14551,22 @@
     },
     {
       "symbol": "__wcstombs_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -14434,15 +14638,22 @@
     },
     {
       "symbol": "__wctomb_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -14548,15 +14759,23 @@
     },
     {
       "symbol": "__wprintf_chk",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "fortify_abi",
       "perf_class": "",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 2,
+      "fixture_files": [
+        "fortify_checked_wrapper_wave05.json"
+      ],
+      "modes_tested": [
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "null_input",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -14914,7 +15133,7 @@
     },
     {
       "symbol": "_authenticate",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -14934,7 +15153,7 @@
     },
     {
       "symbol": "_dl_find_object",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -14943,9 +15162,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "_dl_mcount_wrapper",
@@ -18306,11 +18523,12 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "negative",
+        "zero_length"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "bindresvport",
@@ -18849,7 +19067,7 @@
     },
     {
       "symbol": "callrpc",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -20717,7 +20935,7 @@
     },
     {
       "symbol": "clnt_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -20777,7 +20995,7 @@
     },
     {
       "symbol": "clnt_perror",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -20837,7 +21055,7 @@
     },
     {
       "symbol": "clnt_sperror",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -20857,7 +21075,7 @@
     },
     {
       "symbol": "clntraw_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -20937,7 +21155,7 @@
     },
     {
       "symbol": "clntunix_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -21306,8 +21524,8 @@
     },
     {
       "symbol": "clone",
-      "status": "RawSyscall",
-      "module": "process_abi",
+      "status": "WrapsHostLibc",
+      "module": "unistd_abi",
       "perf_class": "",
       "has_fixtures": true,
       "case_count": 2,
@@ -22721,7 +22939,7 @@
     },
     {
       "symbol": "crypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -22841,7 +23059,7 @@
     },
     {
       "symbol": "crypt_preferred_method",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -22861,7 +23079,7 @@
     },
     {
       "symbol": "crypt_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -22881,7 +23099,7 @@
     },
     {
       "symbol": "crypt_ra",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -22901,7 +23119,7 @@
     },
     {
       "symbol": "crypt_rn",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -23536,7 +23754,7 @@
     },
     {
       "symbol": "daemon",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -27796,7 +28014,7 @@
     },
     {
       "symbol": "fcrypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -27809,7 +28027,8 @@
         "strict"
       ],
       "edge_cases_covered": [
-        "null_input"
+        "null_input",
+        "zero_length"
       ],
       "has_errno_check": true,
       "quality_issues": []
@@ -29269,7 +29488,7 @@
     },
     {
       "symbol": "fmaf128",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "math_abi",
       "perf_class": "zero_cost",
       "has_fixtures": false,
@@ -29278,9 +29497,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "fmaf32",
@@ -31061,7 +31278,7 @@
     },
     {
       "symbol": "fork",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "process_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -31081,7 +31298,7 @@
     },
     {
       "symbol": "forkpty",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -32042,11 +32259,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "fspick",
@@ -32062,11 +32279,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "fsqrt",
@@ -33764,7 +33981,7 @@
     },
     {
       "symbol": "gethostbyaddr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "resolv_abi",
       "perf_class": "default",
       "has_fixtures": true,
@@ -33786,7 +34003,7 @@
     },
     {
       "symbol": "gethostbyaddr_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "inet_abi",
       "perf_class": "fast",
       "has_fixtures": false,
@@ -33795,9 +34012,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "gethostbyname",
@@ -33822,7 +34037,7 @@
     },
     {
       "symbol": "gethostbyname2",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -33831,13 +34046,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "gethostbyname2_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -33846,13 +34059,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "gethostbyname_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "inet_abi",
       "perf_class": "fast",
       "has_fixtures": false,
@@ -33861,9 +34072,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "gethostent",
@@ -34090,7 +34299,7 @@
     },
     {
       "symbol": "getnameinfo",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "resolv_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -45798,11 +46007,11 @@
         "hardened",
         "strict"
       ],
-      "edge_cases_covered": [],
+      "edge_cases_covered": [
+        "zero_length"
+      ],
       "has_errno_check": true,
-      "quality_issues": [
-        "no edge cases detected"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "posix_spawn_file_actions_addchdir_np",
@@ -46844,7 +47053,7 @@
     },
     {
       "symbol": "profil",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": true,
@@ -50524,7 +50733,7 @@
     },
     {
       "symbol": "register_printf_function",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -50537,7 +50746,7 @@
     },
     {
       "symbol": "register_printf_modifier",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -50550,7 +50759,7 @@
     },
     {
       "symbol": "register_printf_specifier",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -50563,7 +50772,7 @@
     },
     {
       "symbol": "register_printf_type",
-      "status": "WrapsHostLibc",
+      "status": "Stub",
       "module": "glibc_internal_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -50576,7 +50785,7 @@
     },
     {
       "symbol": "registerrpc",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -50585,9 +50794,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "remainder",
@@ -59062,7 +59269,7 @@
     },
     {
       "symbol": "svcfd_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59071,13 +59278,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "svcraw_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59086,13 +59291,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "svctcp_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59101,9 +59304,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "svcudp_bufcreate",
@@ -59137,7 +59338,7 @@
     },
     {
       "symbol": "svcudp_enablecache",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59146,13 +59347,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "svcunix_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59161,13 +59360,11 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "svcunixfd_create",
-      "status": "Implemented",
+      "status": "Stub",
       "module": "rpc_abi",
       "perf_class": "",
       "has_fixtures": false,
@@ -59176,9 +59373,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "swab",
@@ -62390,7 +62585,7 @@
     },
     {
       "symbol": "vfork",
-      "status": "RawSyscall",
+      "status": "WrapsHostLibc",
       "module": "process_abi",
       "perf_class": "coldpath",
       "has_fixtures": true,
@@ -62567,15 +62762,26 @@
     },
     {
       "symbol": "vsscanf",
-      "status": "WrapsHostLibc",
+      "status": "Implemented",
       "module": "stdio_abi",
       "perf_class": "coldpath",
-      "has_fixtures": false,
-      "case_count": 0,
-      "fixture_files": [],
-      "modes_tested": [],
-      "edge_cases_covered": [],
-      "has_errno_check": false,
+      "has_fixtures": true,
+      "case_count": 14,
+      "fixture_files": [
+        "stdio_libio_wave02.json",
+        "vsscanf_conformance.json"
+      ],
+      "modes_tested": [
+        "both",
+        "hardened",
+        "strict"
+      ],
+      "edge_cases_covered": [
+        "boundary",
+        "negative",
+        "zero_length"
+      ],
+      "has_errno_check": true,
       "quality_issues": []
     },
     {
@@ -64248,7 +64454,7 @@
     },
     {
       "symbol": "xcrypt",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -64257,9 +64463,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "xcrypt_gensalt",
@@ -64293,7 +64497,7 @@
     },
     {
       "symbol": "xcrypt_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
       "has_fixtures": false,
@@ -64302,9 +64506,7 @@
       "modes_tested": [],
       "edge_cases_covered": [],
       "has_errno_check": false,
-      "quality_issues": [
-        "implemented symbol has no fixtures"
-      ]
+      "quality_issues": []
     },
     {
       "symbol": "xdecrypt",
@@ -68552,13 +68754,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "_dl_find_object",
-      "status": "Implemented",
-      "module": "glibc_internal_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "_dl_mcount_wrapper",
       "status": "Implemented",
       "module": "glibc_internal_abi",
@@ -70743,13 +70938,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "fmaf128",
-      "status": "Implemented",
-      "module": "math_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "fmaf32",
       "status": "Implemented",
       "module": "math_abi",
@@ -71950,34 +72138,6 @@
       "symbol": "getgroups",
       "status": "RawSyscall",
       "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "gethostbyaddr_r",
-      "status": "Implemented",
-      "module": "inet_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "gethostbyname2",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "gethostbyname2_r",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "gethostbyname_r",
-      "status": "Implemented",
-      "module": "inet_abi",
       "action": "create fixture cases",
       "priority": "normal"
     },
@@ -76301,13 +76461,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "registerrpc",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "remap_file_pages",
       "status": "RawSyscall",
       "module": "unistd_abi",
@@ -77953,27 +78106,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "svcfd_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svcraw_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svctcp_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "svcudp_bufcreate",
       "status": "Implemented",
       "module": "rpc_abi",
@@ -77982,27 +78114,6 @@
     },
     {
       "symbol": "svcudp_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svcudp_enablecache",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svcunix_create",
-      "status": "Implemented",
-      "module": "rpc_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "svcunixfd_create",
       "status": "Implemented",
       "module": "rpc_abi",
       "action": "create fixture cases",
@@ -79311,13 +79422,6 @@
       "priority": "normal"
     },
     {
-      "symbol": "xcrypt",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
       "symbol": "xcrypt_gensalt",
       "status": "Implemented",
       "module": "unistd_abi",
@@ -79326,13 +79430,6 @@
     },
     {
       "symbol": "xcrypt_gensalt_r",
-      "status": "Implemented",
-      "module": "unistd_abi",
-      "action": "create fixture cases",
-      "priority": "normal"
-    },
-    {
-      "symbol": "xcrypt_r",
       "status": "Implemented",
       "module": "unistd_abi",
       "action": "create fixture cases",
