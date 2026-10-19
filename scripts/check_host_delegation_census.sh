@@ -38,7 +38,7 @@ if artifact.get("schema_version") != "host_delegation_census.v1":
     errors.append("schema_version_mismatch")
 if artifact.get("bead") != "bd-smp21.1":
     errors.append("bead_mismatch")
-if artifact.get("detector", {}).get("version") != 14:
+if artifact.get("detector", {}).get("version") != 15:
     errors.append("detector_version_mismatch")
 
 summary = artifact.get("summary", {})

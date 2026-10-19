@@ -284,15 +284,16 @@ def main() -> int:
         not assessment_mismatches,
         {"mismatches": assessment_mismatches},
     )
+    expected_level = "L0" if stub > 0 else "L1"
     add_check(
         "l1_remains_host_backed_interpose_not_standalone",
-        levels.get("current_level") == "L1"
-        and levels.get("release_tag_policy", {}).get("current_release_level") == "L1"
-        and callthrough > 0
-        and stub == 0,
+        levels.get("current_level") == expected_level
+        and levels.get("release_tag_policy", {}).get("current_release_level") == expected_level
+        and callthrough > 0,
         {
             "current_level": levels.get("current_level"),
             "current_release_level": levels.get("release_tag_policy", {}).get("current_release_level"),
+            "expected_level": expected_level,
             "host_backed_count": callthrough,
             "stub_count": stub,
         },

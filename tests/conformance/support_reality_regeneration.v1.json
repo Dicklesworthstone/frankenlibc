@@ -1,61 +1,5 @@
 {
-  "schema_version": "support_reality_regeneration.v1",
-  "generated_by_bead": "bd-0agsk.3",
-  "mode": "validate_only",
   "canonical_command": "scripts/check_support_reality_regeneration.sh --validate-only",
-  "regeneration_command": "scripts/check_support_reality_regeneration.sh --regenerate",
-  "supported_modes": ["validate_only", "regenerate"],
-  "source_commit": "2bc1eca9c7743ba9ce493bce5e29d69fe96f49b3",
-  "source_commit_policy": {
-    "committed_contract_token": "full_git_oid",
-    "checker_records_git_head": true,
-    "runtime_report_field": "source_commit",
-    "paired_artifacts_must_match": true
-  },
-  "generator_versions": {
-    "support_matrix_source": "reviewed source-derived support_matrix.json (preserved by paired regeneration)",
-    "reality_report_generator": "cargo run --quiet -p frankenlibc-harness --bin harness -- reality-report --support-matrix support_matrix.json",
-    "checker_contract": "bd-0agsk.3.support_reality_regeneration.v1"
-  },
-  "input_artifacts": [
-    {
-      "id": "support_matrix",
-      "path": "support_matrix.json",
-      "kind": "canonical_support_matrix",
-      "sha256": "4e81c716b7970f87ad1475de377ccea23e71e68541a005d8c8f9644fb6082ea0"
-    },
-    {
-      "id": "reality_report",
-      "path": "tests/conformance/reality_report.v1.json",
-      "kind": "canonical_reality_report",
-      "sha256": "8f155ed2469965473e5132deaa97b0585e477c39450f1e29c0393fa3113bc2e5"
-    }
-  ],
-  "output_artifacts": [
-    {
-      "id": "support_matrix",
-      "path": "support_matrix.json",
-      "kind": "canonical_support_matrix",
-      "sha256": "4e81c716b7970f87ad1475de377ccea23e71e68541a005d8c8f9644fb6082ea0"
-    },
-    {
-      "id": "reality_report",
-      "path": "tests/conformance/reality_report.v1.json",
-      "kind": "canonical_reality_report",
-      "sha256": "8f155ed2469965473e5132deaa97b0585e477c39450f1e29c0393fa3113bc2e5"
-    }
-  ],
-  "paired_update_policy": {
-    "required_artifact_ids": ["support_matrix", "reality_report"],
-    "single_artifact_update": "forbidden",
-    "support_matrix_write": "preserve_verified_input",
-    "canonical_artifact_writes": "forbidden_in_validate_only",
-    "failure_signature": "paired_artifacts_missing"
-  },
-  "report_outputs": {
-    "report_json": "target/conformance/support_reality_regeneration.report.json",
-    "log_jsonl": "target/conformance/support_reality_regeneration.log.jsonl"
-  },
   "checks": [
     "contract_schema_valid",
     "paired_artifacts_present",
@@ -66,9 +10,71 @@
     "regeneration_mode_refreshes_paired_hashes",
     "single_artifact_write_modes_rejected"
   ],
+  "generated_by_bead": "bd-0agsk.3",
+  "generator_versions": {
+    "checker_contract": "bd-0agsk.3.support_reality_regeneration.v1",
+    "reality_report_generator": "cargo run --quiet -p frankenlibc-harness --bin harness -- reality-report --support-matrix support_matrix.json",
+    "support_matrix_source": "reviewed source-derived support_matrix.json (preserved by paired regeneration)"
+  },
+  "input_artifacts": [
+    {
+      "id": "support_matrix",
+      "kind": "canonical_support_matrix",
+      "path": "support_matrix.json",
+      "sha256": "2b53290b3c8e651c749112393c07f310e37068fcf18053b82efb11a95ca4e1f2"
+    },
+    {
+      "id": "reality_report",
+      "kind": "canonical_reality_report",
+      "path": "tests/conformance/reality_report.v1.json",
+      "sha256": "6fafc5e70ecd78c0e4abf340cc6805b2a3f3ef706e5d1a77ebe70f3ef7b40a39"
+    }
+  ],
+  "mode": "validate_only",
   "non_goals": [
     "No support_matrix overwrite or inferred symbol status changes.",
     "No source_commit advancement without a reviewed support_matrix update.",
     "No replacement-level promotion."
+  ],
+  "output_artifacts": [
+    {
+      "id": "support_matrix",
+      "kind": "canonical_support_matrix",
+      "path": "support_matrix.json",
+      "sha256": "2b53290b3c8e651c749112393c07f310e37068fcf18053b82efb11a95ca4e1f2"
+    },
+    {
+      "id": "reality_report",
+      "kind": "canonical_reality_report",
+      "path": "tests/conformance/reality_report.v1.json",
+      "sha256": "6fafc5e70ecd78c0e4abf340cc6805b2a3f3ef706e5d1a77ebe70f3ef7b40a39"
+    }
+  ],
+  "paired_update_policy": {
+    "canonical_artifact_writes": "forbidden_in_validate_only",
+    "failure_signature": "paired_artifacts_missing",
+    "required_artifact_ids": [
+      "support_matrix",
+      "reality_report"
+    ],
+    "single_artifact_update": "forbidden",
+    "support_matrix_write": "preserve_verified_input"
+  },
+  "regeneration_command": "scripts/check_support_reality_regeneration.sh --regenerate",
+  "report_outputs": {
+    "log_jsonl": "target/conformance/support_reality_regeneration.log.jsonl",
+    "report_json": "target/conformance/support_reality_regeneration.report.json"
+  },
+  "schema_version": "support_reality_regeneration.v1",
+  "source_commit": "47cd6b0e1a751495ed9534938bd4f8b9cfe355d9",
+  "source_commit_policy": {
+    "checker_records_git_head": true,
+    "committed_contract_token": "full_git_oid",
+    "paired_artifacts_must_match": true,
+    "runtime_report_field": "source_commit"
+  },
+  "supported_modes": [
+    "validate_only",
+    "regenerate"
   ]
 }

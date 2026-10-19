@@ -874,7 +874,7 @@ fn standalone_build_matches_replacement_guard_outcome() {
         .output()
         .expect("failed to run replacement guard in replacement mode");
 
-    let cargo_output = Command::new("cargo")
+    let cargo_output = Command::new(env!("CARGO"))
         .args([
             "check",
             "--release",
@@ -884,24 +884,32 @@ fn standalone_build_matches_replacement_guard_outcome() {
             "standalone",
         ])
         .env("CARGO_TARGET_DIR", managed_nested_cargo_target_dir())
+        .env("RCH_CARGO_WRAPPER_BYPASS", "1")
         .current_dir(&root)
         .output()
         .expect("failed to run cargo check for standalone feature");
 
+    let census = load_host_delegation_census();
+    let blockers = census
+        .pointer("/profile_census/standalone-release-linux-x86_64/admission_blockers")
+        .and_then(serde_json::Value::as_array)
+        .expect("standalone profile should provide admission blockers");
+
     let guard_passes = guard_output.status.success();
+    let expected_cargo_passes = guard_passes && blockers.is_empty();
     let cargo_passes = cargo_output.status.success();
 
     assert_eq!(
         cargo_passes,
-        guard_passes,
-        "standalone build result must match replacement guard result\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
+        expected_cargo_passes,
+        "standalone build result must match replacement guard + census admission outcome\nreplacement_guard_stdout=\n{}\nreplacement_guard_stderr=\n{}\nstandalone_stdout=\n{}\nstandalone_stderr=\n{}",
         String::from_utf8_lossy(&guard_output.stdout),
         String::from_utf8_lossy(&guard_output.stderr),
         String::from_utf8_lossy(&cargo_output.stdout),
         String::from_utf8_lossy(&cargo_output.stderr)
     );
 
-    if !guard_passes {
+    if !cargo_passes {
         let combined = format!(
             "{}\n{}",
             String::from_utf8_lossy(&cargo_output.stdout),
@@ -916,11 +924,6 @@ fn standalone_build_matches_replacement_guard_outcome() {
             "standalone build failure should point to the replacement guard script\n{combined}"
         );
 
-        let census = load_host_delegation_census();
-        let blockers = census
-            .pointer("/profile_census/standalone-release-linux-x86_64/admission_blockers")
-            .and_then(serde_json::Value::as_array)
-            .expect("standalone profile should provide admission blockers");
         if !blockers.is_empty() {
             assert!(
                 combined.contains("tests/conformance/host_delegation_census.v1.json")

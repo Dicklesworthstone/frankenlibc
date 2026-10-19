@@ -272,14 +272,14 @@ fn native_nodelete_keeps_the_searched_dependency_closure_alive() {
     let dir = directory();
     let leaf = compile(
         &dir.join("plugins"),
-        "search_leaf",
+        "search_nodelete_leaf",
         "int search_tick(void) { static int n; return ++n; }",
         &[],
         None,
     );
     let root = compile(
         &dir,
-        "search_root",
+        "search_nodelete_root",
         "extern int search_tick(void); int search_answer(void) { return search_tick(); }",
         &[&leaf],
         Some(("$ORIGIN/plugins", false)),

@@ -7,7 +7,7 @@ use std::process::Command;
 
 const HOST_DELEGATION_CENSUS_REL: &str = "tests/conformance/host_delegation_census.v1.json";
 const HOST_DELEGATION_CENSUS_SCHEMA: &str = "host_delegation_census.v1";
-const HOST_DELEGATION_DETECTOR_VERSION: u64 = 14;
+const HOST_DELEGATION_DETECTOR_VERSION: u64 = 15;
 const STANDALONE_CENSUS_PROFILE: &str = "standalone-release-linux-x86_64";
 
 #[derive(Debug, Clone, Copy)]

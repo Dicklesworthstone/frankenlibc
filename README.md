@@ -173,7 +173,7 @@ The repair actions are deterministic for the validated input and state. Hardened
 
 ---
 
-## Checked Taxonomy State (snapshot generated 2026-10-12)
+## Checked Taxonomy State (snapshot generated 2026-10-19)
 
 Checked taxonomy source: `support_matrix.json`; replacement-level declarations live in `tests/conformance/replacement_levels.json`.
 `tests/conformance/reality_report.v1.json` mirrors that checked-in matrix and carries the same full source commit. These are classification artifacts, not semantic-parity evidence.
@@ -326,7 +326,7 @@ Unsafe C inputs are not trusted. The TSM sits at the libc boundary and classifie
 
 ### 3. Native by default
 
-Every row in the checked-in support matrix is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`. In the matrix snapshot generated 2026-10-12, the native classified subset is 2,809 symbols (`Implemented + RawSyscall`); 1,266 `WrapsHostLibc` rows remain as explicit host-backed interpose scope, with zero `GlibcCallThrough` and 44 `Stub` rows. The downgrade evidence is derived conservatively from source; the taxonomy does not by itself prove semantic parity.
+Every row in the checked-in support matrix is explicitly classified as `Implemented`, `RawSyscall`, `WrapsHostLibc`, `GlibcCallThrough`, or `Stub`. In the matrix snapshot generated 2026-10-19, the native classified subset is 2,809 symbols (`Implemented + RawSyscall`); 1,266 `WrapsHostLibc` rows remain as explicit host-backed interpose scope, with zero `GlibcCallThrough` and 44 `Stub` rows. The downgrade evidence is derived conservatively from source; the taxonomy does not by itself prove semantic parity.
 
 ### 4. Clean-room over translation
 
@@ -1394,7 +1394,7 @@ The symbol taxonomy is what makes this staged model legible:
 - `Implemented` + `RawSyscall` symbols apply to both artifacts.
 - `WrapsHostLibc` + `GlibcCallThrough` + `Stub` symbols apply to `Interpose` only.
 
-In the checked-in `support_matrix.json` snapshot (generated 2026-10-12), the classified surface is 68.2% native: 2,399 `Implemented` plus 410 `RawSyscall` rows. The remaining surface is 1,266 explicit host-backed `WrapsHostLibc` rows and 44 deterministic-failure `Stub` rows. These are taxonomy counts, not semantic-parity proof; native-promotion and standalone-admission evidence remain tracked by `bd-rc0923-epic-eeuy4f.17`.
+In the checked-in `support_matrix.json` snapshot (generated 2026-10-19), the classified surface is 68.2% native: 2,399 `Implemented` plus 410 `RawSyscall` rows. The remaining surface is 1,266 explicit host-backed `WrapsHostLibc` rows and 44 deterministic-failure `Stub` rows. These are taxonomy counts, not semantic-parity proof; native-promotion and standalone-admission evidence remain tracked by `bd-rc0923-epic-eeuy4f.17`.
 
 ### Today
 
@@ -1701,7 +1701,7 @@ Do not rely on adjectives in the README. Use the artifacts.
 
 | Question | Where to look |
 |---|---|
-| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (68.2% in the source-derived 2026-10-12 snapshot) |
+| How much of the exported surface is native? | `support_matrix.json` and `tests/conformance/replacement_levels.json` (68.2% in the source-derived 2026-10-19 snapshot) |
 | Is a symbol really implemented or still delegated? | `support_matrix.json` |
 | Does the repo still reconcile code and docs? | `bash scripts/check_support_matrix_maintenance.sh` |
 | Does interposition work on actual programs? | `bash scripts/ld_preload_smoke.sh` |
@@ -3901,7 +3901,7 @@ Selected project health snapshot:
 | TSM | Transparent Safety Membrane |
 | `Implemented` | Symbol path is natively owned in FrankenLibC |
 | `RawSyscall` | Symbol path goes directly to Linux syscalls rather than host glibc |
-| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,266 in the checked 2026-10-12 taxonomy snapshot) |
+| `WrapsHostLibc` | Native wrapper that still calls host libc symbols internally (1,266 in the checked 2026-10-19 taxonomy snapshot) |
 | `GlibcCallThrough` | Symbol still depends opaquely on host glibc for behavior (0 in that snapshot) |
 | `Stub` | Deterministic unsupported/failure contract (44 taxonomy rows in that snapshot; not proof that every other fallback/no-op semantic has reached full parity) |
 | `strict` | Compatibility-first runtime mode (default) |

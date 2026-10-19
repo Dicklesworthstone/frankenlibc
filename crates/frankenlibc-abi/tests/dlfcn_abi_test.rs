@@ -447,6 +447,132 @@ fn dlopen_absolute_path_of_libc_linked_dso_resolves_and_runs() {
         .into_owned();
     assert!(v.starts_with('1'), "unexpected zlibVersion {v:?}");
     assert_eq!(unsafe { dlclose(handle) }, 0);
+
+    // Check libm.so.6 by absolute path.
+    if let Some(libm_path) = [
+        "/usr/lib/x86_64-linux-gnu/libm.so.6",
+        "/lib/x86_64-linux-gnu/libm.so.6",
+    ]
+    .into_iter()
+    .find(|p| std::path::Path::new(p).exists())
+    {
+        let libm_name = CString::new(libm_path).unwrap();
+        let libm_handle = unsafe { dlopen(libm_name.as_ptr(), libc::RTLD_NOW) };
+        assert!(!libm_handle.is_null(), "dlopen({libm_path}) returned NULL");
+        let cos_sym = unsafe { dlsym(libm_handle, c"cos".as_ptr()) };
+        assert!(!cos_sym.is_null(), "dlsym(cos) failed");
+        let cos_fn: unsafe extern "C" fn(f64) -> f64 = unsafe { std::mem::transmute(cos_sym) };
+        assert_eq!(unsafe { cos_fn(0.0) }, 1.0);
+        assert_eq!(unsafe { dlclose(libm_handle) }, 0);
+    }
+
+    // Check libcrypto/libssl by absolute path if present on host.
+    for (candidates, symbol) in [
+        (
+            [
+                "/usr/lib/x86_64-linux-gnu/libcrypto.so.3",
+                "/lib/x86_64-linux-gnu/libcrypto.so.3",
+            ],
+            c"OpenSSL_version_num",
+        ),
+        (
+            [
+                "/usr/lib/x86_64-linux-gnu/libssl.so.3",
+                "/lib/x86_64-linux-gnu/libssl.so.3",
+            ],
+            c"OPENSSL_init_ssl",
+        ),
+    ] {
+        if let Some(cand_path) = candidates
+            .into_iter()
+            .find(|p| std::path::Path::new(p).exists())
+        {
+            let cand_name = CString::new(cand_path).unwrap();
+            let cand_handle = unsafe { dlopen(cand_name.as_ptr(), libc::RTLD_NOW) };
+            assert!(!cand_handle.is_null(), "dlopen({cand_path}) returned NULL");
+            let sym_ptr = unsafe { dlsym(cand_handle, symbol.as_ptr()) };
+            assert!(
+                !sym_ptr.is_null(),
+                "dlsym({symbol:?}) failed on {cand_path}"
+            );
+            assert_eq!(unsafe { dlclose(cand_handle) }, 0);
+        }
+    }
+}
+
+#[test]
+fn dlopen_absolute_path_of_libc_linked_dso_with_ie_and_gd_tls_resolves_and_runs() {
+    let _guard = TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "frankenlibc-libc-tls-dso-{}-{stamp}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("libc_tls_plugin.c");
+    let output = dir.join("libfranken_libc_tls_plugin.so");
+    std::fs::write(
+        &source,
+        r#"
+#include <stdio.h>
+#include <string.h>
+
+__thread __attribute__((tls_model("initial-exec"))) int ie_counter = 10;
+__thread __attribute__((tls_model("global-dynamic"))) int gd_counter = 100;
+
+__attribute__((visibility("default")))
+int franken_libc_tls_step(int delta) {
+    char buf[32];
+    ie_counter += delta;
+    gd_counter += delta * 2;
+    int n = snprintf(buf, sizeof(buf), "%d:%d", ie_counter, gd_counter);
+    return (n > 0 && strchr(buf, ':') != NULL) ? (ie_counter + gd_counter) : -1;
+}
+"#,
+    )
+    .unwrap();
+    let cc_output = Command::new("cc")
+        .args(["-shared", "-fPIC", "-O2", "-o"])
+        .arg(&output)
+        .arg(&source)
+        .arg("-lc")
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "cc failed: {}",
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let name = CString::new(output.as_os_str().as_bytes()).unwrap();
+    let handle = unsafe { dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    assert!(
+        !handle.is_null(),
+        "dlopen({output:?}) returned NULL: {:?}",
+        unsafe {
+            let e = dlerror();
+            (!e.is_null()).then(|| CStr::from_ptr(e).to_string_lossy().into_owned())
+        }
+    );
+    let sym = unsafe { dlsym(handle, c"franken_libc_tls_step".as_ptr()) };
+    assert!(!sym.is_null(), "dlsym(franken_libc_tls_step) failed");
+    let step_fn: unsafe extern "C" fn(c_int) -> c_int = unsafe { std::mem::transmute(sym) };
+    assert_eq!(unsafe { step_fn(5) }, (10 + 5) + (100 + 10));
+    assert_eq!(unsafe { step_fn(3) }, (15 + 3) + (110 + 6));
+
+    let fn_addr = sym as usize;
+    let worker_val = std::thread::spawn(move || {
+        let f: unsafe extern "C" fn(c_int) -> c_int = unsafe { std::mem::transmute(fn_addr) };
+        unsafe { f(7) }
+    })
+    .join()
+    .unwrap();
+    assert_eq!(worker_val, (10 + 7) + (100 + 14));
+    assert_eq!(unsafe { step_fn(1) }, (18 + 1) + (116 + 2));
+    assert_eq!(unsafe { dlclose(handle) }, 0);
 }
 
 #[test]

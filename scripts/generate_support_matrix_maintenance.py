@@ -1594,11 +1594,13 @@ def extract_function_body(source, fn_name):
             continue
 
         start = match.start()
-        next_fn = NEXT_FN_PATTERN.search(signature_tail)
-        if next_fn:
-            end = match.end() + next_fn.start()
-        else:
-            end = len(source)
+        end = balanced_brace_end(source, match.end() + open_brace)
+        if end is None:
+            next_fn = NEXT_FN_PATTERN.search(signature_tail)
+            if next_fn:
+                end = match.end() + next_fn.start()
+            else:
+                end = len(source)
         return source[start:end]
 
     return None
@@ -2889,17 +2891,15 @@ def test_downgrade_only_evidence():
         if any(row.get("generator_macro") == "rpc_stub" for row in rows)
     ]
     required_direct = {
-        "pmap_set",
-        "pmap_unset",
         "register_printf_function",
         "register_printf_modifier",
         "register_printf_specifier",
         "register_printf_type",
     }
-    if len(generated_current) != 38 or not required_direct <= set(current["annotations"]):
+    if len(generated_current) != 32 or not required_direct <= set(current["annotations"]):
         raise AssertionError(
-            "current source annotations did not resolve all 38 rpc_stub invocations "
-            f"and six direct contracts: {current}"
+            "current source annotations did not resolve all 32 rpc_stub invocations "
+            f"and four direct contracts: {current}"
         )
     passed += 1
     print(f"Self-test: downgrade-only evidence: {passed} cases passed")

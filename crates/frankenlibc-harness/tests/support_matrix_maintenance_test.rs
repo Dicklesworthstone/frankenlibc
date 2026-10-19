@@ -138,10 +138,17 @@ fn generate_maintenance_report_with_previous_and_triage(
 
 fn generate_promotion_triage_report() -> std::path::PathBuf {
     let root = repo_root();
-    std::fs::create_dir_all(root.join("target/conformance"))
-        .expect("failed to create target/conformance");
+    let maintenance_path = unique_generated_report_path("promotion_triage_maintenance");
+    let triage_path = unique_generated_report_path("promotion_triage_report");
+    let log_path = unique_generated_report_path("promotion_triage_log");
     let output = Command::new("bash")
         .arg(root.join("scripts/check_support_matrix_promotion_triage.sh"))
+        .env(
+            "FRANKENLIBC_PROMOTION_TRIAGE_MAINTENANCE_REPORT",
+            &maintenance_path,
+        )
+        .env("FRANKENLIBC_PROMOTION_TRIAGE_REPORT", &triage_path)
+        .env("FRANKENLIBC_PROMOTION_TRIAGE_LOG", &log_path)
         .current_dir(&root)
         .output()
         .expect("failed to execute promotion triage checker");
@@ -151,7 +158,7 @@ fn generate_promotion_triage_report() -> std::path::PathBuf {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    root.join("target/conformance/support_matrix_promotion_triage.v1.json")
+    triage_path
 }
 
 fn stable_report_sections(report: &serde_json::Value) -> serde_json::Value {
@@ -355,7 +362,7 @@ const C11THREADS_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "thrd_exit",
     "thrd_join",
 ];
-const STDIO_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__isoc99_wscanf", "fscanf"];
+const STDIO_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &["__isoc99_wscanf", "fscanf", "vsscanf"];
 const WCHAR_PROMOTION_TRANCHE_SYMBOLS: &[&str] = &[
     "__isoc23_fwscanf",
     "__isoc23_vfwscanf",

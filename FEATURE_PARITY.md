@@ -3,7 +3,7 @@
 ## Current Reality
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
-The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-10-12, and it records the same full source commit as `support_matrix.json`.
+The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-10-19, and it records the same full source commit as `support_matrix.json`.
 Reality snapshot: total_exported=4119, implemented=2399, raw_syscall=410, wraps_host_libc=1266, glibc_call_through=0, stub=44.
 Counts below reflect the checked-in support matrix symbol rows and will change as source-derived evidence lands. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; the explicit `Stub` rows are deterministic unsupported/failure contracts, while other no-op/fallback/bootstrap semantics remain separately classified by the overlay.
 Regenerate deterministically with:
