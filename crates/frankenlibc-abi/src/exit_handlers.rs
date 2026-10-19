@@ -6,8 +6,7 @@ use super::{CxaEntry, ExitHandler, c_int, c_void, set_abi_errno};
 
 static EXIT_HANDLERS: std::sync::Mutex<Vec<(usize, ExitHandler)>> =
     std::sync::Mutex::new(Vec::new());
-static NEXT_EXIT_TICKET: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(1);
+static NEXT_EXIT_TICKET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
 
 fn invoke_exit_handler(handler: ExitHandler, status: c_int) {
     match handler {
@@ -22,12 +21,10 @@ fn invoke_exit_handler(handler: ExitHandler, status: c_int) {
 #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
 mod host {
     use super::*;
-    type OnExit = unsafe extern "C" fn(
-        unsafe extern "C" fn(c_int, *mut c_void), *mut c_void,
-    ) -> c_int;
-    type CxaAtExit = unsafe extern "C" fn(
-        unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void,
-    ) -> c_int;
+    type OnExit =
+        unsafe extern "C" fn(unsafe extern "C" fn(c_int, *mut c_void), *mut c_void) -> c_int;
+    type CxaAtExit =
+        unsafe extern "C" fn(unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void) -> c_int;
 
     pub(super) enum Registration {
         OnExit(OnExit),
@@ -45,7 +42,9 @@ mod host {
 
     fn claim(ticket: *mut c_void) -> Option<ExitHandler> {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-        handlers.iter().position(|(id, _)| *id == ticket as usize)
+        handlers
+            .iter()
+            .position(|(id, _)| *id == ticket as usize)
             .map(|index| handlers.remove(index).1)
     }
 
@@ -108,7 +107,8 @@ mod host {
         if let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__cxa_finalize") {
             // Host and bridged registrations share the host's ordering. Its
             // callback claims our entry; no native lock crosses foreign code.
-            let finalize: unsafe extern "C" fn(*mut c_void) = unsafe { std::mem::transmute(address) };
+            let finalize: unsafe extern "C" fn(*mut c_void) =
+                unsafe { std::mem::transmute(address) };
             unsafe { finalize(dso) };
         }
     }
@@ -116,8 +116,9 @@ mod host {
 
 pub(super) fn register_exit_handler(handler: ExitHandler) -> c_int {
     use std::sync::atomic::Ordering;
-    let Ok(ticket) = NEXT_EXIT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
-                                                  |id| id.checked_add(1)) else {
+    let Ok(ticket) =
+        NEXT_EXIT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+    else {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     };
@@ -168,12 +169,15 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
     loop {
         let handler = {
             let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            handlers.iter().rposition(|(_, handler)| match handler {
-                ExitHandler::Cxa(entry) => dso.is_null() || entry.dso == dso,
-                // The C++ ABI specifies plain atexit as a null-DSO registration.
-                ExitHandler::Atexit(_) => dso.is_null(),
-                ExitHandler::OnExit(_) => false,
-            }).map(|index| handlers.remove(index).1)
+            handlers
+                .iter()
+                .rposition(|(_, handler)| match handler {
+                    ExitHandler::Cxa(entry) => dso.is_null() || entry.dso == dso,
+                    // The C++ ABI specifies plain atexit as a null-DSO registration.
+                    ExitHandler::Atexit(_) => dso.is_null(),
+                    ExitHandler::OnExit(_) => false,
+                })
+                .map(|index| handlers.remove(index).1)
         };
         let Some(handler) = handler else { break };
         invoke_exit_handler(handler, 0);
@@ -182,7 +186,10 @@ pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
 
 pub(super) fn run_exit_handlers(status: c_int) {
     loop {
-        let handler = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner()).pop();
+        let handler = EXIT_HANDLERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop();
         let Some((_, handler)) = handler else { break };
         // Claim before invocation. Reentrant registrations precede older ones.
         invoke_exit_handler(handler, status);
