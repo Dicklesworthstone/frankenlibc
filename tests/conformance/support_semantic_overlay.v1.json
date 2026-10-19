@@ -6,11 +6,11 @@
     "artifact": "support_matrix.json",
     "total_exported": 4119,
     "status_counts": {
-      "Implemented": 2399,
+      "Implemented": 2419,
       "RawSyscall": 410,
-      "WrapsHostLibc": 1266,
+      "WrapsHostLibc": 1272,
       "GlibcCallThrough": 0,
-      "Stub": 44
+      "Stub": 18
     }
   },
   "semantic_contract_classes": {

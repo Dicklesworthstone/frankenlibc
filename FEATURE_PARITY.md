@@ -4,7 +4,7 @@
 
 Source of truth for support-taxonomy classification is `support_matrix.json`.
 The checked taxonomy snapshot is `tests/conformance/reality_report.v1.json`; its `generated_at_utc` is 2026-10-19, and it records the same full source commit as `support_matrix.json`.
-Reality snapshot: total_exported=4119, implemented=2393, raw_syscall=410, wraps_host_libc=1272, glibc_call_through=0, stub=44.
+Reality snapshot: total_exported=4119, implemented=2419, raw_syscall=410, wraps_host_libc=1272, glibc_call_through=0, stub=18.
 Counts below reflect the checked-in support matrix symbol rows and will change as source-derived evidence lands. Semantic contract coverage is tracked separately in `tests/conformance/support_semantic_overlay.v1.json`; the explicit `Stub` rows are deterministic unsupported/failure contracts, while other no-op/fallback/bootstrap semantics remain separately classified by the overlay.
 Regenerate deterministically with:
 
@@ -15,11 +15,11 @@ cargo run -p frankenlibc-harness --bin harness -- reality-report \
 ```
 
 The current support matrix contains **4119 symbols**, classified as:
-- `Implemented`: 2393
+- `Implemented`: 2419
 - `RawSyscall`: 410
 - `WrapsHostLibc`: 1272
 - `GlibcCallThrough`: 0
-- `Stub`: 44
+- `Stub`: 18
 
 This means the checked taxonomy snapshot describes a **hybrid L0 interposition profile** (mixed Rust-owned behavior, raw syscalls, host-glibc delegation, and explicit unsupported contracts), not a full replacement profile. Conservative downgrade derivation is live; cfg/profile-aware native promotion and standalone admission remain open under `bd-rc0923-epic-eeuy4f.17`. Taxonomy counts are not semantic-parity evidence.
 
@@ -74,7 +74,7 @@ This file tracks the current staged parity profile, not a full replacement profi
 | `RawSyscall` | `unistd_abi`, `socket_abi`, `termios_abi`, `time_abi`, `dirent_abi`, `process_abi`, `poll_abi`, `io_abi`, `mmap_abi`, `resource_abi`, `signal_abi` |
 | `WrapsHostLibc` | `io_internal_abi`, `stdio_abi` |
 | `GlibcCallThrough` | none in current support matrix snapshot |
-| `Stub` | `rpc_abi` (40), `glibc_internal_abi` printf registration (4) |
+| `Stub` | `rpc_abi` (14), `glibc_internal_abi` printf registration (4) |
 
 ## Hard-Parts Truth Table
 
@@ -90,7 +90,7 @@ Historical artifact: `tests/conformance/hard_parts_truth_table.v1.json` (generat
 ## Deterministic Stub Surface
 
 Current support-taxonomy `Stub` rows:
-- 40 SunRPC client/server/registration entrypoints and 4 printf registration entrypoints; the exact 44-symbol list is maintained in the README taxonomy section and `tests/conformance/reality_report.v1.json`.
+- 14 SunRPC client/server/registration entrypoints and 4 printf registration entrypoints; the exact 18-symbol list is maintained in the README taxonomy section and `tests/conformance/reality_report.v1.json`.
 
 Current semantic fallback/no-op/bootstrap contracts:
 - Representative, non-exhaustive overlay: `tests/conformance/support_semantic_overlay.v1.json`

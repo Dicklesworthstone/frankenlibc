@@ -172,13 +172,13 @@ fn contract_binds_gate_sources_events_and_expected_counts() -> TestResult {
 
     let summary = &contract["completion_debt_evidence"]["required_summary"];
     assert_eq!(summary["total_symbols"].as_u64(), Some(4119));
-    assert_eq!(summary["implemented"].as_u64(), Some(2393));
+    assert_eq!(summary["implemented"].as_u64(), Some(2419));
     assert_eq!(summary["raw_syscall"].as_u64(), Some(410));
-    assert_eq!(summary["native"].as_u64(), Some(2803));
+    assert_eq!(summary["native"].as_u64(), Some(2829));
     assert_eq!(summary["wraps_host_libc"].as_u64(), Some(1272));
     assert_eq!(summary["glibc_callthrough"].as_u64(), Some(0));
-    assert_eq!(summary["stub"].as_u64(), Some(44));
-    assert_eq!(summary["native_pct"].as_f64(), Some(68.1));
+    assert_eq!(summary["stub"].as_u64(), Some(18));
+    assert_eq!(summary["native_pct"].as_f64(), Some(68.7));
 
     let events: BTreeSet<_> = contract["completion_debt_evidence"]["required_events"]
         .as_array()
@@ -235,13 +235,13 @@ fn gate_passes_current_taxonomy_and_emits_jsonl() -> TestResult {
     assert_eq!(report["bead"].as_str(), Some("bd-smp21.5"));
     assert_eq!(report["status"].as_str(), Some("pass"));
     assert_eq!(report["summary"]["total_symbols"].as_u64(), Some(4119));
-    assert_eq!(report["summary"]["implemented"].as_u64(), Some(2393));
+    assert_eq!(report["summary"]["implemented"].as_u64(), Some(2419));
     assert_eq!(report["summary"]["raw_syscall"].as_u64(), Some(410));
-    assert_eq!(report["summary"]["native"].as_u64(), Some(2803));
+    assert_eq!(report["summary"]["native"].as_u64(), Some(2829));
     assert_eq!(report["summary"]["wraps_host_libc"].as_u64(), Some(1272));
     assert_eq!(report["summary"]["glibc_callthrough"].as_u64(), Some(0));
-    assert_eq!(report["summary"]["stub"].as_u64(), Some(44));
-    assert_eq!(report["summary"]["native_pct"].as_f64(), Some(68.1));
+    assert_eq!(report["summary"]["stub"].as_u64(), Some(18));
+    assert_eq!(report["summary"]["native_pct"].as_f64(), Some(68.7));
     assert_eq!(
         report["summary"]["implemented_host_delegation_count"].as_u64(),
         Some(0)
@@ -273,7 +273,7 @@ fn gate_passes_current_taxonomy_and_emits_jsonl() -> TestResult {
 fn gate_rejects_stale_readme_native_badge() -> TestResult {
     let root = workspace_root();
     let readme = std::fs::read_to_string(root.join("README.md"))?;
-    let stale = readme.replace("native_coverage-68.1%25", "native_coverage-100%25");
+    let stale = readme.replace("native_coverage-68.7%25", "native_coverage-100%25");
     assert_ne!(readme, stale, "README fixture should be mutated");
     let stale_path = unique_target_path(&root, "stale-readme", "md");
     if let Some(parent) = stale_path.parent() {
@@ -311,7 +311,7 @@ fn gate_rejects_stale_readme_native_badge() -> TestResult {
     assert_eq!(badge_check["details"]["badge_pct"].as_f64(), Some(100.0));
     assert_eq!(
         badge_check["details"]["expected_native_pct"].as_f64(),
-        Some(68.1)
+        Some(68.7)
     );
     Ok(())
 }

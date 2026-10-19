@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "bead": "bd-2bu",
-  "generated_at_utc": "2026-10-12T18:35:28Z",
-  "source_commit": "2bc1eca9c7743ba9ce493bce5e29d69fe96f49b3",
+  "generated_at_utc": "2026-10-19T21:41:00Z",
+  "source_commit": "67d21fb34b2e40e376c47906ec1be9c39530d8b5",
   "description": "Replacement maturity model for frankenlibc. Defines four levels from LD_PRELOAD interposition to full standalone replacement, with measurable gate criteria for each level transition.",
   "levels": [
     {
@@ -21,13 +21,13 @@
         "test_gate": "cargo test --workspace passes"
       },
       "current_state": {
-        "implemented_pct": 58,
+        "implemented_pct": 59,
         "raw_syscall_pct": 10,
         "callthrough_pct": 0,
         "wraps_host_libc_pct": 31,
         "glibc_callthrough_pct": 0,
-        "native_pct": 68,
-        "stub_pct": 1,
+        "native_pct": 69,
+        "stub_pct": 0,
         "callthrough_modules": [
           "c11threads_abi",
           "dirent_abi",
@@ -87,7 +87,7 @@
       "objective_gate": {
         "bead": "bd-gtf.4",
         "status": "blocked",
-        "status_reason": "L1 is not yet achieved. The support taxonomy has 44 explicit deterministic-failure stubs, violating the zero-stub gate. The real-world preload corpus (run rc0923-corpus-20260924T195208Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent) also has one tracked known failure: fork_multithreaded_parent exceeds the strict perf-ratio budget (fork is ~4x glibc; bd-rc0923-epic-eeuy4f.25).",
+        "status_reason": "L1 is not yet achieved. The support taxonomy has 18 explicit deterministic-failure stubs, violating the zero-stub gate. The real-world preload corpus (run rc0923-corpus-20260924T195208Z: git, sed, grep, awk, find, tar, make, perl, C++ and Python C-extension programs, TZ-aware time, GNU argp tools, iconv, named-locale formatting and collation, wide ctype, getaddrinfo ordering, glibc-mangled setjmp/longjmp, C++ exceptions through libc callbacks, thread cancellation at blocking points, process-shared/robust/PI mutexes, fork from a multithreaded parent) also has one tracked known failure: fork_multithreaded_parent exceeds the strict perf-ratio budget (fork is ~4x glibc; bd-rc0923-epic-eeuy4f.25).",
         "required_log_fields": ["trace_id", "level", "obligation_id", "outcome", "artifact_ref"],
         "generated_report": {
           "report_path": "target/conformance/replacement_levels_l1_gate.report.json",
@@ -103,7 +103,7 @@
               "stub": 0
             },
             "actual": {
-              "stub": 44
+              "stub": 18
             },
             "outcome": "blocked"
           },
@@ -127,7 +127,7 @@
               "min_implemented_pct": 35
             },
             "actual": {
-              "implemented_pct": 58
+              "implemented_pct": 59
             },
             "outcome": "pass"
           },
@@ -231,7 +231,7 @@
         }
       },
       "blockers": [
-        "44 deterministic-failure stubs remain: 40 SunRPC APIs and 4 printf registration APIs",
+        "18 deterministic-failure stubs remain: 14 SunRPC APIs and 4 printf registration APIs",
         "fork_multithreaded_parent exceeds the strict perf-ratio budget"
       ],
       "status": "in_progress"
@@ -299,20 +299,20 @@
   "current_level": "L0",
   "current_assessment": {
     "total_symbols": 4119,
-    "implemented": 2393,
+    "implemented": 2419,
     "raw_syscall": 410,
-    "native": 2803,
+    "native": 2829,
     "wraps_host_libc": 1272,
     "glibc_callthrough": 0,
     "callthrough": 1272,
-    "stub": 44,
-    "implemented_pct": 58,
+    "stub": 18,
+    "implemented_pct": 59,
     "raw_syscall_pct": 10,
-    "native_pct": 68,
+    "native_pct": 69,
     "wraps_host_libc_pct": 31,
     "glibc_callthrough_pct": 0,
     "callthrough_pct": 31,
-    "stub_pct": 1,
+    "stub_pct": 0,
     "callthrough_breakdown": {
       "c11threads_abi": 9,
       "dirent_abi": 7,
@@ -374,7 +374,7 @@
     "glibc_callthrough_breakdown": {},
     "stub_breakdown": {
       "glibc_internal_abi": 4,
-      "rpc_abi": 40
+      "rpc_abi": 14
     }
   },
   "release_tag_policy": {

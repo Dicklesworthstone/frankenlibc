@@ -1,7 +1,7 @@
 {
   "version": 2,
-  "generated_at_utc": "2026-10-19T19:49:00Z",
-  "source_commit": "d72b8609e286431a8aca89281f14e7f274f2a782",
+  "generated_at_utc": "2026-10-19T21:41:00Z",
+  "source_commit": "67d21fb34b2e40e376c47906ec1be9c39530d8b5",
   "library": "source-derived:crates/frankenlibc-abi/src",
   "total_exported": 4119,
   "taxonomy": {
@@ -19351,17 +19351,17 @@
     },
     {
       "symbol": "authnone_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "authunix_create_default",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -19461,17 +19461,17 @@
     },
     {
       "symbol": "clnttcp_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_bufcreate",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "clntudp_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -20604,12 +20604,12 @@
     },
     {
       "symbol": "pmap_set",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "pmap_unset",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -21085,82 +21085,82 @@
     },
     {
       "symbol": "svc_exit",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_common",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreq_poll",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_getreqset",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_register",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_run",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_sendreply",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svc_unregister",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_auth",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_decode",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noproc",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_noprog",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_progvers",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_systemerr",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcerr_weakauth",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -21180,12 +21180,12 @@
     },
     {
       "symbol": "svcudp_bufcreate",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
       "symbol": "svcudp_create",
-      "status": "Stub",
+      "status": "Implemented",
       "module": "rpc_abi"
     },
     {
@@ -33218,21 +33218,21 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2393,
+    "implemented": 2419,
     "raw_syscall": 410,
     "wraps_host_libc": 1272,
     "glibc_call_through": 0,
-    "stub": 44
+    "stub": 18
   },
-  "implemented": 2393,
+  "implemented": 2419,
   "raw_syscall": 410,
   "glibc_call_through": 0,
-  "stub": 44,
+  "stub": 18,
   "counts": {
-    "implemented": 2393,
+    "implemented": 2419,
     "raw_syscall": 410,
     "glibc_call_through": 0,
-    "stub": 44,
+    "stub": 18,
     "wraps_host_libc": 1272
   },
   "wraps_host_libc": 1272

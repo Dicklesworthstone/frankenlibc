@@ -132,6 +132,24 @@ CROSS_MODULE_SOURCE_LOCATORS = {
     ("math_abi", "fesetexcept"): "fenv_abi",
     ("math_abi", "fesetmode"): "fenv_abi",
     ("math_abi", "fetestexceptflag"): "fenv_abi",
+    ("rpc_abi", "svc_exit"): "rpc_svc",
+    ("rpc_abi", "svc_getreq"): "rpc_svc",
+    ("rpc_abi", "svc_getreq_common"): "rpc_svc",
+    ("rpc_abi", "svc_getreq_poll"): "rpc_svc",
+    ("rpc_abi", "svc_getreqset"): "rpc_svc",
+    ("rpc_abi", "svc_register"): "rpc_svc",
+    ("rpc_abi", "svc_run"): "rpc_svc",
+    ("rpc_abi", "svc_sendreply"): "rpc_svc",
+    ("rpc_abi", "svc_unregister"): "rpc_svc",
+    ("rpc_abi", "svcerr_auth"): "rpc_svc",
+    ("rpc_abi", "svcerr_decode"): "rpc_svc",
+    ("rpc_abi", "svcerr_noproc"): "rpc_svc",
+    ("rpc_abi", "svcerr_noprog"): "rpc_svc",
+    ("rpc_abi", "svcerr_progvers"): "rpc_svc",
+    ("rpc_abi", "svcerr_systemerr"): "rpc_svc",
+    ("rpc_abi", "svcerr_weakauth"): "rpc_svc",
+    ("rpc_abi", "svcudp_bufcreate"): "rpc_svc",
+    ("rpc_abi", "svcudp_create"): "rpc_svc",
 }
 PROMOTION_PROOF_WARNING = "host delegation census covered by promotion proof manifest"
 FN_NAME_PATTERN = re.compile(r'\bfn\s+([A-Za-z_]\w*)\s*\(')
@@ -2896,9 +2914,9 @@ def test_downgrade_only_evidence():
         "register_printf_specifier",
         "register_printf_type",
     }
-    if len(generated_current) != 32 or not required_direct <= set(current["annotations"]):
+    if len(generated_current) != 14 or not required_direct <= set(current["annotations"]):
         raise AssertionError(
-            "current source annotations did not resolve all 32 rpc_stub invocations "
+            "current source annotations did not resolve all 14 rpc_stub invocations "
             f"and four direct contracts: {current}"
         )
     passed += 1
