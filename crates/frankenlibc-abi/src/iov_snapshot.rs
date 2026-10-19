@@ -79,7 +79,10 @@ impl Mapping {
             unsafe { syscall::syscall2(libc::SYS_munmap as usize, base, bytes) };
             return Err(errno::ENOMEM);
         }
-        Ok(Self { base: base as *mut libc::iovec, bytes })
+        Ok(Self {
+            base: base as *mut libc::iovec,
+            bytes,
+        })
     }
 }
 
@@ -88,9 +91,7 @@ impl Drop for Mapping {
         // SAFETY: this object owns the mapping, it has not been exposed for
         // retention, and all borrowed views end before this destructor runs.
         // The raw veneer does not overwrite ABI errno on an I/O error path.
-        unsafe {
-            syscall::syscall2(libc::SYS_munmap as usize, self.base as usize, self.bytes)
-        };
+        unsafe { syscall::syscall2(libc::SYS_munmap as usize, self.base as usize, self.bytes) };
     }
 }
 
@@ -103,7 +104,10 @@ impl PreparedIovecs {
         hardened: bool,
     ) -> Result<Self, c_int> {
         if !hardened || count <= 0 || count as usize > MAX_IOVECS || iov.is_null() {
-            return Ok(Self { storage: Storage::Original(iov), count: 0 });
+            return Ok(Self {
+                storage: Storage::Original(iov),
+                count: 0,
+            });
         }
         Self::snapshot_with(iov, count as usize, crate::malloc_abi::known_remaining)
     }
@@ -117,7 +121,10 @@ impl PreparedIovecs {
         hardened: bool,
     ) -> Result<Self, c_int> {
         if count > MAX_IOVECS {
-            return Ok(Self { storage: Storage::Original(iov), count: 0 });
+            return Ok(Self {
+                storage: Storage::Original(iov),
+                count: 0,
+            });
         }
         Self::prepare(iov, count as c_int, hardened)
     }
@@ -131,7 +138,9 @@ impl PreparedIovecs {
         if iov.is_null() || count == 0 || count > MAX_IOVECS {
             return Err(errno::EINVAL);
         }
-        let bytes = count.checked_mul(size_of::<libc::iovec>()).ok_or(errno::EINVAL)?;
+        let bytes = count
+            .checked_mul(size_of::<libc::iovec>())
+            .ok_or(errno::EINVAL)?;
         if (iov as usize).checked_add(bytes).is_none()
             || remaining(iov as usize).is_some_and(|available| bytes > available)
         {
@@ -160,7 +169,8 @@ impl PreparedIovecs {
         let entries = imported.entries();
         let mut total = 0usize;
         for entry in entries {
-            total = total.checked_add(entry.iov_len)
+            total = total
+                .checked_add(entry.iov_len)
                 .filter(|&length| length <= isize::MAX as usize)
                 .ok_or(errno::EINVAL)?;
         }
@@ -221,7 +231,8 @@ pub(super) unsafe fn copy_user_bytes(
         return Ok(());
     }
     for address in [source as usize, destination as usize] {
-        if address == 0 || address.checked_add(bytes).is_none()
+        if address == 0
+            || address.checked_add(bytes).is_none()
             || crate::malloc_abi::known_remaining(address)
                 .is_some_and(|available| bytes > available)
         {
@@ -240,8 +251,14 @@ unsafe fn copy_descriptors(
     destination: *mut libc::iovec,
     bytes: usize,
 ) -> Result<(), c_int> {
-    let local = libc::iovec { iov_base: destination.cast::<c_void>(), iov_len: bytes };
-    let remote = libc::iovec { iov_base: source.cast_mut().cast::<c_void>(), iov_len: bytes };
+    let local = libc::iovec {
+        iov_base: destination.cast::<c_void>(),
+        iov_len: bytes,
+    };
+    let remote = libc::iovec {
+        iov_base: source.cast_mut().cast::<c_void>(),
+        iov_len: bytes,
+    };
     // SAFETY: getpid has no pointer arguments. Read it afresh, never cache a PID
     // across fork, and propagate policy errors rather than reinterpret an errno.
     let pid = match kernel_result(unsafe { syscall::syscall0(libc::SYS_getpid as usize) }) {

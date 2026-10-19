@@ -430,9 +430,9 @@ fn introspection_export(symbol: &[u8], version: &[u8]) -> Option<Option<*mut c_v
         b"dladdr1" => "dladdr1",
         _ => return None,
     };
-    let supported = std::str::from_utf8(version).ok().and_then(|version| {
-        native::info_resolver_address(name, Some(version))
-    });
+    let supported = std::str::from_utf8(version)
+        .ok()
+        .and_then(|version| native::info_resolver_address(name, Some(version)));
     // Return the public wrapper, not the private plugin bridge: unversioned
     // and compatibility-version lookups must name the same public function.
     Some(supported.map(|_| resolve_exported_symbol(symbol)))
@@ -476,12 +476,12 @@ fn close_main_program_handle() -> c_int {
 
 #[path = "dlfcn_native.rs"]
 mod native;
-pub(crate) use native::{native_address_info_extra, query_object_info};
 #[cfg(not(feature = "standalone"))]
 use native::host_may_load_declined_object;
 use native::{
     close_native_dso, load_native_dso, native_dso_id_from_handle, resolve_native_dso_symbol,
 };
+pub(crate) use native::{native_address_info_extra, query_object_info};
 
 #[doc(hidden)]
 pub use native::native_dso_handle_for_tests;
@@ -909,7 +909,10 @@ pub unsafe extern "C" fn dlvsym(
         if is_main_program_handle(handle) || is_rtld_default(handle) {
             if let Some(result) = introspection_export(symbol_name, version_name) {
                 return match result {
-                    Some(address) => { clear_dlerror(); address }
+                    Some(address) => {
+                        clear_dlerror();
+                        address
+                    }
                     None => {
                         set_dlerror(dlfcn_core::ERR_SYMBOL_NOT_FOUND);
                         std::ptr::null_mut()

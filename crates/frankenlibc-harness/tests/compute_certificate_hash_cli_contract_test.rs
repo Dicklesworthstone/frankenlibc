@@ -71,18 +71,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -280,10 +283,7 @@ fn harness_source_registers_compute_certificate_hash_subcommand() -> TestResult 
 
 #[test]
 fn cli_d4_anchor_hash_matches_expected() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let manifest = load_json(&manifest_path(&root))?;
     let anchor = manifest
@@ -318,10 +318,7 @@ fn cli_d4_anchor_hash_matches_expected() -> TestResult {
 
 #[test]
 fn cli_hash_hex_is_64_lowercase_hex_chars() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(
         &bin,
         &serde_json::json!([[1, 0, 0], [0, 1, 0], [0, 0, 1]]),
@@ -340,10 +337,7 @@ fn cli_hash_hex_is_64_lowercase_hex_chars() -> TestResult {
 
 #[test]
 fn cli_different_inputs_yield_different_hashes() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let m1 = serde_json::json!([[1, 0], [0, 1]]);
     let m2 = serde_json::json!([[1, 0], [0, 2]]);
     let base = run_and_parse(&bin, &m1, 2, 100, "base")?;
@@ -367,10 +361,7 @@ fn cli_different_inputs_yield_different_hashes() -> TestResult {
 
 #[test]
 fn cli_supported_dims_2_through_8_succeed() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     for d in 2..=8 {
         let mut rows = Vec::with_capacity(d);
         for i in 0..d {
@@ -401,10 +392,7 @@ fn cli_supported_dims_2_through_8_succeed() -> TestResult {
 
 #[test]
 fn cli_unsupported_dim_is_rejected() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let m: Value = serde_json::json!([[1]]);
     let m_path = write_matrix("d1", &m)?;
     let output = unique_tmp("d1", "jsonl")?;
@@ -419,10 +407,7 @@ fn cli_unsupported_dim_is_rejected() -> TestResult {
 
 #[test]
 fn cli_non_square_matrix_is_rejected() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // 3 rows but 4 columns -> non-square.
     let m: Value = serde_json::json!([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]]);
     let m_path = write_matrix("nonsq", &m)?;
@@ -436,10 +421,7 @@ fn cli_non_square_matrix_is_rejected() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let m = serde_json::json!([[1, 2, 3], [4, 5, 6], [7, 8, 9]]);
     let a = run_and_parse(&bin, &m, 3, 12345, "det_a")?;
     let b = run_and_parse(&bin, &m, 3, 12345, "det_b")?;

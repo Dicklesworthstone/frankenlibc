@@ -1102,11 +1102,12 @@ unsafe fn startup_phase0_impl(
     // `ulimit -v`-style self limits) otherwise built them afterwards: strict
     // faulted growing the stack for the kernel's ~158 KiB constructor frame,
     // hardened aborted at exit (stdio flush) on the pipeline's ~8 MB.
-    if publish_environment && process_malloc_is_ours() {
+    if publish_environment
+        && process_malloc_is_ours()
+        && crate::runtime_policy::mode().heals_enabled()
+    {
         crate::runtime_policy::prewarm_kernel();
-        if crate::runtime_policy::mode().heals_enabled() {
-            let _ = crate::membrane_state::try_global_pipeline();
-        }
+        let _ = crate::membrane_state::try_global_pipeline();
     }
 
     path.push(StartupCheckpoint::CallMain);
@@ -1819,7 +1820,7 @@ pub unsafe extern "C" fn __frankenlibc_is_runtime_math_enabled() -> c_int {
 /// Comparing with `crate::malloc_abi::malloc as usize` does not work: taking
 /// the address of an exported function also reads the GOT. The test is
 /// whether the reached `malloc` lies inside fl's own loaded image.
-fn process_malloc_is_ours() -> bool {
+pub(crate) fn process_malloc_is_ours() -> bool {
     let reached = libc::malloc as usize;
     own_image_range().is_none_or(|(start, end)| (start..end).contains(&reached))
 }

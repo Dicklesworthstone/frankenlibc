@@ -62,6 +62,9 @@ pub struct DnsMetrics {
     pub queries_nxdomain: AtomicU64,
     /// Queries that returned other DNS errors (SERVFAIL, etc).
     pub queries_dns_error: AtomicU64,
+    /// Non-native NSS `hosts:` sources (`myhostname`, `resolve`, `mdns*`, ...)
+    /// encountered in `nsswitch.conf` and treated as `UNAVAIL` without dlopen.
+    pub nss_unavailable_sources: AtomicU64,
 }
 
 impl DnsMetrics {
@@ -74,6 +77,7 @@ impl DnsMetrics {
             queries_parse_error: AtomicU64::new(0),
             queries_nxdomain: AtomicU64::new(0),
             queries_dns_error: AtomicU64::new(0),
+            nss_unavailable_sources: AtomicU64::new(0),
         }
     }
 
@@ -87,6 +91,7 @@ impl DnsMetrics {
             queries_parse_error: self.queries_parse_error.load(AtomicOrdering::Relaxed),
             queries_nxdomain: self.queries_nxdomain.load(AtomicOrdering::Relaxed),
             queries_dns_error: self.queries_dns_error.load(AtomicOrdering::Relaxed),
+            nss_unavailable_sources: self.nss_unavailable_sources.load(AtomicOrdering::Relaxed),
         }
     }
 }
@@ -101,6 +106,7 @@ pub struct DnsMetricsSnapshot {
     pub queries_parse_error: u64,
     pub queries_nxdomain: u64,
     pub queries_dns_error: u64,
+    pub nss_unavailable_sources: u64,
 }
 
 /// Global DNS metrics instance.
@@ -1750,7 +1756,7 @@ fn resolve_gethostbyname6_target(
         .lookup(|backend| match backend {
             Backend::Files => files_lookup(),
             Backend::Dns => dns_lookup(),
-            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+            Backend::Unavailable => unavailable_hosts_backend(),
         })
         .map_err(hosts_lookup_error_code)
 }
@@ -1906,7 +1912,7 @@ fn resolve_gethostbyname_target(
         .lookup(|backend| match backend {
             Backend::Files => files_lookup(),
             Backend::Dns => dns_lookup(),
-            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+            Backend::Unavailable => unavailable_hosts_backend(),
         })
         .map_err(hosts_lookup_error_code)
 }
@@ -2612,6 +2618,14 @@ fn native_dns_query(
         .queries_attempted
         .fetch_add(1, AtomicOrdering::Relaxed);
 
+    let server = match std::env::var_os("FRANKENLIBC_DNS_PORT")
+        .and_then(|port| port.to_str()?.parse::<u16>().ok())
+        .filter(|&port| port != 0)
+    {
+        Some(port) => std::net::SocketAddr::new(server.ip(), port),
+        None => server,
+    };
+
     let result = frankenlibc_core::dns_transport::query(
         hostname, qtype_val, server, timeout, trust_ad, use_vc,
     );
@@ -2629,6 +2643,17 @@ fn native_dns_query(
     };
     counter.fetch_add(1, AtomicOrdering::Relaxed);
     result
+}
+
+/// Record an unimplemented NSS `hosts:` source (`myhostname`, `resolve`, `mdns*`, ...)
+/// and report `UNAVAIL` without attempting to dlopen external `libnss_*` objects.
+#[inline]
+fn unavailable_hosts_backend<T>()
+-> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
+    DNS_METRICS
+        .nss_unavailable_sources
+        .fetch_add(1, AtomicOrdering::Relaxed);
+    frankenlibc_core::addrinfo::hosts_policy::BackendResult::Unavailable(libc::EAI_NONAME)
 }
 
 /// The `hosts:` policy from nsswitch.conf (`FRANKENLIBC_NSSWITCH_CONF`
@@ -2759,7 +2784,7 @@ fn reverse_hosts_lookup<T>(
                 BackendResult::Unavailable(code) => BackendResult::Unavailable(code),
                 BackendResult::TryAgain(code) => BackendResult::TryAgain(code),
             },
-            Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+            Backend::Unavailable => unavailable_hosts_backend(),
         })
         .map_err(hosts_lookup_error_code)
 }
@@ -3131,7 +3156,7 @@ pub unsafe extern "C" fn getaddrinfo(
                 let answer = hosts_policy.lookup_forward(|backend| match backend {
                     Backend::Files => files_lookup(),
                     Backend::Dns => dns_lookup(),
-                    Backend::Unavailable => BackendResult::Unavailable(libc::EAI_NONAME),
+                    Backend::Unavailable => unavailable_hosts_backend(),
                 });
                 match answer {
                     Ok(HostAnswer::Files { addresses, name }) => {

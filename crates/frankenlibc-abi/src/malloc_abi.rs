@@ -135,7 +135,10 @@ impl AllocatorReentrySlot {
             thread_key: AtomicUsize::new(0),
             native_guard_bits: AtomicU8::new(0),
             allocator_depth: AtomicU32::new(0),
-            fallback_cache_index: AtomicUsize::new(usize::MAX),
+            // Stored as `index + 1` so `0` means "empty" and the entire
+            // 14.75 MiB `ALLOCATOR_REENTRY_SLOTS` table is zero-initialized in `.bss`
+            // (bd-rc0923-epic-eeuy4f.25).
+            fallback_cache_index: AtomicUsize::new(0),
             segment_local: UnsafeCell::new(SegmentLocalState::new()),
             mt_counts: SlotMtCounters::new(),
             mt_folded: UnsafeCell::new(MallocStatsState::new()),
@@ -424,8 +427,7 @@ fn bind_slot_to_thread_key(slot: &AllocatorReentrySlot, thread_key: Option<usize
     if previous != 0 && previous != thread_key {
         slot.native_guard_bits.store(0, Ordering::Release);
         slot.allocator_depth.store(0, Ordering::Release);
-        slot.fallback_cache_index
-            .store(usize::MAX, Ordering::Release);
+        slot.fallback_cache_index.store(0, Ordering::Release);
     }
 }
 
@@ -724,7 +726,7 @@ static SEGMENT_NEXT_UNUSED: AtomicU32 = AtomicU32::new(0);
 
 const SEGMENT_MAGAZINE_CAPACITY: usize = 8;
 const SEGMENT_BUMP_CHUNK: u32 = 64;
-const SEGMENT_NO_ACTIVE: u16 = u16::MAX;
+const SEGMENT_NO_ACTIVE: u16 = 0;
 const SEGMENT_SLOT_FREE: u16 = u16::MAX;
 const SEGMENT_MAX_SLOT_COUNT: usize = (SEGMENT_SIZE - SEGMENT_HEADER_BYTES) / BUMP_ALIGN;
 const SEGMENT_SPILL_WORDS: usize = SEGMENT_MAX_SLOT_COUNT.div_ceil(64);
@@ -837,7 +839,10 @@ static SEGMENT_DESCRIPTORS: [SegmentDescriptor; SEGMENT_COUNT] =
 struct SegmentMagazineEntry(u64);
 
 impl SegmentMagazineEntry {
-    const EMPTY: Self = Self(u64::MAX);
+    // Zero is never a valid packed entry because `user_offset >= SEGMENT_HEADER_BYTES`
+    // (64 KiB) and `meta_offset >= SEGMENT_ARENA_SIZE` (256 MiB). Using 0 as EMPTY
+    // makes `SegmentMagazine::new()` all-zero for `.bss` placement (bd-rc0923-epic-eeuy4f.25).
+    const EMPTY: Self = Self(0);
 
     #[inline(always)]
     fn from_view(view: SegmentSlotView, arena_base: usize) -> Self {
@@ -848,7 +853,9 @@ impl SegmentMagazineEntry {
         let meta_offset = meta_addr - arena_base;
         debug_assert!(user_offset < SEGMENT_RESERVE_SIZE);
         debug_assert!(meta_offset < SEGMENT_RESERVE_SIZE);
-        Self(user_offset as u64 | ((meta_offset as u64) << 32))
+        let packed = user_offset as u64 | ((meta_offset as u64) << 32);
+        debug_assert_ne!(packed, Self::EMPTY.0);
+        Self(packed)
     }
 
     #[inline(always)]
@@ -1370,7 +1377,7 @@ fn claim_existing_class_chunk(local: &mut SegmentLocalClass, class_index: usize)
         let Some((start, end)) = claim_segment_bump_chunk(segment_index, class_index) else {
             continue;
         };
-        local.active_segment = segment_index as u16;
+        local.active_segment = (segment_index as u16) + 1;
         local.next_unused_slot = start;
         local.bump_end = end;
         return true;
@@ -1563,10 +1570,10 @@ fn allocate_from_local_class(
     }
 
     loop {
-        if local.active_segment == SEGMENT_NO_ACTIVE {
+        let Some(segment_index) = local.active_segment.checked_sub(1) else {
             return None;
-        }
-        let segment_index = local.active_segment as usize;
+        };
+        let segment_index = segment_index as usize;
         let Some(header) = segment_header(segment_index) else {
             local.active_segment = SEGMENT_NO_ACTIVE;
             return None;
@@ -1628,7 +1635,7 @@ fn segment_allocate(
 
     let segment_index = initialize_segment(class_index)?;
     let (start, end) = claim_segment_bump_chunk(segment_index, class_index)?;
-    local.active_segment = segment_index as u16;
+    local.active_segment = (segment_index as u16) + 1;
     local.next_unused_slot = start;
     local.bump_end = end;
     allocate_from_local_class(local, class_index, requested, zeroed).map(|ptr| (ptr, class_index))
@@ -2959,6 +2966,21 @@ pub(crate) fn install_arena_block_allocator() {
     );
 }
 
+/// Reserve and immediately release a 96 KiB block in the host `main_arena`
+/// (`< M_MMAP_THRESHOLD = 128 KiB` and `< M_TRIM_THRESHOLD = 128 KiB`) so the
+/// `sbrk` heap retains enough free top-chunk space after `ValidationPipeline`
+/// construction for programs that immediately cap `RLIMIT_AS` in `main`.
+pub(crate) fn prewarm_host_heap_headroom() {
+    const HEADROOM_BYTES: usize = 96 * 1024;
+    // SAFETY: transient host allocation + immediate release.
+    unsafe {
+        let ptr = native_libc_malloc(HEADROOM_BYTES);
+        if !ptr.is_null() {
+            native_libc_free(ptr);
+        }
+    }
+}
+
 #[inline]
 unsafe fn native_libc_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
     // SAFETY: direct call to libc allocator symbol.
@@ -4210,13 +4232,13 @@ fn remember_fallback_cache(slot: &'static AllocatorReentrySlot, ptr: *mut c_void
     if fallback_key(ptr).is_none() {
         return;
     }
-    slot.fallback_cache_index.store(idx, Ordering::Release);
+    slot.fallback_cache_index
+        .store(idx.saturating_add(1), Ordering::Release);
 }
 
 #[inline]
 fn clear_fallback_cache(slot: &'static AllocatorReentrySlot) {
-    slot.fallback_cache_index
-        .store(usize::MAX, Ordering::Release);
+    slot.fallback_cache_index.store(0, Ordering::Release);
 }
 
 fn fallback_insert_sized_for_slot(
@@ -4265,19 +4287,21 @@ fn fallback_remove_sized_for_slot(
 ) -> Option<usize> {
     let key = fallback_key(ptr)?;
     if !MULTI_THREADED.load(Ordering::Relaxed) {
-        let cached_idx = slot.fallback_cache_index.load(Ordering::Acquire);
-        if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
-            let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
-            if slot_key == key {
-                let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
-                clear_fallback_cache(slot);
-                if size != 0 {
-                    // Keep the key as an inactive marker. The next host tcache
-                    // reuse can reactivate it without probing past a tombstone.
-                    FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
-                    return Some(size);
+        let cached = slot.fallback_cache_index.load(Ordering::Acquire);
+        if let Some(cached_idx) = cached.checked_sub(1) {
+            if cached_idx < FALLBACK_ALLOC_TABLE_SLOTS {
+                let slot_key = FALLBACK_ALLOC_PTRS[cached_idx].load(Ordering::Acquire);
+                if slot_key == key {
+                    let size = FALLBACK_ALLOC_SIZES[cached_idx].load(Ordering::Relaxed);
+                    clear_fallback_cache(slot);
+                    if size != 0 {
+                        // Keep the key as an inactive marker. The next host tcache
+                        // reuse can reactivate it without probing past a tombstone.
+                        FALLBACK_ALLOC_SIZES[cached_idx].store(0, Ordering::Release);
+                        return Some(size);
+                    }
+                    return None;
                 }
-                return None;
             }
             clear_fallback_cache(slot);
         }

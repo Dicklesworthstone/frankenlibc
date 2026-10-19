@@ -399,7 +399,11 @@ extern "C" fn frankenlibc_abi_stdio_init_entry() {
     // Hardened mode: build the ~79 KB validation pipeline now, on the main
     // thread's stack, instead of lazily inside whichever thread first
     // validates — which may be a 32 KiB-stack worker (bd-rc0923-epic-eeuy4f.9).
-    if runtime_policy::mode().heals_enabled() {
+    // Guarded by `process_malloc_is_ours()`: a binary that brings its own
+    // `malloc` (e.g. a small fixed bump arena) must not have the 8 MiB bloom
+    // filter carved out of its allocator during `.init_array`.
+    if runtime_policy::mode().heals_enabled() && startup_abi::process_malloc_is_ours() {
+        malloc_abi::prewarm_host_allocator_symbols();
         let _ = membrane_state::try_global_pipeline();
     }
 }

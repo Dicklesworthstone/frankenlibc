@@ -2797,6 +2797,7 @@ fn atan_refine2(x: f64, a: f64) -> f64 {
 
 avx2_fma_dispatch! {
     /// Correctly rounded `atan`.
+    #[inline]
     pub fn atan(x: f64) -> f64 => atan_body;
 }
 
@@ -3193,6 +3194,7 @@ fn sin_large(x: f64) -> f64 {
 
 avx2_fma_dispatch! {
     /// Correctly rounded `sin`.
+    #[inline]
     pub fn sin(x: f64) -> f64 => sin_body;
 }
 
@@ -3858,6 +3860,7 @@ fn cos_accurate(x: f64) -> f64 {
 
 avx2_fma_dispatch! {
     /// Correctly rounded `cos`.
+    #[inline]
     pub fn cos(x: f64) -> f64 => cos_body;
 }
 
@@ -3882,6 +3885,12 @@ fn cos_body(x: f64) -> f64 {
     {
         return r;
     }
+    cos_fallback(ax)
+}
+
+#[cold]
+#[inline(never)]
+fn cos_fallback(ax: f64) -> f64 {
     let (h, l, err) = cos_fast(ax);
     let left = h + (l - err);
     let right = h + (l + err);
@@ -3931,60 +3940,84 @@ fn div_dint(b: &Dint, a: &Dint) -> Dint {
     mul_dint(&r, b)
 }
 
-/// tan.c `reduce_fast`: `(i, h, l)` with i/2^11 + h + l ~ frac(x/(2 pi))
-/// to within 2^-104.815, for 0x1.d12ed0af1a27ep-27 < x.
-#[inline(always)]
-fn tan_reduce_fast(x: f64) -> (u64, f64, f64) {
-    let (h, l);
-    if x <= hf!("0x1.921fb54442d17p+2") {
-        const CH: f64 = hf!("0x1.45f306dc9c883p-3");
-        const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
-        let (hh, ll) = a_mul(CH, x);
-        h = hh;
-        l = CL.mul_add(x, ll);
+/// Cold Payne-Hanek reduction for `tan_reduce_fast` when `x > 2^20`.
+#[cold]
+#[inline(never)]
+fn tan_reduce_fast_large(x: f64) -> (u64, f64, f64) {
+    let tt = &TRIG_T;
+    let t = x.to_bits();
+    let e = ((t >> 52) & 0x7ff) as i64;
+    let m = u128::from((1u64 << 52) | (t & MASK52));
+    // m*(w0 + w1/2^64 + w2/2^128) as three words, keeping the carry of
+    // the top half of m*w2 into the bottom word.
+    let fold = |w0: u64, w1: u64, w2: u64| {
+        let v = m * u128::from(w2);
+        let u = m * u128::from(w1);
+        let c0 = u.wrapping_add(v >> 64) as u64;
+        let c1 = ((u >> 64) as u64) + u64::from(c0 < u as u64);
+        let u = m * u128::from(w0);
+        let (c1, carry) = add_carry(c1, u as u64);
+        (c0, c1, ((u >> 64) as u64).wrapping_add(carry))
+    };
+    let (mut c0, mut c1, mut c2);
+    let shift;
+    if e <= 1074 {
+        // 2^20 < x < 2^52
+        (c0, c1, c2) = fold(tt[0], tt[1], tt[2]);
+        shift = 1075 - e; // 1 <= shift <= 30
     } else {
-        let tt = &TRIG_T;
-        let t = x.to_bits();
-        let e = ((t >> 52) & 0x7ff) as i64;
-        let m = u128::from((1u64 << 52) | (t & MASK52));
-        // m*(w0 + w1/2^64 + w2/2^128) as three words, keeping the carry of
-        // the top half of m*w2 into the bottom word.
-        let fold = |w0: u64, w1: u64, w2: u64| {
-            let v = m * u128::from(w2);
-            let u = m * u128::from(w1);
-            let c0 = u.wrapping_add(v >> 64) as u64;
-            let c1 = ((u >> 64) as u64) + u64::from(c0 < u as u64);
-            let u = m * u128::from(w0);
-            let (c1, carry) = add_carry(c1, u as u64);
-            (c0, c1, ((u >> 64) as u64).wrapping_add(carry))
-        };
-        let (mut c0, mut c1, mut c2);
-        let shift;
-        if e <= 1074 {
-            // 2^2 <= x < 2^52
-            (c0, c1, c2) = fold(tt[0], tt[1], tt[2]);
-            shift = 1075 - e; // 1 <= shift <= 50
-        } else {
-            // 2^52 <= x: only the low word of m*T[i] reaches the fraction.
-            let i = ((e - 1138 + 63) / 64) as usize;
-            (c0, c1, c2) = fold(tt[i + 1], tt[i + 2], tt[i + 3]);
-            c2 = c2.wrapping_add((m * u128::from(tt[i])) as u64);
-            shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
-        }
-        if shift == 64 {
-            c0 = c1;
-            c1 = c2;
-        } else {
-            c0 = (c1 << (64 - shift)) | (c0 >> shift);
-            c1 = (c2 << (64 - shift)) | (c1 >> shift);
-        }
-        let (hh, ll) = trig_set_dd(c1, c0);
-        h = hh;
-        l = ll;
+        // 2^52 <= x: only the low word of m*T[i] reaches the fraction.
+        let i = ((e - 1138 + 63) / 64) as usize;
+        (c0, c1, c2) = fold(tt[i + 1], tt[i + 2], tt[i + 3]);
+        c2 = c2.wrapping_add((m * u128::from(tt[i])) as u64);
+        shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
     }
+    if shift == 64 {
+        c0 = c1;
+        c1 = c2;
+    } else {
+        c0 = (c1 << (64 - shift)) | (c0 >> shift);
+        c1 = (c2 << (64 - shift)) | (c1 >> shift);
+    }
+    let (h, l) = trig_set_dd(c1, c0);
     let i = (h * hf!("0x1p11")).floor();
     let h = i.mul_add(hf!("-0x1p-11"), h);
     (i as u64, h, l)
+}
+
+/// tan.c `reduce_fast`: `(i, h, l)` with i/2^11 + h + l ~ frac(x/(2 pi))
+/// to within 2^-87.6 for x <= 2^20 (and 2^-104.815 for x > 2^20).
+#[inline(always)]
+fn tan_reduce_fast(x: f64) -> (u64, f64, f64) {
+    if x <= hf!("0x1p+20") {
+        const CH: f64 = hf!("0x1.45f306dc9c883p-3");
+        const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
+        let (hh, ll) = a_mul(CH, x);
+        let l = CL.mul_add(x, ll);
+        let i = (hh * hf!("0x1p11")).floor();
+        let h = i.mul_add(hf!("-0x1p-11"), hh);
+        return (i as u64, h, l);
+    }
+    tan_reduce_fast_large(x)
+}
+
+/// tan2pi(xh + xl) for |xh + xl| < 2^-11 + 2^-24, given uh + ul ~ (xh + xl)^2;
+/// relative error < 2^-71.06, absolute error < 2^-79.41.
+#[inline(always)]
+fn trig_eval_pt_fast(xh: f64, xl: f64, uh: f64, ul: f64) -> (f64, f64) {
+    const P0H: f64 = hf!("0x1.921fb54442d18p+2");
+    const P0L: f64 = hf!("0x1.1a62633145c07p-52");
+    const C1H: f64 = hf!("0x1.4abbce625be53p+6");
+    const C2: f64 = hf!("0x1.466bc6775aae2p+10");
+    const C3: f64 = hf!("0x1.45fff9b48e95ep+14");
+    const C4: f64 = hf!("0x1.45f472e3af046p+18");
+    let mut h = C4.mul_add(uh, C3);
+    h = h.mul_add(uh, C2);
+    h = h.mul_add(uh, C1H);
+    let (h, mut l) = s_mul(h, uh, ul);
+    let (h, t) = fasttwosum(P0H, h);
+    l += P0L + t;
+    d_mul_trig(h, l, xh, xl)
 }
 
 /// (bh + bl)/(ah + al) by Karp-Markstein, relative error below 2^-96.99.
@@ -3995,6 +4028,61 @@ fn tan_fast_div(bh: f64, bl: f64, ah: f64, al: f64) -> (f64, f64) {
     let eh = ah.mul_add(-h, bh);
     let el = al.mul_add(-h, bl);
     (h, y * (eh + el))
+}
+
+/// Fast tan(x) for 0x1.d12ed0af1a27ep-27 < |x| <= 2^20 without any function
+/// calls or panic branches, so `tan::avx2_fma_twin` needs no stack frame or
+/// callee-saved register spills on the moderate-argument fast path.
+#[inline(always)]
+fn tan_moderate(x: f64) -> Option<f64> {
+    let mut neg = u64::from(x < 0.0);
+    let ax = x.abs();
+    const CH: f64 = hf!("0x1.45f306dc9c883p-3");
+    const CL: f64 = hf!("-0x1.6b01ec5417056p-57");
+    let (hh, ll) = a_mul(CH, ax);
+    let mut l = CL.mul_add(ax, ll);
+    let i_f = (hh * hf!("0x1p11")).floor();
+    let mut h = i_f.mul_add(hf!("-0x1p-11"), hh);
+    // 0 < ax <= 2^20 => 0 <= i_f < 2^30, so f64 -> i64 is exact (`vcvttsd2si`).
+    let i = ((i_f as i64) as u64) & 0x3ff;
+    let mut is_tan = 1 ^ (i >> 9);
+    neg ^= i >> 9;
+    let mut i = (i & 0x1ff) as usize;
+    if i & 0x100 != 0 {
+        is_tan ^= 1;
+        i = 0x1ff - i;
+        h = hf!("0x1p-11") - h;
+        l = -l;
+    }
+    if i == 0 && h < hf!("0x1p-34") {
+        // Too close to a multiple of pi/2 for the fast path's error bound.
+        return None;
+    }
+    let sc = &TRIG_SC[i & 0xff];
+    h -= sc[0];
+    let (h, l) = fasttwosum(h, l);
+    let (uh, ul) = a_mul(h, h);
+    let ul = (h + h).mul_add(l, ul);
+    let (th, tl) = trig_eval_pt_fast(h, l, uh, ul);
+    let (sh0, sl0) = s_mul(sc[2], th, tl);
+    let (h1, mut l1) = fasttwosum(sc[1], sh0);
+    l1 += sl0;
+    let (sh, sl) = s_mul(sc[1], th, tl);
+    let (h2, mut l2) = fasttwosum(sc[2], -sh);
+    l2 -= sl;
+    let (h, l) = if is_tan != 0 {
+        tan_fast_div(h1, l1, h2, l2)
+    } else {
+        tan_fast_div(h2, l2, h1, l1)
+    };
+    const SGN: [f64; 2] = [1.0, -1.0];
+    let sgn = SGN[(neg & 1) as usize];
+    let h = h * sgn;
+    let l = l * sgn;
+    let err = h * hf!("0x1.1ap-66");
+    let left = h + (l - err);
+    let right = h + (l + err);
+    if left == right { Some(left) } else { None }
 }
 
 /// Fast tan(x) for |x| > 0x1.d12ed0af1a27ep-27: `(h, l, err)`.
@@ -4012,33 +4100,30 @@ fn tan_fast(x: f64) -> (f64, f64, f64) {
         h = hf!("0x1p-11") - h;
         l = -l;
     }
-    if i == 0 && h < hf!("0x1p-37") {
+    if i == 0 && h < hf!("0x1p-34") {
         // Too close to a multiple of pi/2 for the fast path's error bound.
         return (h, l, 1.0);
     }
-    let sc = &TRIG_SC[i];
+    let sc = &TRIG_SC[i & 0xff];
     h -= sc[0];
     let (h, l) = fasttwosum(h, l);
     let (uh, ul) = a_mul(h, h);
     let ul = (h + h).mul_add(l, ul);
-    let (sh, sl) = trig_eval_ps_fast(h, l, uh, ul);
-    let (ch, cl) = trig_eval_pc_fast(uh, ul);
-    let (sh0, sl0) = s_mul(sc[2], sh, sl);
-    let (ch0, cl0) = s_mul(sc[1], ch, cl);
-    let (h1, mut l1) = fasttwosum(ch0, sh0);
-    l1 += sl0 + cl0;
-    let (ch, cl) = s_mul(sc[2], ch, cl);
-    let (sh, sl) = s_mul(sc[1], sh, sl);
-    let (h2, mut l2) = fasttwosum(ch, -sh);
-    l2 += cl - sl;
+    let (th, tl) = trig_eval_pt_fast(h, l, uh, ul);
+    let (sh0, sl0) = s_mul(sc[2], th, tl);
+    let (h1, mut l1) = fasttwosum(sc[1], sh0);
+    l1 += sl0;
+    let (sh, sl) = s_mul(sc[1], th, tl);
+    let (h2, mut l2) = fasttwosum(sc[2], -sh);
+    l2 -= sl;
     let (h, l) = if is_tan != 0 {
         tan_fast_div(h1, l1, h2, l2)
     } else {
         tan_fast_div(h2, l2, h1, l1)
     };
     const SGN: [f64; 2] = [1.0, -1.0];
-    let h = h * SGN[neg as usize];
-    let l = l * SGN[neg as usize];
+    let h = h * SGN[(neg & 1) as usize];
+    let l = l * SGN[(neg & 1) as usize];
     (h, l, h * hf!("0x1.1ap-66"))
 }
 
@@ -4108,6 +4193,7 @@ fn tan_accurate(x: f64) -> f64 {
 
 avx2_fma_dispatch! {
     /// Correctly rounded `tan`.
+    #[inline]
     pub fn tan(x: f64) -> f64 => tan_body;
 }
 
@@ -4122,13 +4208,25 @@ fn tan_body(x: f64) -> f64 {
         // payload lost (tan(inf) returned a silent NaN).
         return core::hint::black_box(x) * 0.0;
     }
-    if t & 0x7fff_ffff_ffff_ffff <= 0x3e4d_12ed_0af1_a27e {
+    let at = t & 0x7fff_ffff_ffff_ffff;
+    if at <= 0x3e4d_12ed_0af1_a27e {
         // |x| <= 0x1.d12ed0af1a27ep-27: tan(x) rounds to x.
         if x == 0.0 {
             return x;
         }
         return x.mul_add(hf!("0x1p-54"), x);
     }
+    if at <= 0x4130_0000_0000_0000
+        && let Some(r) = tan_moderate(x)
+    {
+        return r;
+    }
+    tan_fallback(x)
+}
+
+#[cold]
+#[inline(never)]
+fn tan_fallback(x: f64) -> f64 {
     let (h, l, err) = tan_fast(x);
     let left = h + (l - err);
     let right = h + (l + err);

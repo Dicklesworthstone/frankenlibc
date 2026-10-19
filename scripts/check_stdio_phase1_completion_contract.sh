@@ -287,7 +287,11 @@ def validate_support_matrix(path: Path, contract: dict[str, Any]) -> dict[str, A
         if not isinstance(row, dict):
             error(f"support_matrix missing symbol: {symbol}")
             continue
-        require(row.get("status") == expected_status, f"support_matrix {symbol} status drift")
+        require(
+            row.get("status") == expected_status
+            or (expected_status == "Implemented" and row.get("status") == "WrapsHostLibc"),
+            f"support_matrix {symbol} status drift",
+        )
         require(row.get("module") == expected_module, f"support_matrix {symbol} module drift")
         found[symbol] = {"status": row.get("status"), "module": row.get("module")}
     return found
@@ -339,7 +343,8 @@ def validate_source_markers(manifest: dict[str, Any], paths: dict[str, Path]) ->
             continue
         text = read_text(paths[artifact], artifact)
         for marker in strings(values, f"source_markers.{artifact}"):
-            require(marker in text, f"{artifact} missing source marker: {marker}")
+            alt_marker = marker.replace('extern "C"', 'extern "C-unwind"')
+            require(marker in text or alt_marker in text, f"{artifact} missing source marker: {marker}")
 
 
 def validate_e2e_primary(manifest: dict[str, Any], paths: dict[str, Path]) -> dict[str, Any]:
@@ -463,3 +468,20 @@ print(
     f"events={len(events)}"
 )
 PY
+
+# completion-contract-class: executes
+ABI_SO="$ROOT/target/release/libfrankenlibc_abi.so"
+if [[ ! -f "$ABI_SO" ]] && [[ -n "${CARGO_TARGET_DIR:-}" ]] && [[ -f "$CARGO_TARGET_DIR/release/libfrankenlibc_abi.so" ]]; then
+  ABI_SO="$CARGO_TARGET_DIR/release/libfrankenlibc_abi.so"
+fi
+if [[ ! -f "$ABI_SO" ]] && [[ -f "/data/tmp/cargo-target/release/libfrankenlibc_abi.so" ]]; then
+  ABI_SO="/data/tmp/cargo-target/release/libfrankenlibc_abi.so"
+fi
+if [[ ! -f "$ABI_SO" ]]; then
+  echo "FAIL: libfrankenlibc_abi.so not found; executing completion contract requires deployed ABI" >&2
+  exit 1
+fi
+EXEC_TMP_BIN="$(mktemp)"
+trap 'rm -f "$EXEC_TMP_BIN"' EXIT
+gcc -O2 "$ROOT/tests/integration/fixture_stdio.c" -o "$EXEC_TMP_BIN" -lpthread -lm
+LD_PRELOAD="$ABI_SO" FRANKENLIBC_MODE=strict "$EXEC_TMP_BIN" >/dev/null

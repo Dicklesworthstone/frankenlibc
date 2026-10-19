@@ -52,15 +52,18 @@ use crate::host_resolve::{
     host_pthread_create_raw as resolved_thread_create_raw,
     host_pthread_detach_raw as resolved_thread_detach_raw,
     host_pthread_exit_raw as resolved_thread_exit_raw,
-    host_pthread_join_raw as resolved_thread_join_raw, host_pthread_register_cancel_defer_raw,
-    host_pthread_register_cancel_raw, host_pthread_self_raw as resolved_thread_self_raw,
+    host_pthread_join_raw as resolved_thread_join_raw,
+    host_pthread_register_cancel_defer_raw as resolved_thread_register_cancel_defer_raw,
+    host_pthread_register_cancel_raw as resolved_thread_register_cancel_raw,
+    host_pthread_self_raw as resolved_thread_self_raw,
     host_pthread_setcancelstate_raw as resolved_thread_setcancelstate_raw,
     host_pthread_setcanceltype_raw as resolved_thread_setcanceltype_raw,
     host_pthread_testcancel_raw as resolved_thread_testcancel_raw,
     host_pthread_timedjoin_np_raw as resolved_thread_timedjoin_np_raw,
     host_pthread_tryjoin_np_raw as resolved_thread_tryjoin_np_raw,
-    host_pthread_unregister_cancel_raw, host_pthread_unregister_cancel_restore_raw,
-    host_pthread_unwind_next_raw,
+    host_pthread_unregister_cancel_raw as resolved_thread_unregister_cancel_raw,
+    host_pthread_unregister_cancel_restore_raw as resolved_thread_unregister_cancel_restore_raw,
+    host_pthread_unwind_next_raw as resolved_thread_unwind_next_raw,
 };
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -6244,7 +6247,7 @@ pub unsafe extern "C" fn pthread_getattr_np(
         resolve_thread_tid(thread).unwrap_or(-1)
     };
     // SAFETY: getpid has no preconditions.
-    let main_thread = probe_tid == unsafe { libc::getpid() };
+    let main_thread = probe_tid == raw_syscall::sys_getpid();
     if probe_tid > 0
         && (calling || main_thread)
         && let Some((stack_start, stack_size, guard_size)) =
@@ -8793,7 +8796,7 @@ fn host_cancellation_thread() -> bool {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
     if host_cancellation_thread()
-        && let Some(register) = host_pthread_register_cancel_raw()
+        && let Some(register) = resolved_thread_register_cancel_raw()
     {
         unsafe { register(buf) };
     }
@@ -8804,7 +8807,7 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel(buf: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
     if host_cancellation_thread()
-        && let Some(unregister) = host_pthread_unregister_cancel_raw()
+        && let Some(unregister) = resolved_thread_unregister_cancel_raw()
     {
         unsafe { unregister(buf) };
     }
@@ -8814,7 +8817,7 @@ pub unsafe extern "C-unwind" fn __pthread_unregister_cancel(buf: *mut c_void) {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void) {
     if host_cancellation_thread()
-        && let Some(register) = host_pthread_register_cancel_defer_raw()
+        && let Some(register) = resolved_thread_register_cancel_defer_raw()
     {
         unsafe { register(buf) };
     }
@@ -8824,7 +8827,7 @@ pub unsafe extern "C-unwind" fn __pthread_register_cancel_defer(buf: *mut c_void
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unregister_cancel_restore(buf: *mut c_void) {
     if host_cancellation_thread()
-        && let Some(unregister) = host_pthread_unregister_cancel_restore_raw()
+        && let Some(unregister) = resolved_thread_unregister_cancel_restore_raw()
     {
         unsafe { unregister(buf) };
     }
@@ -8868,7 +8871,7 @@ pub unsafe extern "C" fn __pthread_get_minstack(_attr: *const libc::pthread_attr
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn __pthread_unwind_next(buf: *mut c_void) {
     if host_cancellation_thread()
-        && let Some(unwind_next) = host_pthread_unwind_next_raw()
+        && let Some(unwind_next) = resolved_thread_unwind_next_raw()
     {
         unsafe { unwind_next(buf) };
     }

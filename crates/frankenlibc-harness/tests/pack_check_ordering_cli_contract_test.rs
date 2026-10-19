@@ -71,18 +71,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn run_repeated(bin: &Path, stages: &[&str]) -> TestResult<std::process::Output> {
@@ -236,10 +239,7 @@ fn harness_source_registers_pack_check_ordering_subcommand() -> TestResult {
 
 #[test]
 fn cli_identity_ordering_packs_to_known_hex() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let out = run_repeated(&bin, &IDENTITY)?;
     if !out.status.success() {
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
@@ -265,10 +265,7 @@ fn cli_identity_ordering_packs_to_known_hex() -> TestResult {
 
 #[test]
 fn cli_reverse_ordering_packs_to_known_hex() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let out = run_repeated(&bin, &REVERSE)?;
     if !out.status.success() {
         return Err(format!("stderr={}", String::from_utf8_lossy(&out.stderr)));
@@ -289,10 +286,7 @@ fn cli_reverse_ordering_packs_to_known_hex() -> TestResult {
 
 #[test]
 fn cli_round_trip_codec_is_lossless() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Exercise a few permutations, asserting unpacked sequence equals input
     // sequence and round_trip_ok is true every time.
     let permutations: [[&str; 7]; 4] = [
@@ -351,10 +345,7 @@ fn cli_round_trip_codec_is_lossless() -> TestResult {
 
 #[test]
 fn cli_repeated_flags_and_comma_separated_are_equivalent() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let out_a = run_repeated(&bin, &IDENTITY)?;
     let out_b = run_csv(&bin, &IDENTITY.join(","))?;
     if !out_a.status.success() || !out_b.status.success() {
@@ -370,10 +361,7 @@ fn cli_repeated_flags_and_comma_separated_are_equivalent() -> TestResult {
 
 #[test]
 fn cli_unknown_stage_rejected_with_nonzero_exit() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let bad: [&str; 7] = [
         "null",
         "tls-cache",
@@ -398,10 +386,7 @@ fn cli_unknown_stage_rejected_with_nonzero_exit() -> TestResult {
 
 #[test]
 fn cli_fewer_than_seven_stages_rejected() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let short: [&str; 6] = [
         "null",
         "tls-cache",
@@ -425,10 +410,7 @@ fn cli_fewer_than_seven_stages_rejected() -> TestResult {
 
 #[test]
 fn cli_more_than_seven_stages_rejected() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let long: [&str; 8] = [
         "null",
         "tls-cache",
@@ -454,10 +436,7 @@ fn cli_more_than_seven_stages_rejected() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = run_repeated(&bin, &IDENTITY)?;
     let b = run_repeated(&bin, &IDENTITY)?;
     require(

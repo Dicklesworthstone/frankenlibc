@@ -387,14 +387,53 @@ fn overlap_fraction(src_addr: usize, dst_addr: usize, len: usize) -> f64 {
 /// Per-thread rather than a shared table: a global lock on the hardened string dispatch
 /// path would trade computation for contention, and the entries are tiny and pure so
 /// duplicating them per thread costs only a few KiB.
-const CERT_CACHE_SLOTS: usize = 64;
+const CERT_CACHE_SLOTS: usize = 16;
+
+const CERT_RATIONALE_OVERLAP_FORBIDDEN: &str =
+    "memcpy candidate rejected: Pin parity witness forbids overlap";
+const CERT_RATIONALE_CONTRACT_DIVERGES: &str =
+    "candidate rejected: lane or tail contract diverges from scalar reference";
+const CERT_RATIONALE_CONTROLLER_VIOLATION: &str =
+    "candidate rejected: Clifford controller observed overlap/parity violation";
+const CERT_RATIONALE_ACCEPTED: &str =
+    "candidate accepted: Clifford lane contract is isomorphic to scalar reference";
+
+const CERT_RATIONALES: [&str; 4] = [
+    CERT_RATIONALE_OVERLAP_FORBIDDEN,
+    CERT_RATIONALE_CONTRACT_DIVERGES,
+    CERT_RATIONALE_CONTROLLER_VIOLATION,
+    CERT_RATIONALE_ACCEPTED,
+];
+
+#[derive(Clone, Copy)]
+struct CachedCliffordCert {
+    key: u64,
+    grade2_energy: f64,
+    parity_imbalance: f64,
+    state: CliffordState,
+    equivalent: bool,
+    rationale_idx: u8,
+    present: bool,
+}
+
+impl CachedCliffordCert {
+    const EMPTY: Self = Self {
+        key: 0,
+        grade2_energy: 0.0,
+        parity_imbalance: 0.0,
+        state: CliffordState::Calibrating,
+        equivalent: false,
+        rationale_idx: 0,
+        present: false,
+    };
+}
 
 thread_local! {
-    /// Direct-mapped, `None` until filled. `CliffordIsomorphismCertificate` is `Copy` and
-    /// holds no owned allocation, so this TLS entry registers no destructor.
-    static CERT_CACHE: core::cell::RefCell<
-        [Option<(u64, CliffordIsomorphismCertificate)>; CERT_CACHE_SLOTS],
-    > = const { core::cell::RefCell::new([None; CERT_CACHE_SLOTS]) };
+    /// Direct-mapped, 16 slots × 32 B = 512 B per thread (down from 5,128 B so
+    /// `PT_TLS` leaves room on 32 KiB worker stacks). Holds no owned allocation
+    /// and registers no destructor.
+    static CERT_CACHE: core::cell::RefCell<[CachedCliffordCert; CERT_CACHE_SLOTS]> =
+        const { core::cell::RefCell::new([CachedCliffordCert::EMPTY; CERT_CACHE_SLOTS]) };
 }
 
 /// FNV-1a over the exact inputs that determine the certificate.
@@ -457,12 +496,26 @@ pub fn certify_simd_string_operation(
     // match means the certificate is bit-identical to the one that would be recomputed.
     let cache_key = cert_cache_key(operation, candidate_isa, reference_obs, candidate_obs);
     if let Some(hit) = CERT_CACHE.with(|c| {
-        c.try_borrow().ok().and_then(
-            |slots| match slots[(cache_key as usize) % CERT_CACHE_SLOTS] {
-                Some((k, cert)) if k == cache_key => Some(cert),
-                _ => None,
-            },
-        )
+        c.try_borrow().ok().and_then(|slots| {
+            let entry = slots[(cache_key as usize) % CERT_CACHE_SLOTS];
+            if entry.present && entry.key == cache_key {
+                Some(CliffordIsomorphismCertificate {
+                    operation,
+                    reference_isa: SimdIsa::Scalar,
+                    candidate_isa,
+                    architecture: candidate_isa.architecture(),
+                    lane_bytes: candidate.lane_bytes,
+                    equivalent: entry.equivalent,
+                    state: entry.state,
+                    grade2_energy: entry.grade2_energy,
+                    parity_imbalance: entry.parity_imbalance,
+                    overlap_fraction,
+                    rationale: CERT_RATIONALES[usize::from(entry.rationale_idx) & 3],
+                })
+            } else {
+                None
+            }
+        })
     }) {
         return hit;
     }
@@ -479,28 +532,16 @@ pub fn certify_simd_string_operation(
 
     let summary = controller.summary();
     let compatible = candidate.compatible_with_reference(reference, overlap);
-    let (equivalent, rationale) = if !compatible {
+    let (equivalent, rationale_idx, rationale) = if !compatible {
         if overlap && matches!(operation, SimdStringOperation::Memcpy) {
-            (
-                false,
-                "memcpy candidate rejected: Pin parity witness forbids overlap",
-            )
+            (false, 0u8, CERT_RATIONALE_OVERLAP_FORBIDDEN)
         } else {
-            (
-                false,
-                "candidate rejected: lane or tail contract diverges from scalar reference",
-            )
+            (false, 1u8, CERT_RATIONALE_CONTRACT_DIVERGES)
         }
     } else if matches!(summary.state, CliffordState::OverlapViolation) {
-        (
-            false,
-            "candidate rejected: Clifford controller observed overlap/parity violation",
-        )
+        (false, 2u8, CERT_RATIONALE_CONTROLLER_VIOLATION)
     } else {
-        (
-            true,
-            "candidate accepted: Clifford lane contract is isomorphic to scalar reference",
-        )
+        (true, 3u8, CERT_RATIONALE_ACCEPTED)
     };
 
     let certificate = CliffordIsomorphismCertificate {
@@ -522,7 +563,15 @@ pub fn certify_simd_string_operation(
     // path if this thread is somehow already inside the cell.
     CERT_CACHE.with(|c| {
         if let Ok(mut slots) = c.try_borrow_mut() {
-            slots[(cache_key as usize) % CERT_CACHE_SLOTS] = Some((cache_key, certificate));
+            slots[(cache_key as usize) % CERT_CACHE_SLOTS] = CachedCliffordCert {
+                key: cache_key,
+                grade2_energy: summary.grade2_energy,
+                parity_imbalance: summary.parity_imbalance,
+                state: summary.state,
+                equivalent,
+                rationale_idx,
+                present: true,
+            };
         }
     });
 

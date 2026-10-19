@@ -76,18 +76,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -195,10 +198,7 @@ fn harness_source_registers_decode_evidence_subcommand() -> TestResult {
 
 #[test]
 fn cli_decodes_valid_systematic_record_to_success_json() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let input = unique_tmp("valid_record", "bin")?;
     let output = unique_tmp("valid_record", "json")?;
     write_records(&input, &[synthetic_record(0xA11C_E001, 0, 7)])?;
@@ -240,10 +240,7 @@ fn cli_decodes_valid_systematic_record_to_success_json() -> TestResult {
 
 #[test]
 fn cli_epoch_filter_keeps_only_matching_epoch() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let input = unique_tmp("epoch_filter", "bin")?;
     let output = unique_tmp("epoch_filter", "json")?;
     write_records(
@@ -294,10 +291,7 @@ fn cli_epoch_filter_keeps_only_matching_epoch() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_empty_input() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let input = unique_tmp("empty", "bin")?;
     let output = unique_tmp("empty", "json")?;
     std::fs::write(&input, b"").map_err(|e| format!("write empty input: {e}"))?;
@@ -307,10 +301,7 @@ fn cli_fails_closed_on_empty_input() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_misaligned_input() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let input = unique_tmp("misaligned", "bin")?;
     let output = unique_tmp("misaligned", "json")?;
     std::fs::write(&input, [1_u8, 2, 3]).map_err(|e| format!("write misaligned input: {e}"))?;
@@ -320,10 +311,7 @@ fn cli_fails_closed_on_misaligned_input() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_unknown_format() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let input = unique_tmp("unknown_format", "bin")?;
     let output = unique_tmp("unknown_format", "json")?;
     write_records(&input, &[synthetic_record(0xD2D0_FF00, 0, 5)])?;

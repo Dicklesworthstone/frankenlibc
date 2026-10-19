@@ -77,18 +77,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -223,10 +226,7 @@ fn run_and_parse(bin: &Path, probe: &str, label: &str) -> TestResult<Value> {
 
 #[test]
 fn cli_all_seventeen_probes_emit_finite_costs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let root = workspace_root()?;
     let manifest = load_json(&manifest_path(&root))?;
     let table = manifest
@@ -256,10 +256,7 @@ fn cli_all_seventeen_probes_emit_finite_costs() -> TestResult {
 
 #[test]
 fn cli_loss_minimizer_is_lowest_cost() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, "loss-minimizer", "lowest")?;
     let cost = json_u64(&parsed, "cost_ns")?;
     require(
@@ -295,10 +292,7 @@ fn cli_loss_minimizer_is_lowest_cost() -> TestResult {
 
 #[test]
 fn cli_persistence_is_highest_cost() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let parsed = run_and_parse(&bin, "persistence", "highest")?;
     let cost = json_u64(&parsed, "cost_ns")?;
     require(
@@ -336,10 +330,7 @@ fn cli_persistence_is_highest_cost() -> TestResult {
 
 #[test]
 fn cli_unknown_probe_is_rejected_with_nonzero_exit() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("unknown")?;
     let out = run_cli(&bin, "totally-not-a-real-probe", &output)?;
     require(
@@ -358,10 +349,7 @@ fn cli_unknown_probe_is_rejected_with_nonzero_exit() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = run_and_parse(&bin, "hji", "det_a")?;
     let b = run_and_parse(&bin, "hji", "det_b")?;
     require(a == b, "same inputs must produce identical output")

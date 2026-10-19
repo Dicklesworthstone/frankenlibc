@@ -662,7 +662,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,860 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,861 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -2366,7 +2366,7 @@ present?  artifact?
 closed!   reopen + flag in audit
 ```
 
-The current compliance machinery joins `.beads/issues.jsonl` with completion-contract artifacts, but its historical coverage is incomplete: the tracked audit bead reports only about 215 of 7,423 closed beads covered and 2,089 empty closure reasons. Treat the diagram as the intended lifecycle, not proof that every existing closure has a binding artifact; `bd-rc0923-epic-eeuy4f.18` owns remediation.
+The current compliance machinery joins `.beads/issues.jsonl` with completion-contract artifacts, but its historical coverage is incomplete: the tracked audit bead reports only about 215 of 7,423 closed beads covered and 2,089 empty closure reasons. Treat the diagram as the intended lifecycle for historical beads, not proof that every legacy closure has a binding artifact; `scripts/check_closure_gate.sh` (Check 5) enforces verifiable commit/artifact and gate-outcome evidence on all beads closed after `2026-10-15T00:00:00Z`, all 68 `crates/frankenlibc-harness/tests/*_cli_contract_test.rs` suites resolve the `harness` binary fail-closed via `CARGO_BIN_EXE_harness`, and the 267 `scripts/check_*completion_contract*.sh` checker scripts are classified into **147 `executes`** (gates that execute binaries, C fixtures under `LD_PRELOAD`, or sub-gates, including the top 30 user-impact `malloc`, `stdio`, `string`, `pthread`, `locale`, `loader`, and `resolver` contracts) and **120 `receipt`** (static manifest/source-anchor validators) (`bd-rc0923-epic-eeuy4f.18`).
 
 ### Why is the membrane in its own crate?
 
@@ -3875,19 +3875,19 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,809 native/direct-syscall rows (68.2%), 1,266 host-backed wrapper rows (30.7%), and 44 explicit stubs (1.1%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,805 |
-| `crates/frankenlibc-abi/src/` | 85 Rust files, 203,796 lines |
-| `crates/frankenlibc-membrane/src/` | 111 Rust files, 81,483 lines |
-| `crates/frankenlibc-core/src/` | 197 Rust files, 1,163,007 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,858 |
+| `crates/frankenlibc-abi/src/` | 105 Rust files, 211,510 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,160 lines |
+| `crates/frankenlibc-core/src/` | 199 Rust files, 1,164,060 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
-| C integration fixtures | 108 |
-| Completion contracts | 282 |
+| C integration fixtures | 112 |
+| Completion contracts | 282 (267 checker scripts: 147 `executes`, 120 `receipt`) |
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 706 files under `scripts/` |
+| Top-level shell/scripts files | 710 files under `scripts/` |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |

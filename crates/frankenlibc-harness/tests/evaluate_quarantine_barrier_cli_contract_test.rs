@@ -71,15 +71,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -251,10 +257,7 @@ fn read_record(out_path: &Path) -> TestResult<Value> {
 
 #[test]
 fn cli_moderate_depth_low_adverse_certified_safe() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("safe")?;
     // Moderate depth, low contention, low adverse, neutral lambda -> safe.
     let out = run_cli(&bin, 4096, 4, 1_000, 0, &output)?;
@@ -278,10 +281,7 @@ fn cli_moderate_depth_low_adverse_certified_safe() -> TestResult {
 
 #[test]
 fn cli_shallow_high_adverse_violates() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("violate")?;
     // Very shallow depth + high contention + 50% adverse + lambda pressure -> violation.
     let out = run_cli(&bin, 64, 100, 500_000, 50, &output)?;
@@ -301,10 +301,7 @@ fn cli_shallow_high_adverse_violates() -> TestResult {
 
 #[test]
 fn cli_extreme_adverse_always_violates() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("extreme_adverse")?;
     // 100% adverse + max depth -> still violates per Invariant A test corpus.
     let out = run_cli(&bin, 65536, 0, 1_000_000, 0, &output)?;
@@ -324,10 +321,7 @@ fn cli_extreme_adverse_always_violates() -> TestResult {
 
 #[test]
 fn cli_deeper_depth_improves_headroom_under_adverse() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = unique_tmp("shallow")?;
     let b = unique_tmp("deep")?;
     let out_a = run_cli(&bin, 256, 10, 100_000, 0, &a)?;
@@ -347,10 +341,7 @@ fn cli_deeper_depth_improves_headroom_under_adverse() -> TestResult {
 
 #[test]
 fn cli_safe_flag_matches_headroom_sign() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     for (label, depth, contention, adverse_ppm, lambda) in [
         ("sign_moderate_safe", 4096u32, 4u32, 1_000u32, 0i64),
         ("sign_shallow_adverse", 64, 100, 500_000, 50),
@@ -376,10 +367,7 @@ fn cli_safe_flag_matches_headroom_sign() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let a = unique_tmp("det_a")?;
     let b = unique_tmp("det_b")?;
     let out_a = run_cli(&bin, 2048, 50, 200_000, 25, &a)?;
@@ -395,10 +383,7 @@ fn cli_deterministic_given_same_inputs() -> TestResult {
 
 #[test]
 fn cli_echoes_inputs_into_record() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = unique_tmp("echo")?;
     let out = run_cli(&bin, 1234, 56, 78_901, -23, &output)?;
     require(

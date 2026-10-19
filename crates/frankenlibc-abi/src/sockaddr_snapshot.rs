@@ -26,7 +26,11 @@ pub(super) struct PreparedSockaddr {
 impl PreparedSockaddr {
     /// Strict, or a null optional address: retain the original kernel inputs.
     pub(super) fn original(length: *mut libc::socklen_t) -> Self {
-        Self { original: length, length: 0, imported: false }
+        Self {
+            original: length,
+            length: 0,
+            imported: false,
+        }
     }
 
     pub(super) fn prepare(
@@ -73,7 +77,11 @@ impl PreparedSockaddr {
         length: *mut libc::socklen_t,
         unit: usize,
     ) -> Result<Self, c_int> {
-        let mut prepared = Self { original: length, length: 0, imported: true };
+        let mut prepared = Self {
+            original: length,
+            length: 0,
+            imported: true,
+        };
         // SAFETY: destination is our initialized scalar. Caller storage is
         // a kernel-copy address, never a Rust dereference or aligned reference.
         unsafe {
@@ -87,7 +95,9 @@ impl PreparedSockaddr {
         // the syscall rather than treating it as a huge positive buffer span.
         // Null buffers retain each option/syscall's own kernel semantics.
         if !buffer.is_null() && prepared.length <= c_int::MAX as libc::socklen_t {
-            let bytes = (prepared.length as usize).checked_mul(unit).ok_or(libc::EFAULT)?;
+            let bytes = (prepared.length as usize)
+                .checked_mul(unit)
+                .ok_or(libc::EFAULT)?;
             if (buffer as usize).checked_add(bytes).is_none()
                 || known_remaining(buffer as usize).is_some_and(|available| bytes > available)
             {
@@ -99,7 +109,11 @@ impl PreparedSockaddr {
 
     /// Resolve the owned scalar's address only after this object stops moving.
     pub(super) fn as_mut_ptr(&mut self) -> *mut libc::socklen_t {
-        if self.imported { &mut self.length } else { self.original }
+        if self.imported {
+            &mut self.length
+        } else {
+            self.original
+        }
     }
 
     /// Publish a returned length without a speculative caller write.
@@ -166,9 +180,13 @@ pub(super) unsafe fn getsockopt_hardened(
         // length over any descriptor byte could lose the sole handle to an
         // installed fd while reporting success. Reject before resource creation.
         let value_start = value as usize;
-        let value_end = value_start.checked_add(size_of::<c_int>()).ok_or(libc::EFAULT)?;
+        let value_end = value_start
+            .checked_add(size_of::<c_int>())
+            .ok_or(libc::EFAULT)?;
         let length_start = length as usize;
-        let length_end = length_start.checked_add(size_of::<libc::socklen_t>()).ok_or(libc::EFAULT)?;
+        let length_end = length_start
+            .checked_add(size_of::<libc::socklen_t>())
+            .ok_or(libc::EFAULT)?;
         if value_start < length_end && length_start < value_end {
             return Err(libc::EINVAL);
         }
@@ -187,7 +205,9 @@ pub(super) unsafe fn getsockopt_hardened(
                 output.as_mut_ptr(),
             )
         }?;
-        if received < 0 { return Err(libc::EIO); }
+        if received < 0 {
+            return Err(libc::EIO);
+        }
         let mut owned = ReturnedFd(Some(received));
         // Do not transfer an incomplete descriptor-valued result. Ownership
         // already belongs to the guard, including when the new descriptor is 0.
@@ -210,9 +230,8 @@ pub(super) unsafe fn getsockopt_hardened(
 
     // SAFETY: caller buffer was checked against the exact submitted capacity;
     // Linux validates permissions and option-specific input/output semantics.
-    let result = unsafe {
-        syscall::sys_getsockopt(fd, level, option, value.cast(), output.as_mut_ptr())
-    };
+    let result =
+        unsafe { syscall::sys_getsockopt(fd, level, option, value.cast(), output.as_mut_ptr()) };
     // SO_PEERGROUPS and SO_PEERSEC report the required size on ERANGE. Other
     // options may update their length before failing too. Preserve changed
     // outputs, but do not invent stores after errors such as EBADF that leave

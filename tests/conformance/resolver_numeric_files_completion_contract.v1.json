@@ -261,7 +261,7 @@
       "telemetry_refs": [
         "crates/frankenlibc-abi/src/resolv_abi.rs:75",
         "crates/frankenlibc-abi/src/resolv_abi.rs:105",
-        "crates/frankenlibc-abi/src/resolv_abi.rs:331",
+        "crates/frankenlibc-abi/src/resolv_abi.rs:330",
         "crates/frankenlibc-abi/src/resolv_abi.rs:842",
         "crates/frankenlibc-abi/src/resolv_abi.rs:1324",
         "crates/frankenlibc-abi/src/resolv_abi.rs:1514",

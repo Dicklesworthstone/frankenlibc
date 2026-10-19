@@ -2481,7 +2481,18 @@ pub(crate) fn decide(
     // Strict mode observation path (bd-06bxm.3): consult kernel for evidence
     // but override to passthrough. High-frequency families still fast-path.
     if strict_passthrough_active() {
-        // High-frequency families skip kernel even for observation
+        // In deployed strict mode, never lazily construct the 50-controller
+        // RuntimeMathKernel (~158 KiB stack frame, ~2.5M instructions): normal
+        // strict processes never need it, and building it after a caller caps
+        // RLIMIT_AS faults growing the stack (gnulib test-dprintf-posix2,
+        // fixture_rlimit_as_first). Diagnostic and liveness probes that inspect
+        // kernel state (`__frankenlibc_decision_count`, `__frankenlibc_is_feedback_enabled`,
+        // `__frankenlibc_kernel_snapshot_json`) initialize the kernel first and
+        // then observe strict decisions on non-fast-path families below.
+        if cfg!(not(test)) && KERNEL_STATE.load(AtomicOrdering::Acquire) != STATE_READY {
+            return (SafetyLevel::Strict, passthrough_decision());
+        }
+        // High-frequency families skip kernel even when initialized for observation
         // (Stdio added: strict mode forces Allow regardless — see
         // decide_strict_observation which always returns action=Allow in strict —
         // so for per-char fgetc/fputc/fread this only skips the kernel evidence
@@ -2496,37 +2507,17 @@ pub(crate) fn decide(
                     | ApiFamily::Stdlib
                     | ApiFamily::MathFenv
                     | ApiFamily::Stdio
-                    // IoFd added to STRICT ONLY (helps `readdir` per-entry loops):
-                    // strict mode forces action=Allow regardless (decide_strict_observation
-                    // never denies), so skipping the per-call kernel evidence consult is
-                    // byte-identical. NOT added to the HARDENED list below — read/write pass
-                    // the USER BUFFER to decide() there and must keep validating it.
-                    | ApiFamily::IoFd
-                    // Time added to STRICT ONLY (helps `strftime`/`mktime` hot loops):
-                    // same reasoning — strict forces Allow, so skipping the kernel consult
-                    // is byte-identical. NOT in the HARDENED list (strftime's output buffer
-                    // must stay validated).
                     | ApiFamily::Time
-                    // Inet added to STRICT ONLY (helps looped inet_pton/ntop/aton/addr):
-                    // pure conversions, strict forces Allow = byte-identical. NOT in the
-                    // HARDENED list (inet_pton's dst output buffer must stay validated).
                     | ApiFamily::Inet
-                    // Resolver added to STRICT ONLY (helps getaddrinfo/getnameinfo — every
-                    // connection). `decide_strict_observation` forces action=Allow regardless
-                    // (it consults the kernel only to RECORD evidence, then overrides to
-                    // passthrough), so skipping that ~397 ns consult is byte-identical: the
-                    // action is Allow either way, `repair` derives from action not profile,
-                    // and the now-fast-pathed observe() no longer reads the profile. Node/
-                    // service pointers are validated by getaddrinfo/getnameinfo's own
-                    // opt_cstr/write_c_buffer bounds, not by decide(). NOT in the HARDENED
-                    // list below — hardened keeps the full consult. Pairs with the Resolver
-                    // observe() fast-path to remove the whole ~1.17 us resolver bookkeeping.
                     | ApiFamily::Resolver
+                    | ApiFamily::Locale
+                    | ApiFamily::VirtualMemory
             )
         {
             return (SafetyLevel::Strict, passthrough_decision());
         }
-        // For other families, consult kernel for observation then passthrough
+        // For other families (e.g. IoFd, Socket, Process), consult the already-ready
+        // kernel for observation then passthrough.
         return decide_strict_observation(
             family,
             addr_hint,
@@ -3109,6 +3100,8 @@ pub(crate) fn observe(
                 // own strict fast path already skips observe entirely; this covers
                 // getaddrinfo and the hardened-mode getnameinfo_full path.
                 | ApiFamily::Resolver
+                | ApiFamily::Locale
+                | ApiFamily::VirtualMemory
         )
     {
         return;

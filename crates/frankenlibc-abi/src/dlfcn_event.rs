@@ -97,7 +97,11 @@ mod tests {
             assert_eq!(address(name, Some(baseline)), expected, "{name}");
             assert_eq!(
                 address(name, Some("GLIBC_2.17")),
-                if moved || cfg!(target_arch = "aarch64") { expected } else { None },
+                if moved || cfg!(target_arch = "aarch64") {
+                    expected
+                } else {
+                    None
+                },
                 "{name}"
             );
             for unsupported in ["GLIBC_2.34", "GLIBC_PRIVATE", "GLIBC_9.99", ""] {

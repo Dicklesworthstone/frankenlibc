@@ -279,6 +279,27 @@ impl StreamBuffer {
         true
     }
 
+    /// Like `fast_write`, but also accepts `BufMode::Line` when `data` contains no `'\n'`.
+    /// Used under `StreamGuard` (`try_write_fast_cell`), which republishes the write window on drop.
+    #[inline]
+    pub fn fast_write_line_or_full(&mut self, data: &[u8]) -> bool {
+        let mode_ok = match self.mode {
+            BufMode::Full => true,
+            BufMode::Line => !data.contains(&b'\n'),
+            BufMode::None => false,
+        };
+        if !mode_ok || data.len() > self.capacity.saturating_sub(self.write_len) {
+            return false;
+        }
+        self.io_started = true;
+        if !data.is_empty() {
+            self.ensure_storage();
+            self.data[self.write_len..self.write_len + data.len()].copy_from_slice(data);
+        }
+        self.write_len += data.len();
+        true
+    }
+
     /// Get any pending buffered write data that needs flushing.
     pub fn pending_write_data(&self) -> &[u8] {
         if self.write_len == 0 {

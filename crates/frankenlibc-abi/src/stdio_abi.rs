@@ -2110,29 +2110,44 @@ fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
 /// the slow path's buffered-read step (decide/observe skipped exactly like the
 /// established ST fast paths). Empty buffer / any miss ⇒ `None` ⇒ slow path refills.
 fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
-    let cell = stream_cell_cache_lookup(stream)?;
-    let mut s = cell.lock();
-    let mut b = [0u8; 1];
-    if s.buffered_read_into(&mut b) > 0 {
-        return Some(b[0] as c_int);
-    }
-    None
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    STREAM_CELL_CACHE.with(|c| {
+        let cache = c.borrow();
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                let mut s = cell.lock();
+                return s.fast_getc().map(|b| b as c_int);
+            }
+        }
+        None
+    })
 }
 
 /// MT-safe fd-stream write fast path (fputs/fwrite/fputc): gen-valid cell-cache hit ⇒
-/// lock ONLY this stream and append `bytes` inline IFF it is a Full-buffered fd stream
-/// with room (the no-flush `fast_write` case). `true` on inline success; `false` on any
-/// miss (not cached / not Full / would flush / mem / cookie) ⇒ caller falls through to the
-/// full per-stream-locked path. Mirrors `try_fgetc_fast_cell` on the write side; cached
-/// cells are stored only for non-cookie non-mem fd streams (see the write slow path), so
-/// `fast_write`'s own Full-buffer+room predicate is the exact soundness gate the ST
-/// `try_fwrite_fast` relies on — just reached under the per-stream lock instead of the
-/// `__libc_single_threaded` cache.
+/// lock ONLY this stream (without cloning its `Arc`, avoiding cross-thread atomic refcount
+/// contention) and append `bytes` inline IFF it is a Full-buffered fd stream with room or a
+/// Line-buffered fd stream with room and no `'\n'` (`fast_write_line_or_full`). `true` on
+/// inline success; `false` on any miss (not cached / would flush / mem / cookie) ⇒ caller
+/// falls through to the full per-stream-locked path.
 fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
-    match stream_cell_cache_lookup(stream) {
-        Some(cell) => cell.lock().fast_write(bytes),
-        None => false,
-    }
+    let key = stream as usize;
+    let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
+    STREAM_CELL_CACHE.with(|c| {
+        let cache = c.borrow();
+        for slot in cache.iter() {
+            if let Some((cp, cg, cell)) = slot
+                && *cp == key
+                && *cg == cur_gen
+            {
+                return cell.lock().fast_write_line_or_full(bytes);
+            }
+        }
+        false
+    })
 }
 
 /// MT-safe fd-stream `fgets` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and
@@ -3411,7 +3426,9 @@ unsafe fn write_bytes_without_runtime_policy(
     // RESOLVED (bd-h0n1mf, was PERF bd-hqo6b6): the write path now resolves the per-stream
     // short map probe and holds ONLY this stream's lock across buffering + the blocking
     // sys_write_fd flush — concurrent writes to different streams no longer serialize.
-    let Some(cell) = stream_cell(id) else {
+    let cached_cell = stream_cell_cache_lookup(_stream);
+    let cell_was_cached = cached_cell.is_some();
+    let Some(cell) = cached_cell.or_else(|| stream_cell(id)) else {
         // Host delegation path - not available in standalone mode
         #[cfg(not(feature = "standalone"))]
         if !is_fl_issued_stream_id(id)
@@ -3452,7 +3469,9 @@ unsafe fn write_bytes_without_runtime_policy(
     write_cache_store(_stream, id, stream_obj as *mut StdioStream);
     // Also populate the MT-safe cell cache so THREADED writers skip the map lock per call
     // (try_write_fast_cell). Mirrors the fgetc slow path.
-    stream_cell_cache_store(_stream, &cell);
+    if !cell_was_cached {
+        stream_cell_cache_store(_stream, &cell);
+    }
 
     let write_result = match stream_obj.buffer_write(bytes) {
         Some(result) => result,
@@ -4335,31 +4354,27 @@ pub unsafe extern "C-unwind" fn fflush(stream: *mut c_void) -> c_int {
 /// POSIX `fgetc`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
-    // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
-    // _IO_read_end` without TLS or mutex overhead when single-threaded.
-    if let Some(rc) = try_fgetc_window(stream) {
-        return rc;
-    }
-    // Single-threaded inline read fast path: a byte already buffered for a cached, clean
-    // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
-    // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
-    // Any miss (empty buffer / ungetc / write-pending / mem / not cached) falls through.
-    if let Some(rc) = try_fgetc_fast_by_stream(stream) {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        // Lock-free published read-window fast path: consumes directly from `_IO_read_ptr ..
+        // _IO_read_end` without TLS or mutex overhead when single-threaded.
+        if let Some(rc) = try_fgetc_window(stream) {
+            return rc;
+        }
+        // Single-threaded inline read fast path: a byte already buffered for a cached, clean
+        // readable fd stream — skips membrane + registry lock + HashMap lookup. Pointer-keyed
+        // so a hit also skips `canonical_stream_id`'s native lock; `id` computed lazily on miss.
+        // Any miss (empty buffer / ungetc / write-pending / mem / not cached) falls through.
+        if let Some(rc) = try_fgetc_fast_by_stream(stream) {
+            return rc;
+        }
+    } else if let Some(rc) = try_fgetc_fast_cell(stream) {
+        // MT-safe fd-stream cell-cache fast path (bd-h0n1mf): gen-valid hit ⇒ per-stream lock only.
         return rc;
     }
     // Pointer-keyed fmemopen read fast path (the write cache above EXCLUDES mem streams, so
     // fmemopen `fgetc` otherwise pays `canonical_stream_id`'s native lock per byte — the 1.4x
     // per-op floor, ST and MT). MT-safe (atomic cursor). Miss ⇒ falls through and re-caches.
     if let Some(rc) = try_fgetc_fast_fixed_mem_by_stream(stream) {
-        return rc;
-    }
-    // MT-safe fd-stream cell-cache fast path (bd-h0n1mf): the ST cache above is
-    // `__libc_single_threaded`-gated and the mem cache only serves fmemopen — a THREADED
-    // program's fd fgetc otherwise pays canonical_stream_id + decide + the registry map
-    // lock PER BYTE (the 44x smoke residual). Gen-valid hit ⇒ per-stream lock only.
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
-        && let Some(rc) = try_fgetc_fast_cell(stream)
-    {
         return rc;
     }
 
@@ -4528,25 +4543,22 @@ pub unsafe extern "C-unwind" fn fgetc(stream: *mut c_void) -> c_int {
 pub unsafe extern "C-unwind" fn fputc(c: c_int, stream: *mut c_void) -> c_int {
     let byte = c as u8;
 
-    // Lock-free published write-window fast path: appends directly into `_IO_write_ptr ..
-    // _IO_write_end` without TLS or mutex overhead when single-threaded.
-    if let Some(rc) = try_fputc_window(stream, byte) {
-        return rc;
-    }
-    // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
-    // for repeated writes to the same Full-buffered fd stream). Pointer-keyed so a hit
-    // also skips `canonical_stream_id`'s native lock; `id` is computed lazily on miss.
-    // It only fires for a stream already resolved+cached by a prior slow write, so
-    // bootstrap (empty cache) falls through safely.
-    if let Some(rc) = try_fputc_fast_by_stream(stream, byte) {
-        return rc;
-    }
-    // MT-safe cell-cache write fast path: the ST cache above is `__libc_single_threaded`-gated,
-    // so a THREADED fputc otherwise pays canonical_stream_id + the registry map lock per byte.
-    // Gen-valid hit ⇒ append the byte under this stream's lock only (fast_write of 1 byte).
-    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) == 0
-        && try_write_fast_cell(stream, &[byte])
-    {
+    if crate::glibc_internal_abi::__libc_single_threaded.load(Ordering::Relaxed) != 0 {
+        // Lock-free published write-window fast path: appends directly into `_IO_write_ptr ..
+        // _IO_write_end` without TLS or mutex overhead when single-threaded.
+        if let Some(rc) = try_fputc_window(stream, byte) {
+            return rc;
+        }
+        // Single-threaded inline fast path (skips membrane + registry lock + HashMap lookup
+        // for repeated writes to the same Full-buffered fd stream). Pointer-keyed so a hit
+        // also skips `canonical_stream_id`'s native lock; `id` is computed lazily on miss.
+        // It only fires for a stream already resolved+cached by a prior slow write, so
+        // bootstrap (empty cache) falls through safely.
+        if let Some(rc) = try_fputc_fast_by_stream(stream, byte) {
+            return rc;
+        }
+    } else if try_write_fast_cell(stream, &[byte]) {
+        // MT-safe cell-cache write fast path: gen-valid hit ⇒ append the byte under this stream's lock only.
         return byte as c_int;
     }
 
@@ -6997,6 +7009,123 @@ fn push_bytes(v: &mut Vec<u8>, src: &[u8]) {
     }
 }
 
+#[inline]
+fn is_valid_printf_string_ptr(ptr_val: usize, wide: bool) -> bool {
+    if ptr_val == 0 {
+        return true;
+    }
+    if !(0x1000..(1usize << 47)).contains(&ptr_val) {
+        return false;
+    }
+    if wide && (ptr_val & 3 != 0) {
+        return false;
+    }
+    if known_remaining(ptr_val).is_some()
+        || read_only_mappings()
+            .iter()
+            .any(|&(start, stop)| ptr_val >= start && ptr_val < stop)
+    {
+        return true;
+    }
+    let page = (ptr_val & !0xfffusize) as *mut u8;
+    unsafe { raw_syscall::sys_msync(page, 4096, libc::MS_ASYNC).is_ok() }
+}
+
+#[inline]
+fn is_valid_printf_writeback_ptr(ptr_val: usize, align_size: usize) -> bool {
+    if !(0x1000..(1usize << 47)).contains(&ptr_val) {
+        return false;
+    }
+    if align_size > 1 && (ptr_val & (align_size - 1) != 0) {
+        return false;
+    }
+    if read_only_mappings()
+        .iter()
+        .any(|&(start, stop)| ptr_val >= start && ptr_val < stop)
+    {
+        return false;
+    }
+    if known_remaining(ptr_val).is_some() {
+        return true;
+    }
+    let page = (ptr_val & !0xfffusize) as *mut u8;
+    unsafe { raw_syscall::sys_msync(page, 4096, libc::MS_ASYNC).is_ok() }
+}
+
+fn should_upgrade_format_to_literal(
+    segments: &frankenlibc_core::stdio::printf::FormatSegments<'_>,
+    args: *const u64,
+    max_args: usize,
+) -> Option<usize> {
+    if segments.raw().is_empty() {
+        return None;
+    }
+    let uses_positional = segments.any_positional();
+    let mut arg_idx = 0usize;
+    let read_arg = |position: Option<usize>, next_idx: &mut usize| -> Option<u64> {
+        let idx = if let Some(position) = position {
+            position.checked_sub(1)?
+        } else {
+            let current = *next_idx;
+            *next_idx = (*next_idx).saturating_add(1);
+            current
+        };
+        (idx < max_args).then(|| unsafe { *args.add(idx) })
+    };
+
+    for seg in segments.iter() {
+        let FormatSegment::Spec(spec) = seg else {
+            continue;
+        };
+        if spec.width.uses_arg() {
+            let pos = if uses_positional {
+                spec.width.position()
+            } else {
+                None
+            };
+            let _ = read_arg(pos, &mut arg_idx);
+        }
+        if spec.precision.uses_arg() {
+            let pos = if uses_positional {
+                spec.precision.position()
+            } else {
+                None
+            };
+            let _ = read_arg(pos, &mut arg_idx);
+        }
+        if !spec.consumes_value_arg() {
+            continue;
+        }
+        let pos = if uses_positional {
+            spec.value_position
+        } else {
+            None
+        };
+        let Some(raw_val) = read_arg(pos, &mut arg_idx) else {
+            continue;
+        };
+        if spec.stores_count() {
+            let align_size = match spec.length {
+                LengthMod::Hh => 1,
+                LengthMod::H => 2,
+                LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+                _ => 4,
+            };
+            let ptr_val = raw_val as usize;
+            if !is_valid_printf_writeback_ptr(ptr_val, align_size) {
+                return Some(ptr_val);
+            }
+        } else if spec.value_arg_is_string() {
+            let ptr_val = raw_val as usize;
+            let wide = matches!(spec.length, LengthMod::L);
+            if !is_valid_printf_string_ptr(ptr_val, wide) {
+                return Some(ptr_val);
+            }
+        }
+    }
+    None
+}
+
 /// Render already-parsed `segments` into a fresh buffer. Split out from
 /// [`render_printf_impl`] so the printf-family entry points can reuse the
 /// `FormatSegments` they parsed for argument counting instead of re-parsing the
@@ -7015,6 +7144,18 @@ pub(crate) unsafe fn render_segments(
     // glibc rejects the whole call, printing nothing.
     if segments.invalid_directive() {
         frankenlibc_core::stdio::printf::note_render_failure(errno::EINVAL);
+        return ScratchVec::new(buf);
+    }
+    if !runtime_policy::strict_passthrough_active()
+        && let Some(bad_ptr) = should_upgrade_format_to_literal(segments, args, max_args)
+    {
+        global_healing_policy().record(
+            "stdio",
+            symbol,
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(bad_ptr)),
+        );
+        push_bytes(&mut buf, segments.raw());
         return ScratchVec::new(buf);
     }
     // Field read, not a walk: `FormatSegments` records this during parsing, so
@@ -8416,6 +8557,11 @@ unsafe fn direct_printf_string_payload<'a>(
     if p.is_null() {
         return None;
     }
+    if !runtime_policy::strict_passthrough_active()
+        && !is_valid_printf_string_ptr(p as usize, false)
+    {
+        return None;
+    }
     let len = unsafe { c_str_bytes(p as *const c_char) }.len();
     // SAFETY: the %s contract guarantees a NUL-terminated string that remains
     // valid for the duration of the printf-family call.
@@ -8451,14 +8597,24 @@ unsafe fn direct_snprintf_s(
     mode: SafetyLevel,
     decision: RuntimeDecision,
 ) -> c_int {
+    let mut upgraded_adverse = false;
     let src = if arg.is_null() {
         b"(null)"
+    } else if mode.heals_enabled() && !is_valid_printf_string_ptr(arg as usize, false) {
+        upgraded_adverse = true;
+        global_healing_policy().record(
+            "stdio",
+            "snprintf",
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(arg as usize)),
+        );
+        b"%s"
     } else {
         unsafe { c_str_bytes(arg) }
     };
     let total_len = src.len().saturating_add(usize::from(append_newline));
     let mut copy_len = if size > 0 { total_len.min(size - 1) } else { 0 };
-    let mut adverse = false;
+    let mut adverse = upgraded_adverse;
     let mut has_room = size > 0 && !str_buf.is_null();
 
     if repair_enabled(mode.heals_enabled(), decision.action)
@@ -14321,6 +14477,11 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
         _ => {}
     }
 
+    // Lock-free std stream slot check (stdin/stdout/stderr) before bloom filter hashing
+    if let Some(fd) = io_internal_abi::native_stdio_fd_for_ptr(stream) {
+        return StreamType::NativeFile(fd as usize);
+    }
+
     // Fast path: bloom filter pre-check (~10ns)
     // If bloom says "definitely not ours", skip expensive lookups
     if io_internal_abi::might_be_native_file(stream) {
@@ -14361,6 +14522,13 @@ fn classify_stream_for_locking(stream: *mut c_void) -> StreamType {
 /// Registry slots live inside a static and never move, so the address stays
 /// valid while the stream is open -- the caller's contract for the `FILE *`.
 fn native_file_unlocked_registry(slot: usize) -> Option<&'static io_internal_abi::NativeFile> {
+    if slot < 3 {
+        let addr = io_internal_abi::native_stdio_slot_addr_lockfree(slot);
+        if addr != 0 {
+            // SAFETY: reserved std slots 0..3 live in static storage and never move.
+            return Some(unsafe { &*(addr as *const io_internal_abi::NativeFile) });
+        }
+    }
     let reg = io_internal_abi::native_stream_registry();
     let file: *const io_internal_abi::NativeFile = reg.get(slot)?;
     drop(reg);

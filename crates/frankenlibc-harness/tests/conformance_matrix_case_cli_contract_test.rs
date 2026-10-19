@@ -72,18 +72,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(path));
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn run_case(
@@ -218,9 +221,7 @@ fn manifest_policy_pins_case_runner_invariants() -> TestResult {
 
 #[test]
 fn cli_emits_ok_envelope_for_supported_fixture() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let stdin =
         serde_json::to_vec(&serde_json::json!({"s": [97, 0]})).map_err(|err| err.to_string())?;
     let output = run_case(&bin, "strlen", "strict", &stdin, Some("strict"))?;
@@ -274,9 +275,7 @@ fn cli_emits_ok_envelope_for_supported_fixture() -> TestResult {
 
 #[test]
 fn cli_emits_error_envelope_for_unsupported_fixture() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let stdin = serde_json::to_vec(&serde_json::json!({})).map_err(|err| err.to_string())?;
     let output = run_case(&bin, "__missing_fixture_contract", "hardened", &stdin, None)?;
     require(
@@ -321,9 +320,7 @@ fn cli_emits_error_envelope_for_unsupported_fixture() -> TestResult {
 
 #[test]
 fn invalid_stdin_fails_closed_before_envelope() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let output = run_case(&bin, "strlen", "strict", b"{not-json", Some("strict"))?;
     require(!output.status.success(), "invalid JSON stdin should fail")?;
     require(

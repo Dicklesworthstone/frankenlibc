@@ -78,15 +78,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str) -> TestResult<PathBuf> {
@@ -200,10 +206,7 @@ fn harness_source_registers_validate_structured_log_subcommand() -> TestResult {
 
 #[test]
 fn cli_passes_on_empty_jsonl() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("empty_in")?;
     let output = unique_tmp("empty_out")?;
     std::fs::write(&jsonl, "").map_err(|e| format!("write input: {e}"))?;
@@ -233,10 +236,7 @@ fn cli_passes_on_empty_jsonl() -> TestResult {
 
 #[test]
 fn cli_passes_on_valid_row() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("valid_in")?;
     let output = unique_tmp("valid_out")?;
     std::fs::write(
@@ -266,10 +266,7 @@ fn cli_passes_on_valid_row() -> TestResult {
 
 #[test]
 fn cli_fails_on_invalid_json_row_with_json_field() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("invalid_json_in")?;
     let output = unique_tmp("invalid_json_out")?;
     std::fs::write(&jsonl, "this is not json\n").map_err(|e| format!("write input: {e}"))?;
@@ -294,10 +291,7 @@ fn cli_fails_on_invalid_json_row_with_json_field() -> TestResult {
 
 #[test]
 fn cli_fails_on_missing_required_field_and_names_field() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("missing_field_in")?;
     let output = unique_tmp("missing_field_out")?;
     std::fs::write(
@@ -326,10 +320,7 @@ fn cli_fails_on_missing_required_field_and_names_field() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_missing_input() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("never_exists")?;
     let output = unique_tmp("missing_out")?;
     let out = run_cli(&bin, &jsonl, &output)?;

@@ -13,11 +13,19 @@ Generates a JSON validation report to stdout (or --output).
 import argparse
 import json
 import os
+import re
+import signal
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+HEALING_ACTION_RE = re.compile(
+    r"ClampSize|TruncateWithNull|IgnoreDoubleFree|IgnoreForeignFree|"
+    r"ReallocAsMalloc|ReturnSafeDefault|UpgradeToSafeVariant|"
+    r"CanaryDetection|FreedWithCanaryCorruption"
+)
 
 
 def find_repo_root():
@@ -25,6 +33,156 @@ def find_repo_root():
     if (p / "Cargo.toml").exists():
         return p
     return Path.cwd()
+
+
+def find_preload_lib(root):
+    candidates = []
+    env_lib = os.environ.get("FRANKENLIBC_LIB")
+    if env_lib:
+        candidates.append(Path(env_lib))
+    candidates.extend([
+        Path("/data/tmp/cargo-target/release/libfrankenlibc_abi.so"),
+        root / "target" / "release" / "libfrankenlibc_abi.so",
+        Path("/data/tmp/cargo-target/debug/libfrankenlibc_abi.so"),
+        root / "target" / "debug" / "libfrankenlibc_abi.so",
+    ])
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return None
+
+
+def decode_signal(rc):
+    if rc is None:
+        return "SIGKILL"
+    if rc < 0:
+        sig_num = -rc
+    elif 128 < rc <= 192:
+        sig_num = rc - 128
+    else:
+        return None
+    try:
+        return signal.Signals(sig_num).name
+    except ValueError:
+        return f"SIG{sig_num}"
+
+
+def count_healing_actions(text):
+    counts = {}
+    for match in HEALING_ACTION_RE.findall(text or ""):
+        counts[match] = counts.get(match, 0) + 1
+    return counts
+
+
+def run_trigger_mode(bin_path, cwd, preload_lib=None, mode=None):
+    env = os.environ.copy()
+    log_file = None
+    if preload_lib is not None:
+        env["LD_PRELOAD"] = str(preload_lib)
+        if mode is not None:
+            env["FRANKENLIBC_MODE"] = mode
+        fd, log_path = tempfile.mkstemp(prefix="flc_cve_heal_", suffix=".jsonl")
+        os.close(fd)
+        log_file = Path(log_path)
+        env["FRANKENLIBC_LOG"] = str(log_file)
+        env["FRANKENLIBC_LOG_FILE"] = str(log_file)
+    else:
+        env.pop("LD_PRELOAD", None)
+        env.pop("FRANKENLIBC_MODE", None)
+        env.pop("FRANKENLIBC_LOG", None)
+        env.pop("FRANKENLIBC_LOG_FILE", None)
+
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            [str(bin_path)],
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        rc = proc.returncode
+        stderr_text = proc.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        rc = None
+        stderr_text = (exc.stderr.decode("utf-8", errors="replace")
+                       if isinstance(exc.stderr, bytes)
+                       else (exc.stderr or ""))
+
+    log_text = ""
+    if log_file is not None:
+        try:
+            if log_file.exists():
+                log_text = log_file.read_text(encoding="utf-8", errors="replace")
+                log_file.unlink()
+        except OSError:
+            pass
+
+    sig = decode_signal(rc)
+    heals = count_healing_actions(stderr_text + "\n" + log_text)
+    return {
+        "rc": rc,
+        "signal": sig,
+        "timed_out": timed_out,
+        "crashed": timed_out or (sig is not None),
+        "stderr_snippet": stderr_text.strip()[:240],
+        "heal_counts": heals,
+        "healing_actions_observed": sorted(heals.keys()),
+    }
+
+
+def execute_c_trigger_paired(test_info, root):
+    trigger_c = test_info["dir"] / "trigger.c"
+    if not trigger_c.exists():
+        return None
+    preload_lib = find_preload_lib(root)
+    with tempfile.TemporaryDirectory(prefix="flc_cve_heap_") as tmpdir:
+        bin_path = Path(tmpdir) / "trigger"
+        try:
+            comp = subprocess.run(
+                ["cc", "-O0", "-fno-builtin", "-g", "-o", str(bin_path), str(trigger_c)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            return {
+                "compiles": False,
+                "compile_error": str(exc),
+            }
+        if comp.returncode != 0:
+            return {
+                "compiles": False,
+                "compile_error": (comp.stderr or "").strip()[:240],
+            }
+        if preload_lib is None:
+            return {
+                "compiles": True,
+                "preload_lib": None,
+                "error": "libfrankenlibc_abi.so not found",
+            }
+        glibc_run = run_trigger_mode(bin_path, tmpdir)
+        strict_run = run_trigger_mode(bin_path, tmpdir, preload_lib, "strict")
+        hardened_run = run_trigger_mode(bin_path, tmpdir, preload_lib, "hardened")
+        heal_deltas = {}
+        all_actions = set(glibc_run["heal_counts"]) | set(hardened_run["heal_counts"])
+        for act in sorted(all_actions):
+            heal_deltas[act] = hardened_run["heal_counts"].get(act, 0) - glibc_run["heal_counts"].get(act, 0)
+        return {
+            "compiles": True,
+            "preload_lib": str(preload_lib),
+            "glibc_baseline": glibc_run,
+            "strict": strict_run,
+            "hardened": hardened_run,
+            "heal_counter_deltas": heal_deltas,
+            "hardened_healed": (
+                not hardened_run["crashed"]
+                and sum(v for v in heal_deltas.values() if v > 0) > 0
+            ),
+        }
 
 
 def load_json_file(path):
@@ -133,24 +291,6 @@ def check_trigger_exists(test_info):
     return [str(f.name) for f in trigger_files]
 
 
-def check_c_trigger_compiles(test_info):
-    """Try to compile C trigger files."""
-    test_dir = test_info["dir"]
-    trigger_c = test_dir / "trigger.c"
-    if not trigger_c.exists():
-        return None  # Not a C trigger
-
-    with tempfile.NamedTemporaryFile(suffix=".o", delete=True) as tmp:
-        try:
-            result = subprocess.run(
-                ["cc", "-c", "-fsyntax-only", str(trigger_c)],
-                capture_output=True, text=True, timeout=10
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return None
-
-
 def check_coverage_matrix(arena_root, heap_tests):
     """Verify heap overflow CVEs appear in coverage_matrix.json."""
     matrix_path = arena_root / "coverage_matrix.json"
@@ -213,8 +353,9 @@ def main():
         # Check trigger files
         trigger_files = check_trigger_exists(test_info)
 
-        # Try C compilation
-        compiles = check_c_trigger_compiles(test_info)
+        # Compile and execute C trigger in paired mode
+        execution = execute_c_trigger_paired(test_info, root)
+        compiles = execution["compiles"] if execution is not None else None
 
         # Collect healing actions
         tsm = manifest.get("expected_tsm_behavior") or manifest.get("expected_tsm", {})
@@ -224,6 +365,19 @@ def main():
         issues = list(manifest_issues)
         if not trigger_files:
             issues.append("No trigger files found")
+        if execution is not None:
+            if not execution.get("compiles"):
+                issues.append(f"C trigger failed to compile: {execution.get('compile_error', '')}")
+            elif execution.get("error"):
+                issues.append(execution["error"])
+            elif not execution.get("hardened_healed"):
+                issues.append("Hardened mode did not heal C trigger under LD_PRELOAD")
+            else:
+                observed = set(execution["hardened"]["healing_actions_observed"])
+                if healing and not (observed & set(healing)):
+                    issues.append(
+                        f"Hardened observed heals {sorted(observed)} did not match expected {healing}"
+                    )
 
         total_issues += len(issues)
 
@@ -235,6 +389,7 @@ def main():
             "cvss_score": manifest.get("cvss_score"),
             "trigger_files": trigger_files,
             "c_compiles": compiles,
+            "c_execution": execution,
             "healing_actions": healing,
             "tsm_features": manifest.get("tsm_features_tested", []),
             "manifest_valid": len(issues) == 0,
@@ -250,6 +405,10 @@ def main():
     with_triggers = sum(1 for t in test_results if t["trigger_files"])
     c_tests = [t for t in test_results if t["c_compiles"] is not None]
     c_compiles = sum(1 for t in c_tests if t["c_compiles"])
+    c_healed = sum(
+        1 for t in c_tests
+        if t.get("c_execution") and t["c_execution"].get("hardened_healed")
+    )
 
     # CWE coverage
     all_cwes = set()
@@ -266,6 +425,7 @@ def main():
             "manifests_valid": valid_manifests,
             "with_trigger_files": with_triggers,
             "c_triggers_compile": c_compiles,
+            "c_triggers_hardened_healed": c_healed,
             "c_triggers_total": len(c_tests),
             "unique_healing_actions": sorted(healing_actions_seen),
             "heap_cwes_covered": sorted(heap_cwes_covered),

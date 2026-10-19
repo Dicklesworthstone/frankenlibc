@@ -129,7 +129,9 @@ pub(crate) unsafe fn address_info_extra(
         };
         // SAFETY: caller supplies pointer output storage for recognized flags.
         // Both pointees remain stable until this object's eventual unload.
-        if let Some(extra) = extra { unsafe { extra_info.write(extra) }; }
+        if let Some(extra) = extra {
+            unsafe { extra_info.write(extra) };
+        }
     }
     true
 }

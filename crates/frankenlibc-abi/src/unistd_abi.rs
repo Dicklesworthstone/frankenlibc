@@ -8732,7 +8732,7 @@ fn wordexp_run_command(body: &[u8], flags: c_int) -> Result<Vec<u8>, WordexpFail
 fn wordexp_home_dir(user: &[u8]) -> Option<Vec<u8>> {
     let entry = if user.is_empty() {
         // SAFETY: getuid has no preconditions.
-        crate::pwd_abi::lookup_passwd_by_uid(unsafe { libc::getuid() })
+        crate::pwd_abi::lookup_passwd_by_uid(unsafe { getuid() })
     } else {
         crate::pwd_abi::lookup_passwd_by_name(user)
     };
@@ -16007,7 +16007,14 @@ unsafe fn aio_submit_group(
         group.reserve();
     }
     let work = Box::into_raw(Box::new(AioWork {
-        aiocbp: aiocbp as usize, fd, buf_addr, nbytes, offset, op, notice, group,
+        aiocbp: aiocbp as usize,
+        fd,
+        buf_addr,
+        nbytes,
+        offset,
+        op,
+        notice,
+        group,
     }));
     match unsafe { aio_completion::spawn(aio_worker_entry, work.cast(), attributes) } {
         Ok(()) => 0,
@@ -16171,17 +16178,21 @@ pub(crate) unsafe fn aio_suspend_cp(
                 return -1;
             }
             let left = dl - now;
-            Some(libc::timespec { tv_sec: left.as_secs() as libc::time_t,
-                tv_nsec: left.subsec_nanos() as libc::c_long })
+            Some(libc::timespec {
+                tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long,
+            })
         } else {
             None
         };
-        let timeout = interval.as_ref().map_or(std::ptr::null(), |ts| ts as *const _);
+        let timeout = interval
+            .as_ref()
+            .map_or(std::ptr::null(), |ts| ts as *const _);
         // SAFETY: no lock or borrow crosses the async-cancel window. Keeping
         // the window in this inlined body preserves the application's caller.
-        match unsafe { crate::pthread_abi::at_cancellation_point(||
-            aio_completion::wait(epoch, timeout)) }
-        {
+        match unsafe {
+            crate::pthread_abi::at_cancellation_point(|| aio_completion::wait(epoch, timeout))
+        } {
             Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => continue,
             Err(error) => {
                 unsafe { set_abi_errno(error) };
@@ -16241,7 +16252,9 @@ pub unsafe extern "C" fn lio_listio(
                 return -1;
             }
         }
-    } else { None };
+    } else {
+        None
+    };
     let mut had_error = false;
     let mut resource_error = false;
 
@@ -16314,9 +16327,17 @@ pub unsafe extern "C" fn lio_listio(
     }
 
     if had_error {
-        unsafe { set_abi_errno(if resource_error { errno::EAGAIN } else { errno::EIO }) };
+        unsafe {
+            set_abi_errno(if resource_error {
+                errno::EAGAIN
+            } else {
+                errno::EIO
+            })
+        };
         -1
-    } else { 0 }
+    } else {
+        0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -27930,8 +27951,8 @@ fn rseq_cpu_id() -> Option<c_int> {
     // Some(TP-relative byte offset of the rseq area) once glibc's rseq is confirmed registered
     // with a `cpu_id` field (offset 4, so the area must be >= 8 bytes); None if unavailable.
     static RSEQ_OFFSET: LazyLock<Option<isize>> = LazyLock::new(|| unsafe {
-        let off = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
-        let size = libc::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
+        let off = crate::dlfcn_abi::dlsym(libc::RTLD_DEFAULT, c"__rseq_offset".as_ptr());
+        let size = crate::dlfcn_abi::dlsym(libc::RTLD_DEFAULT, c"__rseq_size".as_ptr());
         if off.is_null() || size.is_null() || *(size as *const u32) < 8 {
             return None;
         }

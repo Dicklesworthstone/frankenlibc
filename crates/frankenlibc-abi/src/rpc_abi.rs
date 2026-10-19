@@ -2227,7 +2227,11 @@ pub unsafe extern "C" fn authnone_create() -> *mut c_void {
 /// Create owned AUTH_SYS credentials (not cryptographic authentication).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn authunix_create(
-    machname: *mut c_char, uid: c_int, gid: c_int, len: c_int, aup_gids: *mut c_int,
+    machname: *mut c_char,
+    uid: c_int,
+    gid: c_int,
+    len: c_int,
+    aup_gids: *mut c_int,
 ) -> *mut c_void {
     unsafe { rpc_udp::authunix_create(machname, uid, gid, len, aup_gids) }
 }
@@ -2303,8 +2307,12 @@ rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 /// Borrowed descriptors must already be connected and remain caller-owned.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnttcp_create(
-    raddr: *mut c_void, prog: c_ulong, vers: c_ulong, sockp: *mut c_int,
-    sendsz: c_uint, recvsz: c_uint,
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
 ) -> *mut c_void {
     unsafe { rpc_udp::create_tcp(raddr, prog, vers, sockp, sendsz, recvsz) }
 }
@@ -3049,12 +3057,7 @@ pub unsafe extern "C" fn pmap_rmtcall(
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_set(
-    prog: c_ulong,
-    vers: c_ulong,
-    proto: c_int,
-    port: u16,
-) -> c_int {
+pub unsafe extern "C" fn pmap_set(prog: c_ulong, vers: c_ulong, proto: c_int, port: u16) -> c_int {
     rpc_udp::registration(prog, vers, proto, port, false)
 }
 

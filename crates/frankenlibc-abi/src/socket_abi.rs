@@ -549,12 +549,12 @@ pub(crate) unsafe fn recvfrom_cp(
         })
     } {
         Ok(n) => match unsafe { output.publish() } {
-                Ok(()) => (n, false),
-                Err(error) => {
-                    unsafe { set_abi_errno(error) };
-                    (-1, true)
-                }
-            },
+            Ok(()) => (n, false),
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                (-1, true)
+            }
+        },
         Err(e) => {
             unsafe { set_abi_errno(e) };
             (-1, true)
@@ -679,9 +679,7 @@ pub unsafe extern "C" fn getsockopt(
     let result = if mode.heals_enabled() {
         // Required-length import, error-path size publication and ownership
         // of descriptor-valued results are handled together by the snapshot.
-        unsafe {
-            sockaddr_snapshot::getsockopt_hardened(sockfd, level, optname, optval, optlen)
-        }
+        unsafe { sockaddr_snapshot::getsockopt_hardened(sockfd, level, optname, optval, optlen) }
     } else {
         // Preserve strict's existing guards and original kernel arguments.
         if optlen.is_null()
@@ -880,7 +878,8 @@ pub unsafe extern "C-unwind" fn sendmsg(
 /// Body of [`sendmsg`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: c_int) -> isize {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -913,7 +912,9 @@ pub(crate) unsafe fn sendmsg_cp(sockfd: c_int, msg: *const libc::msghdr, flags: 
     } else {
         None
     };
-    let submitted = prepared.as_mut().map_or(msg, |message| message.as_mut_ptr().cast_const());
+    let submitted = prepared
+        .as_mut()
+        .map_or(msg, |message| message.as_mut_ptr().cast_const());
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {
@@ -946,7 +947,8 @@ pub unsafe extern "C-unwind" fn recvmsg(
 /// Body of [`recvmsg`] and its aliases (see [`accept_cp`]).
 #[inline(always)]
 pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_int) -> isize {
-    let (mode, decision) = runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Socket, msg as usize, 0, true, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         unsafe { set_abi_errno(errno::EACCES) };
         runtime_policy::observe(ApiFamily::Socket, decision.profile, 5, true);
@@ -980,7 +982,9 @@ pub(crate) unsafe fn recvmsg_cp(sockfd: c_int, msg: *mut libc::msghdr, flags: c_
     } else {
         None
     };
-    let submitted = prepared.as_mut().map_or(msg, |message| message.as_mut_ptr());
+    let submitted = prepared
+        .as_mut()
+        .map_or(msg, |message| message.as_mut_ptr());
 
     let (rc, adverse) = match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {

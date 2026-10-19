@@ -2508,6 +2508,9 @@ struct CachedLocaleHandle {
 }
 
 static LOCALE_OBJECTS_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+/// Set once any thread selects a non-global locale via `uselocale`; until then
+/// `thread_category` skips the per-call TLS lookup on `isw*`/`tow*`/`mbrtowc`.
+static THREAD_LOCALE_EVER_USED: AtomicBool = AtomicBool::new(false);
 
 std::thread_local! {
     // Copy the immutable view when selecting a handle. Locale-sensitive hot
@@ -2527,6 +2530,9 @@ std::thread_local! {
 
 #[inline]
 fn thread_category(category: c_int) -> Option<Resolved> {
+    if !THREAD_LOCALE_EVER_USED.load(Ordering::Relaxed) {
+        return None;
+    }
     let slot = locale_core::category_slot(category)?;
     THREAD_LOCALE.with(|selected| selected.get().map(|view| view.categories[slot]))
 }
@@ -2832,6 +2838,7 @@ pub unsafe extern "C" fn uselocale(newloc: LocaleT) -> LocaleT {
         unsafe { set_abi_errno(libc::EINVAL) };
         return std::ptr::null_mut();
     };
+    THREAD_LOCALE_EVER_USED.store(true, Ordering::Release);
     THREAD_LOCALE.with(|selected| {
         selected.set(Some(LocaleSelection {
             handle: newloc,

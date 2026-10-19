@@ -449,34 +449,6 @@ fn fromfp_unsigned_f128(x: f128, rnd: c_int, width: u32) -> u64 {
     r as u64
 }
 
-/// nextafter/nexttoward range-error rule, matching glibc: ERANGE on overflow
-/// (finite x -> infinite result) and on underflow (result subnormal-or-zero AND
-/// magnitude decreased). nextafter(0, y) -> smallest subnormal is NOT an
-/// underflow (magnitude increased from 0), so it sets no errno.
-#[inline]
-fn nextafter_range_error_f64(x: f64, r: f64) -> bool {
-    if x.is_nan() || r.is_nan() {
-        return false;
-    }
-    if x.is_finite() && r.is_infinite() {
-        return true; // overflow
-    }
-    let sub_or_zero = r == 0.0 || r.abs() < f64::MIN_POSITIVE;
-    sub_or_zero && r.abs() < x.abs() // underflow (magnitude decreased)
-}
-
-#[inline]
-fn nextafter_range_error_f32(x: f32, r: f32) -> bool {
-    if x.is_nan() || r.is_nan() {
-        return false;
-    }
-    if x.is_finite() && r.is_infinite() {
-        return true;
-    }
-    let sub_or_zero = r == 0.0 || r.abs() < f32::MIN_POSITIVE;
-    sub_or_zero && r.abs() < x.abs()
-}
-
 #[inline]
 fn scaling_range_error_f64(x: f64, out: f64) -> bool {
     x.is_finite() && x != 0.0 && (out.is_infinite() || out == 0.0)
@@ -521,27 +493,9 @@ fn is_integral_f32(x: f32) -> bool {
     }
 }
 
-#[inline]
-fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
-    // A NaN argument is the result, quieted -- FE_INVALID for a signaling NaN
-    // only, sign and payload kept -- in every function routed here (glibc
-    // 2.43, scratch nansweep.c). The kernels did not agree: exp/log/floor
-    // returned an sNaN unquieted and silent, exp2/exp10 raised FE_INVALID for
-    // a quiet NaN, tan/y0/y1 returned the canonical NaN.
-    if x.is_nan() {
-        return std::hint::black_box(x) + 0.0;
-    }
-    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
-    // membrane is provably always-Allow for MathFenv and can never heal a math
-    // result, so `decide()`+`observe()` cannot change the output. Skip them for
-    // the common finite case; finite->non-finite "adverse" results fall through
-    // to the full path so observation (and any future deny/heal) stays reachable.
-    if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x);
-        if !(x.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
-    }
+#[cold]
+#[inline(never)]
+fn unary_entry_slow(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
         x.to_bits() as usize,
@@ -575,14 +529,66 @@ fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
     out
 }
 
+#[inline(always)]
+fn unary_entry(x: f64, base_cost_ns: u64, f: fn(f64) -> f64) -> f64 {
+    // A NaN argument is the result, quieted -- FE_INVALID for a signaling NaN
+    // only, sign and payload kept -- in every function routed here (glibc
+    // 2.43, scratch nansweep.c). The kernels did not agree: exp/log/floor
+    // returned an sNaN unquieted and silent, exp2/exp10 raised FE_INVALID for
+    // a quiet NaN, tan/y0/y1 returned the canonical NaN.
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
+    // Deployed math-membrane fast-path (bd-n40in2): in non-test builds the
+    // membrane is provably always-Allow for MathFenv and can never heal a math
+    // result, so `decide()`+`observe()` cannot change the output.
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
+    unary_entry_slow(x, base_cost_ns, f)
+}
+
+/// Entrypoint wrapper for total unary `<math.h>` functions (`sin`, `cos`, `tan`,
+/// `atan`, etc.) where a finite `f64` input never produces a non-finite result,
+/// so `adverse = x.is_finite() && !raw.is_finite()` is identically false.
+/// Taking `impl Fn(f64) -> f64` inlines `avx2_fma_dispatch!` directly into the
+/// exported ABI symbol and tail-calls `avx2_fma_twin` without allocating a stack
+/// frame or spilling `x` across the call.
+#[inline(always)]
+fn unary_infallible_entry(x: f64, base_cost_ns: u64, f: impl Fn(f64) -> f64) -> f64 {
+    if x.is_nan() {
+        return std::hint::black_box(x) + 0.0;
+    }
+    if runtime_policy::math_membrane_fastpath() {
+        return f(x);
+    }
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::MathFenv,
+        x.to_bits() as usize,
+        std::mem::size_of::<f64>(),
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::MathFenv, decision.profile, base_cost_ns, true);
+        return deny_fallback(mode);
+    }
+    let raw = f(x);
+    runtime_policy::observe(
+        ApiFamily::MathFenv,
+        decision.profile,
+        runtime_policy::scaled_cost(base_cost_ns, std::mem::size_of::<f64>()),
+        false,
+    );
+    raw
+}
+
 #[inline]
 fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f64 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x, y);
-        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x, y);
     }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
@@ -621,17 +627,17 @@ fn binary_entry(x: f64, y: f64, base_cost_ns: u64, f: fn(f64, f64) -> f64) -> f6
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn sin(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::sin)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::sin)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn cos(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::cos)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::cos)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn tan(x: f64) -> f64 {
-    unary_entry(x, 6, frankenlibc_core::math::tan)
+    unary_infallible_entry(x, 6, frankenlibc_core::math::tan)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -664,7 +670,7 @@ pub unsafe extern "C" fn acos(x: f64) -> f64 {
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn atan(x: f64) -> f64 {
-    unary_entry(x, 5, frankenlibc_core::math::atan)
+    unary_infallible_entry(x, 5, frankenlibc_core::math::atan)
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -956,14 +962,18 @@ pub unsafe extern "C" fn tgamma(x: f64) -> f64 {
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn lgamma(x: f64) -> f64 {
     // Compute via reentrant version to get sign, then update global signgam.
-    let (_, sign) = frankenlibc_core::math::lgamma_r(x);
+    let (val, sign) = frankenlibc_core::math::lgamma_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
     // Run through unary_entry for membrane accounting. lgamma computes
     // the same value as lgamma_r; the sign is a side-channel.
-    let out = unary_entry(x, 10, frankenlibc_core::math::lgamma);
+    let out = if !x.is_nan() && runtime_policy::math_membrane_fastpath() {
+        val
+    } else {
+        unary_entry(x, 10, frankenlibc_core::math::lgamma)
+    };
     if x.is_finite() && (x == 0.0 || (x < 0.0 && is_integral_f64(x)) || out.is_infinite()) {
         set_range_errno();
     }
@@ -1580,10 +1590,7 @@ fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
     }
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x);
-        if !(x.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x);
     }
     let (mode, decision) = runtime_policy::decide(
         ApiFamily::MathFenv,
@@ -1628,10 +1635,7 @@ fn unary_entry_f32<F: Fn(f32) -> f32>(x: f32, base_cost_ns: u64, f: F) -> f32 {
 fn binary_entry_f32(x: f32, y: f32, base_cost_ns: u64, f: fn(f32, f32) -> f32) -> f32 {
     // Deployed math-membrane fast-path (bd-n40in2); see `unary_entry`.
     if runtime_policy::math_membrane_fastpath() {
-        let raw = f(x, y);
-        if !(x.is_finite() && y.is_finite() && !raw.is_finite()) {
-            return raw;
-        }
+        return f(x, y);
     }
     let mixed =
         (x.to_bits() as usize).wrapping_mul(0x9e37_79b9_7f4a_7c15usize) ^ y.to_bits() as usize;
@@ -1974,12 +1978,12 @@ pub unsafe extern "C" fn lgammaf(x: f32) -> f32 {
         return std::hint::black_box(x) + 0.0;
     }
     // Compute via reentrant version to get sign, then update global signgam.
-    let (_, sign) = frankenlibc_core::math::lgammaf_r(x);
+    let (val, sign) = frankenlibc_core::math::lgammaf_r(x);
     unsafe {
         signgam = sign;
         __signgam = sign;
     }
-    let out = unary_entry_f32(x, 10, frankenlibc_core::math::lgammaf);
+    let out = unary_entry_f32(x, 10, |_| val);
     if x.is_finite() && ((x <= 0.0 && is_integral_f32(x)) || out.is_infinite()) {
         set_range_errno();
     }

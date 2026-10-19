@@ -19,7 +19,8 @@ pub(super) struct PreparedMessage {
 fn optional_region_fits(pointer: *const c_void, bytes: usize) -> bool {
     // Null optional pointers and zero lengths keep their kernel semantics.
     // In particular a null msg_name need not have a zero msg_namelen.
-    bytes == 0 || pointer.is_null()
+    bytes == 0
+        || pointer.is_null()
         || ((pointer as usize).checked_add(bytes).is_some()
             && known_remaining(pointer as usize).is_none_or(|available| bytes <= available))
 }
@@ -31,8 +32,11 @@ impl PreparedMessage {
         // SAFETY: destination is our live initialized header. Caller memory is
         // a kernel-copy address, never dereferenced or assumed aligned in Rust.
         unsafe {
-            copy_user_bytes(original.cast(), (&mut header as *mut libc::msghdr).cast(),
-                size_of::<libc::msghdr>())
+            copy_user_bytes(
+                original.cast(),
+                (&mut header as *mut libc::msghdr).cast(),
+                size_of::<libc::msghdr>(),
+            )
         }?;
         // Linux's socket-message count error is EMSGSIZE, not readv's EINVAL.
         // Do not narrow size_t, allocate scratch, or examine an invalid vector.
@@ -76,7 +80,11 @@ impl PreparedMessage {
     ) -> Result<(), c_int> {
         // Reject wraparound before computing any field address. The runtime's
         // header import already checks this, but keep the copy-back total too.
-        if original.is_null() || (original as usize).checked_add(size_of::<libc::msghdr>()).is_none() {
+        if original.is_null()
+            || (original as usize)
+                .checked_add(size_of::<libc::msghdr>())
+                .is_none()
+        {
             return Err(libc::EFAULT);
         }
         // SAFETY: each source is an initialized scalar in our owned header.
@@ -87,18 +95,24 @@ impl PreparedMessage {
             if !self.header.msg_name.is_null() {
                 copy_user_bytes(
                     (&self.header.msg_namelen as *const libc::socklen_t).cast(),
-                    original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_namelen)),
+                    original
+                        .cast::<u8>()
+                        .wrapping_add(offset_of!(libc::msghdr, msg_namelen)),
                     size_of::<libc::socklen_t>(),
                 )?;
             }
             copy_user_bytes(
                 (&self.header.msg_flags as *const c_int).cast(),
-                original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_flags)),
+                original
+                    .cast::<u8>()
+                    .wrapping_add(offset_of!(libc::msghdr, msg_flags)),
                 size_of::<c_int>(),
             )?;
             copy_user_bytes(
                 (&self.header.msg_controllen as *const usize).cast(),
-                original.cast::<u8>().wrapping_add(offset_of!(libc::msghdr, msg_controllen)),
+                original
+                    .cast::<u8>()
+                    .wrapping_add(offset_of!(libc::msghdr, msg_controllen)),
                 size_of::<usize>(),
             )
         }

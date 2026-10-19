@@ -1135,9 +1135,11 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   # lines (bd-rc0923-epic-eeuy4f.21).
   run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1
   run_corpus_case "${mode}" "getent_ahosts_localhost" /usr/bin/env LC_ALL=C getent ahosts localhost || mode_failed=1
-  # Reverse and own-hostname lookups through nsswitch hosts: (bd-rc0923-epic-eeuy4f.19).
+  # Reverse, own-hostname, curl and ssh lookups through nsswitch hosts: (bd-rc0923-epic-eeuy4f.19).
   run_corpus_case "${mode}" "getent_hosts_reverse_loopback" /usr/bin/env LC_ALL=C getent hosts 127.0.0.1 || mode_failed=1
   run_corpus_case "${mode}" "getent_ahostsv4_hostname" /usr/bin/env LC_ALL=C getent ahostsv4 "$(hostname)" || mode_failed=1
+  run_optional_case "curl" "${mode}" "curl_file_localhost" curl -fsS "file://localhost${tree}/a.txt" || mode_failed=1
+  run_optional_case "ssh" "${mode}" "ssh_canonicalize_localhost" bash -c "LC_ALL=C ssh -G -o CanonicalizeHostname=always localhost | grep -E '^(hostname|port) '" || mode_failed=1
   run_corpus_case "${mode}" "getent_help" /usr/bin/env LC_ALL=C getent --help || mode_failed=1
   # Exits 64 (EX_USAGE); the status is part of the compared output.
   run_corpus_case "${mode}" "getent_usage_error" bash -c 'LC_ALL=C getent -z passwd 2>&1; echo "rc=$?"' || mode_failed=1

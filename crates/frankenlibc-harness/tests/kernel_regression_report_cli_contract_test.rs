@@ -64,18 +64,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn tmp_dir() -> TestResult<PathBuf> {
@@ -215,10 +218,7 @@ fn harness_source_registers_kernel_regression_report_subcommand() -> TestResult 
 
 #[test]
 fn cli_without_output_prints_markdown_to_stdout() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("harness binary not built; gracefully skipping");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let result = run_report(&bin, None, "0xDEAD_BEEF")?;
     require(
         result.status.success(),
@@ -239,9 +239,7 @@ fn cli_without_output_prints_markdown_to_stdout() -> TestResult {
 
 #[test]
 fn cli_with_output_writes_markdown_and_json_sibling() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out_md = dir.join("kernel_regression_report.md");
     let result = run_report(&bin, Some(&out_md), "0xDEAD_BEEF")?;
@@ -276,9 +274,7 @@ fn cli_with_output_writes_markdown_and_json_sibling() -> TestResult {
 
 #[test]
 fn cli_seed_roundtrips_to_each_mode_block() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let dir = tmp_dir()?;
     let out_md = dir.join("seed_check.md");
     let result = run_report(&bin, Some(&out_md), "0xCAFEBABE")?;

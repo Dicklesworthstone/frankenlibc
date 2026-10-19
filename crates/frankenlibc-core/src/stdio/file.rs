@@ -814,6 +814,23 @@ impl StdioStream {
         }
     }
 
+    /// Like `fast_write`, but also buffers non-newline bytes on `BufMode::Line` streams.
+    #[inline]
+    pub fn fast_write_line_or_full(&mut self, data: &[u8]) -> bool {
+        if !self.open_flags.writable || self.is_mem_backed() {
+            return false;
+        }
+        if self.buffer.fast_write_line_or_full(data) {
+            self.flags.io_started = true;
+            self.flags.last_write = true;
+            self.flags.eof = false;
+            self.offset = self.offset.saturating_add(data.len() as i64);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Fast single-byte buffered read for the common case: returns `Some(byte)` iff a byte
     /// is already in the read buffer for a clean readable fd stream — reusing
     /// `buffered_read_into` (which advances the cursor/offset and clears `last_write`).
@@ -1670,7 +1687,13 @@ mod tests {
 
     #[test]
     fn committed_read_window_sets_sticky_byte_orientation() {
-        let mut stream = StdioStream::new(3, OpenFlags { readable: true, ..Default::default() });
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(stream.fill_read_buffer(b"abc"), 3);
         stream.consume_window(0);
         assert_eq!(stream.set_orientation(0), 0);
@@ -1683,7 +1706,13 @@ mod tests {
 
     #[test]
     fn committed_write_window_sets_sticky_byte_orientation() {
-        let mut stream = StdioStream::new(3, OpenFlags { writable: true, ..Default::default() });
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                writable: true,
+                ..Default::default()
+            },
+        );
         assert!(stream.buffer_write(b"a").is_some());
         stream.set_offset(1);
         let (_, used, capacity) = stream.write_window().unwrap();
@@ -1694,14 +1723,23 @@ mod tests {
         assert_eq!(stream.set_orientation(1), -1);
         assert_eq!(stream.offset(), 2);
         stream.commit_write_window(used + 1);
-        assert_eq!(stream.offset(), 2, "repeated absorption must not double count");
+        assert_eq!(
+            stream.offset(),
+            2,
+            "repeated absorption must not double count"
+        );
     }
 
     #[test]
     fn wide_streams_do_not_publish_byte_windows() {
-        let mut stream = StdioStream::new(3, OpenFlags {
-            readable: true, writable: true, ..Default::default()
-        });
+        let mut stream = StdioStream::new(
+            3,
+            OpenFlags {
+                readable: true,
+                writable: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(stream.set_orientation(1), 1);
         assert_eq!(stream.fill_read_buffer(b"abc"), 3);
         assert!(stream.read_window().is_none());

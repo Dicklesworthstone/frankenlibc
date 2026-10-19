@@ -9,11 +9,21 @@
 use crate::stdio_abi as stdio;
 
 pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
-    let baseline = if cfg!(target_arch = "aarch64") { "GLIBC_2.17" } else { "GLIBC_2.2.5" };
+    let baseline = if cfg!(target_arch = "aarch64") {
+        "GLIBC_2.17"
+    } else {
+        "GLIBC_2.2.5"
+    };
     // The existing fmemopen frontend implements the post-2.22 contract,
     // including zero-sized streams. Do not alias the incompatible old ABI.
-    let introduced = if name == "fmemopen" { "GLIBC_2.22" } else { baseline };
-    if version.is_some_and(|version| version != introduced) { return None; }
+    let introduced = if name == "fmemopen" {
+        "GLIBC_2.22"
+    } else {
+        baseline
+    };
+    if version.is_some_and(|version| version != introduced) {
+        return None;
+    }
     // Preserve each frontend's actual ABI (including C-unwind) by taking its
     // address directly. Do not fabricate a signature-erasing call wrapper.
     let function = match name {

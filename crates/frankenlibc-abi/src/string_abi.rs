@@ -5057,8 +5057,12 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     // obtain/discard those exact results. Unit tests retain the full route, and
     // the uncertified early-startup path still uses the generic machinery.
     let stage_context = (cfg!(test) || !certified_read_active).then(|| {
-        let (aligned, recent_page, ordering) =
-            stage_context_from_remaining_two(s1 as usize, lhs_remaining, s2 as usize, rhs_remaining);
+        let (aligned, recent_page, ordering) = stage_context_from_remaining_two(
+            s1 as usize,
+            lhs_remaining,
+            s2 as usize,
+            rhs_remaining,
+        );
         (ordering, aligned, recent_page)
     });
     let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
@@ -7436,7 +7440,8 @@ pub unsafe extern "C" fn strstr(haystack: *const c_char, needle: *const c_char) 
 #[inline(never)]
 unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *mut c_char {
     if haystack.is_null() {
-        let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+        let (aligned, recent_page, ordering) =
+            stage_context_two(haystack as usize, needle as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -7446,7 +7451,8 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
         return std::ptr::null_mut();
     }
     if needle.is_null() {
-        let (aligned, recent_page, ordering) = stage_context_two(haystack as usize, needle as usize);
+        let (aligned, recent_page, ordering) =
+            stage_context_two(haystack as usize, needle as usize);
         record_string_stage_outcome(
             &ordering,
             aligned,
@@ -7459,8 +7465,12 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
     let hay_known = known_remaining(haystack as usize);
     let needle_known = known_remaining(needle as usize);
     let _trace_scope = runtime_policy::entrypoint_scope("strstr");
-    let (aligned, recent_page, ordering) =
-        stage_context_from_remaining_two(haystack as usize, hay_known, needle as usize, needle_known);
+    let (aligned, recent_page, ordering) = stage_context_from_remaining_two(
+        haystack as usize,
+        hay_known,
+        needle as usize,
+        needle_known,
+    );
     let (_mode, decision) = runtime_policy::decide(
         ApiFamily::StringMemory,
         haystack as usize,

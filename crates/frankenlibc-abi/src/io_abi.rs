@@ -1168,18 +1168,15 @@ pub unsafe extern "C-unwind" fn vmsplice(
     // signed readv count: invalid counts must reach the kernel unchanged.
     // Import only descriptors; the caller still owns the payload lifetime and
     // must honor vmsplice's page-retention and SPLICE_F_GIFT contracts.
-    let prepared = match iov_snapshot::PreparedIovecs::prepare_unsigned(
-        iov,
-        nr_segs,
-        mode.heals_enabled(),
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            unsafe { set_abi_errno(error) };
-            runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
-            return -1;
-        }
-    };
+    let prepared =
+        match iov_snapshot::PreparedIovecs::prepare_unsigned(iov, nr_segs, mode.heals_enabled()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                unsafe { set_abi_errno(error) };
+                runtime_policy::observe(ApiFamily::IoFd, decision.profile, 8, true);
+                return -1;
+            }
+        };
     let iov = prepared.as_ptr();
     match unsafe {
         crate::pthread_abi::at_cancellation_point(|| {

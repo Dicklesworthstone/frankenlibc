@@ -1364,48 +1364,26 @@ impl ValidationPipeline {
                             ApiFamily::PointerValidation,
                             ValidationProfile::Fast,
                             elapsed_ns,
-                            recent_page,
+                            false,
                         );
-
-                        if recent_page {
-                            self.emit_terminal_transition(
-                                &trace,
-                                mode,
-                                "arena_lookup",
-                                "pipeline::stage4::arena",
-                                "Deny",
-                                "Invalid",
-                                elapsed_ns,
-                                aligned,
-                                recent_page,
-                                bloom_negative,
-                                false,
-                                0,
-                                0,
-                                0,
-                                false,
-                            );
-                            return ValidationOutcome::Invalid(PointerAbstraction::invalid(addr));
-                        } else {
-                            self.emit_terminal_transition(
-                                &trace,
-                                mode,
-                                "arena_lookup",
-                                "pipeline::stage4::arena",
-                                "Allow",
-                                "Foreign",
-                                elapsed_ns,
-                                aligned,
-                                recent_page,
-                                bloom_negative,
-                                false,
-                                0,
-                                0,
-                                0,
-                                false,
-                            );
-                            return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
-                        }
+                        self.emit_terminal_transition(
+                            &trace,
+                            mode,
+                            "arena_lookup",
+                            "pipeline::stage4::arena",
+                            "Allow",
+                            "Foreign",
+                            elapsed_ns,
+                            aligned,
+                            recent_page,
+                            bloom_negative,
+                            false,
+                            0,
+                            0,
+                            0,
+                            false,
+                        );
+                        return ValidationOutcome::Foreign(PointerAbstraction::unknown(addr));
                     };
                     if !found.state.is_live() {
                         let abs = self.abstraction_from_slot(addr, &found);
@@ -2837,6 +2815,34 @@ mod tests {
         let abs = outcome.abstraction().expect("invalid abstraction");
         assert_eq!(abs.alloc_base, Some(base));
         assert_eq!(abs.state, SafetyState::Invalid);
+
+        let result = pipeline.free(ptr);
+        assert_eq!(result, FreeResult::Freed);
+    }
+
+    #[test]
+    fn foreign_pointer_sharing_owned_page_is_classified_as_foreign_not_invalid() {
+        let pipeline = ValidationPipeline::new();
+        let ptr = pipeline.allocate(64).expect("alloc");
+        let base = ptr as usize;
+        let page_base = base & !0xFFFusize;
+        // Pick an address on the same 4 KiB page that is outside [raw_base, user_base + 64 + CANARY_SIZE).
+        let candidate = if (base & 0xFFF) >= 512 {
+            page_base + 64
+        } else {
+            page_base + 2048
+        };
+        assert!(pipeline.page_oracle.query(candidate));
+        assert!(pipeline.arena.lookup(candidate).is_none());
+
+        let outcome = pipeline.validate(candidate);
+        assert!(
+            matches!(outcome, ValidationOutcome::Foreign(_)),
+            "unowned address on shared page must be Foreign, got {outcome:?}"
+        );
+        let access = outcome.access_abstraction().expect("foreign abstraction");
+        assert_eq!(access.state, SafetyState::Unknown);
+        assert_eq!(access.remaining, None);
 
         let result = pipeline.free(ptr);
         assert_eq!(result, FreeResult::Freed);

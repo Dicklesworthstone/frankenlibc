@@ -45,7 +45,7 @@ CATEGORY="${CVE_ARENA_CATEGORY:-glibc-internal}"
 MIN_RATE="${CVE_ARENA_MIN_RATE:-1.0}"
 RESULTS_DIR="${CVE_ARENA_RESULTS_DIR:-${ROOT}/tests/cve_arena/results}"
 SKIP_RUN="${CVE_ARENA_SKIP_RUN:-0}"
-RUNNER="${CVE_ARENA_RUNNER:-${ROOT}/tests/cve_arena/run.sh}"
+RUNNER="${CVE_ARENA_RUNNER:-${ROOT}/tests/cve_arena/runner.sh}"
 REPORTER="${CVE_ARENA_REPORT:-${ROOT}/tests/cve_arena/report.sh}"
 SUMMARY_JSON="${RESULTS_DIR}/summary.json"
 
@@ -84,9 +84,9 @@ if [[ "${SKIP_RUN}" != "1" ]]; then
     else
         echo "cve_arena_gate: running CVE Arena suite..."
         if [[ -n "${CATEGORY}" && "${CATEGORY}" != "all" ]]; then
-            "${RUNNER}" --category "${CATEGORY}" --results-dir "${RESULTS_DIR}" || true
+            "${RUNNER}" --no-docker --category="${CATEGORY}" --results-dir="${RESULTS_DIR}" || true
         else
-            "${RUNNER}" --results-dir "${RESULTS_DIR}" || true
+            "${RUNNER}" --no-docker --all --results-dir="${RESULTS_DIR}" || true
         fi
     fi
 fi

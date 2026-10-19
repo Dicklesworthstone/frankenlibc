@@ -220,9 +220,16 @@ impl CacheEntry {
     };
 }
 
+fn allocate_entries() -> Option<Box<[CacheEntry; CACHE_SIZE]>> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(CACHE_SIZE).ok()?;
+    vec.resize(CACHE_SIZE, CacheEntry::EMPTY);
+    vec.into_boxed_slice().try_into().ok()
+}
+
 /// Thread-local validation cache.
 pub struct TlsValidationCache {
-    entries: Box<[CacheEntry; CACHE_SIZE]>,
+    entries: Option<Box<[CacheEntry; CACHE_SIZE]>>,
     /// The four allocations validated most recently, matched by RANGE: an
     /// interior pointer into one of them hits with exactly the guarantee an
     /// exact-address hit gives (the allocation was fully validated and has
@@ -235,19 +242,61 @@ pub struct TlsValidationCache {
     next_range: usize,
     hits: u64,
     misses: u64,
+    unbacked: bool,
 }
 
 impl TlsValidationCache {
-    /// Create a new empty cache.
+    /// Create a zero-initialized cache without allocating the backing table yet.
+    ///
+    /// Used for `const` TLS initialization so `TLS_CACHE` resides in `.tbss`
+    /// and never runs `get_or_init_slow` (which previously moved a 232-byte
+    /// `Option<RefCell<TlsValidationCache>>` via exported `memcpy` before the
+    /// `RefCell` borrow guard was active, re-entering validation and
+    /// overflowing 32 KiB thread stacks).
     #[must_use]
-    pub fn new() -> Self {
+    const fn const_new() -> Self {
         Self {
-            entries: Box::new([CacheEntry::EMPTY; CACHE_SIZE]),
+            entries: None,
             ranges: [CacheEntry::EMPTY; 4],
             next_range: 0,
             hits: 0,
             misses: 0,
+            unbacked: false,
         }
+    }
+
+    /// Ephemeral inline-only cache for re-entrant borrow or post-TLS-teardown
+    /// fallback paths. Never allocates on the heap.
+    #[must_use]
+    const fn unbacked() -> Self {
+        Self {
+            entries: None,
+            ranges: [CacheEntry::EMPTY; 4],
+            next_range: 0,
+            hits: 0,
+            misses: 0,
+            unbacked: true,
+        }
+    }
+
+    /// Create a new empty cache.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entries: allocate_entries(),
+            ranges: [CacheEntry::EMPTY; 4],
+            next_range: 0,
+            hits: 0,
+            misses: 0,
+            unbacked: false,
+        }
+    }
+
+    #[cfg(test)]
+    fn entry_valid(&self, idx: usize) -> bool {
+        self.entries
+            .as_ref()
+            .is_some_and(|entries| entries[idx].valid)
     }
 
     /// A hit in the recently-validated allocation ranges.
@@ -276,24 +325,26 @@ impl TlsValidationCache {
     /// a free) the entry is self-cleaned so subsequent lookups skip the
     /// mismatch comparison.
     pub fn lookup(&mut self, addr: usize) -> Option<CachedValidation> {
-        let idx = Self::index(addr);
-        let entry = &mut self.entries[idx];
+        if let Some(entries) = self.entries.as_deref_mut() {
+            let idx = Self::index(addr);
+            let entry = &mut entries[idx];
 
-        if entry.valid && entry.addr == addr {
-            let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
-            if entry.shard_epoch == live_shard_epoch {
-                self.hits += 1;
-                return Some(CachedValidation {
-                    user_base: entry.user_base,
-                    user_size: entry.user_size,
-                    generation: entry.generation,
-                    state: entry.state,
-                });
+            if entry.valid && entry.addr == addr {
+                let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
+                if entry.shard_epoch == live_shard_epoch {
+                    self.hits += 1;
+                    return Some(CachedValidation {
+                        user_base: entry.user_base,
+                        user_size: entry.user_size,
+                        generation: entry.generation,
+                        state: entry.state,
+                    });
+                }
+                // Shard epoch advanced; the slot was freed (or another slot in
+                // the same shard was freed). Self-clean so we don't repay the
+                // mismatch on the next lookup.
+                entry.valid = false;
             }
-            // Shard epoch advanced; the slot was freed (or another slot in
-            // the same shard was freed). Self-clean so we don't repay the
-            // mismatch on the next lookup.
-            entry.valid = false;
         }
         if let Some(hit) = self.range_hit(addr) {
             self.hits += 1;
@@ -309,21 +360,23 @@ impl TlsValidationCache {
     /// is used by speculative fast paths that fall back to the full pipeline,
     /// where the authoritative miss accounting still happens.
     pub(crate) fn lookup_hit_only(&mut self, addr: usize) -> Option<CachedValidation> {
-        let idx = Self::index(addr);
-        let entry = &mut self.entries[idx];
+        if let Some(entries) = self.entries.as_deref_mut() {
+            let idx = Self::index(addr);
+            let entry = &mut entries[idx];
 
-        if entry.valid && entry.addr == addr {
-            let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
-            if entry.shard_epoch == live_shard_epoch {
-                self.hits += 1;
-                return Some(CachedValidation {
-                    user_base: entry.user_base,
-                    user_size: entry.user_size,
-                    generation: entry.generation,
-                    state: entry.state,
-                });
+            if entry.valid && entry.addr == addr {
+                let live_shard_epoch = current_shard_epoch(entry.shard_idx as usize);
+                if entry.shard_epoch == live_shard_epoch {
+                    self.hits += 1;
+                    return Some(CachedValidation {
+                        user_base: entry.user_base,
+                        user_size: entry.user_size,
+                        generation: entry.generation,
+                        state: entry.state,
+                    });
+                }
+                entry.valid = false;
             }
-            entry.valid = false;
         }
         if let Some(hit) = self.range_hit(addr) {
             self.hits += 1;
@@ -359,7 +412,12 @@ impl TlsValidationCache {
             shard_epoch: shard_epochs[shard_idx],
             valid: true,
         };
-        self.entries[idx] = entry;
+        if self.entries.is_none() && !self.unbacked {
+            self.entries = allocate_entries();
+        }
+        if let Some(entries) = self.entries.as_deref_mut() {
+            entries[idx] = entry;
+        }
         if entry.user_size != 0 {
             // Refresh the range already holding this allocation, else
             // replace the older of the two.
@@ -378,7 +436,14 @@ impl TlsValidationCache {
 
     /// Invalidate entries matching a specific allocation base.
     pub fn invalidate(&mut self, user_base: usize) {
-        for entry in self.entries.iter_mut().chain(self.ranges.iter_mut()) {
+        if let Some(entries) = self.entries.as_deref_mut() {
+            for entry in entries.iter_mut() {
+                if entry.valid && entry.user_base == user_base {
+                    entry.valid = false;
+                }
+            }
+        }
+        for entry in &mut self.ranges {
             if entry.valid && entry.user_base == user_base {
                 entry.valid = false;
             }
@@ -387,7 +452,9 @@ impl TlsValidationCache {
 
     /// Invalidate all entries.
     pub fn invalidate_all(&mut self) {
-        self.entries.fill(CacheEntry::EMPTY);
+        if let Some(entries) = self.entries.as_deref_mut() {
+            entries.fill(CacheEntry::EMPTY);
+        }
         self.ranges = [CacheEntry::EMPTY; 4];
     }
 
@@ -449,8 +516,8 @@ where
         Ok(Some(value)) => value,
         _ => {
             // Either thread-local is destroyed OR re-entrant borrow occurred.
-            // Execute with a fresh temporary cache.
-            let mut fallback = TlsValidationCache::new();
+            // Execute with an allocation-free temporary cache.
+            let mut fallback = TlsValidationCache::unbacked();
             let action = maybe_f
                 .take()
                 .expect("with_tls_cache fallback closure must be available");
@@ -461,8 +528,9 @@ where
 
 #[cfg(not(feature = "owned-tls-cache"))]
 thread_local! {
-    static TLS_CACHE: std::cell::RefCell<TlsValidationCache> =
-        std::cell::RefCell::new(TlsValidationCache::new());
+    static TLS_CACHE: std::cell::RefCell<TlsValidationCache> = const {
+        std::cell::RefCell::new(TlsValidationCache::const_new())
+    };
 }
 
 /// Access the validation cache without emitting Rust TLS in replacement-mode
@@ -472,7 +540,7 @@ pub fn with_tls_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut TlsValidationCache) -> R,
 {
-    let mut fallback = TlsValidationCache::new();
+    let mut fallback = TlsValidationCache::unbacked();
     f(&mut fallback)
 }
 
@@ -632,7 +700,7 @@ mod tests {
             result.is_none(),
             cache.hits() - hits_before,
             cache.misses() - misses_before,
-            cache.entries[idx].valid,
+            cache.entry_valid(idx),
         );
     }
 
@@ -673,7 +741,7 @@ mod tests {
             result.is_none(),
             cache.hits() - hits_before,
             cache.misses() - misses_before,
-            cache.entries[idx].valid,
+            cache.entry_valid(idx),
         );
     }
 
@@ -718,7 +786,7 @@ mod tests {
             result.is_none(),
             cache.hits() - hits_before,
             cache.misses() - misses_before,
-            cache.entries[idx].valid,
+            cache.entry_valid(idx),
         );
     }
 
@@ -856,7 +924,7 @@ mod tests {
             "expected cache miss after epoch bump"
         );
         assert!(
-            !cache.entries[idx].valid,
+            !cache.entry_valid(idx),
             "expected entry self-clean invalidation on epoch mismatch"
         );
 

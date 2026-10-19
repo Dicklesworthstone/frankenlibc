@@ -61,7 +61,7 @@
       "abi_resolver": [
         "pub unsafe extern \"C\" fn getaddrinfo",
         "native_dns_resolve",
-        "ReturnSafeDefault",
+        "global_healing_policy",
         "pub unsafe extern \"C\" fn gethostbyname"
       ],
       "resolver_conformance": [

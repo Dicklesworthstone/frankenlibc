@@ -64,15 +64,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -193,10 +199,7 @@ fn read_record(out_path: &Path) -> TestResult<Value> {
 
 #[test]
 fn cli_too_short_input_yields_too_short_error_and_non_zero_exit() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let pcpt = unique_tmp("too_short", "bin")?;
     let output = unique_tmp("too_short", "jsonl")?;
     std::fs::write(&pcpt, b"").map_err(|e| format!("write: {e}"))?;
@@ -222,10 +225,7 @@ fn cli_too_short_input_yields_too_short_error_and_non_zero_exit() -> TestResult 
 
 #[test]
 fn cli_bad_magic_yields_bad_magic_error() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let pcpt = unique_tmp("bad_magic", "bin")?;
     let output = unique_tmp("bad_magic", "jsonl")?;
     // HEADER_LEN is 119 bytes; allocate well past it with zeros so
@@ -249,10 +249,7 @@ fn cli_bad_magic_yields_bad_magic_error() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_missing_pcpt_file() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let pcpt = unique_tmp("missing", "bin")?;
     let output = unique_tmp("missing", "jsonl")?;
     // pcpt file deliberately not created.

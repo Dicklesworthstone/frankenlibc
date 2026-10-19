@@ -37,15 +37,24 @@ impl PreparedWait {
         sigmask: *const libc::sigset_t,
         hardened: bool,
     ) -> Result<Self, c_int> {
-        let mut prepared = Self { timeout: None, mask: Mask::Original(sigmask) };
+        let mut prepared = Self {
+            timeout: None,
+            mask: Mask::Original(sigmask),
+        };
         if !timeout.is_null() {
-            let mut value = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut value = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             if hardened {
                 // SAFETY: owned, initialized destination; arbitrary source
                 // alignment/permissions/known bounds are checked by the copier.
                 unsafe {
-                    copy_user_bytes(timeout.cast(), (&mut value as *mut libc::timespec).cast(),
-                        size_of::<libc::timespec>())?;
+                    copy_user_bytes(
+                        timeout.cast(),
+                        (&mut value as *mut libc::timespec).cast(),
+                        size_of::<libc::timespec>(),
+                    )?;
                 }
             } else {
                 // SAFETY: strict preserves the original valid-pointer contract.
@@ -64,8 +73,11 @@ impl PreparedWait {
             // SAFETY: all u64 bit patterns are valid. The target consumes only
             // these eight bytes, not the full public libc::sigset_t object.
             unsafe {
-                copy_user_bytes(sigmask.cast(), (&mut bits as *mut u64).cast(),
-                    KERNEL_SIGSET_BYTES)?;
+                copy_user_bytes(
+                    sigmask.cast(),
+                    (&mut bits as *mut u64).cast(),
+                    KERNEL_SIGSET_BYTES,
+                )?;
             }
             prepared.mask = Mask::Owned(bits);
         }

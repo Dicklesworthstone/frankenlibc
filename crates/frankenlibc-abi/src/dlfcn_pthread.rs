@@ -165,7 +165,10 @@ mod tests {
         use std::process::Command;
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let unique = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let directory = std::env::temp_dir().join(format!(
             "frankenlibc-native-pthread-{}-{unique}",
             std::process::id()
@@ -176,15 +179,26 @@ mod tests {
         std::fs::write(&source, WORKERS).unwrap();
         let output = Command::new("cc")
             .args([
-                "-shared", "-fPIC", "-nostdlib", "-O2", "-fno-stack-protector",
-                "-Wall", "-Wextra", "-Werror", "-DFRANKENLIBC_NATIVE",
+                "-shared",
+                "-fPIC",
+                "-nostdlib",
+                "-O2",
+                "-fno-stack-protector",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-DFRANKENLIBC_NATIVE",
             ])
             .arg(&source)
             .arg("-o")
             .arg(&library)
             .output()
             .expect("C compiler required for the native DSO execution test");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let name = CString::new(library.as_os_str().as_bytes()).unwrap();
         // SAFETY: the path is NUL terminated. The compiled, self-contained
         // fixture exports the declared C function and remains mapped until all

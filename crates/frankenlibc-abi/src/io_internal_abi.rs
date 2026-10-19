@@ -2227,19 +2227,9 @@ pub fn verify_native_file(ptr: *mut c_void) -> Option<usize> {
         return None;
     }
 
-    // Check stdin/stdout/stderr first (slots 0/1/2)
-    let stdin_ptr = native_stdio_stream_ptr(libc::STDIN_FILENO);
-    let stdout_ptr = native_stdio_stream_ptr(libc::STDOUT_FILENO);
-    let stderr_ptr = native_stdio_stream_ptr(libc::STDERR_FILENO);
-
-    if ptr == stdin_ptr {
-        return Some(0);
-    }
-    if ptr == stdout_ptr {
-        return Some(1);
-    }
-    if ptr == stderr_ptr {
-        return Some(2);
+    // Check stdin/stdout/stderr first (slots 0/1/2) via lock-free slot address table
+    if let Some(fd) = native_stdio_fd_for_ptr(ptr) {
+        return Some(fd as usize);
     }
 
     // Check if it's an adopted foreign file

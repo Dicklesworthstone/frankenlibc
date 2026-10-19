@@ -13,7 +13,12 @@ Generates a JSON report to stdout (or --output).
 import argparse
 import hashlib
 import json
+import os
+import re
+import signal
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,12 +29,178 @@ DEFAULT_REPORT_PATH = "tests/cve_arena/results/paired_mode_evidence.v1.json"
 DEFAULT_LOG_PATH = "tests/cve_arena/results/paired_mode_evidence.log.jsonl"
 API_FAMILY = "cve_paired_mode"
 
+HEALING_ACTION_RE = re.compile(
+    r"ClampSize|TruncateWithNull|IgnoreDoubleFree|IgnoreForeignFree|"
+    r"ReallocAsMalloc|ReturnSafeDefault|UpgradeToSafeVariant|"
+    r"CanaryDetection|FreedWithCanaryCorruption"
+)
+
 
 def find_repo_root():
     p = Path(__file__).resolve().parent.parent
     if (p / "Cargo.toml").exists():
         return p
     return Path.cwd()
+
+
+def find_preload_lib(root):
+    candidates = []
+    env_lib = os.environ.get("FRANKENLIBC_LIB")
+    if env_lib:
+        candidates.append(Path(env_lib))
+    candidates.extend([
+        Path("/data/tmp/cargo-target/release/libfrankenlibc_abi.so"),
+        root / "target" / "release" / "libfrankenlibc_abi.so",
+        Path("/data/tmp/cargo-target/debug/libfrankenlibc_abi.so"),
+        root / "target" / "debug" / "libfrankenlibc_abi.so",
+    ])
+    for cand in candidates:
+        if cand.exists():
+            return cand
+    return None
+
+
+def decode_signal(rc):
+    if rc is None:
+        return "SIGKILL"
+    if rc < 0:
+        sig_num = -rc
+    elif 128 < rc <= 192:
+        sig_num = rc - 128
+    else:
+        return None
+    try:
+        return signal.Signals(sig_num).name
+    except ValueError:
+        return f"SIG{sig_num}"
+
+
+def count_healing_actions(text):
+    counts = {}
+    for match in HEALING_ACTION_RE.findall(text or ""):
+        counts[match] = counts.get(match, 0) + 1
+    return counts
+
+
+def run_trigger_mode(bin_path, cwd, preload_lib=None, mode=None):
+    env = os.environ.copy()
+    log_file = None
+    if preload_lib is not None:
+        env["LD_PRELOAD"] = str(preload_lib)
+        if mode is not None:
+            env["FRANKENLIBC_MODE"] = mode
+        fd, log_path = tempfile.mkstemp(prefix="flc_cve_paired_", suffix=".jsonl")
+        os.close(fd)
+        log_file = Path(log_path)
+        env["FRANKENLIBC_LOG"] = str(log_file)
+        env["FRANKENLIBC_LOG_FILE"] = str(log_file)
+    else:
+        env.pop("LD_PRELOAD", None)
+        env.pop("FRANKENLIBC_MODE", None)
+        env.pop("FRANKENLIBC_LOG", None)
+        env.pop("FRANKENLIBC_LOG_FILE", None)
+
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            [str(bin_path)],
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            timeout=5,
+        )
+        rc = proc.returncode
+        stderr_text = proc.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        rc = None
+        stderr_text = (exc.stderr.decode("utf-8", errors="replace")
+                       if isinstance(exc.stderr, bytes)
+                       else (exc.stderr or ""))
+
+    log_text = ""
+    if log_file is not None:
+        try:
+            if log_file.exists():
+                log_text = log_file.read_text(encoding="utf-8", errors="replace")
+                log_file.unlink()
+        except OSError:
+            pass
+
+    sig = decode_signal(rc)
+    heals = count_healing_actions(stderr_text + "\n" + log_text)
+    return {
+        "rc": rc,
+        "signal": sig,
+        "timed_out": timed_out,
+        "crashed": timed_out or (sig is not None),
+        "stderr_snippet": stderr_text.strip()[:240],
+        "heal_counts": heals,
+        "healing_actions_observed": sorted(heals.keys()),
+    }
+
+
+def execute_corpus_c_trigger(root, corpus_entry):
+    manifest_rel = corpus_entry.get("manifest_path")
+    if not manifest_rel:
+        return None
+    trigger_c = (root / manifest_rel).parent / "trigger.c"
+    if not trigger_c.exists():
+        return None
+    preload_lib = find_preload_lib(root)
+    with tempfile.TemporaryDirectory(prefix="flc_paired_exec_") as tmpdir:
+        bin_path = Path(tmpdir) / "trigger"
+        try:
+            comp = subprocess.run(
+                ["cc", "-O0", "-fno-builtin", "-g", "-o", str(bin_path), str(trigger_c)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            return {
+                "compiles": False,
+                "compile_error": str(exc),
+                "hardened_healed": False,
+            }
+        if comp.returncode != 0:
+            return {
+                "compiles": False,
+                "compile_error": (comp.stderr or "").strip()[:240],
+                "hardened_healed": False,
+            }
+        if preload_lib is None:
+            return {
+                "compiles": True,
+                "preload_lib": None,
+                "error": "libfrankenlibc_abi.so not found",
+                "hardened_healed": False,
+            }
+        glibc_run = run_trigger_mode(bin_path, tmpdir)
+        strict_run = run_trigger_mode(bin_path, tmpdir, preload_lib, "strict")
+        hardened_run = run_trigger_mode(bin_path, tmpdir, preload_lib, "hardened")
+        heal_deltas = {}
+        all_actions = set(glibc_run["heal_counts"]) | set(hardened_run["heal_counts"])
+        for act in sorted(all_actions):
+            heal_deltas[act] = hardened_run["heal_counts"].get(act, 0) - glibc_run["heal_counts"].get(act, 0)
+        expected_heals = set(corpus_entry.get("healing_actions", []))
+        observed_heals = set(hardened_run["healing_actions_observed"])
+        healed = (
+            not hardened_run["crashed"]
+            and sum(v for v in heal_deltas.values() if v > 0) > 0
+            and (not expected_heals or bool(observed_heals & expected_heals))
+        )
+        return {
+            "compiles": True,
+            "preload_lib": str(preload_lib),
+            "glibc_baseline": glibc_run,
+            "strict": strict_run,
+            "hardened": hardened_run,
+            "heal_counter_deltas": heal_deltas,
+            "hardened_healed": healed,
+        }
 
 
 def load_json_file(path):
@@ -220,8 +391,8 @@ def build_strict_detection(corpus_entry):
     }
 
 
-def build_paired_evidence(corpus_entry, hardened_assertion):
-    """Build paired strict+hardened evidence bundle spec."""
+def build_paired_evidence(root, corpus_entry, hardened_assertion):
+    """Build paired strict+hardened evidence bundle spec and execute C triggers."""
     cve_id = corpus_entry["cve_id"]
     test_name = corpus_entry["test_name"]
     dossier_id = compute_dossier_id(cve_id, test_name)
@@ -229,6 +400,11 @@ def build_paired_evidence(corpus_entry, hardened_assertion):
     strict = build_strict_detection(corpus_entry)
     hardened = hardened_assertion.get("hardened_expectations", {}) if hardened_assertion else {}
     paired_fuzz_seed = build_paired_fuzz_seed(corpus_entry, strict, hardened, dossier_id)
+    live_exec = execute_corpus_c_trigger(root, corpus_entry)
+
+    hardened_verdict = "prevented" if not hardened.get("crashes", False) else "vulnerable"
+    if live_exec is not None and not live_exec.get("hardened_healed"):
+        hardened_verdict = "vulnerable"
 
     return {
         "cve_id": cve_id,
@@ -249,8 +425,9 @@ def build_paired_evidence(corpus_entry, hardened_assertion):
             "exit_code": hardened.get("exit_code", 0),
             "healing_actions": hardened.get("healing_actions_required", []),
             "no_uncontrolled_unsafety": hardened.get("no_uncontrolled_unsafety", True),
-            "verdict": "prevented" if not hardened.get("crashes", False) else "vulnerable",
+            "verdict": hardened_verdict,
         },
+        "live_execution": live_exec,
         "evidence_bundle": {
             "dossier_ref": dossier_id,
             "artifacts": expected_artifact_paths(dossier_id),
@@ -268,6 +445,14 @@ def validate_paired_evidence(evidence_entries):
         cve_id = e["cve_id"]
         dossier_id = e["dossier_id"]
         bundle = e.get("evidence_bundle", {})
+        live_exec = e.get("live_execution")
+
+        if live_exec is not None and not live_exec.get("hardened_healed"):
+            issues.append({
+                "cve_id": cve_id,
+                "issue": "Live C trigger execution under LD_PRELOAD hardened mode did not heal",
+                "severity": "error",
+            })
 
         # Strict must have detection flags
         if not e["strict_mode"]["detection_flags"]:
@@ -437,7 +622,7 @@ def main():
     for entry in corpus_entries:
         cve_id = entry["cve_id"]
         ha = hardened_assertions.get(cve_id)
-        paired = build_paired_evidence(entry, ha)
+        paired = build_paired_evidence(root, entry, ha)
         evidence_entries.append(paired)
         all_detection_flags.update(paired["strict_mode"]["detection_flags"])
         all_healing_actions.update(paired["hardened_mode"]["healing_actions"])

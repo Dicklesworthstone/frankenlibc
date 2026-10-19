@@ -22,6 +22,27 @@
 /// test and a tail call: with `body` inlined into it, every call -- the AVX2
 /// ones included -- paid the baseline body's frame (`pow_fused`: six pushes
 /// and a 136-byte stack adjustment) before the test.
+#[cfg(all(
+    target_arch = "x86_64",
+    not(all(target_feature = "avx2", target_feature = "fma"))
+))]
+pub(crate) static AVX2_FMA_STATE: core::sync::atomic::AtomicU8 =
+    core::sync::atomic::AtomicU8::new(0);
+
+#[cfg(all(
+    target_arch = "x86_64",
+    not(all(target_feature = "avx2", target_feature = "fma"))
+))]
+#[cold]
+#[inline(never)]
+pub(crate) fn detect_avx2_fma() -> bool {
+    let supported =
+        std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma");
+    let state = if supported { 2 } else { 1 };
+    AVX2_FMA_STATE.store(state, core::sync::atomic::Ordering::Relaxed);
+    supported
+}
+
 macro_rules! avx2_fma_dispatch {
     ($(#[$attr:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty => $body:ident;) => {
         $(#[$attr])*
@@ -40,13 +61,24 @@ macro_rules! avx2_fma_dispatch {
                 fn baseline($($arg: $ty),*) -> $ret {
                     $body($($arg),*)
                 }
-                if std::arch::is_x86_feature_detected!("avx2")
-                    && std::arch::is_x86_feature_detected!("fma")
-                {
-                    // SAFETY: the CPU supports AVX2 and FMA, checked just above.
-                    return unsafe { avx2_fma_twin($($arg),*) };
+                #[cold]
+                #[inline(never)]
+                fn init($($arg: $ty),*) -> $ret {
+                    if crate::math::detect_avx2_fma() {
+                        // SAFETY: the CPU supports AVX2 and FMA, checked just above.
+                        unsafe { avx2_fma_twin($($arg),*) }
+                    } else {
+                        baseline($($arg),*)
+                    }
                 }
-                return baseline($($arg),*);
+                return match crate::math::AVX2_FMA_STATE
+                    .load(core::sync::atomic::Ordering::Relaxed)
+                {
+                    // SAFETY: state 2 is stored only after confirming AVX2+FMA support.
+                    2 => unsafe { avx2_fma_twin($($arg),*) },
+                    1 => baseline($($arg),*),
+                    _ => init($($arg),*),
+                };
             }
             $body($($arg),*)
         }

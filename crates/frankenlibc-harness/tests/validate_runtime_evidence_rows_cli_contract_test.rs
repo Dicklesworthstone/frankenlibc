@@ -91,18 +91,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
     if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
-        return Some(PathBuf::from(bin));
+        return Ok(PathBuf::from(bin));
     }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -240,10 +243,7 @@ const VALID_ROW: &str = r#"{"schema":"runtime_evidence.decision.v1","schema_vers
 
 #[test]
 fn cli_valid_row_certified() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = write_jsonl("valid", &[VALID_ROW])?;
     let output = unique_tmp("valid", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
@@ -276,10 +276,7 @@ fn cli_valid_row_certified() -> TestResult {
 
 #[test]
 fn cli_missing_required_field_reports_field() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Remove "bead_id" from the valid row to force a missing_required_field error.
     let mut row = valid_row_value()?;
     remove_object_field(&mut row, "bead_id")?;
@@ -308,10 +305,7 @@ fn cli_missing_required_field_reports_field() -> TestResult {
 
 #[test]
 fn cli_wrong_schema_reports_unexpected_value() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let mut row = valid_row_value()?;
     set_object_field(
         &mut row,
@@ -343,10 +337,7 @@ fn cli_wrong_schema_reports_unexpected_value() -> TestResult {
 
 #[test]
 fn cli_wrong_type_reports_field() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let mut row = valid_row_value()?;
     set_object_field(
         &mut row,
@@ -378,10 +369,7 @@ fn cli_wrong_type_reports_field() -> TestResult {
 
 #[test]
 fn cli_empty_string_reports_field() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let mut row = valid_row_value()?;
     set_object_field(
         &mut row,
@@ -413,10 +401,7 @@ fn cli_empty_string_reports_field() -> TestResult {
 
 #[test]
 fn cli_unparseable_row_reports_json_parse_error() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = write_jsonl("parse", &["not valid json"])?;
     let output = unique_tmp("parse", "jsonl")?;
     let out = run_cli(&bin, &jsonl, &output)?;
@@ -434,10 +419,7 @@ fn cli_unparseable_row_reports_json_parse_error() -> TestResult {
 
 #[test]
 fn cli_summary_counts_match_per_row_aggregate() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     // Mix: 2 valid + 2 invalid + 1 parse error.
     let mut bad_field = valid_row_value()?;
     remove_object_field(&mut bad_field, "bead_id")?;
@@ -497,10 +479,7 @@ fn cli_summary_counts_match_per_row_aggregate() -> TestResult {
 
 #[test]
 fn cli_deterministic_given_same_inputs() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = write_jsonl("det", &[VALID_ROW, "garbage"])?;
     let out_a = unique_tmp("det_a", "jsonl")?;
     let out_b = unique_tmp("det_b", "jsonl")?;

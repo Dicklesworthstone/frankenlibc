@@ -909,6 +909,7 @@ pub struct FormatSegments<'a> {
     /// unsupported N (`%w7d`). An unknown conversion byte (`%y`) is still
     /// printed literally, as glibc does.
     invalid_directive: bool,
+    raw: &'a [u8],
 }
 
 impl<'a> FormatSegments<'a> {
@@ -921,7 +922,12 @@ impl<'a> FormatSegments<'a> {
             sequential_args: 0,
             has_long_double: false,
             invalid_directive: false,
+            raw: &[],
         }
+    }
+
+    pub fn raw(&self) -> &'a [u8] {
+        self.raw
     }
 
     pub fn as_slice(&self) -> &[FormatSegment<'a>] {
@@ -1465,6 +1471,7 @@ fn find_percent(hay: &[u8]) -> Option<usize> {
 
 pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
     let mut segments = FormatSegments::new();
+    segments.raw = fmt;
     let mut pos = 0;
     let len = fmt.len();
 

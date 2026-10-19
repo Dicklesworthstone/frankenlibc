@@ -5739,7 +5739,8 @@ pub unsafe extern "C" fn dladdr1(
 ) -> c_int {
     // Native metadata must be selected before the host path: ld.so neither
     // owns these mappings nor knows their public ELF symbol records.
-    if unsafe { crate::dlfcn_abi::native_address_info_extra(addr, info.cast(), extra_info, flags) } {
+    if unsafe { crate::dlfcn_abi::native_address_info_extra(addr, info.cast(), extra_info, flags) }
+    {
         return 1;
     }
     // The host knows every object it loaded and returns its link_map /

@@ -199,15 +199,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 #[test]
@@ -218,10 +224,7 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
     // The CI lane builds the binary via `cargo test`; if it's
     // not present here we skip rather than fail (the source-anchor
     // test above already protects the contract).
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
 
     // Per-process scratch path so concurrent runs don't collide.
     let tmp = std::env::temp_dir().join(format!(
@@ -327,10 +330,7 @@ fn cli_emits_three_jsonl_records_in_documented_order() -> TestResult {
 
 #[test]
 fn cli_rejects_bad_source_commit_before_running_lanes() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let tmp =
         std::env::temp_dir().join(format!("bd_uof80_cli_bad_sha_{}.jsonl", std::process::id()));
     let output = Command::new(&bin)

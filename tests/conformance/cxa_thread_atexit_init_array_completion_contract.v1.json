@@ -22,7 +22,7 @@
     "next_audit_score_threshold": 800,
     "implementation_refs": [
       "crates/frankenlibc-abi/src/startup_abi.rs:934",
-      "crates/frankenlibc-abi/src/startup_abi.rs:938",
+      "crates/frankenlibc-abi/src/startup_abi.rs:937",
       "crates/frankenlibc-abi/src/startup_abi.rs:941",
       "crates/frankenlibc-abi/src/startup_abi.rs:943",
       "crates/frankenlibc-abi/src/startup_abi.rs:963",
@@ -33,7 +33,7 @@
       "crates/frankenlibc-abi/src/startup_abi.rs:1017",
       "crates/frankenlibc-abi/src/startup_abi.rs:1022",
       "crates/frankenlibc-abi/tests/startup_abi_test.rs:214",
-      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8579",
+      "crates/frankenlibc-abi/tests/unistd_abi_test.rs:8578",
       "scripts/check_setjmp_native.sh:28",
       "scripts/check_setjmp_native.sh:34",
       "tests/conformance/signal_setjmp_async_cancellation_fixture_pack.v1.json:27",

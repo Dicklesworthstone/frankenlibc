@@ -9231,11 +9231,14 @@ mod tests {
             let _ = kernel.decide(SafetyLevel::Strict, ctx);
         }
         let elapsed = start.elapsed();
-        // 10k decisions should take < 50ms even on slow machines.
+        // 10k full kernel decisions should take < 50ms in release builds
+        // (and < 500ms in unoptimized debug builds on shared CI workers).
+        let max_ms = if cfg!(debug_assertions) { 500 } else { 50 };
         assert!(
-            elapsed.as_millis() < 50,
-            "10k decisions took {}ms — expected < 50ms",
-            elapsed.as_millis()
+            elapsed.as_millis() < max_ms,
+            "10k decisions took {}ms — expected < {}ms",
+            elapsed.as_millis(),
+            max_ms
         );
     }
 

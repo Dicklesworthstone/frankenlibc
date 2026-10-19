@@ -243,8 +243,16 @@ static int test_setvbuf_rejects_post_io_change(void) {
         return 1;
     }
 
-    if (setvbuf(fp, NULL, _IOFBF, 128) == 0) {
-        fprintf(stderr, "FAIL: setvbuf after I/O unexpectedly succeeded\n");
+    /* Per glibc iosetvbuf.c (bd-bjcusw), valid setvbuf after I/O flushes and succeeds,
+     * while an invalid mode after I/O is rejected. */
+    if (setvbuf(fp, NULL, _IOFBF, 128) != 0) {
+        fprintf(stderr, "FAIL: setvbuf(_IOFBF) after I/O failed\n");
+        fclose(fp);
+        unlink(path);
+        return 1;
+    }
+    if (setvbuf(fp, NULL, -999, 128) == 0) {
+        fprintf(stderr, "FAIL: setvbuf with invalid mode after I/O unexpectedly succeeded\n");
         fclose(fp);
         unlink(path);
         return 1;

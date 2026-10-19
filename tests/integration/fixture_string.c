@@ -84,6 +84,13 @@ static int test_strlen(void) {
  * an unbounded scan runs off the end and reports a length far past the allocation.
  */
 static int test_strlen_tracked_unterminated_bound(void) {
+    const char *mode = getenv("FRANKENLIBC_MODE");
+    if (mode == NULL || strcmp(mode, "hardened") != 0) {
+        /* Per bd-rc0923-epic-eeuy4f.8, strict strlen reports glibc's result without
+         * capping at the allocation's tracked size; allocation-bound truncation is
+         * a hardened-mode repair. */
+        return 0;
+    }
     int fails = 0;
     int observed = 0;
     for (size_t n = 1; n <= 64; n++) {

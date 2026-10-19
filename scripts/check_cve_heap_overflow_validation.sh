@@ -25,7 +25,7 @@ echo "=== CVE Heap Overflow Validation Gate (bd-1m5.1) ==="
 
 # 1. Generate the validation report
 echo "--- Generating heap overflow validation report ---"
-python3 "$SCRIPT_DIR/generate_cve_heap_overflow_validation.py" -o "$REPORT" 2>&1 || true
+python3 "$SCRIPT_DIR/generate_cve_heap_overflow_validation.py" -o "$REPORT" 2>&1
 
 if [ ! -f "$REPORT" ]; then
     echo "FAIL: validation report not generated"
@@ -50,6 +50,7 @@ total = summary.get("total_heap_overflow_tests", 0)
 valid = summary.get("manifests_valid", 0)
 with_triggers = summary.get("with_trigger_files", 0)
 c_compiles = summary.get("c_triggers_compile", 0)
+c_healed = summary.get("c_triggers_hardened_healed", 0)
 c_total = summary.get("c_triggers_total", 0)
 healing = summary.get("unique_healing_actions", [])
 cwes_covered = set(summary.get("heap_cwes_covered", []))
@@ -59,6 +60,7 @@ print(f"Heap overflow tests: {total}")
 print(f"  Manifests valid:   {valid}/{total}")
 print(f"  With triggers:     {with_triggers}/{total}")
 print(f"  C compiles:        {c_compiles}/{c_total}")
+print(f"  C healed (LD_PRELOAD): {c_healed}/{c_total}")
 print(f"  Issues:            {issues}")
 print(f"  Healing actions:   {', '.join(healing)}")
 print(f"  CWEs covered:      {', '.join(sorted(cwes_covered))}")
@@ -107,6 +109,12 @@ if c_total > 0 and c_compiles < c_total:
     errors += 1
 elif c_total > 0:
     print(f"PASS: All {c_total} C triggers compile")
+
+if c_total > 0 and c_healed < c_total:
+    print(f"FAIL: {c_total - c_healed} C trigger(s) failed hardened LD_PRELOAD healing check")
+    errors += 1
+elif c_total > 0:
+    print(f"PASS: All {c_total} C triggers healed under hardened LD_PRELOAD")
 
 # Check 4: ClampSize exercised (key healing for heap overflows)
 if "ClampSize" not in healing:

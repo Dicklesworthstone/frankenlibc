@@ -91,15 +91,21 @@ fn cargo_target_dir_for_bin() -> PathBuf {
     }
 }
 
-fn find_harness_binary() -> Option<PathBuf> {
+fn find_harness_binary() -> TestResult<PathBuf> {
+    if let Some(bin) = std::env::var_os("FRANKENLIBC_HARNESS_BIN") {
+        return Ok(PathBuf::from(bin));
+    }
+    if let Some(bin) = option_env!("CARGO_BIN_EXE_harness") {
+        return Ok(PathBuf::from(bin));
+    }
     let root = cargo_target_dir_for_bin();
     for prof in ["debug", "release"] {
         let candidate = root.join(prof).join("harness");
         if candidate.exists() {
-            return Some(candidate);
+            return Ok(candidate);
         }
     }
-    None
+    Err("harness binary not built; this gate cannot pass without execution".into())
 }
 
 fn unique_tmp(stem: &str, ext: &str) -> TestResult<PathBuf> {
@@ -203,10 +209,7 @@ fn run_cli(
 
 #[test]
 fn cli_passes_on_empty_jsonl_log() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("empty", "jsonl")?;
     let output = unique_tmp("empty_out", "jsonl")?;
     std::fs::write(&jsonl, "").map_err(|e| format!("write empty jsonl: {e}"))?;
@@ -239,10 +242,7 @@ fn cli_passes_on_empty_jsonl_log() -> TestResult {
 
 #[test]
 fn cli_fails_on_corrupt_jsonl_row() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("corrupt", "jsonl")?;
     let output = unique_tmp("corrupt_out", "jsonl")?;
     std::fs::write(&jsonl, "this is not json\n").map_err(|e| format!("write: {e}"))?;
@@ -276,10 +276,7 @@ fn cli_fails_on_corrupt_jsonl_row() -> TestResult {
 
 #[test]
 fn cli_fails_closed_on_blank_expected_source_commit() -> TestResult {
-    let Some(bin) = find_harness_binary() else {
-        eprintln!("skip: harness binary not built in this profile");
-        return Ok(());
-    };
+    let bin = find_harness_binary()?;
     let jsonl = unique_tmp("blank", "jsonl")?;
     let output = unique_tmp("blank_out", "jsonl")?;
     std::fs::write(&jsonl, "").map_err(|e| format!("write: {e}"))?;

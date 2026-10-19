@@ -385,18 +385,32 @@ impl SignalHandlerSlot {
     }
 }
 
-struct DeferredSignalSlot {
-    count: AtomicU32,
-    has_siginfo: AtomicU8,
+const DEFERRED_SIGINFO_SLOTS: usize = 4;
+
+struct DeferredSiginfoSlot {
+    signum: AtomicU8,
     siginfo: UnsafeCell<MaybeUninit<libc::siginfo_t>>,
 }
 
-impl DeferredSignalSlot {
+impl DeferredSiginfoSlot {
     const fn new() -> Self {
         Self {
-            count: AtomicU32::new(0),
-            has_siginfo: AtomicU8::new(0),
+            signum: AtomicU8::new(0),
             siginfo: UnsafeCell::new(MaybeUninit::uninit()),
+        }
+    }
+}
+
+struct DeferredSignalTable {
+    counts: [AtomicU32; MAX_TRACKED_SIGNAL + 1],
+    siginfos: [DeferredSiginfoSlot; DEFERRED_SIGINFO_SLOTS],
+}
+
+impl DeferredSignalTable {
+    const fn new() -> Self {
+        Self {
+            counts: [const { AtomicU32::new(0) }; MAX_TRACKED_SIGNAL + 1],
+            siginfos: [const { DeferredSiginfoSlot::new() }; DEFERRED_SIGINFO_SLOTS],
         }
     }
 }
@@ -414,7 +428,7 @@ static SIGNAL_HANDLER_SLOTS: [SignalHandlerSlot; MAX_TRACKED_SIGNAL + 1] =
 struct SignalTls {
     critical_depth: AtomicU32,
     classification: AtomicU8,
-    deferred_signals: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1],
+    deferred_signals: DeferredSignalTable,
     deferred_pending: AtomicU64,
 }
 
@@ -429,7 +443,7 @@ fn new_signal_tls() -> SignalTls {
     SignalTls {
         critical_depth: AtomicU32::new(0),
         classification: AtomicU8::new(SignalSafetyClassification::Safe as u8),
-        deferred_signals: [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1],
+        deferred_signals: DeferredSignalTable::new(),
         deferred_pending: AtomicU64::new(0),
     }
 }
@@ -443,8 +457,7 @@ thread_local! {
     static SIGNAL_CRITICAL_DEPTH: AtomicU32 = const { AtomicU32::new(0) };
     static SIGNAL_CLASSIFICATION: AtomicU8 =
         const { AtomicU8::new(SignalSafetyClassification::Safe as u8) };
-    static DEFERRED_SIGNALS: [DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1] =
-        const { [const { DeferredSignalSlot::new() }; MAX_TRACKED_SIGNAL + 1] };
+    static DEFERRED_SIGNALS: DeferredSignalTable = const { DeferredSignalTable::new() };
     static DEFERRED_PENDING: AtomicU64 = const { AtomicU64::new(0) };
 }
 
@@ -470,9 +483,7 @@ fn with_signal_classification<R>(f: impl FnOnce(&AtomicU8) -> R) -> R {
     }
 }
 
-fn with_deferred_signals<R>(
-    f: impl FnOnce(&[DeferredSignalSlot; MAX_TRACKED_SIGNAL + 1]) -> R,
-) -> R {
+fn with_deferred_signals<R>(f: impl FnOnce(&DeferredSignalTable) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
         SIGNAL_OWNED_TLS.with(|tls| f(&tls.deferred_signals))
@@ -618,9 +629,22 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
     if !(1..=MAX_TRACKED_SIGNAL as c_int).contains(&signum) {
         return;
     }
+    let sig_u8 = signum as u8;
     with_deferred_signals(|pending| {
-        let slot = &pending[signum as usize];
         if !info.is_null() {
+            let slot_idx = pending
+                .siginfos
+                .iter()
+                .position(|s| s.signum.load(Ordering::Relaxed) == sig_u8)
+                .or_else(|| {
+                    pending
+                        .siginfos
+                        .iter()
+                        .position(|s| s.signum.load(Ordering::Relaxed) == 0)
+                })
+                .unwrap_or((signum as usize) % DEFERRED_SIGINFO_SLOTS);
+            let slot = &pending.siginfos[slot_idx];
+            slot.signum.store(0, Ordering::Relaxed);
             // SAFETY: the kernel owns `info` for the duration of the signal
             // trampoline. We snapshot it into thread-local storage before
             // returning so deferred replay can hand the user handler the
@@ -628,9 +652,13 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
             unsafe {
                 std::ptr::copy_nonoverlapping(info, (*slot.siginfo.get()).as_mut_ptr(), 1);
             }
-            slot.has_siginfo.store(1, Ordering::Relaxed);
+            slot.signum.store(sig_u8, Ordering::Release);
         } else {
-            slot.has_siginfo.store(0, Ordering::Relaxed);
+            for slot in &pending.siginfos {
+                if slot.signum.load(Ordering::Relaxed) == sig_u8 {
+                    slot.signum.store(0, Ordering::Relaxed);
+                }
+            }
         }
         // The interrupted frame's `ucontext_t` is deliberately NOT stored: a
         // deferred replay runs later, outside that frame, so a handler that
@@ -641,7 +669,7 @@ fn queue_deferred_signal(signum: c_int, info: *mut libc::siginfo_t, context: *mu
         // thread stack; node/libuv 32-64 KiB stacks failed under preload —
         // bd-rc0923-epic-eeuy4f.9). Replay passes a fresh context instead.
         let _ = context;
-        slot.count.fetch_add(1, Ordering::Relaxed);
+        pending.counts[signum as usize].fetch_add(1, Ordering::Relaxed);
     });
     // After the count: a flush that sees this bit is guaranteed to see the
     // count; one that cleared the mask earlier leaves the bit for the next.
@@ -669,17 +697,23 @@ fn take_deferred_signals() -> Vec<DeferredSignalReplay> {
         while bits != 0 {
             let signum = bits.trailing_zeros() as c_int + 1;
             bits &= bits - 1;
-            let slot = &pending[signum as usize];
-            let count = slot.count.swap(0, Ordering::Relaxed);
+            let count = pending.counts[signum as usize].swap(0, Ordering::Relaxed);
             if count != 0 {
-                let siginfo = if slot.has_siginfo.swap(0, Ordering::Relaxed) != 0 {
-                    // SAFETY: the slot was populated before `has_siginfo` was
-                    // set, and swapping the flag back to zero gives the caller
-                    // exclusive ownership of this snapshot.
-                    Some(unsafe { (*slot.siginfo.get()).assume_init_read() })
-                } else {
-                    None
-                };
+                let sig_u8 = signum as u8;
+                let mut siginfo = None;
+                for slot in &pending.siginfos {
+                    if slot
+                        .signum
+                        .compare_exchange(sig_u8, 0, Ordering::Acquire, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        // SAFETY: the slot was populated before `signum` was
+                        // published, and clearing `signum` gives the caller
+                        // exclusive ownership of this snapshot.
+                        siginfo = Some(unsafe { (*slot.siginfo.get()).assume_init_read() });
+                        break;
+                    }
+                }
                 out.push(DeferredSignalReplay {
                     signum,
                     count,
@@ -817,6 +851,24 @@ pub fn exit_signal_critical_section() {
     with_signal_classification(|value| {
         value.store(SignalSafetyClassification::Safe.as_u8(), Ordering::Relaxed)
     });
+    let has_pending = with_deferred_pending(|mask| mask.load(Ordering::Relaxed) != 0);
+    if has_pending {
+        flush_deferred_signals_slow();
+    }
+}
+
+/// Replay signals deferred while this thread was inside a signal-critical
+/// section.
+///
+/// Kept `#[cold]` and `#[inline(never)]`: `replay_context` (`ucontext_t`,
+/// 968 bytes) + `siginfo_t` (128 bytes) live on this frame. When inlined into
+/// [`exit_signal_critical_section`], LLVM hoisted a 2,280-byte (`0x8e8`) stack
+/// allocation into `exit_signal_critical_section`'s prologue — paid on every
+/// hardened `malloc`/`calloc`/`free`, and enough to push a 32 KiB-stack thread
+/// (node/libuv) across its guard page during TLS setup.
+#[cold]
+#[inline(never)]
+fn flush_deferred_signals_slow() {
     for deferred in take_deferred_signals() {
         for _ in 0..deferred.count {
             SIGNAL_FLUSHED_DELIVERIES.fetch_add(1, Ordering::Relaxed);
@@ -840,7 +892,6 @@ pub fn exit_signal_critical_section() {
                     8,
                 )
             };
-            let mut ucontext = Some(replay_context);
             // Replayed callbacks are user signal handlers too. They can call
             // allocator and evidence entrypoints while the flush originates
             // from a critical-section exit, so give them the same lock-free
@@ -853,9 +904,7 @@ pub fn exit_signal_critical_section() {
                     siginfo
                         .as_mut()
                         .map_or(std::ptr::null_mut(), |info| info as *mut libc::siginfo_t),
-                    ucontext.as_mut().map_or(std::ptr::null_mut(), |context| {
-                        context as *mut libc::ucontext_t as *mut c_void
-                    }),
+                    (&raw mut replay_context).cast::<c_void>(),
                 )
             };
         }

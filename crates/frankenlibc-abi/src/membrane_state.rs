@@ -82,10 +82,22 @@ fn initialize_global_pipeline() -> Option<&'static ValidationPipeline> {
     crate::malloc_abi::install_arena_block_allocator();
     let pipeline = Box::new(ValidationPipeline::with_runtime_math(runtime_math_enabled));
     let ptr = Box::into_raw(pipeline);
+    let pipeline_ref = unsafe { &*ptr };
+    // Pre-populate the main thread's TLS validation cache, the initial 64 KiB
+    // BTree node pool + PageOracle L2 bitmap for the heap's 16 MiB chunk, and
+    // host `main_arena` headroom before publishing `STATE_READY`, so a program
+    // that caps `RLIMIT_AS` at the start of `main` does not fault on its first
+    // hardened `malloc`/`free`.
+    frankenlibc_membrane::tls_cache::with_tls_cache(|_| {});
+    if let Some(probe) = pipeline_ref.allocate(16) {
+        let _ = pipeline_ref.free(probe);
+    }
+    #[cfg(not(test))]
+    crate::malloc_abi::prewarm_host_heap_headroom();
     PIPELINE_PTR.store(ptr, Ordering::Release);
     PIPELINE_STATE.store(STATE_READY, Ordering::Release);
 
-    Some(unsafe { &*ptr })
+    Some(pipeline_ref)
 }
 
 #[cfg_attr(test, allow(dead_code))]

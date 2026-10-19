@@ -21,7 +21,7 @@
         "crates/frankenlibc-core/src/string/str.rs:382",
         "crates/frankenlibc-core/src/string/str.rs:383",
         "crates/frankenlibc-core/src/string/str.rs:418",
-        "crates/frankenlibc-core/src/string/str.rs:876",
+        "crates/frankenlibc-core/src/string/str.rs:875",
         "crates/frankenlibc-core/src/string/str.rs:881",
         "crates/frankenlibc-core/src/string/str.rs:886",
         "crates/frankenlibc-core/src/string/str.rs:897"
@@ -42,8 +42,8 @@
       "path": "crates/frankenlibc-abi/tests/string_abi_test.rs",
       "required_line_refs": [
         "crates/frankenlibc-abi/tests/string_abi_test.rs:622",
-        "crates/frankenlibc-abi/tests/string_abi_test.rs:630",
-        "crates/frankenlibc-abi/tests/string_abi_test.rs:646"
+        "crates/frankenlibc-abi/tests/string_abi_test.rs:629",
+        "crates/frankenlibc-abi/tests/string_abi_test.rs:645"
       ],
       "required_needles": [
         "strspn_counts_accepted_prefix",
@@ -59,7 +59,7 @@
       "path": "tests/conformance/per_symbol_fixture_tests.v1.json",
       "required_line_refs": [
         "tests/conformance/per_symbol_fixture_tests.v1.json:55497",
-        "tests/conformance/per_symbol_fixture_tests.v1.json:86363"
+        "tests/conformance/per_symbol_fixture_tests.v1.json:80021"
       ],
       "required_needles": ["\"symbol\": \"strspn\""]
     },
