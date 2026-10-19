@@ -19,7 +19,8 @@ BASIC = ["wait-v4", "wait-v6", "nowait-v4", "nowait-v6", "wait-mixed",
          "zero-request", "controls"]
 BLOCKED = ["dns-v4", "dns-v6", "blocked-timeout", "mixed-pending", "blocked-signal",
            "cancel-one", "cancel-all", "cancel-retire", "cancel-reuse",
-           "suspend-cancel", "suspend-pending-cancel", "wait-cancel"]
+           "suspend-cancel", "suspend-pending-cancel", "wait-cancel",
+           "input-snapshot", "worker-lifetime", "cancel-callback"]
 
 
 def main() -> int:

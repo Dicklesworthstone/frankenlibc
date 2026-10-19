@@ -30862,131 +30862,121 @@ pub unsafe extern "C" fn logwtmp(line: *const c_char, name: *const c_char, host:
 // Async DNS (getaddrinfo_a family)
 // ===========================================================================
 
-const GAICB_ZERO_PROBE_BYTES: usize = 4 * std::mem::size_of::<*const c_void>();
+#[path = "gai_async.rs"]
+mod gai_async;
 
-unsafe fn is_zeroed_gaicb_request(req: *mut c_void) -> bool {
-    if req.is_null() || !tracked_region_fits(req as usize, GAICB_ZERO_PROBE_BYTES) {
-        return false;
-    }
-    // SAFETY: `req` is a caller-provided pointer. We only read the first four
-    // pointer-sized fields, which match glibc's public `gaicb` request-shape
-    // (name/service/request/result) well enough to recognize the degenerate
-    // all-zero handle without depending on the full struct layout.
-    let fields = unsafe { std::slice::from_raw_parts(req.cast::<*const c_void>(), 4) };
-    fields.iter().all(|field| field.is_null())
-}
-
+/// GNU asynchronous name/service resolution using the native resolver.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getaddrinfo_a(
+pub unsafe extern "C-unwind" fn getaddrinfo_a(
     mode: c_int,
     list: *mut *mut c_void,
     nitems: c_int,
-    _sevp: *mut c_void,
+    sevp: *mut c_void,
 ) -> c_int {
-    const GAI_WAIT: c_int = 0;
-    const GAI_NOWAIT: c_int = 1;
-
-    if mode != GAI_WAIT && mode != GAI_NOWAIT {
-        unsafe { set_abi_errno(libc::EINVAL) };
-        return libc::EAI_SYSTEM;
-    }
-    // Host glibc treats the empty request set as a synchronous no-op and
-    // returns success without mutating errno, even when `list` is NULL.
-    if nitems <= 0 {
-        return 0;
-    }
-    // Host glibc is crash-prone when `list` is NULL but `nitems > 0`.
-    // FrankenLibC intentionally treats that shape as unsupported and returns
-    // `EAI_SYSTEM`/`ENOSYS` instead of mirroring host UB at the ABI boundary.
-    if !list.is_null() {
-        let Some(list_bytes) = (nitems as usize).checked_mul(std::mem::size_of::<*mut c_void>())
-        else {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            return libc::EAI_SYSTEM;
-        };
-        if !tracked_region_fits(list as usize, list_bytes) {
-            unsafe { set_abi_errno(libc::ENOSYS) };
-            return libc::EAI_SYSTEM;
+    let saved_errno = current_abi_errno();
+    let submission = match unsafe { gai_async::submit(mode, list, nitems, sevp) } {
+        Ok(submission) => submission,
+        Err(error) => {
+            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            return error;
         }
-        // SAFETY: `list` is a C pointer to `nitems` request slots provided by the
-        // caller. We only create a shared slice after validating `nitems > 0`,
-        // the multiplication above did not overflow, tracked allocations have
-        // enough remaining bytes for all slots,
-        // and we only inspect `gaicb`-shaped entries enough to recognize the
-        // host-glibc degenerate success path where every request slot is either
-        // NULL or points at a zeroed request descriptor.
-        let requests =
-            unsafe { std::slice::from_raw_parts(list as *const *mut c_void, nitems as usize) };
-        if requests
-            .iter()
-            .all(|request| request.is_null() || unsafe { is_zeroed_gaicb_request(*request) })
-        {
-            return 0;
+    };
+    if mode == 0 {
+        loop {
+            let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+            if submission.done() { break; }
+            // No queue lock or borrowed request/list crosses the cancel window.
+            // GAI_WAIT restarts ordinary signal interruptions; request errors
+            // are read with gai_error rather than returned by this batch call.
+            let _ = unsafe { crate::pthread_abi::at_cancellation_point(||
+                gai_async::wait(epoch, std::ptr::null())) };
         }
     }
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
+    unsafe { set_abi_errno(saved_errno) };
+    submission.status
 }
 
-// ---------------------------------------------------------------------------
-// Async DNS constants (glibc <netdb.h> values)
-// ---------------------------------------------------------------------------
-#[allow(dead_code)] // Defined for completeness; used if getaddrinfo_a is implemented.
-const EAI_INPROGRESS: c_int = -100;
-#[allow(dead_code)]
-const EAI_CANCELED: c_int = -101;
-#[allow(dead_code)]
-const EAI_NOTCANCELED: c_int = -102;
-#[allow(dead_code)]
-const EAI_ALLDONE: c_int = -103;
-
-/// `gai_cancel` — cancel an asynchronous name resolution request (bd-9dq5).
-///
-/// FrankenLibC resolves all `getaddrinfo` calls synchronously and does not
-/// export `getaddrinfo_a`, so no asynchronous requests can still be pending by
-/// the time a caller reaches `gai_cancel`. This is part of the proven
-/// host-parity path for the degenerate synchronous wrappers, so report
-/// `EAI_ALLDONE` without mutating `errno`.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
-    let _ = req;
-    EAI_ALLDONE
-}
-
-/// `gai_error` — query status of an asynchronous name resolution request (bd-9dq5).
-///
-/// Since all resolution is synchronous and `getaddrinfo_a` is unimplemented,
-/// a zeroed request descriptor represents the completed synchronous stub
-/// handle, while opaque handles remain unsupported. The all-zero `gaicb` case
-/// is part of the proven host-parity path and reports success without mutating
-/// `errno`. Opaque or NULL handles are treated as an intentional safe
-/// divergence and return `EAI_SYSTEM` with `ENOSYS` instead of following
-/// crash-prone or otherwise host-UB-adjacent behavior.
+/// Query the release-published status, including native per-request errors.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn gai_error(req: *mut c_void) -> c_int {
-    if unsafe { is_zeroed_gaicb_request(req) } {
-        return 0;
+    let saved_errno = current_abi_errno();
+    match unsafe { gai_async::error(req) } {
+        Ok(status) => {
+            // A stored EAI_SYSTEM is still a valid request status, not a new
+            // system failure in the observing thread. Preserve its errno too.
+            unsafe { set_abi_errno(saved_errno) };
+            status
+        }
+        Err(error) => error,
     }
-    unsafe { set_abi_errno(libc::ENOSYS) };
-    libc::EAI_SYSTEM
 }
 
-/// `gai_suspend` — wait for async name resolution requests to complete (bd-9dq5).
-///
-/// Since all resolution is synchronous, every request in the list is already
-/// complete by the time `gai_suspend` is called. The empty-list and all-NULL
-/// list cases are part of the proven host-parity path and return `EAI_ALLDONE`
-/// without mutating `errno`, even when the caller supplies a timeout that
-/// would otherwise be invalid. Nonzero `ent` with a NULL list, including
-/// negative `ent`, is an intentional safe divergence from crash-prone host
-/// behavior and also returns `EAI_ALLDONE` without mutating `errno`.
+/// Cancel queued native requests; executing resolutions retain ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn gai_suspend(
-    _list: *const *const c_void,
-    _nitems: c_int,
-    _timeout: *const libc::timespec,
+pub unsafe extern "C" fn gai_cancel(req: *mut c_void) -> c_int {
+    let saved_errno = current_abi_errno();
+    let result = gai_async::cancel(req);
+    unsafe { set_abi_errno(saved_errno) };
+    result
+}
+
+/// Wait for a request pending at entry, retaining its internal identity even
+/// when another thread reaps, retires or reuses the original gaicb address.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn gai_suspend(
+    list: *const *const c_void,
+    nitems: c_int,
+    timeout: *const libc::timespec,
 ) -> c_int {
-    EAI_ALLDONE
+    let saved_errno = current_abi_errno();
+    let waiting = match unsafe { gai_async::WaitSet::read(list, nitems) } {
+        Ok(waiting) => waiting,
+        Err(error) => {
+            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            return error;
+        }
+    };
+    if waiting.is_empty() {
+        unsafe { set_abi_errno(saved_errno) };
+        return gai_async::ALLDONE;
+    }
+    let deadline = if timeout.is_null() {
+        None
+    } else {
+        if !(timeout as usize).is_multiple_of(std::mem::align_of::<libc::timespec>())
+            || !tracked_region_fits(timeout as usize, std::mem::size_of::<libc::timespec>())
+        {
+            unsafe { set_abi_errno(libc::ENOSYS) };
+            return libc::EAI_SYSTEM;
+        }
+        let ts = unsafe { *timeout };
+        if ts.tv_sec < 0 || ts.tv_nsec < 0 || ts.tv_nsec >= 1_000_000_000 {
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return libc::EAI_SYSTEM;
+        }
+        std::time::Instant::now().checked_add(std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+    };
+    let result = loop {
+        let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
+        if waiting.completed() { break 0; }
+        let interval = if let Some(deadline) = deadline {
+            let now = std::time::Instant::now();
+            if now >= deadline { break libc::EAI_AGAIN; }
+            let left = deadline - now;
+            Some(libc::timespec { tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long })
+        } else { None };
+        let timeout = interval.as_ref().map_or(std::ptr::null(), |ts| ts as *const _);
+        // Keep this window in the public entry frame, as with aio_suspend.
+        match unsafe { crate::pthread_abi::at_cancellation_point(||
+            gai_async::wait(epoch, timeout)) }
+        {
+            Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => {}
+            Err(_) => break gai_async::INTR,
+        }
+    };
+    unsafe { set_abi_errno(saved_errno) };
+    result
 }
 
 // ===========================================================================

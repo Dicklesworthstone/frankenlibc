@@ -9,13 +9,14 @@ on:
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
       - 'crates/frankenlibc-abi/tests/unistd_abi_test.rs'
       - 'crates/frankenlibc-core/src/addrinfo*'
+      - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'tests/integration/fixture_gai_async*'
       - 'scripts/check_gai_async.py'
       - '.github/workflows/gai-async.yml'
   workflow_dispatch:
 permissions:
-  contents: write
+  contents: read
 jobs:
   resolver:
     runs-on: ubuntu-latest
@@ -40,39 +41,23 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
-      - name: Qualify the hash-bound ABI integration candidate
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Record exact committed source provenance
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import base64, gzip, hashlib, json, os, pathlib, subprocess, urllib.request
+          import hashlib, json, os, pathlib, subprocess
           root = pathlib.Path('artifacts/gai-async') / os.environ['BUILD_FEATURE']
           root.mkdir(parents=True, exist_ok=True)
           (root / 'revision.txt').write_text(subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True))
           (root / 'rustc.txt').write_text(subprocess.check_output(['rustc', '--version', '--verbose'], text=True))
-          bases = {
-              'crates/frankenlibc-abi/src/unistd_abi.rs': '113832ee8ba6bc3ee33dee491e3b5c648088369c',
-              'crates/frankenlibc-abi/src/aio_completion.rs': 'cf9b5b2335d019f20863f312e39a57b858d4cd49',
-              'crates/frankenlibc-abi/tests/unistd_abi_test.rs': '4e51933edc739b3772aa800034c47f9bf34214bc',
-          }
-          for name, expected in bases.items():
-              data = pathlib.Path(name).read_bytes()
-              assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == expected, name
-          sha = '66feb913a5c4c3e30258fefb9bb16400db661497'
-          request = urllib.request.Request(
-              f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs/{sha}',
-              headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}', 'Accept': 'application/vnd.github+json'})
-          with urllib.request.urlopen(request) as response:
-              data = base64.b64decode(json.load(response)['content'])
-          assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == sha
-          patch = gzip.decompress(data)
-          (root / 'integration.patch').write_bytes(patch)
-          subprocess.run(['git', 'apply', '--check', '-'], input=patch, check=True)
-          subprocess.run(['git', 'apply', '-'], input=patch, check=True)
-          subprocess.run(['rustfmt', '--edition', '2024', 'crates/frankenlibc-abi/src/gai_async.rs'], check=True)
-          names = list(bases) + ['crates/frankenlibc-abi/src/gai_async.rs']
+          names = ['crates/frankenlibc-abi/src/unistd_abi.rs',
+                   'crates/frankenlibc-abi/src/aio_completion.rs',
+                   'crates/frankenlibc-abi/src/gai_async.rs',
+                   'crates/frankenlibc-abi/tests/unistd_abi_test.rs',
+                   'tests/integration/fixture_gai_async.c',
+                   'tests/integration/fixture_gai_async_blocked.c',
+                   'scripts/check_gai_async.py']
           hashes = {}
           for name in names:
               data = pathlib.Path(name).read_bytes()
@@ -81,7 +66,6 @@ jobs:
               out.write_bytes(data)
               hashes[name] = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
           (root / 'source-blobs.json').write_text(json.dumps(hashes, indent=2) + '\n')
-          (root / 'current-beads.jsonl').write_bytes(pathlib.Path('.beads/issues.jsonl').read_bytes())
           PY
       - name: Execute release DNS and existing AIO contracts
         shell: bash
@@ -100,28 +84,10 @@ jobs:
             cargo test -p frankenlibc-abi --test unistd_abi_test "$filter" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$filter.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$filter.log"
           done
-      - name: Publish only the tested immutable source blobs
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify execution used unchanged committed sources
         shell: bash
         run: |
-          python3 - <<'PY'
-          import hashlib, json, os, pathlib, urllib.request
-          root = pathlib.Path('artifacts/gai-async') / os.environ['BUILD_FEATURE']
-          hashes = json.loads((root / 'source-blobs.json').read_text())
-          for name, expected in hashes.items():
-              data = pathlib.Path(name).read_bytes()
-              assert data == (root / 'source' / name).read_bytes()
-              assert hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest() == expected
-              request = urllib.request.Request(
-                  f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs',
-                  data=json.dumps({'content': data.decode(), 'encoding': 'utf-8'}).encode(),
-                  headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}', 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}, method='POST')
-              with urllib.request.urlopen(request) as response:
-                  assert json.load(response)['sha'] == expected
-          (root / 'published-blobs.json').write_text(json.dumps(hashes, indent=2) + '\n')
-          print(json.dumps(hashes, indent=2))
-          PY
+          git diff --exit-code -- crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/src/aio_completion.rs crates/frankenlibc-abi/src/gai_async.rs crates/frankenlibc-abi/tests/unistd_abi_test.rs tests/integration/fixture_gai_async.c tests/integration/fixture_gai_async_blocked.c scripts/check_gai_async.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -4,6 +4,7 @@
 #include "fixture_gai_async.c"
 #undef main
 #include <poll.h>
+#include <dirent.h>
 
 static atomic_int stopped, released, blocked_count, interrupt_wait;
 static pthread_t controller_thread, interrupted_thread;
@@ -261,6 +262,101 @@ static void dns_success(int family) {
     finish_controller(&request, 1);
 }
 
+
+/* Implementation ownership promise: unlike the caller-owned gaicb output,
+ * all name, service, hint, and list input storage is snapshotted at admission.
+ * Keep the output alive while making the input page inaccessible. */
+static void input_snapshot(void) {
+    install_blocking_controller();
+    struct gaicb blockers[20]; struct addrinfo blocking_hint;
+    blocked_requests(blockers, &blocking_hint, 20);
+    size_t size = (size_t)sysconf(_SC_PAGESIZE);
+    unsigned char *page = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(page != MAP_FAILED && size > 512);
+    struct addrinfo *h = (struct addrinfo *)page;
+    *h = hint(AF_INET);
+    char *name = (char *)page + 128, *service = (char *)page + 192;
+    strcpy(name, "127.0.0.7"); strcpy(service, "43127");
+    struct gaicb output = {.ar_name = name, .ar_service = service, .ar_request = h};
+    struct gaicb **list = (struct gaicb **)(page + 256);
+    list[0] = &output;
+    CHECK(getaddrinfo_a(GAI_NOWAIT, list, 1, NULL) == 0);
+    CHECK(gai_error(&output) == EAI_INPROGRESS);
+    CHECK(mprotect(page, size, PROT_NONE) == 0);
+    atomic_store_explicit(&released, 1, memory_order_release);
+    wait_cb(&output);
+    verify(&output, AF_INET, "127.0.0.7");
+    freeaddrinfo(output.ar_result);
+    finish_controller(blockers, 20);
+    CHECK(munmap(page, size) == 0);
+}
+
+static int thread_count(void) {
+    DIR *directory = opendir("/proc/self/task"); CHECK(directory);
+    int count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(directory))) if (entry->d_name[0] != '.') ++count;
+    CHECK(closedir(directory) == 0);
+    return count;
+}
+
+static void worker_lifetime(void) {
+    int initial = thread_count();
+    install_blocking_controller();
+    struct gaicb blockers[20]; struct addrinfo blocking_hint, h = hint(AF_INET);
+    blocked_requests(blockers, &blocking_hint, 20);
+    CHECK(thread_count() == initial + 21); /* bounded I/O plus DNS controller */
+    enum { BACKLOG = 128 };
+    struct gaicb backlog[BACKLOG]; struct gaicb *list[BACKLOG];
+    for (int i = 0; i < BACKLOG; ++i) {
+        init(&backlog[i], "127.0.0.7", &h); list[i] = &backlog[i];
+    }
+    CHECK(getaddrinfo_a(GAI_NOWAIT, list, BACKLOG, NULL) == 0);
+    CHECK(thread_count() == initial + 21); /* queued work never spawns more */
+    for (int i = 0; i < BACKLOG; ++i) {
+        CHECK(gai_error(&backlog[i]) == EAI_INPROGRESS);
+        CHECK(gai_cancel(&backlog[i]) == EAI_CANCELED);
+        CHECK(gai_error(&backlog[i]) == EAI_CANCELED);
+    }
+    finish_controller(blockers, 20);
+    for (int i = 0; thread_count() != initial; ++i) { CHECK(i < 4000); pause_ms(1); }
+    numeric(GAI_WAIT, AF_INET6); /* a fully retired pool starts again */
+    for (int i = 0; thread_count() != initial; ++i) { CHECK(i < 4000); pause_ms(1); }
+}
+
+static atomic_int batch_canceled_notice;
+static struct gaicb *canceled_batch;
+static void canceled_callback(union sigval value) {
+    CHECK(value.sival_int == 181);
+    for (int i = 0; i < 2; ++i) CHECK(gai_error(&canceled_batch[i]) == EAI_CANCELED);
+    free(canceled_batch);
+    atomic_store_explicit(&batch_canceled_notice, 1, memory_order_release);
+    pthread_exit(NULL);
+}
+
+static void canceled_callback_lifetime(void) {
+    install_blocking_controller();
+    struct gaicb blockers[20]; struct addrinfo blocking_hint, h = hint(AF_INET);
+    blocked_requests(blockers, &blocking_hint, 20);
+    canceled_batch = calloc(2, sizeof(*canceled_batch)); CHECK(canceled_batch);
+    init(&canceled_batch[0], "127.0.0.7", &h);
+    init(&canceled_batch[1], "127.0.0.8", &h);
+    struct gaicb *list[] = {&canceled_batch[0], &canceled_batch[1]};
+    struct sigevent event = {0};
+    event.sigev_notify = SIGEV_THREAD; event.sigev_notify_function = canceled_callback;
+    event.sigev_value.sival_int = 181;
+    CHECK(getaddrinfo_a(GAI_NOWAIT, list, 2, &event) == 0);
+    CHECK(gai_cancel(list[0]) == EAI_CANCELED);
+    CHECK(gai_cancel(list[1]) == EAI_CANCELED);
+    for (int i = 0; !atomic_load_explicit(&batch_canceled_notice, memory_order_acquire); ++i) {
+        CHECK(i < 3000); pause_ms(1);
+    }
+    /* Callback completed before any of the 20 blocked resolver workers could
+     * run again. Never inspect the freed requests after cancellation returns. */
+    finish_controller(blockers, 20);
+}
+
 int main(int argc, char **argv) {
     CHECK(argc == 2); alarm(15);
     provider(getaddrinfo_a); provider(gai_suspend); provider(gai_error);
@@ -274,6 +370,9 @@ int main(int argc, char **argv) {
              !strcmp(scenario, "suspend-pending-cancel")) cancellation_contract(scenario);
     else if (!strcmp(scenario, "dns-v4")) dns_success(AF_INET);
     else if (!strcmp(scenario, "dns-v6")) dns_success(AF_INET6);
+    else if (!strcmp(scenario, "input-snapshot")) input_snapshot();
+    else if (!strcmp(scenario, "worker-lifetime")) worker_lifetime();
+    else if (!strcmp(scenario, "cancel-callback")) canceled_callback_lifetime();
     else CHECK(0 && "unknown blocked scenario");
     printf("PASS %s\n", scenario); return 0;
 }

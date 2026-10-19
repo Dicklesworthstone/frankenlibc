@@ -30,9 +30,13 @@ pub(super) fn wait(expected: u32, timeout: *const libc::timespec) -> Result<(), 
         raw::sys_futex(
             &EPOCH as *const AtomicU32 as *const u32,
             libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG,
-            expected, timeout as usize, 0, 0,
+            expected,
+            timeout as usize,
+            0,
+            0,
         )
-    }.map(|_| ())
+    }
+    .map(|_| ())
 }
 
 pub(super) const INPROGRESS: c_int = -100;
@@ -150,7 +154,9 @@ impl Input {
         let error = unsafe {
             crate::resolv_abi::getaddrinfo(
                 self.name.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-                self.service.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
+                self.service
+                    .as_ref()
+                    .map_or(std::ptr::null(), |s| s.as_ptr()),
                 hints.as_ref().map_or(std::ptr::null(), |h| h as *const _),
                 &mut result,
             )
@@ -166,8 +172,7 @@ unsafe fn publish_status(address: usize, result: *mut libc::addrinfo, error: c_i
     // SAFETY: all users validate the complete object before taking ownership.
     unsafe {
         std::ptr::addr_of_mut!((*cb).result).write(result);
-        (&*std::ptr::addr_of!((*cb).error).cast::<AtomicI32>())
-            .store(error, Ordering::Release);
+        (&*std::ptr::addr_of!((*cb).error).cast::<AtomicI32>()).store(error, Ordering::Release);
     }
 }
 
@@ -214,13 +219,18 @@ struct Queue {
     workers: usize,
 }
 
-static QUEUE: Mutex<Queue> = Mutex::new(Queue { pending: Vec::new(), workers: 0 });
+static QUEUE: Mutex<Queue> = Mutex::new(Queue {
+    pending: Vec::new(),
+    workers: 0,
+});
 // Serialize admission transactions, not execution. A failed first spawn must
 // never leave another submitter's accepted requests with no worker.
 static SUBMISSIONS: Mutex<()> = Mutex::new(());
 
 fn queue() -> MutexGuard<'static, Queue> {
-    QUEUE.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    QUEUE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 unsafe extern "C-unwind" fn worker(_arg: *mut c_void) -> *mut c_void {
@@ -247,7 +257,10 @@ unsafe extern "C-unwind" fn worker(_arg: *mut c_void) -> *mut c_void {
             let (result, error) = request.input.resolve();
             {
                 let mut q = queue();
-                let index = q.pending.iter().position(|p| Arc::ptr_eq(&p.request, &request))
+                let index = q
+                    .pending
+                    .iter()
+                    .position(|p| Arc::ptr_eq(&p.request, &request))
                     .expect("running resolver request retains completion ownership");
                 // SAFETY: cancellation never removes an executing resolver.
                 unsafe { request.publish(result, error) };
@@ -290,12 +303,17 @@ pub(super) unsafe fn submit(
     // Preserve GNU's existing empty/negative-count no-op, without inspecting
     // an event that cannot describe a real request.
     if nitems <= 0 {
-        return Ok(Submission { status: 0, group: None });
+        return Ok(Submission {
+            status: 0,
+            group: None,
+        });
     }
     let count = nitems as usize;
-    let list_bytes = count.checked_mul(std::mem::size_of::<*mut c_void>())
+    let list_bytes = count
+        .checked_mul(std::mem::size_of::<*mut c_void>())
         .ok_or_else(bad_pointer)?;
-    if list.is_null() || !(list as usize).is_multiple_of(std::mem::align_of::<*mut c_void>())
+    if list.is_null()
+        || !(list as usize).is_multiple_of(std::mem::align_of::<*mut c_void>())
         || !tracked_region_fits(list as usize, list_bytes)
     {
         return Err(bad_pointer());
@@ -319,18 +337,26 @@ pub(super) unsafe fn submit(
     let submission = SUBMISSIONS.lock().unwrap_or_else(|p| p.into_inner());
     {
         let mut q = queue();
-        if inputs.iter().any(|(cb, _)| q.pending.iter().any(|p| {
-            p.state != State::Canceled && p.request.cb == *cb
-        })) {
+        if inputs.iter().any(|(cb, _)| {
+            q.pending
+                .iter()
+                .any(|p| p.state != State::Canceled && p.request.cb == *cb)
+        }) {
             // Undefined overlapping use: leave the live request untouched.
             unsafe { set_abi_errno(libc::EINVAL) };
             return Err(libc::EAI_SYSTEM);
         }
-        q.pending.try_reserve(inputs.len()).map_err(|_| libc::EAI_MEMORY)?;
+        q.pending
+            .try_reserve(inputs.len())
+            .map_err(|_| libc::EAI_MEMORY)?;
     }
     // GAI_WAIT must not even inspect event. The Group consumes thread
     // attributes now and holds one reservation until all entries are admitted.
-    let event = if mode == 1 { event } else { std::ptr::null_mut() };
+    let event = if mode == 1 {
+        event
+    } else {
+        std::ptr::null_mut()
+    };
     if !event.is_null()
         && (!(event as usize).is_multiple_of(std::mem::align_of::<libc::sigevent>())
             || !tracked_region_fits(event as usize, std::mem::size_of::<libc::sigevent>()))
@@ -356,35 +382,53 @@ pub(super) unsafe fn submit(
     let mut status = 0;
     for (cb, input) in inputs {
         let request = Arc::new(Request {
-            cb, input, error: AtomicI32::new(INPROGRESS), group: Arc::clone(&group),
+            cb,
+            input,
+            error: AtomicI32::new(INPROGRESS),
+            group: Arc::clone(&group),
         });
         let spawn = {
             let mut q = queue();
             group.reserve();
             unsafe { request.publish(std::ptr::null_mut(), INPROGRESS) };
-            q.pending.push(Pending { request: Arc::clone(&request), state: State::Queued });
+            q.pending.push(Pending {
+                request: Arc::clone(&request),
+                state: State::Queued,
+            });
             let spawn = q.workers < WORKER_LIMIT
-                && q.pending.iter().filter(|p| p.state != State::Canceled).count() > q.workers;
-            if spawn { q.workers += 1; }
+                && q.pending
+                    .iter()
+                    .filter(|p| p.state != State::Canceled)
+                    .count()
+                    > q.workers;
+            if spawn {
+                q.workers += 1;
+            }
             spawn
         };
         publish();
-        if spawn && unsafe {
-            aio_completion::spawn(worker, std::ptr::null_mut(), std::ptr::null())
-        }.is_err() {
-            let failed = {
-                let mut q = queue();
-                q.workers -= 1;
-                if q.workers == 0 {
-                    if let Some(index) = q.pending.iter().position(|p| {
-                        p.state == State::Queued && Arc::ptr_eq(&p.request, &request)
-                    }) {
-                        unsafe { request.publish(std::ptr::null_mut(), libc::EAI_AGAIN) };
-                        q.pending.remove(index);
-                        true
-                    } else { false } // cancellation already completed it
-                } else { false } // an existing worker owns eventual progress
-            };
+        if spawn
+            && unsafe { aio_completion::spawn(worker, std::ptr::null_mut(), std::ptr::null()) }
+                .is_err()
+        {
+            let failed =
+                {
+                    let mut q = queue();
+                    q.workers -= 1;
+                    if q.workers == 0 {
+                        if let Some(index) = q.pending.iter().position(|p| {
+                            p.state == State::Queued && Arc::ptr_eq(&p.request, &request)
+                        }) {
+                            unsafe { request.publish(std::ptr::null_mut(), libc::EAI_AGAIN) };
+                            q.pending.remove(index);
+                            true
+                        } else {
+                            false
+                        } // cancellation already completed it
+                    } else {
+                        false
+                    } // an existing worker owns eventual progress
+                };
             if failed {
                 // The submission reservation prevents a final notification
                 // here, even though SUBMISSIONS still protects admission.
@@ -397,7 +441,10 @@ pub(super) unsafe fn submit(
     // This can notify immediately. Never inspect caller storage after it.
     group.finish();
     publish();
-    Ok(Submission { status, group: Some(group) })
+    Ok(Submission {
+        status,
+        group: Some(group),
+    })
 }
 
 pub(super) unsafe fn error(cb: *mut c_void) -> Result<c_int, c_int> {
@@ -406,8 +453,10 @@ pub(super) unsafe fn error(cb: *mut c_void) -> Result<c_int, c_int> {
     }
     // SAFETY: status is naturally aligned in a validated gaicb. Acquire pairs
     // with the producer's final release, including publication of ar_result.
-    Ok(unsafe { (&*std::ptr::addr_of!((*(cb.cast::<Gaicb>())).error).cast::<AtomicI32>())
-        .load(Ordering::Acquire) })
+    Ok(unsafe {
+        (&*std::ptr::addr_of!((*(cb.cast::<Gaicb>())).error).cast::<AtomicI32>())
+            .load(Ordering::Acquire)
+    })
 }
 
 pub(super) fn cancel(cb: *mut c_void) -> c_int {
@@ -416,7 +465,8 @@ pub(super) fn cancel(cb: *mut c_void) -> c_int {
     {
         let mut q = queue();
         for entry in &mut q.pending {
-            if entry.state == State::Canceled || (!cb.is_null() && entry.request.cb != cb as usize) {
+            if entry.state == State::Canceled || (!cb.is_null() && entry.request.cb != cb as usize)
+            {
                 continue;
             }
             if entry.state == State::Running {
@@ -438,12 +488,20 @@ pub(super) fn cancel(cb: *mut c_void) -> c_int {
     for _ in 0..canceled {
         let request = {
             let mut q = queue();
-            let Some(index) = q.pending.iter().position(|p| p.state == State::Canceled) else { break; };
+            let Some(index) = q.pending.iter().position(|p| p.state == State::Canceled) else {
+                break;
+            };
             q.pending.remove(index).request
         };
         request.notify();
     }
-    if running { NOTCANCELED } else if canceled != 0 { CANCELED } else { ALLDONE }
+    if running {
+        NOTCANCELED
+    } else if canceled != 0 {
+        CANCELED
+    } else {
+        ALLDONE
+    }
 }
 
 pub(super) struct WaitSet(Vec<Arc<Request>>);
@@ -454,7 +512,9 @@ impl WaitSet {
             return Ok(Self(Vec::new()));
         }
         let count = count as usize;
-        let bytes = count.checked_mul(std::mem::size_of::<*const c_void>()).ok_or_else(bad_pointer)?;
+        let bytes = count
+            .checked_mul(std::mem::size_of::<*const c_void>())
+            .ok_or_else(bad_pointer)?;
         if !(list as usize).is_multiple_of(std::mem::align_of::<*const c_void>())
             || !tracked_region_fits(list as usize, bytes)
         {
@@ -465,19 +525,27 @@ impl WaitSet {
         let q = queue();
         for index in 0..count {
             let cb = unsafe { list.add(index).read() };
-            if cb.is_null() { continue; }
-            if let Some(entry) = q.pending.iter().find(|p| {
-                p.state != State::Canceled && p.request.cb == cb as usize
-            }) {
+            if cb.is_null() {
+                continue;
+            }
+            if let Some(entry) = q
+                .pending
+                .iter()
+                .find(|p| p.state != State::Canceled && p.request.cb == cb as usize)
+            {
                 waiting.push(Arc::clone(&entry.request));
             }
         }
         Ok(Self(waiting))
     }
 
-    pub(super) fn is_empty(&self) -> bool { self.0.is_empty() }
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 
     pub(super) fn completed(&self) -> bool {
-        self.0.iter().any(|request| request.error.load(Ordering::Acquire) != INPROGRESS)
+        self.0
+            .iter()
+            .any(|request| request.error.load(Ordering::Acquire) != INPROGRESS)
     }
 }

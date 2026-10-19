@@ -73,6 +73,11 @@ impl Notice {
     }
 
     pub(super) unsafe fn deliver(self) {
+        // SAFETY: preserves the POSIX AIO notification code for existing callers.
+        unsafe { self.deliver_with_code(libc::SI_ASYNCIO) };
+    }
+
+    pub(super) unsafe fn deliver_with_code(self, signal_code: c_int) {
         match self {
             Self::None => {}
             Self::Thread { callback, value } => {
@@ -128,7 +133,7 @@ impl Notice {
                 let info = QueuedInfo {
                     signo,
                     error: 0,
-                    code: libc::SI_ASYNCIO,
+                    code: signal_code,
                     padding: 0,
                     pid,
                     uid,
@@ -227,6 +232,7 @@ pub(super) fn detach_current() {
 pub(super) struct Group {
     remaining: AtomicU32,
     signal: Notice,
+    signal_code: c_int,
 }
 
 impl Group {
@@ -234,9 +240,18 @@ impl Group {
     /// the entire list has been considered. A thread event gets its own waiter
     /// now, consuming the supplied attributes while they are still live.
     pub(super) unsafe fn new(event: *const libc::sigevent) -> Result<Arc<Self>, c_int> {
+        // SAFETY: the original AIO constructor keeps its notification semantics.
+        unsafe { Self::new_with_code(event, libc::SI_ASYNCIO) }
+    }
+
+    pub(super) unsafe fn new_with_code(
+        event: *const libc::sigevent,
+        signal_code: c_int,
+    ) -> Result<Arc<Self>, c_int> {
         let (notice, attributes) = unsafe { Notice::read(event) }?;
         let group = Arc::new(Self {
             remaining: AtomicU32::new(1),
+            signal_code,
             signal: if matches!(notice, Notice::Thread { .. }) {
                 Notice::None
             } else {
@@ -287,6 +302,10 @@ impl Group {
         Ok(group)
     }
 
+    pub(super) fn is_complete(&self) -> bool {
+        self.remaining.load(Ordering::Acquire) == 0
+    }
+
     pub(super) fn reserve(&self) {
         // nent is a nonnegative c_int, so outstanding requests plus the
         // submission reservation fit in u32.
@@ -298,7 +317,7 @@ impl Group {
             wake(&self.remaining);
             // SAFETY: thread callbacks are handled by a separate waiter; this
             // final completion may only queue a signal, not run user code.
-            unsafe { self.signal.deliver() };
+            unsafe { self.signal.deliver_with_code(self.signal_code) };
         }
     }
 }

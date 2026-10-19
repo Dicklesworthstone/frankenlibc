@@ -4690,7 +4690,7 @@ fn getaddrinfo_a_all_null_request_slots_report_success_without_touching_errno() 
 }
 
 #[test]
-fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errno() {
+fn getaddrinfo_a_zeroed_gaicb_requests_finish_with_noname_and_preserve_errno() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut first: GaicbShape = unsafe { std::mem::zeroed() };
     let mut second: GaicbShape = unsafe { std::mem::zeroed() };
@@ -4712,6 +4712,9 @@ fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errn
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(unsafe { gai_error((&mut first as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
+    assert_eq!(unsafe { gai_error((&mut second as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
+    assert!(first.ar_result.is_null() && second.ar_result.is_null());
 
     unsafe {
         *__errno_location() = libc::E2BIG;
@@ -4730,6 +4733,19 @@ fn getaddrinfo_a_zeroed_gaicb_request_slots_report_success_without_touching_errn
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
+    // NOWAIT retains the request until completion. Do not let stack storage
+    // expire while the new native resolver can still publish a result.
+    let first_ptr = (&mut first as *mut GaicbShape).cast::<c_void>();
+    let pending = [first_ptr.cast_const()];
+    let timeout = libc::timespec { tv_sec: 2, tv_nsec: 0 };
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while unsafe { gai_error(first_ptr) } == -100 {
+        assert!(Instant::now() < deadline, "zeroed request must finish");
+        let rc = unsafe { gai_suspend(pending.as_ptr(), 1, &timeout) };
+        assert!(rc == 0 || rc == GAI_EAI_ALLDONE || rc == -104);
+    }
+    assert_eq!(unsafe { gai_error(first_ptr) }, libc::EAI_NONAME);
+    assert!(first.ar_result.is_null());
 }
 
 #[test]
@@ -4997,30 +5013,44 @@ fn getaddrinfo_a_invalid_modes_report_eai_system_with_einval_like_host() {
 }
 
 #[test]
-fn getaddrinfo_a_non_null_requests_still_fall_back_to_eai_system() {
+fn getaddrinfo_a_resolves_numeric_requests_instead_of_returning_enosys() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        *__errno_location() = 0;
-    }
+    let hints = libc::addrinfo {
+        ai_flags: libc::AI_NUMERICHOST | libc::AI_NUMERICSERV,
+        ai_family: libc::AF_INET,
+        ai_socktype: libc::SOCK_STREAM,
+        ai_protocol: 0,
+        ai_addrlen: 0,
+        ai_addr: std::ptr::null_mut(),
+        ai_canonname: std::ptr::null_mut(),
+        ai_next: std::ptr::null_mut(),
+    };
     let mut request = GaicbShape {
-        ar_name: c"opaque".as_ptr(),
-        ar_service: std::ptr::null(),
-        ar_request: std::ptr::null(),
+        ar_name: c"127.0.0.7".as_ptr(),
+        ar_service: c"43127".as_ptr(),
+        ar_request: (&hints as *const libc::addrinfo).cast(),
         ar_result: std::ptr::null_mut(),
         __return: 0,
         __unused: [0; 5],
     };
-    let mut requests = [(&mut request as *mut GaicbShape).cast::<c_void>()];
-    let rc = unsafe {
-        getaddrinfo_a(
-            GAI_WAIT,
-            requests.as_mut_ptr(),
-            requests.len() as c_int,
-            std::ptr::null_mut(),
-        )
-    };
-    assert_eq!(rc, libc::EAI_SYSTEM);
-    assert_eq!(errno_value(), libc::ENOSYS);
+    let cb = (&mut request as *mut GaicbShape).cast::<c_void>();
+    let mut requests = [cb];
+    unsafe { *__errno_location() = libc::E2BIG; }
+    let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
+    assert_eq!(rc, 0);
+    assert_eq!(errno_value(), libc::E2BIG);
+    assert_eq!(unsafe { gai_error(cb) }, 0);
+    assert!(!request.ar_result.is_null());
+    unsafe {
+        let result = &*request.ar_result.cast::<libc::addrinfo>();
+        assert_eq!(result.ai_family, libc::AF_INET);
+        assert_eq!(result.ai_socktype, libc::SOCK_STREAM);
+        assert_eq!(result.ai_addrlen as usize, std::mem::size_of::<libc::sockaddr_in>());
+        let address = &*result.ai_addr.cast::<libc::sockaddr_in>();
+        assert_eq!(u16::from_be(address.sin_port), 43127);
+        assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 7]);
+        frankenlibc_abi::resolv_abi::freeaddrinfo(request.ar_result.cast());
+    }
 }
 
 #[test]
@@ -5089,30 +5119,20 @@ fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
 }
 
 #[test]
-fn gai_error_stub_family_still_sets_errno_for_eai_system() {
+fn gai_error_validates_storage_and_reports_the_actual_request_status() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe {
-        *__errno_location() = 0;
-    }
+    unsafe { *__errno_location() = 0; }
     assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
 
-    unsafe {
-        *__errno_location() = 0;
+    let mut request: GaicbShape = unsafe { std::mem::zeroed() };
+    request.ar_name = c"opaque".as_ptr();
+    for status in [0, libc::EAI_NONAME, libc::EAI_AGAIN, libc::EAI_SYSTEM, -100, -101] {
+        request.__return = status;
+        unsafe { *__errno_location() = libc::E2BIG; }
+        assert_eq!(unsafe { gai_error((&mut request as *mut GaicbShape).cast()) }, status);
+        assert_eq!(errno_value(), libc::E2BIG);
     }
-    let request = GaicbShape {
-        ar_name: c"opaque".as_ptr(),
-        ar_service: std::ptr::null(),
-        ar_request: std::ptr::null(),
-        ar_result: std::ptr::null_mut(),
-        __return: 0,
-        __unused: [0; 5],
-    };
-    assert_eq!(
-        unsafe { gai_error((&request as *const GaicbShape).cast_mut().cast::<c_void>()) },
-        libc::EAI_SYSTEM
-    );
-    assert_eq!(errno_value(), libc::ENOSYS);
 }
 
 #[test]
