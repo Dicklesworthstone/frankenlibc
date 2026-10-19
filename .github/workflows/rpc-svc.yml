@@ -1,0 +1,100 @@
+name: Native UDP RPC services
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/rpc*'
+      - 'crates/frankenlibc-core/src/rpc/**'
+      - 'tests/integration/fixture_rpc_svc*'
+      - 'scripts/check_rpc_svc.py'
+      - '.github/workflows/rpc-svc.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: rpc-svc-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  service:
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Qualify the exact reviewed RPC ABI integration
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/rpc-svc/source
+          git rev-parse HEAD > artifacts/rpc-svc/revision.txt
+          rustc --version --verbose > artifacts/rpc-svc/rustc.txt
+          test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 064b25f3dd3d8ef301f5a2568654c256d6af9a6f
+          gh api repos/${{ github.repository }}/git/blobs/ceb7225652cebd81b796be3e5055f3c20d302993 --jq .content | base64 -d > artifacts/rpc-svc/integration.patch
+          git apply --check artifacts/rpc-svc/integration.patch
+          git apply artifacts/rpc-svc/integration.patch
+          rustfmt --edition 2024 crates/frankenlibc-abi/src/rpc_svc.rs
+          cp crates/frankenlibc-abi/src/rpc_svc.rs crates/frankenlibc-abi/src/rpc_abi.rs artifacts/rpc-svc/source/
+      - name: Execute real RPC services and existing ABI regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ '${{ matrix.feature }}' != default ]]; then args=(--features '${{ matrix.feature }}'); fi
+          root=artifacts/rpc-svc
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+          cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+          python3 scripts/check_rpc_svc.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cases"
+          cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture --test-threads=1 2>&1 | tee "$root/core.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/core.log"
+          cargo test -p frankenlibc-abi --test rpc_abi_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/abi.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/abi.log"
+          python3 scripts/check_gai_async.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/dns"
+          python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/aio"
+      - name: Publish only tested immutable source objects
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, urllib.request
+          result = {}
+          for name in ['rpc_svc.rs', 'rpc_abi.rs']:
+              path = pathlib.Path('crates/frankenlibc-abi/src') / name
+              data = path.read_bytes()
+              assert data == (pathlib.Path('artifacts/rpc-svc/source') / name).read_bytes()
+              expected = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
+              request = urllib.request.Request(f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/git/blobs',
+                  data=json.dumps({'content': data.decode(), 'encoding': 'utf-8'}).encode(),
+                  headers={'Authorization': f'Bearer {os.environ["GH_TOKEN"]}', 'Content-Type': 'application/json'}, method='POST')
+              with urllib.request.urlopen(request) as response:
+                  blob = json.load(response)
+              assert blob['sha'] == expected
+              result[str(path)] = expected
+          pathlib.Path('artifacts/rpc-svc/published-blobs.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-svc-${{ matrix.feature }}
+          path: artifacts/rpc-svc/
+          if-no-files-found: error
+          retention-days: 7

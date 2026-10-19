@@ -1,0 +1,539 @@
+//! Native glibc Sun RPC UDP services. RFC 5531 envelopes live in safe core.
+//!
+//! Registry locks never cover callbacks or socket I/O. A registry Arc retains
+//! each transport while a dispatch/XDR operation runs; destroying it inside a
+//! callback unregisters immediately, but closes/frees only after those owners
+//! leave. Nonblocking operation gates reject recursive use of one XDR buffer.
+//! This is the glibc LP64 interface, not libtirpc's differently shaped SVCXPRT.
+
+use super::{AcceptedReply, AuthUnixParms, OpaqueAuth, RejectedReply, Xdr};
+use std::cell::UnsafeCell;
+use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::mem::{size_of, zeroed};
+use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use frankenlibc_core::rpc::wire::{RemoteError, service::{self, Call, CallError}};
+use frankenlibc_core::syscall as raw;
+
+const LIMIT: usize = libc::FD_SETSIZE;
+const DEFAULT_BUFFER: usize = 8800;
+const MAX_BUFFER: usize = 65536;
+type Procedure = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int;
+type Dispatch = unsafe extern "C-unwind" fn(*mut ServiceRequest, *mut SvcXprt);
+
+#[repr(C)]
+struct SvcOps {
+    recv: unsafe extern "C-unwind" fn(*mut SvcXprt, *mut c_void) -> c_int,
+    stat: unsafe extern "C" fn(*mut SvcXprt) -> c_int,
+    getargs: unsafe extern "C-unwind" fn(*mut SvcXprt, *mut c_void, *mut c_void) -> c_int,
+    reply: unsafe extern "C-unwind" fn(*mut SvcXprt, *mut c_void) -> c_int,
+    freeargs: unsafe extern "C-unwind" fn(*mut SvcXprt, *mut c_void, *mut c_void) -> c_int,
+    destroy: unsafe extern "C" fn(*mut SvcXprt),
+}
+
+#[repr(C)]
+struct SvcXprt {
+    sock: c_int,
+    port: u16,
+    ops: *const SvcOps,
+    addrlen: c_int,
+    raddr: libc::sockaddr_in,
+    verifier: OpaqueAuth,
+    private1: *mut c_void,
+    private2: *mut c_void,
+    padding: [u8; 256],
+}
+
+#[repr(C)]
+struct ServiceRequest {
+    program: u64,
+    version: u64,
+    procedure: u64,
+    credential: OpaqueAuth,
+    cooked: *mut c_void,
+    transport: *mut SvcXprt,
+}
+
+const _: () = {
+    assert!(size_of::<SvcXprt>() == 336);
+    assert!(std::mem::offset_of!(SvcXprt, verifier) == 40);
+    assert!(size_of::<ServiceRequest>() == 64);
+};
+
+struct Io {
+    input: Vec<u8>,
+    output: Vec<u8>,
+    call: Option<Call>,
+    cursor: usize,
+    peer: libc::sockaddr_in,
+}
+struct Transport {
+    public: UnsafeCell<SvcXprt>,
+    io: UnsafeCell<Io>,
+    fd: c_int,
+    operation: AtomicBool,
+    dispatching: AtomicBool,
+    destroyed: AtomicBool,
+    close_fd: AtomicBool,
+}
+// SAFETY: registry owns stable addresses; operation gates serialize all buffer
+// access, and dispatching prevents a second receiver during a user dispatch.
+// Direct concurrent C mutation of SVCXPRT fields remains outside the API contract.
+unsafe impl Send for Transport {}
+unsafe impl Sync for Transport {}
+impl Drop for Transport {
+    fn drop(&mut self) {
+        if self.close_fd.load(Ordering::Relaxed) { let _ = raw::sys_close(self.fd); }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct Registration { program: u32, version: u32, dispatch: Dispatch, published: bool }
+struct Registry { transports: Vec<Arc<Transport>>, services: Vec<Registration> }
+static REGISTRY: Mutex<Registry> = Mutex::new(Registry { transports: Vec::new(), services: Vec::new() });
+static EXIT_EPOCH: AtomicU64 = AtomicU64::new(0);
+fn registry() -> MutexGuard<'static, Registry> {
+    REGISTRY.lock().unwrap_or_else(|p| p.into_inner())
+}
+fn lookup(x: *mut SvcXprt) -> Option<Arc<Transport>> {
+    registry().transports.iter().find(|t| t.public.get() == x).cloned()
+}
+fn error(code: c_int) -> c_int { unsafe { super::set_abi_errno(code) }; 0 }
+
+struct Operation(Arc<Transport>);
+impl Operation {
+    fn begin(t: Arc<Transport>) -> Option<Self> {
+        if t.destroyed.load(Ordering::Acquire) || t.operation.swap(true, Ordering::Acquire) {
+            error(libc::EBUSY); None
+        } else { Some(Self(t)) }
+    }
+}
+impl Drop for Operation {
+    fn drop(&mut self) { self.0.operation.store(false, Ordering::Release); }
+}
+struct DispatchGuard(Arc<Transport>);
+impl Drop for DispatchGuard {
+    fn drop(&mut self) { self.0.dispatching.store(false, Ordering::Release); }
+}
+
+const EMPTY_POLL: libc::pollfd = libc::pollfd { fd: -1, events: libc::POLLIN, revents: 0 };
+struct PollSnapshot { entries: [libc::pollfd; LIMIT] }
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static POLL_SNAPSHOT: UnsafeCell<PollSnapshot> = const {
+        UnsafeCell::new(PollSnapshot { entries: [EMPTY_POLL; LIMIT] })
+    };
+}
+#[cfg(feature = "owned-tls-cache")]
+static POLL_SNAPSHOT: crate::owned_tls_cache::OwnedTlsCache<PollSnapshot> =
+    crate::owned_tls_cache::OwnedTlsCache::new(empty_snapshot);
+#[cfg(feature = "owned-tls-cache")]
+fn empty_snapshot() -> PollSnapshot { PollSnapshot { entries: [EMPTY_POLL; LIMIT] } }
+fn with_snapshot<R>(f: impl FnOnce(&mut PollSnapshot) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    { POLL_SNAPSHOT.with(f) }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    { POLL_SNAPSHOT.with(|s| f(unsafe { &mut *s.get() })) }
+}
+
+/// Refresh existing ABI TLS slots. Their addresses stay valid, and the poll
+/// backing array has thread lifetime. Never retain a lock across C access.
+pub(super) fn refresh() {
+    with_snapshot(|snapshot| {
+        snapshot.entries.fill(EMPTY_POLL);
+        let r = registry();
+        let bits = super::rpc_svc_fdset_ptr().cast::<u64>();
+        // SAFETY: existing accessors own aligned, initialized per-thread slots.
+        unsafe { ptr::write_bytes(bits, 0, LIMIT / 64) };
+        for (index, t) in r.transports.iter().enumerate() {
+            snapshot.entries[index].fd = t.fd;
+            unsafe { *bits.add(t.fd as usize / 64) |= 1u64 << (t.fd as usize % 64) };
+        }
+        unsafe {
+            super::rpc_svc_max_pollfd_ptr().cast::<c_int>().write(r.transports.len() as c_int);
+            super::rpc_svc_pollfd_ptr().cast::<*mut libc::pollfd>().write(snapshot.entries.as_mut_ptr());
+        }
+    });
+}
+
+fn buffer(length: usize) -> Result<Vec<u8>, c_int> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(length).map_err(|_| libc::ENOMEM)?;
+    bytes.resize(length, 0);
+    Ok(bytes)
+}
+
+pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void {
+    let size = (sendsz as usize).max(recvsz as usize);
+    let size = if size == 0 { DEFAULT_BUFFER } else { size.max(64) };
+    if size > MAX_BUFFER { error(libc::EINVAL); return ptr::null_mut(); }
+    let created = sock == -1;
+    let fd = if created {
+        match raw::sys_socket(libc::AF_INET, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0) {
+            Ok(fd) => fd, Err(e) => { error(e); return ptr::null_mut(); }
+        }
+    } else { sock };
+    let build = (|| -> Result<Arc<Transport>, c_int> {
+        if fd < 0 { return Err(libc::EBADF); }
+        if fd >= LIMIT as c_int { return Err(libc::EMFILE); }
+        if registry().transports.iter().any(|t| t.fd == fd) { return Err(libc::EBUSY); }
+        let mut kind = 0i32; let mut length = size_of::<c_int>() as u32;
+        unsafe { raw::sys_getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE,
+            (&mut kind as *mut c_int).cast(), &mut length) }?;
+        if kind != libc::SOCK_DGRAM { return Err(libc::EPROTOTYPE); }
+        let mut address: libc::sockaddr_in = unsafe { zeroed() };
+        let mut length = size_of::<libc::sockaddr_in>() as u32;
+        unsafe { raw::sys_getsockname(fd, (&mut address as *mut libc::sockaddr_in).cast(), &mut length) }?;
+        if address.sin_family as c_int != libc::AF_INET { return Err(libc::EAFNOSUPPORT); }
+        if address.sin_port == 0 {
+            unsafe { raw::sys_bind(fd, (&address as *const libc::sockaddr_in).cast(), length) }?;
+            unsafe { raw::sys_getsockname(fd, (&mut address as *mut libc::sockaddr_in).cast(), &mut length) }?;
+        }
+        let input = buffer(size)?; let output = buffer(size)?;
+        let public = SvcXprt { sock: fd, port: u16::from_be(address.sin_port), ops: &OPS,
+            addrlen: 0, raddr: unsafe { zeroed() },
+            verifier: OpaqueAuth { oa_flavor: 0, oa_base: ptr::null_mut(), oa_length: 0 },
+            private1: ptr::null_mut(), private2: ptr::null_mut(), padding: [0; 256] };
+        Ok(Arc::new(Transport { public: UnsafeCell::new(public), fd,
+            io: UnsafeCell::new(Io { input, output, call: None, cursor: 0, peer: unsafe { zeroed() } }),
+            operation: AtomicBool::new(false), dispatching: AtomicBool::new(false), destroyed: AtomicBool::new(false), close_fd: AtomicBool::new(created) }))
+    })();
+    match build {
+        Err(e) => { if created { let _ = raw::sys_close(fd); } error(e); ptr::null_mut() }
+        Ok(t) => {
+            let mut r = registry();
+            if r.transports.iter().any(|other| other.fd == fd) || r.transports.try_reserve(1).is_err() {
+                drop(r); error(libc::EBUSY); return ptr::null_mut();
+            }
+            // A successful SVC transport owns its descriptor, even if supplied
+            // by the caller. Failed creation must leave a supplied fd open.
+            t.close_fd.store(true, Ordering::Relaxed);
+            let x = t.public.get(); r.transports.push(t); drop(r); refresh(); x.cast()
+        }
+    }
+}
+
+unsafe extern "C" fn destroy(x: *mut SvcXprt) {
+    let t = {
+        let mut r = registry();
+        let Some(index) = r.transports.iter().position(|t| t.public.get() == x) else { return; };
+        r.transports[index].destroyed.store(true, Ordering::Release);
+        r.transports.remove(index)
+    };
+    drop(t); refresh();
+}
+
+// Caller holds the operation gate. All input/output buffers are owned and
+// bounded. MSG_TRUNC detects oversize UDP packets rather than dispatching a prefix.
+fn receive(t: &Transport) -> bool {
+    let io = unsafe { &mut *t.io.get() };
+    io.call = None;
+    let mut peer: libc::sockaddr_in = unsafe { zeroed() };
+    let mut length = size_of::<libc::sockaddr_in>() as u32;
+    let count = unsafe { raw::sys_recvfrom(t.fd, io.input.as_mut_ptr(), io.input.len(),
+        libc::MSG_DONTWAIT | libc::MSG_TRUNC, (&mut peer as *mut libc::sockaddr_in).cast(), &mut length) };
+    let count = match count { Ok(n) => n as usize, Err(e) => { error(e); return false; } };
+    if count > io.input.len() || length as usize != size_of::<libc::sockaddr_in>() || peer.sin_family as c_int != libc::AF_INET {
+        error(libc::EMSGSIZE); return false;
+    }
+    io.peer = peer;
+    unsafe { (*t.public.get()).raddr = peer; (*t.public.get()).addrlen = length as c_int; }
+    match service::decode_call(&io.input[..count]) {
+        Ok(call) => { io.cursor = call.arguments.start; io.call = Some(call); true }
+        Err(CallError::RpcVersion { xid }) => {
+            if let Ok(n) = service::encode_reply_prefix(&mut io.output, xid, 0, &[], Some(RemoteError::RpcVersion { low: 2, high: 2 })) {
+                let _ = unsafe { raw::sys_sendto(t.fd, io.output.as_ptr(), n, libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+                    (&peer as *const libc::sockaddr_in).cast(), length as usize) };
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+unsafe extern "C-unwind" fn recv(x: *mut SvcXprt, message: *mut c_void) -> c_int {
+    if message.is_null() { return error(libc::EINVAL); }
+    let Some(t) = lookup(x) else { return error(libc::EINVAL); };
+    if t.dispatching.load(Ordering::Acquire) { return error(libc::EBUSY); }
+    let Some(gate) = Operation::begin(t) else { return 0; };
+    if !receive(&gate.0) { return 0; }
+    let io = unsafe { &mut *gate.0.io.get() };
+    let length = io.call.as_ref().unwrap().arguments.end;
+    let mut xdr: Xdr = unsafe { zeroed() };
+    unsafe { super::xdrmem_create((&mut xdr as *mut Xdr).cast(), io.input.as_mut_ptr().cast(), length as u32, super::XDR_DECODE) };
+    // Native xdr_callmsg respects caller-provided credential buffers and allocates
+    // with the native XDR allocator when the public message uses null pointers.
+    unsafe { super::xdr_callmsg((&mut xdr as *mut Xdr).cast(), message) }
+}
+
+unsafe extern "C" fn stat(x: *mut SvcXprt) -> c_int {
+    let Some(t) = lookup(x) else { return 0; }; // XPRT_DIED
+    let mut fd = libc::pollfd { fd: t.fd, events: libc::POLLIN, revents: 0 };
+    match unsafe { raw::sys_poll((&mut fd as *mut libc::pollfd).cast(), 1, 0) } {
+        Ok(_) if fd.revents & libc::POLLIN != 0 => 1, // XPRT_MOREREQS
+        Ok(_) if fd.revents & (libc::POLLNVAL | libc::POLLERR) == 0 => 2,
+        _ => 0,
+    }
+}
+
+unsafe extern "C-unwind" fn getargs(x: *mut SvcXprt, proc: *mut c_void, object: *mut c_void) -> c_int {
+    let Some(t) = lookup(x) else { return error(libc::EINVAL); };
+    let Some(gate) = Operation::begin(t) else { return 0; };
+    if proc.is_null() { return error(libc::EINVAL); }
+    let mut xdr: Xdr = unsafe { zeroed() };
+    {
+        let io = unsafe { &mut *gate.0.io.get() };
+        let Some(call) = &io.call else { return 0; };
+        let remaining = call.arguments.end - io.cursor;
+        unsafe { super::xdrmem_create((&mut xdr as *mut Xdr).cast(), io.input.as_mut_ptr().add(io.cursor).cast(), remaining as u32, super::XDR_DECODE) };
+    }
+    let function: Procedure = unsafe { std::mem::transmute(proc) };
+    let result = unsafe { function((&mut xdr as *mut Xdr).cast(), object) };
+    let consumed = unsafe { ((*xdr.x_ops).x_getpostn)(&xdr) } as usize;
+    unsafe { (*gate.0.io.get()).cursor += consumed; }
+    result
+}
+
+unsafe extern "C-unwind" fn freeargs(x: *mut SvcXprt, proc: *mut c_void, object: *mut c_void) -> c_int {
+    let Some(t) = lookup(x) else { return error(libc::EINVAL); };
+    let Some(_gate) = Operation::begin(t) else { return 0; };
+    if proc.is_null() { return error(libc::EINVAL); }
+    let mut xdr: Xdr = unsafe { zeroed() }; xdr.x_op = super::XDR_FREE;
+    let function: Procedure = unsafe { std::mem::transmute(proc) };
+    unsafe { function((&mut xdr as *mut Xdr).cast(), object) }
+}
+
+unsafe fn send(x: *mut SvcXprt, failure: Option<RemoteError>, proc: *mut c_void, object: *mut c_void, verifier: Option<OpaqueAuth>) -> c_int {
+    let Some(t) = lookup(x) else { return error(libc::EINVAL); };
+    let Some(gate) = Operation::begin(t) else { return 0; };
+    let mut xdr: Xdr = unsafe { zeroed() };
+    let (prefix, peer) = {
+        let io = unsafe { &mut *gate.0.io.get() };
+        let Some(call) = &io.call else { return 0; };
+        let v = verifier.unwrap_or_else(|| unsafe { ptr::read(&(*x).verifier) });
+        let mut bytes = [0u8; 400];
+        if v.oa_length as usize > bytes.len() || (v.oa_length != 0 && v.oa_base.is_null()) { return error(libc::EINVAL); }
+        if v.oa_length != 0 {
+            // Public verifier storage remains the caller's responsibility.
+            unsafe { ptr::copy_nonoverlapping(v.oa_base.cast::<u8>(), bytes.as_mut_ptr(), v.oa_length as usize) };
+        }
+        let prefix = match service::encode_reply_prefix(&mut io.output, call.xid, v.oa_flavor as u32, &bytes[..v.oa_length as usize], failure) {
+            Ok(n) => n, Err(_) => return error(libc::EMSGSIZE),
+        };
+        unsafe { super::xdrmem_create((&mut xdr as *mut Xdr).cast(), io.output.as_mut_ptr().add(prefix).cast(), (io.output.len() - prefix) as u32, super::XDR_ENCODE) };
+        (prefix, io.peer)
+    };
+    if failure.is_none() && !proc.is_null() {
+        let function: Procedure = unsafe { std::mem::transmute(proc) };
+        if unsafe { function((&mut xdr as *mut Xdr).cast(), object) } == 0 { return 0; }
+    }
+    if gate.0.destroyed.load(Ordering::Acquire) { return 0; }
+    let length = prefix + unsafe { ((*xdr.x_ops).x_getpostn)(&xdr) } as usize;
+    let io = unsafe { &*gate.0.io.get() };
+    match unsafe { raw::sys_sendto(gate.0.fd, io.output.as_ptr(), length, libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+        (&peer as *const libc::sockaddr_in).cast(), size_of::<libc::sockaddr_in>()) } {
+        Ok(n) => c_int::from(n as usize == length), Err(e) => error(e),
+    }
+}
+
+unsafe extern "C-unwind" fn reply(x: *mut SvcXprt, message: *mut c_void) -> c_int {
+    if message.is_null() { return error(libc::EINVAL); }
+    // glibc LP64 rpc_msg: direction at 8; reply discriminant at 16; body at 24.
+    let b = message.cast::<u8>();
+    if unsafe { b.add(8).cast::<c_int>().read() } != 1 { return 0; }
+    match unsafe { b.add(16).cast::<c_int>().read() } {
+        0 => {
+            let a = unsafe { &*b.add(24).cast::<AcceptedReply>() };
+            let failure = match a.ar_stat {
+                0 => None, 1 => Some(RemoteError::ProgramUnavailable),
+                2 => Some(RemoteError::ProgramVersion { low: a.ar_u1 as u32, high: a.ar_u2 as u32 }),
+                3 => Some(RemoteError::ProcedureUnavailable), 4 => Some(RemoteError::GarbageArguments),
+                5 => Some(RemoteError::System), _ => return 0,
+            };
+            unsafe { send(x, failure, a.ar_u2 as *mut c_void, a.ar_u1 as *mut c_void, Some(ptr::read(&a.ar_verf))) }
+        }
+        1 => {
+            let r = unsafe { &*b.add(24).cast::<RejectedReply>() };
+            let failure = match r.rj_stat {
+                0 => RemoteError::RpcVersion { low: r.rj_u1 as u32, high: r.rj_u2 as u32 },
+                1 => RemoteError::Authentication(r.rj_u1 as u32), _ => return 0,
+            };
+            unsafe { send(x, Some(failure), ptr::null_mut(), ptr::null_mut(), None) }
+        }
+        _ => 0,
+    }
+}
+static OPS: SvcOps = SvcOps { recv, stat, getargs, reply, freeargs, destroy };
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcudp_create(sock: c_int) -> *mut c_void { unsafe { create(sock, 0, 0) } }
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcudp_bufcreate(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void { unsafe { create(sock, sendsz, recvsz) } }
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_sendreply(x: *mut c_void, proc: *mut c_void, object: *mut c_void) -> c_int {
+    unsafe { send(x.cast(), None, proc, object, None) }
+}
+
+macro_rules! failure_export {
+    ($name:ident, $failure:expr) => {
+        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+        pub unsafe extern "C" fn $name(x: *mut c_void) {
+            unsafe { send(x.cast(), Some($failure), ptr::null_mut(), ptr::null_mut(), None) };
+        }
+    };
+}
+failure_export!(svcerr_decode, RemoteError::GarbageArguments);
+failure_export!(svcerr_noproc, RemoteError::ProcedureUnavailable);
+failure_export!(svcerr_noprog, RemoteError::ProgramUnavailable);
+failure_export!(svcerr_systemerr, RemoteError::System);
+failure_export!(svcerr_weakauth, RemoteError::Authentication(5));
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcerr_auth(x: *mut c_void, why: c_int) {
+    unsafe { send(x.cast(), Some(RemoteError::Authentication(why as u32)), ptr::null_mut(), ptr::null_mut(), None) };
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcerr_progvers(x: *mut c_void, low: u64, high: u64) {
+    unsafe { send(x.cast(), Some(RemoteError::ProgramVersion { low: low as u32, high: high as u32 }), ptr::null_mut(), ptr::null_mut(), None) };
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svc_register(x: *mut c_void, program: u64, version: u64, dispatch: *mut c_void, protocol: c_int) -> c_int {
+    let Some(t) = lookup(x.cast()) else { return error(libc::EINVAL); };
+    if program > u32::MAX as u64 || version > u32::MAX as u64 || dispatch.is_null() { return error(libc::EINVAL); }
+    if protocol != 0 && protocol != libc::IPPROTO_UDP { return error(libc::EPROTONOSUPPORT); }
+    let mut r = registry();
+    if let Some(s) = r.services.iter().find(|s| s.program == program as u32 && s.version == version as u32) {
+        if s.dispatch as *mut c_void != dispatch { return 0; }
+    } else if r.services.try_reserve(1).is_err() { return error(libc::ENOMEM); }
+    drop(r);
+    if protocol != 0 && unsafe { super::pmap_set(program, version, protocol, (*t.public.get()).port) } == 0 { return 0; }
+    let mut r = registry();
+    if let Some(s) = r.services.iter_mut().find(|s| s.program == program as u32 && s.version == version as u32) {
+        if s.dispatch as *mut c_void != dispatch { return 0; }
+        s.published |= protocol != 0;
+    } else {
+        if r.services.try_reserve(1).is_err() { return error(libc::ENOMEM); }
+        r.services.push(Registration { program: program as u32, version: version as u32,
+            dispatch: unsafe { std::mem::transmute(dispatch) }, published: protocol != 0 });
+    }
+    1
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svc_unregister(program: u64, version: u64) {
+    let published = {
+        let mut r = registry();
+        let published = r.services.iter().any(|s| s.program as u64 == program && s.version as u64 == version && s.published);
+        r.services.retain(|s| s.program as u64 != program || s.version as u64 != version);
+        published
+    };
+    if published { unsafe { super::pmap_unset(program, version) }; }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
+    let t = registry().transports.iter().find(|t| t.fd == fd).cloned();
+    let Some(t) = t else { return; };
+    if t.dispatching.swap(true, Ordering::Acquire) { return; }
+    let dispatch_guard = DispatchGuard(t);
+    let t = &dispatch_guard.0;
+    // Bound one readiness turn so a perpetually busy socket cannot starve peers.
+    for _ in 0..32 {
+        if t.destroyed.load(Ordering::Acquire) { break; }
+        let Some(op) = Operation::begin(Arc::clone(t)) else { break; };
+        if !receive(t) { break; }
+        let x = t.public.get();
+        let mut hostname = [0u8; 256];
+        let mut groups = [0u32; 16];
+        let mut cooked: AuthUnixParms = unsafe { zeroed() };
+        let (mut request, auth_error) = {
+            let io = unsafe { &*t.io.get() };
+            let call = io.call.as_ref().unwrap();
+            let credential = &io.input[call.credential.body.clone()];
+            let mut request = ServiceRequest { program: call.program as u64, version: call.version as u64,
+                procedure: call.procedure as u64,
+                credential: OpaqueAuth { oa_flavor: call.credential.flavor as c_int,
+                    oa_base: credential.as_ptr().cast_mut().cast(), oa_length: credential.len() as u32 },
+                cooked: ptr::null_mut(), transport: x };
+            let bad = if call.verifier.flavor != 0 || !call.verifier.body.is_empty() { Some(3) }
+            else { match call.credential.flavor {
+                0 if credential.is_empty() => None,
+                1 => match service::decode_system_credential(credential) {
+                    Ok(sys) => {
+                        hostname[..sys.machine.len()].copy_from_slice(sys.machine);
+                        groups = sys.groups;
+                        cooked.aup_time = sys.stamp as u64; cooked.aup_machname = hostname.as_mut_ptr().cast();
+                        cooked.aup_uid = sys.uid; cooked.aup_gid = sys.gid;
+                        cooked.aup_len = sys.group_count as u32; cooked.aup_gids = groups.as_mut_ptr();
+                        request.cooked = (&mut cooked as *mut AuthUnixParms).cast(); None
+                    }
+                    Err(_) => Some(1),
+                },
+                0 => Some(1),
+                _ => Some(2), // AUTH_REJECTEDCRED: unsupported credential flavor
+            }};
+            (request, bad)
+        };
+        drop(op);
+        if let Some(why) = auth_error { unsafe { svcerr_auth(x.cast(), why) }; continue; }
+        let (handler, range) = {
+            let r = registry();
+            let handler = r.services.iter().find(|s| s.program as u64 == request.program && s.version as u64 == request.version).map(|s| s.dispatch);
+            let mut range: Option<(u32, u32)> = None;
+            for s in &r.services { if s.program as u64 == request.program {
+                range = Some(range.map_or((s.version, s.version), |(low, high)| (low.min(s.version), high.max(s.version))));
+            }}
+            (handler, range)
+        };
+        if let Some(handler) = handler { unsafe { handler(&mut request, x) }; }
+        else if let Some((low, high)) = range { unsafe { svcerr_progvers(x.cast(), low as u64, high as u64) }; }
+        else { unsafe { svcerr_noprog(x.cast()) }; }
+    }
+}
+
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_getreqset(readfds: *mut c_void) {
+    if readfds.is_null() { return; }
+    // Snapshot before callbacks, which can alter the caller's event set.
+    let bits = unsafe { readfds.cast::<[u64; LIMIT / 64]>().read() };
+    for fd in 0..LIMIT { if bits[fd / 64] & (1u64 << (fd % 64)) != 0 { unsafe { svc_getreq_common(fd as c_int) }; } }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_getreq(mask: c_int) {
+    for fd in 0..32 { if mask as u32 & (1u32 << fd) != 0 { unsafe { svc_getreq_common(fd) }; } }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_getreq_poll(fds: *mut c_void, ready: c_int) {
+    if fds.is_null() || ready <= 0 { return; }
+    // The second argument is poll's return value, NOT array length. Snapshot
+    // the registered poll-array extent before dispatch can change registration.
+    let count = unsafe { *super::rpc_svc_max_pollfd_ptr().cast::<c_int>() }.max(0) as usize;
+    let mut selected = [-1; LIMIT]; let mut remaining = ready;
+    for index in 0..count.min(LIMIT) {
+        let p = unsafe { fds.cast::<libc::pollfd>().add(index).read() };
+        if p.revents != 0 { remaining -= 1; if p.revents & libc::POLLIN != 0 { selected[index] = p.fd; } }
+        if remaining == 0 { break; }
+    }
+    for fd in selected { if fd >= 0 { unsafe { svc_getreq_common(fd) }; } }
+}
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svc_exit() { EXIT_EPOCH.fetch_add(1, Ordering::Release); }
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn svc_run() {
+    let epoch = EXIT_EPOCH.load(Ordering::Acquire);
+    loop {
+        if EXIT_EPOCH.load(Ordering::Acquire) != epoch { return; }
+        let mut fds = [EMPTY_POLL; LIMIT];
+        let count = {
+            let r = registry();
+            for (p, t) in fds.iter_mut().zip(&r.transports) { p.fd = t.fd; }
+            r.transports.len()
+        };
+        if count == 0 { return; }
+        // A finite readiness wait also observes svc_exit from another thread
+        // without allocating a process-global wake descriptor.
+        let polled = unsafe { crate::pthread_abi::at_cancellation_point(|| raw::sys_poll(fds.as_mut_ptr().cast(), count, 100)) };
+        match polled { Err(libc::EINTR) | Ok(0) => continue, Err(_) => return, _ => {} }
+        for p in &fds[..count] { if p.revents & libc::POLLIN != 0 { unsafe { svc_getreq_common(p.fd) }; } }
+    }
+}
