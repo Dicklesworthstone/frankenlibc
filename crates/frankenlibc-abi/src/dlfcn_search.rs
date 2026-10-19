@@ -1,15 +1,20 @@
 //! Bounded ELF dependency search, shared by the native group loader.
 //!
-//! Implements DT_RPATH inheritance, direct-only DT_RUNPATH, $ORIGIN and
-//! ${ORIGIN}, initial LD_LIBRARY_PATH, native-ABI ld.so.cache entries and
-//! conventional Linux paths. CPU/OS-validated glibc-hwcaps variants precede
+//! Implements DT_RPATH inheritance, direct-only DT_RUNPATH, the ORIGIN/LIB/
+//! PLATFORM dynamic string tokens, initial LD_LIBRARY_PATH, native-ABI cache
+//! entries and conventional Linux paths. CPU/OS-validated glibc-hwcaps variants precede
 //! the baseline WITHIN each search directory, never across directory order.
-//! $LIB/$PLATFORM token expansion remains unsupported.
+//! Token syntax follows https://man7.org/linux/man-pages/man8/ld.so.8.html.
+//!
+//! PLATFORM follows the kernel AT_PLATFORM value. GNU loader CPU aliases and
+//! tunable-driven overrides are not emulated. Reading this value requires
+//! /proc/self/mem access; if unavailable, only paths using PLATFORM are declined.
 
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 
 use frankenlibc_core::elf::{LoadedObject, ProgramType};
@@ -52,6 +57,79 @@ pub(super) struct SearchContext {
     environment: Vec<PathBuf>,
     cache: Option<cache::Cache>,
     capabilities: Capabilities,
+    tokens: DynamicTokens,
+}
+
+/// One load group's process-derived token values. ORIGIN is supplied by the
+/// referencing object, while LIB and PLATFORM cannot come from an environment
+/// variable or the name being expanded. A missing platform affects only paths
+/// that actually contain a recognized PLATFORM token.
+struct DynamicTokens {
+    library: &'static [u8],
+    platform: Option<Vec<u8>>,
+}
+
+fn auxiliary_value(auxv: &[u8], wanted: u64) -> Option<u64> {
+    for entry in auxv.chunks_exact(16) {
+        let tag = u64::from_ne_bytes(entry[..8].try_into().ok()?);
+        let value = u64::from_ne_bytes(entry[8..].try_into().ok()?);
+        if tag == 0 {
+            break;
+        }
+        if tag == wanted {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn platform_token(auxv: &[u8]) -> Option<Vec<u8>> {
+    let address = auxiliary_value(auxv, 15)?; // AT_PLATFORM
+    if address == 0 {
+        return None;
+    }
+    // Read the kernel's string through a checked file operation instead of
+    // dereferencing an auxiliary-vector address in Rust. Failure is local to
+    // PLATFORM expansion; ordinary paths and LIB remain usable without procfs
+    // memory access. Never substitute uname or a build machine's CPU name.
+    let mut bytes = [0u8; 256];
+    let length = File::open("/proc/self/mem")
+        .ok()?
+        .read_at(&mut bytes, address)
+        .ok()?;
+    let end = bytes[..length].iter().position(|byte| *byte == 0)?;
+    (end != 0).then(|| bytes[..end].to_vec())
+}
+
+fn library_token() -> &'static [u8] {
+    // LIB is a loader installation choice, not simply pointer width. Debian
+    // and Ubuntu use lib/<multiarch>, whereas conventional x86-64 layouts use
+    // lib64. Select the supported system layout from trusted fixed paths;
+    // never probe a caller's ORIGIN or LD_LIBRARY_PATH for this decision.
+    // Arbitrary glibc --libdir configurations are outside this layout policy.
+    let (multiarch, directory, alternate, fallback): (&[u8], &str, &str, &[u8]) =
+        if cfg!(target_arch = "x86_64") {
+            (
+                b"lib/x86_64-linux-gnu",
+                "/lib/x86_64-linux-gnu",
+                "/usr/lib/x86_64-linux-gnu",
+                b"lib64",
+            )
+        } else if cfg!(target_arch = "aarch64") {
+            (
+                b"lib/aarch64-linux-gnu",
+                "/lib/aarch64-linux-gnu",
+                "/usr/lib/aarch64-linux-gnu",
+                b"lib",
+            )
+        } else {
+            return b"lib";
+        };
+    if Path::new(directory).is_dir() || Path::new(alternate).is_dir() {
+        multiarch
+    } else {
+        fallback
+    }
 }
 
 fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
@@ -67,21 +145,16 @@ fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
 impl SearchContext {
     pub(super) fn process() -> Self {
         // Unknown security state is secure, never permission to use LD_*.
-        let secure = bounded_file("/proc/self/auxv", 65536)
-            .and_then(|bytes| {
-                for entry in bytes.chunks_exact(16) {
-                    let tag = u64::from_ne_bytes(entry[..8].try_into().ok()?);
-                    let value = u64::from_ne_bytes(entry[8..].try_into().ok()?);
-                    if tag == 23 {
-                        return Some(value != 0);
-                    } // AT_SECURE
-                    if tag == 0 {
-                        break;
-                    } // AT_NULL
-                }
-                None
-            })
+        let auxv = bounded_file("/proc/self/auxv", 65536);
+        let secure = auxv
+            .as_deref()
+            .and_then(|bytes| auxiliary_value(bytes, 23)) // AT_SECURE
+            .map(|value| value != 0)
             .unwrap_or(true);
+        let tokens = DynamicTokens {
+            library: library_token(),
+            platform: auxv.as_deref().and_then(platform_token),
+        };
         let mut environment = Vec::new();
         if !secure {
             // /proc exposes the initial environment, not later setenv edits.
@@ -93,7 +166,7 @@ impl SearchContext {
                 {
                     let executable = std::fs::read_link("/proc/self/exe").ok();
                     let origin = executable.as_deref().and_then(Path::parent);
-                    environment = split_paths(value, origin, true);
+                    environment = split_paths(value, origin, true, &tokens);
                 }
             }
         }
@@ -107,6 +180,7 @@ impl SearchContext {
             environment,
             cache,
             capabilities: Capabilities::detect(),
+            tokens,
         }
     }
 }
@@ -119,14 +193,20 @@ fn dynamic_string(strings: &[u8], offset: u64) -> Option<&[u8]> {
 }
 
 impl SearchPaths {
+    pub(super) fn requires_origin(name: &[u8]) -> bool {
+        name.iter()
+            .enumerate()
+            .any(|(index, byte)| *byte == b'$' && token_length(&name[index..], b"ORIGIN").is_some())
+    }
+
     pub(super) fn parse(
         bytes: &[u8],
         object: &LoadedObject,
         origin: &Path,
-        secure: bool,
+        context: &SearchContext,
     ) -> Option<Self> {
         let mut paths = Self::default();
-        let origin = (!secure).then_some(origin);
+        let origin = (!context.secure).then_some(origin);
         for header in &object.program_headers {
             if header.p_type != ProgramType::Dynamic {
                 continue;
@@ -147,14 +227,19 @@ impl SearchPaths {
                         break;
                     }
                     15 => {
-                        paths.rpath =
-                            split_paths(dynamic_string(&object.dynstr, value)?, origin, false)
+                        paths.rpath = split_paths(
+                            dynamic_string(&object.dynstr, value)?,
+                            origin,
+                            false,
+                            &context.tokens,
+                        )
                     }
                     29 => {
                         paths.runpath = Some(split_paths(
                             dynamic_string(&object.dynstr, value)?,
                             origin,
                             false,
+                            &context.tokens,
                         ))
                     }
                     0x6fff_fffb => paths.no_default = value & 0x800 != 0, // DF_1_NODEFLIB
@@ -184,7 +269,7 @@ impl SearchPaths {
         inherited: &[PathBuf],
         context: &SearchContext,
     ) -> Option<Vec<PathBuf>> {
-        let name = expand_origin(name, (!context.secure).then_some(origin))?;
+        let name = expand_tokens(name, (!context.secure).then_some(origin), &context.tokens)?;
         if name.as_os_str().as_bytes().contains(&b'/') {
             // Path-bearing dependencies are exact paths, relative to cwd when
             // relative, and do not use RUNPATH as an implicit parent directory.
@@ -268,20 +353,42 @@ fn append_unique(output: &mut Vec<PathBuf>, paths: &[PathBuf]) {
     }
 }
 
-fn split_paths(value: &[u8], origin: Option<&Path>, environment: bool) -> Vec<PathBuf> {
+fn split_paths(
+    value: &[u8],
+    origin: Option<&Path>,
+    environment: bool,
+    tokens: &DynamicTokens,
+) -> Vec<PathBuf> {
     value
         .split(|byte| *byte == b':' || (environment && *byte == b';'))
         .filter_map(|component| {
             if component.is_empty() {
                 Some(PathBuf::from("."))
             } else {
-                expand_origin(component, origin)
+                expand_tokens(component, origin, tokens)
             }
         })
         .collect()
 }
 
-fn expand_origin(value: &[u8], origin: Option<&Path>) -> Option<PathBuf> {
+/// Return a token's spelling length only on an exact identifier boundary.
+/// Braces delimit a token even when ordinary name characters follow them.
+fn token_length(value: &[u8], name: &[u8]) -> Option<usize> {
+    let tail = value.strip_prefix(b"$")?;
+    if let Some(braced) = tail.strip_prefix(b"{") {
+        return braced
+            .strip_prefix(name)?
+            .starts_with(b"}")
+            .then_some(name.len() + 3);
+    }
+    let suffix = tail.strip_prefix(name)?;
+    (!suffix
+        .first()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_'))
+    .then_some(name.len() + 1)
+}
+
+fn expand_tokens(value: &[u8], origin: Option<&Path>, tokens: &DynamicTokens) -> Option<PathBuf> {
     let mut result = Vec::new();
     let mut cursor = 0;
     while cursor < value.len() {
@@ -291,18 +398,23 @@ fn expand_origin(value: &[u8], origin: Option<&Path>) -> Option<PathBuf> {
             continue;
         }
         let remaining = &value[cursor..];
-        let length = if remaining.starts_with(b"${ORIGIN}") {
-            9
-        } else if remaining.starts_with(b"$ORIGIN")
-            && !remaining
-                .get(7)
-                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
-        {
-            7
+        let (length, replacement) = if let Some(length) = token_length(remaining, b"ORIGIN") {
+            (length, origin?.as_os_str().as_bytes())
+        } else if let Some(length) = token_length(remaining, b"LIB") {
+            (length, tokens.library)
+        } else if let Some(length) = token_length(remaining, b"PLATFORM") {
+            (length, tokens.platform.as_deref()?)
         } else {
-            return None;
+            // Unknown, incomplete, and suffixed token names are literal
+            // filename bytes in glibc. A second dollar is still considered
+            // independently (e.g. $$LIB expands only the second dollar).
+            result.push(b'$');
+            cursor += 1;
+            continue;
         };
-        result.extend_from_slice(origin?.as_os_str().as_bytes());
+        // Expansion is single-pass: a dollar inside ORIGIN is a filename
+        // byte, not another token to interpret.
+        result.extend_from_slice(replacement);
         cursor += length;
     }
     Some(PathBuf::from(OsStr::from_bytes(&result)))
@@ -312,26 +424,154 @@ fn expand_origin(value: &[u8], origin: Option<&Path>) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    fn tokens() -> DynamicTokens {
+        DynamicTokens {
+            library: b"lib/test-abi",
+            platform: Some(b"test-platform".to_vec()),
+        }
+    }
+
     #[test]
-    fn origin_expansion_preserves_non_utf8_and_rejects_unknown_tokens() {
+    fn dynamic_expansion_preserves_non_utf8_and_literal_dollars() {
         let origin = Path::new(OsStr::from_bytes(b"/tmp/lib-\xff"));
         assert_eq!(
-            expand_origin(b"${ORIGIN}/child", Some(origin))
+            expand_tokens(b"${ORIGIN}/child", Some(origin), &tokens())
                 .unwrap()
                 .as_os_str()
                 .as_bytes(),
             b"/tmp/lib-\xff/child"
         );
         assert_eq!(
-            expand_origin(b"$ORIGIN/child", Some(origin))
+            expand_tokens(b"$ORIGIN/child", Some(origin), &tokens())
                 .unwrap()
                 .as_os_str()
                 .as_bytes(),
             b"/tmp/lib-\xff/child"
         );
-        assert!(expand_origin(b"$ORIGIN_EXTRA/child", Some(origin)).is_none());
-        assert!(expand_origin(b"$PLATFORM/child", Some(origin)).is_none());
-        assert!(expand_origin(b"$ORIGIN/child", None).is_none());
+        for literal in [
+            b"$ORIGIN_EXTRA/child".as_slice(),
+            b"$LIB1/child",
+            b"${LIB_EXTRA}/child",
+            b"${PLATFORM/child",
+            b"$UNKNOWN/child",
+            b"literal$/child",
+        ] {
+            assert_eq!(
+                expand_tokens(literal, Some(origin), &tokens())
+                    .unwrap()
+                    .as_os_str()
+                    .as_bytes(),
+                literal,
+            );
+        }
+        assert_eq!(
+            expand_tokens(b"$$LIB/${PLATFORM}suffix", None, &tokens()).unwrap(),
+            Path::new("$lib/test-abi/test-platformsuffix"),
+        );
+        assert!(expand_tokens(b"$ORIGIN/child", None, &tokens()).is_none());
+    }
+
+    #[test]
+    fn all_dynamic_tokens_expand_in_one_pass_with_both_spellings() {
+        let origin = Path::new("/tmp/literal$LIB");
+        for input in [
+            b"$ORIGIN/$LIB/$PLATFORM/object.so".as_slice(),
+            b"${ORIGIN}/${LIB}/${PLATFORM}/object.so",
+            b"${ORIGIN}/$LIB/${PLATFORM}/object.so",
+        ] {
+            assert_eq!(
+                expand_tokens(input, Some(origin), &tokens()).unwrap(),
+                Path::new("/tmp/literal$LIB/lib/test-abi/test-platform/object.so"),
+            );
+        }
+    }
+
+    #[test]
+    fn missing_platform_rejects_only_paths_that_use_it() {
+        let mut tokens = tokens();
+        tokens.platform = None;
+        assert!(expand_tokens(b"/vendor/$PLATFORM/libx.so", None, &tokens).is_none());
+        assert!(expand_tokens(b"/vendor/${PLATFORM}/libx.so", None, &tokens).is_none());
+        for input in [
+            b"/plain/libx.so".as_slice(),
+            b"/vendor/$PLATFORM_EXTRA/libx.so",
+        ] {
+            assert_eq!(
+                expand_tokens(input, None, &tokens)
+                    .unwrap()
+                    .as_os_str()
+                    .as_bytes(),
+                input,
+            );
+        }
+        assert_eq!(
+            expand_tokens(b"/vendor/$LIB/libx.so", None, &tokens).unwrap(),
+            Path::new("/vendor/lib/test-abi/libx.so"),
+        );
+        assert_eq!(
+            split_paths(
+                b"/missing/$PLATFORM:/present/$LIB:/last",
+                None,
+                false,
+                &tokens,
+            ),
+            vec![
+                PathBuf::from("/present/lib/test-abi"),
+                PathBuf::from("/last")
+            ],
+        );
+        for independent in [
+            b"$LIB/child".as_slice(),
+            b"${PLATFORM}/child",
+            b"$ORIGIN_EXTRA/child",
+        ] {
+            assert!(!SearchPaths::requires_origin(independent));
+        }
+        assert!(SearchPaths::requires_origin(b"${ORIGIN}/child"));
+        assert!(SearchPaths::requires_origin(b"$$ORIGIN/child"));
+    }
+
+    #[test]
+    fn secure_expansion_keeps_fixed_tokens_without_reenabling_origin() {
+        assert_eq!(
+            split_paths(
+                b"$ORIGIN/untrusted:/usr/$LIB:/vendor/${PLATFORM}",
+                None,
+                false,
+                &tokens(),
+            ),
+            vec![
+                PathBuf::from("/usr/lib/test-abi"),
+                PathBuf::from("/vendor/test-platform"),
+            ],
+        );
+        assert_eq!(
+            split_paths(b"$LIB;;$PLATFORM:", None, true, &tokens()),
+            vec![
+                PathBuf::from("lib/test-abi"),
+                PathBuf::from("."),
+                PathBuf::from("test-platform"),
+                PathBuf::from("."),
+            ],
+        );
+        // Semicolons are LD_LIBRARY_PATH separators, not RPATH separators.
+        assert_eq!(
+            split_paths(b"$LIB;$PLATFORM", None, false, &tokens()),
+            vec![PathBuf::from("lib/test-abi;test-platform")],
+        );
+    }
+
+    #[test]
+    fn auxiliary_values_stop_at_null_and_do_not_dereference_missing_platform() {
+        let mut auxv = Vec::new();
+        for (tag, value) in [(23u64, 1u64), (0, 0), (15, u64::MAX)] {
+            auxv.extend_from_slice(&tag.to_ne_bytes());
+            auxv.extend_from_slice(&value.to_ne_bytes());
+        }
+        assert_eq!(auxiliary_value(&auxv, 23), Some(1));
+        assert_eq!(auxiliary_value(&auxv, 15), None);
+        assert_eq!(platform_token(&auxv), None);
+        assert_eq!(auxiliary_value(&auxv[..15], 23), None);
     }
 
     #[test]
@@ -346,6 +586,7 @@ mod tests {
             environment: vec!["/environment".into()],
             cache: None,
             capabilities: Capabilities::default(),
+            tokens: tokens(),
         };
         let inherited = vec![PathBuf::from("/ancestor")];
         assert_eq!(
@@ -372,6 +613,7 @@ mod tests {
             environment: vec!["/environment".into()],
             cache: None,
             capabilities: Capabilities::default(),
+            tokens: tokens(),
         };
         let inherited = vec![PathBuf::from("/ancestor")];
         assert_eq!(
@@ -444,6 +686,7 @@ mod tests {
             environment: vec!["/environment".into()],
             cache: Some(cache::Cache::from_bytes(cache_fixture(paths, None)).unwrap()),
             capabilities: Capabilities::default(),
+            tokens: tokens(),
         }
     }
 
@@ -582,6 +825,7 @@ mod tests {
             environment: Vec::new(),
             cache: None,
             capabilities: Capabilities::for_x86_level(level),
+            tokens: tokens(),
         }
     }
 
@@ -737,6 +981,7 @@ mod tests {
             environment: Vec::new(),
             cache: Some(cache::Cache::from_bytes(bytes).unwrap()),
             capabilities: Capabilities::for_x86_level(2),
+            tokens: tokens(),
         };
         let mut paths = SearchPaths::default();
         let candidates = paths

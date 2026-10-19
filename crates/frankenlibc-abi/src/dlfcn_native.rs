@@ -388,7 +388,7 @@ fn prepare_file(
         &bytes,
         &object,
         path.parent()?,
-        context.secure,
+        context,
     )?);
     Some(PreparedDso {
         file,

@@ -1,0 +1,71 @@
+name: POSIX AIO queue
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/aio_*.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/pthread_abi.rs'
+      - 'tests/integration/fixture_aio*'
+      - 'scripts/check_aio*'
+      - '.github/workflows/aio-queue.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aio-queue-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Record committed source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/aio-queue
+          git rev-parse HEAD > artifacts/aio-queue/revision.txt
+          rustc --version --verbose > artifacts/aio-queue/rustc.txt
+          for file in unistd_abi.rs aio_queue.rs aio_completion.rs; do
+            echo "$file $(git hash-object "crates/frankenlibc-abi/src/$file")" >> artifacts/aio-queue/source-blobs.txt
+          done
+      - name: Execute queue and existing completion contracts in both builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          for feature in default owned-tls-cache; do
+            args=()
+            if [[ "$feature" != default ]]; then args=(--features "$feature"); fi
+            out="artifacts/aio-queue/$feature"
+            mkdir -p "$out"
+            cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$out/build.log"
+            cp target/release/libfrankenlibc_abi.so "$out/libfrankenlibc_abi.so"
+            python3 scripts/check_aio_queue.py "$PWD/$out/libfrankenlibc_abi.so" --output "$out/queue" --repeat 2
+            python3 scripts/check_aio_completion.py "$PWD/$out/libfrankenlibc_abi.so" --output "$out/completion"
+            cargo test -p frankenlibc-abi --test conformance_diff_aio "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$out/regression.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$out/regression.log"
+          done
+      - name: Verify execution used unchanged committed sources
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/unistd_abi.rs crates/frankenlibc-abi/src/aio_queue.rs crates/frankenlibc-abi/src/aio_completion.rs tests/integration/fixture_aio_queue.c tests/integration/fixture_aio_queue_race.c scripts/check_aio_queue.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aio-queue-results
+          path: artifacts/aio-queue/
+          if-no-files-found: error
+          retention-days: 7

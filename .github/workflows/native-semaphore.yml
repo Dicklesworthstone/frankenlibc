@@ -1,0 +1,75 @@
+name: Native semaphore lifecycle
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/*semaphore*'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/dlfcn*'
+      - 'crates/frankenlibc-abi/tests/*semaphore*'
+      - 'crates/frankenlibc-core/src/pthread/semaphore.rs'
+      - 'tests/integration/fixture_semaphore*.c'
+      - 'scripts/check_semaphore_interop.sh'
+      - '.github/workflows/native-semaphore.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  semaphore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+      - name: Execute packed-state, native and exported semaphore contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/semaphore
+          cargo test -p frankenlibc-core --lib pthread::semaphore:: -- --test-threads=1 \
+            2>&1 | tee artifacts/semaphore/core.log
+          grep -Eq 'test result: ok\. 6 passed; 0 failed;' artifacts/semaphore/core.log
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test named_semaphore_test --test dlfcn_native_semaphore_test \
+              --test conformance_diff_semaphore --test semaphore_wait_test -- --test-threads=1 \
+              2>&1 | tee "artifacts/semaphore/${mode}.log"
+            FL_SEM_WAIT_CHILD=public FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test semaphore_wait_test -- --test-threads=1 \
+              2>&1 | tee "artifacts/semaphore/public-${mode}.log"
+            grep -Eq 'test result: ok\. 4 passed; 0 failed;' "artifacts/semaphore/public-${mode}.log"
+          done
+      - name: Exercise the optimized exported library from C
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build -p frankenlibc-abi --release
+          cc -O2 -pthread -DSEMAPHORE_DRIVER tests/integration/fixture_semaphore_wait.c \
+            -o /tmp/semaphore-wait-driver
+          for mode in strict hardened; do
+            for protocol in 0 1 2 3; do
+              timeout 30s env FRANKENLIBC_MODE="$mode" \
+                LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" \
+                /tmp/semaphore-wait-driver "$protocol" \
+                | tee "artifacts/semaphore/release-${mode}-${protocol}.log"
+              grep -q "protocol=${protocol} line=0" "artifacts/semaphore/release-${mode}-${protocol}.log"
+            done
+          done
+      - name: Exercise mixed libc storage, wakeups, lifetime and exec
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/check_semaphore_interop.sh | tee artifacts/semaphore/interop.log
+          grep -q '^SEMAPHORE_INTEROP_PASSED=93$' artifacts/semaphore/interop.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semaphore-runtime-evidence
+          path: artifacts/semaphore/

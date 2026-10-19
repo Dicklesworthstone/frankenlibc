@@ -7,6 +7,9 @@
 #[path = "records.rs"]
 pub mod records;
 
+#[path = "service.rs"]
+pub mod service;
+
 use core::ops::Range;
 
 pub const CALL_PREFIX_BYTES: usize = 24;

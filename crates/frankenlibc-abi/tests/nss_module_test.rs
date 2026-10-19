@@ -1,7 +1,7 @@
 #![cfg(target_os = "linux")]
 
 //! NSS service modules (`libnss_<service>.so.2`) behind the passwd, group,
-//! shadow and initgroups databases.
+//! shadow, initgroups and hosts databases.
 //!
 //! fl used to answer these databases from /etc/passwd and /etc/group alone,
 //! so any user or group provided by sss, systemd, ldap, winbind, ... did not
@@ -19,8 +19,9 @@
 //!   covering source order, status actions, group merge and the initgroups
 //!   rules. It fails, rather than passes vacuously, when no sandbox exists.
 
-use std::ffi::{CStr, CString, c_char, c_int};
+use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::fmt::Write as _;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -284,12 +285,19 @@ fn scratch_dir(tag: &str) -> PathBuf {
 
 fn build_modules(dir: &Path) {
     let source = repo_root().join("tests/integration/fixture_nss_module_lib.c");
-    for (service, extra) in [("fltest", None), ("fltestnoig", Some("-DNO_INITGROUPS"))] {
+    let variants: &[(&str, &[&str])] = &[
+        ("fltest", &[]),
+        ("fltestnoig", &["-DNO_INITGROUPS"]),
+        ("fltesthost2", &["-DNO_HOST3", "-DNO_HOSTADDR2"]),
+        (
+            "fltesthostlegacy",
+            &["-DNO_HOST3", "-DNO_HOST2", "-DNO_HOSTADDR2"],
+        ),
+    ];
+    for (service, extra) in variants {
         let mut cc = Command::new("cc");
         cc.args(["-O2", "-fPIC", "-shared", &format!("-DSERVICE={service}")]);
-        if let Some(flag) = extra {
-            cc.arg(flag);
-        }
+        cc.args(*extra);
         let output = cc
             .arg(&source)
             .arg("-o")
@@ -487,4 +495,620 @@ fn module_sources_match_host_glibc() {
         run_child(child, &format!("config {index} ({config:?})"));
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+const HOSTS: &str = "\
+198.51.100.10 files-host shared-host
+2001:db8:1::10 files-host shared-host
+192.0.2.41 files-reverse
+2001:db8::41 files-reverse
+";
+
+#[derive(Debug, PartialEq, Eq)]
+struct HostAnswer {
+    name: Vec<u8>,
+    aliases: Vec<Vec<u8>>,
+    addresses: Vec<IpAddr>,
+}
+
+unsafe fn host_answer(host: *const libc::hostent) -> Option<HostAnswer> {
+    if host.is_null() {
+        return None;
+    }
+    let host = unsafe { &*host };
+    let mut aliases = Vec::new();
+    if !host.h_aliases.is_null() {
+        let mut index = 0;
+        loop {
+            let alias = unsafe { *host.h_aliases.add(index) };
+            if alias.is_null() {
+                break;
+            }
+            aliases.push(unsafe { cstr(alias) });
+            index += 1;
+        }
+    }
+    let mut addresses = Vec::new();
+    if !host.h_addr_list.is_null() {
+        let mut index = 0;
+        loop {
+            let address = unsafe { *host.h_addr_list.add(index) };
+            if address.is_null() {
+                break;
+            }
+            addresses.push(match (host.h_addrtype, host.h_length) {
+                (libc::AF_INET, 4) => {
+                    IpAddr::V4(Ipv4Addr::from(unsafe { address.cast::<[u8; 4]>().read() }))
+                }
+                (libc::AF_INET6, 16) => {
+                    IpAddr::V6(Ipv6Addr::from(unsafe { address.cast::<[u8; 16]>().read() }))
+                }
+                value => panic!("invalid hostent address shape: {value:?}"),
+            });
+            index += 1;
+        }
+    }
+    Some(HostAnswer {
+        name: unsafe { cstr(host.h_name) },
+        aliases,
+        addresses,
+    })
+}
+
+fn named_addresses(name: &str, family: c_int, extra_flags: c_int) -> Result<HostAnswer, c_int> {
+    let name = CString::new(name).unwrap();
+    let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+    hints.ai_family = family;
+    hints.ai_socktype = libc::SOCK_STREAM;
+    hints.ai_flags = libc::AI_CANONNAME | extra_flags;
+    let mut head = std::ptr::null_mut();
+    let rc = unsafe {
+        frankenlibc_abi::resolv_abi::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut head)
+    };
+    if rc != 0 {
+        assert!(head.is_null());
+        return Err(rc);
+    }
+    assert!(!head.is_null());
+    let canonical = unsafe { cstr((*head).ai_canonname) };
+    let mut addresses = Vec::new();
+    let mut current = head;
+    while !current.is_null() {
+        let item = unsafe { &*current };
+        if current != head {
+            assert!(
+                item.ai_canonname.is_null(),
+                "only the first addrinfo may carry the canonical name"
+            );
+        }
+        addresses.push(match item.ai_family {
+            libc::AF_INET => {
+                let address = unsafe { &*item.ai_addr.cast::<libc::sockaddr_in>() };
+                IpAddr::V4(Ipv4Addr::from(address.sin_addr.s_addr.to_ne_bytes()))
+            }
+            libc::AF_INET6 => {
+                let address = unsafe { &*item.ai_addr.cast::<libc::sockaddr_in6>() };
+                IpAddr::V6(Ipv6Addr::from(address.sin6_addr.s6_addr))
+            }
+            value => panic!("invalid addrinfo family: {value}"),
+        });
+        current = item.ai_next;
+    }
+    unsafe { frankenlibc_abi::resolv_abi::freeaddrinfo(head) };
+    addresses.sort();
+    Ok(HostAnswer {
+        name: canonical,
+        aliases: Vec::new(),
+        addresses,
+    })
+}
+
+fn reverse_name(address: IpAddr) -> Result<Vec<u8>, c_int> {
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let len = match address {
+        IpAddr::V4(address) => {
+            let sa = unsafe {
+                &mut *(&mut storage as *mut libc::sockaddr_storage).cast::<libc::sockaddr_in>()
+            };
+            sa.sin_family = libc::AF_INET as libc::sa_family_t;
+            sa.sin_addr.s_addr = u32::from_ne_bytes(address.octets());
+            std::mem::size_of::<libc::sockaddr_in>()
+        }
+        IpAddr::V6(address) => {
+            let sa = unsafe {
+                &mut *(&mut storage as *mut libc::sockaddr_storage).cast::<libc::sockaddr_in6>()
+            };
+            sa.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+            sa.sin6_addr.s6_addr = address.octets();
+            std::mem::size_of::<libc::sockaddr_in6>()
+        }
+    };
+    let mut buffer = [0 as c_char; 512];
+    let rc = unsafe {
+        frankenlibc_abi::resolv_abi::getnameinfo(
+            (&storage as *const libc::sockaddr_storage).cast(),
+            len as libc::socklen_t,
+            buffer.as_mut_ptr(),
+            buffer.len() as libc::socklen_t,
+            std::ptr::null_mut(),
+            0,
+            libc::NI_NAMEREQD,
+        )
+    };
+    if rc == 0 {
+        Ok(unsafe { cstr(buffer.as_ptr()) })
+    } else {
+        Err(rc)
+    }
+}
+
+fn host_module_child(test: &str, dir: &Path, config: &str, tag: &str) -> Command {
+    let conf = dir.join(format!("hosts-{tag}.conf"));
+    std::fs::write(&conf, config).unwrap();
+    let mut child = child_test_command(test);
+    child
+        .env(CHILD_ENV, tag)
+        .env("LD_LIBRARY_PATH", dir)
+        .env("FRANKENLIBC_NSSWITCH_CONF", conf)
+        .env("FRANKENLIBC_HOSTS_PATH", dir.join("hosts"))
+        .env_remove("FLTEST_STATUS")
+        .env_remove("FLTEST_TRACE");
+    child
+}
+
+fn assert_module_hosts(include_ipv6: bool, has_canonp: bool) {
+    let v4: [IpAddr; 2] = [
+        Ipv4Addr::new(192, 0, 2, 41).into(),
+        Ipv4Addr::new(192, 0, 2, 42).into(),
+    ];
+    let v6: [IpAddr; 2] = [
+        "2001:db8::41".parse().unwrap(),
+        "2001:db8::42".parse().unwrap(),
+    ];
+    for (family, addresses) in [(libc::AF_INET, v4), (libc::AF_INET6, v6)] {
+        if family == libc::AF_INET6 && !include_ipv6 {
+            assert!(named_addresses("fltest-host", family, 0).is_err());
+            continue;
+        }
+        for name in ["fltest-alias", "fltest-large"] {
+            let name_c = CString::new(name).unwrap();
+            let answer = unsafe {
+                host_answer(
+                    frankenlibc_abi::unistd_abi::gethostbyname2(name_c.as_ptr(), family).cast(),
+                )
+            }
+            .expect("module host must be visible through gethostbyname2");
+            assert_eq!(answer.name, b"fltest-host.example");
+            assert_eq!(answer.addresses, addresses);
+            assert_eq!(
+                answer.aliases[..2],
+                [b"fltest-alias".to_vec(), b"fltest-short".to_vec()]
+            );
+            if name == "fltest-large" {
+                assert_eq!(answer.aliases.len(), 3);
+                assert_eq!(answer.aliases[2], vec![b'a'; 3072]);
+            } else {
+                assert_eq!(answer.aliases.len(), 2);
+            }
+            let addrinfo = named_addresses(name, family, 0).unwrap();
+            assert_eq!(addrinfo.name, b"fltest-host.example");
+            assert_eq!(addrinfo.addresses, addresses);
+
+            for len in [8usize, 8192] {
+                let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+                let mut result = std::ptr::null_mut();
+                let mut buffer = vec![0 as c_char; len];
+                let mut h_errno = -1;
+                let rc = unsafe {
+                    frankenlibc_abi::unistd_abi::gethostbyname2_r(
+                        name_c.as_ptr(),
+                        family,
+                        &mut host,
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut result,
+                        &mut h_errno,
+                    )
+                };
+                if len == 8 {
+                    assert_eq!(rc, libc::ERANGE);
+                    assert!(result.is_null());
+                } else {
+                    assert_eq!(rc, 0);
+                    assert_eq!(h_errno, 0);
+                    assert_eq!(unsafe { host_answer(result) }.as_ref(), Some(&answer));
+                }
+            }
+        }
+
+        for address in addresses {
+            assert_eq!(reverse_name(address).unwrap(), b"fltest-host.example");
+            let bytes = match address {
+                IpAddr::V4(value) => value.octets().to_vec(),
+                IpAddr::V6(value) => value.octets().to_vec(),
+            };
+            let legacy = unsafe {
+                host_answer(
+                    frankenlibc_abi::resolv_abi::gethostbyaddr(
+                        bytes.as_ptr().cast(),
+                        bytes.len() as libc::socklen_t,
+                        family,
+                    )
+                    .cast(),
+                )
+            }
+            .expect("module reverse result");
+            assert_eq!(legacy.name, b"fltest-host.example");
+            assert_eq!(legacy.addresses, addresses);
+            assert_eq!(
+                legacy.aliases[..2],
+                [b"fltest-alias".to_vec(), b"fltest-short".to_vec()]
+            );
+            if address == addresses[1] {
+                assert_eq!(legacy.aliases.len(), 3);
+                assert_eq!(legacy.aliases[2], vec![b'a'; 3072]);
+            } else {
+                assert_eq!(legacy.aliases.len(), 2);
+            }
+            for len in [8usize, 8192] {
+                let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+                let mut result: *mut c_void = std::ptr::null_mut();
+                let mut buffer = vec![0 as c_char; len];
+                let mut h_errno = -1;
+                let rc = unsafe {
+                    frankenlibc_abi::inet_abi::gethostbyaddr_r(
+                        bytes.as_ptr().cast(),
+                        bytes.len() as libc::socklen_t,
+                        family,
+                        (&mut host as *mut libc::hostent).cast(),
+                        buffer.as_mut_ptr(),
+                        buffer.len(),
+                        &mut result,
+                        &mut h_errno,
+                    )
+                };
+                if len == 8 {
+                    assert_eq!(rc, libc::ERANGE);
+                    assert!(result.is_null());
+                } else {
+                    assert_eq!(rc, 0);
+                    assert_eq!(h_errno, 0);
+                    assert_eq!(
+                        unsafe { host_answer(result.cast()) }.as_ref(),
+                        Some(&legacy)
+                    );
+                }
+            }
+        }
+    }
+
+    let name = CString::new("fltest-host").unwrap();
+    let answer =
+        unsafe { host_answer(frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()).cast()) }
+            .unwrap();
+    assert_eq!(answer.name, b"fltest-host.example");
+    assert_eq!(answer.addresses, v4);
+    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut result: *mut c_void = std::ptr::null_mut();
+    let mut buffer = [0 as c_char; 8192];
+    let mut h_errno = -1;
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::inet_abi::gethostbyname_r(
+                name.as_ptr(),
+                (&mut host as *mut libc::hostent).cast(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut h_errno,
+            )
+        },
+        0
+    );
+    assert_eq!(h_errno, 0);
+    assert_eq!(
+        unsafe { host_answer(result.cast()) }.as_ref(),
+        Some(&answer)
+    );
+
+    let mut all = v4.to_vec();
+    if include_ipv6 {
+        all.extend(v6);
+    }
+    all.sort();
+    assert_eq!(
+        named_addresses("fltest-host", libc::AF_UNSPEC, 0)
+            .unwrap()
+            .addresses,
+        all
+    );
+    let mut mapped: Vec<IpAddr> = v4
+        .iter()
+        .map(|address| match address {
+            IpAddr::V4(value) => IpAddr::V6(value.to_ipv6_mapped()),
+            IpAddr::V6(_) => unreachable!(),
+        })
+        .collect();
+    let mapped_address = Ipv4Addr::new(192, 0, 2, 41).to_ipv6_mapped();
+    let mapped_bytes = mapped_address.octets();
+    let mapped_reverse = unsafe {
+        host_answer(
+            frankenlibc_abi::resolv_abi::gethostbyaddr(
+                mapped_bytes.as_ptr().cast(),
+                mapped_bytes.len() as libc::socklen_t,
+                libc::AF_INET6,
+            )
+            .cast(),
+        )
+    }
+    .unwrap();
+    assert_eq!(mapped_reverse.name, b"fltest-host.example");
+    assert_eq!(mapped_reverse.addresses, mapped);
+    assert_eq!(mapped_reverse.aliases, answer.aliases);
+    assert_eq!(
+        unsafe {
+            frankenlibc_abi::inet_abi::gethostbyaddr_r(
+                mapped_bytes.as_ptr().cast(),
+                mapped_bytes.len() as libc::socklen_t,
+                libc::AF_INET6,
+                (&mut host as *mut libc::hostent).cast(),
+                buffer.as_mut_ptr(),
+                buffer.len(),
+                &mut result,
+                &mut h_errno,
+            )
+        },
+        0
+    );
+    assert_eq!(
+        unsafe { host_answer(result.cast()) }.as_ref(),
+        Some(&mapped_reverse)
+    );
+    if include_ipv6 {
+        mapped.extend(v6);
+    }
+    mapped.sort();
+    assert_eq!(
+        named_addresses(
+            "fltest-host",
+            libc::AF_INET6,
+            libc::AI_V4MAPPED | libc::AI_ALL,
+        )
+        .unwrap()
+        .addresses,
+        mapped
+    );
+    assert_eq!(
+        named_addresses("fltest-canonical", libc::AF_INET, 0)
+            .unwrap()
+            .name,
+        if has_canonp {
+            b"fltest-official.example".to_vec()
+        } else {
+            b"fltest-host.example".to_vec()
+        },
+        "getaddrinfo must honor the module's separate canonical-name output"
+    );
+    let canonical_query = CString::new("fltest-canonical").unwrap();
+    assert_eq!(
+        unsafe {
+            host_answer(frankenlibc_abi::resolv_abi::gethostbyname(canonical_query.as_ptr()).cast())
+        }
+        .unwrap()
+        .name,
+        b"fltest-host.example",
+        "the hostent name remains independent of the canonical-name extension"
+    );
+}
+
+#[test]
+fn hosts_modules_forward_reverse_and_scratch_growth() {
+    if let Ok(service) = std::env::var(CHILD_ENV) {
+        assert_module_hosts(service != "fltesthostlegacy", service == "fltest");
+        return;
+    }
+    let dir = scratch_dir("hosts-forward-reverse");
+    build_modules(&dir);
+    std::fs::write(dir.join("hosts"), HOSTS).unwrap();
+    for service in ["fltest", "fltesthost2", "fltesthostlegacy"] {
+        let child = host_module_child(
+            "hosts_modules_forward_reverse_and_scratch_growth",
+            &dir,
+            &format!("hosts: {service}\n"),
+            service,
+        );
+        run_child(child, service);
+    }
+}
+
+fn assert_files_hosts_isolation() {
+    for (family, address) in [
+        (libc::AF_INET, IpAddr::V4(Ipv4Addr::new(192, 0, 2, 41))),
+        (libc::AF_INET6, "2001:db8::41".parse::<IpAddr>().unwrap()),
+    ] {
+        let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+        let mut buffer = [0 as c_char; 8192];
+        let mut error = -1;
+        let mut h_errno = -1;
+        for (name, expected) in [("shared-host", 1), ("fltest-host", 0)] {
+            let name = CString::new(name).unwrap();
+            let status = unsafe {
+                frankenlibc_abi::unistd_abi::_nss_files_gethostbyname2_r(
+                    name.as_ptr(),
+                    family,
+                    (&mut host as *mut libc::hostent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut error,
+                    &mut h_errno,
+                )
+            };
+            assert_eq!(status, expected);
+            if status == 1 {
+                assert_eq!(unsafe { host_answer(&host) }.unwrap().name, b"files-host");
+            }
+        }
+        let bytes = match address {
+            IpAddr::V4(value) => value.octets().to_vec(),
+            IpAddr::V6(value) => value.octets().to_vec(),
+        };
+        assert_eq!(
+            unsafe {
+                frankenlibc_abi::unistd_abi::_nss_files_gethostbyaddr_r(
+                    bytes.as_ptr().cast(),
+                    bytes.len() as libc::socklen_t,
+                    family,
+                    (&mut host as *mut libc::hostent).cast(),
+                    buffer.as_mut_ptr(),
+                    buffer.len(),
+                    &mut error,
+                    &mut h_errno,
+                )
+            },
+            1
+        );
+        assert_eq!(
+            unsafe { host_answer(&host) }.unwrap().name,
+            b"files-reverse"
+        );
+    }
+}
+
+fn assert_hosts_policy(expected: &str) {
+    let forward = named_addresses("shared-host", libc::AF_INET, 0);
+    let reverse = reverse_name(Ipv4Addr::new(192, 0, 2, 41).into());
+    let name = CString::new("shared-host").unwrap();
+    let legacy =
+        unsafe { host_answer(frankenlibc_abi::resolv_abi::gethostbyname(name.as_ptr()).cast()) };
+    let mut host: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut result = std::ptr::null_mut();
+    let mut buffer = [0 as c_char; 8192];
+    let mut h_errno = -1;
+    let rc = unsafe {
+        frankenlibc_abi::unistd_abi::gethostbyname2_r(
+            name.as_ptr(),
+            libc::AF_INET6,
+            &mut host,
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &mut result,
+            &mut h_errno,
+        )
+    };
+    let reverse_address = [192u8, 0, 2, 41];
+    let mut reverse_host: libc::hostent = unsafe { std::mem::zeroed() };
+    let mut reverse_result: *mut c_void = std::ptr::null_mut();
+    let mut reverse_buffer = [0 as c_char; 8192];
+    let mut reverse_h_errno = -1;
+    let reverse_rc = unsafe {
+        frankenlibc_abi::inet_abi::gethostbyaddr_r(
+            reverse_address.as_ptr().cast(),
+            reverse_address.len() as libc::socklen_t,
+            libc::AF_INET,
+            (&mut reverse_host as *mut libc::hostent).cast(),
+            reverse_buffer.as_mut_ptr(),
+            reverse_buffer.len(),
+            &mut reverse_result,
+            &mut reverse_h_errno,
+        )
+    };
+    match expected {
+        "module" => {
+            let answer = forward.unwrap();
+            assert_eq!(answer.name, b"fltest-host.example");
+            assert_eq!(
+                answer.addresses,
+                vec![
+                    IpAddr::V4(Ipv4Addr::new(192, 0, 2, 41)),
+                    IpAddr::V4(Ipv4Addr::new(192, 0, 2, 42)),
+                ]
+            );
+            assert_eq!(reverse.unwrap(), b"fltest-host.example");
+            assert_eq!(reverse_rc, 0);
+            assert_eq!(
+                unsafe { host_answer(reverse_result.cast()) }.unwrap().name,
+                b"fltest-host.example"
+            );
+            assert_eq!(legacy.unwrap().name, b"fltest-host.example");
+            assert_eq!(rc, 0);
+            assert_eq!(
+                unsafe { host_answer(result) }.unwrap().name,
+                b"fltest-host.example"
+            );
+        }
+        "files" => {
+            let answer = forward.unwrap();
+            assert_eq!(answer.name, b"files-host");
+            assert_eq!(
+                answer.addresses,
+                vec![IpAddr::V4(Ipv4Addr::new(198, 51, 100, 10))]
+            );
+            assert_eq!(reverse.unwrap(), b"files-reverse");
+            assert_eq!(reverse_rc, 0);
+            assert_eq!(
+                unsafe { host_answer(reverse_result.cast()) }.unwrap().name,
+                b"files-reverse"
+            );
+            assert_eq!(legacy.unwrap().name, b"files-host");
+            assert_eq!(rc, 0);
+            assert_eq!(unsafe { host_answer(result) }.unwrap().name, b"files-host");
+        }
+        "none" | "temporary" => {
+            assert!(legacy.is_none());
+            assert!(result.is_null());
+            assert!(reverse_result.is_null(), "discarded module result leaked");
+            if expected == "temporary" {
+                assert_eq!(forward, Err(libc::EAI_AGAIN));
+                assert_eq!(reverse, Err(libc::EAI_AGAIN));
+                assert_eq!(h_errno, 2);
+                assert_eq!(reverse_h_errno, 2);
+            } else {
+                assert!(forward.is_err());
+                assert!(reverse.is_err());
+            }
+        }
+        value => panic!("unknown hosts policy result: {value}"),
+    }
+    assert_files_hosts_isolation();
+}
+
+#[test]
+fn hosts_modules_policy_order_statuses_and_files_isolation() {
+    if std::env::var_os(CHILD_ENV).is_some() {
+        assert_hosts_policy(&std::env::var("FLTEST_HOST_EXPECTED").unwrap());
+        return;
+    }
+    let dir = scratch_dir("hosts-policy");
+    build_modules(&dir);
+    std::fs::write(dir.join("hosts"), HOSTS).unwrap();
+    for (index, (config, status, expected)) in [
+        ("fltest files", "", "module"),
+        ("files fltest", "", "files"),
+        ("fltest [SUCCESS=continue] files", "", "files"),
+        ("files [SUCCESS=continue] fltest", "", "module"),
+        ("fltest [NOTFOUND=return] files", "notfound", "none"),
+        ("fltest [NOTFOUND=continue] files", "notfound", "files"),
+        ("fltest [TRYAGAIN=return] files", "tryagain", "temporary"),
+        ("fltest [TRYAGAIN=continue] files", "tryagain", "files"),
+        ("fltest [UNAVAIL=return] files", "unavail", "none"),
+        ("fltest [!UNAVAIL=return] files", "unavail", "files"),
+        ("fltest [!UNAVAIL=return] files", "notfound", "none"),
+        ("fltestmissing files", "", "files"),
+        ("fltestmissing [UNAVAIL=return] files", "", "none"),
+        ("fltest [SUCCESS=continue] fltestmissing", "", "none"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut child = host_module_child(
+            "hosts_modules_policy_order_statuses_and_files_isolation",
+            &dir,
+            &format!("hosts: {config}\n"),
+            &format!("policy-{index}"),
+        );
+        child
+            .env("FLTEST_STATUS", status)
+            .env("FLTEST_HOST_EXPECTED", expected);
+        run_child(child, &format!("hosts policy {index}: {config}"));
+    }
 }

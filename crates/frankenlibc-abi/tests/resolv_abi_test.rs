@@ -6090,14 +6090,18 @@ fn nsswitch_hosts_policy_governs_forward_and_reverse_lookups() {
 
         for (policy, found, unavailable_per_lookup) in [
             ("hosts: files\n", true, 0u64),
-            // An unimplemented module is an unavailable source: continue.
-            ("hosts: myhostname files\n", true, 1u64),
-            // Only a module fl does not implement: files is never consulted.
-            ("hosts: myhostname\n", false, 1u64),
+            // A missing module is an unavailable source: continue.
+            ("hosts: frankenlibc_test_missing_nss files\n", true, 1u64),
+            // Only a missing module: files is never consulted.
+            ("hosts: frankenlibc_test_missing_nss\n", false, 1u64),
             // Explicitly empty: no sources at all.
             ("hosts:\n", false, 0u64),
             // UNAVAIL=return stops before files.
-            ("hosts: myhostname [UNAVAIL=return] files\n", false, 1u64),
+            (
+                "hosts: frankenlibc_test_missing_nss [UNAVAIL=return] files\n",
+                false,
+                1u64,
+            ),
         ] {
             std::fs::write(&nsswitch, policy).expect("write nsswitch fixture");
             let before = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
@@ -6651,7 +6655,7 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
         );
 
         // 6. nsswitch `hosts:` policy transitions into live DNS vs halting on UNAVAIL.
-        std::fs::write(&nsswitch_path, b"hosts: myhostname dns\n").unwrap();
+        std::fs::write(&nsswitch_path, b"hosts: frankenlibc_test_missing_nss dns\n").unwrap();
         let before_unavail = resolv_abi::dns_metrics_snapshot().nss_unavailable_sources;
         let fl_after_skip = extract_gai(
             resolv_abi::getaddrinfo,
@@ -6667,7 +6671,11 @@ fn hermetic_dns_differential_matches_host_glibc_across_udp_tcp_cname_and_ptr() {
             before_unavail + 1
         );
 
-        std::fs::write(&nsswitch_path, b"hosts: myhostname [UNAVAIL=return] dns\n").unwrap();
+        std::fs::write(
+            &nsswitch_path,
+            b"hosts: frankenlibc_test_missing_nss [UNAVAIL=return] dns\n",
+        )
+        .unwrap();
         let fl_halted = extract_gai(
             resolv_abi::getaddrinfo,
             resolv_abi::freeaddrinfo,

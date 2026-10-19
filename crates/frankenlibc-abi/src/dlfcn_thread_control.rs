@@ -15,6 +15,11 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         };
     }
     let (function, first, merged) = match name {
+        "nanosleep" => (
+            crate::time_abi::nanosleep as *const (),
+            "GLIBC_2.2.5",
+            false,
+        ),
         "pthread_attr_init" => entry!(pthread_attr_init, "GLIBC_2.2.5", false),
         "pthread_attr_destroy" => entry!(pthread_attr_destroy, "GLIBC_2.2.5", false),
         "pthread_attr_getdetachstate" => entry!(pthread_attr_getdetachstate, "GLIBC_2.2.5", false),
@@ -37,6 +42,22 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         "pthread_attr_setschedparam" => entry!(pthread_attr_setschedparam, "GLIBC_2.2.5", false),
         "pthread_attr_getscope" => entry!(pthread_attr_getscope, "GLIBC_2.2.5", false),
         "pthread_attr_setscope" => entry!(pthread_attr_setscope, "GLIBC_2.2.5", false),
+        "pthread_barrier_init" => entry!(pthread_barrier_init, "GLIBC_2.2.5", true),
+        "pthread_barrier_destroy" => entry!(pthread_barrier_destroy, "GLIBC_2.2.5", true),
+        "pthread_barrier_wait" => entry!(pthread_barrier_wait, "GLIBC_2.2.5", true),
+        "pthread_barrierattr_init" => entry!(pthread_barrierattr_init, "GLIBC_2.2.5", true),
+        "pthread_barrierattr_destroy" => entry!(pthread_barrierattr_destroy, "GLIBC_2.2.5", true),
+        "pthread_barrierattr_getpshared" => {
+            entry!(pthread_barrierattr_getpshared, "GLIBC_2.3.3", true)
+        }
+        "pthread_barrierattr_setpshared" => {
+            entry!(pthread_barrierattr_setpshared, "GLIBC_2.2.5", true)
+        }
+        "pthread_spin_init" => entry!(pthread_spin_init, "GLIBC_2.2.5", true),
+        "pthread_spin_destroy" => entry!(pthread_spin_destroy, "GLIBC_2.2.5", true),
+        "pthread_spin_lock" => entry!(pthread_spin_lock, "GLIBC_2.2.5", true),
+        "pthread_spin_trylock" => entry!(pthread_spin_trylock, "GLIBC_2.2.5", true),
+        "pthread_spin_unlock" => entry!(pthread_spin_unlock, "GLIBC_2.2.5", true),
         "pthread_mutexattr_init" => entry!(pthread_mutexattr_init, "GLIBC_2.2.5", true),
         "pthread_mutexattr_destroy" => entry!(pthread_mutexattr_destroy, "GLIBC_2.2.5", true),
         "pthread_mutexattr_gettype" => entry!(pthread_mutexattr_gettype, "GLIBC_2.2.5", true),
@@ -65,6 +86,8 @@ pub(super) fn address(name: &str, version: Option<&str>) -> Option<u64> {
         }
         "pthread_rwlock_timedrdlock" => entry!(pthread_rwlock_timedrdlock, "GLIBC_2.2.5", true),
         "pthread_rwlock_timedwrlock" => entry!(pthread_rwlock_timedwrlock, "GLIBC_2.2.5", true),
+        "pthread_rwlock_clockrdlock" => entry!(pthread_rwlock_clockrdlock, "GLIBC_2.30", true),
+        "pthread_rwlock_clockwrlock" => entry!(pthread_rwlock_clockwrlock, "GLIBC_2.30", true),
         "pthread_cancel" => entry!(pthread_cancel, "GLIBC_2.2.5", true),
         "pthread_testcancel" => entry!(pthread_testcancel, "GLIBC_2.2.5", true),
         "pthread_setcancelstate" => entry!(pthread_setcancelstate, "GLIBC_2.2.5", false),

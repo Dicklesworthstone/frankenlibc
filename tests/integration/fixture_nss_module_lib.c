@@ -14,6 +14,7 @@
  */
 #include <errno.h>
 #include <grp.h>
+#include <netdb.h>
 #include <nss.h>
 #include <pwd.h>
 #include <shadow.h>
@@ -30,6 +31,145 @@
 #define FN(name) CAT(_nss_, SERVICE, _##name)
 #define STR2(x) #x
 #define STR(x) STR2(x)
+
+static void trace(const char *what, const char *arg);
+static int forced(enum nss_status *st, int *errnop);
+static char *put(char **cur, char *end, const char *s);
+
+static const unsigned char host_v4[2][4] = {
+    {192, 0, 2, 41}, {192, 0, 2, 42},
+};
+static const unsigned char host_v6[2][16] = {
+    {[0] = 0x20, [1] = 0x01, [2] = 0x0d, [3] = 0xb8, [15] = 0x41},
+    {[0] = 0x20, [1] = 0x01, [2] = 0x0d, [3] = 0xb8, [15] = 0x42},
+};
+
+static enum nss_status host_failure(enum nss_status status, int error,
+                                    int *errnop, int *h_errnop) {
+  *errnop = error;
+  *h_errnop = status == NSS_STATUS_TRYAGAIN ? TRY_AGAIN
+             : status == NSS_STATUS_NOTFOUND ? HOST_NOT_FOUND : NO_RECOVERY;
+  return status;
+}
+
+static enum nss_status fill_host(int family, int large, struct hostent *host,
+                                 char *buf, size_t len, int *errnop, int *h_errnop) {
+  if (family != AF_INET && family != AF_INET6)
+    return host_failure(NSS_STATUS_UNAVAIL, EAFNOSUPPORT, errnop, h_errnop);
+  size_t addrlen = family == AF_INET ? 4 : 16;
+  size_t alias_count = large ? 3 : 2;
+  size_t pad = (sizeof(char *) - (uintptr_t)buf % sizeof(char *)) % sizeof(char *);
+  size_t vector_bytes = (alias_count + 1 + 3) * sizeof(char *);
+  if (len < pad + vector_bytes + 2 * addrlen + 128 + (large ? 3073 : 0))
+    return host_failure(NSS_STATUS_TRYAGAIN, ERANGE, errnop, h_errnop);
+  char **aliases = (char **)(buf + pad);
+  char **addresses = aliases + alias_count + 1;
+  char *cur = (char *)(addresses + 3), *end = buf + len;
+  host->h_name = put(&cur, end, "fltest-host.example");
+  aliases[0] = put(&cur, end, "fltest-alias");
+  aliases[1] = put(&cur, end, "fltest-short");
+  if (large) {
+    aliases[2] = cur;
+    memset(cur, 'a', 3072);
+    cur[3072] = '\0';
+    cur += 3073;
+  }
+  aliases[alias_count] = NULL;
+  for (size_t i = 0; i < 2; ++i) {
+    addresses[i] = cur;
+    memcpy(cur, family == AF_INET ? host_v4[i] : host_v6[i], addrlen);
+    cur += addrlen;
+  }
+  addresses[2] = NULL;
+  host->h_aliases = aliases;
+  host->h_addrtype = family;
+  host->h_length = (int)addrlen;
+  host->h_addr_list = addresses;
+  *errnop = 0;
+  *h_errnop = NETDB_SUCCESS;
+  return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status host_by_name(const char *name, int family, struct hostent *host,
+                                    char *buf, size_t len, int *errnop, int *h_errnop) {
+  enum nss_status status;
+  if (forced(&status, errnop))
+    return host_failure(status, *errnop, errnop, h_errnop);
+  int large = strcmp(name, "fltest-large") == 0;
+  if (!large && strcmp(name, "fltest-host") != 0 &&
+      strcmp(name, "fltest-host.example") != 0 &&
+      strcmp(name, "fltest-alias") != 0 && strcmp(name, "shared-host") != 0 &&
+      strcmp(name, "fltest-canonical") != 0)
+    return host_failure(NSS_STATUS_NOTFOUND, ENOENT, errnop, h_errnop);
+  return fill_host(family, large, host, buf, len, errnop, h_errnop);
+}
+
+#ifndef NO_HOST3
+enum nss_status FN(gethostbyname3_r)(const char *name, int family, struct hostent *host,
+                                    char *buf, size_t len, int *errnop, int *h_errnop,
+                                    int32_t *ttlp, char **canonp) {
+  trace("gethostbyname3_r", name);
+  enum nss_status status = host_by_name(name, family, host, buf, len, errnop, h_errnop);
+  if (status == NSS_STATUS_SUCCESS) {
+    if (ttlp != NULL) *ttlp = 60;
+    if (canonp != NULL)
+      *canonp = strcmp(name, "fltest-canonical") == 0
+                    ? (char *)"fltest-official.example" : host->h_name;
+  }
+  return status;
+}
+#endif
+
+#ifndef NO_HOST2
+enum nss_status FN(gethostbyname2_r)(const char *name, int family, struct hostent *host,
+                                    char *buf, size_t len, int *errnop, int *h_errnop) {
+  trace("gethostbyname2_r", name);
+  return host_by_name(name, family, host, buf, len, errnop, h_errnop);
+}
+#endif
+
+enum nss_status FN(gethostbyname_r)(const char *name, struct hostent *host,
+                                   char *buf, size_t len, int *errnop, int *h_errnop) {
+  trace("gethostbyname_r", name);
+  return host_by_name(name, AF_INET, host, buf, len, errnop, h_errnop);
+}
+
+static enum nss_status host_by_address(const void *address, socklen_t address_len,
+                                       int family, struct hostent *host, char *buf,
+                                       size_t len, int *errnop, int *h_errnop) {
+  enum nss_status status;
+  if (forced(&status, errnop))
+    return host_failure(status, *errnop, errnop, h_errnop);
+  if ((family != AF_INET && family != AF_INET6) ||
+      address_len != (socklen_t)(family == AF_INET ? 4 : 16))
+    return host_failure(NSS_STATUS_UNAVAIL, EAFNOSUPPORT, errnop, h_errnop);
+  for (size_t i = 0; i < 2; ++i) {
+    const unsigned char *expected = family == AF_INET ? host_v4[i] : host_v6[i];
+    if (memcmp(address, expected, address_len) == 0)
+      return fill_host(family, i == 1, host, buf, len, errnop, h_errnop);
+  }
+  return host_failure(NSS_STATUS_NOTFOUND, ENOENT, errnop, h_errnop);
+}
+
+#ifndef NO_HOSTADDR2
+enum nss_status FN(gethostbyaddr2_r)(const void *address, socklen_t address_len,
+                                    int family, struct hostent *host, char *buf,
+                                    size_t len, int *errnop, int *h_errnop,
+                                    int32_t *ttlp) {
+  trace("gethostbyaddr2_r", NULL);
+  enum nss_status status = host_by_address(address, address_len, family, host,
+                                          buf, len, errnop, h_errnop);
+  if (status == NSS_STATUS_SUCCESS && ttlp != NULL) *ttlp = 60;
+  return status;
+}
+#endif
+
+enum nss_status FN(gethostbyaddr_r)(const void *address, socklen_t address_len,
+                                   int family, struct hostent *host, char *buf,
+                                   size_t len, int *errnop, int *h_errnop) {
+  trace("gethostbyaddr_r", NULL);
+  return host_by_address(address, address_len, family, host, buf, len, errnop, h_errnop);
+}
 
 struct user {
   const char *name, *passwd, *gecos, *dir, *shell;

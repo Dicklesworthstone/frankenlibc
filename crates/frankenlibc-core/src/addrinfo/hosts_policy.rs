@@ -1,17 +1,17 @@
 //! Native `hosts:` source ordering and status actions from nsswitch.conf.
 //!
 //! Clean-room implementation from the GNU libc manual, "Actions in the NSS
-//! configuration", and live glibc probes. No dynamic NSS modules are loaded:
-//! unknown services are retained as unavailable steps, not silently skipped.
+//! configuration", and live glibc probes. Module names are retained for the
+//! ABI's NSS dispatcher; this policy layer does not load native code.
 //! Parsing and dispatch are safe, input-linear, nonrecursive, and independent
 //! of filesystem/network I/O. The ABI supplies one configuration snapshot and
 //! owns backend errors, including errno. Only files and DNS are native here.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
+pub enum Backend<'a> {
     Files,
     Dns,
-    Unavailable,
+    Module(&'a [u8]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,20 +47,28 @@ enum Action {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Service {
-    backend: Backend,
+    name: Vec<u8>,
     actions: [Action; 4],
 }
 
 impl Service {
-    fn new(backend: Backend) -> Self {
+    fn new(name: &[u8]) -> Self {
         Self {
-            backend,
+            name: name.to_vec(),
             actions: [
                 Action::Return,
                 Action::Continue,
                 Action::Continue,
                 Action::Continue,
             ],
+        }
+    }
+
+    fn backend(&self) -> Backend<'_> {
+        match self.name.as_slice() {
+            b"files" => Backend::Files,
+            b"dns" => Backend::Dns,
+            name => Backend::Module(name),
         }
     }
 }
@@ -87,6 +95,16 @@ pub enum BackendResult<T, E> {
 }
 
 impl<T, E> BackendResult<T, E> {
+    /// Convert a successful payload without changing the NSS status or error.
+    pub fn map<U>(self, convert: impl FnOnce(T) -> U) -> BackendResult<U, E> {
+        match self {
+            Self::Success(value) => BackendResult::Success(convert(value)),
+            Self::NotFound(error) => BackendResult::NotFound(error),
+            Self::Unavailable(error) => BackendResult::Unavailable(error),
+            Self::TryAgain(error) => BackendResult::TryAgain(error),
+        }
+    }
+
     fn status(&self) -> Status {
         match self {
             Self::Success(_) => Status::Success,
@@ -116,7 +134,7 @@ pub enum LookupError<E> {
 impl Default for HostsPolicy {
     fn default() -> Self {
         Self {
-            services: vec![Service::new(Backend::Files), Service::new(Backend::Dns)],
+            services: vec![Service::new(b"files"), Service::new(b"dns")],
         }
     }
 }
@@ -127,7 +145,7 @@ impl HostsPolicy {
     /// nsswitch.conf says.
     pub fn files_only() -> Self {
         Self {
-            services: vec![Service::new(Backend::Files)],
+            services: vec![Service::new(b"files")],
         }
     }
 
@@ -165,12 +183,7 @@ impl HostsPolicy {
             {
                 return Err(ParseError);
             }
-            let backend = match name {
-                b"files" => Backend::Files,
-                b"dns" => Backend::Dns,
-                _ => Backend::Unavailable,
-            };
-            let mut service = Service::new(backend);
+            let mut service = Service::new(name);
             input.whitespace();
             while input.take(b'[') {
                 let mut count = 0;
@@ -216,7 +229,7 @@ impl HostsPolicy {
 
     pub fn lookup<T, E>(
         &self,
-        lookup: impl FnMut(Backend) -> BackendResult<T, E>,
+        lookup: impl FnMut(Backend<'_>) -> BackendResult<T, E>,
     ) -> Result<T, LookupError<E>> {
         self.lookup_inner(lookup, false)
     }
@@ -226,18 +239,18 @@ impl HostsPolicy {
     /// exists. Keep that ABI-specific difference explicit.
     pub fn lookup_forward<T, E>(
         &self,
-        lookup: impl FnMut(Backend) -> BackendResult<T, E>,
+        lookup: impl FnMut(Backend<'_>) -> BackendResult<T, E>,
     ) -> Result<T, LookupError<E>> {
         self.lookup_inner(lookup, true)
     }
 
     fn lookup_inner<T, E>(
         &self,
-        mut lookup: impl FnMut(Backend) -> BackendResult<T, E>,
+        mut lookup: impl FnMut(Backend<'_>) -> BackendResult<T, E>,
         terminal_merge_returns: bool,
     ) -> Result<T, LookupError<E>> {
         for (index, service) in self.services.iter().enumerate() {
-            let result = lookup(service.backend);
+            let result = lookup(service.backend());
             let action = service.actions[result.status() as usize];
             if index + 1 == self.services.len()
                 && (action != Action::Merge || terminal_merge_returns)
@@ -339,17 +352,20 @@ mod tests {
             HostsPolicy::parse(b"HOSTS: dns\n").unwrap(),
             HostsPolicy::default()
         );
-        assert_eq!(policy("FILES").services[0].backend, Backend::Unavailable);
+        assert_eq!(
+            policy("FILES").services[0].backend(),
+            Backend::Module(b"FILES")
+        );
     }
 
     #[test]
     fn source_order_and_unknown_services_are_preserved() {
         let p = policy("dns missing [UNAVAIL=continue] files dns");
         assert_eq!(
-            p.services.iter().map(|s| s.backend).collect::<Vec<_>>(),
+            p.services.iter().map(Service::backend).collect::<Vec<_>>(),
             vec![
                 Backend::Dns,
-                Backend::Unavailable,
+                Backend::Module(b"missing"),
                 Backend::Files,
                 Backend::Dns
             ]
@@ -389,7 +405,7 @@ mod tests {
     #[test]
     fn return_on_unavailable_is_not_a_skipped_source() {
         let got: Result<(), _> = policy("unknown [UNAVAIL=return] files dns").lookup(|source| {
-            assert_eq!(source, Backend::Unavailable);
+            assert_eq!(source, Backend::Module(b"unknown"));
             BackendResult::Unavailable(7)
         });
         assert_eq!(got, Err(LookupError::Backend(7)));
@@ -508,7 +524,7 @@ mod tests {
                         "files [{}{name}={action_name}] dns",
                         if negate { "!" } else { "" }
                     ));
-                    let defaults = Service::new(Backend::Files).actions;
+                    let defaults = Service::new(b"files").actions;
                     for candidate in Status::ALL {
                         let expected = if (candidate == status) != negate {
                             action

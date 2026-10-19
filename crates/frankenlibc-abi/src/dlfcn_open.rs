@@ -283,7 +283,7 @@ pub(super) fn load(
     } else {
         let executable = std::fs::read_link("/proc/self/exe").ok();
         let origin = executable.as_deref().and_then(Path::parent);
-        if name.contains(&b'$') && origin.is_none() {
+        if origin.is_none() && SearchPaths::requires_origin(name) {
             return None;
         }
         SearchPaths::default().candidates(name, origin.unwrap_or(Path::new("/")), &[], &context)?

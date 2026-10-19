@@ -77,7 +77,7 @@ jobs:
         run: |
           mkdir -p artifacts/native-caller
           status=0
-          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test; do
+          for target in membrane_rounding_link_test dlfcn_native_caller_test dlfcn_native_next_test dlfcn_native_open_test dlfcn_native_info_test dlfcn_native_memory_test dlfcn_native_io_test dlfcn_native_stdio_test dlfcn_native_memstream_test dlfcn_native_barrier_test; do
             log="artifacts/native-caller/${target}-${FRANKENLIBC_MODE}.log"
             # Preserve every failure, but execute later targets as well: a
             # memory-admission failure must not hide stream test outcomes.
@@ -99,7 +99,7 @@ jobs:
 
   validated-rwclock-source:
     if: >-
-      github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'build: verify native rwlock clock runtime for publication')
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'feat(loader): enable native-plugin barriers and spinlocks')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -111,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: d2a0f6d3cbbabaafc687240b311302daf8bfcf0d
+          ref: 7504997547488018ecbf25d0387361a4490c79cc
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -128,8 +128,12 @@ jobs:
           assert hashlib.sha256(patch).hexdigest() == 'b960587055aab2ad4ec4621bf0fe93ff4c2224bf72cebb40931ffa85cb0e9d41'
           path = pathlib.Path('/tmp/frankenlibc-rwclock.patch')
           path.write_bytes(patch)
-          subprocess.run(['git', 'apply', '--check', str(path)], check=True)
-          subprocess.run(['git', 'apply', str(path)], check=True)
+          # The NODELETE fixture correction is already on this base. Apply
+          # only the remaining runtime and regression changes, preserving
+          # the later priority-ceiling and robust-owner work in pthread_abi.
+          exclude = '--exclude=crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs'
+          subprocess.run(['git', 'apply', '--check', exclude, str(path)], check=True)
+          subprocess.run(['git', 'apply', exclude, str(path)], check=True)
           subprocess.run(['git', 'diff', '--check'], check=True)
           PY
       - name: Execute clock, synchronization, and native-loader contracts
@@ -155,7 +159,6 @@ jobs:
           paths = [
               'crates/frankenlibc-abi/src/pthread_abi.rs',
               'crates/frankenlibc-abi/src/dlfcn_thread_control.rs',
-              'crates/frankenlibc-abi/tests/dlfcn_native_search_test.rs',
               'crates/frankenlibc-abi/tests/pthread_rwlock_clock_test.rs',
               'crates/frankenlibc-abi/tests/dlfcn_native_rwlock_clock_test.rs',
           ]

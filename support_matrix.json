@@ -5432,18 +5432,20 @@
     },
     {
       "symbol": "gethostbyaddr",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "resolv_abi",
       "perf_class": "default",
-      "strict_semantics": "Passthrough to glibc gethostbyaddr",
-      "hardened_semantics": "Passthrough to glibc gethostbyaddr",
+      "strict_semantics": "IPv4/IPv6 reverse lookup through ordered native files/DNS and installed NSS modules loaded by the host loader; owned thread-local hostent preserves module aliases and addresses",
+      "hardened_semantics": "Same NSS lookup with resolver runtime-policy mediation and deterministic failures; standalone reports module sources unavailable",
       "default_stub": false
     },
     {
       "symbol": "gethostbyaddr_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "inet_abi",
-      "perf_class": "fast"
+      "perf_class": "fast",
+      "strict_semantics": "Reentrant IPv4/IPv6 reverse lookup through native files/DNS and host-loaded NSS modules; preserves aliases and addresses in caller storage with ERANGE on insufficient space",
+      "hardened_semantics": "Same ordered lookup with bounded caller-buffer writes and deterministic failures; standalone reports module sources unavailable"
     },
     {
       "symbol": "gethostbyname",
@@ -5456,29 +5458,29 @@
     },
     {
       "symbol": "gethostbyname2",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "IPv6-aware hostname lookup",
-      "hardened_semantics": "Same as strict",
+      "strict_semantics": "IPv4/IPv6 numeric and nsswitch-ordered hostname lookup using native files/DNS plus installed host-loaded NSS modules; preserves aliases and address lists in thread-local hostent storage",
+      "hardened_semantics": "Same resolver lookup and error contract; standalone reports module sources unavailable",
       "default_stub": false
     },
     {
       "symbol": "gethostbyname2_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "unistd_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Reentrant gethostbyname2 via getaddrinfo",
-      "hardened_semantics": "Same",
+      "strict_semantics": "Reentrant IPv4/IPv6 numeric and ordered NSS lookup with native files/DNS and host-loaded modules; copies canonical hostent name, aliases and addresses into caller storage",
+      "hardened_semantics": "Same ordered lookup with bounded caller-buffer writes and ERANGE on insufficient space; standalone reports module sources unavailable",
       "default_stub": false
     },
     {
       "symbol": "gethostbyname_r",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "inet_abi",
       "perf_class": "fast",
-      "strict_semantics": "Deterministic numeric IPv4 + /etc/hosts lookup into caller buffers; ERANGE/ENOENT deterministic failures",
-      "hardened_semantics": "Deterministic lookup with safe-default fallback under repair mode and bounded buffer writes",
+      "strict_semantics": "Reentrant IPv4 numeric and ordered NSS lookup with native files/DNS and host-loaded modules; preserves aliases and addresses in caller storage with ERANGE on insufficient space",
+      "hardened_semantics": "Same ordered lookup with bounded caller-buffer writes and deterministic failures; standalone reports module sources unavailable",
       "default_stub": false
     },
     {
@@ -5584,11 +5586,11 @@
     },
     {
       "symbol": "getnameinfo",
-      "status": "Implemented",
+      "status": "WrapsHostLibc",
       "module": "resolv_abi",
       "perf_class": "coldpath",
-      "strict_semantics": "Bootstrap resolver implementation: numeric getaddrinfo/getnameinfo + gai_strerror/freeaddrinfo with deterministic EAI_* failures",
-      "hardened_semantics": "Resolver with deterministic repairs: invalid host/service normalized to safe defaults, evidence emitted",
+      "strict_semantics": "Numeric host/service formatting and ordered reverse lookup through native files/DNS and installed host-loaded NSS modules, with NI_NAMEREQD and deterministic EAI_* failures",
+      "hardened_semantics": "Same NSS source policy with bounded output handling and resolver runtime-policy mediation; standalone reports module sources unavailable",
       "default_stub": false
     },
     {
@@ -33216,22 +33218,22 @@
   ],
   "summary": {
     "total": 4119,
-    "implemented": 2399,
+    "implemented": 2393,
     "raw_syscall": 410,
-    "wraps_host_libc": 1266,
+    "wraps_host_libc": 1272,
     "glibc_call_through": 0,
     "stub": 44
   },
-  "implemented": 2399,
+  "implemented": 2393,
   "raw_syscall": 410,
   "glibc_call_through": 0,
   "stub": 44,
   "counts": {
-    "implemented": 2399,
+    "implemented": 2393,
     "raw_syscall": 410,
     "glibc_call_through": 0,
     "stub": 44,
-    "wraps_host_libc": 1266
+    "wraps_host_libc": 1272
   },
-  "wraps_host_libc": 1266
+  "wraps_host_libc": 1272
 }

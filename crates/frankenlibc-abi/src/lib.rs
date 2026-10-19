@@ -480,5 +480,9 @@ pub mod rpc_abi;
 // and initgroups databases.
 #[cfg(not(test))]
 pub(crate) mod nss_module;
+#[cfg(not(test))]
+pub mod named_semaphore;
+#[cfg(not(test))]
+pub mod semaphore_wait;
 
 pub mod util;

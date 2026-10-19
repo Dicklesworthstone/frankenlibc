@@ -7354,73 +7354,7 @@ pub unsafe extern "C-unwind" fn sem_clockwait(
     clockid: c_int,
     abstime: *const c_void,
 ) -> c_int {
-    // glibc allows only CLOCK_REALTIME/CLOCK_MONOTONIC for sem_clockwait
-    // (lll_futex_supported_clockid); any other clock is EINVAL. bd-44y7sl.
-    if clockid != libc::CLOCK_REALTIME && clockid != libc::CLOCK_MONOTONIC {
-        unsafe { crate::errno_abi::set_abi_errno(libc::EINVAL) };
-        return -1;
-    }
-    // Use futex FUTEX_WAIT_BITSET with clock selection
-    // sem_t is an int at offset 0; if value > 0, decrement and return
-    let sem_val = sem as *mut std::sync::atomic::AtomicI32;
-    // Register as a waiter before re-checking the value, as sem_wait does:
-    // sem_post skips FUTEX_WAKE when no waiter is registered, so an
-    // unregistered sem_clockwait slept until its deadline.
-    let _registration = unsafe { crate::unistd_abi::sem_register_waiter(sem) };
-    loop {
-        let val = unsafe { (*sem_val).load(std::sync::atomic::Ordering::Acquire) };
-        if val > 0 {
-            if unsafe {
-                (*sem_val)
-                    .compare_exchange(
-                        val,
-                        val - 1,
-                        std::sync::atomic::Ordering::AcqRel,
-                        std::sync::atomic::Ordering::Relaxed,
-                    )
-                    .is_ok()
-            } {
-                return 0;
-            }
-            continue;
-        }
-        // Wait using futex with absolute timeout
-        let clock_flag = if clockid == libc::CLOCK_REALTIME {
-            0
-        } else {
-            libc::FUTEX_CLOCK_REALTIME // bit to NOT set for CLOCK_MONOTONIC
-        };
-        let _ = clock_flag;
-        let ts = abstime as *const libc::timespec;
-        let futex_op = libc::FUTEX_WAIT_BITSET
-            | crate::unistd_abi::sem_futex_private_flag(sem.cast())
-            | (libc::FUTEX_CLOCK_REALTIME
-                * (if clockid == libc::CLOCK_REALTIME {
-                    1
-                } else {
-                    0
-                }));
-        if let Err(err) = unsafe {
-            crate::pthread_abi::at_cancellation_point(|| {
-                raw_syscall::sys_futex(
-                    sem_val as *mut u32,
-                    futex_op,
-                    val as u32,
-                    ts as usize,
-                    std::ptr::null::<c_void>() as usize,
-                    !0u32, // FUTEX_BITSET_MATCH_ANY
-                )
-            })
-        } {
-            // A signal handler interrupting the wait fails it with EINTR, even
-            // under SA_RESTART, as glibc's sem_clockwait does: CPython's lock
-            // acquire waits here and must return to run Python signal handlers.
-            if err != libc::EAGAIN {
-                unsafe { crate::errno_abi::set_abi_errno(err) };
-                return -1;
-            }
-        }
-    }
+    unsafe { crate::semaphore_wait::timed_cp(sem, clockid, abstime.cast(), false) }
 }
 // setaliasent: mail alias iterator reset — native via endaliasent
 // (resets the thread-local alias iterator so getaliasent starts from the top)

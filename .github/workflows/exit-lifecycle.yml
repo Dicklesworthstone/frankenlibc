@@ -1,0 +1,72 @@
+name: Owned and host exit lifecycle
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/exit_handlers.rs'
+      - 'crates/frankenlibc-abi/src/stdlib_abi.rs'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
+      - 'tests/integration/fixture_exit_tickets*'
+      - 'scripts/check_exit_tickets.py'
+      - '.github/workflows/exit-lifecycle.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Record exact committed source provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/exit
+          git rev-parse HEAD > artifacts/exit/revision.txt
+          rustc --version --verbose > artifacts/exit/rustc.txt
+          for file in stdlib_abi.rs exit_handlers.rs; do
+            cp "crates/frankenlibc-abi/src/$file" artifacts/exit/
+            git hash-object "crates/frankenlibc-abi/src/$file" >> artifacts/exit/source-blobs.txt
+          done
+      - name: Execute actual release exits and destructor regressions
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee artifacts/exit/build.log
+          cp target/release/libfrankenlibc_abi.so artifacts/exit/
+          python3 scripts/check_exit_tickets.py "$PWD/target/release/libfrankenlibc_abi.so" --output artifacts/exit/cases
+          cargo test -p frankenlibc-abi --test dlfcn_native_cxa_test "${args[@]}" -- --test-threads=1 2>&1 | tee artifacts/exit/cxa.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/exit/cxa.log
+          cargo test -p frankenlibc-abi --test stdlib_abi_test on_exit_ "${args[@]}" -- --test-threads=1 2>&1 | tee artifacts/exit/on-exit.log
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' artifacts/exit/on-exit.log
+      - name: Verify execution used unchanged committed source
+        run: git diff --exit-code -- crates/frankenlibc-abi/src/stdlib_abi.rs crates/frankenlibc-abi/src/exit_handlers.rs tests/integration/fixture_exit_tickets* scripts/check_exit_tickets.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exit-lifecycle-${{ matrix.feature }}
+          path: artifacts/exit/
+          if-no-files-found: error
+          retention-days: 7
