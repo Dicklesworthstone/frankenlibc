@@ -86,3 +86,38 @@ fn repeated_wraparound_returns_exact_latest_window() {
         if n >= 7 { assert!(cache.lookup(A, 0, &(n-7).to_ne_bytes()).is_none()); }
     }
 }
+
+#[test]
+fn staged_identity_survives_decoder_mutation() {
+    let mut cache = ReplyCache::new(1, 16).unwrap();
+    let mut input = b"request".to_vec();
+    assert!(cache.stage(A, 4, &input));
+    input.fill(0);
+    assert!(cache.remember_staged(b"response"));
+    assert_eq!(cache.lookup(A, 4, b"request"), Some(b"response".as_slice()));
+    assert_eq!(cache.lookup(A, 4, &input), None);
+}
+
+#[test]
+fn abandoned_or_rejected_staging_preserves_cached_reply() {
+    let mut cache = ReplyCache::new(1, 4).unwrap();
+    assert!(cache.remember(A, 0, b"old", b"one"));
+    assert!(cache.stage(B, 1, b"new"));
+    assert!(!cache.remember_staged(b"oversize"));
+    assert_eq!(cache.lookup(A, 0, b"old"), Some(b"one".as_slice()));
+    assert!(!cache.stage(B, 1, b"oversize"));
+    assert!(!cache.remember_staged(b"two"));
+    assert_eq!(cache.lookup(A, 0, b"old"), Some(b"one".as_slice()));
+}
+
+#[test]
+fn staged_reply_updates_reuse_a_single_fifo_entry() {
+    let mut cache = ReplyCache::new(2, 4).unwrap();
+    assert!(!cache.remember_staged(b"bad"));
+    assert!(cache.remember(A, 0, b"old", b"one"));
+    assert!(cache.stage(B, 1, b"new"));
+    assert!(cache.remember_staged(b"two"));
+    assert!(cache.remember_staged(b"NEW"));
+    assert_eq!(cache.lookup(A, 0, b"old"), Some(b"one".as_slice()));
+    assert_eq!(cache.lookup(B, 1, b"new"), Some(b"NEW".as_slice()));
+}

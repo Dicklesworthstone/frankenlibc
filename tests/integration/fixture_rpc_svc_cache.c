@@ -6,6 +6,17 @@
 #include <limits.h>
 
 static int (*enablecache)(Xprt *, unsigned long);
+/* Public glibc LP64 XDR stream layout; x_private is the current buffer cursor. */
+typedef struct {
+    int op; const void *ops; char *public_data, *cursor, *base; unsigned remaining;
+} CacheXdr;
+_Static_assert(offsetof(CacheXdr,cursor)==24 && sizeof(CacheXdr)==48,"glibc XDR layout");
+static int consume_decode(void *stream, void *value) {
+    if (!xu32(stream,value)) return 0;
+    CacheXdr *x=stream;
+    if (x->op==1) memset(x->cursor-4,0,4);
+    return 1;
+}
 static int fail_encoding(void *x, void *unused) {
     (void)unused;
     unsigned partial=123;
@@ -14,6 +25,10 @@ static int fail_encoding(void *x, void *unused) {
 }
 static void cache_handler(Request *r, Xprt *x) {
     if (r->procedure==15) { ++calls; CHECK(!sendreply(x,fail_encoding,NULL)); }
+    else if (r->procedure==16) {
+        ++calls;unsigned value=0;CHECK(x->ops->getargs(x,consume_decode,&value));
+        value+=7;CHECK(sendreply(x,xu32,&value));CHECK(x->ops->freeargs(x,xu32,&value));
+    }
     else handler(r,x);
 }
 static void cache_error(unsigned xid) {
@@ -38,6 +53,11 @@ int main(int argc,char **argv) {
     CHECK(enablecache(server,count));
     if (!strcmp(scenario,"cache-basic")) {
         for (unsigned i=0;i<8;++i) {exchange(1,101);CHECK(calls==1);}
+    } else if (!strcmp(scenario,"cache-input-snapshot")) {
+        unsigned char data[2048];size_t n=request(data,101,PROGRAM,1,16);word(data,n,35);
+        for(unsigned i=0;i<3;++i) {
+            send_packet(data,n+4);drive();expect_reply(101,0,0,0,42);CHECK(calls==1);
+        }
     } else if (!strcmp(scenario,"cache-peers")) {
         exchange(1,101);CHECK(calls==1);
         int first=client;client=socket(AF_INET,SOCK_DGRAM,0);CHECK(client>=0);

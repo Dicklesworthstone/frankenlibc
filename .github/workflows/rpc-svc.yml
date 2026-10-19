@@ -13,7 +13,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: rpc-svc-${{ github.ref }}
+  group: rpc-svc-cache-${{ github.ref }}
   cancel-in-progress: false
 jobs:
   service:
@@ -50,7 +50,7 @@ jobs:
           rustc --version --verbose > "$root/rustc.txt"
           test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 49798575be2489d2274a02e8297a3aa41d7c43f8
           test "$(git hash-object crates/frankenlibc-abi/src/rpc_svc.rs)" = 7514113ae4941c8392eaee8048e8cf45b142228a
-          gh api repos/${{ github.repository }}/git/blobs/1bb43e5b8e12f0400c9598cd559885e872452195 --jq .content | base64 -d > "$root/integration.patch"
+          gh api repos/${{ github.repository }}/git/blobs/5714ab600d99949f969d00d075fdd9d57e625fd8 --jq .content | base64 -d > "$root/integration.patch"
           git apply --check "$root/integration.patch"
           git apply "$root/integration.patch"
           for file in rpc_svc.rs rpc_abi.rs rpc_svc_cache.rs; do
@@ -69,7 +69,7 @@ jobs:
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cases"
           cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"
-          grep -Eq 'test result: ok\. 8 passed; 0 failed;' "$root/cache-unit.log"
+          grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-unit.log"
           cargo test -p frankenlibc-core --test rpc_service_test -- --nocapture --test-threads=1 2>&1 | tee "$root/core.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/core.log"
           cargo test -p frankenlibc-abi --test rpc_abi_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/abi.log"

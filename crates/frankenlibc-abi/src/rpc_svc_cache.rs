@@ -40,6 +40,7 @@ pub(super) struct ReplyCache {
     bytes: Vec<u8>,
     packet_size: usize,
     next: usize,
+    staged: Option<Slot>,
 }
 
 impl ReplyCache {
@@ -49,7 +50,8 @@ impl ReplyCache {
         }
         let stride = packet_size.checked_mul(2).ok_or(CacheError::NoMemory)?;
         let footprint = stride.checked_add(size_of::<Slot>())
-            .and_then(|n| n.checked_mul(count)).ok_or(CacheError::NoMemory)?;
+            .and_then(|n| n.checked_mul(count))
+            .and_then(|n| n.checked_add(packet_size)).ok_or(CacheError::NoMemory)?;
         if footprint > MAX_CACHE_BYTES {
             return Err(CacheError::NoMemory);
         }
@@ -57,10 +59,12 @@ impl ReplyCache {
         slots.try_reserve_exact(count).map_err(|_| CacheError::NoMemory)?;
         slots.resize(count, Slot::default());
         let mut bytes = Vec::new();
-        let length = stride * count; // bounded above by the checked footprint
+        // The final packet-sized region is an owned pre-dispatch snapshot. A
+        // custom XDR decoder may alter the public input buffer before replying.
+        let length = stride * count + packet_size; // checked by footprint above
         bytes.try_reserve_exact(length).map_err(|_| CacheError::NoMemory)?;
         bytes.resize(length, 0);
-        Ok(Self { slots, bytes, packet_size, next: 0 })
+        Ok(Self { slots, bytes, packet_size, next: 0, staged: None })
     }
 
     fn index(&self, peer: Peer, generation: u64, request: &[u8]) -> Option<usize> {
@@ -83,24 +87,51 @@ impl ReplyCache {
         Some(&self.bytes[start..start + self.slots[index].reply_len])
     }
 
+    /// Save identity before entering any decoder or service callback. Staging
+    /// consumes no FIFO slot, so abandoning a call or failing its encoder does
+    /// not evict a previously successful reply.
+    pub fn stage(&mut self, peer: Peer, generation: u64, request: &[u8]) -> bool {
+        self.staged = None;
+        if request.len() > self.packet_size {
+            return false;
+        }
+        let start = self.slots.len() * self.packet_size * 2;
+        self.bytes[start..start + request.len()].copy_from_slice(request);
+        self.staged = Some(Slot {
+            peer, generation, request_len: request.len(), reply_len: 0, occupied: true,
+        });
+        true
+    }
+
+    /// Publish a fully serialized response for the immutable staged request.
+    /// Keep the snapshot available for a second reply to the same active call.
+    pub fn remember_staged(&mut self, reply: &[u8]) -> bool {
+        let Some(mut slot) = self.staged else { return false };
+        if reply.len() > self.packet_size {
+            return false;
+        }
+        let saved = self.slots.len() * self.packet_size * 2;
+        let index = self.index(slot.peer, slot.generation,
+            &self.bytes[saved..saved + slot.request_len]).unwrap_or_else(|| {
+                let index = self.next;
+                self.next = (self.next + 1) % self.slots.len();
+                index
+            });
+        let start = index * self.packet_size * 2;
+        self.bytes.copy_within(saved..saved + slot.request_len, start);
+        let start = start + self.packet_size;
+        self.bytes[start..start + reply.len()].copy_from_slice(reply);
+        slot.reply_len = reply.len();
+        self.slots[index] = slot;
+        true
+    }
+
     /// Store only a fully encoded response. Oversized data leaves the cache
     /// unchanged. Replacing a reply to the same request consumes no FIFO slot.
     pub fn remember(&mut self, peer: Peer, generation: u64, request: &[u8], reply: &[u8]) -> bool {
         if request.len() > self.packet_size || reply.len() > self.packet_size {
             return false;
         }
-        let index = self.index(peer, generation, request).unwrap_or_else(|| {
-            let index = self.next;
-            self.next = (self.next + 1) % self.slots.len();
-            index
-        });
-        let start = index * self.packet_size * 2;
-        self.bytes[start..start + request.len()].copy_from_slice(request);
-        let start = start + self.packet_size;
-        self.bytes[start..start + reply.len()].copy_from_slice(reply);
-        self.slots[index] = Slot {
-            peer, generation, request_len: request.len(), reply_len: reply.len(), occupied: true,
-        };
-        true
+        self.stage(peer, generation, request) && self.remember_staged(reply)
     }
 }
