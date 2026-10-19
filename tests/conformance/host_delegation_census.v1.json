@@ -296,6 +296,13 @@
       "text": "if let Some(address) = crate::host_resolve::resolve_host_symbol_raw(\"__cxa_finalize\") {"
     },
     {
+      "evidence": "crates/frankenlibc-abi/src/exit_handlers.rs:194",
+      "line": 194,
+      "module": "exit_handlers",
+      "path": "crates/frankenlibc-abi/src/exit_handlers.rs",
+      "text": "if let Some(address) = crate::host_resolve::resolve_host_symbol_raw(\"__call_tls_dtors\") {"
+    },
+    {
       "evidence": "crates/frankenlibc-abi/src/glibc_internal_abi.rs:5281",
       "line": 5281,
       "module": "glibc_internal_abi",
@@ -2111,7 +2118,7 @@
     "abi_source_dir": "crates/frankenlibc-abi/src",
     "function_identity": "<module>::<function>@<one-based-start-line>",
     "source_file_count": 112,
-    "source_tree_sha256": "eb6bf2ed41704128bfe3811666b8d6de4e4c8006784f3e302a46fa4eb703b7f8",
+    "source_tree_sha256": "4d49d08305bcf372712a138bda13430bd7f3288884bb4913bbebcfac1840d3a1",
     "version": 15
   },
   "module_census": [
@@ -3010,10 +3017,10 @@
         "source_unique_export_symbol_count": 4609,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "3a6fd39e4dd79fbc9b20f907805fdcc106a94bdccbca344598e237aee541798d",
+        "support_matrix_sha256": "1d1c7a03e0d3d5c2226e0600a63b64752e85ca825e5338e0fce43aa795019b0f",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 8798,
+      "function_count": 8799,
       "host_dependencies_by_symbol": {
         "_Exit": [
           "<dynamic>"
@@ -4412,6 +4419,7 @@
         "__libc_start_main": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "__libc_start_main",
           "calloc",
@@ -5365,6 +5373,7 @@
         "argp_error": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5375,6 +5384,7 @@
         "argp_failure": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5385,6 +5395,7 @@
         "argp_help": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5395,6 +5406,7 @@
         "argp_parse": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5405,6 +5417,7 @@
         "argp_state_help": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5415,6 +5428,7 @@
         "argp_usage": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5956,6 +5970,7 @@
         "ecalloc": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5969,6 +5984,7 @@
         "efopen": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -5979,6 +5995,7 @@
         "emalloc": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6035,6 +6052,7 @@
         "erealloc": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6082,6 +6100,7 @@
         "error": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6092,6 +6111,7 @@
         "error_at_line": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6105,6 +6125,7 @@
         "estrdup": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6115,6 +6136,7 @@
         "estrlcat": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6125,6 +6147,7 @@
         "estrlcpy": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6135,6 +6158,7 @@
         "estrndup": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6145,6 +6169,7 @@
         "estrtoi": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6155,6 +6180,7 @@
         "estrtou": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -6186,6 +6212,7 @@
         "exit": [
           "<dynamic>",
           "_IO_list_all",
+          "__call_tls_dtors",
           "__errno_location",
           "calloc",
           "dlsym",
@@ -10263,7 +10290,7 @@
         "__libc_scratch_buffer_set_array_size": 6,
         "__libc_secure_getenv": 1,
         "__libc_sigaction": 1,
-        "__libc_start_main": 24,
+        "__libc_start_main": 25,
         "__libc_system": 3,
         "__libc_valloc": 6,
         "__link": 1,
@@ -10510,12 +10537,12 @@
         "aio_write": 11,
         "aio_write64": 11,
         "aligned_alloc": 5,
-        "argp_error": 15,
-        "argp_failure": 12,
-        "argp_help": 15,
-        "argp_parse": 15,
-        "argp_state_help": 15,
-        "argp_usage": 15,
+        "argp_error": 16,
+        "argp_failure": 13,
+        "argp_help": 16,
+        "argp_parse": 16,
+        "argp_state_help": 16,
+        "argp_usage": 16,
         "argz_add": 6,
         "argz_add_sep": 6,
         "argz_append": 6,
@@ -10659,10 +10686,10 @@
         "dup2": 1,
         "dup3": 1,
         "eaccess": 1,
-        "ecalloc": 12,
+        "ecalloc": 13,
         "ecvt": 1,
-        "efopen": 12,
-        "emalloc": 12,
+        "efopen": 13,
+        "emalloc": 13,
         "endgrent": 2,
         "endpwent": 2,
         "endspent": 2,
@@ -10674,7 +10701,7 @@
         "epoll_pwait2": 2,
         "epoll_wait": 2,
         "erand48": 1,
-        "erealloc": 13,
+        "erealloc": 14,
         "erf": 1,
         "erfc": 1,
         "erfcf": 1,
@@ -10687,15 +10714,15 @@
         "erff64": 1,
         "err": 1,
         "errc": 1,
-        "error": 12,
-        "error_at_line": 12,
+        "error": 13,
+        "error_at_line": 13,
         "errx": 1,
-        "estrdup": 12,
-        "estrlcat": 12,
-        "estrlcpy": 12,
-        "estrndup": 12,
-        "estrtoi": 12,
-        "estrtou": 12,
+        "estrdup": 13,
+        "estrlcat": 13,
+        "estrlcpy": 13,
+        "estrndup": 13,
+        "estrtoi": 13,
+        "estrtou": 13,
         "euidaccess": 1,
         "execl": 1,
         "execle": 1,
@@ -10703,7 +10730,7 @@
         "execv": 1,
         "execve": 1,
         "execvp": 1,
-        "exit": 12,
+        "exit": 13,
         "exp": 1,
         "exp10": 1,
         "exp10f": 1,
@@ -11660,14 +11687,14 @@
         "ynf64x": 1,
         "ynl": 1
       },
-      "resolved_call_edge_count": 16911,
+      "resolved_call_edge_count": 16914,
       "summary": {
         "exported_function_count": 4609,
         "exported_symbol_with_host_dependency_count": 1630,
         "exported_symbol_with_unknown_call_edge_count": 5,
-        "host_dependency_callsite_count": 5168,
+        "host_dependency_callsite_count": 5188,
         "standalone_admission_ready": false,
-        "unique_terminal_host_callsite_count": 100,
+        "unique_terminal_host_callsite_count": 101,
         "unknown_reachable_call_edge_count": 4
       },
       "terminal_host_callsites": [
@@ -11904,6 +11931,15 @@
           "host_symbol": "pthread_setspecific",
           "line": 125,
           "path": "crates/frankenlibc-abi/src/dlfcn_thread_exit.rs"
+        },
+        {
+          "delegation_kind": "resolve_host_symbol_raw_literal",
+          "evidence": "crates/frankenlibc-abi/src/exit_handlers.rs:194",
+          "expression": "if let Some(address) = crate::host_resolve::resolve_host_symbol_raw(\"__call_tls_dtors\") {",
+          "function_id": "exit_handlers::run_exiting_thread_dtors@192",
+          "host_symbol": "__call_tls_dtors",
+          "line": 194,
+          "path": "crates/frankenlibc-abi/src/exit_handlers.rs"
         },
         {
           "delegation_kind": "resolve_host_symbol_raw_literal",
@@ -13476,10 +13512,10 @@
         "source_unique_export_symbol_count": 4610,
         "support_matrix_path": "support_matrix.json",
         "support_matrix_row_count": 4119,
-        "support_matrix_sha256": "3a6fd39e4dd79fbc9b20f907805fdcc106a94bdccbca344598e237aee541798d",
+        "support_matrix_sha256": "1d1c7a03e0d3d5c2226e0600a63b64752e85ca825e5338e0fce43aa795019b0f",
         "support_matrix_unique_symbol_count": 4119
       },
-      "function_count": 8786,
+      "function_count": 8787,
       "host_dependencies_by_symbol": {
         "_IO_default_pbackfail": [
           "<dynamic>",
@@ -16105,7 +16141,7 @@
         "xcrypt": 3,
         "xcrypt_r": 3
       },
-      "resolved_call_edge_count": 16722,
+      "resolved_call_edge_count": 16724,
       "summary": {
         "exported_function_count": 4610,
         "exported_symbol_with_host_dependency_count": 516,
@@ -17028,7 +17064,7 @@
     },
     {
       "path": "crates/frankenlibc-abi/src/exit_handlers.rs",
-      "sha256": "a55a92cdf2dbdfa1e82bd95d8d93f3d13df9d96a34d8aa87ff35c72702e9c8ac"
+      "sha256": "d9e9f87296a8b18d2f4d1a67978648e948cdef09dea0262fef7985f61477d8cb"
     },
     {
       "path": "crates/frankenlibc-abi/src/expl_table.rs",
@@ -17304,7 +17340,7 @@
     }
   ],
   "summary": {
-    "broader_source_reference_count": 190,
+    "broader_source_reference_count": 191,
     "exported_symbol_count": 4682,
     "exported_symbol_with_unknown_call_edge_count": 0,
     "host_delegating_symbol_count": 28,
