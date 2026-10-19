@@ -1,12 +1,9 @@
 //! Exactly-once exit registrations shared with host-internal termination.
-//! The native registry remains authoritative. Host on_exit stores only stable
-//! integer tickets; early DSO finalization consumes entries before code unload.
+//! The native registry owns callbacks; the host stores only opaque tickets.
+//! C++ tickets retain their DSO association so either finalizer consumes them.
 
-use super::{CxaEntry, ExitHandler, c_int, c_void, ptr, set_abi_errno};
+use super::{CxaEntry, ExitHandler, c_int, c_void, set_abi_errno};
 
-// Stable tickets let host-internal exit and owned exit share exactly-once
-// ownership without giving glibc pointers to movable registry entries. Cleared
-// tickets remain harmless when a DSO was explicitly finalized before exit.
 static EXIT_HANDLERS: std::sync::Mutex<Vec<(usize, ExitHandler)>> =
     std::sync::Mutex::new(Vec::new());
 static NEXT_EXIT_TICKET: std::sync::atomic::AtomicUsize =
@@ -20,18 +17,100 @@ fn invoke_exit_handler(handler: ExitHandler, status: c_int) {
     }
 }
 
+// Debug tests and standalone builds retain a wholly owned lifecycle. In an
+// interposed release, glibc can terminate internally, without calling our exit.
 #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
-unsafe extern "C" fn host_exit_ticket(status: c_int, ticket: *mut c_void) {
-    let handler = {
+mod host {
+    use super::*;
+    type OnExit = unsafe extern "C" fn(
+        unsafe extern "C" fn(c_int, *mut c_void), *mut c_void,
+    ) -> c_int;
+    type CxaAtExit = unsafe extern "C" fn(
+        unsafe extern "C" fn(*mut c_void), *mut c_void, *mut c_void,
+    ) -> c_int;
+
+    pub(super) enum Registration {
+        OnExit(OnExit),
+        Cxa(CxaAtExit, *mut c_void),
+    }
+
+    // Registered before the first ticket, so output from exit callbacks is
+    // flushed AFTER those callbacks, never as a side effect of ordinary dlclose.
+    // Registration failure remains retryable; no registry lock is held here.
+    static FLUSH_REGISTERED: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+    unsafe extern "C" fn flush_owned_streams(_status: c_int, _arg: *mut c_void) {
+        unsafe { crate::stdio_abi::fflush(std::ptr::null_mut()) };
+    }
+
+    fn claim(ticket: *mut c_void) -> Option<ExitHandler> {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
         handlers.iter().position(|(id, _)| *id == ticket as usize)
             .map(|index| handlers.remove(index).1)
-    };
-    if let Some(handler) = handler {
-        invoke_exit_handler(handler, status);
-        // Host exit only knows host FILEs. Flush output produced by an owned
-        // handler too; no registry lock is held across callbacks or stdio.
-        unsafe { crate::stdio_abi::fflush(ptr::null_mut()) };
+    }
+
+    unsafe extern "C" fn on_exit_ticket(status: c_int, ticket: *mut c_void) {
+        if let Some(handler) = claim(ticket) {
+            invoke_exit_handler(handler, status);
+        }
+    }
+
+    unsafe extern "C" fn cxa_ticket(ticket: *mut c_void) {
+        if let Some(handler) = claim(ticket) {
+            // This slot contains only Cxa or Atexit, neither takes exit status.
+            invoke_exit_handler(handler, 0);
+        }
+    }
+
+    pub(super) fn prepare(handler: &ExitHandler) -> Result<Option<Registration>, ()> {
+        let Some(address) = crate::host_resolve::resolve_host_symbol_raw("on_exit") else {
+            return Ok(None);
+        };
+        // SAFETY: raw lookup excludes this interposer and resolves the host ABI.
+        let on_exit: OnExit = unsafe { std::mem::transmute(address) };
+        {
+            let mut registered = FLUSH_REGISTERED.lock().unwrap_or_else(|e| e.into_inner());
+            if !*registered {
+                if unsafe { on_exit(flush_owned_streams, std::ptr::null_mut()) } != 0 {
+                    return Err(());
+                }
+                *registered = true;
+            }
+        }
+        if !matches!(handler, ExitHandler::OnExit(_))
+            && let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__cxa_atexit")
+        {
+            // SAFETY: __cxa_atexit takes callback, opaque operand and DSO tag.
+            let register: CxaAtExit = unsafe { std::mem::transmute(address) };
+            let dso = match handler {
+                ExitHandler::Cxa(entry) => entry.dso,
+                _ => std::ptr::null_mut(),
+            };
+            return Ok(Some(Registration::Cxa(register, dso)));
+        }
+        Ok(Some(Registration::OnExit(on_exit)))
+    }
+
+    impl Registration {
+        pub(super) fn attach(self, ticket: usize) -> c_int {
+            // SAFETY: the native registry owns the callback before publication;
+            // these opaque integer operands are never dereferenced by either side.
+            unsafe {
+                match self {
+                    Self::OnExit(register) => register(on_exit_ticket, ticket as *mut c_void),
+                    Self::Cxa(register, dso) => register(cxa_ticket, ticket as *mut c_void, dso),
+                }
+            }
+        }
+    }
+
+    pub(super) fn finalize(dso: *mut c_void) {
+        if let Some(address) = crate::host_resolve::resolve_host_symbol_raw("__cxa_finalize") {
+            // Host and bridged registrations share the host's ordering. Its
+            // callback claims our entry; no native lock crosses foreign code.
+            let finalize: unsafe extern "C" fn(*mut c_void) = unsafe { std::mem::transmute(address) };
+            unsafe { finalize(dso) };
+        }
     }
 }
 
@@ -42,12 +121,14 @@ pub(super) fn register_exit_handler(handler: ExitHandler) -> c_int {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;
     };
-    // Resolve outside the registry lock. In an interposed release glibc can
-    // exit internally (notably from its makecontext return trampoline), so
-    // each owned registration needs a corresponding host completion ticket.
-    // Debug tests and standalone builds retain their wholly owned lifecycle.
     #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
-    let host = crate::host_resolve::resolve_host_symbol_raw("on_exit");
+    let bridge = match host::prepare(&handler) {
+        Ok(bridge) => bridge,
+        Err(()) => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return -1;
+        }
+    };
     {
         let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
         if handlers.try_reserve(1).is_err() {
@@ -57,26 +138,19 @@ pub(super) fn register_exit_handler(handler: ExitHandler) -> c_int {
         handlers.push((ticket, handler));
     }
     #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
-    if let Some(host) = host {
-        type OnExit = unsafe extern "C" fn(
-            unsafe extern "C" fn(c_int, *mut c_void), *mut c_void,
-        ) -> c_int;
-        // SAFETY: raw lookup resolves glibc, never our interposed on_exit;
-        // the ticket is an opaque integer and is never dereferenced.
-        let register: OnExit = unsafe { std::mem::transmute(host) };
-        if unsafe { register(host_exit_ticket, ticket as *mut c_void) } != 0 {
-            let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(index) = handlers.iter().position(|(id, _)| *id == ticket) {
-                handlers.remove(index);
-            }
-            unsafe { set_abi_errno(libc::ENOMEM) };
-            return -1;
+    if let Some(bridge) = bridge
+        && bridge.attach(ticket) != 0
+    {
+        let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(index) = handlers.iter().position(|(id, _)| *id == ticket) {
+            handlers.remove(index);
         }
+        unsafe { set_abi_errno(libc::ENOMEM) };
+        return -1;
     }
     0
 }
 
-/// `__cxa_atexit`: an entry in the shared exit-function list.
 pub(crate) fn register_cxa_exit_handler(
     func: unsafe extern "C" fn(*mut c_void),
     arg: *mut c_void,
@@ -89,12 +163,17 @@ pub(crate) fn register_cxa_exit_handler(
 /// Reentrant registration/finalization sees all other unclaimed entries; a
 /// nested exit cannot lose callbacks hidden in an outer extracted batch.
 pub(crate) fn finalize_cxa_handlers(dso: *mut c_void) {
+    #[cfg(all(not(debug_assertions), not(feature = "standalone")))]
+    host::finalize(dso);
     loop {
         let handler = {
             let mut handlers = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner());
-            handlers.iter().rposition(|(_, handler)| matches!(handler,
-                ExitHandler::Cxa(entry) if dso.is_null() || entry.dso == dso))
-                .map(|index| handlers.remove(index).1)
+            handlers.iter().rposition(|(_, handler)| match handler {
+                ExitHandler::Cxa(entry) => dso.is_null() || entry.dso == dso,
+                // The C++ ABI specifies plain atexit as a null-DSO registration.
+                ExitHandler::Atexit(_) => dso.is_null(),
+                ExitHandler::OnExit(_) => false,
+            }).map(|index| handlers.remove(index).1)
         };
         let Some(handler) = handler else { break };
         invoke_exit_handler(handler, 0);
@@ -105,9 +184,7 @@ pub(super) fn run_exit_handlers(status: c_int) {
     loop {
         let handler = EXIT_HANDLERS.lock().unwrap_or_else(|e| e.into_inner()).pop();
         let Some((_, handler)) = handler else { break };
-        // Pop before the call, but do not extract the whole list: callbacks
-        // registered reentrantly must precede older entries in LIFO order.
+        // Claim before invocation. Reentrant registrations precede older ones.
         invoke_exit_handler(handler, status);
     }
 }
-

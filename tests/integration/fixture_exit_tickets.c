@@ -1,6 +1,8 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <stdint.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,10 +22,14 @@ static const char *expected;
 static char output[64];
 static unsigned count;
 static int nested_exit;
+static atomic_int seen[128];
+static int stress;
+static int finalize_stress;
 static void emit(char c) { CHECK(count < sizeof(output)-1); output[count++] = c; }
 static void context_done(void) { emit('X'); }
 static void last(void) {
     CHECK(!strcmp(output,expected));
+    if (stress) for (int i=0;i<128;++i) CHECK(atomic_load(&seen[i])==1);
     /* Deliberately buffered: host termination must flush owned stdio. */
     printf("PASS exit-tickets\n");
 }
@@ -32,6 +38,23 @@ static void with_status(int status,void *p) { CHECK(status==23); letter(p); }
 static void insert(void *p) { letter(p); CHECK(reg(letter,(void *)(uintptr_t)'N',&tag_a)==0); }
 static void recursive(void *p) { letter(p); fin(&tag_a); }
 static void reexit(void *p) { letter(p); if (!nested_exit++) quit(23); }
+static void once(void *p) {
+    uintptr_t index=(uintptr_t)p;CHECK(index<128);
+    CHECK(atomic_fetch_add(&seen[index],1)==0);
+}
+static void *register_many(void *p) {
+    uintptr_t base=(uintptr_t)p;
+    for(uintptr_t i=0;i<32;++i) CHECK(reg(once,(void *)(base+i),&tag_a)==0);
+    return NULL;
+}
+static void *finalize_many(void *unused) {
+    (void)unused;fin(&tag_a);return NULL;
+}
+static void parallel(void *(*entry)(void *)) {
+    pthread_t threads[4];
+    for(uintptr_t i=0;i<4;++i) CHECK(pthread_create(&threads[i],NULL,entry,(void *)(i*32))==0);
+    for(int i=0;i<4;++i) CHECK(pthread_join(threads[i],NULL)==0);
+}
 static void verify_provider(void *symbol) {
     const char *p=getenv("FRANKENLIBC_TEST_LIBRARY"); if(!p) return;
     Dl_info info;struct stat a,b;
@@ -49,7 +72,32 @@ int main(int argc,char **argv) {
     verify_provider((void *)reg);verify_provider((void *)fin);verify_provider((void *)on);
     CHECK(atexit(last)==0);
     const char *kind=argv[1];
-    if(!strcmp(kind,"order")) {
+    if(!strcmp(kind,"registration-stress") || !strcmp(kind,"concurrent-finalize")) {
+        stress=1;expected="";
+        parallel(register_many);
+        finalize_stress=!strcmp(kind,"concurrent-finalize");
+        if(finalize_stress) {
+            parallel(finalize_many);
+            for(int i=0;i<128;++i) CHECK(atomic_load(&seen[i])==1);
+            fin(&tag_a);
+        }
+    } else if(!strcmp(kind,"host-finalize") || !strcmp(kind,"mixed-finalize")) {
+        expected="CBAD";
+        cxa_fn hreg=(cxa_fn)dlsym(host,"__cxa_atexit");CHECK(hreg);
+        finalize_fn hfin=(finalize_fn)dlsym(host,"__cxa_finalize");CHECK(hfin);
+        CHECK(reg(letter,(void *)(uintptr_t)'A',&tag_a)==0);
+        CHECK(hreg(letter,(void *)(uintptr_t)'B',&tag_a)==0);
+        CHECK(reg(letter,(void *)(uintptr_t)'C',&tag_a)==0);
+        (!strcmp(kind,"host-finalize")?hfin:fin)(&tag_a);
+        CHECK(!strcmp(output,"CBA"));
+        fin(&tag_a);hfin(&tag_a);emit('D');
+    } else if(!strcmp(kind,"finalize-all")) {
+        expected="BA";
+        CHECK(reg(letter,(void *)(uintptr_t)'A',&tag_a)==0);
+        CHECK(reg(letter,(void *)(uintptr_t)'B',&tag_b)==0);
+        fin(NULL);fin(NULL);
+        CHECK(!strcmp(output,"BA"));
+    } else if(!strcmp(kind,"order")) {
         expected="DBCA";
         CHECK(reg(letter,(void *)(uintptr_t)'A',&tag_a)==0);
         CHECK(on(with_status,(void *)(uintptr_t)'C')==0);
