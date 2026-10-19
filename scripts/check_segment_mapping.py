@@ -130,8 +130,8 @@ def export():
 
 def mutation():
     original = SOURCE.read_bytes()
-    test = 'malloc_abi::segment_mapping::tests::actual_segment_reservation_stays_inaccessible_until_refill'
-    command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--lib', test,
+    test = 'segment_mapping_actual_segment_reservation_stays_inaccessible_until_refill'
+    command = ['cargo', 'test', '-p', 'frankenlibc-abi', '--test', 'malloc_abi_test', test,
                '--', '--exact', '--nocapture', '--test-threads=1']
     mutant = replace_once(original.decode(),
                           '                        SEGMENT_RESERVE_SIZE,\n                        libc::PROT_NONE,',

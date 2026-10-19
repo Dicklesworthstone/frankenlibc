@@ -2153,3 +2153,51 @@ fn swing2_large_alloc_path_attribution() {
         "path split must be exhaustive for 30 large mallocs"
     );
 }
+
+#[test]
+fn segment_mapping_range_rounding_and_last_bit_are_exact() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::range_rounding_and_last_bit_are_exact();
+}
+
+#[test]
+fn segment_mapping_invalid_ranges_do_not_call_the_kernel() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::invalid_ranges_do_not_call_the_kernel();
+}
+
+#[test]
+fn segment_mapping_repeated_refills_skip_already_writable_granules() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::repeated_refills_skip_already_writable_granules();
+}
+
+#[test]
+fn segment_mapping_failed_upgrade_is_not_published_and_can_be_retried() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::failed_upgrade_is_not_published_and_can_be_retried();
+}
+
+#[test]
+fn segment_mapping_permission_is_published_only_after_upgrade_finishes() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::permission_is_published_only_after_upgrade_finishes();
+}
+
+#[test]
+fn segment_mapping_concurrent_refills_preserve_all_successful_upgrades() {
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_refills_preserve_all_successful_upgrades();
+}
+
+#[test]
+fn segment_mapping_actual_segment_reservation_stays_inaccessible_until_refill() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::actual_segment_reservation_stays_inaccessible_until_refill();
+}
+
+#[test]
+fn segment_mapping_growing_an_entire_segment_preserves_earlier_payload() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::growing_an_entire_segment_preserves_earlier_payload();
+}
+
+#[test]
+fn segment_mapping_concurrent_real_chunk_claims_are_disjoint_and_writable() {
+    let _guard = test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    frankenlibc_abi::malloc_abi::segment_mapping_tests::concurrent_real_chunk_claims_are_disjoint_and_writable();
+}

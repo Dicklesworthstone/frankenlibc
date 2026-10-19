@@ -37,6 +37,12 @@ use crate::runtime_policy;
 use crate::signal_abi::{SignalCriticalSectionKind, enter_signal_critical_section};
 use frankenlibc_core::syscall as raw_syscall;
 
+#[path = "segment_mapping.rs"]
+mod segment_mapping;
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub use segment_mapping::tests as segment_mapping_tests;
+
 type HostMallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
 type HostCallocFn = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 type HostReallocFn = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
@@ -804,6 +810,8 @@ impl SegmentSlotMeta {
 }
 
 struct SegmentDescriptor {
+    // Only chunk refills consult this permission bitmap.
+    writable: segment_mapping::WritablePages,
     meta_base: AtomicUsize,
     // Threads claim disjoint fixed-size ranges only when their private cursor
     // empties.  The atomic never participates in the warmed depth-one cycle.
@@ -817,6 +825,7 @@ struct SegmentDescriptor {
 impl SegmentDescriptor {
     const fn new() -> Self {
         Self {
+            writable: segment_mapping::WritablePages::new(),
             meta_base: AtomicUsize::new(0),
             next_unused_slot: AtomicU32::new(0),
             spill: [const { AtomicU64::new(0) }; SEGMENT_SPILL_WORDS],
@@ -1059,12 +1068,15 @@ fn initialize_segment_arena() -> Option<usize> {
                 // SAFETY: this is a direct raw Linux mmap syscall.  It cannot
                 // recurse through the exported mmap/malloc ABI.  The oversized
                 // immortal reservation contains one 4 MiB-aligned 256 MiB
-                // arena; untouched pages remain demand-zero and uncommitted.
+                // arena. Reserve it inaccessible: MAP_NORESERVE alone does
+                // not stop writable mappings from counting against RLIMIT_DATA.
+                // Sidecars become readable before ownership publication, and
+                // payload granules become writable before chunk publication.
                 let mapping = unsafe {
                     raw_syscall::sys_mmap(
                         std::ptr::null_mut(),
                         SEGMENT_RESERVE_SIZE,
-                        libc::PROT_READ | libc::PROT_WRITE,
+                        libc::PROT_NONE,
                         libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                         -1,
                         0,
@@ -1311,6 +1323,23 @@ fn initialize_segment(class_index: usize) -> Option<usize> {
     // themselves: private to the allocator and, like the reservation,
     // immortal.
     let meta_base = arena_base + SEGMENT_ARENA_SIZE + raw_index * SEGMENT_SIDECAR_STRIDE;
+    // Every slot lookup in an owned segment may read its metadata, even
+    // when that slot has never been allocated. Enable the complete sidecar
+    // before publishing ownership, but leave unused payload inaccessible.
+    let meta_writable = meta_bytes.checked_next_multiple_of(segment_mapping::GRANULE)?;
+    // SAFETY: this uniquely claimed, unpublished sidecar lies wholly inside
+    // our immortal reservation. No libc trampoline or allocator is entered.
+    if unsafe {
+        raw_syscall::sys_mprotect(
+            meta_base as *mut u8,
+            meta_writable,
+            libc::PROT_READ | libc::PROT_WRITE,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
     // The reservation is demand-zero, and an all-zero word IS
     // `SegmentSlotMeta::new()` (`requested_size` 0 = never used), so every slot
     // is already initialized. Writing them anyway committed the whole sidecar
@@ -1357,6 +1386,20 @@ fn claim_segment_bump_chunk(segment_index: usize, class_index: usize) -> Option<
         let end = start
             .saturating_add(SEGMENT_BUMP_CHUNK)
             .min(header.slot_count);
+        let base = segment_base(segment_index)?;
+        let first_byte = SEGMENT_HEADER_BYTES + start as usize * header.class_size as usize;
+        let end_byte = SEGMENT_HEADER_BYTES + end as usize * header.class_size as usize;
+        // Upgrade before claiming: failure leaves the cursor untouched, so
+        // resource pressure cannot consume chunks or expose inaccessible slots.
+        // SAFETY: the descriptor uniquely identifies this immortal segment;
+        // permissions only increase, including across concurrent refills/fork.
+        if !unsafe {
+            descriptor
+                .writable
+                .enable(base, SEGMENT_SIZE, first_byte, end_byte)
+        } {
+            return None;
+        }
         if descriptor
             .next_unused_slot
             .compare_exchange_weak(start, end, Ordering::AcqRel, Ordering::Acquire)

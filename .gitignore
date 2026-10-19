@@ -66,6 +66,7 @@ rustc-ice-*.txt
 Safe
 
 # Ephemeral files (agent-generated, build artifacts, test detritus)
+artifacts/
 ci-artifacts/
 proptest-regressions/
 test_meminfo
