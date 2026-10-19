@@ -21,6 +21,13 @@ use crate::util::scan_c_string;
 
 #[path = "rpc_udp.rs"]
 mod rpc_udp;
+#[path = "rpc_svc.rs"]
+mod rpc_svc;
+pub use rpc_svc::{
+    svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset, svc_register, svc_run,
+    svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode, svcerr_noproc, svcerr_noprog,
+    svcerr_progvers, svcerr_systemerr, svcerr_weakauth, svcudp_bufcreate, svcudp_create,
+};
 
 /// Read a user-supplied C string pointer with a known-region bound so a
 /// non-NUL-terminated argument cannot walk arbitrary process memory through
@@ -2525,52 +2532,14 @@ pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
 use frankenlibc_core::rpc::status_message as rpc_errstr;
 
 // ===========================================================================
-// RPC server / SVC (24 symbols)
+// RPC server / SVC (24 symbols; 18 UDP service symbols provided by rpc_svc)
 // ===========================================================================
 
-rpc_stub!(
-    svc_register(
-        xprt: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        dispatch: *mut c_void,
-        protocol: c_int,
-    ) -> c_int
-);
-
-rpc_stub!(svc_unregister(prog: c_ulong, vers: c_ulong) -> ());
-
-rpc_stub!(
-    svc_sendreply(xprt: *mut c_void, xdr_results: *mut c_void, xdr_location: *mut c_void) -> c_int
-);
-
-rpc_stub!(svc_run() -> ());
-rpc_stub!(svc_exit() -> ());
-
-rpc_stub!(svc_getreq(rdfds: c_int) -> ());
-rpc_stub!(svc_getreqset(readfds: *mut c_void) -> ());
-rpc_stub!(svc_getreq_common(fd: c_int) -> ());
-rpc_stub!(svc_getreq_poll(pfds: *mut c_void, nfds: c_int) -> ());
-
-// --- SVC error replies ---
-
-rpc_stub!(svcerr_auth(xprt: *mut c_void, why: c_int) -> ());
-rpc_stub!(svcerr_decode(xprt: *mut c_void) -> ());
-rpc_stub!(svcerr_noproc(xprt: *mut c_void) -> ());
-rpc_stub!(svcerr_noprog(xprt: *mut c_void) -> ());
-rpc_stub!(svcerr_progvers(xprt: *mut c_void, low_vers: c_ulong, high_vers: c_ulong) -> ());
-rpc_stub!(svcerr_systemerr(xprt: *mut c_void) -> ());
-rpc_stub!(svcerr_weakauth(xprt: *mut c_void) -> ());
-
-// --- SVC transport creation ---
+// --- SVC transport creation (non-UDP stubs) ---
 
 rpc_stub!(svcraw_create() -> *mut c_void);
 rpc_stub!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 rpc_stub!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_stub!(svcudp_create(sock: c_int) -> *mut c_void);
-
-rpc_stub!(svcudp_bufcreate(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut c_void);
-
 rpc_stub!(svcudp_enablecache(xprt: *mut c_void, cachesz: c_ulong) -> c_int);
 rpc_stub!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 rpc_stub!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
@@ -2713,6 +2682,7 @@ fn rpc_svc_fdset_ptr() -> *mut c_void {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_fdset() -> *mut c_void {
+    rpc_svc::refresh();
     rpc_svc_fdset_ptr()
 }
 
@@ -2749,6 +2719,7 @@ fn rpc_svc_max_pollfd_ptr() -> *mut c_void {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_max_pollfd() -> *mut c_void {
+    rpc_svc::refresh();
     rpc_svc_max_pollfd_ptr()
 }
 
@@ -2785,6 +2756,7 @@ fn rpc_svc_pollfd_ptr() -> *mut c_void {
 /// ABI boundary function. Returns a pointer valid for the lifetime of the calling thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __rpc_thread_svc_pollfd() -> *mut c_void {
+    rpc_svc::refresh();
     rpc_svc_pollfd_ptr()
 }
 
