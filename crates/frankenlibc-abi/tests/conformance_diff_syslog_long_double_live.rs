@@ -25,7 +25,7 @@
 //! `al` is zero because no SSE register is used. Reading it as a `double` takes
 //! eight bytes out of a register save area that was never written.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int};
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 

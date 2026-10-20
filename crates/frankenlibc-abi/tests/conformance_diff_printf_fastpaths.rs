@@ -46,6 +46,7 @@ fn render_lit(eng: u8, fmt: &CString) -> String {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn bare_f_fastpath_matches_glibc() {
     // Mix of fast-path triggers (precision>=1, no width) and deliberate
     // fall-backs (precision 0, width, force/space sign, %e/%g).

@@ -18,7 +18,9 @@ unsafe extern "C" {
     fn pthread_rwlockattr_init(attr: *mut c_void) -> c_int;
     fn pthread_rwlockattr_setkind_np(attr: *mut c_void, kind: c_int) -> c_int;
     fn pthread_rwlockattr_getkind_np(attr: *const c_void, kind: *mut c_int) -> c_int;
+    #[allow(dead_code)]
     fn pthread_rwlockattr_setpshared(attr: *mut c_void, pshared: c_int) -> c_int;
+    #[allow(dead_code)]
     fn pthread_rwlockattr_getpshared(attr: *const c_void, pshared: *mut c_int) -> c_int;
 }
 

@@ -13,6 +13,7 @@
 //!   * errno parity wherever glibc returns -1, which is the only way to tell an
 //!     INDETERMINATE limit (-1, errno untouched) from an UNKNOWN selector (-1 +
 //!     EINVAL).
+//!
 //! No mocks.
 //!
 //! The last two bullets were added after this gate passed over a build in which

@@ -896,6 +896,7 @@ fn libc_crate_oracle_arms_resolve_to_host_glibc_not_to_fl() {
 /// This is deliberately NOT `#[cfg(debug_assertions)]`-skipped: a gate that
 /// disappears in the exact configuration it exists to catch is no gate at all.
 #[test]
+#[allow(clippy::assertions_on_constants)]
 fn differential_suite_is_only_evidence_with_debug_assertions_on() {
     assert!(
         cfg!(debug_assertions),

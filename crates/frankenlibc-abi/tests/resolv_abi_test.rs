@@ -589,6 +589,7 @@ unsafe fn hostent_addr_octets(hostent: &libc::hostent) -> Vec<[u8; 4]> {
 /// catch any of these: it merges two rows that share a canonical name, so it exercises
 /// neither the append order, nor the case-sensitive canonical test, nor address parsing.
 #[test]
+#[allow(clippy::type_complexity)]
 fn gethostbyname_hosts_merge_matches_glibc_discriminating_vectors() {
     // (hosts content, query, expected h_name, expected aliases, expected addresses)
     let vectors: &[(&[u8], &str, &[u8], &[&[u8]], &[[u8; 4]])] = &[

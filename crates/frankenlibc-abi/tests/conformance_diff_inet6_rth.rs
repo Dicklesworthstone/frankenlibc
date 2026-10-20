@@ -34,12 +34,12 @@ fn glibc() -> G {
         assert!(!h.is_null());
         let s = |n: &std::ffi::CStr| dlsym(h, n.as_ptr());
         G {
-            space: std::mem::transmute(s(c"inet6_rth_space")),
-            init: std::mem::transmute(s(c"inet6_rth_init")),
-            add: std::mem::transmute(s(c"inet6_rth_add")),
-            seg: std::mem::transmute(s(c"inet6_rth_segments")),
-            getaddr: std::mem::transmute(s(c"inet6_rth_getaddr")),
-            rev: std::mem::transmute(s(c"inet6_rth_reverse")),
+            space: std::mem::transmute::<*mut c_void, SpaceFn>(s(c"inet6_rth_space")),
+            init: std::mem::transmute::<*mut c_void, InitFn>(s(c"inet6_rth_init")),
+            add: std::mem::transmute::<*mut c_void, AddFn>(s(c"inet6_rth_add")),
+            seg: std::mem::transmute::<*mut c_void, SegFn>(s(c"inet6_rth_segments")),
+            getaddr: std::mem::transmute::<*mut c_void, GetAddrFn>(s(c"inet6_rth_getaddr")),
+            rev: std::mem::transmute::<*mut c_void, RevFn>(s(c"inet6_rth_reverse")),
         }
     }
 }

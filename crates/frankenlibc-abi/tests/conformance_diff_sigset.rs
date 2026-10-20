@@ -75,7 +75,7 @@ fn sigset_installs_persistent_handler_and_handles_hold() {
     // A second SIG_HOLD while already blocked reports SIG_HOLD.
     let r2 = unsafe { frankenlibc_abi::unistd_abi::sigset(SIGUSR1, SIG_HOLD) };
     assert_eq!(
-        r2, SIG_HOLD as usize,
+        r2, SIG_HOLD,
         "sigset(SIG_HOLD) on an already-blocked signal returns SIG_HOLD"
     );
 

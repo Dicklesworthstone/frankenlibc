@@ -1,4 +1,3 @@
-#![feature(c_variadic)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for `<stdio.h>` ABI entrypoints.
@@ -6824,7 +6823,7 @@ fn funopen_reads_back_from_a_nonzero_offset_after_write() {
             libc::SEEK_END => state.data.len() as i64,
             _ => return -1,
         };
-        let target = base + off as i64;
+        let target = base + off;
         if target < 0 {
             return -1;
         }

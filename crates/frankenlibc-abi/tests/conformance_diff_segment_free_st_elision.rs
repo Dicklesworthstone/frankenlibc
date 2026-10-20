@@ -146,7 +146,7 @@ fn slot_retire_is_correct_single_threaded_then_after_the_latch() {
     for a in held
         .into_iter()
         .chain(after)
-        .chain(post.into_iter())
+        .chain(post)
         .chain(after2)
     {
         // SAFETY: each of these was allocated above and not yet freed.

@@ -423,7 +423,7 @@ fn both_wide(fmt: &str, value: &[u8; 16], trailing: c_int) -> (String, String) {
             fmt_w.as_ptr().cast::<c_char>(),
             value.as_ptr(),
             trailing,
-            std::mem::transmute::<HostSwprintf, HostSnprintf>(host_swprintf()),
+            host_swprintf(),
         );
         call_snprintf_ld_then_int(
             fl_buf.as_mut_ptr().cast::<c_char>(),

@@ -27,6 +27,7 @@ use std::process::Command;
 
 const CHILD_ENV: &str = "FRANKENLIBC_NSS_MODULE_CHILD";
 
+#[allow(clippy::type_complexity)]
 struct Api {
     getpwnam: unsafe extern "C" fn(*const c_char) -> *mut libc::passwd,
     getpwuid: unsafe extern "C" fn(libc::uid_t) -> *mut libc::passwd,

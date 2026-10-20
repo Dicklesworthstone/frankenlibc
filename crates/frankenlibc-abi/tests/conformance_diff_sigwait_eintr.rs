@@ -33,7 +33,7 @@ unsafe extern "C" fn fl_sigwait(set: *const libc::sigset_t, sig: *mut c_int) -> 
 fn arm() {
     unsafe {
         let mut sa: libc::sigaction = std::mem::zeroed();
-        sa.sa_sigaction = noop_handler as usize;
+        sa.sa_sigaction = noop_handler as *const () as usize;
         libc::sigemptyset(&mut sa.sa_mask);
         sa.sa_flags = 0;
         libc::sigaction(libc::SIGUSR2, &sa, std::ptr::null_mut());

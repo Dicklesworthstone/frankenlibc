@@ -78,7 +78,7 @@ fn fl_globals() -> (String, String, i64, c_int) {
         (
             cstr(frankenlibc_abi::glibc_internal_abi::tzname[0]),
             cstr(frankenlibc_abi::glibc_internal_abi::tzname[1]),
-            frankenlibc_abi::glibc_internal_abi::timezone as i64,
+            frankenlibc_abi::glibc_internal_abi::timezone,
             frankenlibc_abi::glibc_internal_abi::daylight,
         )
     }
@@ -199,14 +199,14 @@ fn tzset_keeps_the_underscored_aliases_in_step() {
                 "tzname[{i}] and __tzname[{i}] disagree"
             );
         }
-        // Read through raw pointers: `assert_eq!` takes references, and Rust
+        // Read into locals first: `assert_eq!` takes references, and Rust
         // 2024 rejects a shared reference to a mutable static.
-        let tz = *(&raw const frankenlibc_abi::glibc_internal_abi::timezone);
-        let tz_alias = *(&raw const frankenlibc_abi::glibc_internal_abi::__timezone);
+        let tz = frankenlibc_abi::glibc_internal_abi::timezone;
+        let tz_alias = frankenlibc_abi::glibc_internal_abi::__timezone;
         assert_eq!(tz, tz_alias, "timezone and __timezone disagree");
 
-        let dl = *(&raw const frankenlibc_abi::glibc_internal_abi::daylight);
-        let dl_alias = *(&raw const frankenlibc_abi::glibc_internal_abi::__daylight);
+        let dl = frankenlibc_abi::glibc_internal_abi::daylight;
+        let dl_alias = frankenlibc_abi::glibc_internal_abi::__daylight;
         assert_eq!(dl, dl_alias, "daylight and __daylight disagree");
     }
 }

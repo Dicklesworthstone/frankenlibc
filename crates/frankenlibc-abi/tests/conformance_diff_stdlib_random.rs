@@ -45,10 +45,15 @@ use frankenlibc_abi::stdlib_abi as fl;
 type RandRFn = unsafe extern "C" fn(*mut c_uint) -> std::ffi::c_int;
 type Xsubi48F64Fn = unsafe extern "C" fn(*mut u16) -> std::ffi::c_double;
 type Xsubi48LongFn = unsafe extern "C" fn(*mut u16) -> std::ffi::c_long;
+#[allow(dead_code)]
 type Global48F64Fn = unsafe extern "C" fn() -> std::ffi::c_double;
+#[allow(dead_code)]
 type Global48LongFn = unsafe extern "C" fn() -> std::ffi::c_long;
+#[allow(dead_code)]
 type Srand48Fn = unsafe extern "C" fn(std::ffi::c_long);
+#[allow(dead_code)]
 type Seed48Fn = unsafe extern "C" fn(*mut u16) -> *mut u16;
+#[allow(dead_code)]
 type Lcong48Fn = unsafe extern "C" fn(*mut u16);
 
 /// Resolve `name` from libc.so.6, refusing to hand back fl's own code.
@@ -73,51 +78,59 @@ fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
 // SAFETY (all ten): each resolved symbol has the signature POSIX documents for
 // it, matched against fl's own declaration in stdlib_abi.
 unsafe fn rand_r(seedp: *mut c_uint) -> std::ffi::c_int {
-    let f: RandRFn = unsafe { std::mem::transmute(host_symbol(c"rand_r", fl::rand_r as usize)) };
+    let f: RandRFn =
+        unsafe { std::mem::transmute(host_symbol(c"rand_r", fl::rand_r as *const () as usize)) };
     unsafe { f(seedp) }
 }
 unsafe fn erand48(xsubi: *mut u16) -> std::ffi::c_double {
     let f: Xsubi48F64Fn =
-        unsafe { std::mem::transmute(host_symbol(c"erand48", fl::erand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"erand48", fl::erand48 as *const () as usize)) };
     unsafe { f(xsubi) }
 }
 unsafe fn nrand48(xsubi: *mut u16) -> std::ffi::c_long {
     let f: Xsubi48LongFn =
-        unsafe { std::mem::transmute(host_symbol(c"nrand48", fl::nrand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"nrand48", fl::nrand48 as *const () as usize)) };
     unsafe { f(xsubi) }
 }
 unsafe fn jrand48(xsubi: *mut u16) -> std::ffi::c_long {
     let f: Xsubi48LongFn =
-        unsafe { std::mem::transmute(host_symbol(c"jrand48", fl::jrand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"jrand48", fl::jrand48 as *const () as usize)) };
     unsafe { f(xsubi) }
 }
+#[allow(dead_code)]
 unsafe fn drand48() -> std::ffi::c_double {
     let f: Global48F64Fn =
-        unsafe { std::mem::transmute(host_symbol(c"drand48", fl::drand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"drand48", fl::drand48 as *const () as usize)) };
     unsafe { f() }
 }
+#[allow(dead_code)]
 unsafe fn lrand48() -> std::ffi::c_long {
     let f: Global48LongFn =
-        unsafe { std::mem::transmute(host_symbol(c"lrand48", fl::lrand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"lrand48", fl::lrand48 as *const () as usize)) };
     unsafe { f() }
 }
+#[allow(dead_code)]
 unsafe fn mrand48() -> std::ffi::c_long {
     let f: Global48LongFn =
-        unsafe { std::mem::transmute(host_symbol(c"mrand48", fl::mrand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"mrand48", fl::mrand48 as *const () as usize)) };
     unsafe { f() }
 }
+#[allow(dead_code)]
 unsafe fn srand48(seedval: std::ffi::c_long) {
     let f: Srand48Fn =
-        unsafe { std::mem::transmute(host_symbol(c"srand48", fl::srand48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"srand48", fl::srand48 as *const () as usize)) };
     unsafe { f(seedval) }
 }
+#[allow(dead_code)]
 unsafe fn seed48(seed16v: *mut u16) -> *mut u16 {
-    let f: Seed48Fn = unsafe { std::mem::transmute(host_symbol(c"seed48", fl::seed48 as usize)) };
+    let f: Seed48Fn =
+        unsafe { std::mem::transmute(host_symbol(c"seed48", fl::seed48 as *const () as usize)) };
     unsafe { f(seed16v) }
 }
+#[allow(dead_code)]
 unsafe fn lcong48(param: *mut u16) {
     let f: Lcong48Fn =
-        unsafe { std::mem::transmute(host_symbol(c"lcong48", fl::lcong48 as usize)) };
+        unsafe { std::mem::transmute(host_symbol(c"lcong48", fl::lcong48 as *const () as usize)) };
     unsafe { f(param) }
 }
 
@@ -150,13 +163,14 @@ struct HostRng {
     jrand48: unsafe extern "C" fn(*mut u16) -> std::ffi::c_long,
 }
 
+#[allow(clippy::missing_transmute_annotations)]
 fn host_rng() -> &'static HostRng {
     use std::sync::OnceLock;
     static H: OnceLock<HostRng> = OnceLock::new();
     H.get_or_init(|| unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc.so.6 failed");

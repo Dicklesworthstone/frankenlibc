@@ -1,5 +1,4 @@
 #![cfg(target_os = "linux")]
-#![feature(c_variadic)]
 
 //! Integration tests for `_FORTIFY_SOURCE` ABI entrypoints (`__*_chk` variants).
 //!

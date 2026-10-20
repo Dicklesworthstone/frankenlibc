@@ -167,8 +167,8 @@ fn sigchld_payload_and_poll() {
 
 #[test]
 fn realtime_signals() {
-    let rtmin = unsafe { libc::SIGRTMIN() };
-    let rtmax = unsafe { libc::SIGRTMAX() };
+    let rtmin = libc::SIGRTMIN();
+    let rtmax = libc::SIGRTMAX();
     for signo in [
         rtmin,
         rtmin + 1,

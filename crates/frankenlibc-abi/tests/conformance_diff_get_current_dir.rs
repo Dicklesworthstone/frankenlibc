@@ -79,7 +79,7 @@ fn host_get_current_dir_name() -> GetCurrentDirNameFn {
     assert!(!raw.is_null(), "dlsym get_current_dir_name");
     assert_ne!(
         raw as usize,
-        fl::get_current_dir_name as usize,
+        fl::get_current_dir_name as *const () as usize,
         "the resolved oracle IS fl's get_current_dir_name — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has glibc's documented signature.
@@ -92,7 +92,7 @@ fn host_getcwd() -> GetcwdFn {
     assert!(!raw.is_null(), "dlsym getcwd");
     assert_ne!(
         raw as usize,
-        fl::getcwd as usize,
+        fl::getcwd as *const () as usize,
         "the resolved oracle IS fl's getcwd — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented getcwd signature.
@@ -108,7 +108,7 @@ fn host_getwd() -> GetwdFn {
     // fl symbol would prove nothing about this gate's fl arm.
     assert_ne!(
         raw as usize,
-        fl_internal::getwd as usize,
+        fl_internal::getwd as *const () as usize,
         "the resolved oracle IS fl's getwd — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has the documented legacy getwd signature.

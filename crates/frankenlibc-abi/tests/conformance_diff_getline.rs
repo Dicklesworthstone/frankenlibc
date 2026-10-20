@@ -168,7 +168,7 @@ fn host_getline_grows_a_frankenlibc_segment_buffer_safely() {
     let mut capacity = 16usize;
     let read = unsafe { frankenlibc_abi::stdio_abi::getline(&mut line, &mut capacity, fp.cast()) };
     assert_eq!(read, content.len() as isize);
-    assert!(capacity >= content.len() + 1);
+    assert!(capacity > content.len());
     assert_eq!(
         unsafe { std::slice::from_raw_parts(line.cast::<u8>(), read as usize) },
         content

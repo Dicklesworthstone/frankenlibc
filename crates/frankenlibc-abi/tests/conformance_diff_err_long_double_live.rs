@@ -24,7 +24,7 @@
 //! So the formats here put a conversion AFTER the long double. A format ending
 //! at the `%Lf` would print one wrong number and hide the stream corruption.
 
-use std::ffi::{CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int};
 use std::io::Read;
 use std::sync::{Mutex, OnceLock};
 

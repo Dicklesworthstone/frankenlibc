@@ -38,11 +38,11 @@ fn glibc() -> G {
         assert!(!h.is_null());
         let s = |n: &std::ffi::CStr| dlsym(h, n.as_ptr());
         G {
-            init: std::mem::transmute(s(c"inet6_opt_init")),
-            append: std::mem::transmute(s(c"inet6_opt_append")),
-            finish: std::mem::transmute(s(c"inet6_opt_finish")),
-            set_val: std::mem::transmute(s(c"inet6_opt_set_val")),
-            next: std::mem::transmute(s(c"inet6_opt_next")),
+            init: std::mem::transmute::<*mut c_void, InitFn>(s(c"inet6_opt_init")),
+            append: std::mem::transmute::<*mut c_void, AppendFn>(s(c"inet6_opt_append")),
+            finish: std::mem::transmute::<*mut c_void, FinishFn>(s(c"inet6_opt_finish")),
+            set_val: std::mem::transmute::<*mut c_void, SetValFn>(s(c"inet6_opt_set_val")),
+            next: std::mem::transmute::<*mut c_void, NextFn>(s(c"inet6_opt_next")),
         }
     }
 }
@@ -140,6 +140,7 @@ fn build_byte_exact() {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn parse_walk_byte_exact() {
     let g = glibc();
     let hdr = build_glibc(&g, 64).expect("glibc build");

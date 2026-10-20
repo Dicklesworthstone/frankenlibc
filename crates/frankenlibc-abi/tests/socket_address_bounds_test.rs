@@ -93,6 +93,7 @@ fn deny_copy_routes(both: bool) {
     assert_eq!(unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1usize, 0usize, 0usize, 0usize) }, 0);
     assert_eq!(unsafe { libc::prctl(libc::PR_SET_SECCOMP, 2usize, &program as *const libc::sock_fprog) }, 0);
 }
+#[allow(unused_assignments)]
 fn run_case(entry: &str, case: &str) {
     malloc_abi::signal_runtime_ready_for_tests();
     assert!(ENTRIES.contains(&entry));

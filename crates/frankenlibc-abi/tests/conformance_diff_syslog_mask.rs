@@ -88,6 +88,7 @@ fn capture<F: FnOnce()>(f: F) -> Vec<u8> {
 
 /// The two implementations under comparison, as a uniform set of entry points.
 struct Impl {
+    #[allow(dead_code)]
     name: &'static str,
     openlog: unsafe fn(*const c_char, c_int, c_int),
     closelog: unsafe fn(),

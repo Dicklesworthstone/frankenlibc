@@ -108,7 +108,8 @@ fn clamping_a_zero_length_output_is_a_no_op_for_every_pointer_kind() {
         ("null", 0usize),
     ] {
         let remaining = frankenlibc_abi::malloc_abi::known_remaining_for_tests(addr);
-        let clamped = remaining.map_or(0usize, |r| r.min(0));
+        let zero_req = std::hint::black_box(0usize);
+        let clamped = remaining.map_or(0usize, |r| r.min(zero_req));
         assert_eq!(
             clamped, 0,
             "{what}: clamping a zero-length request did not yield zero, so the \

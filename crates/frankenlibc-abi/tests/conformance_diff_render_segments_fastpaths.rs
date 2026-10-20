@@ -36,7 +36,7 @@ fn host_snprintf() -> SnprintfFn {
     assert!(!raw.is_null(), "dlsym snprintf");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::stdio_abi::snprintf as usize,
+        frankenlibc_abi::stdio_abi::snprintf as *const () as usize,
         "the resolved oracle IS fl's snprintf — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has C's documented snprintf signature.

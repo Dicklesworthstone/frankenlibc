@@ -1,4 +1,4 @@
-#![feature(c_variadic, f128)]
+#![feature(f128)]
 #![cfg(target_os = "linux")]
 
 //! Integration tests for glibc_internal_abi entrypoints.
@@ -6089,6 +6089,7 @@ fn wait_for_sigabrt_child(pid: libc::pid_t) {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn libc_fatal_aborts_child_with_message() {
     let _guard = LIBC_FATAL_TEST_LOCK
         .lock()
@@ -6109,6 +6110,7 @@ fn libc_fatal_aborts_child_with_message() {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn libc_fatal_null_message_still_aborts_with_fallback() {
     let _guard = LIBC_FATAL_TEST_LOCK
         .lock()
@@ -6123,6 +6125,7 @@ fn libc_fatal_null_message_still_aborts_with_fallback() {
 }
 
 #[test]
+#[allow(unreachable_code)]
 fn libc_fatal_unterminated_message_still_aborts_with_fallback() {
     let _guard = LIBC_FATAL_TEST_LOCK
         .lock()

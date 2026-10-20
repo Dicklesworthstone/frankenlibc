@@ -5376,7 +5376,7 @@ fn futex_mutex_contention_increments_wait_and_wake_counters() {
     // The wait-branch counter moving is the observable that it reached the futex.
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        if pthread_mutex_branch_counters_for_tests().1 >= before.1 + 1 {
+        if pthread_mutex_branch_counters_for_tests().1 > before.1 {
             break;
         }
         assert!(
@@ -5394,15 +5394,15 @@ fn futex_mutex_contention_increments_wait_and_wake_counters() {
 
     let after = pthread_mutex_branch_counters_for_tests();
     assert!(
-        after.0 >= before.0 + 1,
+        after.0 > before.0,
         "spin branch counter did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.1 >= before.1 + 1,
+        after.1 > before.1,
         "wait branch counter did not increase: before={before:?} after={after:?}"
     );
     assert!(
-        after.2 >= before.2 + 1,
+        after.2 > before.2,
         "wake branch counter did not increase: before={before:?} after={after:?}"
     );
 

@@ -33,7 +33,7 @@
 //! cases where a link-time `extern "C"` reference bound locally in a plain
 //! `cargo test`, and `catopen`'s hid a live errno divergence for months.
 
-use std::ffi::{CStr, CString, c_char, c_int, c_void};
+use std::ffi::{CString, c_char, c_int, c_void};
 use std::io::Read as _;
 use std::sync::{Mutex, MutexGuard};
 

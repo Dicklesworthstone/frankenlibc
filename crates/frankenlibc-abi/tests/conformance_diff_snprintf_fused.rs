@@ -35,7 +35,7 @@
 //! correctly) and CROSS-SEGMENT TRUNCATION (a multi-directive format written
 //! into a buffer too small, where the cut can fall inside any segment).
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 
 type Snprintf = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
 

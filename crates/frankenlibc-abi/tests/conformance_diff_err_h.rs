@@ -28,7 +28,6 @@ unsafe extern "C" {
     fn errx(eval: c_int, fmt: *const c_char, ...) -> !;
 
     fn pipe(fds: *mut c_int) -> c_int;
-    fn dup(fd: c_int) -> c_int;
     fn dup2(oldfd: c_int, newfd: c_int) -> c_int;
     fn close(fd: c_int) -> c_int;
     fn read(fd: c_int, buf: *mut c_void, n: usize) -> isize;

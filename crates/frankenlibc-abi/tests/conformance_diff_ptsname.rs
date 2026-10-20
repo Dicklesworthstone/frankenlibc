@@ -29,8 +29,8 @@ fn glibc() -> (RFn, PFn) {
         let h = dlopen(c"libc.so.6".as_ptr(), 2);
         assert!(!h.is_null());
         (
-            std::mem::transmute(dlsym(h, c"ptsname_r".as_ptr())),
-            std::mem::transmute(dlsym(h, c"ptsname".as_ptr())),
+            std::mem::transmute::<*mut c_void, RFn>(dlsym(h, c"ptsname_r".as_ptr())),
+            std::mem::transmute::<*mut c_void, PFn>(dlsym(h, c"ptsname".as_ptr())),
         )
     }
 }

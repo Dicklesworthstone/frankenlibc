@@ -85,15 +85,15 @@ fn fl_flow() -> (c_int, c_int, c_int, i64, c_int, c_int) {
             },
         };
         let s = fl::timer_settime(
-            tid as *mut c_void,
+            tid,
             0,
             &its as *const _ as *const c_void,
             std::ptr::null_mut(),
         );
         let mut cur: libc::itimerspec = std::mem::zeroed();
-        let gt = fl::timer_gettime(tid as *mut c_void, &mut cur as *mut _ as *mut c_void);
-        let ov = fl::timer_getoverrun(tid as *mut c_void);
-        let d = fl::timer_delete(tid as *mut c_void);
+        let gt = fl::timer_gettime(tid, &mut cur as *mut _ as *mut c_void);
+        let ov = fl::timer_getoverrun(tid);
+        let d = fl::timer_delete(tid);
         (c, s, gt, cur.it_value.tv_sec, ov, d)
     }
 }

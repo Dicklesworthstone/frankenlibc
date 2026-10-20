@@ -5,7 +5,6 @@
 //! - ftw / nftw / nftw64
 //! - setmntent / getmntent / endmntent
 
-#![feature(c_variadic)]
 #![allow(unsafe_code)]
 
 use std::ffi::{CStr, CString, c_char, c_int, c_uint, c_void};
@@ -3243,7 +3242,7 @@ fn abi_argp_parse_runs_the_parser_protocol_like_glibc() {
     ];
     let mut argp_struct = empty_argp_storage();
     argp_struct[0] = options.as_ptr() as usize;
-    argp_struct[1] = argp_recording_parser as usize;
+    argp_struct[1] = argp_recording_parser as *const () as usize;
     let args: Vec<CString> = ["getent", "-v", "passwd", "root"]
         .iter()
         .map(|s| CString::new(*s).unwrap())
@@ -11542,7 +11541,7 @@ fn kexec_load_unprivileged_returns_known_errno() {
         let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
 
         assert_eq!(
-            i64::from(rc),
+            rc,
             host_rc,
             "kexec_load rc: fl={rc} host={host_rc}"
         );

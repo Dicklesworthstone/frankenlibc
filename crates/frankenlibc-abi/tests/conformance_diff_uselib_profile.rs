@@ -232,7 +232,7 @@ fn sprofil_period_is_derived_from_the_frequency() {
     assert_eq!(rc, 0, "sprofil query form must succeed");
     assert_eq!(period.tv_sec, 0, "the period is sub-second");
     assert_eq!(
-        period.tv_usec as i64,
+        period.tv_usec,
         1_000_000 / i64::from(freq),
         "sprofil's reported period must follow __profile_frequency"
     );

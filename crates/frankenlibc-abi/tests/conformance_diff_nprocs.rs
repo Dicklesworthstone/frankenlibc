@@ -149,13 +149,10 @@ fn get_nprocs_ignores_the_affinity_mask() {
 /// Free RAM moves between calls, so this checks the shape rather than equality.
 #[test]
 fn available_pages_are_plausible_rather_than_pinned() {
-    // SAFETY: no arguments.
-    let (avail, total) = unsafe {
-        (
-            frankenlibc_abi::stdlib_abi::get_avphys_pages(),
-            frankenlibc_abi::stdlib_abi::get_phys_pages(),
-        )
-    };
+    let (avail, total) = (
+        frankenlibc_abi::stdlib_abi::get_avphys_pages(),
+        frankenlibc_abi::stdlib_abi::get_phys_pages(),
+    );
     assert!(avail > 0, "available pages must be positive");
     assert!(
         avail <= total,
@@ -167,13 +164,10 @@ fn available_pages_are_plausible_rather_than_pinned() {
 /// Equal on most machines, so this pins the RELATION rather than the values.
 #[test]
 fn configured_is_at_least_online() {
-    // SAFETY: no arguments.
-    let (online, configured) = unsafe {
-        (
-            frankenlibc_abi::stdlib_abi::get_nprocs(),
-            frankenlibc_abi::stdlib_abi::get_nprocs_conf(),
-        )
-    };
+    let (online, configured) = (
+        frankenlibc_abi::stdlib_abi::get_nprocs(),
+        frankenlibc_abi::stdlib_abi::get_nprocs_conf(),
+    );
     assert!(
         configured >= online,
         "configured ({configured}) must be >= online ({online}); a CPU cannot be \

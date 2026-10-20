@@ -14,7 +14,6 @@ mod g {
     unsafe extern "C" {
         pub fn fopen(p: *const c_char, m: *const c_char) -> *mut c_void;
         pub fn fclose(f: *mut c_void) -> c_int;
-        pub fn getw(f: *mut c_void) -> c_int;
         pub fn putw(w: c_int, f: *mut c_void) -> c_int;
     }
 }

@@ -23,6 +23,7 @@ struct Glibc {
     sethostent: unsafe extern "C" fn(c_int),
     endhostent: VoidFn,
 }
+#[allow(clippy::missing_transmute_annotations)]
 fn glibc() -> Glibc {
     unsafe {
         let h = dlopen(c"libc.so.6".as_ptr(), 2);

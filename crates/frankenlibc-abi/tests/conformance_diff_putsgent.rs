@@ -68,6 +68,7 @@ fn strlist(items: &[&str]) -> (Vec<CString>, Vec<*const c_char>) {
 }
 
 #[test]
+#[allow(clippy::type_complexity)]
 fn putsgent_matches_glibc() {
     let g = glibc_putsgent();
     let fl_fn: PutFn = fl::putsgent;

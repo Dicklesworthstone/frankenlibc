@@ -102,9 +102,7 @@ fn gen_option(r: &mut Lcg) -> Vec<u8> {
                 out.extend_from_slice(POOL[r.below(POOL.len() as u64) as usize].as_bytes());
                 out.push(b'=');
                 let vlen = r.below(4);
-                for _ in 0..vlen {
-                    out.push(b'x');
-                }
+                out.extend(std::iter::repeat_n(b'x', vlen as usize));
             }
             4 => out.extend_from_slice(b"size="), // empty value
             _ => {

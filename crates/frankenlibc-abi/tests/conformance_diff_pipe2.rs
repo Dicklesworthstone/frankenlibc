@@ -69,7 +69,7 @@ fn host_pipe() -> PipeFn {
     assert!(!raw.is_null(), "dlsym pipe");
     assert_ne!(
         raw as usize,
-        fl::pipe as usize,
+        fl::pipe as *const () as usize,
         "the resolved oracle IS fl's pipe — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented pipe signature.
@@ -82,7 +82,7 @@ fn host_pipe2() -> Pipe2Fn {
     assert!(!raw.is_null(), "dlsym pipe2");
     assert_ne!(
         raw as usize,
-        fl::pipe2 as usize,
+        fl::pipe2 as *const () as usize,
         "the resolved oracle IS fl's pipe2 — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has Linux's documented pipe2 signature.

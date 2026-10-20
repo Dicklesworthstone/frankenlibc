@@ -1142,7 +1142,7 @@ fn getspent_without_setspent_matches_host_glibc() {
         let name_ptr = unsafe { *(fl as *const *const c_char) };
         unsafe { CStr::from_ptr(name_ptr) }.to_bytes().to_vec()
     });
-    unsafe { endspent() };
+    endspent();
     let host = unsafe { libc::getspent() };
     let host_name = (!host.is_null()).then(|| {
         unsafe { CStr::from_ptr((*host).sp_namp) }

@@ -29,6 +29,7 @@ impl Drop for Page { fn drop(&mut self) { unsafe { libc::munmap(self.0, self.1) 
 fn descriptor_count() -> usize { std::fs::read_dir("/proc/self/fd").unwrap().count() }
 
 #[test]
+#[allow(unused_assignments)]
 fn peer_descriptor_case() {
     let Ok(case) = std::env::var(CHILD) else { return; };
     malloc_abi::signal_runtime_ready_for_tests();

@@ -84,6 +84,7 @@ fn host_passwd(line: &str) -> Option<Option<PwTuple>> {
     })
 }
 
+#[allow(clippy::type_complexity)]
 fn host_group(line: &str) -> Option<Option<(Vec<u8>, Vec<u8>, u32, Vec<Vec<u8>>)>> {
     with_stream(line, |s| {
         let p = unsafe { fgetgrent(s) };
