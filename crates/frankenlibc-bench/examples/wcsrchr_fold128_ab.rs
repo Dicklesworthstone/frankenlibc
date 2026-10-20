@@ -441,11 +441,11 @@ fn glibc_wcsrchr() -> GFn {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
-        let s = libc::dlsym(h, b"wcsrchr\0".as_ptr().cast());
+        let s = libc::dlsym(h, c"wcsrchr".as_ptr());
         assert!(!s.is_null(), "dlsym wcsrchr failed");
         std::mem::transmute::<*mut c_void, GFn>(s)
     }
@@ -459,8 +459,7 @@ fn main() {
     for &n in &[256usize, 1024, 4096, 16384, 65536] {
         for tag in ["absent", "frequent", "mid"] {
             let base: Vec<u32> = match tag {
-                "frequent" => std::iter::repeat(b'a' as u32)
-                    .take(n)
+                "frequent" => std::iter::repeat_n(b'a' as u32, n)
                     .chain(std::iter::once(0))
                     .collect(),
                 _ => (0..n as u32)

@@ -11,12 +11,12 @@ fn main() {
     let h = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         )
     };
     assert!(!h.is_null());
-    let g: MFn = unsafe { std::mem::transmute(libc::dlsym(h, b"memmove\0".as_ptr().cast())) };
+    let g: MFn = unsafe { std::mem::transmute(libc::dlsym(h, c"memmove".as_ptr())) };
 
     let cap = 600_000usize; // room for the rep-movsb path (>=128 KiB) + margins
     let layout = std::alloc::Layout::from_size_align(cap, 64).unwrap();

@@ -29,9 +29,9 @@
 //!     glibc's C-locale map table is only TWO entries deep, so the incumbent
 //!     walk it has to beat is at most two `strcmp`s.
 //!     => PREDICT no large win, and specifically that FrankenLibC's ratio is
-//!        WORSE on every `wctrans` case than on every `wctype` case. This is
-//!        the bold half of the test: the naive "glibc walks a table, so we
-//!        win" reading predicts a win here and the mechanism predicts none.
+//!     WORSE on every `wctrans` case than on every `wctype` case. This is
+//!     the bold half of the test: the naive "glibc walks a table, so we
+//!     win" reading predicts a win here and the mechanism predicts none.
 //!
 //!   * `iswctype(wc, desc)` satisfies (a) and (c) but FAILS (b): glibc's
 //!     `__iswctype` is about twenty branchless instructions — three shift/mask
@@ -364,7 +364,7 @@ fn median(values: &[f64]) -> f64 {
     let mut sorted = values.to_vec();
     sorted.sort_by(f64::total_cmp);
     let mid = sorted.len() / 2;
-    if sorted.len() % 2 == 0 {
+    if sorted.len().is_multiple_of(2) {
         (sorted[mid - 1] + sorted[mid]) / 2.0
     } else {
         sorted[mid]

@@ -12,6 +12,7 @@ fn pctl(s: &[f64], q: f64) -> f64 {
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
 const P: usize = 8; // Simd<u32,8> panel
+#[allow(clippy::needless_range_loop)]
 fn scan(s: &[u32], c: u32, panels: usize) -> Option<usize> {
     let block = P * panels;
     let t = Simd::<u32, P>::splat(c);

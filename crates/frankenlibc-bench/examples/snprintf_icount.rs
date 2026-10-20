@@ -70,7 +70,7 @@ fn snprintf_for_arm(arm: &str) -> SnprintfFn {
             assert!(!raw.is_null(), "dlsym snprintf");
             assert_ne!(
                 raw as usize,
-                frankenlibc_abi::stdio_abi::snprintf as usize,
+                frankenlibc_abi::stdio_abi::snprintf as *const () as usize,
                 "the glibc arm resolved to fl's own snprintf — this would compare \
                  fl against itself"
             );

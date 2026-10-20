@@ -69,21 +69,21 @@ fn main() {
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         )
     };
     assert!(!handle.is_null(), "dlmopen libc.so.6");
     unsafe {
         let setlocale: unsafe extern "C" fn(i32, *const i8) -> *mut i8 =
-            std::mem::transmute(libc::dlsym(handle, b"setlocale\0".as_ptr().cast()));
-        let _ = setlocale(libc::LC_ALL, b"C.UTF-8\0".as_ptr().cast());
+            std::mem::transmute(libc::dlsym(handle, c"setlocale".as_ptr()));
+        let _ = setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr());
     }
 
     let glibc_towupper: TowFn =
-        unsafe { std::mem::transmute(libc::dlsym(handle, b"towupper\0".as_ptr().cast())) };
+        unsafe { std::mem::transmute(libc::dlsym(handle, c"towupper".as_ptr())) };
     let glibc_towlower: TowFn =
-        unsafe { std::mem::transmute(libc::dlsym(handle, b"towlower\0".as_ptr().cast())) };
+        unsafe { std::mem::transmute(libc::dlsym(handle, c"towlower".as_ptr())) };
 
     let (fl, glibc) = bench_pair(frankenlibc_core::string::wchar::towupper, |wc| unsafe {
         glibc_towupper(wc)

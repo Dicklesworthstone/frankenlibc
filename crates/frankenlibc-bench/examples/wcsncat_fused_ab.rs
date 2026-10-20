@@ -110,6 +110,7 @@ unsafe fn new(dst: *mut u32, src: *const u32, n: usize) {
     unsafe { *dst.add(c) = 0 };
 }
 
+#[allow(clippy::unit_arg)]
 fn main() {
     for &(n, slen) in &[
         (16usize, 16usize),

@@ -12,6 +12,7 @@ fn pctl(s: &[f64], q: f64) -> f64 {
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
 // CURRENT: 4x Simd<u32,64> panels (1024B block)
+#[allow(clippy::needless_range_loop, clippy::manual_find)]
 fn scan64(s: &[u32], c: u32) -> Option<usize> {
     let t = Simd::<u32, 64>::splat(c);
     let z = Simd::<u32, 64>::splat(0);
@@ -43,6 +44,7 @@ fn scan64(s: &[u32], c: u32) -> Option<usize> {
     None
 }
 // ALT: panels x Simd<u32,8>
+#[allow(clippy::needless_range_loop, clippy::manual_find)]
 fn scan8(s: &[u32], c: u32, panels: usize) -> Option<usize> {
     let t = Simd::<u32, 8>::splat(c);
     let z = Simd::<u32, 8>::splat(0);

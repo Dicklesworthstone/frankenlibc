@@ -26,6 +26,7 @@ fn fold_new(v: Simd<u8, 32>) -> Simd<u8, 32> {
     v | (iu >> Simd::splat(2))
 }
 // OLD: 32B/iter, simd_ge/le fold
+#[allow(clippy::manual_ignore_case_cmp)]
 fn scan_old(a: &[u8], b: &[u8]) -> usize {
     let n = a.len();
     let z = Simd::<u8, 32>::splat(0);
@@ -49,6 +50,7 @@ fn scan_old(a: &[u8], b: &[u8]) -> usize {
     n
 }
 // NEW: 128B unroll, guard-bit fold
+#[allow(clippy::manual_ignore_case_cmp)]
 fn scan_new(a: &[u8], b: &[u8]) -> usize {
     let n = a.len();
     let z = Simd::<u8, 32>::splat(0);

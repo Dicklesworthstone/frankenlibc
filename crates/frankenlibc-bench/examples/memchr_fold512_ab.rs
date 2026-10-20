@@ -42,7 +42,7 @@ fn dlsym_newns(symbol: &[u8]) -> CmemchrFn {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc.so.6 failed");
@@ -89,7 +89,6 @@ fn g_memrchr(buf: &[u8], needle: u8, n: usize) -> Option<usize> {
 /// of eight 32-lane panels with the combined OR tree and early extraction, 128B
 /// stride. Mirrors mem.rs at 49ef98330 (only the tier insertion differs).
 fn memchr_256_only(haystack: &[u8], needle: u8, n: usize) -> Option<usize> {
-    use std::simd::StdFloat;
     let count = n.min(haystack.len());
     let hs = &haystack[..count];
     if count < SIMD_LANES {
@@ -286,10 +285,10 @@ fn main() {
 
             let new_fwd = time_arm(memchr, &buf[..n], needle, iters);
             let old_fwd = time_arm(memchr_256_only, &buf[..n], needle, iters);
-            let g_fwd = time_arm(|b, c, n| g_memchr(b, c, n), &buf[..n], needle, iters);
+            let g_fwd = time_arm(g_memchr, &buf[..n], needle, iters);
             let new_rev = time_arm(memrchr, &buf[..n], needle, iters);
             let old_rev = time_arm(memrchr_256_only, &buf[..n], needle, iters);
-            let g_rev = time_arm(|b, c, n| g_memrchr(b, c, n), &buf[..n], needle, iters);
+            let g_rev = time_arm(g_memrchr, &buf[..n], needle, iters);
             let rf = new_fwd / old_fwd;
             let rr = new_rev / old_rev;
             let gf = new_fwd / g_fwd;

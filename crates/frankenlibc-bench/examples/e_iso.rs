@@ -7,6 +7,7 @@ fn pctl(s: &[f64], q: f64) -> f64 {
     v.sort_by(|a, b| a.partial_cmp(b).unwrap());
     v[((q * (v.len() - 1) as f64).round() as usize).min(v.len() - 1)]
 }
+#[allow(clippy::approx_constant)]
 fn main() {
     let vals = [3.14159f64, 2.71828, 1234.5678, 0.0001234, 9.99e10, 42.0];
     let iters = 1_000_000u64;

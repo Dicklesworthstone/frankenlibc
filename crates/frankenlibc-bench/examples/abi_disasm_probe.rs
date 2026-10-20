@@ -217,10 +217,10 @@ fn symbol_table(object: &str) -> Vec<(u64, u64, String)> {
     // Fill in unknown sizes from the distance to the next symbol, so a sizeless
     // definition still yields a disassemblable range instead of dropping out.
     for index in 0..table.len() {
-        if table[index].1 == 0 {
-            if let Some((next, _, _)) = table.get(index + 1) {
-                table[index].1 = next.saturating_sub(table[index].0);
-            }
+        if table[index].1 == 0
+            && let Some((next, _, _)) = table.get(index + 1)
+        {
+            table[index].1 = next.saturating_sub(table[index].0);
         }
     }
     table

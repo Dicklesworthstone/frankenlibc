@@ -342,7 +342,7 @@ fn main() {
     // decides how to read an EACCES below.
     let linked: SyscallFn = libc::syscall;
     let host = host_syscall();
-    let fl_syscall_address = frankenlibc_abi::unistd_abi::syscall as usize;
+    let fl_syscall_address = frankenlibc_abi::unistd_abi::syscall as *const () as usize;
     println!(
         "CLASSIFY_ICOUNT_SYSCALL_ARMS linked={:#x} host_libc={:#x} fl_export={:#x} \
          linked_is_fl={} linked_is_host={}",
