@@ -824,11 +824,11 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
         rcu::rcu_read_lock();
         unsafe {
             if let Some(reg) = KEY_REGISTRY_RCU.read() {
-                for i in 0..PTHREAD_KEYS_MAX {
+                for (i, slot) in reg.slots.iter().enumerate() {
                     if call_count >= MAX_CALLS {
                         break;
                     }
-                    if !reg.slots[i].in_use {
+                    if !slot.in_use {
                         continue;
                     }
                     // Primary path: walk the per-thread TLS table if this
@@ -839,10 +839,10 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                         // [TlsEntry; PTHREAD_KEYS_MAX] for the registered
                         // native-managed thread.
                         let entry = *values_ptr.add(i);
-                        if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                        if entry.seq == slot.seq && entry.value != 0 {
                             // Clear the value before calling destructor.
                             (*values_ptr.add(i)).value = 0;
-                            if let Some(dtor) = reg.slots[i].destructor {
+                            if let Some(dtor) = slot.destructor {
                                 calls[call_count] = (entry.value, dtor);
                                 call_count += 1;
                                 continue;
@@ -860,7 +860,7 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                         // exactly where teardown_thread_tls runs.
                         FALLBACK_TLS_VALUES.with(|values| {
                             let entry = values.get(i);
-                            if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                            if entry.seq == slot.seq && entry.value != 0 {
                                 // Clear the value before calling destructor.
                                 values.set(
                                     i,
@@ -869,7 +869,7 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                                         value: 0,
                                     },
                                 );
-                                if let Some(dtor) = reg.slots[i].destructor
+                                if let Some(dtor) = slot.destructor
                                     && call_count < MAX_CALLS
                                 {
                                     calls[call_count] = (entry.value, dtor);
@@ -885,10 +885,10 @@ pub(crate) fn teardown_thread_tls(tid: i32) {
                             // current thread's owned fallback block until the
                             // end of teardown_thread_tls.
                             let entry = *fallback_values_ptr.add(i);
-                            if entry.seq == reg.slots[i].seq && entry.value != 0 {
+                            if entry.seq == slot.seq && entry.value != 0 {
                                 // Clear the value before calling destructor.
                                 (*fallback_values_ptr.add(i)).value = 0;
-                                if let Some(dtor) = reg.slots[i].destructor
+                                if let Some(dtor) = slot.destructor
                                     && call_count < MAX_CALLS
                                 {
                                     calls[call_count] = (entry.value, dtor);

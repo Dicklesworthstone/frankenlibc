@@ -115,9 +115,7 @@ fn round_binary(
     } else {
         exponent as i32 - bias
     };
-    let rounded;
-    let inexact;
-    if power < 0 {
+    let (rounded, inexact) = if power < 0 {
         let away = match direction {
             0 => sign == 0,
             1 => sign != 0,
@@ -126,12 +124,12 @@ fn round_binary(
             4 => power == -1 && (magnitude & fraction_mask) != 0,
             _ => unreachable!(),
         };
-        rounded = if away {
+        let rounded = if away {
             (bias as u128) << fraction_bits
         } else {
             0
         };
-        inexact = true;
+        (rounded, true)
     } else if power < fraction_bits as i32 {
         let shift = fraction_bits - power as u32;
         let unit = 1u128 << shift;
@@ -151,12 +149,10 @@ fn round_binary(
                 }
                 _ => unreachable!(),
             };
-        rounded = truncated + if away { unit } else { 0 };
-        inexact = fraction != 0;
+        (truncated + if away { unit } else { 0 }, fraction != 0)
     } else {
-        rounded = magnitude;
-        inexact = false;
-    }
+        (magnitude, false)
+    };
     if rounded != 0 {
         let power = ((rounded >> fraction_bits) & exponent_mask) as i32 - bias;
         let limit = if unsigned { width } else { width - 1 };

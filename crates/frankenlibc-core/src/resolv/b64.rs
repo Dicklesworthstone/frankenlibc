@@ -33,8 +33,7 @@ pub fn ntop(src: &[u8], target: &mut [u8]) -> Option<usize> {
     }
 
     let mut o = 0usize;
-    let chunks = src.chunks_exact(3);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = src.as_chunks::<3>();
     for c in chunks {
         let v = ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | (c[2] as u32);
         target[o] = ALPHABET[((v >> 18) & 0x3f) as usize];

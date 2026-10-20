@@ -400,9 +400,8 @@ fn dn_find(domain: &[u8], msg: &[u8], dnptrs: &[usize]) -> Result<Option<usize>,
         let mut sp = start;
         // Try matching `domain` against each suffix of this stored name.
         while sp < msg.len() && msg[sp] != 0 && (msg[sp] & NS_CMPRSFLGS) == 0 && sp < 0x4000 {
-            match suffix_matches(domain, msg, sp)? {
-                true => return Ok(Some(sp)),
-                false => {}
+            if suffix_matches(domain, msg, sp)? {
+                return Ok(Some(sp));
             }
             // Advance to the next label of this stored name.
             sp += msg[sp] as usize + 1;

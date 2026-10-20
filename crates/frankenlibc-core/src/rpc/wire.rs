@@ -71,8 +71,13 @@ pub fn encode_call_prefix(
     procedure: u32,
 ) -> Result<usize, DecodeError> {
     let destination = output.get_mut(..CALL_PREFIX_BYTES).ok_or(DecodeError::Truncated)?;
-    for (slot, word) in destination.chunks_exact_mut(4).zip([xid, 0, 2, program, version, procedure]) {
-        slot.copy_from_slice(&word.to_be_bytes());
+    for (slot, word) in destination
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip([xid, 0, 2, program, version, procedure])
+    {
+        *slot = word.to_be_bytes();
     }
     Ok(CALL_PREFIX_BYTES)
 }
