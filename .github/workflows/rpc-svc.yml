@@ -67,6 +67,7 @@ jobs:
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
+          python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
           python3 scripts/check_rpc_svc.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cases"
           cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"
           grep -Eq 'test result: ok\. 11 passed; 0 failed;' "$root/cache-unit.log"
@@ -74,7 +75,9 @@ jobs:
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/core.log"
           cargo test -p frankenlibc-abi --test rpc_abi_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/abi.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/abi.log"
-          python3 scripts/check_gai_async.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/dns"
+          # The unchanged DNS fixture binds loopback port 53, just as in
+          # gai-async.yml. No global resolver or kernel configuration is changed.
+          sudo python3 "$PWD/scripts/check_gai_async.py" "$PWD/target/release/libfrankenlibc_abi.so" --output "$PWD/$root/dns"
           python3 scripts/check_aio_completion.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/aio"
       - name: Publish only tested immutable source objects
         env:
