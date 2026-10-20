@@ -200,10 +200,7 @@ unsafe fn parse_strtol_positive_hex_fast(ptr: *const u8) -> (i64, usize, Convers
 
     let mut acc = 0u64;
     let mut digits = 0usize;
-    loop {
-        let Some(digit) = strtol_hex_digit(byte) else {
-            break;
-        };
+    while let Some(digit) = strtol_hex_digit(byte) {
         let digit = digit as u64;
         if digits < 15 {
             acc = (acc << 4) | digit;
@@ -532,7 +529,7 @@ pub(crate) unsafe fn parse_strtod_short_decimal_c_string_fast(
             let token = unsafe { core::str::from_utf8_unchecked(token) };
             return token.parse::<f64>().ok().map(|value| (value, consumed));
         }
-        if acc % 10 != 0 {
+        if !acc.is_multiple_of(10) {
             return None;
         }
         acc /= 10;

@@ -861,6 +861,7 @@ fn scrub_stack_for_main() {
     core::hint::black_box(&mut region);
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn startup_phase0_impl(
     main: Option<MainFn>,
     argc: c_int,
@@ -1821,7 +1822,7 @@ pub unsafe extern "C" fn __frankenlibc_is_runtime_math_enabled() -> c_int {
 /// the address of an exported function also reads the GOT. The test is
 /// whether the reached `malloc` lies inside fl's own loaded image.
 pub(crate) fn process_malloc_is_ours() -> bool {
-    let reached = libc::malloc as usize;
+    let reached = libc::malloc as *const () as usize;
     own_image_range().is_none_or(|(start, end)| (start..end).contains(&reached))
 }
 

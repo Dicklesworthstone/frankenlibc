@@ -226,15 +226,14 @@ impl TerminalSignatureTracker {
             self.illegal_transition_count = self.illegal_transition_count.saturating_add(1);
         }
         let rough_summary = self.rough_path.summary();
-        let summary = TerminalTrackerSummary {
+        TerminalTrackerSummary {
             current: report.current,
             rough_path_state: rough_summary.state,
             anomaly_score: rough_summary.anomaly_score,
             illegal_transition_count: self.illegal_transition_count,
             sequence_signature: self.sequence_signature,
             is_legal: report.is_legal,
-        };
-        summary
+        }
     }
 }
 

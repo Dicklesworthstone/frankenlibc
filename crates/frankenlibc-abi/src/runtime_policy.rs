@@ -3286,6 +3286,7 @@ pub(crate) fn record_semantic_deny(
 }
 
 #[cold]
+#[allow(clippy::too_many_arguments)]
 fn append_deny_record(
     mode: SafetyLevel,
     symbol: &'static str,

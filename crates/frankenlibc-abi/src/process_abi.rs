@@ -1564,7 +1564,7 @@ unsafe fn clone_spawn_child(
             in("rdi") &args as *const raw_syscall::CloneArgs,
             in("rsi") std::mem::size_of::<raw_syscall::CloneArgs>(),
             in("r12") ctx as *const SpawnChildContext<'_>,
-            in("r13") spawn_child_main as usize,
+            in("r13") spawn_child_main as *const () as usize,
             lateout("rcx") _,
             lateout("r11") _,
         );
@@ -1697,10 +1697,10 @@ unsafe fn posix_spawn_impl(request: SpawnRequest) -> c_int {
     let child_error = std::sync::atomic::AtomicI32::new(0);
     let use_pipe = cfg!(not(target_arch = "x86_64"));
     let mut err_pipe = [-1_i32; 2];
-    if use_pipe {
-        if let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) } {
-            return e;
-        }
+    if use_pipe
+        && let Err(e) = unsafe { raw_syscall::sys_pipe2(err_pipe.as_mut_ptr(), libc::O_CLOEXEC) }
+    {
+        return e;
     }
 
     // The pipe must not become an implicit source/destination in user actions.

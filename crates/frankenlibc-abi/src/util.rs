@@ -118,6 +118,7 @@ impl<T> AbiReentrantMutex<T> {
 
     /// Exclusive access proves no other thread holds or can take the lock.
     #[inline]
+    #[allow(dead_code)]
     pub(crate) fn get_mut(&mut self) -> &mut T {
         self.value.get_mut()
     }

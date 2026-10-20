@@ -600,20 +600,20 @@ unsafe fn vdso_cstr_eq(p: *const u8, target: &[u8]) -> bool {
     unsafe { *p.add(target.len()) == 0 }
 }
 
-/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
-/// `__vdso_clock_getres`, `__vdso_gettimeofday`, `__vdso_time`, and `__vdso_getcpu`
-/// from the mapped vDSO ELF at `base`. (`__vdso_getcpu` is x86-64-only; absent on
-/// aarch64 ⇒ `None` ⇒ caller falls back to the raw syscall.)
-unsafe fn parse_vdso(
-    base: usize,
-) -> (
+type VdsoResolvedSymbolTuple = (
     Option<VdsoClockGettimeFn>,
     Option<VdsoClockGetresFn>,
     Option<VdsoGettimeofdayFn>,
     Option<VdsoTimeFn>,
     Option<VdsoGetcpuFn>,
     Option<VdsoGetrandomFn>,
-) {
+);
+
+/// Port of the kernel's reference `parse_vdso`: resolve `__vdso_clock_gettime`,
+/// `__vdso_clock_getres`, `__vdso_gettimeofday`, `__vdso_time`, and `__vdso_getcpu`
+/// from the mapped vDSO ELF at `base`. (`__vdso_getcpu` is x86-64-only; absent on
+/// aarch64 ⇒ `None` ⇒ caller falls back to the raw syscall.)
+unsafe fn parse_vdso(base: usize) -> VdsoResolvedSymbolTuple {
     let none = (None, None, None, None, None, None);
     let ehdr = base as *const Elf64Ehdr;
     let ident = unsafe { &(*ehdr).e_ident };
@@ -1178,6 +1178,7 @@ fn fmt_has_directive(fmt: &[u8], spec: u8) -> bool {
 ///   implicit tzset), or nothing when `tm_isdst < 0` (the latter in core);
 /// - `%s` is `mktime` of a copy of the fields in the local zone, honouring
 ///   `tm_isdst` -- fl read the fields as UTC, off by the local offset.
+///
 /// `always_zone` covers named-locale formats, whose `%c`/`%x` may hold `%Z`.
 unsafe fn prepare_strftime_zone_context(
     tm: *const libc::tm,

@@ -70,9 +70,9 @@ impl WritablePages {
 
 fn range(base: usize, len: usize, start: usize, end: usize) -> Option<(usize, usize, u64)> {
     if base == 0
-        || base % GRANULE != 0
+        || !base.is_multiple_of(GRANULE)
         || len == 0
-        || len % GRANULE != 0
+        || !len.is_multiple_of(GRANULE)
         || len > 64 * GRANULE
         || start >= end
         || end > len

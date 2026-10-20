@@ -179,6 +179,7 @@ fn set_category_charset(cat: c_int, charset: Charset) {
     }
 }
 
+#[cfg(test)]
 #[inline]
 fn set_active_charset(charset: Charset) {
     set_category_charset(locale_core::LC_ALL, charset);
@@ -252,6 +253,7 @@ fn locale_name_for(charset: Charset) -> &'static [u8] {
 }
 
 /// The `nl_langinfo(CODESET)` string for `charset`.
+#[cfg(test)]
 #[inline]
 fn codeset_for(charset: Charset) -> &'static [u8] {
     match charset {
@@ -731,13 +733,6 @@ fn parse_composite(name: &[u8]) -> Option<Vec<(c_int, Vec<u8>)>> {
     (!out.is_empty()).then_some(out)
 }
 
-/// POSIX C-locale radix character.
-static C_LOCALE_RADIX: &[u8] = b".\0";
-/// POSIX C-locale thousands separator (empty string).
-static C_LOCALE_THOUSEP: &[u8] = b"\0";
-/// Generic empty locale string result.
-static EMPTY_LOCALE_STR: &[u8] = b"\0";
-
 /// Static `struct lconv` for the C locale.
 ///
 /// POSIX specifies that localeconv() returns a pointer to a static struct
@@ -812,7 +807,7 @@ unsafe impl Sync for LConv {}
 /// are accepted as aliases; other names fail with `ENOENT` in strict mode.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn setlocale(category: c_int, locale: *const c_char) -> *const c_char {
-    let (mode, decision) =
+    let (_mode, decision) =
         runtime_policy::decide(ApiFamily::Locale, category as usize, 0, false, true, 0);
     if matches!(decision.action, MembraneAction::Deny) {
         runtime_policy::observe(ApiFamily::Locale, decision.profile, 5, true);
@@ -1075,11 +1070,11 @@ fn named_localeconv() -> Option<*const LConv> {
 // nl_langinfo
 // ---------------------------------------------------------------------------
 
-/// The `nl_langinfo` table for a given character set.
-///
-/// Only `CODESET` varies: every other item in the POSIX C locale is identical
-/// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
-/// why the parameter threads through to exactly one arm.
+// The `nl_langinfo` table for a given character set.
+//
+// Only `CODESET` varies: every other item in the POSIX C locale is identical
+// between `C` and `C.UTF-8` (both are the unlocalised English set), which is
+// why the parameter threads through to exactly one arm.
 
 #[repr(transparent)]
 struct PtrTable<const N: usize>([*const c_char; N]);
@@ -1893,6 +1888,10 @@ impl LoadedCatalog {
     }
 }
 
+type ConvertedEntryKey = (usize, usize, Vec<u8>);
+type TranslationCacheKey = (Vec<u8>, Vec<u8>, c_int, Vec<u8>);
+type TranslationCacheValue = (c_int, &'static [u8], &'static mo::PluralRule);
+
 #[derive(Default)]
 struct CatalogCache {
     /// File path -> its catalog, or None when absent or not a catalog.
@@ -1901,15 +1900,12 @@ struct CatalogCache {
     searches: std::collections::HashMap<Vec<u8>, &'static [&'static LoadedCatalog]>,
     /// (catalog, entry offset, target codeset) -> the converted entry with its
     /// NUL, or None when the entry is not valid in the catalog's charset.
-    converted: std::collections::HashMap<(usize, usize, Vec<u8>), Option<&'static [u8]>>,
+    converted: std::collections::HashMap<ConvertedEntryKey, Option<&'static [u8]>>,
     /// glibc's known-translation cache: (msgid, domain, category, category
     /// locale name) -> (catalog counter when found, entry, its plural rule).
     /// LANGUAGE is not part of the key, so -- exactly as in glibc -- changing
     /// it at run time has no effect on a cached msgid until the counter moves.
-    translations: std::collections::HashMap<
-        (Vec<u8>, Vec<u8>, c_int, Vec<u8>),
-        (c_int, &'static [u8], &'static mo::PluralRule),
-    >,
+    translations: std::collections::HashMap<TranslationCacheKey, TranslationCacheValue>,
 }
 
 /// glibc's `_nl_msg_cat_cntr`, which invalidates cached translations.
@@ -2106,7 +2102,7 @@ pub(crate) unsafe fn dcigettext(
     };
     let mut start = 0;
     if plural {
-        match mo::plural_form(&entry[..entry.len() - 1], rule.index(n as u64)) {
+        match mo::plural_form(&entry[..entry.len() - 1], rule.index(n)) {
             Some(form) => start = form,
             // Fewer forms than the rule selects: glibc returns msgid1.
             None => return msgid1.cast_mut(),

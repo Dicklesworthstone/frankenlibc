@@ -212,7 +212,7 @@ pub(super) fn detach_current() {
     // Keep I/O-generated SIGPIPE from terminating the application. POSIX
     // allows notification threads to start with application signals blocked;
     // keep glibc's SIGCANCEL/SIGSETXID (32/33) unblocked for pthread lifecycle.
-    let application_signals = u64::MAX & !((1_u64 << 31) | (1_u64 << 32));
+    let application_signals = !((1_u64 << 31) | (1_u64 << 32));
     // SAFETY: Linux LP64 uses an eight-byte kernel signal set. Unmaskable
     // SIGKILL/SIGSTOP bits are ignored by the kernel.
     let _ = unsafe {

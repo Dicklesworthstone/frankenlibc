@@ -24,9 +24,7 @@ mod tcp;
 
 // Reuse the same tracked-bound, fault-checked copier as the socket importers.
 // Keep one implementation; do not introduce another process_vm/pipe fallback.
-#[path = "iov_snapshot.rs"]
-#[allow(dead_code)]
-mod user_copy;
+use crate::io_abi::iov_snapshot as user_copy;
 
 const DEFAULT_BUFFER: usize = 8800;
 const MAX_BUFFER: usize = 65536;
@@ -95,6 +93,7 @@ fn creation_error(status: c_int, error: RpcError) {
     };
 }
 
+#[allow(dead_code)]
 pub(super) fn creation_status(status: c_int) {
     creation_error(status, RpcError::status(status));
 }
@@ -719,6 +718,7 @@ static CLIENT_OPS: ClientOps = ClientOps {
 
 /// One-shot convenience calls own their freshly constructed client. Keep the
 /// callback casts and the matching destruction in the CLIENT implementation.
+#[allow(dead_code)]
 pub(super) unsafe fn call_once(
     client: *mut c_void,
     procedure: u64,
@@ -766,6 +766,7 @@ impl CreateFailure {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn make_client(
     address: *mut c_void,
     program: u64,
@@ -902,6 +903,7 @@ pub(super) unsafe fn create_tcp(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn create_transport(
     address: *mut c_void,
     program: u64,
@@ -950,10 +952,12 @@ fn portmap(
     endpoint.sin_port = 111u16.to_be();
     let mut arguments = [0u8; 16];
     for (slot, word) in arguments
-        .chunks_exact_mut(4)
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
         .zip([program, version, protocol, port as u32])
     {
-        slot.copy_from_slice(&word.to_be_bytes());
+        *slot = word.to_be_bytes();
     }
     let mut request = [0u8; 56];
     let xid = transaction_id();

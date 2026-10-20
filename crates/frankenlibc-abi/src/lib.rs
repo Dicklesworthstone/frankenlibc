@@ -1,4 +1,3 @@
-#![feature(c_variadic)]
 #![feature(f128)]
 #![feature(portable_simd)]
 #![cfg_attr(target_arch = "x86_64", feature(rtm_target_feature))]

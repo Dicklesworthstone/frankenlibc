@@ -75,12 +75,12 @@ fn encode(
     output[4..8].copy_from_slice(&(name.len() as u32).to_be_bytes());
     output[8..8 + name.len()].copy_from_slice(name);
     output[8 + name.len()..8 + padded].fill(0);
-    for (slot, value) in output[8 + padded..].chunks_exact_mut(4).zip(
+    for (slot, value) in output[8 + padded..].as_chunks_mut::<4>().0.iter_mut().zip(
         [uid, gid, groups.len() as u32]
             .into_iter()
             .chain(groups.iter().copied()),
     ) {
-        slot.copy_from_slice(&value.to_be_bytes());
+        *slot = value.to_be_bytes();
     }
     Some(length)
 }

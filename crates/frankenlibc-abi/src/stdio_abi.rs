@@ -177,6 +177,7 @@ pub(crate) unsafe fn c_str_bytes<'a>(ptr: *const c_char) -> &'a [u8] {
 pub(crate) struct StrictDecimalIntsScan {
     pub(crate) count: c_int,
     pub(crate) input_failure: bool,
+    #[allow(dead_code)]
     pub(crate) values: [c_int; STRICT_INT_LIST_MAX],
 }
 
@@ -188,7 +189,7 @@ enum StrictIntScan {
 
 #[inline]
 fn scanf_ascii_space(b: u8) -> bool {
-    b == b' ' || (b >= b'\t' && b <= b'\r')
+    b == b' ' || (b'\t'..=b'\r').contains(&b)
 }
 
 /// The largest int list the fast path serves. Four covers the shapes that
@@ -453,9 +454,7 @@ pub(crate) unsafe fn strict_scan_single_string(s: *const c_char, dst: *mut c_cha
 fn clamp_scanf_i64_magnitude(val: u64, negative: bool, overflowed: bool) -> i64 {
     if negative {
         const MIN_MAGNITUDE: u64 = 1u64 << 63;
-        if overflowed || val > MIN_MAGNITUDE {
-            i64::MIN
-        } else if val == MIN_MAGNITUDE {
+        if overflowed || val >= MIN_MAGNITUDE {
             i64::MIN
         } else {
             -(val as i64)
@@ -1512,6 +1511,7 @@ impl StreamCellInner {
         }
     }
 
+    #[allow(dead_code)]
     #[inline]
     fn try_lock(&self) -> Option<StreamGuard<'_>> {
         self.stream.try_lock().map(|mut guard| {
@@ -2315,6 +2315,7 @@ fn try_fputc_window(stream: *mut c_void, byte: u8) -> Option<c_int> {
 /// on the regular slow path), so `fast_putc`'s semantics are exactly `buffer_write`'s
 /// no-flush branch. SOUND: `write_cache_lookup` already gated on `__libc_single_threaded`
 /// (unique `&mut`) and gen-validity (value not moved).
+#[allow(dead_code)]
 #[inline]
 fn try_fputc_fast(id: usize, byte: u8) -> Option<c_int> {
     let p = write_cache_lookup(id)?;
@@ -2398,6 +2399,7 @@ fn try_fgetc_window(stream: *mut c_void) -> Option<c_int> {
 /// buffered, return it inline (skipping membrane + lock + lookup). `None` ⇒ full path
 /// (refill / ungetc / mem / transition). The cache is populated for read streams on the
 /// fgetc slow path below, mirroring the write side.
+#[allow(dead_code)]
 #[inline]
 fn try_fgetc_fast(id: usize) -> Option<c_int> {
     let p = write_cache_lookup(id)?;
@@ -2423,6 +2425,7 @@ fn try_fgetc_fast_by_stream(stream: *mut c_void) -> Option<c_int> {
 /// Bulk read sibling of `try_fgetc_fast` for `fread`: fills `dst` inline iff all of it is
 /// already buffered for the cached single-threaded fd stream (skip membrane + lock +
 /// lookup). `false` ⇒ full path (refill / partial / mem).
+#[allow(dead_code)]
 #[inline]
 fn try_fread_fast(id: usize, dst: &mut [u8]) -> bool {
     match write_cache_lookup(id) {
@@ -3613,7 +3616,6 @@ fn sync_input_position(stream: &mut StdioStream) {
     }
 }
 
-/// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
 thread_local! {
     /// Reusable refill bounce buffer — refill_stream fires on EVERY buffered read refill
     /// (fgetc/fread/fgets/getline), and a fresh `vec![0u8; <=8192]` per refill is a per-refill
@@ -3629,6 +3631,7 @@ impl Drop for RefillTmpGuard {
     }
 }
 
+/// Fill a stream's read buffer from its fd. Returns bytes read (0 on EOF, -1 on error).
 unsafe fn refill_stream(stream: &mut StdioStream) -> isize {
     let capacity = stream.buffer_capacity();
     if capacity == 0 {
@@ -3746,6 +3749,7 @@ fn ensure_host_libio_exit_safe() {
 }
 
 /// Internal stream id for stdin-backed scanf helpers.
+#[allow(dead_code)]
 #[inline]
 pub(crate) const fn stdin_stream_id() -> usize {
     STDIN_SENTINEL
@@ -7977,8 +7981,8 @@ const MAX_DIRECT_FIXED_PRECISION: usize = 99;
 /// Byte capacity for the direct fixed renderer, derived from the precision cap.
 ///
 /// The binding case is the `{abs:.precision$}` fallback, which is the branch
-/// that takes an arbitrary magnitude: `-` + the 309 integer digits of `f64::MAX`
-/// + `.` + `MAX_DIRECT_FIXED_PRECISION` fractional digits = 410 bytes. 416 is
+/// that takes an arbitrary magnitude: `-` + the 309 integer digits of `f64::MAX` +
+/// `.` + `MAX_DIRECT_FIXED_PRECISION` fractional digits = 410 bytes. 416 is
 /// that with a little margin.
 ///
 /// THIS IS NOT COSMETIC AND IT IS WHY THE PRECISION CAP AND THE BUFFER SHARE A
@@ -10224,7 +10228,7 @@ pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> 
 unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool) -> c_int {
     let mut buf = [0u8; 12];
     let len = render_d_into_buf(arg, newline, &mut buf);
-    if unsafe { write_all_fd(fd, &buf[..len]) } {
+    if write_all_fd(fd, &buf[..len]) {
         printf_result_to_c_int(len)
     } else {
         -1
@@ -10236,7 +10240,7 @@ unsafe fn strict_direct_fd_d(fd: c_int, arg: c_int, newline: bool) -> c_int {
 unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) -> c_int {
     let mut buf = [0u8; 11];
     let len = render_ux_into_buf(arg, hex, newline, &mut buf);
-    if unsafe { write_all_fd(fd, &buf[..len]) } {
+    if write_all_fd(fd, &buf[..len]) {
         printf_result_to_c_int(len)
     } else {
         -1
@@ -10672,6 +10676,7 @@ unsafe fn vprintf_read_x87_aarch64(
 /// integer, so it agrees with converting the exact rational — checked against
 /// exact-rational rounding over 6007 values spanning x87 subnormals, the f64
 /// subnormal band, and the overflow edge.
+#[allow(dead_code)]
 pub(crate) fn f64_from_x87_bytes(bytes: &[u8; 10]) -> f64 {
     let significand = u64::from_le_bytes([
         bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
@@ -12019,7 +12024,7 @@ impl Drop for ScanfReadBuf {
             // would otherwise leave the pool holding the smaller one.
             if slot
                 .as_ref()
-                .map_or(true, |held| held.capacity() < buf.capacity())
+                .is_none_or(|held| held.capacity() < buf.capacity())
             {
                 *slot = Some(buf);
             }
@@ -13322,11 +13327,11 @@ pub unsafe extern "C" fn remove(pathname: *const c_char) -> c_int {
 // getdelim / getline
 // ---------------------------------------------------------------------------
 
-/// POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
-///
-/// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
-/// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
-/// Returns the number of bytes read (including delim), or -1 on error/EOF.
+// POSIX `getdelim` — read until a delimiter, dynamically allocating the buffer.
+//
+// Reads from `stream` until `delim` is found or EOF. Dynamically (re)allocates
+// `*lineptr` using `malloc`/`realloc`. Stores the line length in `*n`.
+// Returns the number of bytes read (including delim), or -1 on error/EOF.
 thread_local! {
     /// Reusable getdelim scratch buffer — avoids a fresh `Vec::with_capacity(128)` (a per-line
     /// fl-malloc, ~61ns, that glibc doesn't pay) on every getdelim/getline call. Retains its
@@ -13892,7 +13897,7 @@ pub unsafe extern "C-unwind" fn popen(command: *const c_char, typ: *const c_char
         // mode) has to be cleared, which dup2 would otherwise have done.
         let install = |fd: c_int, target: c_int| {
             if fd == target {
-                if raw_syscall::sys_fcntl(fd, libc::F_SETFD, 0).is_err() {
+                if unsafe { raw_syscall::sys_fcntl(fd, libc::F_SETFD, 0) }.is_err() {
                     child_exit();
                 }
                 return;

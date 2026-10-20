@@ -978,6 +978,7 @@ pub fn bench_legacy_service_profile_scan(service: &[u8]) {
 }
 
 /// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+#[allow(dead_code)]
 pub(crate) fn lookup_service_entry_by_name(
     name: &[u8],
     proto_filter: Option<&[u8]>,
@@ -1049,12 +1050,14 @@ pub fn bench_protocols_pathbuf_refresh_alloc() {
 }
 
 /// Cloning wrappers, kept for callers that need to own the entry past the cache borrow.
+#[allow(dead_code)]
 pub(crate) fn lookup_protocol_entry_by_name(
     name: &[u8],
 ) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
     with_protocol_entry_by_name(name, Clone::clone)
 }
 
+#[allow(dead_code)]
 pub(crate) fn lookup_protocol_entry_by_number(
     number: c_int,
 ) -> std::io::Result<Option<frankenlibc_core::resolv::ProtocolEntry>> {
@@ -1223,12 +1226,14 @@ unsafe fn required_cstr_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
     unsafe { opt_cstr(ptr) }.ok().flatten().map(CStr::to_bytes)
 }
 
+#[allow(dead_code)]
 enum HostsAddress {
     V4(Ipv4Addr),
     #[allow(dead_code)]
     V6(Ipv6Addr),
 }
 
+#[allow(dead_code)]
 fn resolve_hosts_subset(node: &str, family: c_int) -> Option<HostsAddress> {
     // Scope boundary: only deterministic files-backend lookup (`/etc/hosts`).
     // Network DNS/NSS backends are intentionally out-of-scope here.
@@ -2243,10 +2248,10 @@ unsafe fn write_reentrant_gethostbyname(
 /// Pack a hostent (name, aliases, `addresses` of `af`'s width) into the
 /// caller's buffer, glibc layout order: strings, addresses, alias table,
 /// address table. `ERANGE` when `buflen` is too small.
-#[allow(clippy::too_many_arguments)]
 /// Alignment of the address block in a reentrant `hostent` buffer.
 const HOSTENT_ADDR_ALIGN: usize = align_of::<*mut c_char>();
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn write_reentrant_hostent_family(
     name: &[u8],
     aliases: &[Vec<u8>],
@@ -7243,7 +7248,7 @@ fn format_generic_rdata(rdata: &[u8], ty: u16, diagnostic: Option<&str>, out: &m
             } else {
                 0
             };
-        let tabs = (COMMENT_COLUMN.saturating_sub(col) + 7) / 8;
+        let tabs = COMMENT_COLUMN.saturating_sub(col).div_ceil(8);
         for _ in 0..tabs {
             out.push('\t');
         }
@@ -7443,7 +7448,7 @@ pub unsafe extern "C" fn ns_sprintrrf(
     let mut ttl_buf = [0u8; 32];
     let ttl_n = unsafe {
         ns_format_ttl(
-            ttl.into(),
+            ttl,
             ttl_buf.as_mut_ptr() as *mut c_char,
             ttl_buf.len(),
         )

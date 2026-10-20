@@ -454,7 +454,7 @@ unsafe fn raw_avx512_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
             copy_unaligned_64(dst.add(n - 64), src.add(n - 64));
         }
         let mut d = dst.add(n - tail);
-        let mut s = src.add(n - tail);
+        let s = src.add(n - tail);
         let end = dst.add(256);
         core::arch::asm!(
             "2:",
@@ -471,7 +471,7 @@ unsafe fn raw_avx512_copy_backward(dst: *mut u8, src: *const u8, n: usize) {
             "cmp {d}, {end}",
             "jae 2b",
             "vzeroupper",
-            s = inout(reg) s,
+            s = inout(reg) s => _,
             d = inout(reg) d,
             end = in(reg) end,
             out("zmm0") _, out("zmm1") _, out("zmm2") _, out("zmm3") _,
@@ -518,7 +518,7 @@ unsafe fn raw_avx512_copy(dst: *mut u8, src: *const u8, n: usize) {
             copy_unaligned_64(dst, src);
         }
         let mut d = dst.add(head);
-        let mut s = src.add(head);
+        let s = src.add(head);
         let end = dst.add(n - 256);
         core::arch::asm!(
             "2:",
@@ -535,7 +535,7 @@ unsafe fn raw_avx512_copy(dst: *mut u8, src: *const u8, n: usize) {
             "cmp {d}, {end}",
             "jbe 2b",
             "vzeroupper",
-            s = inout(reg) s,
+            s = inout(reg) s => _,
             d = inout(reg) d,
             end = in(reg) end,
             out("zmm0") _, out("zmm1") _, out("zmm2") _, out("zmm3") _,
@@ -1451,8 +1451,8 @@ unsafe fn raw_strstr(haystack: *const c_char, needle: *const c_char) -> *mut c_c
         // path, then route the MATCH to the pure core Two-Way searcher instead of the old
         // naive O(hay*needle) double loop (a latent quadratic-DoS vector even here). core
         // memmem allocates nothing and holds no locks, so it is safe in this context.
-        let hay_len = unsafe { scan_c_string(haystack, None).0 };
-        let needle_len = unsafe { scan_c_string(needle, None).0 };
+        let hay_len = scan_c_string(haystack, None).0;
+        let needle_len = scan_c_string(needle, None).0;
         if hay_len < needle_len {
             return std::ptr::null_mut();
         }
@@ -1823,7 +1823,6 @@ unsafe fn chunk_equal_32(lhs: *const u8, rhs: *const u8) -> bool {
 /// Sign of the first differing byte in `[lo, hi)` (`-1`/`+1`), or `0` if equal.
 /// Only ever called on a window already known to contain a difference (the equal
 /// case returns 0 harmlessly).
-#[inline]
 unsafe fn memcmp_first_diff(s1: *const u8, s2: *const u8, lo: usize, hi: usize) -> c_int {
     let mut j = lo;
     while j < hi {
@@ -2050,7 +2049,6 @@ unsafe fn memcmp_avx2(s1: *const u8, s2: *const u8, n: usize) -> c_int {
 /// Caller guarantees `16 <= n < 32` and both regions readable for `n` bytes.
 #[cfg(target_arch = "x86_64")]
 unsafe fn memcmp_sse16(s1: *const u8, s2: *const u8, n: usize) -> c_int {
-    use std::arch::x86_64::*;
     // SAFETY: SSE2 is baseline on x86_64; both windows lie within `[0, n)`
     // (first at 0, second at `n-16`, and `n >= 16`).
     unsafe {
@@ -3744,8 +3742,8 @@ unsafe fn span_scan_cmpistri(
 ///   - `complement == false` (strcspn / strpbrk): byte `== NUL` OR byte ∈ `set`;
 ///   - `complement == true`  (strspn):            byte `== NUL` OR byte ∉ `set`.
 ///
-/// This is the *fused* analog of the ABI strict path's `scan_c_string(s)` pre-scan
-/// + `core::str::{strspn,strcspn}` second pass: it makes ONE early-stopping SIMD
+/// This is the *fused* analog of the ABI strict path's `scan_c_string(s)` pre-scan +
+/// `core::str::{strspn,strcspn}` second pass: it makes ONE early-stopping SIMD
 /// pass from the raw pointer, never scanning past the stop byte (glibc's structure).
 /// Byte-identical to those core functions over the NUL-inclusive slice:
 ///   - strcspn(2..=4): first reject-member OR NUL == `find_any_of4_or_nul_fused`.
@@ -7683,7 +7681,7 @@ unsafe fn strcasestr_fused_firstbyte(
         while k < needle_len {
             // SAFETY: within the mapped string up to and including its NUL.
             let b = unsafe { *hp.add(cand + k) };
-            if b == 0 || b.to_ascii_lowercase() != ns[k].to_ascii_lowercase() {
+            if b == 0 || !b.eq_ignore_ascii_case(&ns[k]) {
                 matched = false;
                 break;
             }
@@ -7848,7 +7846,7 @@ unsafe fn strstr_validating(haystack: *const c_char, needle: *const c_char) -> *
         let (needle_len, needle_terminated) = scan_c_string(needle, needle_bound);
         let (hay_len, hay_terminated) = scan_c_string(haystack, hay_bound);
         let mut out_local = std::ptr::null_mut();
-        let mut work_local = 0usize;
+        let work_local;
 
         if needle_len == 0 {
             out_local = haystack as *mut c_char;
@@ -13489,11 +13487,11 @@ fn render_hex_float(value: f64, precision: Option<usize>, uppercase: bool) -> St
     out.push_str(prefix);
     match precision {
         Some(precision) => {
-            let integer;
-            let fraction;
-            if precision >= 13 {
-                integer = mantissa_units >> 52;
-                fraction = mantissa_units & ((1_u128 << 52) - 1);
+            let (integer, fraction) = if precision >= 13 {
+                (
+                    mantissa_units >> 52,
+                    mantissa_units & ((1_u128 << 52) - 1),
+                )
             } else {
                 let rounded = round_hex_mantissa(mantissa_units, precision);
                 let scale = if precision == 0 {
@@ -13501,9 +13499,8 @@ fn render_hex_float(value: f64, precision: Option<usize>, uppercase: bool) -> St
                 } else {
                     1_u128 << (4 * precision)
                 };
-                integer = rounded / scale;
-                fraction = rounded % scale;
-            }
+                (rounded / scale, rounded % scale)
+            };
             let _ = write!(out, "{integer:x}");
             if precision != 0 {
                 out.push('.');
@@ -14400,8 +14397,7 @@ fn re_syntax_options_ptr() -> *mut libc::c_ulong {
         let sym =
             unsafe { crate::dlfcn_abi::dlsym(std::ptr::null_mut(), c"re_syntax_options".as_ptr()) };
         if sym.is_null() {
-            // SAFETY: taking the address of fl's own definition.
-            unsafe { std::ptr::addr_of_mut!(crate::glibc_internal_abi::re_syntax_options) as usize }
+            std::ptr::addr_of_mut!(crate::glibc_internal_abi::re_syntax_options) as usize
         } else {
             sym as usize
         }
@@ -14596,7 +14592,7 @@ pub unsafe extern "C" fn re_search_2(
                 continue;
             }
             if !nosub {
-                unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
+                unsafe { legacy_regex_write_regs(buffer, regs, match_slots) };
             }
             return so as c_int;
         }
@@ -14612,7 +14608,7 @@ pub unsafe extern "C" fn re_search_2(
                 continue;
             }
             if !nosub {
-                unsafe { legacy_regex_write_regs(buffer, regs, &match_slots) };
+                unsafe { legacy_regex_write_regs(buffer, regs, match_slots) };
             }
             return pos as c_int;
         }
@@ -14942,7 +14938,7 @@ fn const_set_from_args(args: &[c_int]) -> ([u8; 3], usize) {
 
 #[inline]
 fn const_set_contains(set: &[u8], byte: u8) -> bool {
-    set.iter().any(|&candidate| candidate == byte)
+    set.contains(&byte)
 }
 
 #[inline]

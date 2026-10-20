@@ -802,6 +802,7 @@ struct SegmentSlotMeta {
 }
 
 impl SegmentSlotMeta {
+    #[allow(dead_code)]
     const fn new() -> Self {
         Self {
             requested_size: AtomicU16::new(0),
@@ -1613,10 +1614,7 @@ fn allocate_from_local_class(
     }
 
     loop {
-        let Some(segment_index) = local.active_segment.checked_sub(1) else {
-            return None;
-        };
-        let segment_index = segment_index as usize;
+        let segment_index = local.active_segment.checked_sub(1)? as usize;
         let Some(header) = segment_header(segment_index) else {
             local.active_segment = SEGMENT_NO_ACTIVE;
             return None;
@@ -2799,10 +2797,7 @@ unsafe fn native_libc_malloc_usable_size(ptr: *mut c_void) -> Option<usize> {
     }
     #[cfg(not(feature = "standalone"))]
     {
-        let Some(_reentry_guard) = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC_USABLE_SIZE)
-        else {
-            return None;
-        };
+        let _reentry_guard = enter_native_reentry_guard(NATIVE_REENTRY_MALLOC_USABLE_SIZE)?;
         let host_ptr = if let Some(&host_ptr) = HOST_MALLOC_USABLE_SIZE_FN.get() {
             host_ptr
         } else {
@@ -4182,9 +4177,7 @@ fn fallback_insert_sized_index(ptr: *mut c_void, size: usize) -> Option<usize> {
     if ptr.is_null() {
         return None;
     }
-    let Some(key) = fallback_key(ptr) else {
-        return None;
-    };
+    let key = fallback_key(ptr)?;
     let _guard = lock_fallback_alloc_table();
     // SAFETY-OF-EXCLUSION: the table lock is held for the whole probe below.
     unsafe { fallback_insert_sized_index_unlocked(key, size) }
@@ -5325,7 +5318,7 @@ unsafe fn bootstrap_realloc_passthrough(ptr: *mut c_void, size: usize) -> *mut c
 fn arena_block_size_lockfree(ptr: *mut c_void) -> Option<usize> {
     use frankenlibc_membrane::fingerprint::{AllocationFingerprint, FINGERPRINT_SIZE};
     let addr = ptr as usize;
-    if addr % 16 != 0 || addr & 0xfff < FINGERPRINT_SIZE {
+    if !addr.is_multiple_of(16) || addr & 0xfff < FINGERPRINT_SIZE {
         return None;
     }
     let mut header = [0u8; FINGERPRINT_SIZE];
@@ -5408,6 +5401,7 @@ fn record_allocator_stage_outcome(
 /// Returns the full safety abstraction for a pointer at `addr`.
 ///
 /// Returns `None` if the pipeline is not yet initialized.
+#[allow(dead_code)]
 #[must_use]
 pub(crate) fn validate_ptr(addr: usize) -> Option<PointerAbstraction> {
     validate_ptr_in_slot(addr, current_allocator_reentry_slot())
@@ -6489,7 +6483,7 @@ pub unsafe extern "C" fn posix_memalign(
             // Host allocator off-limits here (signal handler / table holder).
             if memptr.is_null()
                 || !alignment.is_power_of_two()
-                || alignment % core::mem::size_of::<*mut c_void>() != 0
+                || !alignment.is_multiple_of(core::mem::size_of::<*mut c_void>())
             {
                 return libc::EINVAL;
             }

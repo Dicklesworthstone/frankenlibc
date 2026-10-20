@@ -29,11 +29,11 @@ use frankenlibc_core::pthread::tls::{
     pthread_setspecific as core_pthread_setspecific,
 };
 use frankenlibc_core::pthread::{
-    CondvarData, MANAGED_CONDVAR_MAGIC, MANAGED_CONDVAR_PSHARED_MAGIC,
-    PTHREAD_COND_CLOCK_MONOTONIC, PTHREAD_COND_CLOCK_REALTIME, THREAD_DETACHED, THREAD_FINISHED,
-    THREAD_JOINED, ThreadHandle, condvar_broadcast as core_condvar_broadcast,
-    condvar_destroy as core_condvar_destroy, condvar_init as core_condvar_init,
-    condvar_signal as core_condvar_signal, condvar_timed_futex_op as core_condvar_timed_futex_op,
+    CondvarData, MANAGED_CONDVAR_MAGIC, MANAGED_CONDVAR_PSHARED_MAGIC, PTHREAD_COND_CLOCK_REALTIME,
+    THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle,
+    condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
+    condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
+    condvar_timed_futex_op as core_condvar_timed_futex_op,
     condvar_wait_finish as core_condvar_wait_finish,
     condvar_wait_prepare as core_condvar_wait_prepare, create_thread as core_create_thread,
     detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
@@ -322,21 +322,21 @@ thread_local! {
     static PTHREAD_SELF_FAST: Cell<libc::pthread_t> = const { Cell::new(0) };
 }
 
-/// Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
-///
-/// `in_threading_policy_context()` is on the allocator's hot path: the allocator
-/// re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
-/// would short-circuit it, `pthread_tls_access_active()`, is a `const fn` returning
-/// `false` unless the `owned-tls-cache` feature is on. Reading the depth out of
-/// `PTHREAD_TLS` cost a `RefCell` borrow-flag check and, worse, a LAZY-INIT check,
-/// because that `thread_local!` has a non-`const` initializer
-/// (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
-/// accessor must test on every use.
-///
-/// A single `u32` in its own `const`-initialised `Cell` needs neither. Same value,
-/// same two writers, same reader semantics -- only the container changes.
-/// Unconditional: the field it replaces was removed from `PthreadTlsState` for both
-/// feature configurations, and `in_threading_policy_context()` has one definition.
+// Threading-policy re-entry depth, held OUTSIDE `PthreadTlsState`.
+//
+// `in_threading_policy_context()` is on the allocator's hot path: the allocator
+// re-entry guard evaluates it on EVERY `malloc` and `free`, because the term that
+// would short-circuit it, `pthread_tls_access_active()`, is a `const fn` returning
+// `false` unless the `owned-tls-cache` feature is on. Reading the depth out of
+// `PTHREAD_TLS` cost a `RefCell` borrow-flag check and, worse, a LAZY-INIT check,
+// because that `thread_local!` has a non-`const` initializer
+// (`RefCell::new(PthreadTlsState::new())`) and so carries a state word the
+// accessor must test on every use.
+//
+// A single `u32` in its own `const`-initialised `Cell` needs neither. Same value,
+// same two writers, same reader semantics -- only the container changes.
+// Unconditional: the field it replaces was removed from `PthreadTlsState` for both
+// feature configurations, and `in_threading_policy_context()` has one definition.
 thread_local! {
     static THREADING_POLICY_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
@@ -1753,14 +1753,6 @@ fn clock_convert_between(
         result.tv_nsec += 1_000_000_000;
     }
     Ok(result)
-}
-
-fn condvar_clock_to_libc(clock: i32) -> c_int {
-    if clock == PTHREAD_COND_CLOCK_MONOTONIC {
-        libc::CLOCK_MONOTONIC
-    } else {
-        libc::CLOCK_REALTIME
-    }
 }
 
 fn absolute_timespec_valid(abstime: *const libc::timespec) -> bool {
@@ -7849,7 +7841,7 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
                     return rc;
                 }
                 let previous = type_word
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+                    .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
                         Some(
                             (word & !MUTEX_PRIOCEILING_MASK)
                                 | (prioceiling << MUTEX_PRIOCEILING_SHIFT),
@@ -7875,7 +7867,7 @@ pub(crate) unsafe fn native_pthread_mutex_setprioceiling(
         return lock_rc;
     }
     let previous = type_word
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |word| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |word| {
             Some((word & !MUTEX_PRIOCEILING_MASK) | (prioceiling << MUTEX_PRIOCEILING_SHIFT))
         })
         .unwrap_or_else(|word| word);

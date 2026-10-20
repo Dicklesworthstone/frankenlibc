@@ -309,8 +309,8 @@ unsafe fn wide_strlen_bounded(s: *const u32, limit: usize) -> usize {
 /// 8-lane chunks are SIMD-stored, the NUL-containing tail is copied scalar up to and
 /// including the NUL, so `dst` receives byte-for-byte the same `len + 1` chars as glibc.
 ///
-/// Bounded wide copy of exactly `count` u32 chars (no NUL scan). 8-lane SIMD store loop
-/// + scalar tail — never lowers to the interposed `memcpy` symbol (`copy_to_slice` is a
+/// Bounded wide copy of exactly `count` u32 chars (no NUL scan). 8-lane SIMD store loop +
+/// scalar tail — never lowers to the interposed `memcpy` symbol (`copy_to_slice` is a
 /// vector store), so an n-bounded wide copy skips the symbol round trip. dst/src disjoint.
 ///
 /// # Safety
@@ -383,13 +383,6 @@ unsafe fn wide_move_n(dst: *mut u32, src: *const u32, count: usize) {
     }
 }
 
-/// Returns the length copied (index of the terminating NUL), so `wcpcpy` can return the
-/// end pointer `dst + len` without a second scan.
-///
-/// # Safety
-/// `src` must be a valid NUL-terminated wide string and `dst` must have room for
-/// `wcslen(src) + 1` wide chars (the caller's contract for C `wcscpy`/`wcpcpy`).
-#[inline]
 /// Copies `n` wide chars (1..=8) with OVERLAPPING power-of-two moves instead of an
 /// element-at-a-time loop.
 ///
@@ -2209,7 +2202,7 @@ pub unsafe extern "C" fn wcsstr(haystack: *const u32, needle: *const u32) -> *mu
         let (needle_len, needle_terminated) = scan_w_string(needle, needle_bound);
         let (hay_len, hay_terminated) = scan_w_string(haystack, hay_bound);
         let mut out_local = std::ptr::null_mut();
-        let mut work_local = 0usize;
+        let work_local;
 
         // TRACKED INVALID INPUT REFUSES (bd-7ilguh): mirrors the strict fast
         // path. A bounded scan that hit its tracked extent without a NUL means
@@ -3207,7 +3200,7 @@ pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 
     // Strict-mode fast path (DEFAULT deployed): byte-identical to the strict full
     // body below; skips the decide + observe membrane tax.
     if runtime_policy::strict_passthrough_active() {
-        return unsafe {
+        unsafe {
             let (accept_len, _) = scan_w_string(accept, None);
             // LAZY early-stopping scan — return at the first accept member, null at the
             // NUL, with NO full-haystack pre-scan (the old scan_w_string(s) made an early
@@ -3238,7 +3231,7 @@ pub unsafe extern "C" fn wcspbrk(s: *const u32, accept: *const u32) -> *mut u32 
                 }
                 i += 1;
             }
-        };
+        }
     }
 
     // COLD-TAIL SPLIT. The strict fast path needs its two pointers and a scan; the
@@ -4765,7 +4758,7 @@ fn project_wide_ascii_into<'a>(
         }
         n += 1;
     }
-    if n + 1 <= WIDE_ASCII_STACK {
+    if n < WIDE_ASCII_STACK {
         for i in 0..n {
             stack[i] = s[i] as u8;
         }

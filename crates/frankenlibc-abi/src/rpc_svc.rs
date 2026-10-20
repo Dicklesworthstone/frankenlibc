@@ -790,7 +790,12 @@ pub unsafe extern "C" fn svc_register(
         r.services.push(Registration {
             program: program as u32,
             version: version as u32,
-            dispatch: unsafe { std::mem::transmute(dispatch) },
+            dispatch: unsafe {
+                std::mem::transmute::<
+                    *mut c_void,
+                    unsafe extern "C-unwind" fn(*mut ServiceRequest, *mut SvcXprt),
+                >(dispatch)
+            },
             published: protocol != 0,
         });
     }
@@ -946,12 +951,12 @@ pub unsafe extern "C-unwind" fn svc_getreq_poll(fds: *mut c_void, ready: c_int) 
     let count = unsafe { *super::rpc_svc_max_pollfd_ptr().cast::<c_int>() }.max(0) as usize;
     let mut selected = [-1; LIMIT];
     let mut remaining = ready;
-    for index in 0..count.min(LIMIT) {
+    for (index, slot) in selected.iter_mut().enumerate().take(count.min(LIMIT)) {
         let p = unsafe { fds.cast::<libc::pollfd>().add(index).read() };
         if p.revents != 0 {
             remaining -= 1;
             if p.revents & libc::POLLIN != 0 {
-                selected[index] = p.fd;
+                *slot = p.fd;
             }
         }
         if remaining == 0 {

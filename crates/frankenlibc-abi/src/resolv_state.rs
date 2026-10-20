@@ -351,7 +351,7 @@ pub unsafe fn close(pointer: *mut c_void) {
             if owned
                 .search
                 .iter()
-                .any(|name| name.as_ptr() as usize == *slot as usize)
+                .any(|name| std::ptr::eq(name.as_ptr().cast::<c_char>(), *slot))
             {
                 *slot = std::ptr::null_mut();
             }
@@ -454,6 +454,7 @@ fn make_query(
 
 /// Build from this state's recursion/AD options without implicitly calling
 /// init. A zero-initialized state intentionally emits neither RD nor AD.
+#[allow(clippy::too_many_arguments)]
 pub unsafe fn mkquery(
     pointer: *mut c_void,
     op: c_int,

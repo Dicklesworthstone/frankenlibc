@@ -16,8 +16,7 @@ use crate::errno_abi::set_abi_errno;
 use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
-#[path = "iov_snapshot.rs"]
-mod iov_snapshot;
+use crate::io_abi::iov_snapshot;
 #[path = "wait_snapshot.rs"]
 mod wait_snapshot;
 
@@ -301,7 +300,7 @@ pub(crate) unsafe fn select_cp(
     exceptfds: *mut libc::fd_set,
     timeout: *mut libc::timeval,
 ) -> c_int {
-    let (mode, decision) = runtime_policy::decide(
+    let (_mode, decision) = runtime_policy::decide(
         ApiFamily::Poll,
         readfds as usize,
         nfds as usize,

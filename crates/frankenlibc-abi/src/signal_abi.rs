@@ -1144,7 +1144,7 @@ pub unsafe extern "C" fn sigprocmask(
     // Only word 0 matters — `kernel_sigset_size` is 8, so that is all the kernel
     // reads, and both reserved bits (31 and 32) live in it.
     let reserved = signal_core::GLIBC_RESERVED_SIGNAL_MASK as libc::c_ulong;
-    let mut filtered: libc::c_ulong = 0;
+    let filtered: libc::c_ulong;
     let mut effective_set = set as *const u8;
     if !set.is_null() {
         // SAFETY: a non-null `sigset_t` is at least one `c_ulong` wide, and
@@ -1461,7 +1461,7 @@ pub(crate) unsafe fn pause_cp() -> c_int {
     }
 
     // pause always returns -1 with EINTR when interrupted.
-    let _ = crate::pthread_abi::at_cancellation_point(|| raw_syscall::sys_pause());
+    let _ = unsafe { crate::pthread_abi::at_cancellation_point(raw_syscall::sys_pause) };
     unsafe { set_abi_errno(errno::EINTR) };
     runtime_policy::observe(ApiFamily::Signal, decision.profile, 10, true);
     -1
@@ -1974,8 +1974,8 @@ fn format_psiginfo_body(info: *const libc::siginfo_t) -> String {
             unsafe { std::ffi::CStr::from_ptr(p) }.to_str().ok()
         }
     };
-    let rtmin = unsafe { libc::SIGRTMIN() };
-    let rtmax = unsafe { libc::SIGRTMAX() };
+    let rtmin = libc::SIGRTMIN();
+    let rtmax = libc::SIGRTMAX();
     // glibc's RT range is half-open: [SIGRTMIN, SIGRTMAX). SIGRTMAX itself
     // prints as "Unknown signal N".
     let is_rt = signo >= rtmin && signo < rtmax;

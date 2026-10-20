@@ -2,6 +2,7 @@
 //! the erf/erfc rational-approximation coefficient tables (bd-9z5ikz).
 //! DO NOT hand-edit; values are correctly-rounded f128.
 #![allow(
+    non_upper_case_globals,
     clippy::excessive_precision,
     clippy::approx_constant,
     clippy::unreadable_literal

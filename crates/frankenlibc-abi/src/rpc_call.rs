@@ -10,6 +10,7 @@ use super::{
 };
 use std::ffi::{c_int, c_uint, c_void};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) unsafe fn invoke(
     client: *mut Client,
     data: &mut Data,

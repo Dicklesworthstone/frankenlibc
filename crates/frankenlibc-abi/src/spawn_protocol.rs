@@ -125,7 +125,7 @@ fn close_from_proc(from: c_int, keep: c_int) -> Result<(), c_int> {
     let directory = unsafe {
         raw_syscall::sys_openat(
             libc::AT_FDCWD,
-            b"/proc/self/fd\0".as_ptr(),
+            c"/proc/self/fd".as_ptr().cast::<u8>(),
             libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
             0,
         )
@@ -249,14 +249,10 @@ pub(super) fn child_fail(fd: c_int, error: c_int) -> ! {
 }
 
 pub(super) fn reap_failed_child(pid: libc::pid_t) {
-    loop {
-        // SAFETY: null status/rusage are permitted; wait for this child only.
-        match unsafe { raw_syscall::sys_wait4(pid, std::ptr::null_mut(), 0, std::ptr::null_mut()) }
-        {
-            Err(libc::EINTR) => continue,
-            _ => break,
-        }
-    }
+    // SAFETY: null status/rusage are permitted; wait for this child only.
+    while let Err(libc::EINTR) =
+        unsafe { raw_syscall::sys_wait4(pid, std::ptr::null_mut(), 0, std::ptr::null_mut()) }
+    {}
 }
 
 /// RESETIDS changes effective IDs to the parent's *real* IDs, not its

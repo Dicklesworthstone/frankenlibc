@@ -145,7 +145,8 @@ static ENVELOPE_HI: AtomicUsize = AtomicUsize::new(0);
 /// which in `free` would leak and in a bounds check would under-report. Trading
 /// a little precision for that safety is deliberate.
 pub fn register(base: usize, len: usize) -> bool {
-    if base == 0 || len == 0 || base % SLAB_ALIGN != 0 || len % SLAB_ALIGN != 0 {
+    if base == 0 || len == 0 || !base.is_multiple_of(SLAB_ALIGN) || !len.is_multiple_of(SLAB_ALIGN)
+    {
         return false;
     }
     let Some(end) = base.checked_add(len) else {
