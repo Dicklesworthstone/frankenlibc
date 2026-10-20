@@ -73,7 +73,7 @@ const BYTES: usize = translit_bytes(&C_TRANSLIT);
 pub(super) static C_TRANSLIT_PACKED: PackedTranslit<LEN, BYTES> = pack_translit(&C_TRANSLIT);
 
 /// Source table, used only at compile time to build [`C_TRANSLIT_PACKED`].
-const C_TRANSLIT: [(u32, &[u8]); 1656] = [
+static C_TRANSLIT: [(u32, &[u8]); 1656] = [
     (0xA0, b" "),
     (0xA9, b"(C)"),
     (0xAB, b"<<"),

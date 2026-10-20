@@ -12,21 +12,6 @@ const MAX_LEGACY_CVT_DIGITS: usize = 512;
 /// have their own glibc-divergence story, bd-2g7oyh.101.)
 const GCVT_MAX_SIG_DIGITS: usize = 17;
 
-/// Render the digit string glibc emits for a non-finite `ecvt`/`fcvt` input.
-///
-/// glibc embeds the sign character directly in the returned buffer for NaN
-/// and infinity (e.g. `"-inf"`, `"-nan"`) and leaves the out-param `*sign`
-/// set to 0 — unlike finite values, where the sign is reported via `*sign`
-/// and stripped from the digits. Mirroring that, the returned tuple here
-/// always carries `is_negative = false` for non-finite inputs so the ABI
-/// layer reports `sign = 0`. The sign bit is read directly (not via
-/// `is_sign_negative() && !is_nan()`) so `-nan` keeps its leading `-`.
-fn nonfinite_cvt(value: f64) -> (Vec<u8>, i32, bool) {
-    let sign = if value.is_sign_negative() { "-" } else { "" };
-    let body = if value.is_nan() { "nan" } else { "inf" };
-    (format!("{sign}{body}").into_bytes(), 0, false)
-}
-
 /// The base-10 exponent of a positive finite `abs_val` (= floor(log10(abs_val))),
 /// read from the shortest scientific formatting so it reflects the TRUE magnitude
 /// without rounding a near-decade value up: `123.0` -> 2, `9.99` -> 0,

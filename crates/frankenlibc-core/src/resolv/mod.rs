@@ -686,6 +686,7 @@ fn parse_network_component_bytes(bytes: &[u8]) -> Option<u32> {
     Some(value)
 }
 
+#[cfg(test)]
 fn parse_ascii_decimal_u32(bytes: &[u8]) -> Option<u32> {
     if bytes.is_empty() {
         return None;
