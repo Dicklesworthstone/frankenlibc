@@ -268,7 +268,7 @@ fn finite_sqrtf128(x: f128) -> f128 {
 
     for i in 0..115 {
         let next_2_bits = if i < 57 {
-            let b = (m_top >> 126) as u128;
+            let b = m_top >> 126;
             m_top <<= 2;
             b
         } else {
@@ -1466,14 +1466,14 @@ pub unsafe extern "C" fn jn(n: c_int, x: f64) -> f64 {
 pub unsafe extern "C" fn y0(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y0);
     // y0(x) for x <= 0 is domain error
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     out
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn y1(x: f64) -> f64 {
     let out = unary_entry(x, 12, frankenlibc_core::math::y1);
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     out
 }
 
@@ -1489,7 +1489,7 @@ pub unsafe extern "C" fn yn(n: c_int, x: f64) -> f64 {
         0,
     );
     let raw = frankenlibc_core::math::yn(n, x);
-    bessel_y_errno(x.into());
+    bessel_y_errno(x);
     runtime_policy::observe(
         ApiFamily::MathFenv,
         decision.profile,
@@ -5564,10 +5564,10 @@ pub unsafe extern "C" fn asinpif64x(x: f64) -> f64 {
 pub unsafe extern "C" fn asinpif128(x: f128) -> f128 {
     // glibc s_asinpi_template: EDOM if |x|>1, else asin(x)/pi, clamp to ±0.5.
     const PI: f128 = 3.141592653589793238462643383279502884f128;
-    if !(x.abs() <= 1.0) {
-        if x.is_nan() {
-            return (x - x) / (x - x); // propagate input NaN
-        }
+    if x.is_nan() {
+        return (x - x) / (x - x); // propagate input NaN
+    }
+    if x.abs() > 1.0 {
         set_domain_errno();
         return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     }
@@ -7850,6 +7850,7 @@ fn remainder_family_domain_error_f32(x: f32, y: f32) -> bool {
 ///     out of zero into the smallest subnormal is NOT an underflow.
 ///     `nextafter(0, 1)` must leave errno at 0.
 ///   - `stepped == from`: x == y returns y early, likewise with no errno.
+///
 /// A naive "result is subnormal -> ERANGE" rule violates the first of these.
 #[inline]
 fn nextafter_range_errno(from: f64, stepped: f64, tiny: f64) {
@@ -8309,7 +8310,10 @@ fn host_lgammaf128_r() -> Option<HostLgammaf128R> {
             return None;
         }
         // SAFETY: libm's `lgammaf128_r` has this exact binary128 C ABI.
-        Some(core::mem::transmute(symbol))
+        Some(core::mem::transmute::<
+            *mut c_void,
+            unsafe extern "C" fn(f128, *mut c_int) -> f128,
+        >(symbol))
     })
 }
 
@@ -8892,6 +8896,7 @@ pub(crate) fn svid_scalb_f64(x: f64, n: f64) -> f64 {
 }
 
 /// f32 counterpart of [`svid_scalb_f64`].
+#[allow(dead_code)]
 pub(crate) fn svid_scalb_f32(x: f32, n: f32) -> f32 {
     let z = ieee754_scalb_f32(x, n);
     if !z.is_finite() || z == 0.0 {
@@ -10962,7 +10967,10 @@ fn host_fmaf128() -> Option<HostFmaf128> {
         if symbol.is_null() {
             return None;
         }
-        Some(core::mem::transmute(symbol))
+        Some(core::mem::transmute::<
+            *mut c_void,
+            unsafe extern "C" fn(f128, f128, f128) -> f128,
+        >(symbol))
     })
 }
 
@@ -11723,7 +11731,7 @@ fn asin_f128(x: f128) -> f128 {
         p = p * tt + RS2;
         p = p * tt + RS1;
         p = p * tt + RS0;
-        p = p * tt;
+        p *= tt;
         let mut q = tt + SS9;
         q = q * tt + SS8;
         q = q * tt + SS7;
@@ -11752,7 +11760,7 @@ fn asin_f128(x: f128) -> f128 {
     p = p * t + PS2;
     p = p * t + PS1;
     p = p * t + PS0;
-    p = p * t;
+    p *= t;
     let mut q = t + QS8;
     q = q * t + QS7;
     q = q * t + QS6;
@@ -11769,11 +11777,10 @@ fn asin_f128(x: f128) -> f128 {
     }
 
     let s = finite_sqrtf128(t);
-    let tres;
-    if ix >= 0x3ffe_f333 {
+    let tres = if ix >= 0x3ffe_f333 {
         // |x| > 0.975
         let w = p / q;
-        tres = PIO2_HI - (2.0 * (s + s * w) - PIO2_LO);
+        PIO2_HI - (2.0 * (s + s * w) - PIO2_LO)
     } else {
         // hi/lo split of s: clear the low 64 mantissa bits.
         let w = f128::from_bits(s.to_bits() & (!0u128 << 64));
@@ -11781,8 +11788,8 @@ fn asin_f128(x: f128) -> f128 {
         let r = p / q;
         let pp = 2.0 * s * r - (PIO2_LO - 2.0 * c);
         let qq = PIO4_HI - 2.0 * w;
-        tres = PIO4_HI - (pp - qq);
-    }
+        PIO4_HI - (pp - qq)
+    };
     if neg { -tres } else { tres }
 }
 
@@ -11901,7 +11908,7 @@ fn acos_f128(x: f128) -> f128 {
             p = p * z + PS2;
             p = p * z + PS1;
             p = p * z + PS0;
-            p = p * z;
+            p *= z;
             let mut q = z + QS8;
             q = q * z + QS7;
             q = q * z + QS6;
@@ -11926,7 +11933,7 @@ fn acos_f128(x: f128) -> f128 {
         p = p * t + P2;
         p = p * t + P1;
         p = p * t + P0;
-        p = p * t;
+        p *= t;
         let mut q = t + Q9;
         q = q * t + Q8;
         q = q * t + Q7;
@@ -11954,7 +11961,7 @@ fn acos_f128(x: f128) -> f128 {
         p = p * t + RS2;
         p = p * t + RS1;
         p = p * t + RS0;
-        p = p * t;
+        p *= t;
         let mut q = t + SS9;
         q = q * t + SS8;
         q = q * t + SS7;
@@ -11980,9 +11987,9 @@ fn acos_f128(x: f128) -> f128 {
     let f1 = f128::from_bits(s.to_bits() & (!0u128 << 64));
     let f2 = s - f1;
     let mut w = z - f1 * f1;
-    w = w - 2.0 * f1 * f2;
-    w = w - f2 * f2;
-    w = w / (2.0 * s);
+    w -= 2.0 * f1 * f2;
+    w -= f2 * f2;
+    w /= 2.0 * s;
     let mut p = PS9 * z + PS8;
     p = p * z + PS7;
     p = p * z + PS6;
@@ -11992,7 +11999,7 @@ fn acos_f128(x: f128) -> f128 {
     p = p * z + PS2;
     p = p * z + PS1;
     p = p * z + PS0;
-    p = p * z;
+    p *= z;
     let mut q = z + QS8;
     q = q * z + QS7;
     q = q * z + QS6;
@@ -12607,20 +12614,16 @@ fn log1pl_f128(xm1: f128) -> f128 {
         x = f128::from_bits((bits & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
     }
 
-    if e > 2 || e < -2 {
-        let y;
-        let zz;
-        if x < SQRTH {
+    if !(-2..=2).contains(&e) {
+        let (y, zz) = if x < SQRTH {
             e -= 1;
             let z = x - 0.5;
-            y = 0.5 * z + 0.5;
-            zz = z;
+            (0.5 * z + 0.5, z)
         } else {
             let mut z = x - 0.5;
             z -= 0.5;
-            y = 0.5 * x + 0.5;
-            zz = z;
-        }
+            (0.5 * x + 0.5, z)
+        };
         let xr = zz / y;
         let z = xr * xr;
         let mut r = R5 * z + R4;
@@ -12798,8 +12801,7 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
         xm = f128::from_bits((xb & !(0x7fff_u128 << 112)) | (0x3FFE_u128 << 112));
     }
 
-    let y;
-    if e > 2 || e < -2 {
+    let y = if !(-2..=2).contains(&e) {
         let yy;
         if xm < SQRTH {
             e -= 1;
@@ -12813,7 +12815,7 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
             xm = z / yy;
         }
         let z = xm * xm;
-        y = xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S));
+        xm * (z * neval_f128(z, &LOGB_R) / deval_f128(z, &LOGB_S))
     } else {
         if xm < SQRTH {
             e -= 1;
@@ -12823,8 +12825,8 @@ fn cephes_log_reduce_f128(x: f128) -> Result<(f128, f128, i32), f128> {
         }
         let z = xm * xm;
         let yy = xm * (z * neval_f128(xm, &LOGB_P) / deval_f128(xm, &LOGB_Q));
-        y = yy - 0.5 * z;
-    }
+        yy - 0.5 * z
+    };
     Ok((y, xm, e))
 }
 
@@ -12909,16 +12911,18 @@ fn acoshl_f128(x: f128) -> f128 {
     if hx < 0x3fff_0000_0000_0000 {
         // x < 1 (incl negatives); NaN inputs propagate, else negative qNaN.
         if x.is_nan() {
-            return (x - x) / (x - x);
+            (x - x) / (x - x)
+        } else {
+            f128::from_bits((0xffff_u128 << 112) | (1u128 << 111))
         }
-        return f128::from_bits((0xffff_u128 << 112) | (1u128 << 111));
     } else if hx >= 0x4035_0000_0000_0000 {
         if hx >= 0x7fff_0000_0000_0000 {
-            return x + x; // inf/NaN
+            x + x // inf/NaN
+        } else {
+            logl_f128(x) + LN2 // acosh(huge) = log(2x)
         }
-        return logl_f128(x) + LN2; // acosh(huge) = log(2x)
     } else if hx == 0x3fff_0000_0000_0000 && lx == 0 {
-        return 0.0; // acosh(1) = 0
+        0.0 // acosh(1) = 0
     } else if hx > 0x4000_0000_0000_0000 {
         let t = x * x;
         logl_f128(2.0 * x - 1.0 / (x + finite_sqrtf128(t - 1.0)))
@@ -13059,11 +13063,9 @@ fn powl_f128(x: f128, y: f128) -> f128 {
     if hx < 0 {
         if iy >= 0x4070_0000 {
             yisint = 2;
-        } else if iy >= 0x3fff_0000 {
-            if finite_floorf128(y) == y {
-                let z = 0.5 * y;
-                yisint = if finite_floorf128(z) == z { 2 } else { 1 };
-            }
+        } else if iy >= 0x3fff_0000 && finite_floorf128(y) == y {
+            let z = 0.5 * y;
+            yisint = if finite_floorf128(z) == z { 2 } else { 1 };
         }
     }
 
@@ -13434,7 +13436,11 @@ fn compoundn_f128(x: f128, y: i64) -> f128 {
 /// `__kernel_rem_pio2` (dbl-64 k_rem_pio2.c). Computes x·(2/pi) mod 1 in f64
 /// multi-precision (24-bit limbs) using the caller's `ipio2` table; returns the
 /// low 3 bits of the integer part and writes the fractional remainder into `y`.
-#[allow(clippy::needless_range_loop)]
+#[allow(
+    clippy::needless_range_loop,
+    clippy::excessive_precision,
+    clippy::explicit_counter_loop
+)]
 fn kernel_rem_pio2(x: &[f64], y: &mut [f64], e0: i32, nx: i32, prec: i32) -> i32 {
     use crate::trig_tables::TWO_OVER_PI as IPIO2;
     use frankenlibc_core::math::scalbn as fscalbn;
@@ -15355,25 +15361,24 @@ fn clog_f128(z: CFloat128Complex) -> CFloat128Complex {
             absx = scalbn_f128(absx, 113);
             absy = scalbn_f128(absy, 113);
         }
-        let real;
-        if absx == 1.0 && scale == 0 {
-            real = log1pl_f128(absy * absy) / 2.0;
+        let real = if absx == 1.0 && scale == 0 {
+            log1pl_f128(absy * absy) / 2.0
         } else if absx > 1.0 && absx < 2.0 && absy < 1.0 && scale == 0 {
             let mut d2m1 = (absx - 1.0) * (absx + 1.0);
             if absy >= EPS {
                 d2m1 += absy * absy;
             }
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else if absx < 1.0 && absx >= 0.5 && absy < EPS_HALF && scale == 0 {
             let d2m1 = (absx - 1.0) * (absx + 1.0);
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else if absx < 1.0 && absx >= 0.5 && scale == 0 && absx * absx + absy * absy >= 0.5 {
             let d2m1 = x2y2m1_f128(absx, absy);
-            real = log1pl_f128(d2m1) / 2.0;
+            log1pl_f128(d2m1) / 2.0
         } else {
             let d = hypot_f128(absx, absy);
-            real = logl_f128(d) - (scale as f128) * LN2;
-        }
+            logl_f128(d) - (scale as f128) * LN2
+        };
         return CFloat128Complex {
             re: real,
             im: atan2_f128(ix, rx),
@@ -15635,7 +15640,6 @@ pub unsafe extern "C" fn csqrtf128(z: CFloat128Complex) -> CFloat128Complex {
 fn catanh_f128(z: CFloat128Complex) -> CFloat128Complex {
     const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
     const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
-    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
     const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS = 2^116
     const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS*EPS = 2^-224
     const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2 = 2^-113
@@ -16003,7 +16007,6 @@ fn cacos_f128(x: CFloat128Complex) -> CFloat128Complex {
 fn catan_f128(z: CFloat128Complex) -> CFloat128Complex {
     const PI_2: f128 = 1.5707963267948966192313216916397514420986f128;
     const LN2: f128 = 6.931471805599453094172321214581765680755e-1f128;
-    const EPS: f128 = f128::from_bits(16271u128 << 112); // 2^-112
     const INV16EPS: f128 = f128::from_bits(16499u128 << 112); // 16/EPS
     const EPS2: f128 = f128::from_bits(16159u128 << 112); // EPS²
     const EPS_HALF: f128 = f128::from_bits(16270u128 << 112); // EPS/2
@@ -16279,6 +16282,7 @@ macro_rules! finite_unary_f32 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! finite_unary_f128 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -16297,6 +16301,7 @@ macro_rules! finite_binary_f64 {
     };
 }
 
+#[allow(unused_macros)]
 macro_rules! finite_binary_f128 {
     ($name:ident, $target:path) => {
         #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
