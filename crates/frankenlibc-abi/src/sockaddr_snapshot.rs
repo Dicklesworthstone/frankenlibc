@@ -23,6 +23,7 @@ pub(super) struct PreparedSockaddr {
     imported: bool,
 }
 
+#[allow(dead_code)]
 impl PreparedSockaddr {
     /// Strict, or a null optional address: retain the original kernel inputs.
     pub(super) fn original(length: *mut libc::socklen_t) -> Self {

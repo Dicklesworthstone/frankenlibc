@@ -351,6 +351,7 @@ impl Table {
             .flatten()
     }
 
+    #[allow(dead_code)]
     pub(super) fn relocation(&self, index: usize) -> Lookup {
         let hidden = self
             .raw

@@ -161,6 +161,7 @@ impl<T> AbiReentrantMutex<T> {
     ///
     /// Must only be called in a freshly forked child, before any other thread
     /// exists, with `parent_tid` read by the forking thread before the clone.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) unsafe fn adopt_in_fork_child(&self, parent_tid: i32) {
         let _ = self.owner_tid.compare_exchange(
@@ -172,6 +173,7 @@ impl<T> AbiReentrantMutex<T> {
     }
 
     /// TID used for ownership, exposed so fork paths can record the parent's.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn current_owner_tid() -> i32 {
         current_tid()

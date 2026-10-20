@@ -180,6 +180,7 @@ fn set_category_charset(cat: c_int, charset: Charset) {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 #[inline]
 fn set_active_charset(charset: Charset) {
     set_category_charset(locale_core::LC_ALL, charset);
@@ -254,6 +255,7 @@ fn locale_name_for(charset: Charset) -> &'static [u8] {
 
 /// The `nl_langinfo(CODESET)` string for `charset`.
 #[cfg(test)]
+#[allow(dead_code)]
 #[inline]
 fn codeset_for(charset: Charset) -> &'static [u8] {
     match charset {
@@ -373,6 +375,7 @@ static CTYPE_TABLES: AtomicPtr<frankenlibc_core::locale::data::CtypeTables<'stat
     AtomicPtr::new(std::ptr::null_mut());
 
 /// How wide-character classification, case mapping and `wcwidth` behave.
+#[allow(dead_code)]
 pub(crate) enum WideCtype {
     /// The C/POSIX locale: ASCII only, as glibc's built-in C locale.
     Ascii,
@@ -942,6 +945,7 @@ pub unsafe extern "C" fn localeconv() -> *const LConv {
 
 /// Collation tables when LC_COLLATE is on a named locale with rules
 /// (`None` for byte-order collation, including C and C.UTF-8).
+#[allow(dead_code)]
 pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::CollateTables<'static>> {
     let n = named(locale_core::LC_COLLATE)?;
     frankenlibc_core::locale::collate::CollateTables::from_blob(&n.blob)
@@ -949,6 +953,7 @@ pub(crate) fn named_collate() -> Option<frankenlibc_core::locale::collate::Colla
 
 /// LC_TIME strings for `strftime` when LC_TIME is on a named locale.
 /// Item indices are the LC_TIME `nl_item` offsets (ABDAY_1 = 0 ... T_FMT_AMPM = 43).
+#[allow(dead_code)]
 pub(crate) fn named_time_locale() -> Option<frankenlibc_core::time::TimeLocale<'static>> {
     let n = named(locale_core::LC_TIME)?;
     let s = |i: usize| n.blob.string(i).unwrap_or(b"");
@@ -2387,6 +2392,7 @@ pub unsafe extern "C" fn bindtextdomain(
 /// GNU `bind_textdomain_codeset`: select (or, with a NULL `codeset`, query)
 /// the encoding `domainname`'s translations are returned in. NULL when no
 /// codeset has been bound, or for a NULL/empty domain.
+#[allow(dead_code)]
 pub(crate) unsafe fn bind_textdomain_codeset_impl(
     domainname: *const c_char,
     codeset: *const c_char,
@@ -2797,6 +2803,7 @@ pub unsafe extern "C" fn newlocale(
 /// ignore the argument, so `strftime_l(.., newlocale("en_US.UTF-8"))` gave C
 /// output. An invalid handle runs `f` under the current locale (uselocale
 /// has set EINVAL).
+#[allow(dead_code)]
 pub(crate) fn with_locale<R>(locale: LocaleT, f: impl FnOnce() -> R) -> R {
     if locale.is_null() {
         return f();

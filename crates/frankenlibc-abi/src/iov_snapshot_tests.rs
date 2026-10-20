@@ -150,8 +150,8 @@ fn unaligned_caller_descriptors_are_imported_without_rust_references() {
 
 #[test]
 fn descriptor_mutation_after_import_does_not_change_submitted_io() {
-    let original_payload = [b'o', b'k'];
-    let replacement_payload = [b'n', b'o'];
+    let original_payload = *b"ok";
+    let replacement_payload = *b"no";
     let mut iov = [libc::iovec {
         iov_base: original_payload.as_ptr().cast_mut().cast(),
         iov_len: 2,

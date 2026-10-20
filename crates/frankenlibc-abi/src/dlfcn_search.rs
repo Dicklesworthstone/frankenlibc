@@ -101,6 +101,7 @@ fn platform_token(auxv: &[u8]) -> Option<Vec<u8>> {
     (end != 0).then(|| bytes[..end].to_vec())
 }
 
+#[allow(dead_code)]
 fn library_token() -> &'static [u8] {
     // LIB is a loader installation choice, not simply pointer width. Debian
     // and Ubuntu use lib/<multiarch>, whereas conventional x86-64 layouts use
@@ -132,6 +133,7 @@ fn library_token() -> &'static [u8] {
     }
 }
 
+#[allow(dead_code)]
 fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
     let mut bytes = Vec::new();
     File::open(path)
@@ -143,6 +145,7 @@ fn bounded_file(path: &str, limit: usize) -> Option<Vec<u8>> {
 }
 
 impl SearchContext {
+    #[allow(dead_code)]
     pub(super) fn process() -> Self {
         // Unknown security state is secure, never permission to use LD_*.
         let auxv = bounded_file("/proc/self/auxv", 65536);
@@ -184,6 +187,7 @@ impl SearchContext {
     }
 }
 
+#[allow(dead_code)]
 fn dynamic_string(strings: &[u8], offset: u64) -> Option<&[u8]> {
     let offset = usize::try_from(offset).ok()?;
     let tail = strings.get(offset..)?;
@@ -198,6 +202,7 @@ impl SearchPaths {
             .any(|(index, byte)| *byte == b'$' && token_length(&name[index..], b"ORIGIN").is_some())
     }
 
+    #[allow(dead_code)]
     pub(super) fn parse(
         bytes: &[u8],
         object: &LoadedObject,

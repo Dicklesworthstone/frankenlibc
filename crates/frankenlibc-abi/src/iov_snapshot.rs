@@ -115,6 +115,7 @@ impl PreparedIovecs {
     /// vmsplice's count is size_t, not readv's signed int. Preserve oversized
     /// values for the original syscall instead of truncating them into a valid
     /// import count (or zero). The caller passes the unchanged count to Linux.
+    #[allow(dead_code)]
     pub(crate) fn prepare_unsigned(
         iov: *const libc::iovec,
         count: usize,
@@ -221,6 +222,7 @@ impl PreparedIovecs {
 /// Any readable source bytes must be initialized. Any writable destination must
 /// permit byte writes for the duration of this call, without violating Rust
 /// aliasing; permission faults are reported rather than dereferenced in Rust.
+#[allow(dead_code)]
 pub(crate) unsafe fn copy_user_bytes(
     source: *const u8,
     destination: *mut u8,
