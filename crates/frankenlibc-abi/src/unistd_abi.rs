@@ -36,13 +36,6 @@ struct NetEnt {
 unsafe extern "C" {}
 
 #[inline]
-fn last_host_errno(default_errno: c_int) -> c_int {
-    std::io::Error::last_os_error()
-        .raw_os_error()
-        .unwrap_or(default_errno)
-}
-
-#[inline]
 fn current_abi_errno() -> c_int {
     // SAFETY: __errno_location returns valid thread-local errno storage.
     unsafe { std::ptr::read_volatile(crate::errno_abi::__errno_location()) }
@@ -109,7 +102,6 @@ fn tracked_output_capacity(ptr: *mut c_char, requested: usize) -> usize {
     known_remaining(ptr as usize).map_or(requested, |remaining| remaining.min(requested))
 }
 
-#[inline]
 /// Clamp a syscall's output length to what the allocator knows about `ptr`.
 ///
 /// TWO SHORT-CIRCUITS AHEAD OF THE LOOKUP, both behaviour-preserving and both
@@ -642,7 +634,7 @@ pub(crate) unsafe fn close_cp(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::Stdio, decision.profile, 6, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_close(fd)) {
+    let rc = match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_close(fd)) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1620,7 +1612,7 @@ pub unsafe extern "C-unwind" fn fsync(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fsync(fd)) {
+    let rc = match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_fsync(fd)) } {
         Ok(()) => 0,
         Err(e) => {
             unsafe { set_abi_errno(e) };
@@ -1639,13 +1631,14 @@ pub unsafe extern "C-unwind" fn fdatasync(fd: c_int) -> c_int {
         runtime_policy::observe(ApiFamily::IoFd, decision.profile, 5, true);
         return -1;
     }
-    let rc = match crate::pthread_abi::at_cancellation_point(|| syscall::sys_fdatasync(fd)) {
-        Ok(()) => 0,
-        Err(e) => {
-            unsafe { set_abi_errno(e) };
-            -1
-        }
-    };
+    let rc =
+        match unsafe { crate::pthread_abi::at_cancellation_point(|| syscall::sys_fdatasync(fd)) } {
+            Ok(()) => 0,
+            Err(e) => {
+                unsafe { set_abi_errno(e) };
+                -1
+            }
+        };
     runtime_policy::observe(ApiFamily::IoFd, decision.profile, 15, rc != 0);
     rc
 }
@@ -3155,11 +3148,8 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         // POSIX option/version selectors.
         13 | 20 => 200809, // _SC_PRIORITIZED_IO, _SC_MESSAGE_PASSING
         45 => 2048,        // _SC_CHARCLASS_NAME_MAX
-        77..=82 => 200809, // _SC_THREAD_{ATTR_*,PRIORITY_*,PRIO_*,PROCESS_SHARED}
         88 => 8192,        // _SC_PASS_MAX
         89 => 700,         // _SC_XOPEN_VERSION
-        90 => 4,           // _SC_XOPEN_XCU_VERSION
-        91 | 93 | 94 => 1, // _SC_XOPEN_{UNIX,ENH_I18N,SHM}
         95 | 96 => 200809, // _SC_2_{CHAR_TERM,C_VERSION}
         98..=100 => 1,     // _SC_XOPEN_XPG{2,3,4}
         // C implementation limits reported by glibc's sysconf(3).
@@ -3186,7 +3176,7 @@ pub unsafe extern "C" fn sysconf(name: c_int) -> libc::c_long {
         120 => 2048, // _SC_NL_LANGMAX
         121..=124 => i32::MAX as libc::c_long,
         // _SC_NL_{MSGMAX,NMAX,SETMAX,TEXTMAX}
-        127 | 129 | 130 => 1, // _SC_XBS5_LP64_OFF64, _SC_XOPEN_{LEGACY,REALTIME}
+        127 => 1, // _SC_XBS5_LP64_OFF64
         // The signed lower bounds. Their _MAX counterparts are all present
         // above, but the four _MIN selectors were never added, so they fell
         // through to the unknown-selector arm and reported -1 with EINVAL
@@ -3495,6 +3485,7 @@ fn getopt_is_option_like(elem: &[u8]) -> bool {
 /// argv element as a separate argument: true iff walking the bundle reaches
 /// a `Required`-argument option with no attached text after it. Used by the
 /// permutation step so an option and its separate argument move together.
+#[allow(dead_code)]
 fn getopt_block_takes_next_arg(elem: &[u8], optspec: &[u8]) -> bool {
     let mut i = 1;
     while i < elem.len() {
@@ -3664,7 +3655,6 @@ unsafe fn getopt_prepare(
         if first_nonopt != last_nonopt && last_nonopt != optind {
             unsafe { getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind) };
             first_nonopt += optind - last_nonopt;
-            last_nonopt = optind;
         } else if last_nonopt != optind {
             first_nonopt = optind;
         }
@@ -3687,7 +3677,6 @@ unsafe fn getopt_prepare(
                     getopt_exchange(&mut argv_bytes, argv, first_nonopt, last_nonopt, optind)
                 };
                 first_nonopt += optind - last_nonopt;
-                last_nonopt = optind;
             } else if first_nonopt == last_nonopt {
                 first_nonopt = optind;
             }
@@ -5714,7 +5703,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
     let (Some(f), Some(params)) = (f, params) else {
         VG_FAST.with(|c| {
             c.set(VdsoDrawFast {
-                state: 1 as *mut c_void,
+                state: std::ptr::dangling_mut::<c_void>(),
                 f: None,
                 state_len: 0,
             })
@@ -5727,7 +5716,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
     if VG_STATES_CLAIMED.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= VG_STATE_SLOTS {
         VG_FAST.with(|c| {
             c.set(VdsoDrawFast {
-                state: 1 as *mut c_void,
+                state: std::ptr::dangling_mut::<c_void>(),
                 f: None,
                 state_len: 0,
             })
@@ -5749,7 +5738,7 @@ fn init_vdso_draw_fast() -> Option<VdsoDrawFast> {
         Err(_) => {
             VG_FAST.with(|c| {
                 c.set(VdsoDrawFast {
-                    state: 1 as *mut c_void,
+                    state: std::ptr::dangling_mut::<c_void>(),
                     f: None,
                     state_len: 0,
                 })
@@ -6628,11 +6617,13 @@ pub unsafe extern "C" fn shm_unlink(name: *const c_char) -> c_int {
 // ---------------------------------------------------------------------------
 
 /// SEM_VALUE_MAX — POSIX specifies at least 32767.
+#[allow(dead_code)]
 const SEM_VALUE_MAX: c_uint = 0x7fff_ffff;
 
 /// Interpret the sem_t pointer as a pointer to an atomic i32 counter.
 /// On Linux/glibc, sem_t is a 32-byte union; the first 4 bytes hold the
 /// unsigned counter for unnamed semaphores.
+#[allow(dead_code)]
 unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI32 {
     unsafe { &*(sem as *const std::sync::atomic::AtomicI32) }
 }
@@ -6640,8 +6631,10 @@ unsafe fn sem_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicI
 /// Marker in the sem_t word at offset 8 of a process-shared semaphore
 /// (`sem_init` with nonzero `pshared`, or `sem_open`): its futexes must be
 /// shared, since process-private futexes never wake another process.
+#[allow(dead_code)]
 const SEM_SHARED_MARK: u32 = 0x5345_4d53; // "SMES"
 
+#[allow(dead_code)]
 unsafe fn sem_shared_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
     // SAFETY: a Linux sem_t is at least 32 bytes and 4-aligned.
     unsafe {
@@ -6651,6 +6644,7 @@ unsafe fn sem_shared_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::
 }
 
 /// `FUTEX_PRIVATE_FLAG` for a process-private semaphore, 0 for a shared one.
+#[allow(dead_code)]
 pub(crate) fn sem_futex_private_flag(sem: *mut c_void) -> c_int {
     // SAFETY: `sem` is the caller's sem_t.
     if unsafe { sem_shared_as_atomic(sem) }.load(std::sync::atomic::Ordering::Acquire)
@@ -6668,6 +6662,7 @@ pub(crate) fn sem_futex_private_flag(sem: *mut c_void) -> c_int {
 /// FUTEX_WAKE syscall when nobody is blocked, and e634aff2a deleted the whole
 /// mechanism. Without it every sem_post issues a syscall even uncontended, and
 /// conformance_diff_semaphore's wake test has no registration to observe.
+#[allow(dead_code)]
 unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic::AtomicU32 {
     // SAFETY: callers provide a valid, suitably aligned Linux sem_t, which is
     // at least 32 bytes. Offset four is therefore an aligned AtomicU32 slot.
@@ -6680,6 +6675,7 @@ unsafe fn sem_waiters_as_atomic(sem: *mut c_void) -> &'static std::sync::atomic:
 /// RAII registration: decrements on every exit path, including the error
 /// returns out of the sleeping loop, so a failed sem_wait cannot leak a
 /// phantom waiter and pin sem_post to the syscall path forever.
+#[allow(dead_code)]
 pub(crate) struct SemWaiterRegistration(&'static std::sync::atomic::AtomicU32);
 
 impl Drop for SemWaiterRegistration {
@@ -6688,6 +6684,7 @@ impl Drop for SemWaiterRegistration {
     }
 }
 
+#[allow(dead_code)]
 pub(crate) unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistration {
     let waiters = unsafe { sem_waiters_as_atomic(sem) };
     waiters.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -6696,6 +6693,7 @@ pub(crate) unsafe fn sem_register_waiter(sem: *mut c_void) -> SemWaiterRegistrat
 
 // Always inlined: its futex wait is the cancellation point of the exported
 // sem_wait, whose caller decides whether it is one (at_cancellation_point).
+#[allow(dead_code)]
 #[inline(always)]
 fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     // Semaphore waits are cancellation points.
@@ -6716,6 +6714,7 @@ fn sem_futex_wait(word: *mut c_void, expected: i32) -> c_int {
     }
 }
 
+#[allow(dead_code)]
 fn sem_realtime_now() -> Result<libc::timespec, c_int> {
     let mut now = libc::timespec {
         tv_sec: 0,
@@ -6727,6 +6726,7 @@ fn sem_realtime_now() -> Result<libc::timespec, c_int> {
     Ok(now)
 }
 
+#[allow(dead_code)]
 fn sem_relative_timeout(abs_timeout: *const libc::timespec) -> Result<libc::timespec, c_int> {
     if abs_timeout.is_null() {
         return Err(libc::EINVAL);
@@ -6757,6 +6757,7 @@ fn sem_relative_timeout(abs_timeout: *const libc::timespec) -> Result<libc::time
 }
 
 // Always inlined, as sem_futex_wait is.
+#[allow(dead_code)]
 #[inline(always)]
 fn sem_futex_wait_timed(
     word: *mut c_void,
@@ -6785,6 +6786,7 @@ fn sem_futex_wait_timed(
     }
 }
 
+#[allow(dead_code)]
 fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
     match unsafe {
         syscall::sys_futex(
@@ -6808,12 +6810,14 @@ fn sem_futex_wake(word: *mut c_void, count: i32) -> i64 {
 // sem_close munmaps it; sem_unlink removes the backing file.
 
 /// Size of the semaphore mapping (page-aligned minimum).
+#[allow(dead_code)]
 const SEM_MMAP_SIZE: usize = 32; // Must be >= sizeof(sem_t) = 32 on glibc/x86_64
 
 /// Resolve a POSIX semaphore name to its /dev/shm/sem.NAME path.
 ///
 /// The name MUST start with '/' and contain no further slashes.
 /// glibc convention: the backing file is `/dev/shm/sem.<name_without_slash>`.
+#[allow(dead_code)]
 #[inline]
 unsafe fn resolve_sem_path(name: *const c_char) -> Result<CString, c_int> {
     if name.is_null() {
@@ -9291,7 +9295,7 @@ fn host_extended_crypt() -> Option<unsafe extern "C" fn(*const c_char, *const c_
         let symbol = host_libcrypt_symbol(c"crypt".as_ptr())?;
         // SAFETY: dlsym returned libxcrypt's `crypt` symbol, whose ABI is
         // exactly `CryptFn`.
-        Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
+        Some(unsafe { core::mem::transmute::<*mut c_void, CryptFn>(symbol) }) // ubs:ignore — dlsym result has verified crypt ABI
     });
     *HOST_CRYPT
 }
@@ -9303,7 +9307,7 @@ fn host_crypt_preferred_method() -> Option<*const c_char> {
             let symbol = host_libcrypt_symbol(c"crypt_preferred_method".as_ptr())?;
             // SAFETY: dlsym returned libxcrypt's `crypt_preferred_method`
             // symbol, whose ABI is exactly `PreferredMethodFn`.
-            Some(unsafe { core::mem::transmute(symbol) }) // ubs:ignore — dlsym result has verified crypt_preferred_method ABI
+            Some(unsafe { core::mem::transmute::<*mut c_void, PreferredMethodFn>(symbol) }) // ubs:ignore — dlsym result has verified crypt_preferred_method ABI
         });
     let preferred_method = (*HOST_PREFERRED_METHOD)?;
     let method = unsafe { preferred_method() };
@@ -15652,6 +15656,7 @@ fn aio_execute(fd: c_int, buf_addr: usize, nbytes: usize, offset: i64, op: AioOp
     }
 }
 
+#[allow(dead_code)]
 unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
     if result < 0 {
         let err = current_abi_errno();
@@ -15665,6 +15670,7 @@ unsafe fn aio_complete(aiocbp: *mut c_void, result: i64) {
     }
 }
 
+#[allow(dead_code)]
 fn aio_notify_waiters() {
     aio_completion::publish();
 }
@@ -24069,7 +24075,7 @@ unsafe fn dn_name_at_offset_equals(base: *const u8, mut off: usize, want: &[&[u8
         for (k, &wb) in label.iter().enumerate() {
             // SAFETY: bounded by `len`, which the message declares.
             let mb = unsafe { *base.add(off + 1 + k) };
-            if mb.to_ascii_lowercase() != wb.to_ascii_lowercase() {
+            if !mb.eq_ignore_ascii_case(&wb) {
                 return false;
             }
         }
@@ -31628,8 +31634,8 @@ pub unsafe extern "C" fn MD5Transform(state: *mut u32, block: *const c_uchar) {
     let mut hasher = md5::Md5::new();
     hasher.update(blk);
     let out = hasher.finalize();
-    for (i, chunk) in out.chunks_exact(4).enumerate().take(4) {
-        let w = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    for (i, chunk) in out.as_chunks::<4>().0.iter().enumerate().take(4) {
+        let w = u32::from_le_bytes(*chunk);
         unsafe { *state.add(i) = w };
     }
 }

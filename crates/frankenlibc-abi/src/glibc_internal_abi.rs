@@ -2309,7 +2309,7 @@ fn dns_name_fully_qualified(name: &[u8]) -> bool {
         backslashes += 1;
         i -= 1;
     }
-    backslashes % 2 == 0
+    backslashes.is_multiple_of(2)
 }
 
 /// `ns_name_ntop` — convert uncompressed wire-format labels to dotted text (RFC 1035).
@@ -3410,8 +3410,8 @@ pub unsafe extern "C" fn inet6_option_next(cmsg: *const c_void, tptrp: *mut *mut
         if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
             return -1;
         }
-        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
-        let first = ip6e.add(I6O_IP6_EXT) as *const u8; // ip6e + 1
+        let endp = ip6e.add((ip6e_len + 1) * 8);
+        let first = ip6e.add(I6O_IP6_EXT); // ip6e + 1
         let mut result: *const u8;
         if (*tptrp).is_null() {
             result = first;
@@ -3454,12 +3454,12 @@ pub unsafe extern "C" fn inet6_option_find(
         if clen < I6O_CMSG_HDR + I6O_IP6_EXT || clen < I6O_CMSG_HDR + (ip6e_len + 1) * 8 {
             return -1;
         }
-        let endp = ip6e.add((ip6e_len + 1) * 8) as *const u8;
+        let endp = ip6e.add((ip6e_len + 1) * 8);
         let mut next: *const u8;
         if (*tptrp).is_null() {
-            next = ip6e.add(I6O_IP6_EXT) as *const u8;
+            next = ip6e.add(I6O_IP6_EXT);
         } else {
-            if (*tptrp as *const u8) < ip6e.add(I6O_IP6_EXT) as *const u8 {
+            if (*tptrp as *const u8) < ip6e.add(I6O_IP6_EXT) {
                 return -1;
             }
             next = core::ptr::null();
@@ -4116,10 +4116,7 @@ pub unsafe extern "C" fn __fsetlocking(fp: *mut c_void, typ: c_int) -> c_int {
     // it. Returns the mode in effect before the call. fl previously ignored
     // `typ` and the stream, always returning 2 (BYCALLER) — wrong default (glibc
     // streams default to INTERNAL=1) and never honoring a set. bd-zwtrcz.
-    match crate::stdio_abi::stream_set_locking(fp, typ) {
-        Some(prev) => prev,
-        None => 1, // unknown stream: glibc's default is FSETLOCKING_INTERNAL
-    }
+    crate::stdio_abi::stream_set_locking(fp, typ).unwrap_or(1)
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn __fwritable(fp: *mut c_void) -> c_int {
@@ -5284,7 +5281,7 @@ pub unsafe extern "C" fn _dl_find_object(address: *mut c_void, result: *mut c_vo
                 addr = resolved;
             }
         }
-        if addr != 0 && addr != _dl_find_object as usize {
+        if addr != 0 && addr != _dl_find_object as *const () as usize {
             // SAFETY: resolved from the already-loaded host dynamic linker,
             // which exports `_dl_find_object(void *, struct dl_find_object *)`.
             let host: HostDlFindObject = unsafe { core::mem::transmute(addr) };
@@ -5444,7 +5441,7 @@ unsafe fn host_profil_fn() -> Option<HostProfilFn> {
     let addr = crate::host_resolve::resolve_host_symbol_raw("profil")?;
     // SAFETY: the raw ELF resolver returns the host libc's `profil` symbol,
     // whose ABI is exactly `HostProfilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute(addr) })
+    Some(unsafe { core::mem::transmute::<usize, HostProfilFn>(addr) })
 }
 
 #[inline]
@@ -5452,7 +5449,7 @@ unsafe fn host_sprofil_fn() -> Option<HostSprofilFn> {
     let addr = crate::host_resolve::resolve_host_symbol_raw("sprofil")?;
     // SAFETY: the raw ELF resolver returns the host libc's `sprofil` symbol,
     // whose ABI is exactly `HostSprofilFn` on the supported Linux targets.
-    Some(unsafe { core::mem::transmute(addr) })
+    Some(unsafe { core::mem::transmute::<usize, HostSprofilFn>(addr) })
 }
 
 // profil: host sampling engine
@@ -5639,7 +5636,6 @@ pub fn adjtime_timeval_to_offset_micros_for_tests(tv_sec: i64, tv_usec: i64) -> 
         tv_sec: tv_sec as _,
         tv_usec: tv_usec as _,
     })
-    .map(|v| v as i64)
 }
 
 /// Test hook (bd-xh08pf): the reading half of the same pair. Returns
@@ -5648,7 +5644,7 @@ pub fn adjtime_timeval_to_offset_micros_for_tests(tv_sec: i64, tv_usec: i64) -> 
 #[must_use]
 pub fn adjtime_offset_micros_to_timeval_for_tests(offset: i64) -> (i64, i64) {
     let tv = offset_micros_to_timeval(offset as _);
-    (tv.tv_sec as i64, tv.tv_usec as i64)
+    (tv.tv_sec, tv.tv_usec)
 }
 
 // arch_prctl: native syscall
@@ -6075,10 +6071,7 @@ pub unsafe extern "C" fn fwide(stream: *mut c_void, mode: c_int) -> c_int {
     // unset and mode != 0; sticky thereafter) and return the result. Previously
     // `mode` was ignored entirely, so fwide(s, +1)/fwide(s, -1) never oriented
     // the stream and always returned 0. bd-ifu9ll.
-    match crate::stdio_abi::stream_set_orientation(stream, mode) {
-        Some(orientation) => orientation,
-        None => 0, // stream not owned by fl: orientation unknown
-    }
+    crate::stdio_abi::stream_set_orientation(stream, mode).unwrap_or_default()
 }
 // get_kernel_syms: removed in Linux 2.6 — return ENOSYS
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -7811,8 +7804,7 @@ pub unsafe extern "C" fn sgetspent_r(
     }
     let parse_long = |idx: usize| -> Option<c_long> {
         match fields.get(idx) {
-            None => Some(-1),
-            Some(s) if s.is_empty() => Some(-1),
+            None | Some(&"") => Some(-1),
             Some(s) => shadow_strtoul(s).map(|v| v as c_long),
         }
     };
@@ -7827,8 +7819,7 @@ pub unsafe extern "C" fn sgetspent_r(
         return libc::EINVAL;
     };
     let flag = match fields.get(8) {
-        None => c_ulong::MAX,
-        Some(s) if s.is_empty() => c_ulong::MAX,
+        None | Some(&"") => c_ulong::MAX,
         Some(s) => match shadow_strtoul(s) {
             Some(v) => v as c_ulong,
             None => return libc::EINVAL,
