@@ -249,7 +249,7 @@ impl Fixture {
             }
             let start = usize::try_from(header.p_offset).unwrap();
             let len = usize::try_from(header.p_filesz).unwrap();
-            for entry in bytes[start..start + len].chunks_exact(16) {
+            for entry in bytes[start..start + len].as_chunks::<16>().0 {
                 let tag = i64::from_le_bytes(entry[..8].try_into().unwrap());
                 let flags = u64::from_le_bytes(entry[8..].try_into().unwrap());
                 if tag == 0 {

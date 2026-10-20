@@ -273,12 +273,16 @@ impl Fixture {
             let size = u64_at(&bytes, header + 32);
             assert_eq!(u64_at(&bytes, header + 56), 24);
             let mut records = bytes[offset..offset + size]
-                .chunks_exact(24)
-                .map(<[u8]>::to_vec)
+                .as_chunks::<24>()
+                .0
+                .iter()
+                .map(|c| c.to_vec())
                 .collect::<Vec<_>>();
             records.sort_by_key(|r| (u64_at(r, 8) >> 32) != index);
             for (target, record) in bytes[offset..offset + size]
-                .chunks_exact_mut(24)
+                .as_chunks_mut::<24>()
+                .0
+                .iter_mut()
                 .zip(records)
             {
                 target.copy_from_slice(&record);

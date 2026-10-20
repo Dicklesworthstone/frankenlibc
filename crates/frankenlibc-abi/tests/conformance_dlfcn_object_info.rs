@@ -96,13 +96,12 @@ fn metadata_owns_non_utf8_path_and_names_after_parser_drop() {
 #[test]
 fn ownership_excludes_gaps_and_half_open_load_end() {
     let mut object = object();
-    let load = object
+    let load = *object
         .program_headers
         .iter()
         .find(|header| header.is_load())
-        .unwrap()
-        .clone();
-    object.program_headers = vec![load.clone(), load];
+        .unwrap();
+    object.program_headers = vec![load, load];
     object.program_headers[0].p_vaddr = 0x1000;
     object.program_headers[0].p_memsz = 0x100;
     object.program_headers[1].p_vaddr = 0x3000;

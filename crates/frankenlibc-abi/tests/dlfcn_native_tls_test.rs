@@ -529,6 +529,7 @@ fn native_tls_malformed_metadata_and_relocations_rollback() {
 }
 
 #[test]
+#[allow(clippy::single_element_loop)]
 fn native_tls_unsupported_models_are_not_silently_loaded() {
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let f = Fixture::new();

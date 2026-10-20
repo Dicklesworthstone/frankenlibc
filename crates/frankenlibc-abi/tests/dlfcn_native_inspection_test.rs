@@ -150,5 +150,5 @@ fn native_zero_sized_symbol_matches_only_its_exact_address() {
     let (found, interior) = address_info((zero as usize + 1) as *const c_void);
     assert_ne!(found, 0);
     assert!(interior.dli_sname.is_null() && interior.dli_saddr.is_null());
-    assert_eq!(address_info(1usize as *const c_void).0, 0);
+    assert_eq!(address_info(std::ptr::without_provenance(1)).0, 0);
 }

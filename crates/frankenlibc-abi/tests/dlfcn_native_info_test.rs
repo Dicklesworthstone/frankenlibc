@@ -106,8 +106,8 @@ impl Api {
             assert!(!info.is_null() && !address.is_null());
             Self { open: dl::dlopen, close: dl::dlclose, sym: dl::dlsym,
                 error: dl::dlerror,
-                info: unsafe { std::mem::transmute(info) },
-                address: unsafe { std::mem::transmute(address) }, native }
+                info: unsafe { std::mem::transmute::<*mut c_void, Info>(info) },
+                address: unsafe { std::mem::transmute::<*mut c_void, Address>(address) }, native }
         } else { unsafe { Self {
             open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
             close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
@@ -362,7 +362,7 @@ fn file_symbol(path: &Path, name: &str) -> (usize, ElfSymbol) {
     let dynamic = object.program_headers.iter().find(|header| header.p_type
         == frankenlibc_core::elf::ProgramType::Dynamic).unwrap();
     let entries = &bytes[dynamic.p_offset as usize..(dynamic.p_offset + dynamic.p_filesz) as usize];
-    let table = entries.chunks_exact(16).take_while(|entry| entry[..8] != [0; 8])
+    let table = entries.as_chunks::<16>().0.iter().take_while(|entry| entry[..8] != [0; 8])
         .find(|entry| i64::from_le_bytes(entry[..8].try_into().unwrap()) == 6).unwrap();
     let offset = u64::from_le_bytes(table[8..16].try_into().unwrap()) as usize + index * 24;
     (offset, ElfSymbol { name: symbol.st_name, info: symbol.st_info,
@@ -373,7 +373,7 @@ fn address_query(function: Address, address: *const c_void, flag: i32)
     -> (libc::Dl_info, *mut c_void)
 {
     let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
-    let mut extra = 1usize as *mut c_void;
+    let mut extra = std::ptr::without_provenance_mut(1);
     assert_eq!(unsafe { function(address, (&raw mut info).cast(), &mut extra, flag) }, 1);
     (info, extra)
 }

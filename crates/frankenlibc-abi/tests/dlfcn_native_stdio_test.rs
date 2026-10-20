@@ -317,7 +317,7 @@ fn stream_recursive_locks_serialize_concurrent_records() {
             unsafe { std::mem::transmute(api.symbol(h, c"stream_close_shared")) };
         let stream = unsafe { open(f.path("records").as_ptr()) } as usize;
         assert_ne!(stream, 0);
-        let workers = [b'A', b'B', b'C', b'D'].map(|byte| std::thread::spawn(move || {
+        let workers = b"ABCD".map(|byte| std::thread::spawn(move || {
             assert_eq!(unsafe { write(stream as *mut c_void, byte as c_int, 200) }, 0);
         }));
         for worker in workers { worker.join().unwrap(); }
@@ -325,7 +325,7 @@ fn stream_recursive_locks_serialize_concurrent_records() {
         let bytes = std::fs::read(f.dir.join("records")).unwrap();
         assert_eq!(bytes.len(), 4 * 200 * 8);
         let mut counts = [0usize; 4];
-        for line in bytes.chunks_exact(8) {
+        for line in bytes.as_chunks::<8>().0 {
             assert_eq!(line[7], b'\n'); assert!((b'A'..=b'D').contains(&line[0]));
             assert!(line[..7].iter().all(|byte| *byte == line[0]));
             counts[(line[0] - b'A') as usize] += 1;

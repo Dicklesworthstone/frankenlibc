@@ -80,6 +80,7 @@ const RELATIVE: &str = "int relative_value(void) { return 99; }\n";
 const IMPORTER: &str = "extern int open_private(void); int imported(void) { return open_private(); }\n";
 
 #[derive(Clone, Copy)]
+#[allow(dead_code)]
 struct Api { open: Open, sym: Sym, close: Close, error: Error, native: bool }
 impl Api {
     fn new(native: bool) -> Self {

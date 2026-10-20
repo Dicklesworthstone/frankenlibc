@@ -342,7 +342,7 @@ fn native_lifecycle_malformed_dynamic_metadata_cannot_use_sections() {
     ] {
         let mut bytes = original.clone();
         let mut changed = false;
-        for entry in bytes[start..end].chunks_exact_mut(16) {
+        for entry in bytes[start..end].as_chunks_mut::<16>().0 {
             let current = i64::from_le_bytes(entry[..8].try_into().unwrap());
             if current == 0 {
                 break;
