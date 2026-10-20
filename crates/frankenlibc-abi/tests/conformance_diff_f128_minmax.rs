@@ -92,7 +92,7 @@ fn values() -> Vec<f128> {
         f128::from_bits(1u128 << 112),       // smallest normal
         f128::from_bits(0x7ffe_u128 << 112), // near-largest finite
     ];
-    let mut st: u64 = 0xc0ffee_1234_5678;
+    let mut st: u64 = 0x00c0_ffee_1234_5678;
     for _ in 0..30 {
         st = st
             .wrapping_mul(6364136223846793005)

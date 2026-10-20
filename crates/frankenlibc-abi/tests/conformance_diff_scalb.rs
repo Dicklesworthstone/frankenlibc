@@ -139,7 +139,12 @@ fn host_scalb_finite_symbols() -> (ScalbFinite64Fn, ScalbFinite32Fn) {
 
     // SAFETY: dlvsym resolved the documented GLIBC_2.15 scalar signatures.
     // ubs:ignore — the versioned host ABI fixes both raw-pointer signatures.
-    unsafe { (std::mem::transmute(finite64), std::mem::transmute(finite32)) }
+    unsafe {
+        (
+            std::mem::transmute::<*mut libc::c_void, ScalbFinite64Fn>(finite64),
+            std::mem::transmute::<*mut libc::c_void, ScalbFinite32Fn>(finite32),
+        )
+    }
 }
 
 fn host_finite64(function: ScalbFinite64Fn, x: f64, e: f64) -> Obs64 {

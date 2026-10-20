@@ -44,7 +44,7 @@ fn diff_fmod_rem_flags() {
     assert!(!h.is_null());
     macro_rules! sym2 {
         ($n:literal, $t:ty) => {
-            unsafe { core::mem::transmute::<_, $t>(dlsym(h, $n.as_ptr())) }
+            unsafe { core::mem::transmute::<*mut c_void, $t>(dlsym(h, $n.as_ptr())) }
         };
     }
     let g_fmod = sym2!(c"fmod", extern "C" fn(f64, f64) -> f64);

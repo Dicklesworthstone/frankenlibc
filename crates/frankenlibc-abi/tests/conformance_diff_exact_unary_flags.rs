@@ -53,7 +53,7 @@ fn diff_exact_unary_flags() {
     assert!(!h.is_null());
     macro_rules! sym {
         ($n:literal, $t:ty) => {
-            unsafe { core::mem::transmute::<_, $t>(dlsym(h, $n.as_ptr())) }
+            unsafe { core::mem::transmute::<*mut c_void, $t>(dlsym(h, $n.as_ptr())) }
         };
     }
     let mut div = Vec::new();

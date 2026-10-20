@@ -68,6 +68,7 @@ fn close32(a: f32, b: f32) -> bool {
     ka.abs_diff(kb) <= 4
 }
 
+#[allow(clippy::approx_constant)]
 const CASES: &[f64] = &[
     0.0,
     -0.0,

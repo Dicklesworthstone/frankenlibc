@@ -25,7 +25,6 @@ mod dlsym_oracle;
 /// these symbols into this test binary, so a link-time reference can bind to fl
 /// and leave BOTH arms as fl -- green while comparing nothing, which would leave
 /// the defect documented above ungated and free to regress (bd-v0388t).
-
 type ImaxdivFn = unsafe extern "C" fn(i64, i64) -> HostImaxdiv;
 
 fn host_imaxdiv() -> ImaxdivFn {

@@ -13,6 +13,7 @@ unsafe extern "C" {
     fn ctanhf128(z: C) -> C;
 }
 
+#[allow(clippy::approx_constant)]
 fn parts() -> Vec<f128> {
     let mut v = vec![
         0.0,

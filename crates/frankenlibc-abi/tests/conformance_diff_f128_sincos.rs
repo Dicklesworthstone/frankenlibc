@@ -1,7 +1,7 @@
 //! Differential gate: f128 sinf128 + cosf128 match glibc bit-for-bit
 //! (bd-9z5ikz). Both were garbage f64-ABI stubs. The fix ports glibc's ldbl-128
-//! trig cluster verbatim — __kernel_rem_pio2 (Payne-Hanek with the 2/pi table)
-//! + __ieee754_rem_pio2l + __kernel_sincosl (Chebyshev + the 83-point sin/cos
+//! trig cluster verbatim — __kernel_rem_pio2 (Payne-Hanek with the 2/pi table) +
+//! __ieee754_rem_pio2l + __kernel_sincosl (Chebyshev + the 83-point sin/cos
 //! table) + the sinl/cosl dispatchers — so they are byte-exact.
 #![cfg(target_os = "linux")]
 #![feature(f128)]
@@ -14,6 +14,7 @@ unsafe extern "C" {
     fn cosf128(x: f128) -> f128;
 }
 
+#[allow(clippy::approx_constant)]
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
         0.0,

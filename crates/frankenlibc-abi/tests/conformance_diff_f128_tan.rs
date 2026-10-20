@@ -11,6 +11,7 @@ unsafe extern "C" {
     fn tanf128(x: f128) -> f128;
 }
 
+#[allow(clippy::approx_constant)]
 fn values() -> Vec<f128> {
     let mut v: Vec<f128> = vec![
         0.0,

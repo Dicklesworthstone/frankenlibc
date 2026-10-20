@@ -27,7 +27,9 @@ mod dlsym_oracle;
 /// of it.
 type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
+#[allow(dead_code)]
 type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
+#[allow(dead_code)]
 type F32BinaryFn = unsafe extern "C" fn(f32, f32) -> f32;
 
 macro_rules! host_shim {

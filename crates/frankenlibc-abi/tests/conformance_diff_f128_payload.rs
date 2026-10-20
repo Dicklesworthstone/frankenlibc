@@ -5,7 +5,7 @@
 #![allow(unsafe_code)]
 
 use frankenlibc_abi::math_abi as ma;
-use std::ffi::{CStr, CString, c_char};
+use std::ffi::{CString, c_char};
 
 unsafe extern "C" {
     fn getpayloadf128(x: *const f128) -> f128;
@@ -70,5 +70,4 @@ fn nan_matches_glibc() {
     // (NULL tag is not tested: glibc's nanf128 dereferences the tag pointer and
     // crashes on NULL — UB — whereas fl handles it; can't compare.)
     assert!(mism.is_empty(), "nanf128 diverged:\n{}", mism.join("\n"));
-    let _ = CStr::from_bytes_with_nul(b"\0");
 }

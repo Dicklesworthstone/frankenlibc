@@ -29,7 +29,6 @@ mod dlsym_oracle;
 type F64UnaryFn = unsafe extern "C" fn(f64) -> f64;
 type F32UnaryFn = unsafe extern "C" fn(f32) -> f32;
 type F64BinaryFn = unsafe extern "C" fn(f64, f64) -> f64;
-type F32BinaryFn = unsafe extern "C" fn(f32, f32) -> f32;
 
 macro_rules! host_shim {
     ($($rust:ident : $ty:ty = $sym:literal via $flpath:path => ($($arg:ident : $at:ty),*) -> $rt:ty);* $(;)?) => {

@@ -430,12 +430,8 @@ unsafe extern "C" fn call_host_qgcvt(
 
 fn host_qgcvt() -> HostQgcvt {
     static H: OnceLock<Option<HostQcvt>> = OnceLock::new();
-    let sym = H
-        .get_or_init(|| host_symbol(c"qgcvt"))
-        .expect("glibc qgcvt must resolve");
-    // SAFETY: same nullary-shaped alias the other oracles use; the trampoline
-    // supplies the real signature.
-    unsafe { std::mem::transmute::<HostQcvt, HostQgcvt>(sym) }
+    H.get_or_init(|| host_symbol(c"qgcvt"))
+        .expect("glibc qgcvt must resolve")
 }
 
 fn render(buf: &[c_char]) -> String {

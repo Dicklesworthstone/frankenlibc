@@ -1,7 +1,7 @@
 //! Differential gate: f128 pownf128 (C23) matches glibc bit-for-bit on value +
-//! errno (bd-9z5ikz). Was a garbage f64-ABI stub. For binary128 (MANT_DIG=113
-//! >= 63) glibc's pown reduces to pow(x, (f128)n); the fix mirrors that on the
-//! byte-exact powl_f128 with pown's ERANGE tail. Byte-exact.
+//! errno (bd-9z5ikz). Was a garbage f64-ABI stub. For binary128
+//! (MANT_DIG=113 >= 63) glibc's pown reduces to pow(x, (f128)n); the fix mirrors
+//! that on the byte-exact powl_f128 with pown's ERANGE tail. Byte-exact.
 #![cfg(target_os = "linux")]
 #![feature(f128)]
 #![allow(unsafe_code)]

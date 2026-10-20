@@ -15,7 +15,7 @@
 #![allow(unsafe_code)]
 
 use frankenlibc_abi::math_abi as ma;
-use std::ffi::{CStr, c_int, c_uint};
+use std::ffi::{c_int, c_uint};
 
 #[path = "common/dlsym_oracle.rs"]
 mod dlsym_oracle;
@@ -38,23 +38,23 @@ fn host() -> HostF128 {
     unsafe {
         HostF128 {
             fromfp: dlsym_oracle::host_fn_versioned(
-                CStr::from_bytes_with_nul(b"fromfpf128\0").unwrap(),
-                CStr::from_bytes_with_nul(b"GLIBC_2.26\0").unwrap(),
+                c"fromfpf128",
+                c"GLIBC_2.26",
                 ma::fromfpf128 as *const (),
             ),
             ufromfp: dlsym_oracle::host_fn_versioned(
-                CStr::from_bytes_with_nul(b"ufromfpf128\0").unwrap(),
-                CStr::from_bytes_with_nul(b"GLIBC_2.26\0").unwrap(),
+                c"ufromfpf128",
+                c"GLIBC_2.26",
                 ma::ufromfpf128 as *const (),
             ),
             fromfpx: dlsym_oracle::host_fn_versioned(
-                CStr::from_bytes_with_nul(b"fromfpxf128\0").unwrap(),
-                CStr::from_bytes_with_nul(b"GLIBC_2.26\0").unwrap(),
+                c"fromfpxf128",
+                c"GLIBC_2.26",
                 ma::fromfpxf128 as *const (),
             ),
             ufromfpx: dlsym_oracle::host_fn_versioned(
-                CStr::from_bytes_with_nul(b"ufromfpxf128\0").unwrap(),
-                CStr::from_bytes_with_nul(b"GLIBC_2.26\0").unwrap(),
+                c"ufromfpxf128",
+                c"GLIBC_2.26",
                 ma::ufromfpxf128 as *const (),
             ),
         }
