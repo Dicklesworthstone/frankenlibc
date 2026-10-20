@@ -1,0 +1,83 @@
+name: Native RPC client creation and one-shot calls
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/frankenlibc-abi/src/rpc*'
+      - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/tests/rpc*'
+      - 'tests/integration/fixture_rpc_client_create.c'
+      - '.github/workflows/rpc-client-create.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  clients:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: [default, owned-tls-cache]
+    env:
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-08-31
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Prepare the exact reviewed integration candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/rpc-clients
+          mkdir -p "$root/source"
+          git rev-parse HEAD > "$root/revision.txt"
+          rustc --version --verbose > "$root/rustc.txt"
+          test "$(git hash-object crates/frankenlibc-abi/src/rpc_abi.rs)" = 49798575be2489d2274a02e8297a3aa41d7c43f8
+          test "$(git hash-object crates/frankenlibc-abi/tests/rpc_abi_test.rs)" = eff983cbd2d2eee8ba20b020cc58182d580e855c
+          gh api repos/${{ github.repository }}/git/blobs/8da6cf8e12e1e1b0b752afe60949ae5fefb54cad --jq .content | base64 -d > "$root/integration.patch"
+          git apply --check "$root/integration.patch"
+          git apply "$root/integration.patch"
+          for file in crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_client_create.rs crates/frankenlibc-abi/src/rpc_udp.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs; do
+            cp "$file" "$root/source/"
+            git hash-object "$file" >> "$root/source-blobs.txt"
+          done
+      - name: Compile release ABI and execute existing RPC contracts
+        env:
+          FEATURE: ${{ matrix.feature }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=artifacts/rpc-clients
+          args=()
+          if [[ "$FEATURE" != default ]]; then args=(--features "$FEATURE"); fi
+          cargo build --locked --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
+          cp target/release/libfrankenlibc_abi.so "$root/"
+          cc -O2 -Wall -Wextra -Werror tests/integration/fixture_rpc_client_create.c -ldl -o "$root/fixture"
+          "$root/fixture" unknown-protocol
+          for mode in strict hardened; do
+            LD_PRELOAD="$PWD/$root/libfrankenlibc_abi.so" FRANKENLIBC_TEST_LIBRARY="$PWD/$root/libfrankenlibc_abi.so" FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=0 "$root/fixture" unknown-protocol
+          done
+          for target in rpc_abi_test rpc_udp_transport_test rpc_tcp_frontend_test rpc_auth_recovery_test; do
+            cargo test --locked -p frankenlibc-abi --test "$target" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$target.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$target.log"
+          done
+          sudo python3 "$PWD/scripts/check_gai_async.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/dns"
+          python3 scripts/check_aio_completion.py "$PWD/$root/libfrankenlibc_abi.so" --output "$root/aio"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rpc-clients-${{ matrix.feature }}
+          path: artifacts/rpc-clients/
+          if-no-files-found: error
+          retention-days: 7
