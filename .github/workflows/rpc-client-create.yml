@@ -68,7 +68,7 @@ jobs:
           for mode in strict hardened; do
             LD_PRELOAD="$PWD/$root/libfrankenlibc_abi.so" FRANKENLIBC_TEST_LIBRARY="$PWD/$root/libfrankenlibc_abi.so" FRANKENLIBC_MODE="$mode" FRANKENLIBC_THREAD_NATIVE=0 "$root/fixture" unknown-protocol
           done
-          for target in rpc_abi_test rpc_udp_transport_test rpc_tcp_frontend_test rpc_auth_recovery_test; do
+          for target in rpc_abi_test rpc_udp_integration_test rpc_tcp_auth_integration_test rpc_auth_refresh_integration_test; do
             cargo test --locked -p frankenlibc-abi --test "$target" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$target.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$target.log"
           done
