@@ -16,8 +16,7 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 // Share the file-vector importer rather than maintaining a second iovec validator.
-#[path = "iov_snapshot.rs"]
-mod iov_snapshot;
+use crate::io_abi::iov_snapshot;
 #[path = "msg_snapshot.rs"]
 mod msg_snapshot;
 #[path = "sockaddr_snapshot.rs"]

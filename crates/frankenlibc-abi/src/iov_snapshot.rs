@@ -21,7 +21,7 @@ use frankenlibc_core::{errno, syscall};
 
 const INLINE_IOVECS: usize = 8;
 // Linux UIO_MAXIOV, on the x86_64 and aarch64 targets supported by the raw veneer.
-pub(super) const MAX_IOVECS: usize = 1024;
+pub(crate) const MAX_IOVECS: usize = 1024;
 const EMPTY_IOVEC: libc::iovec = libc::iovec {
     iov_base: ptr::null_mut(),
     iov_len: 0,
@@ -31,7 +31,7 @@ const EMPTY_IOVEC: libc::iovec = libc::iovec {
 /// error paths. Large imports use a raw anonymous mapping, not malloc or TLS:
 /// importing readv/writev must not acquire an allocator lock or reuse a signal-
 /// interrupted outer call's scratch storage.
-pub(super) struct PreparedIovecs {
+pub(crate) struct PreparedIovecs {
     storage: Storage,
     count: usize,
 }
@@ -98,7 +98,7 @@ impl Drop for Mapping {
 impl PreparedIovecs {
     /// Invalid/empty counts and null arrays are left to the original syscall,
     /// preserving zero-count FD checks and kernel count/null error handling.
-    pub(super) fn prepare(
+    pub(crate) fn prepare(
         iov: *const libc::iovec,
         count: c_int,
         hardened: bool,
@@ -115,7 +115,7 @@ impl PreparedIovecs {
     /// vmsplice's count is size_t, not readv's signed int. Preserve oversized
     /// values for the original syscall instead of truncating them into a valid
     /// import count (or zero). The caller passes the unchanged count to Linux.
-    pub(super) fn prepare_unsigned(
+    pub(crate) fn prepare_unsigned(
         iov: *const libc::iovec,
         count: usize,
         hardened: bool,
@@ -191,7 +191,7 @@ impl PreparedIovecs {
     }
 
     #[inline]
-    pub(super) fn as_ptr(&self) -> *const libc::iovec {
+    pub(crate) fn as_ptr(&self) -> *const libc::iovec {
         match &self.storage {
             Storage::Original(original) => *original,
             Storage::Inline(entries) => entries.as_ptr(),
@@ -221,8 +221,7 @@ impl PreparedIovecs {
 /// Any readable source bytes must be initialized. Any writable destination must
 /// permit byte writes for the duration of this call, without violating Rust
 /// aliasing; permission faults are reported rather than dereferenced in Rust.
-#[allow(dead_code)] // also compiled by the file-I/O parent, which imports only iovecs
-pub(super) unsafe fn copy_user_bytes(
+pub(crate) unsafe fn copy_user_bytes(
     source: *const u8,
     destination: *mut u8,
     bytes: usize,

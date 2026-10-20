@@ -14,7 +14,7 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 
 #[path = "iov_snapshot.rs"]
-mod iov_snapshot;
+pub(crate) mod iov_snapshot;
 
 #[inline]
 fn tracked_region_fits(ptr: *const c_void, len: usize) -> bool {
