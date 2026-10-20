@@ -93,10 +93,8 @@ pub fn decode_evidence_file(
     }
 
     let mut by_epoch: BTreeMap<u64, Vec<EvidenceSymbolRecord>> = BTreeMap::new();
-    for chunk in bytes.chunks_exact(EVIDENCE_RECORD_SIZE) {
-        let mut arr = [0u8; EVIDENCE_RECORD_SIZE];
-        arr.copy_from_slice(chunk);
-        let rec = EvidenceSymbolRecord::from_bytes(arr);
+    for chunk in bytes.as_chunks::<EVIDENCE_RECORD_SIZE>().0 {
+        let rec = EvidenceSymbolRecord::from_bytes(*chunk);
         if epoch_filter.is_some_and(|target| rec.epoch_id() != target) {
             continue;
         }
@@ -434,10 +432,7 @@ mod tests {
         records.retain(|rec| {
             let is_sys = (rec.flags() & FLAG_SYSTEMATIC) != 0;
             let esi = rec.esi();
-            if is_sys && drop_systematic.contains(&esi) {
-                return false;
-            }
-            true
+            !(is_sys && drop_systematic.contains(&esi))
         });
 
         let proof = decode_epoch(epoch_id, &records);
@@ -624,9 +619,9 @@ mod tests {
     fn payload_for(seed: u64, esi: u16) -> Payload {
         let mut out = [0u8; EVIDENCE_SYMBOL_SIZE_T];
         let mut state = seed ^ ((esi as u64) << 32) ^ 0xD6E8_FEB8_6659_FD93u64;
-        for chunk in out.chunks_exact_mut(8) {
+        for chunk in out.as_chunks_mut::<8>().0 {
             let v = splitmix64_next(&mut state);
-            chunk.copy_from_slice(&v.to_le_bytes());
+            *chunk = v.to_le_bytes();
         }
         out
     }
