@@ -3,10 +3,366 @@
 > **Canonical single plan document.** Always revise in place; never create `REALITY_CHECK_BRIDGE_PLAN_v2.md` or parallel plan files.
 > **Original assessment:** 2026-09-08 at commit `3bf05e3a` (`bd-reality-202609-lx578q`).
 > **Second pass:** 2026-09-23 (`bd-rc0923-epic-eeuy4f`).
-> **Current end-to-end reality check & revision:** 2026-10-13 at commit `9cef7fbd2`.
+> **Current reality check & revision:** 2026-10-20 at commit `9e97da908489a5f8e9b85cfd1f877ab4b40fef52`.
 > **Scope:** Close the remaining gap between FrankenLibC's vision (`README.md`, `AGENTS.md`, `PROPOSED_ARCHITECTURE.md`, `PLAN_TO_PORT_GLIBC_TO_RUST.md`, `FEATURE_PARITY.md`) and executed reality at HEAD across all replacement levels (`L0` → `L1` → `L2` → `L3`).
 
 ---
+
+## Current assessment — 2026-10-20
+
+**Verdict:** FrankenLibC is substantial Linux interposition engineering with real
+native kernels, selected hardened repairs, and improving executable evidence.
+It is still **L0**, with major compatibility, performance, provider-independence
+and qualification work remaining. It is not a demonstrated standalone glibc
+replacement or a universal memory-safety layer. Finishing the intake backlog
+alone would not close the vision gap.
+
+This assessment supersedes the October 13 and earlier assessments below as a
+statement of current state. Their observations and workstreams are retained as
+dated evidence. In particular, their 44-stub counts, stale-healing diagnosis,
+ungated aarch64 assembly diagnosis, and mapping of `.30` to printf/RPC work must
+not be carried forward as current facts.
+
+### Scope, source identity and verification limits
+
+The checkout began clean on `main` at
+`9e97da908489a5f8e9b85cfd1f877ab4b40fef52`. The full repository `AGENTS.md`
+(1,567 lines) and `README.md` (3,963 lines), applicable machine/project guidance,
+main porting plan, proposed architecture, parity/deployment/compatibility guides,
+existing bridge and stdio plans, investigation ledger, and relevant runtime-math
+designs were reviewed. `/data/projects/AGENTS.md` is absent on this machine;
+`/dp/AGENTS.md` resolves to the applicable `/Users/jemanuel/projects/AGENTS.md`.
+Do not invent missing suite rules beyond the operative inline repo instructions.
+
+Source review traced deployed allocator/string routing, runtime-policy bypasses,
+pointer validation and quarantine limits, pthread host/native selection, loader
+TLS/setjmp changes, healing subprocess execution, artifact admission, and the
+claim/closure/architecture/performance gates. Keyword and structural inspection
+found no ABI `todo!` macro, but actual unsupported behavior remains in explicit
+stub macros and ordinary constant-return functions. A keyword count is not a
+semantic completeness measure.
+
+**Fresh Rust compilation, Linux preload execution and performance measurement
+were not performed in this pass.** `sbh check --need 20G` returned exit 1 with
+`status=critical` (about 254.7 GB free but below the configured APFS percentage
+threshold). The machine's nonzero-preflight rule prohibits heavy build lanes.
+The host is Darwin/arm64; existing Linux receipts cannot become fresh runtime
+evidence by being read here. RCH was running with degraded fleet capacity.
+No disk cleanup, local-build fallback, threshold override or service restart was
+performed. This is a verification limitation, not a new product test failure.
+
+### What is real, and what the evidence actually establishes
+
+1. **The implementation is substantial.** The matrix contains 4,119 symbol rows:
+   2,419 `Implemented`, 410 `RawSyscall`, 1,272 `WrapsHostLibc`, zero
+   `GlibcCallThrough`, and 18 `Stub`. Thus 2,829 rows, or 68.7%, are classified
+   native/direct-syscall. These are ownership classifications, not a completion
+   percentage, full semantic-parity count, or independently verified provider
+   census for every deployed configuration.
+2. **Selected repairs have materially better evidence than the prior plan.**
+   `healing_oracle.rs` launches explicit subprocess probes and checks observations;
+   the committed October 19 report records 28/28 cases, library SHA-256
+   `55e2f785e79b0cb6e951d13b65d6cd2e18c9659a2abce62a2137441625ea07e5`
+   and probe SHA-256
+   `41788673570ba38a2c103432bfd9fa90d0cf8363111163791cf3ca9e44ef0197`.
+   That report has no `source_commit` field. It proves its recorded cases for its
+   identified binaries, not fresh HEAD, every repair path, or invalid strict-mode
+   behavior: the strict counterparts are valid controls.
+3. **Real-program interposition has historical evidence.** The committed smoke
+   summary remains September 24 at `a8a4110b…`: 189 pass, zero fail, four optional
+   skips and one xfail. Its structured and free-text xfail assignments disagree.
+   Later source and closure records show real fixes and broader cases, but no
+   fresh full corpus result was observed here.
+4. **Several old defects have source fixes.** `memcmp_validating` now resolves
+   extents before installing the PCC scope. x86 TLSDESC assembly is cfg-gated,
+   and aarch64 setjmp entries are naked Rust exports. Loader search/TLS and
+   resolver/NSS module work has advanced. Do not reopen those historical defects
+   merely because an old plan still describes them. Integrated release acceptance
+   remains a separate obligation.
+5. **The safety boundary is real and limited.** Strict hot copies bypass bounds
+   validation. Hardened arena metadata/quarantine can support wired checks and
+   repairs, but address reuse removes caller-generation information; direct C
+   writes, signal-handler bypasses and a later access racing with free are not
+   made safe by a completed validation lookup.
+
+### Vision checklist and active coverage
+
+`PARTIAL` below means implementation exists without complete goal delivery.
+`UNPROVEN` means the required current execution was not observed. No row is
+promoted to universally `WORKING` on source presence or receipt counts.
+
+| Goal | Reality and status at the audited source | Existing work and bridge coverage |
+|---|---|---|
+| V1: existing Linux binaries run correctly in both modes | **PARTIAL / current execution UNPROVEN.** Historical smoke is useful; broad HEAD corpus remains outstanding. | Existing `bd-rc0923-epic-eeuy4f.4`; final acceptance `.47`. |
+| V2: full POSIX/GNU behavior, including advertised exports | **PARTIAL / explicit STUBS.** Four printf-registration and fourteen SunRPC stubs remain; `printf_size`/`printf_size_info` also have constant fallback bodies. | Existing `bd-reality-202609-lx578q.7`, libm/cancellation work; new `.33`–`.36`, `.45`–`.46`. |
+| V3: accurate ownership and host-dependency census | **PARTIAL / live gate FAIL.** Stale census; committed maintenance rejects 1,079 classifications. | Previous `.17` is closed; new `.37`–`.38` resolve the current gap. |
+| V4: transparent spatial/temporal hardening | **PARTIAL.** Defined owned/quarantined paths work in recorded probes; universal safety does not follow. | Existing `bd-reality-202609-lx578q.8`, `.7`; retain deployed boundary/negative tests. |
+| V5: live runtime math causally controls deployed policy | **PARTIAL.** ABI `decide` still hard-returns for seven hardened hot families; pointer validation can consult a separate kernel. Counters/profiles alone do not prove influence. | Existing `bd-reality-202609-lx578q.4`; keep route-specific causal tests. |
+| V6: strict <20 ns and hardened <200 ns overhead, usable workload performance | **UNPROVEN globally / known active gaps.** Historical baseline and active allocator/sort/math work do not establish current all-path budgets. | `.9` sort, `.26` allocator, `bd-dcrhgl`, `bd-65p87u`, `bd-ny3hsa`, `bd-f874go`, `bd-rv2gv6`, current libm beads. |
+| V7: complete startup/thread/cancellation/stdio/service integration | **PARTIAL.** Native components coexist with default host NPTL and host-backed fallbacks; integration remains open. | Existing `bd-reality-202609-lx578q.6`, `.6.1`, `.6.2`, `.6.3`, cancellation `.24`. |
+| V8: actual host-independent replacement process | **UNPROVEN / preflight BLOCKED.** No supplied source-bound artifacts/package; zero workload processes executed in this pass. | Existing `bd-reality-202609-lx578q.1`, `.6`, `bd-38x82`. |
+| V9: x86 baseline and aarch64 release qualification | **PARTIAL / ARM runtime UNPROVEN.** aarch64 type-checking is not release linking; the existing ARM smoke executes a static system-libc program. | Existing `.13` and release `.9`; new `.41`–`.42`. |
+| V10: packages and 24-hour reliability | **UNPROVEN as a combined deliverable.** Package/schema receipts do not supply installed no-host execution or a 24-hour run. | Existing `bd-reality-202609-lx578q.9`, `bd-38x82.4`; architecture acceptance feeds release qualification. |
+| V11: conformance evidence covers the declared surface | **PARTIAL.** 1,190/4,119 rows (28.9%) have fixture linkage; this is not a pass rate. Semantic overlay has nine representative entries and the join has seventeen blockers. | Existing `.7`; new `.45`–`.46` inventory unknowns and drive actual behavior work. |
+| V12: claims and closure reflect executed reality | **PARTIAL / source-confirmed acceptance holes.** Operator guides disagree; closure admission accepts prose plus file existence. | New `.39`–`.40`, `.43`–`.44`; existing workspace hygiene `.11` and `bd-blnp4u`. |
+| V13: load-bearing formal guarantees | **DEFERRED.** All 24 binder obligations remain deferred; supplied-matrix arithmetic and finite tests are not system theorems. | Preserve owner decision `bd-e4phe.1` and safety `.8`. No automatic mechanization program or false theorem promotion. |
+| V14: asupersync/frankentui remain tooling dependencies | **Source/static-gate supported / execution not refreshed.** Harness features declare companion dependencies; the boundary validator passes. | Existing tooling-boundary gate plus release `.9`; verify feature-specific execution when qualified. |
+
+### Fresh lightweight gate results
+
+Logs for this pass are under `target/conformance/reality-20261020/`; generated
+gate reports remain in their existing `target/conformance/` locations. These
+are local reproduction aids, not a published release dossier.
+
+| Command | Observed outcome | Meaning |
+|---|---|---|
+| `bash scripts/check_docs_semantic_claims.sh` | **Exit 1.** Seven stale numeric claims; semantic-field/shape subchecks pass. | Actual documentation drift; no runtime failure implied. |
+| `bash scripts/check_support_matrix_maintenance.sh` | **Exit 1.** Host-delegation census is stale; later maintenance stages do not run. | Full maintenance is not green. The committed 1,079-invalid report is separate evidence. |
+| `bash scripts/check_semantic_contract_drift.sh` | **Exit 1.** `support taxonomy Stub=0 claim blocker is missing or stale`. | Semantic claim bookkeeping disagrees with current eighteen-stub state. |
+| `bash scripts/check_support_semantic_overlay_schema.sh` | **Exit 0.** Nine audited entries; no stale source refs under its predicate. | Bounded schema/source-anchor result, not exhaustive semantic coverage. |
+| `bash scripts/check_replacement_levels.sh` | **Exit 0**, but structured L1 objective has **three blocked** obligations. | L0 declaration is coherent; L1 readiness is not established. |
+| `bash scripts/check_closure_gate.sh` | **Exit 0.** Nineteen selected critique rows and thirteen post-cutoff rows accepted. | Admission predicates pass; they do not verify stored nonzero runtime results. |
+| `bash scripts/check_ws8_e2e_standalone_verification.sh --preflight` | **Exit 2 / blocked.** Six blocked scenarios, zero workload processes and zero companion tests. | Correct missing-evidence refusal in this invocation; no standalone result. |
+| `bash scripts/check_tooling_dependency_boundary.sh --validate-only` | **Exit 0.** Tooling boundary validated. | Static dependency validation, not feature-specific runtime execution. |
+| `br --no-db dep cycles --json` at intake | **Zero cycles.** | Graph sanity only. |
+| `bv --robot-triage` at intake | **Exit 0**, graph analysis completed. | Its 37-open snapshot differs from the raw status census; do not use it as a completion percentage. |
+
+The committed maintenance report's 1,079 invalid rows break down into **1,075
+conservative host-label/source mismatches** and **four detected true host calls
+labelled `Implemented`**: the cancellation register/unregister wrapper family.
+The first category requires reviewed promotion evidence, not blanket native
+reclassification. Neither category means 1,079 observed runtime bugs.
+
+### Newly confirmed gaps and the bridge
+
+All IDs `.33`–`.47` below share prefix `bd-rc0923-epic-eeuy4f`.
+Each implementation task contains context, existing file surfaces, constraints,
+acceptance, positive/error cases and independent counterexamples; each has a
+separate acceptance-test task. The complete specification is embedded in Beads.
+
+| Gap and why existing work was insufficient | Implementation / acceptance | Required result and order |
+|---|---|---|
+| Missing printf registration and size formatter behavior. Historical plan `.30` actually resolves locale caching. | `.33` / `.34` | Callback-visible actual formatting, types/modifiers, truncation/counting, reentry/errors and both-mode provider-verified differentials. |
+| Fourteen actual SunRPC stubs block zero-stub L1. No dedicated active implementation covered this set. | `.35` / `.36` | Real bounded local client/server/auth/transport/registration behavior; no permanently failing dlsym fallback promoted to implementation. |
+| Closed derivation work leaves stale census and rejected classifications. | `.37` / `.38` | Exact-source conservative configuration-aware census, reviewed promotion proofs and row-level deltas; thresholds unchanged. |
+| Active operator guides still claim L1/100% parity/met budgets; source/build descriptions conflict. | `.39` / `.40` | Reconcile existing docs and extend claim checks to their semantic fields. Immediate honest wording can land independently of implementation completion. |
+| aarch64 gate does not link, and smoke never loads the library. | `.41` / `.42` | Linked AArch64 release, actual dynamic providers and both-mode C fixtures under native/QEMU execution. Preserve artifacts; missing compiler cannot pass. |
+| Post-cutoff closure accepts `PASS` plus an existing filename/test/commit without reading an execution result. | `.43` / `.44` | Stored source/configuration-bound nonzero results; reject fabricated prose, unrelated output and zero-test success. Preserve explicit docs-only evidence and historical exemptions. |
+| Representative semantic entries leave unreviewed fallback behavior outside the completion measure. | `.45` / `.46` | Complete inventory with explicit unknowns, case linkage and concrete behavior follow-through under existing `.7`; a complete inventory cannot claim complete semantics. |
+| Independent task completion may still miss combined L1 behavior. | Acceptance `.47` | Fresh actual release corpus, repair/stub/claim tests and budgets; read structured blocked obligations before any promotion. |
+
+The source findings are precise: `register_printf_*` bodies in
+`glibc_internal_abi.rs` return `ENOSYS`; `printf_size` returns -1 and
+`printf_size_info` returns zero. `rpc_stub!` generates unsupported constructors
+and other RPC contracts. `runtime_policy::decide` retains its
+`cfg!(not(test))` high-frequency hardened bypass before `kernel.decide`.
+`run_aarch64_smoke.sh` uses `-static`, never passes its artifact to a process,
+and exits zero for absent compiler/compile failure. It also deletes generated
+files on its run path and was therefore not run unchanged. The closure-gate
+Check 5 source requires a verification regex and any valid reference, not an
+execution receipt. These are source-confirmed defects; their independent
+executed negative controls are acceptance work, not results invented here.
+
+### Bridge ordering and preserved goals
+
+Implementation tracks remain independent. Evidence defects block promotion
+claims, not every unrelated implementation. Tests can be authored early; the
+companion acceptance task depends on implementation before it closes.
+
+```text
+printf .33 --------> acceptance .34 ----+
+RPC .35 -----------> acceptance .36 ----+
+census .37 --------> acceptance .38 ----+
+docs .39 ----------> acceptance .40 ----+--> integrated L1 acceptance .47
+closure .43 -------> acceptance .44 ----+    + fresh corpus .4
+semantics .45 -----> acceptance .46 ----+    + hardened sort/budget .9
+
+aarch64 .41 -------> acceptance .42 --> existing release qualification lx578q.9
+owned CRT/stdio/services lx578q.6.* --> existing integration lx578q.6
+owned integration + standalone lx578q.1 --> L2/L3/package/soak acceptance
+```
+
+Continue the existing allocator architecture/performance tasks, libm accuracy
+tasks, cancellation `.24`, runtime influence `lx578q.4`, safety-boundary
+`lx578q.8`, workspace hygiene `lx578q.11`, behavioral campaigns `lx578q.7`,
+standalone `.1`/`.6.*` and release/soak work. New tasks do not discharge them.
+Do not blindly implement the old stdio plan's foreign-`FILE` adoption or signal
+policy as if its draft were already a demonstrated safe, ABI-faithful design.
+
+All original POSIX/GNU, ABI, safety, performance, developer-transparency,
+architecture and replacement goals remain. Mathematical proof obligations
+remain explicitly deferred under the recorded owner policy. This pass does not
+turn a proof-name/module inventory into a mechanized theorem or start a new
+proof program implicitly.
+
+### Ambition and refinement
+
+**Ambition pass 1 — require an observable effect.** A printf registration must
+change actual output; an RPC constructor must participate in an exchange; an
+ARM test must load this library; a runtime-math signal must change a permitted
+decision against a matched control. Non-null tokens, counters and `PASS` prose
+cannot substitute. These requirements are embedded in the corresponding beads.
+
+**Ambition pass 2 — compose evidence without inflating it.** Treat source and
+configuration as an explicit provider abstraction. Bind source inputs, target,
+features, profile, mode, library/probe hashes and actual symbol providers into
+the observed result. Preserve unknowns rather than automatically promoting
+them. Separate data integrity from behavioral truth. For performance, use the
+deployed path and live incumbent in the same invocation; changing a budget is
+not an optimization. For adaptive control, identify the signal-to-action path,
+assumptions, deterministic fallback and cross-controller interference tests.
+
+The mathematical techniques here serve concrete artifacts: conservative
+provider manifests, transition/policy tables and causal counterexample tests.
+No new controller is justified by novelty. Existing conformal/topological/
+algebraic/descent obligations remain explicit; their required assumptions and
+deferred proof state must accompany any future guarantee.
+
+**Five plan-space passes** check the newly added tasks and their interfaces to
+existing work: completeness; provider/test independence; dependency usability;
+safety/performance/proof scope; then final consistency. Findings and exact
+graph results are recorded in the completion checkpoint for this revision.
+This is a bounded review of these tasks, not a claim to re-audit 7,490 historical
+closures or every one of 4,119 function contracts.
+
+The generation instruction applied verbatim is retained here for reproducibility:
+
+```text
+OK so please take ALL of that and elaborate on it and use it to create a comprehensive and granular
+set of beads for all this with tasks, subtasks, and dependency structure overlaid, with detailed
+comments so that the whole thing is totally self-contained and self-documenting (including relevant
+background, reasoning/justification, considerations, etc.-- anything we'd want our "future self" to
+know about the goals and intentions and thought process and how it serves the over-arching goals of
+the project.) The beads should be so detailed that we never need to consult back to the original
+markdown plan document. Remember to ONLY use the `br` tool to create and modify the beads and add
+the dependencies.
+```
+
+Each refinement pass applies this frozen instruction:
+
+```text
+Check over each bead super carefully-- are you sure it makes sense? Is it optimal? Could we change
+anything to make the system work better for users? If so, revise the beads. It's a lot easier and
+faster to operate in "plan space" before we start implementing these things! DO NOT OVERSIMPLIFY
+THINGS! DO NOT LOSE ANY FEATURES OR FUNCTIONALITY! Also make sure that as part of the beads we
+include comprehensive unit tests and e2e test scripts with great, detailed logging so we can be
+sure that everything is working perfectly after implementation. Make sure to ONLY use the `br` cli
+tool for all changes, and you can and should also use the `bv` tool to help diagnose potential
+problems with the beads.
+```
+
+### Backlog sufficiency and next execution
+
+The intake JSONL contains 7,527 records: 7,490 closed, 23 in progress, five open,
+five blocked and four tombstones. The `bd-` slice contains 6,299 closed and 33
+active records. Prefix alone is not a proof of project ownership: at least one
+active `bd-` title discusses BLAS/LAPACK/XLA performance. It was left intact.
+No global completion percentage is meaningful for the vision.
+
+**Would completing the intake backlog finish the project? No.** It omits the
+concrete stub work, the actual ARM runtime/gate defect, closure receipt defect,
+current census/docs regressions and exhaustive semantic unknowns described
+above. The expanded graph now covers these observed gaps, but cannot guarantee
+all future implementation discoveries or discharge deferred formal theorems.
+The remaining standalone integration is large engineering work, not a small
+cleanup implied by the low open count.
+
+The ordinary write path, including `br --no-db create --dry-run`, refused the
+old local DB with `SCHEMA_MISMATCH` (expected 19, found 0). The existing DB,
+WAL/recovery files and metadata were preserved. The authoritative JSONL was
+copied to `target/conformance/reality-20261020/issues.before.jsonl` (SHA-256
+`bd38fe2d000cb6136a1371d4c48e646c4be937f5be3d1bd9c27f3a8315df8fd3`),
+then imported through `br` into isolated `.beads/reality-20261020.db` with
+`--no-auto-import --no-auto-flush`. All planning mutations use `br` against
+that isolated DB. Canonical export requires preservation review and a fresh
+JSONL comparison; do not export the stale original DB over this work.
+
+Implementation begins with independently ready printf/RPC, census, docs,
+closure and architecture tasks while existing owners continue their tracks.
+Fresh build/runtime acceptance resumes only after the required disk preflight
+passes. No implementation task is closed by this assessment.
+
+### Completion checkpoint for this revision
+
+The two ambition rounds and five plan-space refinement passes are complete:
+
+1. **Completeness:** added independent positive/negative verification to every
+   implementation pair, preserved the full inherited behavior contract, and
+   made integrated acceptance read the structured L1 obligations.
+2. **Independent evidence:** separated provider identity from correct output,
+   widened claim checking beyond README counts, and clarified the separate ABI
+   and pointer-validator runtime kernels. Existing stdio work must preserve
+   ownership and cancellation/signal semantics rather than adopt a draft design
+   on faith.
+3. **Usable execution order:** allowed independently ready tasks and honest
+   documentation fixes to proceed, kept ARM release qualification separate from
+   x86 L0 work, and bound freshness to relevant source inputs without inventing
+   new runtime measurements for unrelated documentation-only changes.
+4. **Scope and ambition:** retained all fourteen RPC contracts, distinguished a
+   working host-backed L1 path from native standalone support, bounded semantic
+   inventory work through explicit unknowns, and retained the incumbent/live
+   performance comparison and owner-deferred theorem policy.
+5. **Final consistency:** reread all fifteen new task specifications,
+   acceptance criteria and dependencies; cross-checked the vision matrix,
+   provider/error controls, level boundaries and retained goals. No further
+   plan-space defect was found in this bounded pass. This is convergence of the
+   reviewed plan, not a claim of complete product implementation or an exhaustive
+   audit of historical closures.
+
+All fifteen new tasks remain **open**. There are seven implementation/test
+pairs (`.33`–`.46`) and integrated acceptance `.47`. The implementation tasks
+have no new blocking predecessor. Their companion acceptance tasks depend on
+the corresponding implementation; `.47` depends on the six relevant companion
+acceptances and the existing corpus/sort work. ARM acceptance `.42` additionally
+blocks the existing architecture/package qualification task.
+
+`br dep cycles --json` and `br dep cycles --include-closed --json` both report
+zero cycles, including zero archived cycles. Final `bv --robot-triage` and
+`bv --robot-insights` both completed with data hash `9b45f4175e012977`.
+**`bv` skipped its cycle computation because the graph exceeds 2,000 nodes**;
+the zero-cycle result comes from `br`, not that skipped analysis. `bv` reports
+52 open in its own projection versus 48 active raw records; neither is a
+product-completion measure. Its top recommendation includes the existing
+BLAS/XLA task, reinforcing the need to choose by project scope rather than
+blindly follow graph rank.
+
+The canonical export now contains **7,542 records**, including all 7,527 intake
+IDs: 7,490 closed, 23 in progress, 20 open, five blocked and four tombstones.
+No existing status, description, acceptance criterion or closure was changed.
+Only the three appended notes and one added release dependency were intentional
+changes to existing issues. The current exporter also omits 1,475 obsolete
+machine-local `source_repo_path` fields while retaining portable `source_repo`,
+and renumbers one historical comment ID whose contents are unchanged. All old
+comment contents and relations remain present.
+
+The preview export changed `br`'s last-export anchor. A normal canonical flush
+then refused stale data, and an unforced merge refused four ambiguous-base
+rows. Before resolution, the canonical JSONL was confirmed byte-identical to
+the intake snapshot. `br sync --merge --force-db` retained precisely the four
+reviewed local note/dependency edits, recorded four `br-sync` audit comments,
+and reported **7,542 merged, zero deleted, zero ID collisions**. This was a
+reviewed resolution of those owned changes, not an override of peer edits.
+`issues.jsonl` and `beads.base.jsonl` are byte-identical, and isolated-DB sync
+status is healthy with zero dirty rows and no coverage drift. The original
+schema-0 DB remains preserved; do not use it to overwrite the canonical graph.
+The field-level comparison is retained locally in
+`target/conformance/reality-20261020/preservation-report.json`.
+
+This revision changes planning and tracker data only. It does not alter runtime
+code, gate policy, fixture expectations, performance tolerances or deferred
+proof decisions. The fresh execution limitation above remains unresolved.
+`git diff --check` passes, and field-level JSONL preservation/dependency checks
+pass. The required `ubs --staged` invocation exits **3: nothing scanned** because
+the three staged files are Markdown/JSONL, outside its supported languages.
+This is **not a UBS pass**; no allow-no-scan override was used. It supplies no
+code-validation evidence for this documentation/tracker revision.
+
+---
+
+## Retained assessment — 2026-10-13
+
+The following October 13 assessment is historical. Its original detail is
+preserved; the current section above governs current status and task mappings.
 
 ## 0. Executive Summary (2026-10-13 Reality Check at `9cef7fbd2`)
 
