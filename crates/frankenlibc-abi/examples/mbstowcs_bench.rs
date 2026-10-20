@@ -10,21 +10,18 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type SetlocaleFn = unsafe extern "C" fn(i32, *const libc::c_char) -> *mut libc::c_char;
         type MbstowcsFn = unsafe extern "C" fn(*mut i32, *const libc::c_char, usize) -> usize;
-        let gl_setlocale: SetlocaleFn = std::mem::transmute::<*mut c_void, SetlocaleFn>(
-            libc::dlsym(h, b"setlocale\0".as_ptr().cast()),
-        );
-        let gl_mbstowcs: MbstowcsFn = std::mem::transmute::<*mut c_void, MbstowcsFn>(libc::dlsym(
-            h,
-            b"mbstowcs\0".as_ptr().cast(),
-        ));
+        let gl_setlocale: SetlocaleFn =
+            std::mem::transmute::<*mut c_void, SetlocaleFn>(libc::dlsym(h, c"setlocale".as_ptr()));
+        let gl_mbstowcs: MbstowcsFn =
+            std::mem::transmute::<*mut c_void, MbstowcsFn>(libc::dlsym(h, c"mbstowcs".as_ptr()));
         assert!(
-            !gl_setlocale(libc::LC_ALL, b"C.UTF-8\0".as_ptr().cast()).is_null(),
+            !gl_setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()).is_null(),
             "setlocale failed"
         );
 

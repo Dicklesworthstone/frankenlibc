@@ -13,13 +13,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type SnFn = unsafe extern "C" fn(*mut c_char, usize, *const c_char, ...) -> c_int;
         let gl: SnFn =
-            std::mem::transmute::<*mut c_void, SnFn>(libc::dlsym(h, b"snprintf\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, SnFn>(libc::dlsym(h, c"snprintf".as_ptr()));
 
         let mut fl_buf = [0i8; 128];
         let mut gl_buf = [0i8; 128];
@@ -78,8 +78,8 @@ fn main() {
         probe!(
             "str",
             "hello, %s!",
-            |b, f| snprintf(b, 128, f, b"world\0".as_ptr() as *const c_char),
-            |gl: SnFn, b, f| gl(b, 128, f, b"world\0".as_ptr() as *const c_char)
+            |b, f| snprintf(b, 128, f, c"world".as_ptr()),
+            |gl: SnFn, b, f| gl(b, 128, f, c"world".as_ptr())
         );
     }
 }

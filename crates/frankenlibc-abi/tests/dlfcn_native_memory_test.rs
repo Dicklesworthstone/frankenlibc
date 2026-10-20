@@ -126,7 +126,10 @@ fn symbols() -> [(&'static str, *const ()); 22] {
     [
         ("calloc", allocation::calloc as *const ()),
         ("realloc", allocation::realloc as *const ()),
-        ("malloc_usable_size", allocation::malloc_usable_size as *const ()),
+        (
+            "malloc_usable_size",
+            allocation::malloc_usable_size as *const (),
+        ),
         ("memchr", strings::memchr as *const ()),
         ("memrchr", strings::memrchr as *const ()),
         ("memcmp", strings::memcmp as *const ()),
@@ -150,27 +153,48 @@ fn symbols() -> [(&'static str, *const ()); 22] {
 }
 
 #[derive(Clone, Copy)]
-struct Api { open: Open, close: Close, sym: Sym, native: bool }
+struct Api {
+    open: Open,
+    close: Close,
+    sym: Sym,
+    native: bool,
+}
 impl Api {
     fn new(native: bool) -> Self {
-        if native { Self { open: dl::dlopen, close: dl::dlclose, sym: dl::dlsym, native } }
-        else { unsafe { Self {
-            open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
-            close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
-            sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()), native,
-        } } }
+        if native {
+            Self {
+                open: dl::dlopen,
+                close: dl::dlclose,
+                sym: dl::dlsym,
+                native,
+            }
+        } else {
+            unsafe {
+                Self {
+                    open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                    close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                    sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                    native,
+                }
+            }
+        }
     }
     fn open(self, path: &Path, flags: c_int) -> *mut c_void {
         let name = CString::new(path.as_os_str().as_bytes()).unwrap();
         let handle = unsafe { (self.open)(name.as_ptr(), flags | libc::RTLD_NOW) };
         assert!(!handle.is_null(), "open {path:?}");
-        if self.native { assert!(dl::native_dso_handle_for_tests(handle), "host fallback"); }
+        if self.native {
+            assert!(dl::native_dso_handle_for_tests(handle), "host fallback");
+        }
         handle
     }
-    fn close(self, handle: *mut c_void) { assert_eq!(unsafe { (self.close)(handle) }, 0); }
+    fn close(self, handle: *mut c_void) {
+        assert_eq!(unsafe { (self.close)(handle) }, 0);
+    }
     fn symbol(self, handle: *mut c_void, name: &CStr) -> *mut c_void {
         let value = unsafe { (self.sym)(handle, name.as_ptr()) };
-        assert!(!value.is_null(), "symbol {name:?}"); value
+        assert!(!value.is_null(), "symbol {name:?}");
+        value
     }
     fn run(self, handle: *mut c_void, name: &CStr) -> c_int {
         let run: Run = unsafe { std::mem::transmute(self.symbol(handle, name)) };
@@ -178,19 +202,40 @@ impl Api {
     }
 }
 
-struct Fixture { dir: PathBuf, path: PathBuf }
+struct Fixture {
+    dir: PathBuf,
+    path: PathBuf,
+}
 impl Fixture {
     fn new(flags: &[&str]) -> Self {
-        let dir = std::env::temp_dir().join(format!("frankenlibc-memory-runtime-{}-{}",
-            std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-memory-runtime-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir(&dir).unwrap();
-        let source = dir.join("fixture.c"); let path = dir.join("fixture.so");
+        let source = dir.join("fixture.c");
+        let path = dir.join("fixture.so");
         std::fs::write(&source, SOURCE).unwrap();
         compile(&source, &path, flags);
-        let object = ElfLoader::new(0).parse(&std::fs::read(&path).unwrap()).unwrap();
-        assert!(object.needed_libraries.is_empty(), "fixture must not import a host runtime");
+        let object = ElfLoader::new(0)
+            .parse(&std::fs::read(&path).unwrap())
+            .unwrap();
+        assert!(
+            object.needed_libraries.is_empty(),
+            "fixture must not import a host runtime"
+        );
         for (name, _) in symbols() {
-            assert!(object.dynsym.iter().any(|s| object.symbol_name(s) == Some(name)), "missing {name}");
+            assert!(
+                object
+                    .dynsym
+                    .iter()
+                    .any(|s| object.symbol_name(s) == Some(name)),
+                "missing {name}"
+            );
         }
         Self { dir, path }
     }
@@ -198,28 +243,54 @@ impl Fixture {
 
 fn compile(source: &Path, output: &Path, flags: &[&str]) {
     let result = Command::new("gcc")
-        .args(["-shared", "-fPIC", "-nostdlib", "-O2", "-fno-builtin", "-Wl,--hash-style=both"])
-        .args(flags).arg(source).arg("-o").arg(output).output().expect("gcc is required");
-    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        .args([
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-O2",
+            "-fno-builtin",
+            "-Wl,--hash-style=both",
+        ])
+        .args(flags)
+        .arg(source)
+        .arg("-o")
+        .arg(output)
+        .output()
+        .expect("gcc is required");
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
 }
 
 fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
     if let Ok(mode) = std::env::var("FRANKENLIBC_MEMORY_CHILD") {
         assert!(matches!(mode.as_str(), "host" | "native"));
-        scenario(Api::new(mode == "native")); return;
+        scenario(Api::new(mode == "native"));
+        return;
     }
-    let modes: &[&str] = if native_only { &["native"] } else { &["host", "native"] };
+    let modes: &[&str] = if native_only {
+        &["native"]
+    } else {
+        &["host", "native"]
+    };
     for mode in modes {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", name, "--nocapture"]).env("FRANKENLIBC_MEMORY_CHILD", mode)
-            .spawn().unwrap();
+            .args(["--exact", name, "--nocapture"])
+            .env("FRANKENLIBC_MEMORY_CHILD", mode)
+            .spawn()
+            .unwrap();
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "{name}: {mode}: {status}"); break;
+                assert!(status.success(), "{name}: {mode}: {status}");
+                break;
             }
             if start.elapsed() > Duration::from_secs(40) {
-                child.kill().unwrap(); child.wait().unwrap(); panic!("{name}: {mode}: timeout");
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{name}: {mode}: timeout");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -227,13 +298,15 @@ fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
 }
 
 fn exercise(api: Api, flags: &[&str]) {
-    let fixture = Fixture::new(flags); let handle = api.open(&fixture.path, 0);
+    let fixture = Fixture::new(flags);
+    let handle = api.open(&fixture.path, 0);
     let function: Function = unsafe { std::mem::transmute(api.symbol(handle, c"memory_function")) };
     for (index, (name, expected)) in symbols().into_iter().enumerate() {
         let actual = unsafe { function(index as u32) };
         assert!(!actual.is_null(), "missing runtime {name}");
-        if api.native { assert_eq!(actual as usize, expected as usize, "wrong provider: {name}"); }
-        else {
+        if api.native {
+            assert_eq!(actual as usize, expected as usize, "wrong provider: {name}");
+        } else {
             let name = CString::new(name).unwrap();
             let host = unsafe { dlsym_oracle::host_addr(&name, expected) };
             assert_eq!(actual, host);
@@ -247,86 +320,133 @@ fn exercise(api: Api, flags: &[&str]) {
 
 #[test]
 fn memory_runtime_plt_calls_reach_owned_implementations() {
-    isolated("memory_runtime_plt_calls_reach_owned_implementations", false, |api| exercise(api, &[]));
+    isolated(
+        "memory_runtime_plt_calls_reach_owned_implementations",
+        false,
+        |api| exercise(api, &[]),
+    );
 }
 
 #[test]
 fn memory_runtime_got_calls_reach_owned_implementations() {
-    isolated("memory_runtime_got_calls_reach_owned_implementations", false, |api| exercise(api, &["-fno-plt"]));
+    isolated(
+        "memory_runtime_got_calls_reach_owned_implementations",
+        false,
+        |api| exercise(api, &["-fno-plt"]),
+    );
 }
 
 #[test]
 fn memory_runtime_dynamic_addresses_match_direct_imports() {
-    isolated("memory_runtime_dynamic_addresses_match_direct_imports", false, |api| {
-        let f = Fixture::new(&[]); let h = api.open(&f.path, 0);
-        let imported: Function = unsafe { std::mem::transmute(api.symbol(h, c"memory_function")) };
-        let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
-        for (index, (name, expected)) in symbols().into_iter().enumerate() {
-            let name = CString::new(name).unwrap();
-            let direct = unsafe { imported(index as u32) };
-            if api.native { assert_eq!(direct as usize, expected as usize); }
-            for version in [std::ptr::null(), c"GLIBC_2.2.5".as_ptr()] {
-                assert_eq!(unsafe { dynamic(name.as_ptr(), version) }, direct);
+    isolated(
+        "memory_runtime_dynamic_addresses_match_direct_imports",
+        false,
+        |api| {
+            let f = Fixture::new(&[]);
+            let h = api.open(&f.path, 0);
+            let imported: Function =
+                unsafe { std::mem::transmute(api.symbol(h, c"memory_function")) };
+            let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
+            for (index, (name, expected)) in symbols().into_iter().enumerate() {
+                let name = CString::new(name).unwrap();
+                let direct = unsafe { imported(index as u32) };
+                if api.native {
+                    assert_eq!(direct as usize, expected as usize);
+                }
+                for version in [std::ptr::null(), c"GLIBC_2.2.5".as_ptr()] {
+                    assert_eq!(unsafe { dynamic(name.as_ptr(), version) }, direct);
+                }
+                for version in [c"GLIBC_2.34", c"FRANKENLIBC_NO_SUCH_VERSION"] {
+                    assert!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }.is_null());
+                }
             }
-            for version in [c"GLIBC_2.34", c"FRANKENLIBC_NO_SUCH_VERSION"] {
-                assert!(unsafe { dynamic(name.as_ptr(), version.as_ptr()) }.is_null());
-            }
-        }
-        api.close(h);
-    });
+            api.close(h);
+        },
+    );
 }
 
 static FINAL_RESULT: AtomicI32 = AtomicI32::new(-100);
-unsafe extern "C" fn final_report(result: c_int) { FINAL_RESULT.store(result, Ordering::Relaxed); }
+unsafe extern "C" fn final_report(result: c_int) {
+    FINAL_RESULT.store(result, Ordering::Relaxed);
+}
 
 #[test]
 fn memory_runtime_is_available_during_construction_and_finalization() {
-    isolated("memory_runtime_is_available_during_construction_and_finalization", false, |api| {
-        let f = Fixture::new(&["-DLIFECYCLE"]); let h = api.open(&f.path, 0);
-        assert_eq!(unsafe { *api.symbol(h, c"memory_init_result").cast::<i32>() }, 0);
-        type Set = unsafe extern "C" fn(unsafe extern "C" fn(c_int));
-        let set: Set = unsafe { std::mem::transmute(api.symbol(h, c"memory_set_report")) };
-        unsafe { set(final_report) }; api.close(h);
-        assert_eq!(FINAL_RESULT.load(Ordering::Relaxed), 0);
-    });
+    isolated(
+        "memory_runtime_is_available_during_construction_and_finalization",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DLIFECYCLE"]);
+            let h = api.open(&f.path, 0);
+            assert_eq!(
+                unsafe { *api.symbol(h, c"memory_init_result").cast::<i32>() },
+                0
+            );
+            type Set = unsafe extern "C" fn(unsafe extern "C" fn(c_int));
+            let set: Set = unsafe { std::mem::transmute(api.symbol(h, c"memory_set_report")) };
+            unsafe { set(final_report) };
+            api.close(h);
+            assert_eq!(FINAL_RESULT.load(Ordering::Relaxed), 0);
+        },
+    );
 }
 
 #[test]
 fn memory_runtime_missing_strong_import_does_not_publish_a_handle() {
-    isolated("memory_runtime_missing_strong_import_does_not_publish_a_handle", false, |api| {
-        let f = Fixture::new(&["-DSTRONG_MISSING"]);
-        let name = CString::new(f.path.as_os_str().as_bytes()).unwrap();
-        assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
-        assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }.is_null());
-        let valid = Fixture::new(&[]); let h = api.open(&valid.path, 0);
-        assert_eq!(api.run(h, c"memory_allocations"), 0); api.close(h);
-    });
+    isolated(
+        "memory_runtime_missing_strong_import_does_not_publish_a_handle",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DSTRONG_MISSING"]);
+            let name = CString::new(f.path.as_os_str().as_bytes()).unwrap();
+            assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
+            assert!(
+                unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) }.is_null()
+            );
+            let valid = Fixture::new(&[]);
+            let h = api.open(&valid.path, 0);
+            assert_eq!(api.run(h, c"memory_allocations"), 0);
+            api.close(h);
+        },
+    );
 }
 
 #[test]
 fn memory_runtime_fallback_preserves_native_scope_preemption() {
     // This tests the native namespace's existing GLOBAL/local binding policy,
     // not glibc's executable/libc prefix ordering for a standard libc name.
-    isolated("memory_runtime_fallback_preserves_native_scope_preemption", true, |api| {
-        let ordinary = Fixture::new(&["-DLOCAL_COMPARE"]);
-        let provider_c = ordinary.dir.join("provider.c");
-        let provider_so = ordinary.dir.join("provider.so");
-        std::fs::write(&provider_c, "#include <stddef.h>\nint memcmp(const void*a,const void*b,size_t n){(void)a;(void)b;(void)n;return 37;}\n").unwrap();
-        compile(&provider_c, &provider_so, &[]);
-        let g = api.open(&provider_so, libc::RTLD_GLOBAL);
-        let h = api.open(&ordinary.path, 0);
-        assert_eq!(api.run(h, c"memory_compare"), 37);
-        let selected = api.symbol(g, c"memcmp");
-        let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
-        assert_eq!(unsafe { dynamic(c"memcmp".as_ptr(), std::ptr::null()) }, selected);
-        let deep = Fixture::new(&["-DLOCAL_COMPARE"]);
-        let d = api.open(&deep.path, libc::RTLD_DEEPBIND);
-        assert_eq!(api.run(d, c"memory_compare"), -23);
-        let own = api.symbol(d, c"memcmp");
-        let deep_dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(d, c"memory_dynamic")) };
-        assert_eq!(unsafe { deep_dynamic(c"memcmp".as_ptr(), std::ptr::null()) }, own);
-        api.close(g);
-        assert_eq!(api.run(h, c"memory_compare"), 37);
-        api.close(h); api.close(d);
-    });
+    isolated(
+        "memory_runtime_fallback_preserves_native_scope_preemption",
+        true,
+        |api| {
+            let ordinary = Fixture::new(&["-DLOCAL_COMPARE"]);
+            let provider_c = ordinary.dir.join("provider.c");
+            let provider_so = ordinary.dir.join("provider.so");
+            std::fs::write(&provider_c, "#include <stddef.h>\nint memcmp(const void*a,const void*b,size_t n){(void)a;(void)b;(void)n;return 37;}\n").unwrap();
+            compile(&provider_c, &provider_so, &[]);
+            let g = api.open(&provider_so, libc::RTLD_GLOBAL);
+            let h = api.open(&ordinary.path, 0);
+            assert_eq!(api.run(h, c"memory_compare"), 37);
+            let selected = api.symbol(g, c"memcmp");
+            let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(h, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { dynamic(c"memcmp".as_ptr(), std::ptr::null()) },
+                selected
+            );
+            let deep = Fixture::new(&["-DLOCAL_COMPARE"]);
+            let d = api.open(&deep.path, libc::RTLD_DEEPBIND);
+            assert_eq!(api.run(d, c"memory_compare"), -23);
+            let own = api.symbol(d, c"memcmp");
+            let deep_dynamic: Dynamic =
+                unsafe { std::mem::transmute(api.symbol(d, c"memory_dynamic")) };
+            assert_eq!(
+                unsafe { deep_dynamic(c"memcmp".as_ptr(), std::ptr::null()) },
+                own
+            );
+            api.close(g);
+            assert_eq!(api.run(h, c"memory_compare"), 37);
+            api.close(h);
+            api.close(d);
+        },
+    );
 }

@@ -5,17 +5,18 @@ use std::ffi::{CStr, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
+#[allow(clippy::approx_constant)]
 fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type Gcvt = unsafe extern "C" fn(f64, i32, *mut libc::c_char) -> *mut libc::c_char;
         let gl_gcvt: Gcvt =
-            std::mem::transmute::<*mut c_void, Gcvt>(libc::dlsym(h, b"gcvt\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, Gcvt>(libc::dlsym(h, c"gcvt".as_ptr()));
 
         let iters = 5_000_000usize;
         let mut fbuf = [0i8; 64];

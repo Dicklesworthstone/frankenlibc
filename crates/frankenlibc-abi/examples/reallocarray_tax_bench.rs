@@ -13,18 +13,16 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type MallocFn = unsafe extern "C" fn(usize) -> *mut c_void;
         type RallocarrFn = unsafe extern "C" fn(*mut c_void, usize, usize) -> *mut c_void;
-        let gl_malloc: MallocFn = std::mem::transmute::<*mut c_void, MallocFn>(libc::dlsym(
-            h,
-            b"malloc\0".as_ptr().cast(),
-        ));
+        let gl_malloc: MallocFn =
+            std::mem::transmute::<*mut c_void, MallocFn>(libc::dlsym(h, c"malloc".as_ptr()));
         let gl_reallocarray: RallocarrFn = std::mem::transmute::<*mut c_void, RallocarrFn>(
-            libc::dlsym(h, b"reallocarray\0".as_ptr().cast()),
+            libc::dlsym(h, c"reallocarray".as_ptr()),
         );
 
         const S: usize = 4096; // shrink target that fits the 1 MiB block -> in-place fast realloc

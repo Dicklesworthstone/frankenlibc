@@ -614,6 +614,7 @@ enum Encoding {
     Johab,
 }
 
+#[derive(Clone, Copy)]
 struct CodecSpec {
     encoding: Encoding,
     canonical: &'static str,
@@ -626,7 +627,7 @@ struct ExcludedCodecSpec {
     normalized: &'static str,
 }
 
-const PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
+static PHASE1_CODEC_TABLE: [CodecSpec; 302] = [
     CodecSpec {
         encoding: Encoding::Utf8,
         canonical: "UTF-8",
@@ -43053,11 +43054,12 @@ fn iso2022kr_decode(
 /// (and an `ESC ( B` / `ESC ( J` / `ESC $ B` emitted) only when the current set
 /// cannot represent the scalar — matching glibc's lazy switching, e.g. a plain
 /// ASCII letter after `ESC ( J` stays in JIS-Roman. Representability:
-///   * ASCII set  -> every scalar `< 0x80`;
-///   * JIS-Roman  -> graphic `0x21..=0x7E` except `0x5C`/`0x7E`, plus ¥ (U+00A5
-///     -> 0x5C) and ‾ (U+203E -> 0x7E);
-///   * JIS X 0208 -> any scalar that EUC-JP encodes in code-set 1 (both bytes
-///     `0xA1..=0xFE`), emitted as the ku-ten pair with the high bit cleared.
+/// * ASCII set  -> every scalar `< 0x80`;
+/// * JIS-Roman  -> graphic `0x21..=0x7E` except `0x5C`/`0x7E`, plus ¥ (U+00A5
+///   -> 0x5C) and ‾ (U+203E -> 0x7E);
+/// * JIS X 0208 -> any scalar that EUC-JP encodes in code-set 1 (both bytes
+///   `0xA1..=0xFE`), emitted as the ku-ten pair with the high bit cleared.
+///
 /// Half-width kana, JIS X 0212 (EUC 3-byte), and non-EUC scalars are
 /// unrepresentable -> EILSEQ at that scalar. The return to ASCII is emitted on
 /// the reset (NULL inbuf) call in [`iconv`], like glibc.
@@ -43526,7 +43528,7 @@ fn iso2022jp_decode(
 fn jp2_g0_encode(set: u8, ch: char, cp: u32) -> Option<[u8; 2]> {
     let two = |t: &[u8]| [t[0] & 0x7F, t[1] & 0x7F];
     match set {
-        0 => (cp < 0x80).then(|| [cp as u8, 0]),
+        0 => (cp < 0x80).then_some([cp as u8, 0]),
         1 => {
             if cp == 0xA5 {
                 Some([0x5C, 0])
@@ -44367,12 +44369,12 @@ fn iso2022cn_convert(
                     in_pos += consumed;
                     continue;
                 }
-            } else if g1 == 2 {
-                if let Some(b) = cns1(ch) {
-                    emit_g1(outbuf, &mut out_pos, 2, b, &mut g1, &mut shifted);
-                    in_pos += consumed;
-                    continue;
-                }
+            } else if g1 == 2
+                && let Some(b) = cns1(ch)
+            {
+                emit_g1(outbuf, &mut out_pos, 2, b, &mut g1, &mut shifted);
+                in_pos += consumed;
+                continue;
             }
             if let Some(b) = gb(ch) {
                 emit_g1(outbuf, &mut out_pos, 1, b, &mut g1, &mut shifted);
@@ -44473,7 +44475,7 @@ fn iso2022cn_convert(
             continue;
         }
         // Emit `bytes` in G1 charset `set`, designating/shifting as needed.
-        let mut emit_g1 =
+        let emit_g1 =
             |out: &mut Vec<u8>, set: u8, bytes: [u8; 2], g1: &mut u8, shifted: &mut bool| {
                 if *g1 != set {
                     out.extend_from_slice(if set == 1 {
@@ -44497,12 +44499,12 @@ fn iso2022cn_convert(
                 in_pos += consumed;
                 continue;
             }
-        } else if g1 == 2 {
-            if let Some(b) = cns1(ch) {
-                emit_g1(&mut out, 2, b, &mut g1, &mut shifted);
-                in_pos += consumed;
-                continue;
-            }
+        } else if g1 == 2
+            && let Some(b) = cns1(ch)
+        {
+            emit_g1(&mut out, 2, b, &mut g1, &mut shifted);
+            in_pos += consumed;
+            continue;
         }
         // 2. Priority: GB2312, then CNS plane 1, then CNS plane 2 (G2/SS2).
         if let Some(b) = gb(ch) {
@@ -46313,16 +46315,27 @@ fn build_dbcs_x_multi_first_cps(multi: &[(&'static [u32], u16)]) -> Vec<u32> {
     v
 }
 
+struct DbcsXEncTables<'a> {
+    e1: &'a std::collections::HashMap<u32, u8>,
+    e2: &'a std::collections::HashMap<u32, u16>,
+    multi_enc: &'a [(&'static [u32], u16)],
+    direct: &'a [u32],
+    multi_first: &'a [u32],
+}
+
 fn dbcs_x_convert(
     cd: &mut IconvDescriptor,
     input: &[u8],
     outbuf: &mut [u8],
-    e1: &std::collections::HashMap<u32, u8>,
-    e2: &std::collections::HashMap<u32, u16>,
-    multi_enc: &[(&'static [u32], u16)],
-    direct: &[u32],
-    multi_first: &[u32],
+    tables: DbcsXEncTables<'_>,
 ) -> Result<IconvResult, IconvError> {
+    let DbcsXEncTables {
+        e1,
+        e2,
+        multi_enc,
+        direct,
+        multi_first,
+    } = tables;
     // Single-pass fast path: write directly into outbuf, skipping the `Vec<u8>`
     // accumulator + final copy (2 heap allocs/call), the two per-char SipHash
     // `HashMap::get`s (now one O(1) BMP index), and the O(table) combining scan for
@@ -46549,11 +46562,13 @@ fn sjisx0213_convert(
         cd,
         input,
         outbuf,
-        sjisx0213_enc1(),
-        sjisx0213_enc2(),
-        &sjisx0213_tables::SJISX_MULTI_ENC,
-        sjisx0213_enc_direct(),
-        sjisx0213_multi_first_cps(),
+        DbcsXEncTables {
+            e1: sjisx0213_enc1(),
+            e2: sjisx0213_enc2(),
+            multi_enc: &sjisx0213_tables::SJISX_MULTI_ENC,
+            direct: sjisx0213_enc_direct(),
+            multi_first: sjisx0213_multi_first_cps(),
+        },
     )
 }
 
@@ -46629,11 +46644,13 @@ fn big5hkscs_convert(
         cd,
         input,
         outbuf,
-        big5hkscs_enc1(),
-        big5hkscs_enc2(),
-        &big5hkscs_tables::BIG5HKSCS_MULTI_ENC,
-        big5hkscs_enc_direct(),
-        big5hkscs_multi_first_cps(),
+        DbcsXEncTables {
+            e1: big5hkscs_enc1(),
+            e2: big5hkscs_enc2(),
+            multi_enc: &big5hkscs_tables::BIG5HKSCS_MULTI_ENC,
+            direct: big5hkscs_enc_direct(),
+            multi_first: big5hkscs_multi_first_cps(),
+        },
     )
 }
 
@@ -48273,7 +48290,7 @@ fn iso2022jp3_convert(
                 }
                 outbuf[out_pos] = b0;
                 out_pos += 1;
-                if matches!(cid, 2 | 3 | 4 | 5) {
+                if matches!(cid, 2..=5) {
                     outbuf[out_pos] = b1;
                     out_pos += 1;
                 }
@@ -48391,7 +48408,7 @@ fn iso2022jp3_convert(
                 set = t;
             }
             out.push(b0);
-            if matches!(cid, 2 | 3 | 4 | 5) {
+            if matches!(cid, 2..=5) {
                 out.push(b1);
             }
         } else {

@@ -40,9 +40,16 @@ pub struct RecordDecoder {
 impl RecordDecoder {
     pub fn new(byte_limit: usize, fragment_limit: usize) -> Self {
         Self {
-            marker: [0; 4], marker_used: 0, remaining: 0, last: false,
-            fragments: 0, complete: false, failure: None, payload: Vec::new(),
-            byte_limit, fragment_limit,
+            marker: [0; 4],
+            marker_used: 0,
+            remaining: 0,
+            last: false,
+            fragments: 0,
+            complete: false,
+            failure: None,
+            payload: Vec::new(),
+            byte_limit,
+            fragment_limit,
         }
     }
 
@@ -56,7 +63,9 @@ impl RecordDecoder {
     /// An already-complete decoder consumes zero bytes. No caller storage is
     /// retained. Empty input is harmless, including between partial headers.
     pub fn consume(&mut self, input: &[u8]) -> Result<usize, RecordError> {
-        if let Some(error) = self.failure { return Err(error); }
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
         let mut used = 0;
         while !self.complete {
             if self.marker_used != 4 {
@@ -65,7 +74,9 @@ impl RecordDecoder {
                     .copy_from_slice(&input[used..used + count]);
                 self.marker_used += count;
                 used += count;
-                if self.marker_used != 4 { break; }
+                if self.marker_used != 4 {
+                    break;
+                }
                 if self.fragments == self.fragment_limit {
                     return self.fail(RecordError::TooManyFragments);
                 }
@@ -90,7 +101,9 @@ impl RecordDecoder {
                 self.marker_used = 0;
                 self.complete = self.last;
             }
-            if used == input.len() { break; }
+            if used == input.len() {
+                break;
+            }
         }
         Ok(used)
     }
@@ -109,14 +122,18 @@ impl RecordDecoder {
 
     /// Transfer a complete record; never publish a partially received payload.
     pub fn take_record(&mut self) -> Option<Vec<u8>> {
-        if !self.complete { return None; }
+        if !self.complete {
+            return None;
+        }
         self.next_record();
         Some(std::mem::take(&mut self.payload))
     }
 
     /// Discard a complete stale-XID reply while retaining its allocation.
     pub fn discard_record(&mut self) -> bool {
-        if !self.complete { return false; }
+        if !self.complete {
+            return false;
+        }
         self.payload.clear();
         self.next_record();
         true
@@ -125,7 +142,9 @@ impl RecordDecoder {
     /// EOF is clean only at a record boundary. A zero-length non-final fragment
     /// is still an unfinished record even though no payload bytes were received.
     pub fn finish(&mut self) -> Result<(), RecordError> {
-        if let Some(error) = self.failure { return Err(error); }
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
         if self.complete || (self.marker_used == 0 && self.fragments == 0) {
             Ok(())
         } else {
@@ -194,23 +213,38 @@ mod tests {
         assert_eq!(decoder.take_record(), Some(Vec::new()));
         assert_eq!(fragment_header(0, true), Ok([0x80, 0, 0, 0]));
         assert_eq!(fragment_header(0x7fff_ffff, true), Ok([0xff; 4]));
-        assert_eq!(fragment_header(0x8000_0000, false), Err(RecordError::TooLarge));
+        assert_eq!(
+            fragment_header(0x8000_0000, false),
+            Err(RecordError::TooLarge)
+        );
     }
 
     #[test]
     fn cumulative_limits_and_empty_fragment_floods_fail_closed() {
         let mut decoder = RecordDecoder::new(4, 4);
         decoder.consume(&fragment(b"abc", false)).unwrap();
-        assert_eq!(decoder.consume(&fragment_header(2, true).unwrap()), Err(RecordError::TooLarge));
+        assert_eq!(
+            decoder.consume(&fragment_header(2, true).unwrap()),
+            Err(RecordError::TooLarge)
+        );
         assert_eq!(decoder.record(), None);
-        assert_eq!(decoder.consume(&fragment(b"x", true)), Err(RecordError::TooLarge));
+        assert_eq!(
+            decoder.consume(&fragment(b"x", true)),
+            Err(RecordError::TooLarge)
+        );
         assert_eq!(decoder.finish(), Err(RecordError::TooLarge));
         let mut decoder = RecordDecoder::new(32, 2);
         decoder.consume(&[0; 8]).unwrap();
-        assert_eq!(decoder.consume(&[0x80, 0, 0, 0]), Err(RecordError::TooManyFragments));
+        assert_eq!(
+            decoder.consume(&[0x80, 0, 0, 0]),
+            Err(RecordError::TooManyFragments)
+        );
         assert_eq!(decoder.take_record(), None);
         let mut decoder = RecordDecoder::new(32, 0);
-        assert_eq!(decoder.consume(&[0x80, 0, 0, 0]), Err(RecordError::TooManyFragments));
+        assert_eq!(
+            decoder.consume(&[0x80, 0, 0, 0]),
+            Err(RecordError::TooManyFragments)
+        );
     }
 
     #[test]
@@ -226,7 +260,14 @@ mod tests {
         decoder.consume(&[0; 4]).unwrap();
         assert_eq!(decoder.finish(), Err(RecordError::Truncated));
         let mut decoder = RecordDecoder::new(16, 1);
-        assert_eq!(decoder.consume(&fragment_header(0x7fff_ffff, true).unwrap()), Err(RecordError::TooLarge));
-        assert_eq!(decoder.payload.capacity(), 0, "declared lengths must not allocate");
+        assert_eq!(
+            decoder.consume(&fragment_header(0x7fff_ffff, true).unwrap()),
+            Err(RecordError::TooLarge)
+        );
+        assert_eq!(
+            decoder.payload.capacity(),
+            0,
+            "declared lengths must not allocate"
+        );
     }
 }

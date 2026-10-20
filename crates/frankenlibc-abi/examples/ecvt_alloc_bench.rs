@@ -4,11 +4,12 @@ use std::ffi::c_void;
 use std::hint::black_box;
 use std::time::Instant;
 
+#[allow(clippy::approx_constant)]
 fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
@@ -16,13 +17,13 @@ fn main() {
         type CvtR =
             unsafe extern "C" fn(f64, i32, *mut i32, *mut i32, *mut libc::c_char, usize) -> i32;
         let gl_ecvt: Cvt =
-            std::mem::transmute::<*mut c_void, Cvt>(libc::dlsym(h, b"ecvt\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, Cvt>(libc::dlsym(h, c"ecvt".as_ptr()));
         let gl_fcvt: Cvt =
-            std::mem::transmute::<*mut c_void, Cvt>(libc::dlsym(h, b"fcvt\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, Cvt>(libc::dlsym(h, c"fcvt".as_ptr()));
         let gl_ecvt_r: CvtR =
-            std::mem::transmute::<*mut c_void, CvtR>(libc::dlsym(h, b"ecvt_r\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, CvtR>(libc::dlsym(h, c"ecvt_r".as_ptr()));
         let gl_fcvt_r: CvtR =
-            std::mem::transmute::<*mut c_void, CvtR>(libc::dlsym(h, b"fcvt_r\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, CvtR>(libc::dlsym(h, c"fcvt_r".as_ptr()));
 
         let iters = 5_000_000usize;
         let val = 3.141592653589793f64;

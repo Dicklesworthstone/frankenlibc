@@ -270,9 +270,9 @@ fn bool_or_false(value: &serde_json::Value) -> bool {
 }
 
 fn u64_or_zero(value: &serde_json::Value) -> u64 {
-    value.as_u64().map_or(0, |value| value)
+    value.as_u64().unwrap_or(0)
 }
 
 fn f64_or_zero(value: &serde_json::Value) -> f64 {
-    value.as_f64().map_or(0.0, |value| value)
+    value.as_f64().unwrap_or(0.0)
 }

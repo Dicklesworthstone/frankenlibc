@@ -4984,8 +4984,8 @@ enum ExitHandler {
 
 #[path = "exit_handlers.rs"]
 mod exit_handlers;
-use exit_handlers::{register_exit_handler, run_exit_handlers};
 pub(crate) use exit_handlers::{finalize_cxa_handlers, register_cxa_exit_handler};
+use exit_handlers::{register_exit_handler, run_exit_handlers};
 
 /// The executable's `fini` and the loader's `rtld_fini` (`_dl_fini`), handed
 /// over by the owned startup path so [`exit`] can run them after the

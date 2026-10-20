@@ -4,17 +4,18 @@ use std::ffi::{CStr, c_char, c_double, c_int, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
+#[allow(clippy::approx_constant)]
 fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type GcvtFn = unsafe extern "C" fn(c_double, c_int, *mut c_char) -> *mut c_char;
         let gl_gcvt: GcvtFn =
-            std::mem::transmute::<*mut c_void, GcvtFn>(libc::dlsym(h, b"gcvt\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, GcvtFn>(libc::dlsym(h, c"gcvt".as_ptr()));
 
         for &(label, v, nd) in &[
             ("pi", 3.14159265358979_f64, 17),

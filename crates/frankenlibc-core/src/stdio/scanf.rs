@@ -2839,7 +2839,7 @@ mod tests {
     fn scanned_scanset_and_char_round_trip_across_the_inline_boundary() {
         // %[...] and %c share the same storage; both sides of the boundary.
         for len in [SCAN_INLINE_CAP, SCAN_INLINE_CAP + 1] {
-            let token: Vec<u8> = std::iter::repeat(b'x').take(len).collect();
+            let token: Vec<u8> = std::iter::repeat_n(b'x', len).collect();
 
             let dirs = parse_scanf_format(b"%[x]");
             let result = scan_input(&token, &dirs);

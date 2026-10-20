@@ -13488,10 +13488,7 @@ fn render_hex_float(value: f64, precision: Option<usize>, uppercase: bool) -> St
     match precision {
         Some(precision) => {
             let (integer, fraction) = if precision >= 13 {
-                (
-                    mantissa_units >> 52,
-                    mantissa_units & ((1_u128 << 52) - 1),
-                )
+                (mantissa_units >> 52, mantissa_units & ((1_u128 << 52) - 1))
             } else {
                 let rounded = round_hex_mantissa(mantissa_units, precision);
                 let scale = if precision == 0 {

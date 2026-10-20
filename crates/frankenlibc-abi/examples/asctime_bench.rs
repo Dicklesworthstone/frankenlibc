@@ -12,14 +12,14 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type AsctimeRFn =
             unsafe extern "C" fn(*const libc::tm, *mut libc::c_char) -> *mut libc::c_char;
         let gl_asctime_r: AsctimeRFn = std::mem::transmute::<*mut std::ffi::c_void, AsctimeRFn>(
-            libc::dlsym(h, b"asctime_r\0".as_ptr().cast()),
+            libc::dlsym(h, c"asctime_r".as_ptr()),
         );
 
         // Full broken-down time (with wday/yday, which asctime needs).

@@ -169,57 +169,135 @@ fn frontends() -> Vec<(&'static str, *const ())> {
 }
 
 #[derive(Clone, Copy)]
-struct Api { open: Open, sym: Sym, close: Close, native: bool }
+struct Api {
+    open: Open,
+    sym: Sym,
+    close: Close,
+    native: bool,
+}
 impl Api {
     fn new(native: bool) -> Self {
-        if native { Self { open: dl::dlopen, sym: dl::dlsym, close: dl::dlclose, native } }
-        else { unsafe { Self {
-            open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
-            sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
-            close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()), native,
-        } } }
+        if native {
+            Self {
+                open: dl::dlopen,
+                sym: dl::dlsym,
+                close: dl::dlclose,
+                native,
+            }
+        } else {
+            unsafe {
+                Self {
+                    open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                    sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                    close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                    native,
+                }
+            }
+        }
     }
     fn open(self, path: &Path, flags: c_int) -> *mut c_void {
         let path = CString::new(path.as_os_str().as_bytes()).unwrap();
         let handle = unsafe { (self.open)(path.as_ptr(), flags | libc::RTLD_NOW) };
         assert!(!handle.is_null(), "dlopen {path:?}");
-        if self.native { assert!(dl::native_dso_handle_for_tests(handle), "host fallback: {path:?}"); }
+        if self.native {
+            assert!(
+                dl::native_dso_handle_for_tests(handle),
+                "host fallback: {path:?}"
+            );
+        }
         handle
     }
     fn symbol(self, handle: *mut c_void, name: &CStr) -> *mut c_void {
         let value = unsafe { (self.sym)(handle, name.as_ptr()) };
-        assert!(!value.is_null(), "dlsym {name:?}"); value
+        assert!(!value.is_null(), "dlsym {name:?}");
+        value
     }
-    fn close(self, handle: *mut c_void) { assert_eq!(unsafe { (self.close)(handle) }, 0); }
+    fn close(self, handle: *mut c_void) {
+        assert_eq!(unsafe { (self.close)(handle) }, 0);
+    }
     fn loaded(self, path: &Path) -> bool {
         let path = CString::new(path.as_os_str().as_bytes()).unwrap();
         let handle = unsafe { (self.open)(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
-        if handle.is_null() { false } else { self.close(handle); true }
+        if handle.is_null() {
+            false
+        } else {
+            self.close(handle);
+            true
+        }
     }
 }
 
-struct Fixture { dir: PathBuf, library: PathBuf }
+struct Fixture {
+    dir: PathBuf,
+    library: PathBuf,
+}
 impl Fixture {
     fn new(extra: &[&str]) -> Self {
-        let dir = std::env::temp_dir().join(format!("frankenlibc-stream-{}-{}",
-            std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-stream-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir(&dir).unwrap();
         let library = dir.join("libstream.so");
-        let source = dir.join("stream.c"); std::fs::write(&source, SOURCE).unwrap();
+        let source = dir.join("stream.c");
+        std::fs::write(&source, SOURCE).unwrap();
         let mut command = Command::new("gcc");
-        command.args(["-shared", "-fPIC", "-nostdlib", "-O2", "-fno-builtin",
-            "-fno-optimize-sibling-calls", "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0",
-            "-Wall", "-Wextra", "-Werror", "-Wl,--hash-style=both"])
-            .arg(format!("-DLIFECYCLE_PATH=\"{}\"", dir.join("lifecycle.txt").display()))
-            .args(extra).arg(&source).arg("-o").arg(&library);
+        command
+            .args([
+                "-shared",
+                "-fPIC",
+                "-nostdlib",
+                "-O2",
+                "-fno-builtin",
+                "-fno-optimize-sibling-calls",
+                "-U_FORTIFY_SOURCE",
+                "-D_FORTIFY_SOURCE=0",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wl,--hash-style=both",
+            ])
+            .arg(format!(
+                "-DLIFECYCLE_PATH=\"{}\"",
+                dir.join("lifecycle.txt").display()
+            ))
+            .args(extra)
+            .arg(&source)
+            .arg("-o")
+            .arg(&library);
         let output = command.output().expect("gcc is required");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        let object = ElfLoader::new(0).parse(&std::fs::read(&library).unwrap()).unwrap();
-        assert!(object.needed_libraries.is_empty(), "host dependencies are forbidden");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let object = ElfLoader::new(0)
+            .parse(&std::fs::read(&library).unwrap())
+            .unwrap();
+        assert!(
+            object.needed_libraries.is_empty(),
+            "host dependencies are forbidden"
+        );
         // Verify the generated DSO really imports the selected stream API.
-        for name in ["fopen", "fclose", "fread", "fwrite", "fdopen", "flockfile", "fflush"] {
-            assert!(object.undefined_symbols().any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
-                "compiler elided import {name}");
+        for name in [
+            "fopen",
+            "fclose",
+            "fread",
+            "fwrite",
+            "fdopen",
+            "flockfile",
+            "fflush",
+        ] {
+            assert!(
+                object
+                    .undefined_symbols()
+                    .any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
+                "compiler elided import {name}"
+            );
         }
         Self { dir, library }
     }
@@ -230,19 +308,30 @@ impl Fixture {
 
 fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
     if let Ok(mode) = std::env::var("FRANKENLIBC_STREAM_CHILD") {
-        assert!(mode == "host" || mode == "native"); scenario(Api::new(mode == "native")); return;
+        assert!(mode == "host" || mode == "native");
+        scenario(Api::new(mode == "native"));
+        return;
     }
-    for mode in if native_only { &["native"][..] } else { &["host", "native"][..] } {
+    for mode in if native_only {
+        &["native"][..]
+    } else {
+        &["host", "native"][..]
+    } {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", name, "--nocapture"]).env("FRANKENLIBC_STREAM_CHILD", mode)
-            .spawn().unwrap();
+            .args(["--exact", name, "--nocapture"])
+            .env("FRANKENLIBC_STREAM_CHILD", mode)
+            .spawn()
+            .unwrap();
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "{name}: {mode}: {status}"); break;
+                assert!(status.success(), "{name}: {mode}: {status}");
+                break;
             }
             if start.elapsed() > Duration::from_secs(45) {
-                child.kill().unwrap(); child.wait().unwrap(); panic!("{name}: {mode}: timeout");
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{name}: {mode}: timeout");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -251,129 +340,210 @@ fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
 
 #[test]
 fn stream_imports_and_dynamic_lookup_share_all_frontends() {
-    isolated("stream_imports_and_dynamic_lookup_share_all_frontends", false, |api| {
-        for options in [&[][..], &["-fno-plt"][..]] {
-            let f = Fixture::new(options); let h = api.open(&f.library, 0);
-            let count: unsafe extern "C" fn() -> usize = unsafe { std::mem::transmute(api.symbol(h, c"stream_frontend_count")) };
-            let query: Frontend = unsafe { std::mem::transmute(api.symbol(h, c"stream_frontend")) };
-            assert_eq!(unsafe { count() }, frontends().len());
-            for (index, (name, expected)) in frontends().into_iter().enumerate() {
-                let direct = unsafe { query(index, 0, std::ptr::null()) };
-                let dynamic = unsafe { query(index, 1, std::ptr::null()) };
-                let versioned = unsafe { query(index, 1, c"GLIBC_2.2.5".as_ptr()) };
-                assert_eq!(direct, dynamic, "{name}: direct/dynamic mismatch");
-                assert_eq!(direct, versioned, "{name}: versioned mismatch");
-                if api.native { assert_eq!(direct.cast_const().cast::<()>(), expected, "{name}: wrong Rust frontend"); }
-                assert!(unsafe { query(index, 1, c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+    isolated(
+        "stream_imports_and_dynamic_lookup_share_all_frontends",
+        false,
+        |api| {
+            for options in [&[][..], &["-fno-plt"][..]] {
+                let f = Fixture::new(options);
+                let h = api.open(&f.library, 0);
+                let count: unsafe extern "C" fn() -> usize =
+                    unsafe { std::mem::transmute(api.symbol(h, c"stream_frontend_count")) };
+                let query: Frontend =
+                    unsafe { std::mem::transmute(api.symbol(h, c"stream_frontend")) };
+                assert_eq!(unsafe { count() }, frontends().len());
+                for (index, (name, expected)) in frontends().into_iter().enumerate() {
+                    let direct = unsafe { query(index, 0, std::ptr::null()) };
+                    let dynamic = unsafe { query(index, 1, std::ptr::null()) };
+                    let versioned = unsafe { query(index, 1, c"GLIBC_2.2.5".as_ptr()) };
+                    assert_eq!(direct, dynamic, "{name}: direct/dynamic mismatch");
+                    assert_eq!(direct, versioned, "{name}: versioned mismatch");
+                    if api.native {
+                        assert_eq!(
+                            direct.cast_const().cast::<()>(),
+                            expected,
+                            "{name}: wrong Rust frontend"
+                        );
+                    }
+                    assert!(unsafe { query(index, 1, c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+                }
+                api.close(h);
             }
-            api.close(h);
-        }
-    });
+        },
+    );
 }
 
 fn one_path(api: Api, symbol: &CStr, expected: Option<&[u8]>) {
-    let f = Fixture::new(&[]); let h = api.open(&f.library, 0);
+    let f = Fixture::new(&[]);
+    let h = api.open(&f.library, 0);
     let call: OnePath = unsafe { std::mem::transmute(api.symbol(h, symbol)) };
     assert_eq!(unsafe { call(f.path("output").as_ptr()) }, 0, "{symbol:?}");
-    if let Some(expected) = expected { assert_eq!(std::fs::read(f.dir.join("output")).unwrap(), expected); }
+    if let Some(expected) = expected {
+        assert_eq!(std::fs::read(f.dir.join("output")).unwrap(), expected);
+    }
     api.close(h);
 }
 #[test]
 fn stream_binary_roundtrip_and_flush_visibility() {
-    isolated("stream_binary_roundtrip_and_flush_visibility", false,
-        |api| one_path(api, c"stream_roundtrip", Some(b"ab\0cd\n!")));
+    isolated(
+        "stream_binary_roundtrip_and_flush_visibility",
+        false,
+        |api| one_path(api, c"stream_roundtrip", Some(b"ab\0cd\n!")),
+    );
 }
 #[test]
 fn stream_descriptor_transfer_and_failed_fdopen_ownership() {
-    isolated("stream_descriptor_transfer_and_failed_fdopen_ownership", false,
-        |api| one_path(api, c"stream_fd_ownership", Some(b"descriptor")));
+    isolated(
+        "stream_descriptor_transfer_and_failed_fdopen_ownership",
+        false,
+        |api| one_path(api, c"stream_fd_ownership", Some(b"descriptor")),
+    );
 }
 #[test]
 fn stream_eof_error_and_rewind_state() {
-    isolated("stream_eof_error_and_rewind_state", false,
-        |api| one_path(api, c"stream_errors", Some(b"one\ntwo\n")));
+    isolated("stream_eof_error_and_rewind_state", false, |api| {
+        one_path(api, c"stream_errors", Some(b"one\ntwo\n"))
+    });
 }
 #[test]
 fn stream_freopen_and_append_preserve_file_protocol() {
-    isolated("stream_freopen_and_append_preserve_file_protocol", false, |api| {
-        let f = Fixture::new(&[]); let h = api.open(&f.library, 0);
-        let call: unsafe extern "C" fn(*const c_char, *const c_char) -> c_int =
-            unsafe { std::mem::transmute(api.symbol(h, c"stream_reopen")) };
-        assert_eq!(unsafe { call(f.path("first").as_ptr(), f.path("second").as_ptr()) }, 0);
-        assert_eq!(std::fs::read(f.dir.join("first")).unwrap(), b"old");
-        assert_eq!(std::fs::read(f.dir.join("second")).unwrap(), b"new\n+");
-        api.close(h);
-    });
+    isolated(
+        "stream_freopen_and_append_preserve_file_protocol",
+        false,
+        |api| {
+            let f = Fixture::new(&[]);
+            let h = api.open(&f.library, 0);
+            let call: unsafe extern "C" fn(*const c_char, *const c_char) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(h, c"stream_reopen")) };
+            assert_eq!(
+                unsafe { call(f.path("first").as_ptr(), f.path("second").as_ptr()) },
+                0
+            );
+            assert_eq!(std::fs::read(f.dir.join("first")).unwrap(), b"old");
+            assert_eq!(std::fs::read(f.dir.join("second")).unwrap(), b"new\n+");
+            api.close(h);
+        },
+    );
 }
 #[test]
 fn stream_recursive_locks_serialize_concurrent_records() {
-    isolated("stream_recursive_locks_serialize_concurrent_records", false, |api| {
-        let f = Fixture::new(&[]); let h = api.open(&f.library, 0);
-        let open: unsafe extern "C" fn(*const c_char) -> *mut c_void =
-            unsafe { std::mem::transmute(api.symbol(h, c"stream_open_shared")) };
-        let write: unsafe extern "C" fn(*mut c_void, c_int, usize) -> c_int =
-            unsafe { std::mem::transmute(api.symbol(h, c"stream_write_locked")) };
-        let close: unsafe extern "C" fn(*mut c_void) -> c_int =
-            unsafe { std::mem::transmute(api.symbol(h, c"stream_close_shared")) };
-        let stream = unsafe { open(f.path("records").as_ptr()) } as usize;
-        assert_ne!(stream, 0);
-        let workers = b"ABCD".map(|byte| std::thread::spawn(move || {
-            assert_eq!(unsafe { write(stream as *mut c_void, byte as c_int, 200) }, 0);
-        }));
-        for worker in workers { worker.join().unwrap(); }
-        assert_eq!(unsafe { close(stream as *mut c_void) }, 0);
-        let bytes = std::fs::read(f.dir.join("records")).unwrap();
-        assert_eq!(bytes.len(), 4 * 200 * 8);
-        let mut counts = [0usize; 4];
-        for line in bytes.as_chunks::<8>().0 {
-            assert_eq!(line[7], b'\n'); assert!((b'A'..=b'D').contains(&line[0]));
-            assert!(line[..7].iter().all(|byte| *byte == line[0]));
-            counts[(line[0] - b'A') as usize] += 1;
-        }
-        assert_eq!(counts, [200; 4]); api.close(h);
-    });
+    isolated(
+        "stream_recursive_locks_serialize_concurrent_records",
+        false,
+        |api| {
+            let f = Fixture::new(&[]);
+            let h = api.open(&f.library, 0);
+            let open: unsafe extern "C" fn(*const c_char) -> *mut c_void =
+                unsafe { std::mem::transmute(api.symbol(h, c"stream_open_shared")) };
+            let write: unsafe extern "C" fn(*mut c_void, c_int, usize) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(h, c"stream_write_locked")) };
+            let close: unsafe extern "C" fn(*mut c_void) -> c_int =
+                unsafe { std::mem::transmute(api.symbol(h, c"stream_close_shared")) };
+            let stream = unsafe { open(f.path("records").as_ptr()) } as usize;
+            assert_ne!(stream, 0);
+            let workers = b"ABCD".map(|byte| {
+                std::thread::spawn(move || {
+                    assert_eq!(
+                        unsafe { write(stream as *mut c_void, byte as c_int, 200) },
+                        0
+                    );
+                })
+            });
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            assert_eq!(unsafe { close(stream as *mut c_void) }, 0);
+            let bytes = std::fs::read(f.dir.join("records")).unwrap();
+            assert_eq!(bytes.len(), 4 * 200 * 8);
+            let mut counts = [0usize; 4];
+            for line in bytes.as_chunks::<8>().0 {
+                assert_eq!(line[7], b'\n');
+                assert!((b'A'..=b'D').contains(&line[0]));
+                assert!(line[..7].iter().all(|byte| *byte == line[0]));
+                counts[(line[0] - b'A') as usize] += 1;
+            }
+            assert_eq!(counts, [200; 4]);
+            api.close(h);
+        },
+    );
 }
 #[test]
 fn stream_constructors_and_finalizers_use_runtime_streams() {
-    isolated("stream_constructors_and_finalizers_use_runtime_streams", false, |api| {
-        let f = Fixture::new(&[]); let h = api.open(&f.library, 0);
-        let init: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(api.symbol(h, c"stream_init_result")) };
-        assert_eq!(unsafe { init() }, 0);
-        assert_eq!(std::fs::read(f.dir.join("lifecycle.txt")).unwrap(), b"init\n");
-        api.close(h);
-        assert_eq!(std::fs::read(f.dir.join("lifecycle.txt")).unwrap(), b"init\nfini\n");
-        assert!(!api.loaded(&f.library));
-    });
+    isolated(
+        "stream_constructors_and_finalizers_use_runtime_streams",
+        false,
+        |api| {
+            let f = Fixture::new(&[]);
+            let h = api.open(&f.library, 0);
+            let init: unsafe extern "C" fn() -> c_int =
+                unsafe { std::mem::transmute(api.symbol(h, c"stream_init_result")) };
+            assert_eq!(unsafe { init() }, 0);
+            assert_eq!(
+                std::fs::read(f.dir.join("lifecycle.txt")).unwrap(),
+                b"init\n"
+            );
+            api.close(h);
+            assert_eq!(
+                std::fs::read(f.dir.join("lifecycle.txt")).unwrap(),
+                b"init\nfini\n"
+            );
+            assert!(!api.loaded(&f.library));
+        },
+    );
 }
 #[test]
 fn stream_missing_strong_import_rolls_back_before_constructor_io() {
-    isolated("stream_missing_strong_import_rolls_back_before_constructor_io", false, |api| {
-        let f = Fixture::new(&["-DBAD_IMPORT"]);
-        let name = CString::new(f.library.as_os_str().as_bytes()).unwrap();
-        assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
-        assert!(!f.dir.join("lifecycle.txt").exists()); assert!(!api.loaded(&f.library));
-        // Refusal did not poison the native/host stream registry for the next load.
-        one_path(api, c"stream_roundtrip", Some(b"ab\0cd\n!"));
-    });
+    isolated(
+        "stream_missing_strong_import_rolls_back_before_constructor_io",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DBAD_IMPORT"]);
+            let name = CString::new(f.library.as_os_str().as_bytes()).unwrap();
+            assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
+            assert!(!f.dir.join("lifecycle.txt").exists());
+            assert!(!api.loaded(&f.library));
+            // Refusal did not poison the native/host stream registry for the next load.
+            one_path(api, c"stream_roundtrip", Some(b"ab\0cd\n!"));
+        },
+    );
 }
 #[test]
 fn stream_native_overrides_precede_runtime_and_retain_provider() {
-    isolated("stream_native_overrides_precede_runtime_and_retain_provider", true, |api| {
-        let provider = Fixture::new(&["-DLOCAL_OVERRIDE"]);
-        let p = api.open(&provider.library, libc::RTLD_GLOBAL);
-        let expected = api.symbol(p, c"fputs");
-        let consumer = Fixture::new(&[]); let c = api.open(&consumer.library, 0);
-        let query: Frontend = unsafe { std::mem::transmute(api.symbol(c, c"stream_frontend")) };
-        let index = frontends().iter().position(|(name, _)| *name == "fputs").unwrap();
-        assert_eq!(unsafe { query(index, 0, std::ptr::null()) }, expected);
-        assert_eq!(unsafe { query(index, 1, std::ptr::null()) }, expected);
-        api.close(p); assert!(api.loaded(&provider.library));
-        let own = Fixture::new(&["-DLOCAL_OVERRIDE"]);
-        let d = api.open(&own.library, libc::RTLD_DEEPBIND);
-        let own_expected = api.symbol(d, c"fputs"); assert_ne!(own_expected, expected);
-        let own_query: Frontend = unsafe { std::mem::transmute(api.symbol(d, c"stream_frontend")) };
-        assert_eq!(unsafe { own_query(index, 0, std::ptr::null()) }, own_expected);
-        assert_eq!(unsafe { own_query(index, 1, std::ptr::null()) }, own_expected);
-        api.close(d); api.close(c); assert!(!api.loaded(&provider.library));
-    });
+    isolated(
+        "stream_native_overrides_precede_runtime_and_retain_provider",
+        true,
+        |api| {
+            let provider = Fixture::new(&["-DLOCAL_OVERRIDE"]);
+            let p = api.open(&provider.library, libc::RTLD_GLOBAL);
+            let expected = api.symbol(p, c"fputs");
+            let consumer = Fixture::new(&[]);
+            let c = api.open(&consumer.library, 0);
+            let query: Frontend = unsafe { std::mem::transmute(api.symbol(c, c"stream_frontend")) };
+            let index = frontends()
+                .iter()
+                .position(|(name, _)| *name == "fputs")
+                .unwrap();
+            assert_eq!(unsafe { query(index, 0, std::ptr::null()) }, expected);
+            assert_eq!(unsafe { query(index, 1, std::ptr::null()) }, expected);
+            api.close(p);
+            assert!(api.loaded(&provider.library));
+            let own = Fixture::new(&["-DLOCAL_OVERRIDE"]);
+            let d = api.open(&own.library, libc::RTLD_DEEPBIND);
+            let own_expected = api.symbol(d, c"fputs");
+            assert_ne!(own_expected, expected);
+            let own_query: Frontend =
+                unsafe { std::mem::transmute(api.symbol(d, c"stream_frontend")) };
+            assert_eq!(
+                unsafe { own_query(index, 0, std::ptr::null()) },
+                own_expected
+            );
+            assert_eq!(
+                unsafe { own_query(index, 1, std::ptr::null()) },
+                own_expected
+            );
+            api.close(d);
+            api.close(c);
+            assert!(!api.loaded(&provider.library));
+        },
+    );
 }

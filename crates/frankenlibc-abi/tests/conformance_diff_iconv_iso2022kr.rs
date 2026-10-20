@@ -33,9 +33,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, OpenFn>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, ConvFn>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, CloseFn>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }

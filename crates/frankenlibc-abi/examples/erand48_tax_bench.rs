@@ -11,16 +11,16 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type Erand = unsafe extern "C" fn(*mut u16) -> f64;
         type Nrand = unsafe extern "C" fn(*mut u16) -> libc::c_long;
         let gl_erand48: Erand =
-            std::mem::transmute::<*mut c_void, Erand>(libc::dlsym(h, b"erand48\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, Erand>(libc::dlsym(h, c"erand48".as_ptr()));
         let gl_nrand48: Nrand =
-            std::mem::transmute::<*mut c_void, Nrand>(libc::dlsym(h, b"nrand48\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, Nrand>(libc::dlsym(h, c"nrand48".as_ptr()));
 
         let iters = 20_000_000usize;
 

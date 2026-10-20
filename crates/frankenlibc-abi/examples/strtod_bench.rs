@@ -11,15 +11,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrtodFn = unsafe extern "C" fn(*const libc::c_char, *mut *mut libc::c_char) -> f64;
-        let gl_strtod: StrtodFn = std::mem::transmute::<*mut c_void, StrtodFn>(libc::dlsym(
-            h,
-            b"strtod\0".as_ptr().cast(),
-        ));
+        let gl_strtod: StrtodFn =
+            std::mem::transmute::<*mut c_void, StrtodFn>(libc::dlsym(h, c"strtod".as_ptr()));
 
         let cases = [
             "3.14159",

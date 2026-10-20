@@ -27,7 +27,7 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
@@ -38,7 +38,7 @@ fn main() {
             unsafe extern "C" fn(*const c_void, *const c_void) -> i32,
         );
         let gl_qsort: QsortFn =
-            std::mem::transmute::<*mut c_void, QsortFn>(libc::dlsym(h, b"qsort\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, QsortFn>(libc::dlsym(h, c"qsort".as_ptr()));
 
         let n = 20_000usize;
         // Distinct, random-order strings (8 hex chars of a hash).
@@ -50,8 +50,7 @@ fn main() {
             .collect();
         let ptrs: Vec<*const u8> = strings.iter().map(|s| s.as_ptr().cast::<u8>()).collect();
 
-        let fl_cmp =
-            |a: &[u8], b: &[u8]| unsafe { cmp_strptr(a.as_ptr().cast(), b.as_ptr().cast()) };
+        let fl_cmp = |a: &[u8], b: &[u8]| cmp_strptr(a.as_ptr().cast(), b.as_ptr().cast());
 
         // Correctness: fl and glibc produce the same pointer order.
         let mut vf = ptrs.clone();

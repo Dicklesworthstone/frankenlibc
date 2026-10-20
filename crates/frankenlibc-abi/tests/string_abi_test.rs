@@ -3496,7 +3496,10 @@ fn bd_rc0923_epic_eeuy4f_28_hardened_memcmp_arena_bounds_and_quarantine_uaf() {
         // hardened `memcmp` must clamp `cmp_len` to 16 and return 0 without reading
         // trailing canary/heap bytes past byte 16.
         let live_eq = memcmp(a.cast(), b.cast(), 64);
-        assert_eq!(live_eq, 0, "hardened memcmp must clamp to 16-byte arena bound");
+        assert_eq!(
+            live_eq, 0,
+            "hardened memcmp must clamp to 16-byte arena bound"
+        );
 
         // Make `a[0]` differ from `b[0]`, then free `a` so it enters the arena
         // quarantine (`SafetyState::Quarantined => Some(0)`). Hardened `memcmp`

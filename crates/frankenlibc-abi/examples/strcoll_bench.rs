@@ -11,15 +11,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrcollFn = unsafe extern "C" fn(*const libc::c_char, *const libc::c_char) -> i32;
-        let gl_strcoll: StrcollFn = std::mem::transmute::<*mut c_void, StrcollFn>(libc::dlsym(
-            h,
-            b"strcoll\0".as_ptr().cast(),
-        ));
+        let gl_strcoll: StrcollFn =
+            std::mem::transmute::<*mut c_void, StrcollFn>(libc::dlsym(h, c"strcoll".as_ptr()));
 
         // Differ near the end -> a (near) full-length compare.
         let a = "the quick brown fox jumps over the lazy dog A";

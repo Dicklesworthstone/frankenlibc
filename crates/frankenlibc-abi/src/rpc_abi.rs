@@ -19,10 +19,10 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
-#[path = "rpc_udp.rs"]
-mod rpc_udp;
 #[path = "rpc_svc.rs"]
 mod rpc_svc;
+#[path = "rpc_udp.rs"]
+mod rpc_udp;
 pub use rpc_svc::{
     svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset, svc_register, svc_run,
     svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode, svcerr_noproc, svcerr_noprog,

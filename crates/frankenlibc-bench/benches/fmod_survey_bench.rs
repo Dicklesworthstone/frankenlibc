@@ -80,9 +80,13 @@ fn bench(c: &mut Criterion) {
 
     let mut g = c.benchmark_group("fmod_survey");
     g.sample_size(10);
-    survey(&mut g, "fmod_typical", &typical, math::fmod, |x, y| unsafe {
-        h_fmod(x, y)
-    });
+    survey(
+        &mut g,
+        "fmod_typical",
+        &typical,
+        math::fmod,
+        |x, y| unsafe { h_fmod(x, y) },
+    );
     survey(&mut g, "fmod_stress", &stress, math::fmod, |x, y| unsafe {
         h_fmod(x, y)
     });

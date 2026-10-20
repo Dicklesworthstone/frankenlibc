@@ -138,10 +138,7 @@ fn parse_hex(s: &str) -> TestResult<Vec<u8>> {
         return Err(format!("hex length {} not even", s.len()));
     }
     let mut out = Vec::with_capacity(s.len() / 2);
-    for pair in s.as_bytes().chunks_exact(2) {
-        let Some((&hi_byte, &lo_byte)) = pair.first().zip(pair.get(1)) else {
-            return Err("hex pair must contain two bytes".into());
-        };
+    for &[hi_byte, lo_byte] in s.as_bytes().as_chunks::<2>().0 {
         let hi = match hex_nibble(hi_byte) {
             Some(nibble) => nibble,
             None => return Err("hex parse failed".into()),

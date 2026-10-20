@@ -1063,11 +1063,13 @@ mod tests {
 
     #[test]
     fn reverse_retry_preserves_options_without_search_suffixes() {
-        let mut config = ResolverConfig::default();
-        config.search = vec!["must-not-be-queried.test".to_owned()];
-        config.attempts = 2;
-        config.use_vc = true;
-        config.trust_ad = true;
+        let config = ResolverConfig {
+            search: vec!["must-not-be-queried.test".to_owned()],
+            attempts: 2,
+            use_vc: true,
+            trust_ad: true,
+            ..ResolverConfig::default()
+        };
         let mut calls = 0;
         let result = reverse_with(
             "192.0.2.9".parse().unwrap(),
@@ -1439,9 +1441,11 @@ mod tests {
 
     #[test]
     fn nxdomain_advances_search_and_success_stops_it() {
-        let mut config = ResolverConfig::default();
-        config.search = vec!["missing.test".to_owned(), "found.test".to_owned()];
-        config.attempts = 4;
+        let config = ResolverConfig {
+            search: vec!["missing.test".to_owned(), "found.test".to_owned()],
+            attempts: 4,
+            ..ResolverConfig::default()
+        };
         let mut calls = Vec::new();
         let result = resolve_with(b"host", true, false, &config, |name, _, _, _, _, _| {
             calls.push(name.to_vec());
@@ -1501,9 +1505,11 @@ mod tests {
         fn timed_out() -> Result<QueryReply, QueryError> {
             Err(QueryError::Io(std::io::ErrorKind::TimedOut.into()))
         }
-        let mut config = ResolverConfig::default();
-        config.search = vec!["a.test".to_owned(), "b.test".to_owned()];
-        config.attempts = 1;
+        let config = ResolverConfig {
+            search: vec!["a.test".to_owned(), "b.test".to_owned()],
+            attempts: 1,
+            ..ResolverConfig::default()
+        };
 
         // As-is first (enough dots): its NXDOMAIN is the answer even though a
         // search domain timed out -- and the timeout stops the search.
@@ -1567,10 +1573,12 @@ mod tests {
 
     #[test]
     fn transport_options_are_forwarded_to_each_attempt() {
-        let mut config = ResolverConfig::default();
-        config.use_vc = true;
-        config.trust_ad = true;
-        config.timeout = 7;
+        let config = ResolverConfig {
+            use_vc: true,
+            trust_ad: true,
+            timeout: 7,
+            ..ResolverConfig::default()
+        };
         let result = resolve_with(
             b"example.test.",
             true,
@@ -1678,8 +1686,10 @@ mod tests {
 
     #[test]
     fn canonical_name_comes_from_successful_search_candidate() {
-        let mut config = ResolverConfig::default();
-        config.search = vec!["missing.test".into(), "found.test".into()];
+        let config = ResolverConfig {
+            search: vec!["missing.test".into(), "found.test".into()],
+            ..ResolverConfig::default()
+        };
         let mut calls = Vec::new();
         let result =
             resolve_with_canonical(b"host", true, false, &config, |owner, kind, _, _, _, _| {
@@ -1707,12 +1717,13 @@ mod tests {
 
     fn bound_answer(sent: &[u8], packet: &[u8]) -> Result<AddressAnswer, QueryError> {
         let (owner, fields) = question(sent).unwrap();
+        let mut min_ttl = u32::MAX;
         address_answer(
             sent,
             packet,
             u16::from_be_bytes([fields[0], fields[1]]),
             &mut vec![owner],
-            &mut u32::MAX,
+            &mut min_ttl,
         )
     }
 

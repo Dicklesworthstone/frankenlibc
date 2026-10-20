@@ -41,7 +41,7 @@ fn make(n: usize, width: usize, dist: &str) -> Vec<u8> {
             // perturbed by a bounded jitter (append log, timestamps, mostly-sorted
             // ids). pdqsort exploits the runs; LSD radix cannot.
             "nearly" => {
-                if lcg(&mut s) % 100 == 0 {
+                if lcg(&mut s).is_multiple_of(100) {
                     i as i64 + (lcg(&mut s) % 64) as i64 - 32
                 } else {
                     i as i64
@@ -179,6 +179,7 @@ fn cmp64(a: &[u8], b: &[u8]) -> i32 {
     gl_cmp_i64(a.as_ptr() as *const c_void, b.as_ptr() as *const c_void)
 }
 
+#[allow(clippy::type_complexity)]
 fn main() {
     let widths: [(
         usize,

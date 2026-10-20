@@ -12,13 +12,14 @@ use frankenlibc_core::resolv::ResolverConfig;
 use frankenlibc_core::resolv::dns::{DnsRecord, qclass, qtype, rcode};
 
 fn config() -> ResolverConfig {
-    let mut config = ResolverConfig::default();
-    config.nameservers = vec![
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-    ];
-    config.attempts = 3;
-    config
+    ResolverConfig {
+        nameservers: vec![
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+        ],
+        attempts: 3,
+        ..ResolverConfig::default()
+    }
 }
 
 fn refused() -> QueryError {

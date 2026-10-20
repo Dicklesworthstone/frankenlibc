@@ -11,7 +11,7 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
@@ -23,30 +23,24 @@ fn main() {
             *mut libc::regmatch_t,
             i32,
         ) -> i32;
-        let gl_regcomp: RegcompFn = std::mem::transmute::<*mut c_void, RegcompFn>(libc::dlsym(
-            h,
-            b"regcomp\0".as_ptr().cast(),
-        ));
-        let gl_regexec: RegexecFn = std::mem::transmute::<*mut c_void, RegexecFn>(libc::dlsym(
-            h,
-            b"regexec\0".as_ptr().cast(),
-        ));
+        let gl_regcomp: RegcompFn =
+            std::mem::transmute::<*mut c_void, RegcompFn>(libc::dlsym(h, c"regcomp".as_ptr()));
+        let gl_regexec: RegexecFn =
+            std::mem::transmute::<*mut c_void, RegexecFn>(libc::dlsym(h, c"regexec".as_ptr()));
 
         let cases: [(&str, usize); 3] =
             [("a*a*a*a*a*a*a*a*b", 40), ("(a*)*b", 26), ("(a|aa)*b", 26)];
         let mut none: [regex::RegMatch; 0] = [];
         for &(pat, m) in cases.iter() {
             let text = "a".repeat(m); // no 'b' -> NO-MATCH
-            let compiled = match regex::regex_compile(
-                pat.as_bytes(),
-                (libc::REG_EXTENDED | libc::REG_NOSUB),
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    println!("REGEX {pat:?} fl compile err {e}");
-                    continue;
-                }
-            };
+            let compiled =
+                match regex::regex_compile(pat.as_bytes(), libc::REG_EXTENDED | libc::REG_NOSUB) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        println!("REGEX {pat:?} fl compile err {e}");
+                        continue;
+                    }
+                };
             let fl_r = regex::regex_exec(&compiled, text.as_bytes(), &mut none, 0);
 
             let mut re: libc::regex_t = std::mem::zeroed();
@@ -54,7 +48,7 @@ fn main() {
             let rc = gl_regcomp(
                 &mut re,
                 pat_c.as_ptr(),
-                (libc::REG_EXTENDED | libc::REG_NOSUB),
+                libc::REG_EXTENDED | libc::REG_NOSUB,
             );
             if rc != 0 {
                 println!("REGEX {pat:?} glibc compile err {rc}");

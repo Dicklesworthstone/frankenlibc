@@ -11,15 +11,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type FnmatchFn = unsafe extern "C" fn(*const c_void, *const c_void, i32) -> i32;
-        let gl_fnmatch: FnmatchFn = std::mem::transmute::<*mut c_void, FnmatchFn>(libc::dlsym(
-            h,
-            b"fnmatch\0".as_ptr().cast(),
-        ));
+        let gl_fnmatch: FnmatchFn =
+            std::mem::transmute::<*mut c_void, FnmatchFn>(libc::dlsym(h, c"fnmatch".as_ptr()));
 
         let flags = FnmatchFlags::from_bits(0);
         for &(stars, tlen) in &[(4usize, 12usize), (8, 24), (12, 36), (16, 48)] {

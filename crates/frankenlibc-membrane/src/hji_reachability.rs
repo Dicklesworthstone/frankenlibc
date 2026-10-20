@@ -491,7 +491,8 @@ impl HjiReachabilityController {
         self.adverse_ewma = (1.0 - EWMA_ALPHA) * self.adverse_ewma + EWMA_ALPHA * adv_frac;
 
         // Discretize to grid levels.
-        self.risk_level = (crate::util::floor_f64(self.risk_ewma * GRID as f64) as usize).min(GRID - 1);
+        self.risk_level =
+            (crate::util::floor_f64(self.risk_ewma * GRID as f64) as usize).min(GRID - 1);
         self.latency_level =
             (crate::util::floor_f64(self.latency_ewma * GRID as f64) as usize).min(GRID - 1);
         self.adverse_level =

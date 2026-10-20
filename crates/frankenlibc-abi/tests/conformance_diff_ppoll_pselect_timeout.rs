@@ -94,6 +94,7 @@ fn ts_eq(a: &libc::timespec, b: &libc::timespec) -> bool {
 }
 
 #[test]
+#[allow(clippy::unnecessary_mut_passed)]
 fn ppoll_does_not_clobber_caller_timeout_like_glibc() {
     let (rfd, _w) = idle_pipe();
 
@@ -148,6 +149,7 @@ fn ppoll_does_not_clobber_caller_timeout_like_glibc() {
 }
 
 #[test]
+#[allow(clippy::unnecessary_mut_passed)]
 fn pselect_does_not_clobber_caller_timeout_like_glibc() {
     let (rfd, _w) = idle_pipe();
     let g: PselectFn = unsafe { std::mem::transmute(glibc(c"pselect")) };

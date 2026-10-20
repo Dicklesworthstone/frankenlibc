@@ -8,16 +8,14 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrptimeFn =
             unsafe extern "C" fn(*const c_char, *const c_char, *mut libc::tm) -> *mut c_char;
-        let gl_strptime: StrptimeFn = std::mem::transmute::<*mut c_void, StrptimeFn>(libc::dlsym(
-            h,
-            b"strptime\0".as_ptr().cast(),
-        ));
+        let gl_strptime: StrptimeFn =
+            std::mem::transmute::<*mut c_void, StrptimeFn>(libc::dlsym(h, c"strptime".as_ptr()));
 
         for &(label, input, fmt) in &[
             ("datetime", "2024-06-15 12:30:45", "%Y-%m-%d %H:%M:%S"),

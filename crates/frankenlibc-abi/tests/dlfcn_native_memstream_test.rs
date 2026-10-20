@@ -141,7 +141,8 @@ void *memory_standard_address(size_t i,int dynamic) {
 }
 "#;
 
-const VERSIONS: &str = "GLIBC_2.22 { global: fmem_version_anchor; }; GLIBC_2.34 { global: version_anchor; };\n";
+const VERSIONS: &str =
+    "GLIBC_2.22 { global: fmem_version_anchor; }; GLIBC_2.34 { global: version_anchor; };\n";
 
 fn frontends() -> Vec<(&'static str, *const ())> {
     vec![
@@ -164,36 +165,67 @@ fn frontends() -> Vec<(&'static str, *const ())> {
 }
 
 #[derive(Clone, Copy)]
-struct Api { open: Open, sym: Sym, close: Close, error: Error, native: bool }
+struct Api {
+    open: Open,
+    sym: Sym,
+    close: Close,
+    error: Error,
+    native: bool,
+}
 impl Api {
     fn new(native: bool) -> Self {
-        if native { Self { open: dl::dlopen, sym: dl::dlsym, close: dl::dlclose, error: dl::dlerror, native } }
-        else { unsafe { Self {
-            open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
-            sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
-            close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
-            error: dlsym_oracle::host_fn(c"dlerror", dl::dlerror as *const ()), native,
-        } } }
+        if native {
+            Self {
+                open: dl::dlopen,
+                sym: dl::dlsym,
+                close: dl::dlclose,
+                error: dl::dlerror,
+                native,
+            }
+        } else {
+            unsafe {
+                Self {
+                    open: dlsym_oracle::host_fn(c"dlopen", dl::dlopen as *const ()),
+                    sym: dlsym_oracle::host_fn(c"dlsym", dl::dlsym as *const ()),
+                    close: dlsym_oracle::host_fn(c"dlclose", dl::dlclose as *const ()),
+                    error: dlsym_oracle::host_fn(c"dlerror", dl::dlerror as *const ()),
+                    native,
+                }
+            }
+        }
     }
     fn open(self, path: &Path, flags: c_int) -> *mut c_void {
         let path = CString::new(path.as_os_str().as_bytes()).unwrap();
         let handle = unsafe { (self.open)(path.as_ptr(), flags | libc::RTLD_NOW) };
         assert!(!handle.is_null(), "dlopen {path:?}");
-        if self.native { assert!(dl::native_dso_handle_for_tests(handle), "host fallback: {path:?}"); }
+        if self.native {
+            assert!(
+                dl::native_dso_handle_for_tests(handle),
+                "host fallback: {path:?}"
+            );
+        }
         handle
     }
     fn symbol(self, handle: *mut c_void, name: &CStr) -> *mut c_void {
         let address = unsafe { (self.sym)(handle, name.as_ptr()) };
-        assert!(!address.is_null(), "dlsym {name:?}"); address
+        assert!(!address.is_null(), "dlsym {name:?}");
+        address
     }
     fn frontend(self, handle: *mut c_void) -> Frontend {
         unsafe { std::mem::transmute(self.symbol(handle, c"memory_frontend")) }
     }
-    fn close(self, handle: *mut c_void) { assert_eq!(unsafe { (self.close)(handle) }, 0); }
+    fn close(self, handle: *mut c_void) {
+        assert_eq!(unsafe { (self.close)(handle) }, 0);
+    }
     fn loaded(self, path: &Path) -> bool {
         let path = CString::new(path.as_os_str().as_bytes()).unwrap();
         let h = unsafe { (self.open)(path.as_ptr(), libc::RTLD_NOW | libc::RTLD_NOLOAD) };
-        if h.is_null() { false } else { self.close(h); true }
+        if h.is_null() {
+            false
+        } else {
+            self.close(h);
+            true
+        }
     }
 }
 
@@ -204,7 +236,10 @@ fn dword(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at.checked_add(4).unwrap()].try_into().unwrap())
 }
 fn offset(bytes: &[u8], at: usize) -> usize {
-    usize::try_from(u64::from_le_bytes(bytes[at..at.checked_add(8).unwrap()].try_into().unwrap())).unwrap()
+    usize::try_from(u64::from_le_bytes(
+        bytes[at..at.checked_add(8).unwrap()].try_into().unwrap(),
+    ))
+    .unwrap()
 }
 
 /// Encode a real versioned undefined reference without adding a host DT_NEEDED.
@@ -216,16 +251,30 @@ fn offset(bytes: &[u8], at: usize) -> usize {
 fn version_import(path: &Path, symbol: &str, anchor: &str) {
     let mut bytes = std::fs::read(path).unwrap();
     let object = ElfLoader::new(0).parse(&bytes).unwrap();
-    let index = object.dynsym.iter().position(|entry| object.symbol_name(entry) == Some(symbol)).unwrap();
-    let anchor = object.dynsym.iter().position(|entry| object.symbol_name(entry) == Some(anchor)).unwrap();
+    let index = object
+        .dynsym
+        .iter()
+        .position(|entry| object.symbol_name(entry) == Some(symbol))
+        .unwrap();
+    let anchor = object
+        .dynsym
+        .iter()
+        .position(|entry| object.symbol_name(entry) == Some(anchor))
+        .unwrap();
     assert!(object.dynsym[index].is_undefined());
     assert!(object.dynsym[anchor].is_defined());
     let sections = offset(&bytes, 40);
     let stride = usize::from(word(&bytes, 58));
     let count = usize::from(word(&bytes, 60));
     assert!(stride >= 64 && count != 0);
-    let section = (0..count).map(|i| sections.checked_add(i.checked_mul(stride).unwrap()).unwrap())
-        .find(|&at| dword(&bytes, at + 4) == 0x6fff_ffff).expect("GNU versym section");
+    let section = (0..count)
+        .map(|i| {
+            sections
+                .checked_add(i.checked_mul(stride).unwrap())
+                .unwrap()
+        })
+        .find(|&at| dword(&bytes, at + 4) == 0x6fff_ffff)
+        .expect("GNU versym section");
     let start = offset(&bytes, section + 24);
     let size = offset(&bytes, section + 32);
     assert!(index.checked_mul(2).unwrap() + 2 <= size);
@@ -237,34 +286,95 @@ fn version_import(path: &Path, symbol: &str, anchor: &str) {
     std::fs::write(path, &bytes).unwrap();
     let reloaded = std::fs::read(path).unwrap();
     assert_eq!(word(&reloaded, target), version);
-    assert!(ElfLoader::new(0).parse(&reloaded).unwrap().needed_libraries.is_empty());
+    assert!(
+        ElfLoader::new(0)
+            .parse(&reloaded)
+            .unwrap()
+            .needed_libraries
+            .is_empty()
+    );
 }
 
-struct Fixture { dir: PathBuf, library: PathBuf }
+struct Fixture {
+    dir: PathBuf,
+    library: PathBuf,
+}
 impl Fixture {
     fn new(extra: &[&str], impossible_malloc: bool) -> Self {
-        let dir = std::env::temp_dir().join(format!("frankenlibc-memstream-{}-{}",
-            std::process::id(), SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let dir = std::env::temp_dir().join(format!(
+            "frankenlibc-memstream-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         std::fs::create_dir(&dir).unwrap();
-        let source = dir.join("memory.c"); let library = dir.join("libmemory.so");
+        let source = dir.join("memory.c");
+        let library = dir.join("libmemory.so");
         std::fs::write(&source, SOURCE).unwrap();
         std::fs::write(dir.join("versions.map"), VERSIONS).unwrap();
         let output = Command::new("gcc")
-            .args(["-shared", "-fPIC", "-nostdlib", "-O2", "-fno-builtin", "-fno-optimize-sibling-calls",
-                "-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=0", "-Wall", "-Wextra", "-Werror", "-Wl,--hash-style=both"])
-            .arg(format!("-Wl,--version-script={}", dir.join("versions.map").display()))
-            .args(extra).arg(&source).arg("-o").arg(&library)
-            .output().expect("gcc is required");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            .args([
+                "-shared",
+                "-fPIC",
+                "-nostdlib",
+                "-O2",
+                "-fno-builtin",
+                "-fno-optimize-sibling-calls",
+                "-U_FORTIFY_SOURCE",
+                "-D_FORTIFY_SOURCE=0",
+                "-Wall",
+                "-Wextra",
+                "-Werror",
+                "-Wl,--hash-style=both",
+            ])
+            .arg(format!(
+                "-Wl,--version-script={}",
+                dir.join("versions.map").display()
+            ))
+            .args(extra)
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .expect("gcc is required");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         version_import(&library, "fmemopen", "fmem_version_anchor");
-        if impossible_malloc { version_import(&library, "malloc", "version_anchor"); }
-        let object = ElfLoader::new(0).parse(&std::fs::read(&library).unwrap()).unwrap();
-        assert!(object.needed_libraries.is_empty(), "no runtime DT_NEEDED allowed");
-        for name in ["fmemopen", "open_memstream", "vasprintf", "vsnprintf", "stdout", "__getdelim"] {
-            assert!(object.undefined_symbols().any(|(_, entry)| object.symbol_name(entry) == Some(name)),
-                "compiler elided import {name}");
+        if impossible_malloc {
+            version_import(&library, "malloc", "version_anchor");
         }
-        let malloc = object.dynsym.iter().find(|entry| object.symbol_name(entry) == Some("malloc")).unwrap();
+        let object = ElfLoader::new(0)
+            .parse(&std::fs::read(&library).unwrap())
+            .unwrap();
+        assert!(
+            object.needed_libraries.is_empty(),
+            "no runtime DT_NEEDED allowed"
+        );
+        for name in [
+            "fmemopen",
+            "open_memstream",
+            "vasprintf",
+            "vsnprintf",
+            "stdout",
+            "__getdelim",
+        ] {
+            assert!(
+                object
+                    .undefined_symbols()
+                    .any(|(_, entry)| object.symbol_name(entry) == Some(name)),
+                "compiler elided import {name}"
+            );
+        }
+        let malloc = object
+            .dynsym
+            .iter()
+            .find(|entry| object.symbol_name(entry) == Some("malloc"))
+            .unwrap();
         assert_eq!(malloc.is_weak(), extra.contains(&"-DWEAK_MALLOC"));
         Self { dir, library }
     }
@@ -274,30 +384,62 @@ impl Fixture {
         std::fs::write(&source, "#include <stddef.h>\nvoid *fmemopen(void *p,size_t n,const char *m) {(void)p;(void)n;(void)m;return 0;}\n").unwrap();
         let map = self.dir.join("custom.map");
         std::fs::write(&map, "CUSTOM_MEMORY_1 { global: fmemopen; local: *; };\n").unwrap();
-        let output = Command::new("gcc").args(["-shared", "-fPIC", "-nostdlib", "-O2", "-Wl,--hash-style=both"])
+        let output = Command::new("gcc")
+            .args([
+                "-shared",
+                "-fPIC",
+                "-nostdlib",
+                "-O2",
+                "-Wl,--hash-style=both",
+            ])
             .arg(format!("-Wl,--version-script={}", map.display()))
-            .arg(&source).arg("-o").arg(&library).output().unwrap();
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert!(ElfLoader::new(0).parse(&std::fs::read(&library).unwrap()).unwrap().needed_libraries.is_empty());
+            .arg(&source)
+            .arg("-o")
+            .arg(&library)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            ElfLoader::new(0)
+                .parse(&std::fs::read(&library).unwrap())
+                .unwrap()
+                .needed_libraries
+                .is_empty()
+        );
         library
     }
 }
 
 fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
     if let Ok(mode) = std::env::var("FRANKENLIBC_MEMSTREAM_CHILD") {
-        assert!(mode == "host" || mode == "native"); scenario(Api::new(mode == "native")); return;
+        assert!(mode == "host" || mode == "native");
+        scenario(Api::new(mode == "native"));
+        return;
     }
-    for mode in if native_only { &["native"][..] } else { &["host", "native"][..] } {
+    for mode in if native_only {
+        &["native"][..]
+    } else {
+        &["host", "native"][..]
+    } {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", name, "--nocapture"]).env("FRANKENLIBC_MEMSTREAM_CHILD", mode)
-            .spawn().unwrap();
+            .args(["--exact", name, "--nocapture"])
+            .env("FRANKENLIBC_MEMSTREAM_CHILD", mode)
+            .spawn()
+            .unwrap();
         let start = Instant::now();
         loop {
             if let Some(status) = child.try_wait().unwrap() {
-                assert!(status.success(), "{name}: {mode}: {status}"); break;
+                assert!(status.success(), "{name}: {mode}: {status}");
+                break;
             }
             if start.elapsed() > Duration::from_secs(45) {
-                child.kill().unwrap(); child.wait().unwrap(); panic!("{name}: {mode}: timeout");
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("{name}: {mode}: timeout");
             }
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -306,104 +448,189 @@ fn isolated(name: &str, native_only: bool, scenario: fn(Api)) {
 
 #[test]
 fn memstream_direct_dynamic_and_versioned_frontends_agree() {
-    isolated("memstream_direct_dynamic_and_versioned_frontends_agree", false, |api| {
-        for options in [&[][..], &["-fno-plt"][..]] {
-            let f = Fixture::new(options, false); let h = api.open(&f.library, 0);
-            let count: unsafe extern "C" fn() -> usize = unsafe { std::mem::transmute(api.symbol(h, c"memory_frontend_count")) };
-            assert_eq!(unsafe { count() }, frontends().len());
-            let query = api.frontend(h);
-            for (index, (name, expected)) in frontends().into_iter().enumerate() {
-                let version = if name == "fmemopen" { c"GLIBC_2.22" } else { c"GLIBC_2.2.5" };
-                let direct = unsafe { query(index, 0, std::ptr::null()) };
-                assert!(!direct.is_null());
-                assert_eq!(direct, unsafe { query(index, 1, std::ptr::null()) }, "{name}: dynamic");
-                assert_eq!(direct, unsafe { query(index, 1, version.as_ptr()) }, "{name}: versioned");
-                if api.native { assert_eq!(direct.cast_const().cast::<()>(), expected, "{name}: wrong frontend"); }
-                assert!(unsafe { query(index, 1, c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+    isolated(
+        "memstream_direct_dynamic_and_versioned_frontends_agree",
+        false,
+        |api| {
+            for options in [&[][..], &["-fno-plt"][..]] {
+                let f = Fixture::new(options, false);
+                let h = api.open(&f.library, 0);
+                let count: unsafe extern "C" fn() -> usize =
+                    unsafe { std::mem::transmute(api.symbol(h, c"memory_frontend_count")) };
+                assert_eq!(unsafe { count() }, frontends().len());
+                let query = api.frontend(h);
+                for (index, (name, expected)) in frontends().into_iter().enumerate() {
+                    let version = if name == "fmemopen" {
+                        c"GLIBC_2.22"
+                    } else {
+                        c"GLIBC_2.2.5"
+                    };
+                    let direct = unsafe { query(index, 0, std::ptr::null()) };
+                    assert!(!direct.is_null());
+                    assert_eq!(
+                        direct,
+                        unsafe { query(index, 1, std::ptr::null()) },
+                        "{name}: dynamic"
+                    );
+                    assert_eq!(
+                        direct,
+                        unsafe { query(index, 1, version.as_ptr()) },
+                        "{name}: versioned"
+                    );
+                    if api.native {
+                        assert_eq!(
+                            direct.cast_const().cast::<()>(),
+                            expected,
+                            "{name}: wrong frontend"
+                        );
+                    }
+                    assert!(unsafe { query(index, 1, c"GLIBC_PRIVATE".as_ptr()) }.is_null());
+                }
+                let data: unsafe extern "C" fn(usize, c_int) -> *mut c_void =
+                    unsafe { std::mem::transmute(api.symbol(h, c"memory_standard_address")) };
+                let expected = [
+                    (&raw mut stdio::stdin).cast::<c_void>(),
+                    (&raw mut stdio::stdout).cast::<c_void>(),
+                    (&raw mut stdio::stderr).cast::<c_void>(),
+                ];
+                for (index, expected) in expected.into_iter().enumerate() {
+                    let direct = unsafe { data(index, 0) };
+                    assert!(!direct.is_null());
+                    assert_eq!(direct, unsafe { data(index, 1) });
+                    if api.native {
+                        assert_eq!(direct, expected, "FILE* variable address, not its value");
+                    }
+                }
+                api.close(h);
             }
-            let data: unsafe extern "C" fn(usize, c_int) -> *mut c_void =
-                unsafe { std::mem::transmute(api.symbol(h, c"memory_standard_address")) };
-            let expected = [(&raw mut stdio::stdin).cast::<c_void>(),
-                (&raw mut stdio::stdout).cast::<c_void>(), (&raw mut stdio::stderr).cast::<c_void>()];
-            for (index, expected) in expected.into_iter().enumerate() {
-                let direct = unsafe { data(index, 0) };
-                assert!(!direct.is_null()); assert_eq!(direct, unsafe { data(index, 1) });
-                if api.native { assert_eq!(direct, expected, "FILE* variable address, not its value"); }
-            }
-            api.close(h);
-        }
-    });
+        },
+    );
 }
 
 fn protocol(api: Api, name: &CStr) {
-    let f = Fixture::new(&[], false); let h = api.open(&f.library, 0);
+    let f = Fixture::new(&[], false);
+    let h = api.open(&f.library, 0);
     let call: unsafe extern "C" fn() -> c_int = unsafe { std::mem::transmute(api.symbol(h, name)) };
-    assert_eq!(unsafe { call() }, 0, "{name:?}"); api.close(h);
+    assert_eq!(unsafe { call() }, 0, "{name:?}");
+    api.close(h);
 }
 #[test]
 fn memstream_printf_and_va_list_protocols() {
-    isolated("memstream_printf_and_va_list_protocols", false, |api| protocol(api, c"memory_format_protocol"));
+    isolated("memstream_printf_and_va_list_protocols", false, |api| {
+        protocol(api, c"memory_format_protocol")
+    });
 }
 #[test]
 fn memstream_modern_fixed_stream_zero_size_and_bounds() {
-    isolated("memstream_modern_fixed_stream_zero_size_and_bounds", false, |api| protocol(api, c"memory_fixed_stream"));
+    isolated(
+        "memstream_modern_fixed_stream_zero_size_and_bounds",
+        false,
+        |api| protocol(api, c"memory_fixed_stream"),
+    );
 }
 #[test]
 fn memstream_growth_holes_and_allocator_ownership() {
-    isolated("memstream_growth_holes_and_allocator_ownership", false, |api| protocol(api, c"memory_growing_stream"));
+    isolated(
+        "memstream_growth_holes_and_allocator_ownership",
+        false,
+        |api| protocol(api, c"memory_growing_stream"),
+    );
 }
 #[test]
 fn memstream_delimiters_embedded_nuls_and_line_reallocation() {
-    isolated("memstream_delimiters_embedded_nuls_and_line_reallocation", false, |api| protocol(api, c"memory_line_protocol"));
+    isolated(
+        "memstream_delimiters_embedded_nuls_and_line_reallocation",
+        false,
+        |api| protocol(api, c"memory_line_protocol"),
+    );
 }
 #[test]
 fn memstream_standard_output_uses_the_stream_frontend() {
-    isolated("memstream_standard_output_uses_the_stream_frontend", false, |api| protocol(api, c"memory_stdout_protocol"));
+    isolated(
+        "memstream_standard_output_uses_the_stream_frontend",
+        false,
+        |api| protocol(api, c"memory_stdout_protocol"),
+    );
 }
 #[test]
 fn memstream_strong_runtime_version_mismatch_rejects_load() {
-    isolated("memstream_strong_runtime_version_mismatch_rejects_load", false, |api| {
-        let f = Fixture::new(&[], true);
-        let name = CString::new(f.library.as_os_str().as_bytes()).unwrap();
-        unsafe { (api.error)() };
-        assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
-        assert!(!unsafe { (api.error)() }.is_null()); assert!(!api.loaded(&f.library));
-        protocol(api, c"memory_format_protocol");
-    });
+    isolated(
+        "memstream_strong_runtime_version_mismatch_rejects_load",
+        false,
+        |api| {
+            let f = Fixture::new(&[], true);
+            let name = CString::new(f.library.as_os_str().as_bytes()).unwrap();
+            unsafe { (api.error)() };
+            assert!(unsafe { (api.open)(name.as_ptr(), libc::RTLD_NOW) }.is_null());
+            assert!(!unsafe { (api.error)() }.is_null());
+            assert!(!api.loaded(&f.library));
+            protocol(api, c"memory_format_protocol");
+        },
+    );
 }
 #[test]
 fn memstream_weak_runtime_version_mismatch_resolves_to_zero() {
-    isolated("memstream_weak_runtime_version_mismatch_resolves_to_zero", false, |api| {
-        let f = Fixture::new(&["-DWEAK_MALLOC"], true); let h = api.open(&f.library, 0);
-        let call: unsafe extern "C" fn() -> *mut c_void =
-            unsafe { std::mem::transmute(api.symbol(h, c"memory_malloc_address")) };
-        assert!(unsafe { call() }.is_null()); api.close(h);
-    });
+    isolated(
+        "memstream_weak_runtime_version_mismatch_resolves_to_zero",
+        false,
+        |api| {
+            let f = Fixture::new(&["-DWEAK_MALLOC"], true);
+            let h = api.open(&f.library, 0);
+            let call: unsafe extern "C" fn() -> *mut c_void =
+                unsafe { std::mem::transmute(api.symbol(h, c"memory_malloc_address")) };
+            assert!(unsafe { call() }.is_null());
+            api.close(h);
+        },
+    );
 }
 #[test]
 fn memstream_native_legacy_version_does_not_escape_to_host() {
-    isolated("memstream_native_legacy_version_does_not_escape_to_host", true, |api| {
-        // glibc really implements both ABIs; the native runtime currently
-        // implements only the modern contract. A host legacy FILE is unsafe
-        // as an implicit replacement for that unsupported native version.
-        let f = Fixture::new(&[], false); let h = api.open(&f.library, 0);
-        let query = api.frontend(h);
-        unsafe { (api.error)() };
-        assert!(unsafe { query(0, 1, c"GLIBC_2.2.5".as_ptr()) }.is_null());
-        assert!(!unsafe { (api.error)() }.is_null());
-        assert_eq!(unsafe { query(0, 1, c"GLIBC_2.22".as_ptr()) }, stdio::fmemopen as *const () as *mut c_void);
-        assert!(unsafe { (api.error)() }.is_null()); api.close(h);
-    });
+    isolated(
+        "memstream_native_legacy_version_does_not_escape_to_host",
+        true,
+        |api| {
+            // glibc really implements both ABIs; the native runtime currently
+            // implements only the modern contract. A host legacy FILE is unsafe
+            // as an implicit replacement for that unsupported native version.
+            let f = Fixture::new(&[], false);
+            let h = api.open(&f.library, 0);
+            let query = api.frontend(h);
+            unsafe { (api.error)() };
+            assert!(unsafe { query(0, 1, c"GLIBC_2.2.5".as_ptr()) }.is_null());
+            assert!(!unsafe { (api.error)() }.is_null());
+            assert_eq!(
+                unsafe { query(0, 1, c"GLIBC_2.22".as_ptr()) },
+                stdio::fmemopen as *const () as *mut c_void
+            );
+            assert!(unsafe { (api.error)() }.is_null());
+            api.close(h);
+        },
+    );
 }
 #[test]
 fn memstream_native_custom_version_precedes_runtime_refusal() {
-    isolated("memstream_native_custom_version_precedes_runtime_refusal", true, |api| {
-        let f = Fixture::new(&[], false); let provider = f.custom_provider();
-        let p = api.open(&provider, libc::RTLD_GLOBAL); let expected = api.symbol(p, c"fmemopen");
-        let h = api.open(&f.library, 0); let query = api.frontend(h);
-        assert_eq!(unsafe { query(0, 0, std::ptr::null()) }, stdio::fmemopen as *const () as *mut c_void);
-        assert_eq!(unsafe { query(0, 1, c"CUSTOM_MEMORY_1".as_ptr()) }, expected);
-        api.close(p); assert!(api.loaded(&provider));
-        api.close(h); assert!(!api.loaded(&provider));
-    });
+    isolated(
+        "memstream_native_custom_version_precedes_runtime_refusal",
+        true,
+        |api| {
+            let f = Fixture::new(&[], false);
+            let provider = f.custom_provider();
+            let p = api.open(&provider, libc::RTLD_GLOBAL);
+            let expected = api.symbol(p, c"fmemopen");
+            let h = api.open(&f.library, 0);
+            let query = api.frontend(h);
+            assert_eq!(
+                unsafe { query(0, 0, std::ptr::null()) },
+                stdio::fmemopen as *const () as *mut c_void
+            );
+            assert_eq!(
+                unsafe { query(0, 1, c"CUSTOM_MEMORY_1".as_ptr()) },
+                expected
+            );
+            api.close(p);
+            assert!(api.loaded(&provider));
+            api.close(h);
+            assert!(!api.loaded(&provider));
+        },
+    );
 }

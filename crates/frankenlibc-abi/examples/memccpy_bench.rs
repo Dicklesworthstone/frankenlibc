@@ -8,16 +8,14 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type MemccpyFn =
             unsafe extern "C" fn(*mut c_void, *const c_void, i32, usize) -> *mut c_void;
-        let gl_memccpy: MemccpyFn = std::mem::transmute::<*mut c_void, MemccpyFn>(libc::dlsym(
-            h,
-            b"memccpy\0".as_ptr().cast(),
-        ));
+        let gl_memccpy: MemccpyFn =
+            std::mem::transmute::<*mut c_void, MemccpyFn>(libc::dlsym(h, c"memccpy".as_ptr()));
 
         for &n in &[256usize, 4096, 65536] {
             let mut src = vec![b'a'; n];

@@ -247,10 +247,7 @@ impl EbrCollector {
                 .iter()
                 .filter(|s| s.active.load(Ordering::Relaxed))
                 .count(),
-            pinned_threads: slots
-                .iter()
-                .filter(|s| s.pins.lock().count != 0)
-                .count(),
+            pinned_threads: slots.iter().filter(|s| s.pins.lock().count != 0).count(),
             total_retired: self.total_retired.load(Ordering::Relaxed),
             total_reclaimed: self.total_reclaimed.load(Ordering::Relaxed),
             pending_per_epoch: [

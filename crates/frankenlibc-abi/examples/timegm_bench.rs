@@ -9,13 +9,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type TimegmFn = unsafe extern "C" fn(*mut libc::tm) -> i64;
         let gl_timegm: TimegmFn = std::mem::transmute::<*mut std::ffi::c_void, TimegmFn>(
-            libc::dlsym(h, b"timegm\0".as_ptr().cast()),
+            libc::dlsym(h, c"timegm".as_ptr()),
         );
 
         let bd = BrokenDownTime {

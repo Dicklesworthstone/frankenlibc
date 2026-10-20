@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 
 const CHILD: &str = "FRANKENLIBC_VECTORED_BOUNDS_CHILD";
 const SIZE: usize = 64;
-const APIS: &[&str] = &["readv", "writev", "preadv", "pwritev", "preadv2", "pwritev2"];
+const APIS: &[&str] = &[
+    "readv", "writev", "preadv", "pwritev", "preadv2", "pwritev2",
+];
 
 unsafe fn invoke(api: &str, fd: c_int, iov: *const libc::iovec, count: c_int) -> isize {
     // SAFETY: this fixture deliberately includes invalid inputs to verify
@@ -33,10 +35,14 @@ fn run_case(api: &str, case: &str) {
     malloc_abi::signal_runtime_ready_for_tests();
     let hardened = std::env::var("FRANKENLIBC_MODE").as_deref() == Ok("hardened");
     let reading = api.contains("read");
-    let fd = unsafe { libc::memfd_create(c"frankenlibc-vector-bounds".as_ptr(), libc::MFD_CLOEXEC) };
+    let fd =
+        unsafe { libc::memfd_create(c"frankenlibc-vector-bounds".as_ptr(), libc::MFD_CLOEXEC) };
     assert!(fd >= 0);
     let original_file = [0x39u8; 128];
-    assert_eq!(unsafe { libc::pwrite(fd, original_file.as_ptr().cast(), 128, 0) }, 128);
+    assert_eq!(
+        unsafe { libc::pwrite(fd, original_file.as_ptr().cast(), 128, 0) },
+        128
+    );
     assert_eq!(unsafe { libc::lseek(fd, 0, libc::SEEK_SET) }, 0);
 
     if case == "zero" {
@@ -52,7 +58,10 @@ fn run_case(api: &str, case: &str) {
 
     let allocation = unsafe { malloc_abi::malloc(SIZE) }.cast::<u8>();
     assert!(!allocation.is_null());
-    assert_eq!(malloc_abi::malloc_known_remaining_for_tests(allocation.cast()), Some(SIZE));
+    assert_eq!(
+        malloc_abi::malloc_known_remaining_for_tests(allocation.cast()),
+        Some(SIZE)
+    );
     for i in 0..SIZE {
         unsafe { allocation.add(i).write_volatile(0x57) };
     }
@@ -62,19 +71,27 @@ fn run_case(api: &str, case: &str) {
     }];
     // This is the important precondition missing from the old test coverage:
     // descriptor storage is untracked even though its buffer is tracked.
-    assert_eq!(malloc_abi::malloc_known_remaining_for_tests(descriptors.as_ptr().cast()), None);
+    assert_eq!(
+        malloc_abi::malloc_known_remaining_for_tests(descriptors.as_ptr().cast()),
+        None
+    );
 
     let mut live = true;
     if case == "quarantine" {
         assert!(hardened);
         unsafe { malloc_abi::free(allocation.cast()) };
         live = false;
-        assert_eq!(malloc_abi::malloc_known_remaining_for_tests(allocation.cast()), Some(0));
+        assert_eq!(
+            malloc_abi::malloc_known_remaining_for_tests(allocation.cast()),
+            Some(0)
+        );
     }
     let mut saved_canary = None;
     if case == "oversize" {
         assert!(hardened);
-        assert!(!malloc_abi::malloc_segment_owned_for_tests(allocation.cast()));
+        assert!(!malloc_abi::malloc_segment_owned_for_tests(
+            allocation.cast()
+        ));
         assert!(!malloc_abi::malloc_is_bump_ptr_for_tests(allocation.cast()));
         // Restore the owned trailing byte even if the old implementation writes
         // beyond the user range. This is isolated metadata fault injection.
@@ -99,9 +116,14 @@ fn run_case(api: &str, case: &str) {
     let error = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
     let offset = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
     let mut after_file = [0u8; 128];
-    assert_eq!(unsafe { libc::pread(fd, after_file.as_mut_ptr().cast(), 128, 0) }, 128);
+    assert_eq!(
+        unsafe { libc::pread(fd, after_file.as_mut_ptr().cast(), 128, 0) },
+        128
+    );
     let after_payload = if live {
-        (0..SIZE).map(|i| unsafe { allocation.add(i).read_volatile() }).collect::<Vec<_>>()
+        (0..SIZE)
+            .map(|i| unsafe { allocation.add(i).read_volatile() })
+            .collect::<Vec<_>>()
     } else {
         Vec::new()
     };
@@ -124,7 +146,14 @@ fn run_case(api: &str, case: &str) {
                 assert_eq!(&after_file[..SIZE], &[0x57; SIZE]);
                 assert_eq!(after_payload, [0x57; SIZE]);
             }
-            assert_eq!(offset, if api == "readv" || api == "writev" { SIZE as i64 } else { 0 });
+            assert_eq!(
+                offset,
+                if api == "readv" || api == "writev" {
+                    SIZE as i64
+                } else {
+                    0
+                }
+            );
         }
         "zero-element" => {
             assert_eq!(result, 0);
@@ -133,12 +162,30 @@ fn run_case(api: &str, case: &str) {
             assert_eq!(after_payload, [0x57; SIZE]);
         }
         "oversize" | "quarantine" | "bad-descriptor" | "bad-count" => {
-            assert_eq!(result, -1, "{api}/{case}: rejected input reached target I/O");
-            assert_eq!(error, if case == "bad-count" { libc::EINVAL } else { libc::EFAULT });
+            assert_eq!(
+                result, -1,
+                "{api}/{case}: rejected input reached target I/O"
+            );
+            assert_eq!(
+                error,
+                if case == "bad-count" {
+                    libc::EINVAL
+                } else {
+                    libc::EFAULT
+                }
+            );
             assert_eq!(offset, 0, "{api}/{case}: rejection changed file offset");
-            assert_eq!(after_file, original_file, "{api}/{case}: rejection changed file content");
-            if live { assert_eq!(after_payload, [0x57; SIZE]); }
-            assert_eq!(after_canary, saved_canary, "{api}/{case}: overflow reached canary");
+            assert_eq!(
+                after_file, original_file,
+                "{api}/{case}: rejection changed file content"
+            );
+            if live {
+                assert_eq!(after_payload, [0x57; SIZE]);
+            }
+            assert_eq!(
+                after_canary, saved_canary,
+                "{api}/{case}: overflow reached canary"
+            );
         }
         _ => panic!("unknown case {case}"),
     }
@@ -157,18 +204,41 @@ fn vectored_io_bounds_matrix() {
     for &api in APIS {
         for mode in ["strict", "hardened"] {
             let cases: &[&str] = if mode == "hardened" {
-                &["valid", "zero", "zero-element", "oversize", "quarantine", "bad-descriptor", "bad-count", "unaligned"]
+                &[
+                    "valid",
+                    "zero",
+                    "zero-element",
+                    "oversize",
+                    "quarantine",
+                    "bad-descriptor",
+                    "bad-count",
+                    "unaligned",
+                ]
             } else {
-                &["valid", "zero", "zero-element", "bad-descriptor", "bad-count", "unaligned"]
+                &[
+                    "valid",
+                    "zero",
+                    "zero-element",
+                    "bad-descriptor",
+                    "bad-count",
+                    "unaligned",
+                ]
             };
             for &case in cases {
                 let mut child = Command::new(&executable)
-                    .args(["--exact", "vectored_io_bounds_matrix", "--nocapture", "--test-threads=1"])
+                    .args([
+                        "--exact",
+                        "vectored_io_bounds_matrix",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
                     .env(CHILD, format!("{api}:{case}"))
                     .env("FRANKENLIBC_MODE", mode)
                     .env("FRANKENLIBC_RUNTIME_MATH", "off")
-                    .stdout(Stdio::piped()).stderr(Stdio::piped())
-                    .spawn().expect("start isolated vector ABI test");
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .expect("start isolated vector ABI test");
                 let deadline = Instant::now() + Duration::from_secs(30);
                 let mut timed_out = false;
                 while child.try_wait().unwrap().is_none() {
@@ -183,8 +253,11 @@ fn vectored_io_bounds_matrix() {
                 executed += 1;
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if timed_out || !output.status.success() || !stdout.contains("1 passed;") {
-                    failures.push(format!("{api}/{case}/{mode}: timeout={timed_out} status={}\n{stdout}\n{}",
-                        output.status, String::from_utf8_lossy(&output.stderr)));
+                    failures.push(format!(
+                        "{api}/{case}/{mode}: timeout={timed_out} status={}\n{stdout}\n{}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
                 }
             }
         }

@@ -70,7 +70,9 @@ pub fn encode_call_prefix(
     version: u32,
     procedure: u32,
 ) -> Result<usize, DecodeError> {
-    let destination = output.get_mut(..CALL_PREFIX_BYTES).ok_or(DecodeError::Truncated)?;
+    let destination = output
+        .get_mut(..CALL_PREFIX_BYTES)
+        .ok_or(DecodeError::Truncated)?;
     for (slot, word) in destination
         .as_chunks_mut::<4>()
         .0
@@ -91,7 +93,9 @@ pub fn encode_null_call(
     procedure: u32,
     arguments: &[u8],
 ) -> Result<usize, DecodeError> {
-    let length = NULL_CALL_BYTES.checked_add(arguments.len()).ok_or(DecodeError::Truncated)?;
+    let length = NULL_CALL_BYTES
+        .checked_add(arguments.len())
+        .ok_or(DecodeError::Truncated)?;
     let output = output.get_mut(..length).ok_or(DecodeError::Truncated)?;
     encode_call_prefix(output, xid, program, version, procedure)?;
     output[CALL_PREFIX_BYTES..NULL_CALL_BYTES].fill(0);
@@ -107,7 +111,10 @@ struct Cursor<'a> {
 impl Cursor<'_> {
     fn word(&mut self) -> Result<u32, DecodeError> {
         let end = self.position.checked_add(4).ok_or(DecodeError::Truncated)?;
-        let b = self.bytes.get(self.position..end).ok_or(DecodeError::Truncated)?;
+        let b = self
+            .bytes
+            .get(self.position..end)
+            .ok_or(DecodeError::Truncated)?;
         let value = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
         self.position = end;
         Ok(value)
@@ -144,13 +151,18 @@ pub fn decode_reply(bytes: &[u8], expected_xid: u32) -> Result<Reply, DecodeErro
         0 => {
             let (verifier_flavor, verifier) = input.verifier()?;
             match input.word()? {
-                0 => return Ok(Reply::Success {
-                    verifier_flavor,
-                    verifier,
-                    results: input.position..bytes.len(),
-                }),
+                0 => {
+                    return Ok(Reply::Success {
+                        verifier_flavor,
+                        verifier,
+                        results: input.position..bytes.len(),
+                    });
+                }
                 1 => RemoteError::ProgramUnavailable,
-                2 => RemoteError::ProgramVersion { low: input.word()?, high: input.word()? },
+                2 => RemoteError::ProgramVersion {
+                    low: input.word()?,
+                    high: input.word()?,
+                },
                 3 => RemoteError::ProcedureUnavailable,
                 4 => RemoteError::GarbageArguments,
                 5 => RemoteError::System,
@@ -158,7 +170,10 @@ pub fn decode_reply(bytes: &[u8], expected_xid: u32) -> Result<Reply, DecodeErro
             }
         }
         1 => match input.word()? {
-            0 => RemoteError::RpcVersion { low: input.word()?, high: input.word()? },
+            0 => RemoteError::RpcVersion {
+                low: input.word()?,
+                high: input.word()?,
+            },
             1 => RemoteError::Authentication(input.word()?),
             _ => return Err(DecodeError::InvalidDiscriminant),
         },
@@ -172,15 +187,22 @@ mod tests {
     use super::*;
 
     fn words(values: &[u32]) -> Vec<u8> {
-        values.iter().flat_map(|value| value.to_be_bytes()).collect()
+        values
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect()
     }
 
     #[test]
     fn call_header_matches_independent_network_words() {
         let mut output = [0xa5; 48];
-        let length = encode_null_call(&mut output, 0x12345678, 100000, 2, 3, &[0, 0, 0, 17]).unwrap();
+        let length =
+            encode_null_call(&mut output, 0x12345678, 100000, 2, 3, &[0, 0, 0, 17]).unwrap();
         assert_eq!(length, 44);
-        assert_eq!(&output[..length], words(&[0x12345678, 0, 2, 100000, 2, 3, 0, 0, 0, 0, 17]));
+        assert_eq!(
+            &output[..length],
+            words(&[0x12345678, 0, 2, 100000, 2, 3, 0, 0, 0, 0, 17])
+        );
         assert_eq!(&output[length..], &[0xa5; 4]);
     }
 
@@ -194,11 +216,19 @@ mod tests {
     #[test]
     fn success_exposes_only_bounded_verifier_and_result_ranges() {
         let bytes = words(&[7, 1, 0, 0, 0, 0, 0, 42]);
-        assert_eq!(decode_reply(&bytes, 7), Ok(Reply::Success {
-            verifier_flavor: 0, verifier: 20..20, results: 24..32,
-        }));
+        assert_eq!(
+            decode_reply(&bytes, 7),
+            Ok(Reply::Success {
+                verifier_flavor: 0,
+                verifier: 20..20,
+                results: 24..32,
+            })
+        );
         for length in 0..24 {
-            assert!(decode_reply(&bytes[..length], 7).is_err(), "prefix {length}");
+            assert!(
+                decode_reply(&bytes[..length], 7).is_err(),
+                "prefix {length}"
+            );
         }
     }
 
@@ -207,9 +237,14 @@ mod tests {
         let mut bytes = words(&[1, 1, 0, 2, 3]);
         bytes.extend_from_slice(&[11, 22, 33, 0]);
         bytes.extend_from_slice(&words(&[0, 42]));
-        assert_eq!(decode_reply(&bytes, 1), Ok(Reply::Success {
-            verifier_flavor: 2, verifier: 20..23, results: 28..32,
-        }));
+        assert_eq!(
+            decode_reply(&bytes, 1),
+            Ok(Reply::Success {
+                verifier_flavor: 2,
+                verifier: 20..23,
+                results: 28..32,
+            })
+        );
         assert_eq!(decode_reply(&bytes[..23], 1), Err(DecodeError::Truncated));
     }
 
@@ -222,40 +257,67 @@ mod tests {
             (5, RemoteError::System),
         ];
         for (status, failure) in cases {
-            assert_eq!(decode_reply(&words(&[1, 1, 0, 0, 0, status]), 1), Ok(Reply::Failure(failure)));
+            assert_eq!(
+                decode_reply(&words(&[1, 1, 0, 0, 0, status]), 1),
+                Ok(Reply::Failure(failure))
+            );
         }
-        assert_eq!(decode_reply(&words(&[1, 1, 0, 0, 0, 2, 3, 9]), 1),
-            Ok(Reply::Failure(RemoteError::ProgramVersion { low: 3, high: 9 })));
+        assert_eq!(
+            decode_reply(&words(&[1, 1, 0, 0, 0, 2, 3, 9]), 1),
+            Ok(Reply::Failure(RemoteError::ProgramVersion {
+                low: 3,
+                high: 9
+            }))
+        );
         assert!(decode_reply(&words(&[1, 1, 0, 0, 0, 2, 3]), 1).is_err());
     }
 
     #[test]
     fn denied_reply_unions_are_not_accepted_as_success() {
-        assert_eq!(decode_reply(&words(&[8, 1, 1, 0, 2, 2]), 8),
-            Ok(Reply::Failure(RemoteError::RpcVersion { low: 2, high: 2 })));
-        assert_eq!(decode_reply(&words(&[8, 1, 1, 1, 5]), 8),
-            Ok(Reply::Failure(RemoteError::Authentication(5))));
+        assert_eq!(
+            decode_reply(&words(&[8, 1, 1, 0, 2, 2]), 8),
+            Ok(Reply::Failure(RemoteError::RpcVersion { low: 2, high: 2 }))
+        );
+        assert_eq!(
+            decode_reply(&words(&[8, 1, 1, 1, 5]), 8),
+            Ok(Reply::Failure(RemoteError::Authentication(5)))
+        );
         assert!(decode_reply(&words(&[8, 1, 1, 1]), 8).is_err());
     }
 
     #[test]
     fn unrelated_and_non_reply_packets_are_not_results() {
-        assert_eq!(decode_reply(&words(&[2, 1, 0, 0, 0, 0]), 1), Err(DecodeError::WrongTransaction));
-        assert_eq!(decode_reply(&words(&[1, 0, 0, 0, 0, 0]), 1), Err(DecodeError::NotReply));
+        assert_eq!(
+            decode_reply(&words(&[2, 1, 0, 0, 0, 0]), 1),
+            Err(DecodeError::WrongTransaction)
+        );
+        assert_eq!(
+            decode_reply(&words(&[1, 0, 0, 0, 0, 0]), 1),
+            Err(DecodeError::NotReply)
+        );
     }
 
     #[test]
     fn unknown_discriminants_fail_closed() {
-        for message in [words(&[1, 1, 2]), words(&[1, 1, 0, 0, 0, 6]), words(&[1, 1, 1, 2])] {
-            assert_eq!(decode_reply(&message, 1), Err(DecodeError::InvalidDiscriminant));
+        for message in [
+            words(&[1, 1, 2]),
+            words(&[1, 1, 0, 0, 0, 6]),
+            words(&[1, 1, 1, 2]),
+        ] {
+            assert_eq!(
+                decode_reply(&message, 1),
+                Err(DecodeError::InvalidDiscriminant)
+            );
         }
     }
 
     #[test]
     fn verifier_limit_is_checked_before_length_arithmetic() {
         for length in [401, u32::MAX] {
-            assert_eq!(decode_reply(&words(&[1, 1, 0, 0, length]), 1),
-                Err(DecodeError::AuthenticationTooLong));
+            assert_eq!(
+                decode_reply(&words(&[1, 1, 0, 0, length]), 1),
+                Err(DecodeError::AuthenticationTooLong)
+            );
         }
         let mut bytes = words(&[1, 1, 0, 0, 400]);
         bytes.extend_from_slice(&[0; 400]);

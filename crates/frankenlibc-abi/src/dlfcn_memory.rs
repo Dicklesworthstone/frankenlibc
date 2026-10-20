@@ -18,10 +18,10 @@ mod pthread;
 
 #[path = "dlfcn_fortify.rs"]
 mod fortify;
-#[path = "dlfcn_thread_control.rs"]
-mod thread_control;
 #[path = "dlfcn_semaphore.rs"]
 mod semaphore;
+#[path = "dlfcn_thread_control.rs"]
+mod thread_control;
 
 /// Only the real baseline symbol version for this target is advertised. A
 /// private/future version is not interchangeable with an unversioned lookup.

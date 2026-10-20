@@ -30,7 +30,7 @@ impl Lcg {
 fn wcsnlen_matches_scalar_reference_and_golden() {
     let mut r = Lcg(0xfeed_face_dead_2025);
     let mut hash: u64 = 0xcbf29ce484222325;
-    let mut mix = |x: u64, h: &mut u64| {
+    let mix = |x: u64, h: &mut u64| {
         *h ^= x;
         *h = h.wrapping_mul(0x100000001b3);
     };

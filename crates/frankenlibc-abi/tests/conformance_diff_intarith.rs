@@ -140,11 +140,7 @@ fn abs_family_matches_glibc_including_int_min() {
         let fi = fl::imaxabs(n);
         assert_eq!(fi, gi, "imaxabs({n})");
     }
-    assert_eq!(
-        fl::labs(i64::MIN),
-        i64::MIN,
-        "labs(LONG_MIN) must wrap"
-    );
+    assert_eq!(fl::labs(i64::MIN), i64::MIN, "labs(LONG_MIN) must wrap");
     assert_eq!(
         fl::imaxabs(i64::MIN),
         i64::MIN,

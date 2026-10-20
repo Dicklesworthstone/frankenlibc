@@ -124,9 +124,7 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let a = CString::new(sa).unwrap();
         let b = CString::new(sb).unwrap();
         let g = unsafe { strcoll_l(a.as_ptr(), b.as_ptr(), loc) };
-        let f = unsafe {
-            frankenlibc_abi::unistd_abi::strcoll_l(a.as_ptr(), b.as_ptr(), fl_loc)
-        };
+        let f = unsafe { frankenlibc_abi::unistd_abi::strcoll_l(a.as_ptr(), b.as_ptr(), fl_loc) };
         assert_eq!(
             f.signum(),
             g.signum(),
@@ -136,9 +134,7 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let wa = wide(sa);
         let wb = wide(sb);
         let gw = unsafe { wcscoll_l(wa.as_ptr(), wb.as_ptr(), loc) };
-        let fw = unsafe {
-            frankenlibc_abi::wchar_abi::wcscoll_l(wa.as_ptr(), wb.as_ptr(), fl_loc)
-        };
+        let fw = unsafe { frankenlibc_abi::wchar_abi::wcscoll_l(wa.as_ptr(), wb.as_ptr(), fl_loc) };
         assert_eq!(
             fw.signum(),
             gw.signum(),

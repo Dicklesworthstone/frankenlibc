@@ -951,11 +951,12 @@ fn portmap(
     let mut endpoint = *peer;
     endpoint.sin_port = 111u16.to_be();
     let mut arguments = [0u8; 16];
-    for (slot, word) in arguments
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .zip([program, version, protocol, port as u32])
+    for (slot, word) in
+        arguments
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip([program, version, protocol, port as u32])
     {
         *slot = word.to_be_bytes();
     }

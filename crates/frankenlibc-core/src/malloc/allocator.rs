@@ -757,7 +757,7 @@ impl MallocState {
 
     /// Drains allocator lifecycle log records.
     pub fn drain_lifecycle_logs(&mut self) -> Vec<AllocatorLogRecord> {
-        self.lifecycle_logs.drain(..).collect()
+        std::mem::take(&mut self.lifecycle_logs)
     }
 
     #[cfg(test)]
@@ -1138,7 +1138,7 @@ mod tests {
                 record.event,
                 record.ptr,
                 record.size,
-                record.bin.map_or(NUM_SIZE_CLASSES, |bin| bin),
+                record.bin.unwrap_or(NUM_SIZE_CLASSES),
                 record.outcome,
                 record.details,
                 record.active_count,
@@ -1193,7 +1193,7 @@ mod tests {
                 record.event,
                 record.ptr,
                 record.size,
-                record.bin.map_or(NUM_SIZE_CLASSES, |bin| bin),
+                record.bin.unwrap_or(NUM_SIZE_CLASSES),
                 record.outcome,
                 record.details,
                 record.active_count,

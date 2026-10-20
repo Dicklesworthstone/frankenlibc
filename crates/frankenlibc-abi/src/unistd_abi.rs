@@ -30897,19 +30897,26 @@ pub unsafe extern "C-unwind" fn getaddrinfo_a(
     let submission = match unsafe { gai_async::submit(mode, list, nitems, sevp) } {
         Ok(submission) => submission,
         Err(error) => {
-            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            if error != libc::EAI_SYSTEM {
+                unsafe { set_abi_errno(saved_errno) };
+            }
             return error;
         }
     };
     if mode == 0 {
         loop {
             let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
-            if submission.done() { break; }
+            if submission.done() {
+                break;
+            }
             // No queue lock or borrowed request/list crosses the cancel window.
             // GAI_WAIT restarts ordinary signal interruptions; request errors
             // are read with gai_error rather than returned by this batch call.
-            let _ = unsafe { crate::pthread_abi::at_cancellation_point(||
-                gai_async::wait(epoch, std::ptr::null())) };
+            let _ = unsafe {
+                crate::pthread_abi::at_cancellation_point(|| {
+                    gai_async::wait(epoch, std::ptr::null())
+                })
+            };
         }
     }
     unsafe { set_abi_errno(saved_errno) };
@@ -30952,7 +30959,9 @@ pub unsafe extern "C-unwind" fn gai_suspend(
     let waiting = match unsafe { gai_async::WaitSet::read(list, nitems) } {
         Ok(waiting) => waiting,
         Err(error) => {
-            if error != libc::EAI_SYSTEM { unsafe { set_abi_errno(saved_errno) }; }
+            if error != libc::EAI_SYSTEM {
+                unsafe { set_abi_errno(saved_errno) };
+            }
             return error;
         }
     };
@@ -30974,23 +30983,36 @@ pub unsafe extern "C-unwind" fn gai_suspend(
             unsafe { set_abi_errno(libc::EINVAL) };
             return libc::EAI_SYSTEM;
         }
-        std::time::Instant::now().checked_add(std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+        std::time::Instant::now().checked_add(std::time::Duration::new(
+            ts.tv_sec as u64,
+            ts.tv_nsec as u32,
+        ))
     };
     let result = loop {
         let epoch = gai_async::EPOCH.load(std::sync::atomic::Ordering::Acquire);
-        if waiting.completed() { break 0; }
+        if waiting.completed() {
+            break 0;
+        }
         let interval = if let Some(deadline) = deadline {
             let now = std::time::Instant::now();
-            if now >= deadline { break libc::EAI_AGAIN; }
+            if now >= deadline {
+                break libc::EAI_AGAIN;
+            }
             let left = deadline - now;
-            Some(libc::timespec { tv_sec: left.as_secs() as libc::time_t,
-                tv_nsec: left.subsec_nanos() as libc::c_long })
-        } else { None };
-        let timeout = interval.as_ref().map_or(std::ptr::null(), |ts| ts as *const _);
+            Some(libc::timespec {
+                tv_sec: left.as_secs() as libc::time_t,
+                tv_nsec: left.subsec_nanos() as libc::c_long,
+            })
+        } else {
+            None
+        };
+        let timeout = interval
+            .as_ref()
+            .map_or(std::ptr::null(), |ts| ts as *const _);
         // Keep this window in the public entry frame, as with aio_suspend.
-        match unsafe { crate::pthread_abi::at_cancellation_point(||
-            gai_async::wait(epoch, timeout)) }
-        {
+        match unsafe {
+            crate::pthread_abi::at_cancellation_point(|| gai_async::wait(epoch, timeout))
+        } {
             Ok(()) | Err(libc::EAGAIN) | Err(libc::ETIMEDOUT) => {}
             Err(_) => break gai_async::INTR,
         }

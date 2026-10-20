@@ -3347,20 +3347,23 @@ impl RuntimeMathKernel {
                     LossState::DenyBiased | LossState::CostExplosion
                 ));
                 self.cached_loss_posterior_ppm.store(
-                    crate::util::round_f64(summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0)
-                        as u64,
+                    crate::util::round_f64(
+                        summary.posterior_adverse_prob.clamp(0.0, 1.0) * 1_000_000.0,
+                    ) as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_selected_action
                     .store(summary.recommended_action, Ordering::Relaxed);
                 self.cached_loss_selected_cost_milli.store(
-                    crate::util::round_f64(summary.selected_expected_loss.max(0.0) * 1_000.0) as u64,
+                    crate::util::round_f64(summary.selected_expected_loss.max(0.0) * 1_000.0)
+                        as u64,
                     Ordering::Relaxed,
                 );
                 self.cached_loss_competing_action
                     .store(summary.competing_action, Ordering::Relaxed);
                 self.cached_loss_competing_cost_milli.store(
-                    crate::util::round_f64(summary.competing_expected_loss.max(0.0) * 1_000.0) as u64,
+                    crate::util::round_f64(summary.competing_expected_loss.max(0.0) * 1_000.0)
+                        as u64,
                     Ordering::Relaxed,
                 );
                 match state {

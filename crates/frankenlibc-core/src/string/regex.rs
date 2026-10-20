@@ -5593,7 +5593,8 @@ mod tests {
                 .then(|| (m[0].rm_so, m[0].rm_eo, m[1].rm_so, m[1].rm_eo))
         }
         const E: i32 = REG_EXTENDED;
-        let cases: &[(&[u8], &[u8], i32, Option<(i32, i32)>)] = &[
+        type Utf8Case<'a> = (&'a [u8], &'a [u8], i32, Option<(i32, i32)>);
+        let cases: &[Utf8Case<'_>] = &[
             (b".", "é".as_bytes(), E, Some((0, 2))),
             (b"^.$", "é".as_bytes(), E, Some((0, 2))),
             (b"^..$", "é".as_bytes(), E, None),

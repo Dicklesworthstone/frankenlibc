@@ -44,7 +44,9 @@ fn refresh_during_reclamation(force: bool) {
         // Once the reader drops its old cached Arc, publish yet another
         // version before refresh returns. This is the exact dangerous gap
         // between the former load() and epoch() calls.
-        weak.upgrade().expect("cell remains live").update(Snapshot::plain(3));
+        weak.upgrade()
+            .expect("cell remains live")
+            .update(Snapshot::plain(3));
     }));
     let mut reader = RcuReader::new(&cell);
     cell.update(Snapshot::plain(2));
@@ -63,7 +65,11 @@ fn refresh_during_reclamation(force: bool) {
         3,
         "old snapshot must not be stamped with a later publication's epoch"
     );
-    assert_eq!(reader.read().value, 3, "a subsequent read must observe the update");
+    assert_eq!(
+        reader.read().value,
+        3,
+        "a subsequent read must observe the update"
+    );
     assert_eq!(reader.cached_epoch(), 4);
 }
 
@@ -87,7 +93,10 @@ fn writer_reclamation_allows_reentry(with_closure: bool) {
         // Fail promptly under the old implementation instead of hanging a
         // test process forever on the reentrant load/update just below.
         let available = cell.current.try_lock();
-        assert!(available.is_some(), "snapshot destructor ran under the writer lock");
+        assert!(
+            available.is_some(),
+            "snapshot destructor ran under the writer lock"
+        );
         drop(available);
         let (epoch, snapshot) = cell.load_versioned();
         assert_eq!((epoch, snapshot.value), (3, 2));
@@ -125,7 +134,11 @@ fn writer_publication_survives_destructor_panic(with_closure: bool) {
     }));
     assert!(result.is_err(), "the destructor panic must be observed");
     let (epoch, snapshot) = cell.load_versioned();
-    assert_eq!((epoch, snapshot.value), (2, 1), "publication precedes reclamation");
+    assert_eq!(
+        (epoch, snapshot.value),
+        (2, 1),
+        "publication precedes reclamation"
+    );
     cell.update(Snapshot::plain(2));
     assert_eq!(cell.epoch(), 3);
     assert_eq!(cell.load().value, 2);
@@ -143,13 +156,19 @@ fn update_with_publishes_before_a_panicking_destructor() {
 
 #[test]
 fn reader_installs_complete_pair_before_a_panicking_destructor() {
-    let cell = RcuCell::new(Snapshot::with_drop(0, || panic!("cached snapshot destructor")));
+    let cell = RcuCell::new(Snapshot::with_drop(0, || {
+        panic!("cached snapshot destructor")
+    }));
     let mut reader = RcuReader::new(&cell);
     cell.update(Snapshot::plain(1));
     let result = catch_unwind(AssertUnwindSafe(|| reader.refresh()));
     assert!(result.is_err());
     assert_eq!(reader.cached_snapshot.value, 1);
-    assert_eq!(reader.cached_epoch(), 2, "panic must not leave a split cached pair");
+    assert_eq!(
+        reader.cached_epoch(),
+        2,
+        "panic must not leave a split cached pair"
+    );
     assert_eq!(reader.read().value, 1);
     cell.update(Snapshot::plain(2));
     assert_eq!(reader.read().value, 2);
@@ -192,7 +211,10 @@ fn epoch_exhaustion_never_changes_or_relabels_the_snapshot() {
             }
         }));
         assert!(result.is_err());
-        assert!(!called.load(Ordering::Relaxed), "exhaustion is checked before invoking user code");
+        assert!(
+            !called.load(Ordering::Relaxed),
+            "exhaustion is checked before invoking user code"
+        );
         let after = cell.load_versioned();
         assert_eq!(after.0, u64::MAX);
         assert_eq!(*after.1, 1);
@@ -226,7 +248,11 @@ fn concurrent_readers_observe_exact_version_pairs_without_lost_updates() {
                     reader.refresh();
                 }
                 let value = *reader.read();
-                assert_eq!(reader.cached_epoch(), value + 1, "reader cached a split version pair");
+                assert_eq!(
+                    reader.cached_epoch(),
+                    value + 1,
+                    "reader cached a split version pair"
+                );
                 let (epoch, snapshot) = cell.load_versioned();
                 assert_eq!(epoch, *snapshot + 1);
             }
@@ -234,7 +260,11 @@ fn concurrent_readers_observe_exact_version_pairs_without_lost_updates() {
     }
     start.wait();
     // Join every worker even when one fails, so no worker leaks into later tests.
-    let failed = threads.into_iter().map(|thread| thread.join().is_err()).filter(|failed| *failed).count();
+    let failed = threads
+        .into_iter()
+        .map(|thread| thread.join().is_err())
+        .filter(|failed| *failed)
+        .count();
     assert_eq!(failed, 0);
     let (epoch, value) = cell.load_versioned();
     assert_eq!((epoch, *value), (8001, 8000));

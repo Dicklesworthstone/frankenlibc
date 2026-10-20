@@ -260,8 +260,7 @@ mod tests {
     #[test]
     fn slot_index_matches_division_at_every_transition() {
         let mut checked = 0usize;
-        for class_index in 0..NUM_SIZE_CLASSES {
-            let d = SIZE_TABLE[class_index];
+        for (class_index, &d) in SIZE_TABLE.iter().enumerate() {
             let recip = slot_index_reciprocal(class_index).expect("class in range");
             let mut k = 0usize;
             while k * d < MAX_SLOT_OFFSET {

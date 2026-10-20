@@ -59,7 +59,7 @@ fn bench(
 ) {
     let mut seed = 0xDE5CE7D ^ (n as u64);
     let mut pristine = vec![0u8; n * 8];
-    for chunk in pristine.chunks_exact_mut(8) {
+    for chunk in pristine.as_chunks_mut::<8>().0 {
         // Full-range keys, top bit set on ~half (so signed & unsigned diverge and
         // the descending paths of BOTH interpretations are exercised).
         let v = lcg(&mut seed);

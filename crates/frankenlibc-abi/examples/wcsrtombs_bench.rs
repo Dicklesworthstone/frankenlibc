@@ -2,7 +2,7 @@
 // gconv. Pristine glibc via dlmopen (LM_ID_NEWLM) so `wcsrtombs` is glibc's, not
 // fl's interposed copy. Output verified byte-identical before timing. Interleaved
 // (café), contiguous 2-byte (Cyrillic) and 3-byte (CJK) wide sources.
-use std::ffi::{CString, c_char, c_void};
+use std::ffi::{c_char, c_void};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -10,21 +10,19 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type SetlocaleFn = unsafe extern "C" fn(i32, *const c_char) -> *mut c_char;
         type WcsrtombsFn =
             unsafe extern "C" fn(*mut c_char, *mut *const i32, usize, *mut c_void) -> usize;
-        let gl_setlocale: SetlocaleFn = std::mem::transmute::<*mut c_void, SetlocaleFn>(
-            libc::dlsym(h, b"setlocale\0".as_ptr().cast()),
-        );
-        let gl_wcsrtombs: WcsrtombsFn = std::mem::transmute::<*mut c_void, WcsrtombsFn>(
-            libc::dlsym(h, b"wcsrtombs\0".as_ptr().cast()),
-        );
+        let gl_setlocale: SetlocaleFn =
+            std::mem::transmute::<*mut c_void, SetlocaleFn>(libc::dlsym(h, c"setlocale".as_ptr()));
+        let gl_wcsrtombs: WcsrtombsFn =
+            std::mem::transmute::<*mut c_void, WcsrtombsFn>(libc::dlsym(h, c"wcsrtombs".as_ptr()));
         assert!(
-            !gl_setlocale(libc::LC_ALL, b"C.UTF-8\0".as_ptr().cast()).is_null(),
+            !gl_setlocale(libc::LC_ALL, c"C.UTF-8".as_ptr()).is_null(),
             "setlocale failed"
         );
 

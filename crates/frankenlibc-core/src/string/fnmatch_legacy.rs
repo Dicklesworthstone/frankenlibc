@@ -731,8 +731,7 @@ fn fnmatch_simple(pat: &[u8], text: &[u8], flags: FnmatchFlags) -> bool {
                     && new_si < text.len()
                     && let Some(&lit) = pat.get(spi)
                 {
-                    let plain =
-                        !matches!(lit, b'*' | b'?' | b'[') && !(lit == b'\\' && !noescape);
+                    let plain = !matches!(lit, b'*' | b'?' | b'[') && !(lit == b'\\' && !noescape);
                     if plain {
                         if pathname {
                             // '*' may advance only within the current path

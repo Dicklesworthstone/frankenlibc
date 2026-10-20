@@ -19,15 +19,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type BzeroFn = unsafe extern "C" fn(*mut c_void, usize);
-        let gl_explicit_bzero: BzeroFn = std::mem::transmute::<*mut c_void, BzeroFn>(libc::dlsym(
-            h,
-            b"explicit_bzero\0".as_ptr().cast(),
-        ));
+        let gl_explicit_bzero: BzeroFn =
+            std::mem::transmute::<*mut c_void, BzeroFn>(libc::dlsym(h, c"explicit_bzero".as_ptr()));
 
         for &n in &[16usize, 64, 256, 1024, 4096, 65536] {
             let mut buf = vec![0xAAu8; n];

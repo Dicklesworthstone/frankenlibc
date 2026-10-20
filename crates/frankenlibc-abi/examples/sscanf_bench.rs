@@ -12,13 +12,12 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type SsFn = unsafe extern "C" fn(*const c_char, *const c_char, ...) -> c_int;
-        let gl: SsFn =
-            std::mem::transmute::<*mut c_void, SsFn>(libc::dlsym(h, b"sscanf\0".as_ptr().cast()));
+        let gl: SsFn = std::mem::transmute::<*mut c_void, SsFn>(libc::dlsym(h, c"sscanf".as_ptr()));
 
         macro_rules! probe_int3 {
             ($label:expr, $input:expr, $fmt:expr) => {{
@@ -72,8 +71,8 @@ fn main() {
 
         // float
         {
-            let inp = b"3.14159 2.71828\0".as_ptr() as *const c_char;
-            let fmt = b"%lf %lf\0".as_ptr() as *const c_char;
+            let inp = c"3.14159 2.71828".as_ptr();
+            let fmt = c"%lf %lf".as_ptr();
             let (mut a, mut b) = (0f64, 0f64);
             let (mut ga, mut gb) = (0f64, 0f64);
             let fr = sscanf(inp, fmt, &mut a, &mut b);

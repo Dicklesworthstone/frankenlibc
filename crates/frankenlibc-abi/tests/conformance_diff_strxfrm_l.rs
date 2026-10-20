@@ -158,12 +158,7 @@ fn wcsxfrm_l_matches_glibc() {
             let mut fd = vec![0x7e7e_i32 as wchar_t; 40];
             let g = unsafe { wcsxfrm_l(gd.as_mut_ptr(), src.as_ptr(), n, loc) };
             let f = unsafe {
-                frankenlibc_abi::wchar_abi::wcsxfrm_l(
-                    fd.as_mut_ptr(),
-                    src.as_ptr(),
-                    n,
-                    fl_loc,
-                )
+                frankenlibc_abi::wchar_abi::wcsxfrm_l(fd.as_mut_ptr(), src.as_ptr(), n, fl_loc)
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");
             // Same determinacy rule as strxfrm_l above, keyed on the measured

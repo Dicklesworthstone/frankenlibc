@@ -4130,7 +4130,7 @@ mod tests {
             cases.push(v);
         }
         // Deterministic pseudo-random buffers, some seeded with '%'.
-        let mut state: u64 = 0xC0FFEE_1234_5678;
+        let mut state: u64 = 0x00C0_FFEE_1234_5678;
         for _ in 0..20_000 {
             state ^= state << 13;
             state ^= state >> 7;

@@ -10,16 +10,14 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type StrtolFn =
             unsafe extern "C" fn(*const libc::c_char, *mut *mut libc::c_char, i32) -> i64;
-        let gl_strtol: StrtolFn = std::mem::transmute::<*mut c_void, StrtolFn>(libc::dlsym(
-            h,
-            b"strtol\0".as_ptr().cast(),
-        ));
+        let gl_strtol: StrtolFn =
+            std::mem::transmute::<*mut c_void, StrtolFn>(libc::dlsym(h, c"strtol".as_ptr()));
 
         let cases: [(&str, i32); 9] = [
             ("42", 10),
@@ -66,10 +64,8 @@ fn main() {
         // sub-15ns measurement noise (the lesson from the strtol short-number correction).
         type StrtoullFn =
             unsafe extern "C" fn(*const libc::c_char, *mut *mut libc::c_char, i32) -> u64;
-        let gl_strtoull: StrtoullFn = std::mem::transmute::<*mut c_void, StrtoullFn>(libc::dlsym(
-            h,
-            b"strtoull\0".as_ptr().cast(),
-        ));
+        let gl_strtoull: StrtoullFn =
+            std::mem::transmute::<*mut c_void, StrtoullFn>(libc::dlsym(h, c"strtoull".as_ptr()));
         let ucases: [(&str, i32); 3] = [
             ("12345678901234567890", 10),
             ("18446744073709551615", 10), // u64::MAX

@@ -12,7 +12,7 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
@@ -23,7 +23,7 @@ fn main() {
             *const libc::tm,
         ) -> usize;
         let gl_strftime: StrftimeFn = std::mem::transmute::<*mut std::ffi::c_void, StrftimeFn>(
-            libc::dlsym(h, b"strftime\0".as_ptr().cast()),
+            libc::dlsym(h, c"strftime".as_ptr()),
         );
 
         let seed = BrokenDownTime {

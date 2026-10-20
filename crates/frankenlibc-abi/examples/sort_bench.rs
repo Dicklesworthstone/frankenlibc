@@ -99,11 +99,12 @@ fn cmp_u64_rs(a: &[u8], b: &[u8]) -> i32 {
     (x > y) as i32 - (x < y) as i32
 }
 
+#[allow(clippy::type_complexity)]
 fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
@@ -114,7 +115,7 @@ fn main() {
             unsafe extern "C" fn(*const c_void, *const c_void) -> i32,
         );
         let gl_qsort: QsortFn =
-            std::mem::transmute::<*mut c_void, QsortFn>(libc::dlsym(h, b"qsort\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, QsortFn>(libc::dlsym(h, c"qsort".as_ptr()));
 
         let n = 20_000usize;
         let gens: [(&str, fn(usize, usize) -> i32); 6] = [

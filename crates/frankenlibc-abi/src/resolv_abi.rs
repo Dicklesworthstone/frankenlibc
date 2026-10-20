@@ -7446,13 +7446,7 @@ pub unsafe extern "C" fn ns_sprintrrf(
     ns_addtab(&mut out, 24, &mut spaced);
 
     let mut ttl_buf = [0u8; 32];
-    let ttl_n = unsafe {
-        ns_format_ttl(
-            ttl,
-            ttl_buf.as_mut_ptr() as *mut c_char,
-            ttl_buf.len(),
-        )
-    };
+    let ttl_n = unsafe { ns_format_ttl(ttl, ttl_buf.as_mut_ptr() as *mut c_char, ttl_buf.len()) };
     if ttl_n < 0 {
         return -1;
     }

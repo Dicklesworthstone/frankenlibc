@@ -156,9 +156,7 @@ fn wcstol_l_family_matches_glibc() {
         let g = unsafe { wcstol_l(w.as_ptr(), &mut ge, base, loc) };
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
-        let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, fl_loc)
-        };
+        let f = unsafe { frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, fl_loc) };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstol_l({s:?},{base}) value");
         assert_eq!(
@@ -174,9 +172,8 @@ fn wcstol_l_family_matches_glibc() {
         unsafe { *__errno_location() = 0 };
         let g2 = unsafe { wcstoll_l(w.as_ptr(), &mut ge2, base, loc) };
         let _ = unsafe { *__errno_location() };
-        let f2 = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, fl_loc)
-        };
+        let f2 =
+            unsafe { frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, fl_loc) };
         assert_eq!(f2, g2, "wcstoll_l({s:?},{base}) value");
     }
 
@@ -188,9 +185,7 @@ fn wcstol_l_family_matches_glibc() {
         let g = unsafe { wcstoul_l(w.as_ptr(), &mut ge, base, loc) };
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
-        let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, fl_loc)
-        };
+        let f = unsafe { frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, fl_loc) };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoul_l({s:?},{base}) value");
         assert_eq!(
@@ -203,14 +198,8 @@ fn wcstol_l_family_matches_glibc() {
         let mut ge2: *mut wchar_t = std::ptr::null_mut();
         let mut fe2: *mut wchar_t = std::ptr::null_mut();
         let g2 = unsafe { wcstoull_l(w.as_ptr(), &mut ge2, base, loc) };
-        let f2 = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoull_l(
-                w.as_ptr(),
-                &mut fe2,
-                base,
-                fl_loc,
-            )
-        };
+        let f2 =
+            unsafe { frankenlibc_abi::wchar_abi::wcstoull_l(w.as_ptr(), &mut fe2, base, fl_loc) };
         assert_eq!(f2, g2, "wcstoull_l({s:?},{base}) value");
     }
     unsafe { freelocale(loc) };

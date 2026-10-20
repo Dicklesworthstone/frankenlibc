@@ -4,8 +4,14 @@
 mod cache;
 use cache::{CacheError, Peer, ReplyCache};
 
-const A: Peer = Peer { address: 0x0100007f, port: 1000 };
-const B: Peer = Peer { address: 0x0100007f, port: 1001 };
+const A: Peer = Peer {
+    address: 0x0100007f,
+    port: 1000,
+};
+const B: Peer = Peer {
+    address: 0x0100007f,
+    port: 1001,
+};
 
 #[test]
 fn replay_owns_request_and_reply_bytes() {
@@ -13,7 +19,8 @@ fn replay_owns_request_and_reply_bytes() {
     let mut request = b"request".to_vec();
     let mut reply = b"response".to_vec();
     assert!(cache.remember(A, 1, &request, &reply));
-    request.fill(0); reply.fill(0);
+    request.fill(0);
+    reply.fill(0);
     assert_eq!(cache.lookup(A, 1, b"request"), Some(b"response".as_slice()));
 }
 #[test]
@@ -23,7 +30,10 @@ fn peers_and_entire_requests_are_distinct() {
     assert_eq!(cache.lookup(B, 1, b"xid-args-user1"), None);
     assert_eq!(cache.lookup(A, 1, b"xid-args-user2"), None);
     assert_eq!(cache.lookup(A, 1, b"xid-newargs-user1"), None);
-    assert_eq!(cache.lookup(Peer { address: 2, ..A }, 1, b"xid-args-user1"), None);
+    assert_eq!(
+        cache.lookup(Peer { address: 2, ..A }, 1, b"xid-args-user1"),
+        None
+    );
 }
 #[test]
 fn service_generation_invalidates_cached_results() {
@@ -66,10 +76,19 @@ fn oversized_packets_do_not_consume_or_mutate_a_slot() {
 }
 #[test]
 fn invalid_and_overflowing_allocations_are_rejected() {
-    assert!(matches!(ReplyCache::new(0, 8), Err(CacheError::InvalidSize)));
-    assert!(matches!(ReplyCache::new(1, 0), Err(CacheError::InvalidSize)));
+    assert!(matches!(
+        ReplyCache::new(0, 8),
+        Err(CacheError::InvalidSize)
+    ));
+    assert!(matches!(
+        ReplyCache::new(1, 0),
+        Err(CacheError::InvalidSize)
+    ));
     for (count, size) in [(usize::MAX, 8), (2, usize::MAX), (65536, 65536)] {
-        assert!(matches!(ReplyCache::new(count, size), Err(CacheError::NoMemory)));
+        assert!(matches!(
+            ReplyCache::new(count, size),
+            Err(CacheError::NoMemory)
+        ));
     }
 }
 #[test]
@@ -81,9 +100,14 @@ fn repeated_wraparound_returns_exact_latest_window() {
         assert!(cache.remember(A, 0, &key, &value));
         for live in n.saturating_sub(6)..=n {
             let expected = (live ^ 0x0123456789abcdef).to_ne_bytes();
-            assert_eq!(cache.lookup(A, 0, &live.to_ne_bytes()), Some(expected.as_slice()));
+            assert_eq!(
+                cache.lookup(A, 0, &live.to_ne_bytes()),
+                Some(expected.as_slice())
+            );
         }
-        if n >= 7 { assert!(cache.lookup(A, 0, &(n-7).to_ne_bytes()).is_none()); }
+        if n >= 7 {
+            assert!(cache.lookup(A, 0, &(n - 7).to_ne_bytes()).is_none());
+        }
     }
 }
 

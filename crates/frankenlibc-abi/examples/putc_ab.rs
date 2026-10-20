@@ -26,10 +26,7 @@ use std::time::Instant;
 
 fn main() {
     unsafe {
-        let f = frankenlibc_abi::stdio_abi::fopen(
-            b"/dev/null\0".as_ptr().cast(),
-            b"w\0".as_ptr().cast(),
-        );
+        let f = frankenlibc_abi::stdio_abi::fopen(c"/dev/null".as_ptr(), c"w".as_ptr());
         assert!(!f.is_null(), "fopen failed");
         // _IOFBF, 64 MiB: n below stays under it → no flush in the timed loop.
         assert_eq!(
@@ -64,10 +61,7 @@ fn main() {
         // Read-path comparison: fgetc from /dev/zero (the read path my memory says was
         // optimized to ~2x faster than glibc). The fputc/fgetc asymmetry localizes the
         // write-path gap (membrane vs buffer vs dispatch).
-        let r = frankenlibc_abi::stdio_abi::fopen(
-            b"/dev/zero\0".as_ptr().cast(),
-            b"r\0".as_ptr().cast(),
-        );
+        let r = frankenlibc_abi::stdio_abi::fopen(c"/dev/zero".as_ptr(), c"r".as_ptr());
         let getc_ns = if !r.is_null() {
             assert_eq!(
                 frankenlibc_abi::stdio_abi::setvbuf(r, std::ptr::null_mut(), 0, 64 << 20),

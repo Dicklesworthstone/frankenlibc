@@ -22,16 +22,16 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type A64l = unsafe extern "C" fn(*const libc::c_char) -> libc::c_long;
         type L64a = unsafe extern "C" fn(libc::c_long) -> *mut libc::c_char;
         let gl_a64l: A64l =
-            std::mem::transmute::<*mut c_void, A64l>(libc::dlsym(h, b"a64l\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, A64l>(libc::dlsym(h, c"a64l".as_ptr()));
         let gl_l64a: L64a =
-            std::mem::transmute::<*mut c_void, L64a>(libc::dlsym(h, b"l64a\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, L64a>(libc::dlsym(h, c"l64a".as_ptr()));
 
         let iters = 20_000_000usize;
 

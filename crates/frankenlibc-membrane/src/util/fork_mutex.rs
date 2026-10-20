@@ -304,15 +304,16 @@ mod tests {
         let lock = NoPoisonMutex::new(0);
         let guard = lock.lock_in_generation(3);
         let sequence = lock.wake_sequence.load(Ordering::Acquire);
-        assert!(lock
-            .state
-            .compare_exchange(
-                tagged(3, LOCKED),
-                tagged(3, CONTENDED),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            )
-            .is_ok());
+        assert!(
+            lock.state
+                .compare_exchange(
+                    tagged(3, LOCKED),
+                    tagged(3, CONTENDED),
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+        );
         drop(guard);
         assert_ne!(lock.wake_sequence.load(Ordering::Acquire), sequence);
         // The existing syscall wrapper must return EAGAIN on the stale
@@ -337,7 +338,10 @@ mod tests {
         assert_eq!(lock.state.load(Ordering::Acquire), tagged(31, CONTENDED));
         let sequence = lock.wake_sequence.load(Ordering::Acquire);
         drop(guard);
-        assert_eq!(lock.wake_sequence.load(Ordering::Acquire), sequence.wrapping_add(1));
+        assert_eq!(
+            lock.wake_sequence.load(Ordering::Acquire),
+            sequence.wrapping_add(1)
+        );
     }
 
     #[test]
@@ -393,6 +397,10 @@ mod tests {
         assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
         assert!(libc::WIFEXITED(status));
         assert_eq!(libc::WEXITSTATUS(status), 0);
-        assert_eq!(*lock.lock(), 73, "child mutations must stay in child memory");
+        assert_eq!(
+            *lock.lock(),
+            73,
+            "child mutations must stay in child memory"
+        );
     }
 }

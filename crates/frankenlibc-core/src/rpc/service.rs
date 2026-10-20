@@ -31,7 +31,9 @@ pub enum CallError {
 }
 
 impl From<DecodeError> for CallError {
-    fn from(error: DecodeError) -> Self { Self::Malformed(error) }
+    fn from(error: DecodeError) -> Self {
+        Self::Malformed(error)
+    }
 }
 
 /// Decode a call without allocating from lengths controlled by a peer. A
@@ -39,8 +41,12 @@ impl From<DecodeError> for CallError {
 pub fn decode_call(bytes: &[u8]) -> Result<Call, CallError> {
     let mut input = Cursor { bytes, position: 0 };
     let xid = input.word()?;
-    if input.word()? != 0 { return Err(CallError::NotCall); }
-    if input.word()? != 2 { return Err(CallError::RpcVersion { xid }); }
+    if input.word()? != 0 {
+        return Err(CallError::NotCall);
+    }
+    if input.word()? != 2 {
+        return Err(CallError::RpcVersion { xid });
+    }
     let program = input.word()?;
     let version = input.word()?;
     let procedure = input.word()?;
@@ -48,8 +54,13 @@ pub fn decode_call(bytes: &[u8]) -> Result<Call, CallError> {
     let credential = Auth { flavor, body };
     let (flavor, body) = input.verifier()?;
     Ok(Call {
-        xid, program, version, procedure, credential,
-        verifier: Auth { flavor, body }, arguments: input.position..bytes.len(),
+        xid,
+        program,
+        version,
+        procedure,
+        credential,
+        verifier: Auth { flavor, body },
+        arguments: input.position..bytes.len(),
     })
 }
 
@@ -66,37 +77,62 @@ pub struct SystemCredential<'a> {
 /// Parse the bounded AUTH_SYS credential from RFC 5531 Appendix A. Require
 /// complete fields, including XDR padding, and reject extra credential data.
 pub fn decode_system_credential(bytes: &[u8]) -> Result<SystemCredential<'_>, DecodeError> {
-    if bytes.len() > MAX_AUTH_BYTES { return Err(DecodeError::AuthenticationTooLong); }
+    if bytes.len() > MAX_AUTH_BYTES {
+        return Err(DecodeError::AuthenticationTooLong);
+    }
     let mut input = Cursor { bytes, position: 0 };
     let stamp = input.word()?;
     let length = input.word()? as usize;
-    if length > 255 { return Err(DecodeError::AuthenticationTooLong); }
+    if length > 255 {
+        return Err(DecodeError::AuthenticationTooLong);
+    }
     let start = input.position;
     let end = start + ((length + 3) & !3);
     bytes.get(start..end).ok_or(DecodeError::Truncated)?;
     let machine = &bytes[start..start + length];
     // The public cooked credential is a C string. Embedded NULs cannot be
     // represented faithfully and must not silently change the asserted host.
-    if machine.contains(&0) { return Err(DecodeError::InvalidDiscriminant); }
+    if machine.contains(&0) {
+        return Err(DecodeError::InvalidDiscriminant);
+    }
     input.position = end;
     let uid = input.word()?;
     let gid = input.word()?;
     let group_count = input.word()? as usize;
-    if group_count > 16 { return Err(DecodeError::AuthenticationTooLong); }
+    if group_count > 16 {
+        return Err(DecodeError::AuthenticationTooLong);
+    }
     let mut groups = [0; 16];
-    for group in &mut groups[..group_count] { *group = input.word()?; }
-    if input.position != bytes.len() { return Err(DecodeError::InvalidDiscriminant); }
-    Ok(SystemCredential { stamp, machine, uid, gid, groups, group_count })
+    for group in &mut groups[..group_count] {
+        *group = input.word()?;
+    }
+    if input.position != bytes.len() {
+        return Err(DecodeError::InvalidDiscriminant);
+    }
+    Ok(SystemCredential {
+        stamp,
+        machine,
+        uid,
+        gid,
+        groups,
+        group_count,
+    })
 }
 
 /// Emit a success/error reply envelope. The caller appends XDR results after
 /// the returned offset on success. Failure never changes a short destination.
 /// Rejected messages do not contain an accepted-message verifier.
 pub fn encode_reply_prefix(
-    output: &mut [u8], xid: u32, verifier_flavor: u32, verifier: &[u8],
+    output: &mut [u8],
+    xid: u32,
+    verifier_flavor: u32,
+    verifier: &[u8],
     failure: Option<RemoteError>,
 ) -> Result<usize, DecodeError> {
-    let denied = matches!(failure, Some(RemoteError::RpcVersion { .. } | RemoteError::Authentication(_)));
+    let denied = matches!(
+        failure,
+        Some(RemoteError::RpcVersion { .. } | RemoteError::Authentication(_))
+    );
     if !denied && verifier.len() > MAX_AUTH_BYTES {
         return Err(DecodeError::AuthenticationTooLong);
     }
@@ -127,15 +163,18 @@ pub fn encode_reply_prefix(
         None => put(output, &mut position, 0),
         Some(RemoteError::RpcVersion { low, high }) => {
             put(output, &mut position, 0);
-            put(output, &mut position, low); put(output, &mut position, high);
+            put(output, &mut position, low);
+            put(output, &mut position, high);
         }
         Some(RemoteError::Authentication(why)) => {
-            put(output, &mut position, 1); put(output, &mut position, why);
+            put(output, &mut position, 1);
+            put(output, &mut position, why);
         }
         Some(RemoteError::ProgramUnavailable) => put(output, &mut position, 1),
         Some(RemoteError::ProgramVersion { low, high }) => {
             put(output, &mut position, 2);
-            put(output, &mut position, low); put(output, &mut position, high);
+            put(output, &mut position, low);
+            put(output, &mut position, high);
         }
         Some(RemoteError::ProcedureUnavailable) => put(output, &mut position, 3),
         Some(RemoteError::GarbageArguments) => put(output, &mut position, 4),

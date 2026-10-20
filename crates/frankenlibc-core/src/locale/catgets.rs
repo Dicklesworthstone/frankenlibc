@@ -291,7 +291,7 @@ mod tests {
         // Build a normal catalog, then byte-swap the first 12 header bytes
         // (3 u32s) so all three header words read as big-endian.
         let mut bytes = build_catalog(2, 1, &[(0, 1, b"x")]);
-        for chunk in bytes[..12].chunks_exact_mut(4) {
+        for chunk in bytes[..12].as_chunks_mut::<4>().0 {
             chunk.reverse();
         }
         let cat = parse_catalog_bytes(bytes).unwrap();

@@ -189,12 +189,8 @@ fn bench(c: &mut Criterion) {
         |x| unsafe { h_pow(x, 1.7) },
     );
     survey_unary(&mut g, "cbrt", &any, math::cbrt, |x| unsafe { h_cbrt(x) });
-    survey_unary(&mut g, "sinh", &small, math::sinh, |x| unsafe {
-        h_sinh(x)
-    });
-    survey_unary(&mut g, "cosh", &small, math::cosh, |x| unsafe {
-        h_cosh(x)
-    });
+    survey_unary(&mut g, "sinh", &small, math::sinh, |x| unsafe { h_sinh(x) });
+    survey_unary(&mut g, "cosh", &small, math::cosh, |x| unsafe { h_cosh(x) });
     survey_unary(&mut g, "tanh", &any, math::tanh, |x| unsafe { h_tanh(x) });
     survey_unary(&mut g, "erf", &any, math::erf, |x| unsafe { h_erf(x) });
     let negwide: Vec<f64> = (0..64).map(|k| -20.0 + k as f64 * 0.3125).collect();

@@ -27,15 +27,35 @@ fn symbols() -> [(&'static str, &'static str, *const ()); 13] {
         ("ppoll", "GLIBC_2.4", poll::ppoll as *const ()),
         ("select", "GLIBC_2.2.5", poll::select as *const ()),
         ("pselect", "GLIBC_2.2.5", poll::pselect as *const ()),
-        ("epoll_create", "GLIBC_2.3.2", poll::epoll_create as *const ()),
-        ("epoll_create1", "GLIBC_2.9", poll::epoll_create1 as *const ()),
+        (
+            "epoll_create",
+            "GLIBC_2.3.2",
+            poll::epoll_create as *const (),
+        ),
+        (
+            "epoll_create1",
+            "GLIBC_2.9",
+            poll::epoll_create1 as *const (),
+        ),
         ("epoll_ctl", "GLIBC_2.3.2", poll::epoll_ctl as *const ()),
         ("epoll_wait", "GLIBC_2.3.2", poll::epoll_wait as *const ()),
         ("epoll_pwait", "GLIBC_2.6", poll::epoll_pwait as *const ()),
         ("eventfd", "GLIBC_2.7", poll::eventfd as *const ()),
-        ("timerfd_create", "GLIBC_2.8", poll::timerfd_create as *const ()),
-        ("timerfd_settime", "GLIBC_2.8", poll::timerfd_settime as *const ()),
-        ("timerfd_gettime", "GLIBC_2.8", poll::timerfd_gettime as *const ()),
+        (
+            "timerfd_create",
+            "GLIBC_2.8",
+            poll::timerfd_create as *const (),
+        ),
+        (
+            "timerfd_settime",
+            "GLIBC_2.8",
+            poll::timerfd_settime as *const (),
+        ),
+        (
+            "timerfd_gettime",
+            "GLIBC_2.8",
+            poll::timerfd_gettime as *const (),
+        ),
     ]
 }
 
@@ -49,7 +69,12 @@ struct Api {
 impl Api {
     fn new(native: bool) -> Self {
         if native {
-            Self { open: dl::dlopen, close: dl::dlclose, sym: dl::dlsym, native }
+            Self {
+                open: dl::dlopen,
+                close: dl::dlclose,
+                sym: dl::dlsym,
+                native,
+            }
         } else {
             // SAFETY: the oracle rejects our interposed entry points and
             // returns host functions with these exact declared signatures.
@@ -69,7 +94,10 @@ impl Api {
         let handle = unsafe { (self.open)(name.as_ptr(), libc::RTLD_NOW) };
         assert!(!handle.is_null(), "open {path:?}");
         if self.native {
-            assert!(dl::native_dso_handle_for_tests(handle), "host fallback: {path:?}");
+            assert!(
+                dl::native_dso_handle_for_tests(handle),
+                "host fallback: {path:?}"
+            );
         }
         handle
     }
@@ -87,9 +115,13 @@ struct Fixture {
 
 impl Fixture {
     fn new(got: bool) -> Self {
-        let stamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         let dir = std::env::temp_dir().join(format!(
-            "frankenlibc-native-event-{}-{stamp}", std::process::id()
+            "frankenlibc-native-event-{}-{stamp}",
+            std::process::id()
         ));
         std::fs::create_dir(&dir).unwrap();
         let source = dir.join("fixture.c");
@@ -97,20 +129,41 @@ impl Fixture {
         std::fs::write(&source, SOURCE).unwrap();
         let mut command = Command::new("gcc");
         command.args([
-            "-shared", "-fPIC", "-nostdlib", "-O2", "-fno-builtin",
-            "-Wall", "-Wextra", "-Werror", "-Wl,--hash-style=both",
+            "-shared",
+            "-fPIC",
+            "-nostdlib",
+            "-O2",
+            "-fno-builtin",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wl,--hash-style=both",
         ]);
         if got {
             command.arg("-fno-plt");
         }
-        let output = command.arg(&source).arg("-o").arg(&path).output().expect("gcc is required");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let output = command
+            .arg(&source)
+            .arg("-o")
+            .arg(&path)
+            .output()
+            .expect("gcc is required");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let bytes = std::fs::read(&path).unwrap();
         let object = ElfLoader::new(0).parse(&bytes).unwrap();
-        assert!(object.needed_libraries.is_empty(), "host dependencies would mask missing bindings");
+        assert!(
+            object.needed_libraries.is_empty(),
+            "host dependencies would mask missing bindings"
+        );
         for (name, _, _) in symbols() {
             assert!(
-                object.undefined_symbols().any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
+                object
+                    .undefined_symbols()
+                    .any(|(_, symbol)| object.symbol_name(symbol) == Some(name)),
                 "fixture did not import {name}"
             );
         }
@@ -123,7 +176,8 @@ fn exercise(native: bool) {
     for got in [false, true] {
         let fixture = Fixture::new(got);
         let handle = api.open(&fixture.path);
-        let direct: Function = unsafe { std::mem::transmute(api.symbol(handle, c"event_function")) };
+        let direct: Function =
+            unsafe { std::mem::transmute(api.symbol(handle, c"event_function")) };
         let dynamic: Dynamic = unsafe { std::mem::transmute(api.symbol(handle, c"event_dynamic")) };
         for (index, (name, version, expected)) in symbols().into_iter().enumerate() {
             let actual = unsafe { direct(index as u32) };
@@ -137,7 +191,10 @@ fn exercise(native: bool) {
             assert_eq!(actual, expected, "wrong provider for {name:?}");
             for required in [std::ptr::null(), version.as_ptr()] {
                 let mut error = -1;
-                assert_eq!(unsafe { dynamic(name.as_ptr(), required, &mut error) }, actual);
+                assert_eq!(
+                    unsafe { dynamic(name.as_ptr(), required, &mut error) },
+                    actual
+                );
                 assert_eq!(error, 0);
             }
             for rejected in [c"GLIBC_2.34", c"FRANKENLIBC_EVENT_MISSING_VERSION"] {
@@ -147,7 +204,11 @@ fn exercise(native: bool) {
             }
         }
         type Run = unsafe extern "C" fn() -> c_int;
-        for name in [c"event_readiness_protocol", c"event_epoll_socket_protocol", c"event_timer_protocol"] {
+        for name in [
+            c"event_readiness_protocol",
+            c"event_epoll_socket_protocol",
+            c"event_timer_protocol",
+        ] {
             let run: Run = unsafe { std::mem::transmute(api.symbol(handle, name)) };
             assert_eq!(unsafe { run() }, 0, "{name:?}: failing C protocol line");
         }
@@ -164,9 +225,17 @@ fn native_event_runtime_protocols_and_versions() {
     }
     // A fresh process owns each runtime policy and loader namespace. A host
     // fallback cannot count as a successful native test, even in interpose mode.
-    for (provider, mode) in [("host", "strict"), ("native", "strict"), ("native", "hardened")] {
+    for (provider, mode) in [
+        ("host", "strict"),
+        ("native", "strict"),
+        ("native", "hardened"),
+    ] {
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "native_event_runtime_protocols_and_versions", "--nocapture"])
+            .args([
+                "--exact",
+                "native_event_runtime_protocols_and_versions",
+                "--nocapture",
+            ])
             .env(CHILD, provider)
             .env("FRANKENLIBC_MODE", mode)
             .spawn()

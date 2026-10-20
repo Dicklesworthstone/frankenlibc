@@ -286,8 +286,11 @@ fn stale_overlay_taxonomy_counts_fails() {
     overlay["support_matrix_snapshot"]["status_counts"]["Implemented"] =
         serde_json::json!(current + 1);
     let stale = unique_temp_path("docs-semantic-stale-overlay.json");
-    std::fs::write(&stale, serde_json::to_string_pretty(&overlay).unwrap() + "\n")
-        .expect("failed to write stale overlay fixture");
+    std::fs::write(
+        &stale,
+        serde_json::to_string_pretty(&overlay).unwrap() + "\n",
+    )
+    .expect("failed to write stale overlay fixture");
 
     let output = run_gate_with_env(&[("FLC_DOCS_SEMANTIC_OVERLAY", &stale)]);
     let _ = std::fs::remove_file(&stale);
@@ -309,4 +312,3 @@ fn stale_overlay_taxonomy_counts_fails() {
             .contains("does not match support_matrix.json")
     }));
 }
-

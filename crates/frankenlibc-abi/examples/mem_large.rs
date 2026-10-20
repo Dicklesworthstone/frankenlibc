@@ -10,25 +10,19 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type MemchrFn = unsafe extern "C" fn(*const c_void, i32, usize) -> *const c_void;
         type StrlenFn = unsafe extern "C" fn(*const c_void) -> usize;
         type MemcmpFn = unsafe extern "C" fn(*const c_void, *const c_void, usize) -> i32;
-        let gl_memchr: MemchrFn = std::mem::transmute::<*mut c_void, MemchrFn>(libc::dlsym(
-            h,
-            b"memchr\0".as_ptr().cast(),
-        ));
-        let gl_strlen: StrlenFn = std::mem::transmute::<*mut c_void, StrlenFn>(libc::dlsym(
-            h,
-            b"strlen\0".as_ptr().cast(),
-        ));
-        let gl_memcmp: MemcmpFn = std::mem::transmute::<*mut c_void, MemcmpFn>(libc::dlsym(
-            h,
-            b"memcmp\0".as_ptr().cast(),
-        ));
+        let gl_memchr: MemchrFn =
+            std::mem::transmute::<*mut c_void, MemchrFn>(libc::dlsym(h, c"memchr".as_ptr()));
+        let gl_strlen: StrlenFn =
+            std::mem::transmute::<*mut c_void, StrlenFn>(libc::dlsym(h, c"strlen".as_ptr()));
+        let gl_memcmp: MemcmpFn =
+            std::mem::transmute::<*mut c_void, MemcmpFn>(libc::dlsym(h, c"memcmp".as_ptr()));
 
         for &size in &[4096usize, 65536, 1_048_576] {
             let iters = (2_000_000_000usize / size).max(200);
@@ -104,10 +98,8 @@ fn main() {
         // strstr HARD needle ("aaa…ab" never matches in "aaa…a" → full scan): does glibc's
         // strstr degrade like its weak memmem (290ns) or is it two-way-strong?
         type StrstrFn = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
-        let gl_strstr: StrstrFn = std::mem::transmute::<*mut c_void, StrstrFn>(libc::dlsym(
-            h,
-            b"strstr\0".as_ptr().cast(),
-        ));
+        let gl_strstr: StrstrFn =
+            std::mem::transmute::<*mut c_void, StrstrFn>(libc::dlsym(h, c"strstr".as_ptr()));
         for &hsz in &[4096usize, 65536] {
             let mut hay = vec![b'a'; hsz];
             *hay.last_mut().unwrap() = 0;
@@ -143,7 +135,7 @@ fn main() {
         type StrcasestrFn = unsafe extern "C" fn(*const c_void, *const c_void) -> *const c_void;
         let gl_scs: StrcasestrFn = std::mem::transmute::<*mut c_void, StrcasestrFn>(libc::dlsym(
             h,
-            b"strcasestr\0".as_ptr().cast(),
+            c"strcasestr".as_ptr(),
         ));
         for &hsz in &[4096usize, 65536] {
             let mut hay = vec![b'a'; hsz];
@@ -177,10 +169,8 @@ fn main() {
         // wcsstr HARD wide needle: glibc's wide wcsstr is likely naive O(n·m); fl uses
         // two_way_search_wide + rarity anchor. needle (wide) "a"×31+"b" never matches "a"×N.
         type WcsstrFn = unsafe extern "C" fn(*const i32, *const i32) -> *const i32;
-        let gl_wcsstr: WcsstrFn = std::mem::transmute::<*mut c_void, WcsstrFn>(libc::dlsym(
-            h,
-            b"wcsstr\0".as_ptr().cast(),
-        ));
+        let gl_wcsstr: WcsstrFn =
+            std::mem::transmute::<*mut c_void, WcsstrFn>(libc::dlsym(h, c"wcsstr".as_ptr()));
         for &hsz in &[4096usize, 65536] {
             let mut hay: Vec<u32> = vec![b'a' as u32; hsz];
             *hay.last_mut().unwrap() = 0;
@@ -212,10 +202,8 @@ fn main() {
 
         // memmove non-overlapping (= memcpy, bandwidth) — 1MB.
         type MemmoveFn = unsafe extern "C" fn(*mut c_void, *const c_void, usize) -> *mut c_void;
-        let gl_memmove: MemmoveFn = std::mem::transmute::<*mut c_void, MemmoveFn>(libc::dlsym(
-            h,
-            b"memmove\0".as_ptr().cast(),
-        ));
+        let gl_memmove: MemmoveFn =
+            std::mem::transmute::<*mut c_void, MemmoveFn>(libc::dlsym(h, c"memmove".as_ptr()));
         {
             let size = 1_048_576usize;
             let src = vec![b'a'; size];
@@ -248,10 +236,8 @@ fn main() {
         // memset across sizes: glibc uses rep stosb / AVX; fl uses a Rust fill. Small =
         // per-call overhead, large = bandwidth.
         type MemsetFn = unsafe extern "C" fn(*mut c_void, i32, usize) -> *mut c_void;
-        let gl_memset: MemsetFn = std::mem::transmute::<*mut c_void, MemsetFn>(libc::dlsym(
-            h,
-            b"memset\0".as_ptr().cast(),
-        ));
+        let gl_memset: MemsetFn =
+            std::mem::transmute::<*mut c_void, MemsetFn>(libc::dlsym(h, c"memset".as_ptr()));
         for &size in &[64usize, 4096, 1_048_576] {
             let mut buf = vec![0u8; size];
             let iters = (2_000_000_000usize / size).max(500);
@@ -279,10 +265,8 @@ fn main() {
         // O(N·R); fl uses a fast membership set O(N). 1000 'a' (no reject char → returns
         // 1000), reject = 50 distinct non-'a' chars.
         type WcscspnFn = unsafe extern "C" fn(*const i32, *const i32) -> usize;
-        let gl_wcscspn: WcscspnFn = std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(
-            h,
-            b"wcscspn\0".as_ptr().cast(),
-        ));
+        let gl_wcscspn: WcscspnFn =
+            std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(h, c"wcscspn".as_ptr()));
         for &rsize in &[8u32, 50] {
             let mut s: Vec<u32> = vec![b'a' as u32; 1000];
             s.push(0);
@@ -319,14 +303,10 @@ fn main() {
 
         // wcspbrk + wcsspn (share wcscspn's membership path), 1000-'a' string, r=50.
         type WcspbrkFn = unsafe extern "C" fn(*const i32, *const i32) -> *const i32;
-        let gl_wcspbrk: WcspbrkFn = std::mem::transmute::<*mut c_void, WcspbrkFn>(libc::dlsym(
-            h,
-            b"wcspbrk\0".as_ptr().cast(),
-        ));
-        let gl_wcsspn: WcscspnFn = std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(
-            h,
-            b"wcsspn\0".as_ptr().cast(),
-        ));
+        let gl_wcspbrk: WcspbrkFn =
+            std::mem::transmute::<*mut c_void, WcspbrkFn>(libc::dlsym(h, c"wcspbrk".as_ptr()));
+        let gl_wcsspn: WcscspnFn =
+            std::mem::transmute::<*mut c_void, WcscspnFn>(libc::dlsym(h, c"wcsspn".as_ptr()));
         {
             let mut s: Vec<u32> = vec![b'a' as u32; 1000];
             s.push(0);
@@ -393,7 +373,7 @@ fn main() {
         // fold. s1='A'x1000, s2='a'x1000, n=1000 -> case-insensitive equal (returns 0).
         type WcsncasecmpFn = unsafe extern "C" fn(*const i32, *const i32, usize) -> i32;
         let gl_wcsncasecmp: WcsncasecmpFn = std::mem::transmute::<*mut c_void, WcsncasecmpFn>(
-            libc::dlsym(h, b"wcsncasecmp\0".as_ptr().cast()),
+            libc::dlsym(h, c"wcsncasecmp".as_ptr()),
         );
         {
             let mut s1: Vec<u32> = vec![b'A' as u32; 1000];
@@ -434,14 +414,10 @@ fn main() {
         // wmemset (wide fill) + wcsnlen (wide bounded scan) across sizes.
         type WmemsetFn = unsafe extern "C" fn(*mut i32, i32, usize) -> *mut i32;
         type WcsnlenFn = unsafe extern "C" fn(*const i32, usize) -> usize;
-        let gl_wmemset: WmemsetFn = std::mem::transmute::<*mut c_void, WmemsetFn>(libc::dlsym(
-            h,
-            b"wmemset\0".as_ptr().cast(),
-        ));
-        let gl_wcsnlen: WcsnlenFn = std::mem::transmute::<*mut c_void, WcsnlenFn>(libc::dlsym(
-            h,
-            b"wcsnlen\0".as_ptr().cast(),
-        ));
+        let gl_wmemset: WmemsetFn =
+            std::mem::transmute::<*mut c_void, WmemsetFn>(libc::dlsym(h, c"wmemset".as_ptr()));
+        let gl_wcsnlen: WcsnlenFn =
+            std::mem::transmute::<*mut c_void, WcsnlenFn>(libc::dlsym(h, c"wcsnlen".as_ptr()));
         for &n in &[256usize, 65536] {
             let mut buf: Vec<u32> = vec![0u32; n];
             let iters = (200_000_000usize / n).max(500);

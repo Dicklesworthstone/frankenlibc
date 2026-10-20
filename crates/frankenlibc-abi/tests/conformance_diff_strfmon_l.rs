@@ -48,13 +48,7 @@ fn run_fl(fmt: &str, v: f64) -> (isize, Vec<u8>) {
     let mut buf = vec![0u8; 128];
     unsafe {
         let loc = fll::newlocale(libc::LC_ALL_MASK, c"C".as_ptr(), std::ptr::null_mut());
-        let n = flu::strfmon_l(
-            buf.as_mut_ptr() as *mut c_char,
-            128,
-            loc,
-            cf.as_ptr(),
-            v,
-        );
+        let n = flu::strfmon_l(buf.as_mut_ptr() as *mut c_char, 128, loc, cf.as_ptr(), v);
         fll::freelocale(loc);
         let bytes = if n >= 0 {
             buf[..n as usize].to_vec()

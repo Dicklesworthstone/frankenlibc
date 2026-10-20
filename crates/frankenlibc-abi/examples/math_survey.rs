@@ -72,13 +72,13 @@ fn run_atan2_axis_ab() {
     let handle = unsafe {
         libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libm.so.6\0".as_ptr().cast(),
+            c"libm.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         )
     };
     assert!(!handle.is_null(), "dlmopen libm failed");
     let host: F64BinaryFn = unsafe {
-        let symbol = libc::dlsym(handle, b"atan2\0".as_ptr().cast());
+        let symbol = libc::dlsym(handle, c"atan2".as_ptr());
         assert!(!symbol.is_null(), "dlsym atan2 failed");
         std::mem::transmute(symbol)
     };
@@ -205,7 +205,7 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libm.so.6\0".as_ptr().cast(),
+            c"libm.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libm failed");
@@ -334,7 +334,7 @@ fn main() {
         // f64 `log` direct (the core kernel this port replaces).
         type F64Fn = unsafe extern "C" fn(f64) -> f64;
         let gl_log: F64Fn =
-            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"log\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, c"log".as_ptr()));
         let xs: Vec<f64> = (0..4096)
             .map(|i| 0.2 + 50.0 * (i as f64) / 4096.0)
             .collect();
@@ -370,7 +370,7 @@ fn main() {
 
         // f64 `log10` (its hot path now rides the fast __log kernel).
         let gl_log10: F64Fn =
-            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"log10\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, c"log10".as_ptr()));
         let mut maxrel = 0.0f64;
         for &x in &xs {
             let a = frankenlibc_abi::math_abi::log10(x);
@@ -600,7 +600,7 @@ fn main() {
         // [-708, 709] — validates the widened compensated path at the extremes (where the
         // old [-5,5] limit was conservative). ULP = |fl_bits - glibc_bits| (exp > 0).
         let gl_exp: F64Fn =
-            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, b"exp\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, F64Fn>(libc::dlsym(h, c"exp".as_ptr()));
         let mut max_ulp = 0i64;
         let mut worst_x = 0.0f64;
         let n = 4_000_000usize;
@@ -621,7 +621,7 @@ fn main() {
         use frankenlibc_abi::math_abi::{CDoubleComplex, csinh};
         type CFn = unsafe extern "C" fn(CDoubleComplex) -> CDoubleComplex;
         let gl_csinh: CFn =
-            std::mem::transmute::<*mut c_void, CFn>(libc::dlsym(h, b"csinh\0".as_ptr().cast()));
+            std::mem::transmute::<*mut c_void, CFn>(libc::dlsym(h, c"csinh".as_ptr()));
         let cin: Vec<CDoubleComplex> = (0..1000)
             .map(|k| CDoubleComplex {
                 re: 1.0 + (k as f64) * 0.009,
@@ -655,7 +655,9 @@ fn main() {
 }
 
 unsafe fn g64(h: *mut std::ffi::c_void, n: &[u8]) -> unsafe extern "C" fn(f64) -> f64 {
-    let p = libc::dlsym(h, n.as_ptr().cast());
-    assert!(!p.is_null(), "dlsym f64 failed");
-    std::mem::transmute::<*mut std::ffi::c_void, unsafe extern "C" fn(f64) -> f64>(p)
+    unsafe {
+        let p = libc::dlsym(h, n.as_ptr().cast());
+        assert!(!p.is_null(), "dlsym f64 failed");
+        std::mem::transmute::<*mut std::ffi::c_void, unsafe extern "C" fn(f64) -> f64>(p)
+    }
 }

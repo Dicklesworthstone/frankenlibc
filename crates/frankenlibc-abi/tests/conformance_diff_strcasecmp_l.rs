@@ -110,9 +110,8 @@ fn strcasecmp_l_matches_glibc() {
         let a = CString::new(sa).unwrap();
         let b = CString::new(sb).unwrap();
         let g = unsafe { strcasecmp_l(a.as_ptr(), b.as_ptr(), loc) };
-        let f = unsafe {
-            frankenlibc_abi::string_abi::strcasecmp_l(a.as_ptr(), b.as_ptr(), fl_loc)
-        };
+        let f =
+            unsafe { frankenlibc_abi::string_abi::strcasecmp_l(a.as_ptr(), b.as_ptr(), fl_loc) };
         assert_eq!(
             f.signum(),
             g.signum(),
@@ -122,12 +121,7 @@ fn strcasecmp_l_matches_glibc() {
         for n in [0usize, 1, 3, 10] {
             let gn = unsafe { strncasecmp_l(a.as_ptr(), b.as_ptr(), n, loc) };
             let fnr = unsafe {
-                frankenlibc_abi::string_abi::strncasecmp_l(
-                    a.as_ptr(),
-                    b.as_ptr(),
-                    n,
-                    fl_loc,
-                )
+                frankenlibc_abi::string_abi::strncasecmp_l(a.as_ptr(), b.as_ptr(), n, fl_loc)
             };
             assert_eq!(
                 fnr.signum(),

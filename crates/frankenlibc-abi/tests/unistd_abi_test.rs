@@ -4711,8 +4711,14 @@ fn getaddrinfo_a_zeroed_gaicb_requests_finish_with_noname_and_preserve_errno() {
     };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
-    assert_eq!(unsafe { gai_error((&mut first as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
-    assert_eq!(unsafe { gai_error((&mut second as *mut GaicbShape).cast()) }, libc::EAI_NONAME);
+    assert_eq!(
+        unsafe { gai_error((&mut first as *mut GaicbShape).cast()) },
+        libc::EAI_NONAME
+    );
+    assert_eq!(
+        unsafe { gai_error((&mut second as *mut GaicbShape).cast()) },
+        libc::EAI_NONAME
+    );
     assert!(first.ar_result.is_null() && second.ar_result.is_null());
 
     unsafe {
@@ -4736,7 +4742,10 @@ fn getaddrinfo_a_zeroed_gaicb_requests_finish_with_noname_and_preserve_errno() {
     // expire while the new native resolver can still publish a result.
     let first_ptr = (&mut first as *mut GaicbShape).cast::<c_void>();
     let pending = [first_ptr.cast_const()];
-    let timeout = libc::timespec { tv_sec: 2, tv_nsec: 0 };
+    let timeout = libc::timespec {
+        tv_sec: 2,
+        tv_nsec: 0,
+    };
     let deadline = Instant::now() + Duration::from_secs(3);
     while unsafe { gai_error(first_ptr) } == -100 {
         assert!(Instant::now() < deadline, "zeroed request must finish");
@@ -5034,7 +5043,9 @@ fn getaddrinfo_a_resolves_numeric_requests_instead_of_returning_enosys() {
     };
     let cb = (&mut request as *mut GaicbShape).cast::<c_void>();
     let mut requests = [cb];
-    unsafe { *__errno_location() = libc::E2BIG; }
+    unsafe {
+        *__errno_location() = libc::E2BIG;
+    }
     let rc = unsafe { getaddrinfo_a(GAI_WAIT, requests.as_mut_ptr(), 1, std::ptr::null_mut()) };
     assert_eq!(rc, 0);
     assert_eq!(errno_value(), libc::E2BIG);
@@ -5044,7 +5055,10 @@ fn getaddrinfo_a_resolves_numeric_requests_instead_of_returning_enosys() {
         let result = &*request.ar_result.cast::<libc::addrinfo>();
         assert_eq!(result.ai_family, libc::AF_INET);
         assert_eq!(result.ai_socktype, libc::SOCK_STREAM);
-        assert_eq!(result.ai_addrlen as usize, std::mem::size_of::<libc::sockaddr_in>());
+        assert_eq!(
+            result.ai_addrlen as usize,
+            std::mem::size_of::<libc::sockaddr_in>()
+        );
         let address = &*result.ai_addr.cast::<libc::sockaddr_in>();
         assert_eq!(u16::from_be(address.sin_port), 43127);
         assert_eq!(address.sin_addr.s_addr.to_ne_bytes(), [127, 0, 0, 7]);
@@ -5120,16 +5134,30 @@ fn gai_cancel_reports_all_done_for_synchronous_stub_handles() {
 #[test]
 fn gai_error_validates_storage_and_reports_the_actual_request_status() {
     let _gai_guard = GAI_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { *__errno_location() = 0; }
+    unsafe {
+        *__errno_location() = 0;
+    }
     assert_eq!(unsafe { gai_error(std::ptr::null_mut()) }, libc::EAI_SYSTEM);
     assert_eq!(errno_value(), libc::ENOSYS);
 
     let mut request: GaicbShape = unsafe { std::mem::zeroed() };
     request.ar_name = c"opaque".as_ptr();
-    for status in [0, libc::EAI_NONAME, libc::EAI_AGAIN, libc::EAI_SYSTEM, -100, -101] {
+    for status in [
+        0,
+        libc::EAI_NONAME,
+        libc::EAI_AGAIN,
+        libc::EAI_SYSTEM,
+        -100,
+        -101,
+    ] {
         request.__return = status;
-        unsafe { *__errno_location() = libc::E2BIG; }
-        assert_eq!(unsafe { gai_error((&mut request as *mut GaicbShape).cast()) }, status);
+        unsafe {
+            *__errno_location() = libc::E2BIG;
+        }
+        assert_eq!(
+            unsafe { gai_error((&mut request as *mut GaicbShape).cast()) },
+            status
+        );
         assert_eq!(errno_value(), libc::E2BIG);
     }
 }
@@ -11540,11 +11568,7 @@ fn kexec_load_unprivileged_returns_known_errno() {
         let rc = unsafe { kexec_load(0, 0, std::ptr::null(), 0) };
         let errno = unsafe { *frankenlibc_abi::errno_abi::__errno_location() };
 
-        assert_eq!(
-            rc,
-            host_rc,
-            "kexec_load rc: fl={rc} host={host_rc}"
-        );
+        assert_eq!(rc, host_rc, "kexec_load rc: fl={rc} host={host_rc}");
         if host_rc == -1 {
             assert_eq!(
                 errno, host_errno,

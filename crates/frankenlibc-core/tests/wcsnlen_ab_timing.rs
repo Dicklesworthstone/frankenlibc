@@ -11,6 +11,7 @@ use frankenlibc_core::string::wide::wcsnlen;
 
 /// The original implementation: per-16-element SIMD chunk, one `.any()` reduction
 /// per chunk.
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn wcsnlen_orig(s: &[u32], maxlen: usize) -> usize {
     const LANES: usize = 16;
     let limit = maxlen.min(s.len());

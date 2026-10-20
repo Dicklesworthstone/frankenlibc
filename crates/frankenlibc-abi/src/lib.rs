@@ -478,9 +478,9 @@ pub mod rpc_abi;
 // NSS service modules (libnss_<service>.so.2) for the passwd/group/shadow
 // and initgroups databases.
 #[cfg(not(test))]
-pub(crate) mod nss_module;
-#[cfg(not(test))]
 pub mod named_semaphore;
+#[cfg(not(test))]
+pub(crate) mod nss_module;
 #[cfg(not(test))]
 pub mod semaphore_wait;
 

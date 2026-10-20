@@ -11,15 +11,13 @@ fn main() {
     unsafe {
         let h = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!h.is_null(), "dlmopen libc failed");
         type WmemsetFn = unsafe extern "C" fn(*mut u32, u32, usize) -> *mut u32;
-        let gl_wmemset: WmemsetFn = std::mem::transmute::<*mut c_void, WmemsetFn>(libc::dlsym(
-            h,
-            b"wmemset\0".as_ptr().cast(),
-        ));
+        let gl_wmemset: WmemsetFn =
+            std::mem::transmute::<*mut c_void, WmemsetFn>(libc::dlsym(h, c"wmemset".as_ptr()));
 
         const C: u32 = 0x1234_5678;
         for &n in &[16usize, 64, 256, 1024, 4096, 65536] {

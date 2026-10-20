@@ -1841,11 +1841,22 @@ fn futex_wait_absolute_clock(
     // expired instant, but Linux rejects them: use the epoch instead. Passing
     // the absolute timestamp directly also avoids overflow for time_t::MAX
     // and lets the selected clock, not a sampled epoch offset, govern expiry.
-    let expired = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    let deadline = if deadline.tv_sec < 0 { &expired } else { deadline };
+    let expired = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let deadline = if deadline.tv_sec < 0 {
+        &expired
+    } else {
+        deadline
+    };
     let op = libc::FUTEX_WAIT_BITSET
         | if private { libc::FUTEX_PRIVATE_FLAG } else { 0 }
-        | if clockid == libc::CLOCK_REALTIME { libc::FUTEX_CLOCK_REALTIME } else { 0 };
+        | if clockid == libc::CLOCK_REALTIME {
+            libc::FUTEX_CLOCK_REALTIME
+        } else {
+            0
+        };
     // SAFETY: the caller's live, aligned atomic word and timespec outlive the
     // syscall. This is not a cancellation point (rwlock acquisition is not one).
     match unsafe {
