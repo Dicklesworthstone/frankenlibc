@@ -783,6 +783,7 @@ impl NativeFile {
 
     /// An empty registry slot: what `invalidate` leaves (no flags, no
     /// vtable), without a lock until one is needed.
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY_SLOT: Self = {
         let mut io_file = _IO_FILE_Layout::new(-1);
         io_file._flags = 0;
@@ -854,6 +855,7 @@ impl NativeFile {
     /// construction): skips the lock, whose two `gettid` syscalls per slot
     /// were 512 of the ~700 syscalls of every process's startup
     /// (bd-rc0923-epic-eeuy4f.25).
+    #[allow(dead_code)]
     fn invalidate_unshared(&mut self) {
         if let Some(lock) = self._frankenlibc_state.locked.get_mut() {
             Self::reset_locked_state(lock.get_mut().get_mut());
@@ -1368,6 +1370,7 @@ struct StreamSlot {
 }
 
 impl StreamSlot {
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         state: SLOT_FREE,
         file: NativeFile::EMPTY_SLOT,
@@ -1397,6 +1400,7 @@ impl NativeStreamRegistry {
     /// initialized in place. Building the 63 KB registry at startup (on the
     /// stack, then moved into a LazyLock) faulted in its pages twice in
     /// every process (bd-rc0923-epic-eeuy4f.25).
+    #[allow(clippy::declare_interior_mutable_const)]
     const EMPTY: Self = Self {
         slots: [const { StreamSlot::EMPTY }; STREAM_REGISTRY_CAPACITY],
     };
@@ -1474,16 +1478,16 @@ impl NativeStreamRegistry {
     /// The new file is prepended to the `_IO_list_all` linked list.
     pub fn register(&mut self, file: NativeFile) -> Option<usize> {
         // Start from slot 3 (0/1/2 are reserved for stdin/stdout/stderr).
-        for i in 3..STREAM_REGISTRY_CAPACITY {
-            if self.slots[i].state == SLOT_FREE {
-                self.slots[i].state = SLOT_OCCUPIED;
-                self.slots[i].file = file;
+        for (i, slot) in self.slots.iter_mut().enumerate().skip(3) {
+            if slot.state == SLOT_FREE {
+                slot.state = SLOT_OCCUPIED;
+                slot.file = file;
                 // Link into _chain list: new file becomes the head.
                 // SAFETY: _IO_list_all is protected by the registry mutex.
-                let new_file_ptr: *mut NativeFile = &mut self.slots[i].file;
+                let new_file_ptr: *mut NativeFile = &mut slot.file;
                 unsafe {
                     let old_head = _IO_list_all.cast::<NativeFile>();
-                    self.slots[i].file.set_chain(old_head);
+                    slot.file.set_chain(old_head);
                     _IO_list_all = new_file_ptr.cast::<c_void>();
                 }
                 return Some(i);
@@ -1554,9 +1558,9 @@ impl NativeStreamRegistry {
     /// This implements `fflush(NULL)` semantics: flush every open output stream.
     pub fn flush_all(&mut self) -> usize {
         let mut errors = 0;
-        for i in 0..STREAM_REGISTRY_CAPACITY {
-            if self.slots[i].state == SLOT_OCCUPIED && self.slots[i].file.is_writable() {
-                let file_ptr: *mut NativeFile = &mut self.slots[i].file;
+        for slot in &mut self.slots {
+            if slot.state == SLOT_OCCUPIED && slot.file.is_writable() {
+                let file_ptr: *mut NativeFile = &mut slot.file;
                 // SAFETY: file_ptr is a valid pointer to our registry-owned NativeFile.
                 let rc = unsafe { vtable_fd_flush(file_ptr) };
                 if rc != 0 {
@@ -1710,12 +1714,12 @@ pub fn native_stream_registry() -> std::sync::MutexGuard<'static, NativeStreamRe
         // Publish the reserved slot addresses for the lock-free `native_stdio_fd_for_ptr`
         // path. `get_mut` (not `&mut slots[i].file`) so an unoccupied slot publishes 0 and
         // the lock-free compare stays semantically identical to the locked scan.
-        for index in 0..NATIVE_STDIO_SLOT_ADDR.len() {
+        for (index, slot_addr) in NATIVE_STDIO_SLOT_ADDR.iter().enumerate() {
             let addr = match guard.get_mut(index) {
                 Some(file) => file as *mut NativeFile as usize,
                 None => 0,
             };
-            NATIVE_STDIO_SLOT_ADDR[index].store(addr, Ordering::Relaxed);
+            slot_addr.store(addr, Ordering::Relaxed);
         }
 
         // Release: publishes the slot-address stores above to every `Acquire` reader of
@@ -1784,10 +1788,10 @@ pub fn bench_native_stdio_fd_for_ptr_locked(stream: *const c_void) -> Option<c_i
         (1, libc::STDOUT_FILENO),
         (2, libc::STDERR_FILENO),
     ] {
-        if let Some(file) = registry.get_mut(index) {
-            if file as *mut NativeFile as *const c_void == stream {
-                return Some(fd);
-            }
+        if let Some(file) = registry.get_mut(index)
+            && file as *mut NativeFile as *const c_void == stream
+        {
+            return Some(fd);
         }
     }
     None
