@@ -1015,30 +1015,26 @@ impl<'a> Deref for FormatSegments<'a> {
     }
 }
 
-pub enum FormatSegmentsIntoIter<'a> {
-    Inline {
-        segs: [FormatSegment<'a>; INLINE_SEGMENTS],
-        len: usize,
-        idx: usize,
-    },
-    Heap(std::vec::IntoIter<FormatSegment<'a>>),
+pub struct FormatSegmentsIntoIter<'a> {
+    inline: [FormatSegment<'a>; INLINE_SEGMENTS],
+    inline_len: usize,
+    idx: usize,
+    heap: Option<std::vec::IntoIter<FormatSegment<'a>>>,
 }
 
 impl<'a> Iterator for FormatSegmentsIntoIter<'a> {
     type Item = FormatSegment<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Inline { segs, len, idx } => {
-                if *idx < *len {
-                    let seg = segs[*idx];
-                    *idx += 1;
-                    Some(seg)
-                } else {
-                    None
-                }
-            }
-            Self::Heap(iter) => iter.next(),
+        if let Some(iter) = &mut self.heap {
+            return iter.next();
+        }
+        if self.idx < self.inline_len {
+            let seg = self.inline[self.idx];
+            self.idx += 1;
+            Some(seg)
+        } else {
+            None
         }
     }
 }
@@ -1048,13 +1044,11 @@ impl<'a> IntoIterator for FormatSegments<'a> {
     type IntoIter = FormatSegmentsIntoIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        match self.heap {
-            Some(heap) => FormatSegmentsIntoIter::Heap(heap.into_iter()),
-            None => FormatSegmentsIntoIter::Inline {
-                segs: self.inline,
-                len: self.inline_len,
-                idx: 0,
-            },
+        FormatSegmentsIntoIter {
+            inline: self.inline,
+            inline_len: self.inline_len,
+            idx: 0,
+            heap: self.heap.map(IntoIterator::into_iter),
         }
     }
 }

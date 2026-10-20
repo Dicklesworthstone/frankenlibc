@@ -2665,11 +2665,7 @@ impl<'a> PikeVm<'a> {
         num_slots: usize,
         eflags: i32,
         prefilter: Option<FirstByteSet>,
-        literal_prefix: Option<&'a [u8]>,
         literal_icase: bool,
-        literal_is_whole: bool,
-        anchored_literal: Option<&'a [u8]>,
-        dotstar_lits: Option<(&'a [u8], &'a [u8])>,
     ) -> Self {
         Self {
             nfa,
@@ -2677,16 +2673,30 @@ impl<'a> PikeVm<'a> {
             num_slots,
             eflags,
             prefilter,
-            literal_prefix,
+            literal_prefix: None,
             literal_icase,
-            literal_is_whole,
-            anchored_literal,
-            dotstar_lits,
+            literal_is_whole: false,
+            anchored_literal: None,
+            dotstar_lits: None,
             min_start: 0,
             bulk_table: None,
             closure_table: None,
             utf8: false,
         }
+    }
+
+    fn with_literals(
+        mut self,
+        literal_prefix: Option<&'a [u8]>,
+        literal_is_whole: bool,
+        anchored_literal: Option<&'a [u8]>,
+        dotstar_lits: Option<(&'a [u8], &'a [u8])>,
+    ) -> Self {
+        self.literal_prefix = literal_prefix;
+        self.literal_is_whole = literal_is_whole;
+        self.anchored_literal = anchored_literal;
+        self.dotstar_lits = dotstar_lits;
+        self
     }
 
     /// Search for matches starting at or after `min_start` only.
@@ -2811,16 +2821,16 @@ impl<'a> PikeVm<'a> {
         if min > self.input.len() {
             return None;
         }
-        if self.literal_is_whole {
-            if let Some(lit) = self.literal_prefix {
-                return find_literal(&self.input[min..], lit, self.literal_icase).map(|rel| {
-                    let off = min + rel;
-                    let mut slots = vec![-1i32; self.num_slots];
-                    slots[0] = off as i32;
-                    slots[1] = (off + lit.len()) as i32;
-                    slots
-                });
-            }
+        if self.literal_is_whole
+            && let Some(lit) = self.literal_prefix
+        {
+            return find_literal(&self.input[min..], lit, self.literal_icase).map(|rel| {
+                let off = min + rel;
+                let mut slots = vec![-1i32; self.num_slots];
+                slots[0] = off as i32;
+                slots[1] = (off + lit.len()) as i32;
+                slots
+            });
         }
         // Anchored-literal short-circuit: `^literal` (no REG_NEWLINE) matches ONLY at
         // position 0, and only if position 0 is a line start (not REG_NOTBOL). Without
@@ -2853,10 +2863,7 @@ impl<'a> PikeVm<'a> {
             let start = if prefix.is_empty() {
                 min
             } else {
-                match find_literal(&self.input[min..], prefix, self.literal_icase) {
-                    Some(s) => min + s,
-                    None => return None,
-                }
+                min + find_literal(&self.input[min..], prefix, self.literal_icase)?
             };
             let after = start + prefix.len();
             // End: the greedy `.*` extends to the LAST suffix at/after `after` (empty
@@ -2885,10 +2892,7 @@ impl<'a> PikeVm<'a> {
                 } else {
                     None
                 };
-                match last_rel {
-                    Some(rel) => after + rel + suffix.len(),
-                    None => return None,
-                }
+                after + last_rel? + suffix.len()
             };
             // A UTF-8 `.` skips invalid bytes: the closed form holds only when
             // the bytes `.*` spans are valid UTF-8; otherwise the NFA decides.
@@ -2986,8 +2990,7 @@ impl<'a> PikeVm<'a> {
                 if let Some(matched_slots) = self.run_from(
                     start,
                     &slots,
-                    notbol,
-                    noteol,
+                    VmAnchors { notbol, noteol },
                     visited,
                     &mut generation,
                     bulk_table,
@@ -3021,8 +3024,7 @@ impl<'a> PikeVm<'a> {
                     .run_from(
                         start,
                         &slots,
-                        notbol,
-                        noteol,
+                        VmAnchors { notbol, noteol },
                         visited,
                         &mut generation,
                         bulk_table,
@@ -3044,8 +3046,7 @@ impl<'a> PikeVm<'a> {
         self.run_from(
             start,
             &slots,
-            notbol,
-            noteol,
+            VmAnchors { notbol, noteol },
             visited,
             &mut generation,
             bulk_table,
@@ -4045,8 +4046,7 @@ impl<'a> PikeVm<'a> {
         &self,
         start: usize,
         initial_slots: &[i32],
-        notbol: bool,
-        noteol: bool,
+        anchors: VmAnchors,
         visited: &mut [u64],
         generation: &mut u64,
         bulk_table: &[Option<[u64; 4]>],
@@ -4056,7 +4056,6 @@ impl<'a> PikeVm<'a> {
         let mut current: Vec<Thread> = Vec::with_capacity(self.nfa.len());
         let mut next: Vec<Thread> = Vec::with_capacity(self.nfa.len());
         let mut best: Option<SlotBuf> = None;
-        let anchors = VmAnchors { notbol, noteol };
         let mut closure = ClosureState {
             visited,
             generation: 0,
@@ -5072,18 +5071,7 @@ pub fn regex_compile_bytes_collated(
 
     // Backreference patterns run on the backtracker, which never reads the table.
     if compiled.backtrack_ast.is_none() {
-        let vm = PikeVm::new(
-            &compiled.nfa,
-            &[],
-            compiled.num_slots(),
-            0,
-            None,
-            None,
-            false,
-            false,
-            None,
-            None,
-        );
+        let vm = PikeVm::new(&compiled.nfa, &[], compiled.num_slots(), 0, None, false);
         compiled.bulk_table = vm.build_bulk_loop_table();
         compiled.closure_table = vm.build_closure_table();
     }
@@ -5107,11 +5095,7 @@ pub fn regex_compile_bytes_collated(
                 compiled.num_slots(),
                 0,
                 compiled.prefilter,
-                None,
                 compiled.icase,
-                false,
-                None,
-                None,
             );
             vm.precompute_membership_dfa()
         };
@@ -5232,11 +5216,7 @@ pub fn regex_is_match_bytes(compiled: &CompiledRegex, input: &[u8], eflags: i32)
         compiled.num_slots(),
         eflags,
         compiled.prefilter,
-        None,
         compiled.icase,
-        false,
-        None,
-        None,
     )
     .with_utf8(compiled.utf8);
     let notbol = eflags & REG_NOTBOL != 0;
@@ -5329,10 +5309,8 @@ fn required_literal_bytes(ast: &Ast) -> Vec<u8> {
                     collect(it, out);
                 }
             }
-            Ast::Repeat { inner, min, .. } => {
-                if *min >= 1 {
-                    collect(inner, out);
-                }
+            Ast::Repeat { inner, min, .. } if *min >= 1 => {
+                collect(inner, out);
             }
             // Alternate / AnyChar / CharClass / Anchor / BackRef: no single byte is
             // guaranteed across all matches — contribute nothing (keeps the set sound).
@@ -5451,8 +5429,10 @@ fn regex_exec_byte_slots_from(
         num_slots,
         eflags,
         compiled.prefilter,
-        compiled.literal_prefix.as_deref(),
         compiled.icase,
+    )
+    .with_literals(
+        compiled.literal_prefix.as_deref(),
         compiled.literal_is_whole,
         compiled.anchored_literal.as_deref(),
         compiled
