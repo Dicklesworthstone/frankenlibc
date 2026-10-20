@@ -149,7 +149,7 @@ fn mbstowcs_simd_2byte_matches_glibc() {
         if fl != gl && divs.len() < 20 {
             divs.push(format!(
                 "input={:02x?}\n    fl   ={:?}\n    glibc={:?}",
-                &s,
+                s,
                 fl.as_ref().map(|v| v.len()),
                 gl.as_ref().map(|v| v.len())
             ));

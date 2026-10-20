@@ -56,9 +56,9 @@ fn c_locales() -> (*mut c_void, *mut c_void) {
     let cloc = CString::new("C").unwrap();
     // SAFETY: resolved symbol has POSIX's documented newlocale signature.
     let newlocale = unsafe {
-        std::mem::transmute::<_, NewlocaleFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, NewlocaleFn>(host_symbol(
             c"newlocale",
-            frankenlibc_abi::locale_abi::newlocale as usize,
+            frankenlibc_abi::locale_abi::newlocale as *const () as usize,
         ))
     };
     // SAFETY: LC_ALL_MASK with a valid name and no base locale.
@@ -80,9 +80,9 @@ fn host_freelocale() -> FreelocaleFn {
     // SAFETY: paired with the host newlocale above — freeing a glibc locale_t
     // through fl's freelocale would be a cross-implementation free, not a test.
     unsafe {
-        std::mem::transmute::<_, FreelocaleFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, FreelocaleFn>(host_symbol(
             c"freelocale",
-            frankenlibc_abi::locale_abi::freelocale as usize,
+            frankenlibc_abi::locale_abi::freelocale as *const () as usize,
         ))
     }
 }
@@ -119,30 +119,30 @@ const UNSIGNED_CASES: &[(&str, c_int)] = &[
 fn wcstol_l_family_matches_glibc() {
     // SAFETY: each resolved symbol has its documented POSIX signature.
     let wcstol_l = unsafe {
-        std::mem::transmute::<_, WcstolLFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, WcstolLFn>(host_symbol(
             c"wcstol_l",
-            frankenlibc_abi::wchar_abi::wcstol_l as usize,
+            frankenlibc_abi::wchar_abi::wcstol_l as *const () as usize,
         ))
     };
     // SAFETY: as above.
     let wcstoul_l = unsafe {
-        std::mem::transmute::<_, WcstoulLFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, WcstoulLFn>(host_symbol(
             c"wcstoul_l",
-            frankenlibc_abi::wchar_abi::wcstoul_l as usize,
+            frankenlibc_abi::wchar_abi::wcstoul_l as *const () as usize,
         ))
     };
     // SAFETY: as above.
     let wcstoll_l = unsafe {
-        std::mem::transmute::<_, WcstollLFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, WcstollLFn>(host_symbol(
             c"wcstoll_l",
-            frankenlibc_abi::wchar_abi::wcstoll_l as usize,
+            frankenlibc_abi::wchar_abi::wcstoll_l as *const () as usize,
         ))
     };
     // SAFETY: as above.
     let wcstoull_l = unsafe {
-        std::mem::transmute::<_, WcstoullLFn>(host_symbol(
+        std::mem::transmute::<*mut c_void, WcstoullLFn>(host_symbol(
             c"wcstoull_l",
-            frankenlibc_abi::wchar_abi::wcstoull_l as usize,
+            frankenlibc_abi::wchar_abi::wcstoull_l as *const () as usize,
         ))
     };
     let freelocale = host_freelocale();
@@ -157,7 +157,7 @@ fn wcstol_l_family_matches_glibc() {
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
         let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, fl_loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstol_l(w.as_ptr(), &mut fe, base, fl_loc)
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstol_l({s:?},{base}) value");
@@ -175,7 +175,7 @@ fn wcstol_l_family_matches_glibc() {
         let g2 = unsafe { wcstoll_l(w.as_ptr(), &mut ge2, base, loc) };
         let _ = unsafe { *__errno_location() };
         let f2 = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, fl_loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstoll_l(w.as_ptr(), &mut fe2, base, fl_loc)
         };
         assert_eq!(f2, g2, "wcstoll_l({s:?},{base}) value");
     }
@@ -189,7 +189,7 @@ fn wcstol_l_family_matches_glibc() {
         let gerr = unsafe { *__errno_location() };
         unsafe { *__errno_location() = 0 };
         let f = unsafe {
-            frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, fl_loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcstoul_l(w.as_ptr(), &mut fe, base, fl_loc)
         };
         let ferr = unsafe { *__errno_location() };
         assert_eq!(f, g, "wcstoul_l({s:?},{base}) value");
@@ -208,7 +208,7 @@ fn wcstol_l_family_matches_glibc() {
                 w.as_ptr(),
                 &mut fe2,
                 base,
-                fl_loc as *mut c_void,
+                fl_loc,
             )
         };
         assert_eq!(f2, g2, "wcstoull_l({s:?},{base}) value");

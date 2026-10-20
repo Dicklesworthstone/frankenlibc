@@ -39,7 +39,7 @@ fn host_setlocale() -> SetlocaleFn {
     assert!(!raw.is_null(), "dlsym setlocale");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::locale_abi::setlocale as usize,
+        frankenlibc_abi::locale_abi::setlocale as *const () as usize,
         "the resolved oracle IS fl's setlocale — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has C's documented setlocale signature.

@@ -46,7 +46,7 @@ fn host_newlocale() -> NewlocaleFn {
     assert!(!raw.is_null(), "dlsym newlocale");
     assert_ne!(
         raw as usize,
-        frankenlibc_abi::locale_abi::newlocale as usize,
+        frankenlibc_abi::locale_abi::newlocale as *const () as usize,
         "the resolved oracle IS fl's newlocale — this gate would compare fl to itself"
     );
     // SAFETY: the resolved symbol has POSIX's documented newlocale signature.

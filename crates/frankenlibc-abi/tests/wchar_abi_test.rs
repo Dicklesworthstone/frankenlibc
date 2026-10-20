@@ -850,7 +850,7 @@ fn iswspace_l_matches_base_for_ascii() {
 /// previous one back.
 ///
 /// fl starts in the POSIX C locale, where the charset is ASCII and any byte
-/// >= 0x80 is EILSEQ. That is not a quirk — it is what glibc does. Measured on
+/// `>= 0x80` is EILSEQ. That is not a quirk — it is what glibc does. Measured on
 /// this host with a C program that never calls setlocale:
 ///
 /// ```text

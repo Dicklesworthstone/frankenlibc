@@ -5,6 +5,7 @@
 //!   * UNICODE: glibc's UCS-2 + BOM charset (BMP-only — astral unrepresentable,
 //!     surrogate code units illegal; LE default with BOM-resolved endianness);
 //!   * OSF100203B5: an OSF registry alias for 7-bit ASCII.
+//!
 //! glibc is reached via dlsym so its symbols bypass fl's no_mangle interposition.
 #![cfg(target_os = "linux")]
 #![allow(unsafe_code)]
@@ -34,9 +35,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }

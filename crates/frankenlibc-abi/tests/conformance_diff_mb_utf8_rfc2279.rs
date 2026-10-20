@@ -52,7 +52,7 @@ fn host_wctomb() -> WctombFn {
     unsafe {
         std::mem::transmute::<_, WctombFn>(host_symbol(
             c"wctomb",
-            frankenlibc_abi::wchar_abi::wctomb as usize,
+            frankenlibc_abi::wchar_abi::wctomb as *const () as usize,
         ))
     }
 }
@@ -62,7 +62,7 @@ fn host_mbrtowc_fn() -> MbrtowcFn {
     unsafe {
         std::mem::transmute::<_, MbrtowcFn>(host_symbol(
             c"mbrtowc",
-            frankenlibc_abi::wchar_abi::mbrtowc as usize,
+            frankenlibc_abi::wchar_abi::mbrtowc as *const () as usize,
         ))
     }
 }

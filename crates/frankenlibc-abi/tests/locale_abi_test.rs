@@ -38,7 +38,7 @@ static LOCALE_STATE_GUARD: Mutex<()> = Mutex::new(());
 /// is not hypothetical — adding a single `setlocale(LC_ALL,"C.UTF-8")` to the
 /// UTF-8 codec-output arm turned both of them red, under `--test-threads=1`,
 /// purely through ordering.
-struct LocaleStateGuard(std::sync::MutexGuard<'static, ()>);
+struct LocaleStateGuard(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
 
 impl LocaleStateGuard {
     fn acquire() -> Self {

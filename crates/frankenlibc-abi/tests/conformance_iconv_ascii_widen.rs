@@ -5,7 +5,7 @@
 //! mixed ASCII/non-ASCII transitions, and output-buffer-full (E2BIG) mid-run, so
 //! the fast path can never silently diverge from the per-char encode it replaces.
 
-use std::ffi::{c_char, c_void};
+use std::ffi::c_char;
 
 use frankenlibc_abi::iconv_abi::{iconv, iconv_close, iconv_open};
 
@@ -150,7 +150,7 @@ fn ascii_widen_e2big_midrun_is_exact() {
     // that many input bytes — byte-identical to the scalar encode.
     let cps: Vec<u32> = (0..100).map(|k| 0x41 + (k as u32 % 26)).collect();
     let src = utf8_encode(&cps);
-    let cd = unsafe { iconv_open(b"UTF-16LE\0".as_ptr().cast(), b"UTF-8\0".as_ptr().cast()) };
+    let cd = unsafe { iconv_open(c"UTF-16LE".as_ptr(), c"UTF-8".as_ptr()) };
     assert!(cd as isize != -1 && !cd.is_null());
     // Room for exactly 37 UTF-16 units (74 bytes) — mid-run, not on a 16-byte edge.
     let mut dst = vec![0u8; 74];

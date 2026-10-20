@@ -127,6 +127,7 @@ fn memccpy_matches_glibc() {
 }
 
 #[test]
+#[allow(clippy::same_item_push)]
 fn strlcpy_matches_glibc() {
     let mut rng = Rng(0x5354_524C_4350_0000);
     for _ in 0..6000 {
@@ -154,6 +155,7 @@ fn strlcpy_matches_glibc() {
 }
 
 #[test]
+#[allow(clippy::same_item_push)]
 fn strlcat_matches_glibc() {
     let mut rng = Rng(0x5354_524C_4341_0000);
     for _ in 0..6000 {

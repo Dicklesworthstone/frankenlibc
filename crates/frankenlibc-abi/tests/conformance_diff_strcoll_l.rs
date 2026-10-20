@@ -47,7 +47,7 @@ fn host_strcoll_l() -> StrcollLFn {
     unsafe {
         std::mem::transmute::<_, StrcollLFn>(host_symbol(
             c"strcoll_l",
-            frankenlibc_abi::unistd_abi::strcoll_l as usize,
+            frankenlibc_abi::unistd_abi::strcoll_l as *const () as usize,
         ))
     }
 }
@@ -56,7 +56,7 @@ fn host_wcscoll_l() -> WcscollLFn {
     unsafe {
         std::mem::transmute::<_, WcscollLFn>(host_symbol(
             c"wcscoll_l",
-            frankenlibc_abi::wchar_abi::wcscoll_l as usize,
+            frankenlibc_abi::wchar_abi::wcscoll_l as *const () as usize,
         ))
     }
 }
@@ -65,7 +65,7 @@ fn host_newlocale() -> NewlocaleFn {
     unsafe {
         std::mem::transmute::<_, NewlocaleFn>(host_symbol(
             c"newlocale",
-            frankenlibc_abi::locale_abi::newlocale as usize,
+            frankenlibc_abi::locale_abi::newlocale as *const () as usize,
         ))
     }
 }
@@ -76,7 +76,7 @@ fn host_freelocale() -> FreelocaleFn {
     unsafe {
         std::mem::transmute::<_, FreelocaleFn>(host_symbol(
             c"freelocale",
-            frankenlibc_abi::locale_abi::freelocale as usize,
+            frankenlibc_abi::locale_abi::freelocale as *const () as usize,
         ))
     }
 }
@@ -125,7 +125,7 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let b = CString::new(sb).unwrap();
         let g = unsafe { strcoll_l(a.as_ptr(), b.as_ptr(), loc) };
         let f = unsafe {
-            frankenlibc_abi::unistd_abi::strcoll_l(a.as_ptr(), b.as_ptr(), fl_loc as *mut c_void)
+            frankenlibc_abi::unistd_abi::strcoll_l(a.as_ptr(), b.as_ptr(), fl_loc)
         };
         assert_eq!(
             f.signum(),
@@ -137,7 +137,7 @@ fn strcoll_l_wcscoll_l_match_glibc() {
         let wb = wide(sb);
         let gw = unsafe { wcscoll_l(wa.as_ptr(), wb.as_ptr(), loc) };
         let fw = unsafe {
-            frankenlibc_abi::wchar_abi::wcscoll_l(wa.as_ptr(), wb.as_ptr(), fl_loc as *mut c_void)
+            frankenlibc_abi::wchar_abi::wcscoll_l(wa.as_ptr(), wb.as_ptr(), fl_loc)
         };
         assert_eq!(
             fw.signum(),

@@ -8,6 +8,7 @@
 //!   1. fl had no arithmetic expansion at all.
 //!   2. fl's WRDE_NOCMD scan treated `$((` as command substitution, so
 //!      `$((1+2))` returned WRDE_CMDSUB where glibc expands it to "3".
+//!
 //! A classification-only fix would have been worse than the bug — it would have
 //! left `$((1+2))` unexpanded — so both are covered here.
 //!

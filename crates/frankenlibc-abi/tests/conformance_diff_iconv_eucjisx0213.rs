@@ -36,9 +36,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }
@@ -176,7 +176,7 @@ fn eucjisx0213_decode_matches_glibc() {
         }
     }
     // random fuzz
-    let mut state: u64 = 0xE_C_4a_2004;
+    let mut state: u64 = 0xEC4A_2004;
     let mut next = || {
         state = state
             .wrapping_mul(6364136223846793005)
@@ -225,13 +225,12 @@ fn eucjisx0213_encode_roundtrip_matches_glibc() {
         }
     }
     for c in &cells {
-        if let Some(u) = g_full(&g, "UTF-8", NAME, c) {
-            if !u.is_empty()
-                && g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u)
-                && mism.len() < 60
-            {
-                mism.push(format!("re {c:02x?}"));
-            }
+        if let Some(u) = g_full(&g, "UTF-8", NAME, c)
+            && !u.is_empty()
+            && g_full(&g, NAME, "UTF-8", &u) != f_full(NAME, "UTF-8", &u)
+            && mism.len() < 60
+        {
+            mism.push(format!("re {c:02x?}"));
         }
     }
     for s in [
@@ -279,7 +278,7 @@ fn eucjisx0213_decode_to_utf16le_matches_glibc() {
             mism.push(format!("{c:02x?}"));
         }
     }
-    let mut state: u64 = 0xE_C_4a_2004;
+    let mut state: u64 = 0xEC4A_2004;
     let mut next = || {
         state = state
             .wrapping_mul(6364136223846793005)

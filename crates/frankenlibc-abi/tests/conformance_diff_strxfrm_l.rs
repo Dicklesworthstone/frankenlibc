@@ -7,7 +7,7 @@
 //! length; in a "C" locale the transform is the identity copy. fl delegates to
 //! strxfrm/wcsxfrm; it must match host glibc on the return length always, and
 //! on the bytes written when the result fits (n > src len). When the return is
-//! >= n the C standard leaves dest contents INDETERMINATE, so the buffer is not
+//! `>= n` the C standard leaves dest contents INDETERMINATE, so the buffer is not
 //! compared in that case (only the length). No mocks.
 
 use std::ffi::{CString, c_char, c_int, c_void};
@@ -48,7 +48,7 @@ fn host_strxfrm_l() -> StrxfrmLFn {
     unsafe {
         std::mem::transmute::<_, StrxfrmLFn>(host_symbol(
             c"strxfrm_l",
-            frankenlibc_abi::unistd_abi::strxfrm_l as usize,
+            frankenlibc_abi::unistd_abi::strxfrm_l as *const () as usize,
         ))
     }
 }
@@ -57,7 +57,7 @@ fn host_wcsxfrm_l() -> WcsxfrmLFn {
     unsafe {
         std::mem::transmute::<_, WcsxfrmLFn>(host_symbol(
             c"wcsxfrm_l",
-            frankenlibc_abi::wchar_abi::wcsxfrm_l as usize,
+            frankenlibc_abi::wchar_abi::wcsxfrm_l as *const () as usize,
         ))
     }
 }
@@ -66,7 +66,7 @@ fn host_newlocale() -> NewlocaleFn {
     unsafe {
         std::mem::transmute::<_, NewlocaleFn>(host_symbol(
             c"newlocale",
-            frankenlibc_abi::locale_abi::newlocale as usize,
+            frankenlibc_abi::locale_abi::newlocale as *const () as usize,
         ))
     }
 }
@@ -76,7 +76,7 @@ fn host_freelocale() -> FreelocaleFn {
     unsafe {
         std::mem::transmute::<_, FreelocaleFn>(host_symbol(
             c"freelocale",
-            frankenlibc_abi::locale_abi::freelocale as usize,
+            frankenlibc_abi::locale_abi::freelocale as *const () as usize,
         ))
     }
 }
@@ -119,7 +119,7 @@ fn strxfrm_l_matches_glibc() {
                     fd.as_mut_ptr() as *mut c_char,
                     src.as_ptr(),
                     n,
-                    fl_loc as *mut c_void,
+                    fl_loc,
                 )
             };
             assert_eq!(f, g, "strxfrm_l({s:?}, n={n}) return");
@@ -162,7 +162,7 @@ fn wcsxfrm_l_matches_glibc() {
                     fd.as_mut_ptr(),
                     src.as_ptr(),
                     n,
-                    fl_loc as *mut c_void,
+                    fl_loc,
                 )
             };
             assert_eq!(f, g, "wcsxfrm_l({s:?}, n={n}) return");

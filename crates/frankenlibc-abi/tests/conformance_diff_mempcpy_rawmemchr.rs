@@ -60,7 +60,7 @@ fn rawmemchr_matches_glibc() {
     // Each buffer is guaranteed to contain the search byte (rawmemchr is
     // unbounded and must not be called otherwise).
     let buf = b"the quick brown fox\0jumps";
-    for c in [b't', b'q', b'x', b' ', b'\0', b'e', b'j'] {
+    for &c in b"tqx \0ej" {
         let rg = unsafe { rawmemchr(buf.as_ptr() as *const c_void, c as c_int) };
         let rf = unsafe {
             frankenlibc_abi::string_abi::rawmemchr(buf.as_ptr() as *const c_void, c as c_int)

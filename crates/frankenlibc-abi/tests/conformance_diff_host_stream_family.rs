@@ -142,7 +142,7 @@ fn arms() -> Arms {
 fn fgetc_reads_a_host_owned_stream_the_way_the_host_does() {
     let a = arms();
     let read_three = |f: FgetcFn| {
-        with_host_stream(&a.path, a.fopen, a.fclose, |s| {
+        with_host_stream(a.path, a.fopen, a.fclose, |s| {
             // SAFETY: `s` is a live FILE* from host fopen.
             unsafe { [f(s), f(s), f(s)] }
         })
@@ -166,7 +166,7 @@ fn fgetc_reads_a_host_owned_stream_the_way_the_host_does() {
 fn fgets_reads_a_host_owned_stream_the_way_the_host_does() {
     let a = arms();
     let first_line = |f: FgetsFn| {
-        with_host_stream(&a.path, a.fopen, a.fclose, |s| {
+        with_host_stream(a.path, a.fopen, a.fclose, |s| {
             let mut buf = [0u8; 64];
             // SAFETY: `buf` is 64 bytes and that length is what is passed.
             let rc = unsafe { f(buf.as_mut_ptr().cast::<c_char>(), 64, s) };
@@ -196,7 +196,7 @@ fn fgets_reads_a_host_owned_stream_the_way_the_host_does() {
 fn fread_reads_a_host_owned_stream_the_way_the_host_does() {
     let a = arms();
     let read_five = |f: FreadFn| {
-        with_host_stream(&a.path, a.fopen, a.fclose, |s| {
+        with_host_stream(a.path, a.fopen, a.fclose, |s| {
             let mut buf = [0u8; 5];
             // SAFETY: exactly 5 bytes are requested into a 5-byte buffer.
             let n = unsafe { f(buf.as_mut_ptr().cast::<c_void>(), 1, 5, s) };
@@ -227,7 +227,7 @@ fn fread_reads_a_host_owned_stream_the_way_the_host_does() {
 fn ftell_reports_a_host_owned_stream_position_the_way_the_host_does() {
     let a = arms();
     let position_after_three = |f: FtellFn| {
-        with_host_stream(&a.path, a.fopen, a.fclose, |s| {
+        with_host_stream(a.path, a.fopen, a.fclose, |s| {
             // SAFETY: `s` is a live FILE* from host fopen; three bytes are
             // consumed through the HOST's fgetc in every arm.
             unsafe {
@@ -260,7 +260,7 @@ fn ftell_reports_a_host_owned_stream_position_the_way_the_host_does() {
 fn feof_reports_a_host_owned_stream_the_way_the_host_does() {
     let a = arms();
     let eof_after_drain = |f: FeofFn| {
-        with_host_stream(&a.path, a.fopen, a.fclose, |s| {
+        with_host_stream(a.path, a.fopen, a.fclose, |s| {
             // SAFETY: reads through the host's own fgetc until it reports EOF;
             // the loop is bounded by the fixture's length plus one.
             unsafe {

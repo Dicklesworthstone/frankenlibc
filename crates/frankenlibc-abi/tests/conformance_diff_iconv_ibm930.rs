@@ -38,9 +38,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }
@@ -250,11 +250,11 @@ fn ibm930_encode_roundtrip_matches_glibc() {
     // Round-trip every decodable single byte and double-byte cell.
     for b in 0u16..256 {
         let inp = [b as u8];
-        if let Some(u) = g_full(&g, "UTF-8", "IBM930", &inp) {
-            if g_full(&g, "IBM930", "UTF-8", &u) != f_full("IBM930", "UTF-8", &u) && mism.len() < 40
-            {
-                mism.push(format!("reencode sbcs {b:02x}"));
-            }
+        if let Some(u) = g_full(&g, "UTF-8", "IBM930", &inp)
+            && g_full(&g, "IBM930", "UTF-8", &u) != f_full("IBM930", "UTF-8", &u)
+            && mism.len() < 40
+        {
+            mism.push(format!("reencode sbcs {b:02x}"));
         }
     }
     for alias in ["CP930", "CSIBM930", "IBM-930"] {

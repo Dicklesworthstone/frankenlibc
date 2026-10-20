@@ -15,7 +15,6 @@ use std::sync::{Mutex, MutexGuard};
 
 use frankenlibc_abi::resolv_abi as fl;
 
-#[link(name = "resolv")]
 // Host arms resolved with `dlsym`, not `#[link_name]`.
 //
 // The previous form declared them as `#[link_name = "__loc_aton"] fn loc_aton`,
@@ -66,14 +65,20 @@ fn host_symbol(name: &std::ffi::CStr, fl_addr: usize) -> *mut std::ffi::c_void {
 fn host_loc_aton() -> LocAtonFn {
     // SAFETY: the resolved symbol has glibc's documented __loc_aton signature.
     unsafe {
-        std::mem::transmute::<_, LocAtonFn>(host_symbol(c"__loc_aton", fl::__loc_aton as usize))
+        std::mem::transmute::<_, LocAtonFn>(host_symbol(
+            c"__loc_aton",
+            fl::__loc_aton as *const () as usize,
+        ))
     }
 }
 
 fn host_loc_ntoa() -> LocNtoaFn {
     // SAFETY: the resolved symbol has glibc's documented __loc_ntoa signature.
     unsafe {
-        std::mem::transmute::<_, LocNtoaFn>(host_symbol(c"__loc_ntoa", fl::__loc_ntoa as usize))
+        std::mem::transmute::<_, LocNtoaFn>(host_symbol(
+            c"__loc_ntoa",
+            fl::__loc_ntoa as *const () as usize,
+        ))
     }
 }
 

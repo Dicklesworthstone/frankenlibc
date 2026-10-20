@@ -418,6 +418,7 @@ fn fused_span_long_strings_match_glibc() {
 ///   * strings and sets placed hard against a page end, which trips the probe's
 ///     page-cross guard into declining. Both guard branches must agree.
 #[test]
+#[allow(clippy::same_item_push)]
 fn cmpistri_span_probe_matches_glibc() {
     const PAGE: usize = 4096;
     let mut rng = Rng(0x0BAD_F00D_1234_5678);

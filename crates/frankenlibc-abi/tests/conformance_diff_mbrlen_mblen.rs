@@ -99,7 +99,7 @@ fn mbrlen_matches_glibc() {
         let mut seq: Vec<u8> = Vec::with_capacity(len);
         for i in 0..len {
             let b = match rng.below(5) {
-                0 => (b'a' + (rng.below(26) as u8)), // ASCII
+                0 => b'a' + (rng.below(26) as u8),   // ASCII
                 1 => 0xC0 | (rng.below(0x20) as u8), // 2-byte lead-ish
                 2 => 0xE0 | (rng.below(0x10) as u8), // 3-byte lead-ish
                 3 => 0x80 | (rng.below(0x40) as u8), // continuation

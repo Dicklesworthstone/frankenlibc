@@ -5,6 +5,7 @@
 //!   * decode: every 1-byte (0x00..=0xFF) and 2-byte (lead 0x80..=0xFF) input
 //!     -> UTF-32LE, comparing decoded unit AND incomplete/EILSEQ classification;
 //!   * encode: every BMP scalar -> IBM-943 bytes.
+//!
 //! Also asserts the IBM943/IBM-943/CSIBM943 spellings all resolve, and that
 //! IBM-943 genuinely diverges from CP932 (the 0x8160 discriminator).
 #![cfg(target_os = "linux")]
@@ -35,9 +36,9 @@ fn g() -> G {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         G {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
         }
     }
 }

@@ -39,9 +39,9 @@ fn glibc() -> Glibc {
         let h = dlopen(c"libc.so.6".as_ptr(), RTLD_NOW);
         assert!(!h.is_null());
         Glibc {
-            open: std::mem::transmute(dlsym(h, c"iconv_open".as_ptr())),
-            conv: std::mem::transmute(dlsym(h, c"iconv".as_ptr())),
-            close: std::mem::transmute(dlsym(h, c"iconv_close".as_ptr())),
+            open: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_open".as_ptr())),
+            conv: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv".as_ptr())),
+            close: std::mem::transmute::<*mut c_void, _>(dlsym(h, c"iconv_close".as_ptr())),
         }
     }
 }
@@ -229,23 +229,22 @@ fn ebcdic_dbcs_encode_roundtrip_matches_glibc() {
         // round-trip every decodable single byte and double-byte cell.
         for b in 0u16..256 {
             let inp = [b as u8];
-            if let Some(u) = g_full(&g, "UTF-8", page, &inp) {
-                if !u.is_empty()
-                    && g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u)
-                    && mism.len() < 20
-                {
-                    mism.push(format!("re-sbcs {b:02x}"));
-                }
+            if let Some(u) = g_full(&g, "UTF-8", page, &inp)
+                && !u.is_empty()
+                && g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u)
+                && mism.len() < 20
+            {
+                mism.push(format!("re-sbcs {b:02x}"));
             }
         }
         for b0 in 0x40u16..=0xFE {
             for b1 in 0x40u16..=0xFE {
                 let inp = [0x0E, b0 as u8, b1 as u8, 0x0F];
-                if let Some(u) = g_full(&g, "UTF-8", page, &inp) {
-                    if g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u) && mism.len() < 40
-                    {
-                        mism.push(format!("re-dbcs {b0:02x}{b1:02x}"));
-                    }
+                if let Some(u) = g_full(&g, "UTF-8", page, &inp)
+                    && g_full(&g, page, "UTF-8", &u) != f_full(page, "UTF-8", &u)
+                    && mism.len() < 40
+                {
+                    mism.push(format!("re-dbcs {b0:02x}{b1:02x}"));
                 }
             }
         }
