@@ -253,8 +253,8 @@ pub fn native_dso_handle_for_tests(handle: *mut c_void) -> bool {
 
 fn next_id() -> Option<usize> {
     NEXT_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
-            (id <= (usize::MAX >> 8)).then(|| id + 1)
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+            (id <= (usize::MAX >> 8)).then_some(id + 1)
         })
         .ok()
 }
@@ -332,7 +332,8 @@ fn dynamic_flags(bytes: &[u8], object: &LoadedObject) -> Option<u64> {
     let mut flags = None;
     for entry in bytes
         .get(offset..offset.checked_add(size)?)?
-        .chunks_exact(16)
+        .as_chunks::<16>()
+        .0
     {
         let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
         let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
@@ -802,11 +803,7 @@ fn publish_group(group: &[PreparedDso], flags: c_int) -> Option<*mut c_void> {
                 }
                 ids[index] = Some(dso.id);
             } else {
-                if let Some(id) = next_id() {
-                    ids[index] = Some(id);
-                } else {
-                    return None;
-                }
+                ids[index] = Some(next_id()?);
                 new_indexes.push(index);
                 visit.extend(
                     prepared

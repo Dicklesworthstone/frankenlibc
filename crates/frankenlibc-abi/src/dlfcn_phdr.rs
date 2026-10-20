@@ -24,13 +24,13 @@ static ADDS: AtomicU64 = AtomicU64::new(0);
 static SUBS: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn published(count: usize) {
-    let _ = ADDS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+    let _ = ADDS.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         Some(value.saturating_add(count as u64))
     });
 }
 
 pub(super) fn retired(count: usize) {
-    let _ = SUBS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+    let _ = SUBS.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
         Some(value.saturating_add(count as u64))
     });
 }

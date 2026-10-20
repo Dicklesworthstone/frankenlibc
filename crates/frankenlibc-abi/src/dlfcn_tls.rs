@@ -277,6 +277,7 @@ pub(super) fn relocate(dso: &NativeDso, memory: &mut [u8], resolver: &Resolver<'
 /// grow. Dropping a failed transaction or the retired DSO frees every argument.
 #[derive(Debug, Default)]
 pub(super) struct Descriptors {
+    #[allow(clippy::vec_box)]
     arguments: RefCell<Vec<Box<TlsIndex>>>,
 }
 

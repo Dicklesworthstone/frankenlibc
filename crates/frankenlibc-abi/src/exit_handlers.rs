@@ -117,7 +117,7 @@ mod host {
 pub(super) fn register_exit_handler(handler: ExitHandler) -> c_int {
     use std::sync::atomic::Ordering;
     let Ok(ticket) =
-        NEXT_EXIT_TICKET.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        NEXT_EXIT_TICKET.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
     else {
         unsafe { set_abi_errno(libc::ENOMEM) };
         return -1;

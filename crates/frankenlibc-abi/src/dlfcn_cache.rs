@@ -107,7 +107,7 @@ fn hwcaps_extension(bytes: &[u8], offset: u32, strings_end: usize) -> Option<Ran
     let end = start.checked_add(count.checked_mul(16)?)?;
     let sections = bytes.get(start..end)?;
     let mut hwcaps = None;
-    for section in sections.chunks_exact(16) {
+    for section in sections.as_chunks::<16>().0 {
         let begin = usize::try_from(word(section, 8)?).ok()?;
         let length = usize::try_from(word(section, 12)?).ok()?;
         let limit = begin.checked_add(length)?;
@@ -214,6 +214,7 @@ impl Cache {
         capabilities.rank(name, ((bits >> 32) & ISA_INDEX_MASK) as u32)
     }
 
+    #[cfg(test)]
     pub(super) fn candidates(&self, name: &[u8]) -> Vec<PathBuf> {
         self.candidates_with_capabilities(name, Capabilities::detect())
     }

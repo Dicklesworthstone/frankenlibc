@@ -468,7 +468,7 @@ fn open_main_program_handle() -> *mut c_void {
 }
 
 fn close_main_program_handle() -> c_int {
-    let _ = MAIN_PROGRAM_REFS.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
+    let _ = MAIN_PROGRAM_REFS.try_update(Ordering::Relaxed, Ordering::Relaxed, |refs| {
         if refs > 0 { Some(refs - 1) } else { None }
     });
     0

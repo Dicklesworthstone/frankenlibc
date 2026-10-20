@@ -132,7 +132,7 @@ impl<'a> Image<'a> {
             return None;
         }
         let mut tags = BTreeMap::new();
-        for entry in bytes.get(..size)?.chunks_exact(16) {
+        for entry in bytes.get(..size)?.as_chunks::<16>().0 {
             let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
             let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
             if tag == 0 {
@@ -141,10 +141,9 @@ impl<'a> Image<'a> {
             if matches!(
                 tag,
                 5 | 10 | VERSYM | VERDEF | VERDEFNUM | VERNEED | VERNEEDNUM
-            ) {
-                if tags.insert(tag, value).is_some_and(|old| old != value) {
-                    return None;
-                }
+            ) && tags.insert(tag, value).is_some_and(|old| old != value)
+            {
+                return None;
             }
         }
         None
@@ -308,8 +307,8 @@ impl Table {
         if let Some(&address) = tags.get(&VERSYM) {
             table.versioned = true;
             let bytes = image.span(address, object.dynsym.len().checked_mul(2)?)?;
-            for entry in bytes.chunks_exact(2) {
-                let raw = u16::from_le_bytes(entry.try_into().ok()?);
+            for entry in bytes.as_chunks::<2>().0 {
+                let raw = u16::from_le_bytes(*entry);
                 let index = raw & 0x7fff;
                 table.raw.push(raw);
                 if index > 1 && !names.contains_key(&index) {

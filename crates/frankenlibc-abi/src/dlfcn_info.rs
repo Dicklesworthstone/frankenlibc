@@ -113,7 +113,7 @@ impl SymbolTable {
         let mut table = None;
         let mut entry_size = None;
         let mut terminated = false;
-        for entry in entries.chunks_exact(16) {
+        for entry in entries.as_chunks::<16>().0 {
             let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
             let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
             if tag == 0 {
@@ -155,7 +155,7 @@ impl SymbolTable {
         })?;
         let file_offset = usize::try_from(file_offset).ok()?;
         let records = bytes.get(file_offset..file_offset.checked_add(size)?)?;
-        for (record, symbol) in records.chunks_exact(24).zip(&object.dynsym) {
+        for (record, symbol) in records.as_chunks::<24>().0.iter().zip(&object.dynsym) {
             if u32::from_le_bytes(record[..4].try_into().ok()?) != symbol.st_name
                 || record[4] != symbol.st_info
                 || record[5] != symbol.st_other

@@ -191,19 +191,19 @@ unsafe fn dispatch(
             // Never repeat native relocation/IFUNC execution or ask the host
             // to reinterpret a bare name relative to this Rust wrapper.
             #[cfg(not(feature = "standalone"))]
-            if let Some(declined) = declined {
-                if let Some(path) = declined.host_path() {
-                    abi::NATIVE_PATHNAME_FALLBACKS
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let handle = unsafe { abi::host_dlopen_with_error(path.as_ptr(), flags) };
-                    runtime_policy::observe(
-                        ApiFamily::Loader,
-                        decision.profile,
-                        12,
-                        handle.is_null(),
-                    );
-                    return handle;
-                }
+            if let Some(declined) = declined
+                && let Some(path) = declined.host_path()
+            {
+                abi::NATIVE_PATHNAME_FALLBACKS
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let handle = unsafe { abi::host_dlopen_with_error(path.as_ptr(), flags) };
+                runtime_policy::observe(
+                    ApiFamily::Loader,
+                    decision.profile,
+                    12,
+                    handle.is_null(),
+                );
+                return handle;
             }
             std::ptr::null_mut()
         }

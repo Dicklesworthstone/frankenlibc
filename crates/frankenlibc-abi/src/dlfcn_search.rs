@@ -70,7 +70,7 @@ struct DynamicTokens {
 }
 
 fn auxiliary_value(auxv: &[u8], wanted: u64) -> Option<u64> {
-    for entry in auxv.chunks_exact(16) {
+    for entry in auxv.as_chunks::<16>().0 {
         let tag = u64::from_ne_bytes(entry[..8].try_into().ok()?);
         let value = u64::from_ne_bytes(entry[8..].try_into().ok()?);
         if tag == 0 {
@@ -159,15 +159,14 @@ impl SearchContext {
         if !secure {
             // /proc exposes the initial environment, not later setenv edits.
             // Do not consult mutable process environment during concurrent loads.
-            if let Some(bytes) = bounded_file("/proc/self/environ", 1 << 20) {
-                if let Some(value) = bytes
+            if let Some(bytes) = bounded_file("/proc/self/environ", 1 << 20)
+                && let Some(value) = bytes
                     .split(|byte| *byte == 0)
                     .find_map(|entry| entry.strip_prefix(b"LD_LIBRARY_PATH="))
-                {
-                    let executable = std::fs::read_link("/proc/self/exe").ok();
-                    let origin = executable.as_deref().and_then(Path::parent);
-                    environment = split_paths(value, origin, true, &tokens);
-                }
+            {
+                let executable = std::fs::read_link("/proc/self/exe").ok();
+                let origin = executable.as_deref().and_then(Path::parent);
+                environment = split_paths(value, origin, true, &tokens);
             }
         }
         // A load group sees one immutable snapshot, including in secure mode:
@@ -218,7 +217,7 @@ impl SearchPaths {
                 return None;
             }
             let mut terminated = false;
-            for entry in entries.chunks_exact(16) {
+            for entry in entries.as_chunks::<16>().0 {
                 let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
                 let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
                 match tag {

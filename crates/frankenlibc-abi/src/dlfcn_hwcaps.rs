@@ -91,19 +91,19 @@ impl Capabilities {
 fn detect() -> Capabilities {
     use core::arch::x86_64::__cpuid_count;
 
-    // SAFETY: CPUID is available on x86-64. Check maximum leaves before
-    // querying feature leaves, rather than accepting unspecified leaf data.
-    let basic_max = unsafe { __cpuid_count(0, 0) }.eax;
-    let extended_max = unsafe { __cpuid_count(0x8000_0000, 0) }.eax;
+    // Check maximum leaves before querying feature leaves, rather than
+    // accepting unspecified leaf data.
+    let basic_max = __cpuid_count(0, 0).eax;
+    let extended_max = __cpuid_count(0x8000_0000, 0).eax;
     let mut features = X86Features::default();
     if basic_max >= 1 {
-        features.ecx1 = unsafe { __cpuid_count(1, 0) }.ecx;
+        features.ecx1 = __cpuid_count(1, 0).ecx;
     }
     if basic_max >= 7 {
-        features.ebx7 = unsafe { __cpuid_count(7, 0) }.ebx;
+        features.ebx7 = __cpuid_count(7, 0).ebx;
     }
     if extended_max >= 0x8000_0001 {
-        features.extended_ecx = unsafe { __cpuid_count(0x8000_0001, 0) }.ecx;
+        features.extended_ecx = __cpuid_count(0x8000_0001, 0).ecx;
     }
     if features.ecx1 & ((1 << 26) | (1 << 27)) == ((1 << 26) | (1 << 27)) {
         let xcr0: u32;

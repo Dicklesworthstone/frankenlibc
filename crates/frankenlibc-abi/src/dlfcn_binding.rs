@@ -31,7 +31,7 @@ pub(super) fn symbolic(bytes: &[u8], object: &LoadedObject) -> Option<bool> {
             return None;
         }
         let mut terminated = false;
-        for entry in entries.chunks_exact(16) {
+        for entry in entries.as_chunks::<16>().0 {
             let tag = i64::from_le_bytes(entry[..8].try_into().ok()?);
             let value = u64::from_le_bytes(entry[8..].try_into().ok()?);
             match tag {
@@ -338,10 +338,11 @@ pub(super) fn prepare(
                 value,
                 width,
             });
-            if let Some(provider) = definition.provider {
-                if provider != dso.id && !plan.providers.contains(&provider) {
-                    plan.providers.push(provider);
-                }
+            if let Some(provider) = definition.provider
+                && provider != dso.id
+                && !plan.providers.contains(&provider)
+            {
+                plan.providers.push(provider);
             }
         }
         plans.push(plan);
