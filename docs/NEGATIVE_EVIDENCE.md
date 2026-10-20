@@ -41763,3 +41763,25 @@ ones that would notice a threading-policy depth counter behaving differently.
   calls fl serves with its own I/O), but the headline above is wrong for `read`: the gated window
   costs a multi-threaded 1-byte read about 4-6 ns (1.0-1.3%). Next lever: find where those ns go
   (the read path pays them, write does not) before adding more work to the hook.
+
+## 2026-10-19 — `bd-rc0923-epic-eeuy4f.9`: Hardened Mode Hot-Path String/Memory PCC + TLS Cache Fast Paths (`3.552x` on `sort120k`, `9.136x -> 2.572x` vs glibc)
+
+- **LEVER (`bd-rc0923-epic-eeuy4f.9`).** Eliminated per-call hardened-mode overhead in hot string/memory entrypoints (`memcpy`, `memmove`, `memset`, `memcmp`, `strlen`, `strnlen`, `strcmp`, `strncmp`) while preserving 100% of PCC explainability, arena/quarantine UAF detection, bounds clamping, and atomic metrics contracts:
+  1. **Direct TLS Cache Hit Lookup & Inline Range First (`tls_cache.rs`, `ptr_validator.rs`, `malloc_abi.rs`):** Added single-register `CachedRemaining(usize)` (`UNKNOWN`/`KNOWN_UNBOUNDED`/exact remaining bytes) and `try_with_tls_cache_hit` (eliminating the 240-byte `TlsValidationCache::unbacked()` fallback frame and 40-byte nested `Option<Option<Option<usize>>>` `sret` stack spill), reordered `lookup_hit_only` / `lookup_hit_remaining` to check the 4-entry inline `ranges` cache before the 48 KiB heap `entries` table, masked `current_shard_epoch` with `& (NUM_TLS_CACHE_SHARDS - 1)` to eliminate panic bounds checks, and wired `known_remaining_in_guarded_string` / `known_remaining_pair_in_guarded_string` directly into the hardened string/memory entrypoints.
+  2. **Batched Thread-Local Hit Metrics (`tls_cache.rs`, `metrics.rs`):** Batched `GLOBAL_METRICS.validations` and `GLOBAL_METRICS.tls_cache_hits` updates per thread (`HIT_METRICS_FLUSH_BATCH = 4096`) and flushed pending thread-local hit counts inside `MembraneMetrics::get` before reading `validations` or `tls_cache_hits`, eliminating global cache-line `lock xadd` contention on every cached string operation while keeping `MembraneMetrics::snapshot()` exact.
+  3. **Consolidated `RUNTIME_POLICY_TLS` & Certified String PCC Fast Path (`runtime_policy.rs`, `string_abi.rs`):** Consolidated the 8 separate `thread_local!` variables in `runtime_policy.rs` into a single `RUNTIME_POLICY_TLS: RuntimePolicyCells` struct (putting `trace_active: Cell<bool>` ahead of the 88-byte `TraceContext` and combining `mode_cache` + `mode_switch_counter` into one TLS access), and added `try_decide_certified_string_pcc` + 48-byte `RecordedPccExplainability` so `StringMemory` / `Memory` hardened paths with a live `PccTableState` record exact PCC explainability and return `Allow` without routing through the full general `decide()` / `KernelContext` / 248-byte `DecisionExplainability` stack copy when `RuntimeMathKernel` falls back only after `PccTableState` is uninitialized.
+- **OBJECTS.**
+  - `incumbent`: `main@d41a6e312` (`/data/tmp/libfrankenlibc_abi.incumbent.so`), SHA-256 `9b607006e621b92cee472466513cfea2dfd200bad269969764bfede65cad73b6`
+  - `candidate`: `/data/tmp/cargo-target/release/libfrankenlibc_abi.so`, SHA-256 `13428527d93a78a110fd072840fcbc53f5d1ac59b7bd9d1ff5af89b00729c4e7`
+  - `glibc`: host glibc 2.43 (`/usr/bin/sort` with `LC_ALL=C` on `/data/tmp/sort120k_bench.txt`, 120,000 pseudorandom lines)
+- **SAME-INVOCATION INTERLEAVED BENCHMARK (9 rounds, `LC_ALL=C /usr/bin/sort /data/tmp/sort120k_bench.txt > /dev/null`):**
+
+  | variant | median (ms) | min (ms) | ratio vs glibc | ratio incumbent/candidate |
+  |---|---|---|---|---|
+  | `glibc` (no `LD_PRELOAD`) | `27.63` | `19.72` | `1.000x` | — |
+  | `hardened-incumbent` (`d41a6e312`) | `252.42` | `205.49` | `9.136x` | `1.000x` |
+  | `hardened-candidate` | `71.07` | `61.40` | `2.572x` | **`3.552x` (`-71.8%`)** |
+  | `strict-candidate` | `28.52` | `22.59` | `1.032x` | — |
+
+- **DISPOSITION.** KEEP. Hardened `sort120k` drops from `252.42ms` (`9.136x` glibc) to `71.07ms` (`2.572x` glibc), a **`3.552x` speedup** (`71.8%` wall-time reduction) that clears the `<=3x` target on `sort120k`.
+

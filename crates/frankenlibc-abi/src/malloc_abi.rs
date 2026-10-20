@@ -5481,6 +5481,47 @@ pub(crate) fn known_remaining_for_certified_read(addr: usize) -> Option<usize> {
         .or_else(|| fallback_remaining(addr))
 }
 
+/// Fast remaining-bytes lookup for a caller that has already entered
+/// `enter_string_membrane_guard` (which guarantees no bootstrap/policy/allocator/
+/// validation reentry and no signal handler).
+#[inline(always)]
+pub(crate) fn known_remaining_in_guarded_string(addr: usize) -> Option<usize> {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+        && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
+    {
+        return rem.or_else(|| fallback_remaining(addr));
+    }
+    known_remaining(addr)
+}
+
+/// Fast remaining-bytes lookup for two pointers in a caller that has already
+/// entered `enter_string_membrane_guard`, resolving both pointers in a single
+/// `TLS_CACHE` borrow.
+#[inline(always)]
+pub(crate) fn known_remaining_pair_in_guarded_string(
+    lhs: usize,
+    rhs: usize,
+) -> (Option<usize>, Option<usize>) {
+    if !runtime_policy::strict_passthrough_active()
+        && !(cfg!(test) && runtime_policy::proof_carried_pointer_validation_active())
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+    {
+        let (lhs_cached, rhs_cached) = pipeline.try_validate_cached_remaining_pair(lhs, rhs);
+        let lhs_rem = match lhs_cached.decode() {
+            Some(rem) => rem.or_else(|| fallback_remaining(lhs)),
+            None => known_remaining(lhs),
+        };
+        let rhs_rem = match rhs_cached.decode() {
+            Some(rem) => rem.or_else(|| fallback_remaining(rhs)),
+            None => known_remaining(rhs),
+        };
+        return (lhs_rem, rhs_rem);
+    }
+    (known_remaining(lhs), known_remaining(rhs))
+}
+
 pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
     // Strict mode skips the full membrane validator, but allocator-owned
     // fallback bookkeeping is still cheap and required for bounded C-string
@@ -5510,6 +5551,14 @@ pub(crate) fn known_remaining(addr: usize) -> Option<usize> {
         return bump_mmap_remaining(addr)
             .or_else(|| segment_remaining(addr))
             .or_else(|| fallback_remaining(addr));
+    }
+
+    if !runtime_policy::proof_carried_pointer_validation_active()
+        && !slot.is_some_and(in_signal_handler)
+        && let Some(pipeline) = crate::membrane_state::ready_pipeline()
+        && let Some(rem) = pipeline.try_validate_cached_remaining(addr)
+    {
+        return rem.or_else(|| fallback_remaining(addr));
     }
 
     bump_mmap_remaining(addr)

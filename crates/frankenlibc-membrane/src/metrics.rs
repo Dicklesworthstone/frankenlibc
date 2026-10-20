@@ -63,12 +63,24 @@ impl MembraneMetrics {
     }
 
     /// Increment a counter by 1.
+    #[inline]
     pub fn inc(counter: &AtomicU64) {
-        counter.fetch_add(1, Ordering::Relaxed);
+        Self::add(counter, 1);
+    }
+
+    /// Increment a counter by `delta`.
+    #[inline]
+    pub fn add(counter: &AtomicU64, delta: u64) {
+        counter.fetch_add(delta, Ordering::Relaxed);
     }
 
     /// Read a counter value.
     pub fn get(counter: &AtomicU64) -> u64 {
+        if std::ptr::eq(counter, &GLOBAL_METRICS.validations)
+            || std::ptr::eq(counter, &GLOBAL_METRICS.tls_cache_hits)
+        {
+            crate::tls_cache::flush_current_thread_hit_metrics();
+        }
         counter.load(Ordering::Relaxed)
     }
 

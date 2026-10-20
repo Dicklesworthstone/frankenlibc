@@ -17,7 +17,7 @@ use frankenlibc_membrane::heal::{HealingAction, RepairLogContext, global_healing
 use frankenlibc_membrane::runtime_math::clifford::{
     SimdIsa, SimdStringOperation, certify_simd_string_operation,
 };
-use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
+use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction, ValidationProfile};
 
 use crate::htm_fast_path::{HtmSite, HtmSiteSnapshot};
 use crate::malloc_abi::known_remaining;
@@ -4631,8 +4631,8 @@ pub unsafe extern "C" fn memcpy(dst: *mut c_void, src: *const c_void, n: usize) 
 #[cold]
 #[inline(never)]
 unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *mut c_void {
-    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
-    if !runtime_policy::mode().heals_enabled() {
+    if cfg!(test) && !runtime_policy::mode().heals_enabled() {
+        let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
         if runtime_policy::proof_carried_fast_path_active(ApiFamily::StringMemory, n, true, true) {
             let (_, decision) =
                 runtime_policy::decide(ApiFamily::StringMemory, dst as usize, n, true, true, 0);
@@ -4667,10 +4667,57 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         return dst;
     };
 
-    let dst_rem = known_remaining(dst as usize);
-    let src_rem = known_remaining(src as usize);
+    let (dst_rem, src_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCPY_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (copy_len, clamped) = maybe_clamp_copy_len(
+            "memcpy",
+            n,
+            dst as usize,
+            dst_rem,
+            Some(src as usize),
+            src_rem,
+            mode.heals_enabled(),
+        );
+        if copy_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(7, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        if !try_memcpy_htm(dst.cast::<u8>(), src.cast::<u8>(), copy_len) {
+            unsafe {
+                raw_dispatch_memcpy_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+            }
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, copy_len),
+                true,
+            );
+        }
+        return dst;
+    }
+
+    let _trace_scope = runtime_policy::entrypoint_scope("memcpy");
     let aligned = ((dst as usize) | (src as usize)) & 0x7 == 0;
-    let recent_page = dst_rem.is_some() || src_rem.is_some();
+    let recent_page = !bloom_negative;
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
 
     let (mode, decision) = runtime_policy::decide(
@@ -4678,7 +4725,7 @@ unsafe fn memcpy_validating(dst: *mut c_void, src: *const c_void, n: usize) -> *
         dst as usize,
         n,
         true,
-        dst_rem.is_none() && src_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -4783,8 +4830,52 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         return dst;
     };
 
-    let dst_rem = known_remaining(dst as usize);
-    let src_rem = known_remaining(src as usize);
+    let (dst_rem, src_rem) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(dst as usize, src as usize);
+    let bloom_negative = dst_rem.is_none() && src_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMMOVE_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (copy_len, clamped) = maybe_clamp_copy_len(
+            "memmove",
+            n,
+            dst as usize,
+            dst_rem,
+            Some(src as usize),
+            src_rem,
+            mode.heals_enabled(),
+        );
+        if copy_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(8, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        unsafe {
+            raw_memmove_bytes(dst.cast::<u8>(), src.cast::<u8>(), copy_len);
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(8, copy_len),
+                true,
+            );
+        }
+        return dst;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memmove");
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(dst as usize, dst_rem, src as usize, src_rem);
@@ -4794,7 +4885,7 @@ pub unsafe extern "C" fn memmove(dst: *mut c_void, src: *const c_void, n: usize)
         dst as usize,
         n,
         true,
-        dst_rem.is_none() && src_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -4898,7 +4989,51 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         return dst;
     };
 
-    let dst_rem = known_remaining(dst as usize);
+    let dst_rem = crate::malloc_abi::known_remaining_in_guarded_string(dst as usize);
+    let bloom_negative = dst_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMSET_INDEX,
+            dst as usize,
+            n,
+            true,
+            bloom_negative,
+        )
+    {
+        let (fill_len, clamped) = maybe_clamp_copy_len(
+            "memset",
+            n,
+            dst as usize,
+            dst_rem,
+            None,
+            None,
+            mode.heals_enabled(),
+        );
+        if fill_len == 0 {
+            if clamped {
+                runtime_policy::observe(
+                    ApiFamily::StringMemory,
+                    ValidationProfile::Fast,
+                    runtime_policy::scaled_cost(6, n),
+                    true,
+                );
+            }
+            return dst;
+        }
+        unsafe {
+            raw_memset_bytes(dst.cast::<u8>(), c as u8, fill_len);
+        }
+        if clamped {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, fill_len),
+                true,
+            );
+        }
+        return dst;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("memset");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(dst as usize, dst_rem);
 
@@ -4907,7 +5042,7 @@ pub unsafe extern "C" fn memset(dst: *mut c_void, c: c_int, n: usize) -> *mut c_
         dst as usize,
         n,
         true,
-        dst_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5045,9 +5180,50 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
     // Some(0)` UAF detection on hardened heap allocations, and scanning the
     // 64-slot fallback table twice on every call; bd-rc0923-epic-eeuy4f.28,
     // same ordering invariant as `strlen_validating` in bd-k3skh6).
-    let lhs_remaining = known_remaining(s1 as usize);
-    let rhs_remaining = known_remaining(s2 as usize);
+    let (lhs_remaining, rhs_remaining) =
+        crate::malloc_abi::known_remaining_pair_in_guarded_string(s1 as usize, s2 as usize);
     let _ = crate::malloc_abi::known_remaining_for_certified_read;
+    let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_MEMCMP_INDEX,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let (cmp_len, _clamped) = maybe_clamp_copy_len(
+            "memcmp",
+            n,
+            s1 as usize,
+            lhs_remaining,
+            Some(s2 as usize),
+            rhs_remaining,
+            mode.heals_enabled(),
+        );
+        if cmp_len == 0 {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, n),
+                true,
+            );
+            return 0;
+        }
+        // SAFETY: `cmp_len` is either original `n` or clamped by known safe bounds.
+        let out = unsafe { raw_dispatch_memcmp_bytes(s1.cast::<u8>(), s2.cast::<u8>(), cmp_len) };
+        if cmp_len < n {
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(6, cmp_len),
+                true,
+            );
+        }
+        return out;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope_memcmp();
     let certified_read = runtime_policy::active_memcmp_pcc_token();
     let certified_read_active = certified_read.is_some();
@@ -5065,7 +5241,6 @@ unsafe fn memcmp_validating(s1: *const c_void, s2: *const c_void, n: usize) -> c
         );
         (ordering, aligned, recent_page)
     });
-    let bloom_negative = lhs_remaining.is_none() && rhs_remaining.is_none();
     let (mode, decision) = if let Some(token) = certified_read {
         runtime_policy::decide_certified_memcmp(token, s1 as usize, n, bloom_negative)
     } else {
@@ -5682,14 +5857,63 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
     // other ABI entry queries it from — outside any scope — so `validate_ptr` is entered
     // exactly as it is from `memchr`/`memrchr`, not from a nested context.
     let rem = known_remaining(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRLEN_INDEX,
+            s as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        if !mode.heals_enabled() && bloom_negative {
+            return unsafe { scan_c_string(s, None).0 };
+        }
+        if let Some(limit) = rem {
+            let dispatch = select_string_simd_dispatch(
+                SimdStringOperation::Strlen,
+                s as usize,
+                s as usize,
+                limit.max(1),
+            );
+            // SAFETY: bounded scan within known allocation extent.
+            let (len, terminated) =
+                unsafe { raw_lane_strnlen_bytes(s, limit, dispatch.lane_bytes) };
+            if terminated {
+                return len;
+            }
+            let action = HealingAction::TruncateWithNull {
+                requested: limit.saturating_add(1),
+                truncated: limit,
+            };
+            global_healing_policy().record(
+                "string_memory",
+                "strlen",
+                &action,
+                RepairLogContext::new(0, Some(s as usize)),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, limit),
+                true,
+            );
+            return limit;
+        }
+        let dispatch =
+            select_string_simd_dispatch(SimdStringOperation::Strlen, s as usize, s as usize, 64);
+        return unsafe { raw_lane_strlen_bytes(s, dispatch.lane_bytes) };
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strlen");
-    if !runtime_policy::mode().heals_enabled() && rem.is_none() {
+    if !runtime_policy::mode().heals_enabled() && bloom_negative {
         // Same dead-dispatch elision as the strict path above (byte-identical).
         return unsafe { scan_c_string(s, None).0 };
     }
 
     let aligned = (s as usize) & 0x7 == 0;
-    let recent_page = rem.is_some();
+    let recent_page = !bloom_negative;
     let ordering = runtime_policy::check_ordering(ApiFamily::StringMemory, aligned, recent_page);
 
     let (_mode, decision) = runtime_policy::decide(
@@ -5697,7 +5921,7 @@ unsafe fn strlen_validating(s: *const c_char) -> usize {
         s as usize,
         0,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5835,6 +6059,38 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
     }
 
     let rem = known_remaining(s as usize);
+    let bloom_negative = rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNLEN_INDEX,
+            s as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let mut scan_limit = n;
+        let mut adverse = false;
+        if mode.heals_enabled()
+            && let Some(bound) = rem
+            && bound < scan_limit
+        {
+            scan_limit = bound;
+            adverse = true;
+        }
+        let len = unsafe { scan_c_string_nul_or_bound(s, scan_limit).0 };
+        if adverse {
+            record_truncation("strnlen", n, scan_limit, s as usize);
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, len),
+                true,
+            );
+        }
+        return len;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strnlen");
     let (aligned, recent_page, ordering) = stage_context_from_remaining_one(s as usize, rem);
 
@@ -5843,7 +6099,7 @@ unsafe fn strnlen_validating(s: *const c_char, n: usize) -> usize {
         s as usize,
         n,
         false,
-        rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -5963,6 +6219,52 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
 
     let lhs_rem = known_remaining(s1 as usize);
     let rhs_rem = known_remaining(s2 as usize);
+    let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRCMP_INDEX,
+            s1 as usize,
+            0,
+            false,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let lhs_bound = if repair { lhs_rem } else { None };
+        let rhs_bound = if repair { rhs_rem } else { None };
+        let cmp_bound = match (lhs_bound, rhs_bound) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        let (result, adverse, span) = unsafe {
+            let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_bound.unwrap_or(usize::MAX));
+            if hit_limit {
+                (0, true, i)
+            } else {
+                let a = *s1.add(i) as u8;
+                let b = *s2.add(i) as u8;
+                ((a as c_int) - (b as c_int), false, i.saturating_add(1))
+            }
+        };
+        if adverse {
+            record_truncation(
+                "strcmp",
+                cmp_bound.unwrap_or(span),
+                span,
+                bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, span),
+                true,
+            );
+        }
+        return result;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strcmp");
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
@@ -5972,7 +6274,7 @@ unsafe fn strcmp_validating(s1: *const c_char, s2: *const c_char) -> c_int {
         s1 as usize,
         0,
         false,
-        lhs_rem.is_none() && rhs_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {
@@ -6093,6 +6395,53 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
 
     let lhs_rem = known_remaining(s1 as usize);
     let rhs_rem = known_remaining(s2 as usize);
+    let bloom_negative = lhs_rem.is_none() && rhs_rem.is_none();
+    if cfg!(not(test))
+        && let Some(mode) = runtime_policy::try_decide_certified_string_pcc(
+            runtime_policy::FFI_PCC_STRNCMP_INDEX,
+            s1 as usize,
+            n,
+            false,
+            bloom_negative,
+        )
+    {
+        let repair = mode.heals_enabled();
+        let lhs_bound = if repair { lhs_rem } else { None };
+        let rhs_bound = if repair { rhs_rem } else { None };
+        let cmp_limit = match (lhs_bound, rhs_bound) {
+            (Some(a), Some(b)) => a.min(b).min(n),
+            (Some(a), None) => a.min(n),
+            (None, Some(b)) => b.min(n),
+            (None, None) => n,
+        };
+        let (result, span, hit_limit) = unsafe {
+            let (i, hit_limit) = scan_strcmp::<true>(s1, s2, cmp_limit);
+            if hit_limit {
+                (0, i, true)
+            } else {
+                let a = *s1.add(i) as u8;
+                let b = *s2.add(i) as u8;
+                ((a as c_int) - (b as c_int), i.saturating_add(1), false)
+            }
+        };
+        let adverse = repair && cmp_limit < n && hit_limit;
+        if adverse {
+            record_truncation(
+                "strncmp",
+                n,
+                cmp_limit,
+                bound_causing_address(s1 as usize, lhs_bound, Some(s2 as usize), rhs_bound),
+            );
+            runtime_policy::observe(
+                ApiFamily::StringMemory,
+                ValidationProfile::Fast,
+                runtime_policy::scaled_cost(7, span),
+                true,
+            );
+        }
+        return result;
+    }
+
     let _trace_scope = runtime_policy::entrypoint_scope("strncmp");
     let (aligned, recent_page, ordering) =
         stage_context_from_remaining_two(s1 as usize, lhs_rem, s2 as usize, rhs_rem);
@@ -6102,7 +6451,7 @@ unsafe fn strncmp_validating(s1: *const c_char, s2: *const c_char, n: usize) -> 
         s1 as usize,
         n,
         false,
-        lhs_rem.is_none() && rhs_rem.is_none(),
+        bloom_negative,
         0,
     );
     if matches!(decision.action, MembraneAction::Deny) {

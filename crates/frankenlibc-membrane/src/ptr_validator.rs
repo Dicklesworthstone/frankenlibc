@@ -28,7 +28,8 @@ use crate::metrics::{MembraneMetrics, global_metrics};
 use crate::page_oracle::PageOracle;
 use crate::runtime_math::{ApiFamily, RuntimeContext, RuntimeMathKernel, ValidationProfile};
 use crate::tls_cache::{
-    CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs, with_tls_cache,
+    CachedRemaining, CachedValidation, NUM_TLS_CACHE_SHARDS, snapshot_shard_epochs,
+    try_with_tls_cache_hit, with_tls_cache,
 };
 use crate::util::NoPoisonMutex as Mutex;
 use crate::util::now_utc_iso_like;
@@ -858,17 +859,62 @@ impl ValidationPipeline {
             return Some(ValidationOutcome::Bypassed);
         }
 
-        let cached = with_tls_cache(|cache| cache.lookup_hit_only(addr));
-        if let Some(cv) = cached {
-            let metrics = global_metrics();
-            MembraneMetrics::inc(&metrics.validations);
-            MembraneMetrics::inc(&metrics.tls_cache_hits);
-            return Some(ValidationOutcome::CachedValid(
-                Self::abstraction_from_cached(addr, cv),
-            ));
-        }
+        let cached = try_with_tls_cache_hit(None, |cache| {
+            let hit = cache.lookup_hit_only(addr);
+            if hit.is_some() {
+                cache.record_pipeline_hits(1);
+            }
+            hit
+        });
+        cached.map(|cv| ValidationOutcome::CachedValid(Self::abstraction_from_cached(addr, cv)))
+    }
 
-        None
+    /// Resolve remaining bytes from the thread-local validation cache without
+    /// constructing a 72-byte `ValidationOutcome` on the stack.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining(&self, addr: usize) -> Option<Option<usize>> {
+        if addr == 0 || self.validation_logging_enabled() || !safety_level().validation_enabled() {
+            return None;
+        }
+        try_with_tls_cache_hit(CachedRemaining::MISS, |cache| {
+            let hit = cache.lookup_hit_remaining(addr);
+            if hit.is_hit() {
+                cache.record_pipeline_hits(1);
+            }
+            hit
+        })
+        .decode()
+    }
+
+    /// Resolve remaining bytes for two pointers in a single TLS cache borrow,
+    /// returning two single-register `CachedRemaining` values in `(rax, rdx)`
+    /// without stack `sret` spills.
+    #[inline(always)]
+    pub fn try_validate_cached_remaining_pair(
+        &self,
+        lhs: usize,
+        rhs: usize,
+    ) -> (CachedRemaining, CachedRemaining) {
+        if self.validation_logging_enabled() || !safety_level().validation_enabled() {
+            return (CachedRemaining::MISS, CachedRemaining::MISS);
+        }
+        try_with_tls_cache_hit((CachedRemaining::MISS, CachedRemaining::MISS), |cache| {
+            let lhs_hit = if lhs != 0 {
+                cache.lookup_hit_remaining(lhs)
+            } else {
+                CachedRemaining::MISS
+            };
+            let rhs_hit = if rhs != 0 {
+                cache.lookup_hit_remaining(rhs)
+            } else {
+                CachedRemaining::MISS
+            };
+            let hits = u64::from(lhs_hit.is_hit()) + u64::from(rhs_hit.is_hit());
+            if hits != 0 {
+                cache.record_pipeline_hits(hits);
+            }
+            (lhs_hit, rhs_hit)
+        })
     }
 
     #[inline]
