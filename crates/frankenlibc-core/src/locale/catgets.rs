@@ -174,11 +174,8 @@ pub fn parse_catalog_bytes(bytes: Vec<u8>) -> Result<MessageCatalog, CatalogPars
         .get(header_len..first_table_end)
         .ok_or(CatalogParseError::TruncatedTable)?;
     let mut table = Vec::with_capacity(table_words);
-    for chunk in first_table.chunks_exact(4) {
-        let word: [u8; 4] = chunk
-            .try_into()
-            .map_err(|_| CatalogParseError::TruncatedTable)?;
-        table.push(u32::from_le_bytes(word));
+    for chunk in first_table.as_chunks::<4>().0 {
+        table.push(u32::from_le_bytes(*chunk));
     }
     if table.len() != table_words {
         return Err(CatalogParseError::TruncatedTable);

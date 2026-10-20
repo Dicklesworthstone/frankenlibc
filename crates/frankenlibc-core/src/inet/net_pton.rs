@@ -235,7 +235,7 @@ fn parse_hex(input: &[u8], dst: &mut [u8]) -> Result<u32, NetPtonError> {
             b'A'..=b'F' => input[i] - b'A' + 10,
             _ => return Err(NetPtonError::Invalid),
         };
-        if n_nibbles % 2 == 0 {
+        if n_nibbles.is_multiple_of(2) {
             // First nibble of a new byte → high half (low half stays 0 until/unless
             // the next nibble arrives).
             if n_octets >= MAX_OCTETS {

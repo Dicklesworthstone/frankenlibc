@@ -300,7 +300,7 @@ struct AddressRecord {
 
 enum AddressAnswer {
     Complete(QueryReply),
-    Follow(WireName),
+    Follow(Box<WireName>),
 }
 
 /// Return only address/PTR records owned by the queried name or its validated CNAME
@@ -433,7 +433,7 @@ fn address_answer(
                 rcode: rcode::NOERROR,
             }));
         } else {
-            return Ok(AddressAnswer::Follow(owner));
+            return Ok(AddressAnswer::Follow(Box::new(owner)));
         }
     }
 }

@@ -136,7 +136,7 @@ impl Tags {
             single: BTreeMap::new(),
             needed: Vec::new(),
         };
-        for entry in bytes.chunks_exact(16) {
+        for entry in bytes.as_chunks::<16>().0 {
             let tag = i64::from_le_bytes(
                 entry[..8]
                     .try_into()
@@ -183,12 +183,10 @@ impl Tags {
                     | DT_VERDEFNUM
                     | DT_VERNEED
                     | DT_VERNEEDNUM
-            ) {
-                if let Some(previous) = result.single.insert(tag, value) {
-                    if previous != value {
-                        return Err(invalid("conflicting dynamic tag", tag as u64));
-                    }
-                }
+            ) && let Some(previous) = result.single.insert(tag, value)
+                && previous != value
+            {
+                return Err(invalid("conflicting dynamic tag", tag as u64));
             }
         }
         Err(invalid("unterminated PT_DYNAMIC", bytes.len() as u64))
@@ -231,8 +229,8 @@ fn sysv_hash(image: &Image<'_>, address: u64) -> ElfResult<(ElfHashTable, u64)> 
     let length = add(8, mul(add(buckets, count)?, 4)?)?;
     let bytes = slice(bytes, 0, length)?;
     // Invalid chain indexes must not reach the existing lookup implementation.
-    for word in bytes[8..].chunks_exact(4) {
-        let index = u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+    for word in bytes[8..].as_chunks::<4>().0 {
+        let index = u32::from_le_bytes(*word);
         if u64::from(index) >= count {
             return Err(invalid("DT_HASH symbol index", u64::from(index)));
         }
@@ -257,10 +255,8 @@ fn gnu_hash(image: &Image<'_>, address: u64) -> ElfResult<(GnuHashTable, u64)> {
     let chain_start = add(bucket_start, mul(buckets, 4)?)?;
     let bucket_bytes = slice(bytes, bucket_start, mul(buckets, 4)?)?;
     let mut highest = 0u64;
-    for bucket in bucket_bytes.chunks_exact(4) {
-        let index = u64::from(u32::from_le_bytes([
-            bucket[0], bucket[1], bucket[2], bucket[3],
-        ]));
+    for bucket in bucket_bytes.as_chunks::<4>().0 {
+        let index = u64::from(u32::from_le_bytes(*bucket));
         if index != 0 && index < first {
             return Err(invalid("DT_GNU_HASH bucket", index));
         }
@@ -291,21 +287,19 @@ fn word_array(image: &Image<'_>, tags: &Tags, pointer: i64, size: i64) -> ElfRes
     };
     let (_, bytes) = image.table(address, size)?;
     Ok(bytes
-        .chunks_exact(8)
-        .map(|word| {
-            u64::from_le_bytes([
-                word[0], word[1], word[2], word[3], word[4], word[5], word[6], word[7],
-            ])
-        })
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
         .collect())
 }
 
 fn version_name(map: &mut BTreeMap<u16, String>, index: u16, value: String) -> ElfResult<()> {
     let index = index & 0x7fff;
-    if let Some(previous) = map.insert(index, value.clone()) {
-        if previous != value {
-            return Err(invalid("conflicting symbol version", u64::from(index)));
-        }
+    if let Some(previous) = map.insert(index, value.clone())
+        && previous != value
+    {
+        return Err(invalid("conflicting symbol version", u64::from(index)));
     }
     Ok(())
 }
@@ -397,8 +391,8 @@ fn versions(
     let mut result = vec![None; count];
     if let Some(address) = tags.get(DT_VERSYM) {
         let (_, bytes) = image.table(address, mul(count as u64, 2)?)?;
-        for (slot, word) in result.iter_mut().zip(bytes.chunks_exact(2)) {
-            let index = u16::from_le_bytes([word[0], word[1]]) & 0x7fff;
+        for (slot, word) in result.iter_mut().zip(bytes.as_chunks::<2>().0) {
+            let index = u16::from_le_bytes(*word) & 0x7fff;
             if index > 1 {
                 *slot = Some(
                     names
@@ -454,10 +448,10 @@ pub(super) fn parse(
         .get(DT_GNU_HASH)
         .map(|address| gnu_hash(&image, address))
         .transpose()?;
-    if let (Some((_, sysv_count)), Some((_, gnu_count))) = (&sysv, &gnu) {
-        if gnu_count > sysv_count {
-            return Err(invalid("inconsistent dynamic hash counts", *gnu_count));
-        }
+    if let (Some((_, sysv_count)), Some((_, gnu_count))) = (&sysv, &gnu)
+        && gnu_count > sysv_count
+    {
+        return Err(invalid("inconsistent dynamic hash counts", *gnu_count));
     }
     let dynamic_rela = tags.region(DT_RELA, DT_RELASZ, 24)?;
     let plt_rela = tags.region(DT_JMPREL, DT_PLTRELSZ, 24)?;

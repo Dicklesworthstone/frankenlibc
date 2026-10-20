@@ -3629,8 +3629,7 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
         let e = ((t >> 52) & 0x7ff) as i64; // 1025 <= e <= 2046
         let m = (1u64 << 52) | (t & MASK52);
         let mut c = [0u64; 3];
-        let shift;
-        if e <= 1074 {
+        let shift = if e <= 1074 {
             let u = u128::from(m) * u128::from(tt[1]);
             c[0] = u as u64;
             c[1] = (u >> 64) as u64;
@@ -3638,7 +3637,7 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
             let (s, carry) = add_carry(c[1], u as u64);
             c[1] = s;
             c[2] = ((u >> 64) as u64) + carry;
-            shift = 1075 - e; // 1 <= shift <= 50
+            1075 - e // 1 <= shift <= 50
         } else {
             let i = ((e - 1138 + 63) / 64) as usize;
             let u = u128::from(m) * u128::from(tt[i + 2]);
@@ -3650,8 +3649,8 @@ fn trig_reduce_fast(x: f64) -> (u64, f64, f64, f64) {
             c[2] = ((u >> 64) as u64) + carry;
             let u = u128::from(m) * u128::from(tt[i]);
             c[2] = c[2].wrapping_add(u as u64);
-            shift = 1139 + ((i as i64) << 6) - e; // 1 <= shift <= 64
-        }
+            1139 + ((i as i64) << 6) - e // 1 <= shift <= 64
+        };
         if shift == 64 {
             c[0] = c[1];
             c[1] = c[2];

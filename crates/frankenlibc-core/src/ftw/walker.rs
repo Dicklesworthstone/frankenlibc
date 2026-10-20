@@ -177,20 +177,19 @@ where
             // A logical walk follows the link for `stat`, but glibc reports a
             // symlink whose target cannot be resolved as FTW_SLN rather than
             // FTW_NS. `lstat` lets us retain that distinction.
-            if !flags.contains(WalkFlags::PHYSICAL) {
-                if let Some(link_stat) = fs.lstat(path) {
-                    if link_stat.is_symlink() {
-                        return visit_control(
-                            path,
-                            &link_stat,
-                            WalkType::DanglingSymlink,
-                            level,
-                            base,
-                            flags,
-                            visit,
-                        );
-                    }
-                }
+            if !flags.contains(WalkFlags::PHYSICAL)
+                && let Some(link_stat) = fs.lstat(path)
+                && link_stat.is_symlink()
+            {
+                return visit_control(
+                    path,
+                    &link_stat,
+                    WalkType::DanglingSymlink,
+                    level,
+                    base,
+                    flags,
+                    visit,
+                );
             }
             // FTW_NS — pass a default (all-zeros) stat. POSIX leaves
             // the contents undefined when typeflag is FTW_NS.
