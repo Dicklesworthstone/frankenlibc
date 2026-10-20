@@ -16,6 +16,7 @@ unsafe extern "C" {
     fn host_lgamma(x: f64) -> f64;
 }
 
+#[allow(clippy::excessive_precision)]
 const HALF_LN_2PI: f64 = 0.918_938_533_204_672_74;
 // ln(x) extended-precision split helpers reuse fl's fused log; we recover the product
 // rounding error of (x-0.5)*ln(x) with an fma.

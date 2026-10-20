@@ -4,17 +4,18 @@
 //! Each function previously delegated its general case to `libm` (~1.5–2.5x
 //! slower than glibc). The lever ports the ARM optimized-routines fused kernels
 //! (the same algorithms glibc ships). Three arms per function:
-//!   - `fl`     : `frankenlibc_core::math::*` (new fused kernel)
-//!   - `fl_old` : `libm::*` (the pre-lever fallback)
-//!   - `glibc`  : host libc symbol via a plain `extern "C"` link (no fl ABI in
-//!                this bench, so it resolves to glibc — no interposition)
+//! - `fl`     : `frankenlibc_core::math::*` (new fused kernel)
+//! - `fl_old` : `libm::*` (the pre-lever fallback)
+//! - `glibc`  : host libc symbol via a plain `extern "C"` link (no fl ABI in
+//!   this bench, so it resolves to glibc — no interposition)
 //!
 //! `expf` is sampled in [6, 80) — above fl's existing [-5,5] fast path, so the
 //! new kernel is exercised; `exp2f`/`log2f` over their general ranges.
 
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::math;
 
 unsafe extern "C" {
@@ -110,26 +111,26 @@ fn bench(c: &mut Criterion) {
     let mut group = c.benchmark_group("exp_log");
     group.sample_size(50);
 
-    run(&mut group, "fl", "exp2f", &exp2_in, |x| math::exp2f(x));
-    run(&mut group, "fl_old", "exp2f", &exp2_in, |x| libm::exp2f(x));
+    run(&mut group, "fl", "exp2f", &exp2_in, math::exp2f);
+    run(&mut group, "fl_old", "exp2f", &exp2_in, libm::exp2f);
     run(&mut group, "glibc", "exp2f", &exp2_in, |x| unsafe {
         host_exp2f(x)
     });
 
-    run(&mut group, "fl", "log2f", &log2_in, |x| math::log2f(x));
-    run(&mut group, "fl_old", "log2f", &log2_in, |x| libm::log2f(x));
+    run(&mut group, "fl", "log2f", &log2_in, math::log2f);
+    run(&mut group, "fl_old", "log2f", &log2_in, libm::log2f);
     run(&mut group, "glibc", "log2f", &log2_in, |x| unsafe {
         host_log2f(x)
     });
 
-    run(&mut group, "fl", "expf", &exp_in, |x| math::expf(x));
-    run(&mut group, "fl_old", "expf", &exp_in, |x| libm::expf(x));
+    run(&mut group, "fl", "expf", &exp_in, math::expf);
+    run(&mut group, "fl_old", "expf", &exp_in, libm::expf);
     run(&mut group, "glibc", "expf", &exp_in, |x| unsafe {
         host_expf(x)
     });
 
-    run(&mut group, "fl", "logf", &log2_in, |x| math::logf(x));
-    run(&mut group, "fl_old", "logf", &log2_in, |x| libm::logf(x));
+    run(&mut group, "fl", "logf", &log2_in, math::logf);
+    run(&mut group, "fl_old", "logf", &log2_in, libm::logf);
     run(&mut group, "glibc", "logf", &log2_in, |x| unsafe {
         host_logf(x)
     });

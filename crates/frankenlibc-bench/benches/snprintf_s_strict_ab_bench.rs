@@ -8,14 +8,14 @@
 //! a within-process ratio. This bench measures THREE kernels in ONE process so
 //! their ratios are directly comparable regardless of which (loaded) worker runs
 //! it:
-//!   1. `old_strict_s`  — the previous `strict_direct_snprintf_s` fused scalar
-//!                        scan+copy byte loop (a per-byte bound branch).
-//!   2. `new_strict_s`  — page-safe SWAR/SIMD strlen (verbatim copy of the
-//!                        deployed `strlen`'s `scan_c_string` None branch, NO
-//!                        membrane `known_remaining`) + `memcpy`. THE SHIPPED kernel.
-//!   3. `host glibc`    — real `libc::snprintf` (this bench links NO fl symbols,
-//!                        so `libc::snprintf` resolves to host glibc directly —
-//!                        no dlmopen needed, no symbol collision).
+//! 1. `old_strict_s` — the previous `strict_direct_snprintf_s` fused scalar
+//!    scan+copy byte loop (a per-byte bound branch).
+//! 2. `new_strict_s` — page-safe SWAR/SIMD strlen (verbatim copy of the
+//!    deployed `strlen`'s `scan_c_string` None branch, NO
+//!    membrane `known_remaining`) + `memcpy`. THE SHIPPED kernel.
+//! 3. `host glibc` — real `libc::snprintf` (this bench links NO fl symbols,
+//!    so `libc::snprintf` resolves to host glibc directly —
+//!    no dlmopen needed, no symbol collision).
 //!
 //! Both kernels are EXACT mirrors of production `strict_direct_snprintf_s` (size==0,
 //! NULL→"(null)", "%s\n", truncation, return = full source length). `verify()`

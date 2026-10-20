@@ -88,6 +88,7 @@ unsafe fn scan_strcmp_old(s1: *const c_char, s2: *const c_char, bound: usize) ->
 /// equal NUL-free 128 bytes is skipped under a single branch. A flagged block
 /// resolves the exact first panel/byte (byte-identical result). Falls through to
 /// the unchanged 32B/8B/scalar tail for the <128B remainder and page edges.
+#[allow(clippy::needless_range_loop)]
 unsafe fn scan_strcmp_new(s1: *const c_char, s2: *const c_char, bound: usize) -> (usize, bool) {
     let p1 = s1.cast::<u8>();
     let p2 = s2.cast::<u8>();

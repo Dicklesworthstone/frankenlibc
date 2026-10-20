@@ -2,10 +2,11 @@
 //! currently uses `pdqsort_recurse` which moves full width-byte elements per
 //! swap). Compares, on the same width-32 struct records with the same key
 //! comparator:
-//!   - fl_pdqsort  : `frankenlibc_core::stdlib::sort::qsort` (full-element moves)
-//!   - index_sort  : std `sort_unstable_by` over u32 INDICES, then one permute
-//!                   (moves 4-byte indices during the sort, elements once at end)
-//!   - glibc       : host `qsort`
+//! - fl_pdqsort  : `frankenlibc_core::stdlib::sort::qsort` (full-element moves)
+//! - index_sort  : std `sort_unstable_by` over u32 INDICES, then one permute
+//!   (moves 4-byte indices during the sort, elements once at end)
+//! - glibc       : host `qsort`
+//!
 //! If index_sort << fl_pdqsort, extending the fallback to index-sort for
 //! arbitrary widths is a real lever for struct-array sorting.
 //!

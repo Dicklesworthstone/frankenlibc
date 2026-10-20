@@ -22,11 +22,11 @@ fn host_wcsspn() -> WcsspnFn {
     let addr = *HOST.get_or_init(|| unsafe {
         let handle = libc::dlmopen(
             libc::LM_ID_NEWLM,
-            b"libc.so.6\0".as_ptr().cast(),
+            c"libc.so.6".as_ptr(),
             libc::RTLD_LAZY | libc::RTLD_LOCAL,
         );
         assert!(!handle.is_null(), "dlmopen libc.so.6");
-        let sym = libc::dlsym(handle, b"wcsspn\0".as_ptr().cast());
+        let sym = libc::dlsym(handle, c"wcsspn".as_ptr());
         assert!(!sym.is_null(), "resolve glibc wcsspn");
         sym as usize
     });
@@ -164,7 +164,7 @@ fn wstr(n: usize) -> Vec<u32> {
 // wcsspn returns `head`, but the pre-scan variant still walks the whole `len`.
 fn wstr_early(head: usize, len: usize) -> Vec<u32> {
     let mut v = vec![b'a' as u32; head];
-    v.extend(std::iter::repeat(b'z' as u32).take(len - head));
+    v.extend(std::iter::repeat_n(b'z' as u32, len - head));
     v.push(0);
     v
 }

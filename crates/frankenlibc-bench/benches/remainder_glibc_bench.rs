@@ -19,6 +19,7 @@ unsafe extern "C" {
 
 /// fdlibm `__ieee754_remainder`, fmod-based, using fl's fast `math::fmod`.
 #[inline]
+#[allow(clippy::eq_op)]
 fn candidate(x: f64, p: f64) -> f64 {
     let xbits = x.to_bits();
     let pbits = p.to_bits();
@@ -167,16 +168,12 @@ fn bench(c: &mut Criterion) {
         .collect();
     let mut g = c.benchmark_group("remainder");
     g.sample_size(10);
-    run(&mut g, "fl_deployed_typical", &typical, |x, y| {
-        math::remainder(x, y)
-    });
+    run(&mut g, "fl_deployed_typical", &typical, math::remainder);
     run(&mut g, "candidate_typical", &typical, candidate);
     run(&mut g, "glibc_typical", &typical, |x, y| unsafe {
         h_remainder(x, y)
     });
-    run(&mut g, "fl_deployed_stress", &stress, |x, y| {
-        math::remainder(x, y)
-    });
+    run(&mut g, "fl_deployed_stress", &stress, math::remainder);
     run(&mut g, "candidate_stress", &stress, candidate);
     run(&mut g, "glibc_stress", &stress, |x, y| unsafe {
         h_remainder(x, y)

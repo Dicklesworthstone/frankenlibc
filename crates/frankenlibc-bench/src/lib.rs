@@ -1624,7 +1624,7 @@ mod tests {
             BALANCED_SQUARE_ABBA,
             [false, true, true, false, false, true, true, false]
         );
-        for half in BALANCED_SQUARE_ABBA.chunks_exact(4) {
+        for half in BALANCED_SQUARE_ABBA.as_chunks::<4>().0 {
             assert_eq!(half.iter().filter(|&&reverse| reverse).count(), 2);
             assert_eq!(half.iter().filter(|&&reverse| !reverse).count(), 2);
         }
@@ -1636,7 +1636,7 @@ mod tests {
         );
         assert_eq!(
             (0..BALANCED_SQUARE_ABBA.len())
-                .map(|round| balanced_square_reverse_at(round))
+                .map(balanced_square_reverse_at)
                 .collect::<Vec<_>>(),
             BALANCED_SQUARE_ABBA
         );

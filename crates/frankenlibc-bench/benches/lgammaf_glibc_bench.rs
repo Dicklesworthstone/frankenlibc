@@ -82,7 +82,7 @@ fn run<F: Fn(f32) -> f32>(
 
 #[inline]
 fn lgammaf_via_tgamma(x: f32) -> f32 {
-    (math::log(math::tgamma(x as f64)) as f32)
+    math::log(math::tgamma(x as f64)) as f32
 }
 
 fn bench(c: &mut Criterion) {
@@ -100,7 +100,7 @@ fn bench(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("lgammaf_f32");
     group.sample_size(60);
-    run(&mut group, "fl_libm", &inputs, |x| math::lgammaf(x));
+    run(&mut group, "fl_libm", &inputs, math::lgammaf);
     run(
         &mut group,
         "candidate_log_tgamma",

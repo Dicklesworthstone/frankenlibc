@@ -10,16 +10,17 @@
 //! defer to libm for exact exception/errno semantics).
 //!
 //! Three arms per case:
-//!   - `fl`     : `frankenlibc_core::math::powf` (the new general fast path)
-//!   - `fl_old` : `libm::powf` (the pre-lever general fallback)
-//!   - `glibc`  : host libc `powf` via a plain `extern "C"` link (no fl ABI in
-//!                this bench, so the symbol resolves to glibc — no interposition)
+//! - `fl`     : `frankenlibc_core::math::powf` (the new general fast path)
+//! - `fl_old` : `libm::powf` (the pre-lever general fallback)
+//! - `glibc`  : host libc `powf` via a plain `extern "C"` link (no fl ABI in
+//!   this bench, so the symbol resolves to glibc — no interposition)
 //!
 //! ratio of interest = fl_p50 / glibc_p50 (lower is better; <1 = fl faster).
 
+use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use frankenlibc_core::math;
 
 unsafe extern "C" {

@@ -68,6 +68,7 @@ fn member_eq8_32(lanes: Simd<u8, L32>, set: &[u8; 8]) -> std::simd::Mask<i8, L32
         | lanes.simd_eq(Simd::splat(set[7]))
 }
 
+#[allow(clippy::chunks_exact_to_as_chunks)]
 fn span_legacy_eq8_32(s: &[u8], set: &[u8; 8], stop_in_set: bool) -> usize {
     let zero = Simd::<u8, L32>::splat(0);
     let mut chunks = s.chunks_exact(L32);

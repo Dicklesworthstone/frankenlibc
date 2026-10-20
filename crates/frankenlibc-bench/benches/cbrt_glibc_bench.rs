@@ -106,7 +106,7 @@ fn bench(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("cbrt_f64");
     group.sample_size(60);
-    run(&mut group, "fl", &inputs, |x| math::cbrt(x));
+    run(&mut group, "fl", &inputs, math::cbrt);
     run(&mut group, "glibc", &inputs, |x| unsafe { host_cbrt(x) });
     group.finish();
 }

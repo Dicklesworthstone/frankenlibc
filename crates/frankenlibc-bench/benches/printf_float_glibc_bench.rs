@@ -19,6 +19,7 @@ unsafe extern "C" {
     fn strfromd(str: *mut c_char, n: usize, format: *const c_char, fp: f64) -> c_int;
 }
 
+#[allow(clippy::approx_constant)]
 const CASES: &[(&str, f64, usize)] = &[
     ("f_mid_p6", 12345.678901, 6),
     ("g_profile_p6", 12345.678901, 6),
@@ -117,6 +118,7 @@ fn bench_deployed_e(c: &mut Criterion) {
     // fixed-scaled fast path now lives inside it (after its dyadic path). Compare
     // vs glibc; the pre-change baseline is captured in the commit ledger from the
     // same pinned setup (legacy render_pct_e_into, glibc control stable).
+    #[allow(clippy::approx_constant)]
     const E_CASES: &[(&str, f64, usize)] = &[
         ("dep_e_pi_p6", 3.141592653589793, 6),
         ("dep_e_simple_p6", 2.5, 6),
@@ -150,6 +152,7 @@ fn bench_deployed_e(c: &mut Criterion) {
 /// is captured in the commit ledger from the same pinned setup.
 fn bench_deployed_g(c: &mut Criterion) {
     use frankenlibc_core::stdlib::ecvt::render_pct_g_into;
+    #[allow(clippy::approx_constant)]
     const G_CASES: &[(&str, f64, usize)] = &[
         ("dep_g_mid_p6", 12345.678901, 6),
         ("dep_g_pi_p6", 3.141592653589793, 6),
