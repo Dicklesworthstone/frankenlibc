@@ -93,9 +93,8 @@ fn creation_error(status: c_int, error: RpcError) {
     };
 }
 
-#[allow(dead_code)]
-pub(super) fn creation_status(status: c_int) {
-    creation_error(status, RpcError::status(status));
+pub(super) fn creation_status(status: c_int, error: c_int) {
+    creation_error(status, RpcError::system(status, error));
 }
 
 fn kernel(raw_value: usize) -> Result<usize, c_int> {
@@ -511,7 +510,7 @@ struct Client {
 }
 #[repr(C)]
 struct ClientOps {
-    call: unsafe extern "C" fn(
+    call: unsafe extern "C-unwind" fn(
         *mut Client,
         u64,
         Option<XdrProc>,
@@ -522,7 +521,7 @@ struct ClientOps {
     ) -> c_int,
     abort: unsafe extern "C" fn(),
     geterr: unsafe extern "C" fn(*mut Client, *mut RpcError),
-    freeres: unsafe extern "C" fn(*mut Client, Option<XdrProc>, *mut c_void) -> c_int,
+    freeres: unsafe extern "C-unwind" fn(*mut Client, Option<XdrProc>, *mut c_void) -> c_int,
     destroy: unsafe extern "C" fn(*mut Client),
     control: unsafe extern "C" fn(*mut Client, c_int, *mut c_char) -> c_int,
 }
@@ -564,7 +563,7 @@ impl Drop for Gate<'_> {
 mod invocation;
 use invocation::invoke;
 
-unsafe extern "C" fn call(
+unsafe extern "C-unwind" fn call(
     client: *mut Client,
     procedure: u64,
     arguments: Option<XdrProc>,
@@ -615,7 +614,7 @@ unsafe extern "C" fn geterr(client: *mut Client, output: *mut RpcError) {
     };
     let _ = unsafe { publish(&error, output) };
 }
-unsafe extern "C" fn freeres(
+unsafe extern "C-unwind" fn freeres(
     client: *mut Client,
     callback: Option<XdrProc>,
     result: *mut c_void,
@@ -629,6 +628,10 @@ unsafe extern "C" fn freeres(
     };
     let mut xdr: Xdr = unsafe { std::mem::zeroed() };
     xdr.x_op = super::XDR_FREE;
+    // SAFETY: the callback has the public XDR ABI; permit foreign exceptions
+    // and forced pthread unwinds to release the operation gate.
+    let callback: unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int =
+        unsafe { std::mem::transmute(callback) };
     unsafe { callback((&mut xdr as *mut Xdr).cast(), result) }
 }
 unsafe extern "C" fn destroy(client: *mut Client) {
@@ -718,7 +721,6 @@ static CLIENT_OPS: ClientOps = ClientOps {
 
 /// One-shot convenience calls own their freshly constructed client. Keep the
 /// callback casts and the matching destruction in the CLIENT implementation.
-#[allow(dead_code)]
 pub(super) unsafe fn call_once(
     client: *mut c_void,
     procedure: u64,
@@ -727,9 +729,19 @@ pub(super) unsafe fn call_once(
     results: Option<XdrProc>,
     result: *mut c_void,
 ) -> c_int {
-    let status = unsafe {
+    struct OwnedClient(*mut Client);
+    impl Drop for OwnedClient {
+        fn drop(&mut self) {
+            // SAFETY: this guard owns the freshly constructed client. The
+            // inner operation gate drops before normal or foreign unwinding
+            // reaches here, so destruction can release its socket and buffers.
+            unsafe { destroy(self.0) };
+        }
+    }
+    let client = OwnedClient(client.cast());
+    unsafe {
         call(
-            client.cast(),
+            client.0,
             procedure,
             arguments,
             argument,
@@ -740,9 +752,7 @@ pub(super) unsafe fn call_once(
                 tv_usec: 0,
             },
         )
-    };
-    unsafe { destroy(client.cast()) };
-    status
+    }
 }
 
 struct CreateFailure {

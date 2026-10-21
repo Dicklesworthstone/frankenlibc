@@ -44,8 +44,8 @@ fn unsupported_rpc_status_apis_return_failure_not_success() {
                 std::ptr::null_mut(),
             )
         },
-        17,
-        "callrpc must return RPC_UNKNOWNPROTO"
+        13,
+        "callrpc must report RPC_UNKNOWNHOST for a null hostname"
     );
     assert_eq!(
         unsafe {

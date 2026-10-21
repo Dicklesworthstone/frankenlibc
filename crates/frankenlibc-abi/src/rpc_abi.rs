@@ -19,12 +19,15 @@ use crate::malloc_abi::known_remaining;
 use crate::runtime_policy;
 use crate::util::scan_c_string;
 
+#[path = "rpc_client_create.rs"]
+mod rpc_client_create;
 #[path = "rpc_svc.rs"]
 mod rpc_svc;
 #[path = "rpc_svc_cache.rs"]
 mod rpc_svc_cache;
 #[path = "rpc_udp.rs"]
 mod rpc_udp;
+pub use rpc_client_create::{callrpc, clnt_create};
 pub use rpc_svc::{
     svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset, svc_register, svc_run,
     svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode, svcerr_noproc, svcerr_noprog,
@@ -2302,15 +2305,6 @@ rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int = 7);
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_stub!(
-    clnt_create(
-        host: *const c_char,
-        prog: c_ulong,
-        vers: c_ulong,
-        proto: *const c_char,
-    ) -> *mut c_void
-);
-
 rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
 
 /// Create a native IPv4 TCP RPC client with bounded record framing.
@@ -2362,19 +2356,6 @@ rpc_stub!(
         sendsz: c_uint,
         recvsz: c_uint,
     ) -> *mut c_void
-);
-
-rpc_stub!(
-    callrpc(
-        host: *const c_char,
-        prognum: c_ulong,
-        versnum: c_ulong,
-        procnum: c_ulong,
-        inproc: *mut c_void,
-        in_: *mut c_char,
-        outproc: *mut c_void,
-        out: *mut c_char,
-    ) -> c_int = 17
 );
 
 /// Broadcast an RPC call to all hosts on the local network.

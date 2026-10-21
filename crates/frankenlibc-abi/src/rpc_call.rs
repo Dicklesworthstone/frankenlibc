@@ -26,6 +26,12 @@ pub(super) unsafe fn invoke(
     let deadline = Deadline::new(timeout)?;
     let arguments = arguments.ok_or_else(|| RpcError::status(1))?;
     let results = results.ok_or_else(|| RpcError::status(2))?;
+    // SAFETY: C and C-unwind use the same public callback layout. Application
+    // codecs may throw or call pthread_exit; all intervening Rust ownership
+    // guards must run instead of aborting at a non-unwinding callback edge.
+    type Codec = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void) -> c_int;
+    let arguments: Codec = unsafe { std::mem::transmute(arguments) };
+    let results: Codec = unsafe { std::mem::transmute(results) };
     let auth = unsafe { (*client).auth };
     if auth.is_null() || unsafe { (*auth).operations.is_null() } {
         return Err(RpcError::remote(RemoteError::Authentication(7)));
@@ -75,7 +81,11 @@ pub(super) unsafe fn invoke(
         }
         // Data is exclusively gated. Reentrant calls/control/free/destroy fail without
         // accessing it; no Rust mutable reference to the AUTH or CLIENT is formed.
-        if unsafe { ((*(*auth).operations).marshal)(auth, &mut xdr) } == 0
+        // SAFETY: the installed AUTH table follows the public glibc layout;
+        // its application callbacks have the same foreign-unwind contract.
+        let marshal: unsafe extern "C-unwind" fn(*mut super::Auth, *mut Xdr) -> c_int =
+            unsafe { std::mem::transmute((*(*auth).operations).marshal) };
+        if unsafe { marshal(auth, &mut xdr) } == 0
             || unsafe { arguments((&mut xdr as *mut Xdr).cast(), argument) } == 0
         {
             return Err(RpcError::status(1));
@@ -109,7 +119,10 @@ pub(super) unsafe fn invoke(
                 // Transport failures and an invalid verifier on an ACCEPTED reply
                 // must never replay a procedure that may already have executed.
                 deadline.check()?;
-                if unsafe { ((*(*auth).operations).refresh)(auth) } == 0 {
+                // SAFETY: the live AUTH table's refresh callback has this ABI.
+                let refresh: unsafe extern "C-unwind" fn(*mut super::Auth) -> c_int =
+                    unsafe { std::mem::transmute((*(*auth).operations).refresh) };
+                if unsafe { refresh(auth) } == 0 {
                     return Err(RpcError::remote(RemoteError::Authentication(2)));
                 }
                 refreshes += 1;
@@ -131,7 +144,12 @@ pub(super) unsafe fn invoke(
                     oa_base: verifier_bytes.as_mut_ptr().cast(),
                     oa_length: verifier.len() as c_uint,
                 };
-                if unsafe { ((*(*auth).operations).validate)(auth, &mut verifier) } == 0 {
+                // SAFETY: the live AUTH table's verifier callback has this ABI.
+                let validate: unsafe extern "C-unwind" fn(
+                    *mut super::Auth,
+                    *mut OpaqueAuth,
+                ) -> c_int = unsafe { std::mem::transmute((*(*auth).operations).validate) };
+                if unsafe { validate(auth, &mut verifier) } == 0 {
                     return Err(RpcError::remote(RemoteError::Authentication(6)));
                 }
                 // SAFETY: range came from the bounded envelope parser; callbacks see
