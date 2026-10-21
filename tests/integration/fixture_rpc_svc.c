@@ -1,7 +1,8 @@
 #define _GNU_SOURCE
 /* Published glibc LP64 Sun RPC layouts; libtirpc's SVCXPRT is NOT this ABI.
  * Wire expectations below are independent network-order words, not the
- * implementation's serializer. No rpcbind, external DNS or privileged ports. */
+ * implementation's serializer. register-* uses the runner's exclusive loopback
+ * portmapper peer; other cases require no privileged port. No external DNS. */
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <errno.h>
@@ -24,6 +25,7 @@
 typedef struct { int flavor; char *base; unsigned length; } Auth;
 typedef struct Xprt Xprt;
 typedef int (*Proc)(void *, void *);
+enum { XDR_ENCODE=0, XDR_DECODE=1, XDR_FREE=2 };
 typedef struct {
     int (*recv)(Xprt *, void *); int (*stat)(Xprt *);
     int (*getargs)(Xprt *, Proc, void *); int (*reply)(Xprt *, void *);
@@ -61,6 +63,8 @@ static int (*sendreply)(Xprt *,Proc,void *), (*xu32)(void *,void *), (*xstr)(voi
 static void (*err_decode)(Xprt *), (*err_proc)(Xprt *), (*err_prog)(Xprt *), (*err_sys)(Xprt *), (*err_weak)(Xprt *), (*err_auth)(Xprt *,int), (*err_vers)(Xprt *,unsigned long,unsigned long);
 static void *(*fdset_slot)(void), *(*poll_slot)(void), *(*count_slot)(void);
 static int (*authenticate)(Request *,Call *);
+static int (*simple_reg)(unsigned long,unsigned long,unsigned long,void *(*)(void *),Proc,Proc);
+static Proc xvoid;
 static RpcClient *(*udpclient)(struct sockaddr_in *,unsigned long,unsigned long,struct timeval,int *);
 static ClientAuth *(*unixauth)(char *,unsigned,unsigned,int,unsigned *);
 static unsigned calls, cleaned;
@@ -94,6 +98,7 @@ static void load(void) {
     LOAD(err_weak,"svcerr_weakauth"); LOAD(err_auth,"svcerr_auth"); LOAD(err_vers,"svcerr_progvers");
     LOAD(fdset_slot,"__rpc_thread_svc_fdset"); LOAD(poll_slot,"__rpc_thread_svc_pollfd"); LOAD(count_slot,"__rpc_thread_svc_max_pollfd");
     LOAD(authenticate,"_authenticate"); LOAD(udpclient,"clntudp_create"); LOAD(unixauth,"authunix_create");
+    LOAD(simple_reg,"registerrpc"); LOAD(xvoid,"xdr_void");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -287,8 +292,130 @@ static void transport(void) {
     CHECK(server->ops->reply(server,msg)); expect_reply(22,0,0,0,42);
     CHECK(server->ops->freeargs(server,xu32,&value));
 }
+static unsigned simple_calls, simple_frees;
+static int counted_u32(void *x,void *p) {
+    if (*(int *)x==XDR_FREE) ++simple_frees;
+    return xu32(x,p);
+}
+static int rejecting_u32(void *x,void *p) {
+    int ok=counted_u32(x,p);
+    return *(int *)x==XDR_DECODE && ok && *(unsigned *)p==99 ? 0 : ok;
+}
+static int counted_string(void *x,void *p) {
+    if (*(int *)x==XDR_FREE) ++simple_frees;
+    return string_proc(x,p);
+}
+static int partial_string(void *x,void *p) {
+    int ok=counted_string(x,p);
+    if (*(int *)x==XDR_DECODE && ok) { unsigned missing=0;return xu32(x,&missing); }
+    return ok;
+}
+static void *simple_add(void *p) { ++simple_calls;*(unsigned *)p+=7;return p; }
+static void *simple_replace(void *p) { ++simple_calls;*(unsigned *)p+=9;return p; }
+static void *simple_reenter(void *p) {
+    CHECK(simple_reg(PROGRAM,1,1,simple_replace,counted_u32,xu32)==0);
+    return simple_add(p);
+}
+static int simple_encode_failure(void *x,void *p) { (void)x;(void)p;return 0; }
+static void *simple_text(void *p) { ++simple_calls;CHECK(!strcmp(*(char **)p,"native-rpc"));return p; }
+static void *simple_null(void *p) { (void)p;++simple_calls;return NULL; }
+static void *simple_exit(void *p) { (void)p;++simple_calls;pthread_exit((void *)27); }
+static int simple_fd(void) {
+    fd_set bits=*(fd_set *)fdset_slot();int fd=-1;
+    for(int i=0;i<FD_SETSIZE;++i) if(FD_ISSET(i,&bits)) { CHECK(fd==-1);fd=i; }
+    CHECK(fd>=0);return fd;
+}
+static void simple_mapping(unsigned expected) {
+    int fd=socket(AF_INET,SOCK_DGRAM,0);CHECK(fd>=0);
+    struct sockaddr_in mapper={.sin_family=AF_INET,.sin_port=htons(111),.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
+    unsigned char packet[2048];request(packet,0x1234,100000,2,3);
+    word(packet,40,PROGRAM);word(packet,44,1);word(packet,48,17);word(packet,52,0);
+    CHECK(sendto(fd,packet,56,0,(void *)&mapper,sizeof(mapper))==56);
+    struct pollfd p={fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
+    CHECK(recv(fd,packet,sizeof(packet),0)==28);
+    CHECK(readword(packet,0)==0x1234 && readword(packet,4)==1 && readword(packet,8)==0 && readword(packet,12)==0 && readword(packet,16)==0 && readword(packet,20)==0 && readword(packet,24)==expected);
+    close(fd);
+}
+static void simple_services(void) {
+    if (!strcmp(scenario,"register-zero")) {
+        CHECK(simple_reg(PROGRAM,1,0,simple_add,counted_u32,xu32)==-1);return;
+    }
+    if (!strcmp(scenario,"register-invalid")) {
+        CHECK(simple_reg(PROGRAM,1,1,NULL,counted_u32,xu32)==-1);
+        CHECK(simple_reg(PROGRAM,1,1,simple_add,NULL,xu32)==-1);
+        CHECK(simple_reg(PROGRAM,1,1,simple_add,counted_u32,NULL)==-1);
+        CHECK(simple_reg(PROGRAM,1,1UL<<32,simple_add,counted_u32,xu32)==-1);
+        fd_set bits=*(fd_set *)fdset_slot();for(int i=0;i<FD_SETSIZE;++i)CHECK(!FD_ISSET(i,&bits));return;
+    }
+    if (!strcmp(scenario,"register-denied"))
+        CHECK(simple_reg(PROGRAM+1,1,1,simple_add,counted_u32,xu32)==-1);
+    Proc input=counted_u32, output=xu32;void *(*callback)(void *)=simple_add;
+    if (!strcmp(scenario,"register-string")) { input=counted_string;output=string_proc;callback=simple_text; }
+    if (!strcmp(scenario,"register-partial")) { input=partial_string;callback=simple_add; }
+    if (!strcmp(scenario,"register-void")) { input=xvoid;output=xvoid;callback=simple_null; }
+    if (!strcmp(scenario,"register-no-reply")) callback=simple_null;
+    if (!strcmp(scenario,"register-callback-exit")) callback=simple_exit;
+    if (!strcmp(scenario,"register-decoder-error")) input=rejecting_u32;
+    if (!strcmp(scenario,"register-reentry")) callback=simple_reenter;
+    if (!strcmp(scenario,"register-encode-error")) output=simple_encode_failure;
+    CHECK(simple_reg(PROGRAM,1,1,callback,input,output)==0);
+    Xprt address={.fd=simple_fd()};server=&address;
+    struct sockaddr_in a;socklen_t size=sizeof(a);CHECK(!getsockname(address.fd,(void *)&a,&size));address.port=ntohs(a.sin_port);CHECK(address.port);
+    simple_mapping(address.port);
+    client=socket(AF_INET,SOCK_DGRAM,0);CHECK(client>=0);
+    unsigned char data[2048];size_t n;
+    n=request(data,81,PROGRAM,1,0);send_packet(data,n);drive();expect_reply(81,0,0,-1,0);CHECK(!simple_calls);
+    if (!strcmp(scenario,"register-unknown")) {
+        n=request(data,96,PROGRAM,1,99);send_packet(data,n);drive();CHECK(0);
+    }
+    if (!strcmp(scenario,"register-string") || !strcmp(scenario,"register-partial")) {
+        n=request(data,82,PROGRAM,1,1);word(data,n,10);memcpy(data+n+4,"native-rpc",10);memset(data+n+14,0,2);
+        send_packet(data,n+16);drive();
+        if (!strcmp(scenario,"register-partial")) { expect_reply(82,0,4,-1,0);CHECK(!simple_calls && simple_frees==1); }
+        else { n=response(data);CHECK(n==40 && readword(data,24)==10 && !memcmp(data+28,"native-rpc",10));CHECK(simple_calls==1 && simple_frees==1); }
+    } else if (!strcmp(scenario,"register-decode") || !strcmp(scenario,"register-decoder-error")) {
+        n=request(data,83,PROGRAM,1,1);
+        if (!strcmp(scenario,"register-decoder-error")) { word(data,n,99);n+=4; }
+        send_packet(data,n);drive();expect_reply(83,0,4,-1,0);CHECK(!simple_calls);
+        exchange(1,84);CHECK(simple_calls==1);
+    } else if (!strcmp(scenario,"register-no-reply")) {
+        n=request(data,85,PROGRAM,1,1);word(data,n,35);send_packet(data,n+4);drive();
+        struct pollfd p={client,POLLIN,0};CHECK(poll(&p,1,50)==0 && simple_calls==1);
+        if(getenv("FRANKENLIBC_TEST_LIBRARY"))CHECK(simple_frees==1);
+    } else if (!strcmp(scenario,"register-void")) {
+        n=request(data,86,PROGRAM,1,1);send_packet(data,n);drive();expect_reply(86,0,0,-1,0);CHECK(simple_calls==1);
+    } else if (!strcmp(scenario,"register-callback-exit")) {
+        n=request(data,87,PROGRAM,1,1);word(data,n,35);send_packet(data,n+4);
+        struct pollfd p={server->fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
+        pthread_t t;void *result;CHECK(!pthread_create(&t,NULL,serve_thread,NULL));CHECK(!pthread_join(t,&result));
+        CHECK(result==(void *)27 && simple_calls==1 && simple_frees==1);
+        CHECK(simple_reg(PROGRAM,1,1,simple_add,counted_u32,xu32)==0);exchange(1,88);CHECK(simple_calls==2 && simple_frees==2);
+    } else {
+        exchange(1,89);CHECK(simple_calls==1 && simple_frees==1);
+        if (!strcmp(scenario,"register-reentry")) {
+            n=request(data,97,PROGRAM,1,1);word(data,n,35);send_packet(data,n+4);drive();expect_reply(97,0,0,0,44);
+            CHECK(simple_calls==2 && simple_frees==2);
+        }
+        if (!strcmp(scenario,"register-multi")) {
+            CHECK(simple_reg(PROGRAM,2,1,simple_replace,counted_u32,xu32)==0);
+            CHECK(simple_reg(PROGRAM,1,2,simple_add,counted_u32,xu32)==0 && simple_fd()==address.fd);
+            for(unsigned version=1;version<=2;++version) {
+                n=request(data,90+version,PROGRAM,version,1);word(data,n,35);send_packet(data,n+4);drive();expect_reply(90+version,0,0,0,44);
+            }
+            n=request(data,93,PROGRAM,1,2);word(data,n,35);send_packet(data,n+4);drive();expect_reply(93,0,0,0,42);
+            CHECK(simple_calls==4 && simple_frees==4);unreg(PROGRAM,2);
+        }
+    }
+    unreg(PROGRAM,1);
+    simple_mapping(0);
+    n=request(data,94,PROGRAM,1,0);send_packet(data,n);drive();expect_reply(94,0,1,-1,0);
+    CHECK(simple_reg(PROGRAM,1,3,simple_add,counted_u32,xu32)==0 && simple_fd()==address.fd);
+    n=request(data,95,PROGRAM,1,3);word(data,n,35);send_packet(data,n+4);drive();expect_reply(95,0,0,0,42);
+    unreg(PROGRAM,1);CHECK(fcntl(address.fd,F_GETFD)>=0);close(client);server=NULL;
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
+    if (!strncmp(scenario,"register-",9)) { simple_services();printf("PASS %s\n",scenario);return 0; }
     int borrowed=-1;
     if (!strcmp(scenario,"borrowed")) {
         borrowed=socket(AF_INET,SOCK_DGRAM|SOCK_NONBLOCK,0);CHECK(borrowed>=0);

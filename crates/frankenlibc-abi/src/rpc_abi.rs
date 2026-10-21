@@ -29,10 +29,10 @@ mod rpc_svc_cache;
 mod rpc_udp;
 pub use rpc_client_create::{callrpc, clnt_create};
 pub use rpc_svc::{
-    _authenticate, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset,
-    svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode,
-    svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr, svcerr_weakauth,
-    svcudp_bufcreate, svcudp_create, svcudp_enablecache,
+    _authenticate, registerrpc, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll,
+    svc_getreqset, svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth,
+    svcerr_decode, svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr,
+    svcerr_weakauth, svcudp_bufcreate, svcudp_create, svcudp_enablecache,
 };
 
 /// Read a user-supplied C string pointer with a known-region bound so a
@@ -2572,17 +2572,6 @@ rpc_stub!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mu
 // ===========================================================================
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)
 // ===========================================================================
-
-rpc_stub!(
-    registerrpc(
-        prognum: c_ulong,
-        versnum: c_ulong,
-        procnum: c_ulong,
-        progname: *mut c_void,
-        inproc: *mut c_void,
-        outproc: *mut c_void,
-    ) -> c_int = -1
-);
 
 /// Returns the file descriptor table size (same as getdtablesize).
 /// Uses getrlimit(RLIMIT_NOFILE) with a fallback to FD_SETSIZE (1024).

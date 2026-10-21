@@ -229,16 +229,29 @@ struct Registration {
     dispatch: Dispatch,
     published: bool,
 }
+#[derive(Clone, Copy)]
+struct SimpleRegistration {
+    program: u32,
+    procedure: u32,
+    callback: unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
+    input: Procedure,
+    output: Procedure,
+}
 struct Registry {
     transports: Vec<Arc<Transport>>,
     services: Vec<Registration>,
     generation: u64,
+    simple_transport: Option<usize>,
+    simple: Vec<SimpleRegistration>,
 }
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
     transports: Vec::new(),
     services: Vec::new(),
     generation: 0,
+    simple_transport: None,
+    simple: Vec::new(),
 });
+static SIMPLE_REGISTERING: AtomicBool = AtomicBool::new(false);
 static EXIT_EPOCH: AtomicU64 = AtomicU64::new(0);
 fn registry() -> MutexGuard<'static, Registry> {
     REGISTRY.lock().unwrap_or_else(|p| p.into_inner())
@@ -482,6 +495,10 @@ unsafe extern "C" fn destroy(x: *mut SvcXprt) {
             return;
         };
         r.transports[index].destroyed.store(true, Ordering::Release);
+        if r.simple_transport == Some(x as usize) {
+            r.simple_transport = None;
+            r.simple.clear();
+        }
         r.transports.remove(index)
     };
     drop(t);
@@ -878,6 +895,190 @@ static OPS: SvcOps = SvcOps {
 pub unsafe extern "C" fn svcudp_create(sock: c_int) -> *mut c_void {
     unsafe { create(sock, 0, 0) }
 }
+
+/// Register a simplified UDP procedure using the native service/XDR machinery.
+/// GNU's historical interface selects callbacks by program/procedure, ignoring
+/// version: a later registration replaces the callback for all those versions.
+/// Decoded arguments are freed after decode failure, NULL results and callback
+/// unwind, including paths where GNU's historical implementation leaks them.
+///
+/// # Safety
+/// Callbacks must remain callable until the transport is destroyed. The input
+/// object must fit the historical 8800-byte, 16-byte-aligned argument area and
+/// support XDR_FREE after partial decoding. A free callback must not unwind
+/// while another callback is already unwinding. Output stays valid until sent.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn registerrpc(
+    program: u64,
+    version: u64,
+    procedure: u64,
+    callback: *mut c_void,
+    input: *mut c_void,
+    output: *mut c_void,
+) -> c_int {
+    if procedure == 0 {
+        simple_message("can't reassign procedure number 0\n");
+        return -1;
+    }
+    if program > u32::MAX as u64
+        || version > u32::MAX as u64
+        || procedure > u32::MAX as u64
+        || callback.is_null()
+        || input.is_null()
+        || output.is_null()
+    {
+        error(libc::EINVAL);
+        return -1;
+    }
+    if SIMPLE_REGISTERING.swap(true, Ordering::Acquire) {
+        error(libc::EBUSY);
+        return -1;
+    }
+    struct RegisterGuard;
+    impl Drop for RegisterGuard {
+        fn drop(&mut self) {
+            SIMPLE_REGISTERING.store(false, Ordering::Release);
+        }
+    }
+    let _guard = RegisterGuard;
+    let transport = {
+        let mut r = registry();
+        if r.simple.try_reserve(1).is_err() {
+            error(libc::ENOMEM);
+            return -1;
+        }
+        r.simple_transport.and_then(|address| {
+            r.transports
+                .iter()
+                .find(|t| t.public.get() as usize == address)
+                .cloned()
+        })
+    };
+    let transport = match transport {
+        Some(t) => t,
+        None => {
+            // SAFETY: the service owns the new socket and its bounded buffers.
+            let x = unsafe { create(-1, 0, 0) }.cast::<SvcXprt>();
+            let Some(t) = lookup(x) else {
+                simple_message("couldn't create an rpc server\n");
+                return -1;
+            };
+            registry().simple_transport = Some(x as usize);
+            t
+        }
+    };
+    // SAFETY: non-null pointers designate the documented C callback signatures.
+    let registration = unsafe {
+        SimpleRegistration {
+            program: program as u32,
+            procedure: procedure as u32,
+            callback: std::mem::transmute::<
+                *mut c_void,
+                unsafe extern "C-unwind" fn(*mut c_void) -> *mut c_void,
+            >(callback),
+            input: std::mem::transmute::<*mut c_void, Procedure>(input),
+            output: std::mem::transmute::<*mut c_void, Procedure>(output),
+        }
+    };
+    // Never hold registry locks during portmapper I/O. Commit the callback and
+    // dispatch entry together: a concurrent receiver must never see a newly
+    // registered service without its callback. Failed publication installs none.
+    unsafe { super::pmap_unset(program, version) };
+    if unsafe {
+        register_service(
+            transport.public.get().cast(),
+            program,
+            version,
+            simple_dispatch as *mut c_void,
+            libc::IPPROTO_UDP,
+            Some(registration),
+        )
+    } == 0
+    {
+        simple_message(&format!(
+            "couldn't register prog {program} vers {version}\n"
+        ));
+        return -1;
+    }
+    0
+}
+
+fn simple_message(message: &str) {
+    // SAFETY: message is an initialized byte slice retained through the write.
+    let _ = unsafe { raw::sys_write(2, message.as_ptr(), message.len()) };
+}
+
+#[repr(C, align(16))]
+struct SimpleArguments {
+    bytes: [u8; DEFAULT_BUFFER],
+    free: Procedure,
+}
+impl Drop for SimpleArguments {
+    fn drop(&mut self) {
+        // SAFETY: the zero-initialized object was passed only to its registered
+        // decoder. XDR_FREE also supports partially initialized objects. This
+        // direct free does not depend on the transport surviving the callback.
+        unsafe {
+            let mut xdr: Xdr = zeroed();
+            xdr.x_op = super::XDR_FREE;
+            (self.free)(
+                (&mut xdr as *mut Xdr).cast(),
+                self.bytes.as_mut_ptr().cast(),
+            );
+        }
+    }
+}
+
+unsafe extern "C-unwind" fn simple_dispatch(request: *mut ServiceRequest, x: *mut SvcXprt) {
+    // SAFETY: dispatch owns a live request and retains the transport via Arc.
+    let request = unsafe { &*request };
+    if request.procedure == 0 {
+        // No encoder is required for a void reply.
+        if unsafe { send(x, None, ptr::null_mut(), ptr::null_mut(), None) } == 0 {
+            simple_message("xxx\n");
+            unsafe { crate::stdlib_abi::exit(1) };
+        }
+        return;
+    }
+    let registration = registry()
+        .simple
+        .iter()
+        .find(|s| s.program as u64 == request.program && s.procedure as u64 == request.procedure)
+        .copied();
+    let Some(registration) = registration else {
+        simple_message(&format!(
+            "never registered prog {}\n",
+            request.program as i32
+        ));
+        unsafe { crate::stdlib_abi::exit(1) };
+    };
+    let mut arguments = SimpleArguments {
+        bytes: [0; DEFAULT_BUFFER],
+        free: registration.input,
+    };
+    let object = arguments.bytes.as_mut_ptr().cast();
+    // SAFETY: callback types/lifetimes are the registration caller's contract;
+    // storage stays initialized and alive through serialization/free. No
+    // registry lock covers callbacks.
+    unsafe {
+        if getargs(x, registration.input as *mut c_void, object) == 0 {
+            svcerr_decode(x.cast());
+            return;
+        }
+        let result = (registration.callback)(object);
+        if result.is_null() && registration.output as usize != super::xdr_void as *const () as usize
+        {
+            return;
+        }
+        if send(x, None, registration.output as *mut c_void, result, None) == 0 {
+            simple_message(&format!(
+                "trouble replying to prog {}\n",
+                registration.program as i32
+            ));
+            crate::stdlib_abi::exit(1);
+        }
+    }
+}
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn svcudp_bufcreate(
     sock: c_int,
@@ -984,6 +1185,18 @@ pub unsafe extern "C" fn svc_register(
     dispatch: *mut c_void,
     protocol: c_int,
 ) -> c_int {
+    // SAFETY: forwarded arguments retain the public service API preconditions.
+    unsafe { register_service(x, program, version, dispatch, protocol, None) }
+}
+
+unsafe fn register_service(
+    x: *mut c_void,
+    program: u64,
+    version: u64,
+    dispatch: *mut c_void,
+    protocol: c_int,
+    simple: Option<SimpleRegistration>,
+) -> c_int {
     let Some(t) = lookup(x.cast()) else {
         return error(libc::EINVAL);
     };
@@ -994,6 +1207,9 @@ pub unsafe extern "C" fn svc_register(
         return error(libc::EPROTONOSUPPORT);
     }
     let mut r = registry();
+    if t.destroyed.load(Ordering::Acquire) {
+        return error(libc::EBUSY);
+    }
     if let Some(s) = r
         .services
         .iter()
@@ -1012,6 +1228,10 @@ pub unsafe extern "C" fn svc_register(
         return 0;
     }
     let mut r = registry();
+    // Destruction may race the portmapper call after the initial lookup.
+    if t.destroyed.load(Ordering::Acquire) {
+        return error(libc::EBUSY);
+    }
     if let Some(s) = r
         .services
         .iter_mut()
@@ -1040,6 +1260,19 @@ pub unsafe extern "C" fn svc_register(
     // Conservatively retire cached responses after every successful service
     // registration, including a repeated registration by the same callback.
     r.generation = r.generation.wrapping_add(1);
+    if let Some(registration) = simple {
+        if let Some(existing) = r
+            .simple
+            .iter_mut()
+            .find(|s| s.program == registration.program && s.procedure == registration.procedure)
+        {
+            *existing = registration;
+        } else {
+            // registerrpc reserves capacity while its nonblocking single-writer
+            // guard is held; no other API inserts simplified callbacks.
+            r.simple.push(registration);
+        }
+    }
     1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
