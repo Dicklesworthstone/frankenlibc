@@ -1969,6 +1969,7 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
             Receive::Replayed => continue,
             Receive::Unavailable => {
                 if t.dead.load(Ordering::Acquire) {
+                    // SAFETY: both guards retain the transport through removal.
                     unsafe { destroy(t.public.get()) };
                 }
                 break;
