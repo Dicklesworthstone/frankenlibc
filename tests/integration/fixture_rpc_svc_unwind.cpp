@@ -38,6 +38,7 @@ static Xprt *server;
 static unsigned calls, destructors;
 static bool armed = true;
 static const char *scenario;
+static bool stream_transport;
 static constexpr unsigned PROGRAM = 0x31234767;
 struct Marker { ~Marker() { ++destructors; } };
 struct CallbackException {};
@@ -89,24 +90,36 @@ static void ready(int fd, int timeout) {
 }
 static void expect_reply(int client, unsigned xid) {
     ready(client,1000);
-    std::uint32_t words[32]{}; CHECK(recv(client,words,sizeof(words),0)==28);
+    std::uint32_t words[32]{};
+    if(stream_transport) {
+        std::uint32_t marker{};CHECK(recv(client,&marker,4,MSG_WAITALL)==4);
+        CHECK(ntohl(marker)==(0x80000000u|28));CHECK(recv(client,words,28,MSG_WAITALL)==28);
+    } else CHECK(recv(client,words,sizeof(words),0)==28);
     const unsigned expected[]={xid,1,0,0,0,0,42};
     for (unsigned i=0;i<7;++i) CHECK(ntohl(words[i])==expected[i]);
 }
 int main(int argc,char **argv) {
-    CHECK(argc==2); scenario=argv[1];
-    LOAD(create,"svcudp_bufcreate"); LOAD(reg,"svc_register"); LOAD(unreg,"svc_unregister");
+    CHECK(argc==2);stream_transport=std::strncmp(argv[1],"tcp-",4)==0;scenario=argv[1]+(stream_transport?4:0);
+    if(stream_transport)LOAD(create,"svcfd_create");else LOAD(create,"svcudp_bufcreate");
+    LOAD(reg,"svc_register"); LOAD(unreg,"svc_unregister");
     LOAD(common,"svc_getreq_common"); LOAD(sendreply,"svc_sendreply");
     LOAD(xu32,"xdr_u_int"); LOAD(enablecache,"svcudp_enablecache");
-    server=create(-1,128,128); CHECK(server && enablecache(server,4));
+    int client;
+    if(stream_transport) {
+        int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_STREAM,0,pair));
+        server=create(pair[0],128,128);client=pair[1];CHECK(server);
+    } else { server=create(-1,128,128); CHECK(server && enablecache(server,4));client=socket(AF_INET,SOCK_DGRAM,0); }
     CHECK(reg(server,PROGRAM,1,handler,0));
-    int fd=server->fd, client=socket(AF_INET,SOCK_DGRAM,0); CHECK(client>=0);
+    int fd=server->fd;CHECK(client>=0);
     sockaddr_in dest{}; dest.sin_family=AF_INET; dest.sin_port=htons(server->port);
     dest.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     unsigned words[]={101,0,2,PROGRAM,1,1,0,0,0,0,35};
     for (unsigned &w:words) w=htonl(w);
     auto send_request=[&]() {
-        CHECK(sendto(client,words,sizeof(words),0,reinterpret_cast<sockaddr *>(&dest),sizeof(dest))==sizeof(words));
+        if(stream_transport) {
+            std::uint32_t marker=htonl(0x80000000u|sizeof(words));
+            CHECK(send(client,&marker,4,MSG_NOSIGNAL)==4 && send(client,words,sizeof(words),MSG_NOSIGNAL)==sizeof(words));
+        } else CHECK(sendto(client,words,sizeof(words),0,reinterpret_cast<sockaddr *>(&dest),sizeof(dest))==sizeof(words));
         ready(fd,1000);
     };
     send_request();
@@ -124,7 +137,7 @@ int main(int argc,char **argv) {
     CHECK(destructors==expected_dtors);
     if (is("destroy-exit")) {
         CHECK(fcntl(fd,F_GETFD)==-1); unreg(PROGRAM,1); CHECK(!close(client));
-        std::printf("PASS %s\n",scenario); return 0;
+        std::printf("PASS %s\n",argv[1]); return 0;
     }
     bool replied=is("dispatch-exit") || is("free-throw");
     if (replied) expect_reply(client,101);
@@ -133,11 +146,11 @@ int main(int argc,char **argv) {
     send_request(); common(fd); expect_reply(client,101);
     // A successful response survives a subsequent unwind. An incomplete
     // serialization must not populate the cache or suppress a fresh dispatch.
-    CHECK(calls==(replied?1u:2u));
+    CHECK(calls==(stream_transport?2u:replied?1u:2u));
     unsigned after=destructors;
-    send_request(); common(fd); expect_reply(client,101); CHECK(destructors==after);
+    send_request(); common(fd); expect_reply(client,101); CHECK(destructors==after+(stream_transport?1u:0u));
     words[0]=htonl(102); send_request(); common(fd); expect_reply(client,102);
-    CHECK(calls==(replied?2u:3u));
+    CHECK(calls==(stream_transport?4u:replied?2u:3u));
     unreg(PROGRAM,1); server->ops->destroy(server); CHECK(fcntl(fd,F_GETFD)==-1);
-    CHECK(!close(client)); std::printf("PASS %s\n",scenario);
+    CHECK(!close(client)); std::printf("PASS %s\n",argv[1]);
 }

@@ -517,6 +517,7 @@ fn install(t: Arc<Transport>) -> *mut c_void {
     if matches!(t.kind, Kind::Listener { .. }) {
         // Ownership commits only after the last fallible operation. A supplied
         // listener becomes nonblocking; failures leave its flags/fd untouched.
+        // SAFETY: F_GETFL reads descriptor flags and has no pointer argument.
         let flags = unsafe { raw::sys_fcntl(t.fd, libc::F_GETFL, 0) };
         let flags = match flags {
             Ok(flags) => flags,
@@ -525,9 +526,10 @@ fn install(t: Arc<Transport>) -> *mut c_void {
                 return ptr::null_mut();
             }
         };
-        if let Err(e) = unsafe {
-            raw::sys_fcntl(t.fd, libc::F_SETFL, (flags | libc::O_NONBLOCK) as usize)
-        } {
+        // SAFETY: only the validated integer flag word is passed to F_SETFL.
+        if let Err(e) =
+            unsafe { raw::sys_fcntl(t.fd, libc::F_SETFL, (flags | libc::O_NONBLOCK) as usize) }
+        {
             error(e);
             return ptr::null_mut();
         }
@@ -572,44 +574,88 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
         let mut length = size_of::<c_int>() as u32;
         // SAFETY: kernel results target initialized owned scalars/storage.
         unsafe {
-            raw::sys_getsockopt(fd, libc::SOL_SOCKET, libc::SO_TYPE,
-                (&mut socket_type as *mut c_int).cast(), &mut length)
+            raw::sys_getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_TYPE,
+                (&mut socket_type as *mut c_int).cast(),
+                &mut length,
+            )
         }?;
         if socket_type != libc::SOCK_STREAM {
             return Err(libc::EPROTOTYPE);
         }
-        let mut address: libc::sockaddr_in = unsafe { zeroed() };
-        let mut peer: libc::sockaddr_storage = unsafe { zeroed() };
+        // SAFETY: zero is a valid initialized representation of socket storage.
+        let (mut address, mut peer): (libc::sockaddr_in, libc::sockaddr_storage) =
+            unsafe { zeroed() };
         let mut peer_length = size_of::<libc::sockaddr_storage>() as u32;
         let (port, stream) = if listener {
             let mut length = size_of::<libc::sockaddr_in>() as u32;
-            unsafe { raw::sys_getsockname(fd, (&mut address as *mut libc::sockaddr_in).cast(), &mut length) }?;
+            // SAFETY: the kernel receives owned address storage of this length.
+            unsafe {
+                raw::sys_getsockname(
+                    fd,
+                    (&mut address as *mut libc::sockaddr_in).cast(),
+                    &mut length,
+                )
+            }?;
             if address.sin_family as c_int != libc::AF_INET {
                 return Err(libc::EAFNOSUPPORT);
             }
             if address.sin_port == 0 {
-                unsafe { raw::sys_bind(fd, (&address as *const libc::sockaddr_in).cast(), length) }?;
-                unsafe { raw::sys_getsockname(fd, (&mut address as *mut libc::sockaddr_in).cast(), &mut length) }?;
+                // SAFETY: the initialized IPv4 address has the returned size.
+                unsafe {
+                    raw::sys_bind(fd, (&address as *const libc::sockaddr_in).cast(), length)
+                }?;
+                // SAFETY: address and length remain owned initialized outputs.
+                unsafe {
+                    raw::sys_getsockname(
+                        fd,
+                        (&mut address as *mut libc::sockaddr_in).cast(),
+                        &mut length,
+                    )
+                }?;
             }
             (u16::from_be(address.sin_port), None)
         } else {
-            unsafe { raw::sys_getpeername(fd, (&mut peer as *mut libc::sockaddr_storage).cast(), &mut peer_length) }?;
-            let receive = if receive == 0 { DEFAULT_BUFFER } else { receive as usize };
-            (0, Some(StreamIo {
-                decoder: RecordDecoder::new(MAX_STREAM, 4096),
-                bytes: buffer(receive.clamp(128, MAX_BUFFER))?,
-                start: 0,
-                end: 0,
-                send_hint: if send == 0 { DEFAULT_BUFFER } else { send as usize },
-                pending: None,
-            }))
+            // SAFETY: peer storage and length are owned kernel output buffers.
+            unsafe {
+                raw::sys_getpeername(
+                    fd,
+                    (&mut peer as *mut libc::sockaddr_storage).cast(),
+                    &mut peer_length,
+                )
+            }?;
+            let receive = if receive == 0 {
+                DEFAULT_BUFFER
+            } else {
+                receive as usize
+            };
+            (
+                0,
+                Some(StreamIo {
+                    decoder: RecordDecoder::new(MAX_STREAM, 4096),
+                    bytes: buffer(receive.clamp(128, MAX_BUFFER))?,
+                    start: 0,
+                    end: 0,
+                    send_hint: if send == 0 {
+                        DEFAULT_BUFFER
+                    } else {
+                        send as usize
+                    },
+                    pending: None,
+                }),
+            )
         };
+        // SAFETY: zero is valid for the public optional IPv4 address.
         let mut raddr: libc::sockaddr_in = unsafe { zeroed() };
         let addrlen = if !listener && peer.ss_family as c_int == libc::AF_INET {
             // SAFETY: sockaddr_storage is aligned and contains an IPv4 peer.
             raddr = unsafe { ptr::read((&peer as *const libc::sockaddr_storage).cast()) };
             size_of::<libc::sockaddr_in>() as c_int
-        } else { 0 };
+        } else {
+            0
+        };
         let input = Vec::new();
         let output = buffer(DEFAULT_BUFFER)?;
         if listener {
@@ -617,16 +663,42 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
         }
         let transport = Arc::new(Transport {
             public: UnsafeCell::new(SvcXprt {
-                sock: fd, port, ops: &OPS, addrlen, raddr,
-                verifier: OpaqueAuth { oa_flavor: 0, oa_base: ptr::null_mut(), oa_length: 0 },
-                private1: ptr::null_mut(), private2: ptr::null_mut(), padding: [0; 256],
+                sock: fd,
+                port,
+                ops: &OPS,
+                addrlen,
+                raddr,
+                verifier: OpaqueAuth {
+                    oa_flavor: 0,
+                    oa_base: ptr::null_mut(),
+                    oa_length: 0,
+                },
+                private1: ptr::null_mut(),
+                private2: ptr::null_mut(),
+                padding: [0; 256],
             }),
-            io: UnsafeCell::new(Io { input, output, call: None, cursor: 0, peer: raddr, cache: None, stream }),
+            io: UnsafeCell::new(Io {
+                input,
+                output,
+                call: None,
+                cursor: 0,
+                peer: raddr,
+                cache: None,
+                stream,
+            }),
             fd,
-            kind: if listener { Kind::Listener { send, receive } } else { Kind::Stream },
-            operation: AtomicBool::new(false), dispatching: AtomicBool::new(false),
-            destroyed: AtomicBool::new(false), close_fd: AtomicBool::new(created),
-            dead: AtomicBool::new(false), buffered: AtomicBool::new(false), wants_write: AtomicBool::new(false),
+            kind: if listener {
+                Kind::Listener { send, receive }
+            } else {
+                Kind::Stream
+            },
+            operation: AtomicBool::new(false),
+            dispatching: AtomicBool::new(false),
+            destroyed: AtomicBool::new(false),
+            close_fd: AtomicBool::new(created),
+            dead: AtomicBool::new(false),
+            buffered: AtomicBool::new(false),
+            wants_write: AtomicBool::new(false),
         });
         Ok(transport)
     })();
@@ -709,12 +781,20 @@ fn flush_stream(t: &Transport, io: &mut Io) -> bool {
         };
         // SAFETY: initialized owned reply bytes remain alive through send.
         let result = unsafe {
-            raw::sys_sendto(t.fd, pending.bytes[pending.position..].as_ptr(),
+            raw::sys_sendto(
+                t.fd,
+                pending.bytes[pending.position..].as_ptr(),
                 pending.bytes.len() - pending.position,
-                libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL, ptr::null(), 0)
+                libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+                ptr::null(),
+                0,
+            )
         };
         match result {
-            Ok(0) => { stream_failure(t, libc::EPIPE); return false; }
+            Ok(0) => {
+                stream_failure(t, libc::EPIPE);
+                return false;
+            }
             Ok(n) => {
                 pending.position += n as usize;
                 if pending.position == pending.bytes.len() {
@@ -723,7 +803,10 @@ fn flush_stream(t: &Transport, io: &mut Io) -> bool {
             }
             Err(libc::EINTR) => {}
             Err(libc::EAGAIN) => break,
-            Err(e) => { stream_failure(t, e); return false; }
+            Err(e) => {
+                stream_failure(t, e);
+                return false;
+            }
         }
     }
     let pending = stream.pending.is_some();
@@ -736,7 +819,9 @@ fn queue_stream(t: &Transport, io: &mut Io, mut bytes: Vec<u8>) -> c_int {
         return error(libc::EBUSY);
     }
     let length = bytes.len();
-    let Ok(header) = fragment_header(length, true) else { return error(libc::EMSGSIZE); };
+    let Ok(header) = fragment_header(length, true) else {
+        return error(libc::EMSGSIZE);
+    };
     if bytes.try_reserve(4).is_err() {
         return error(libc::ENOMEM);
     }
@@ -752,21 +837,29 @@ fn queue_stream(t: &Transport, io: &mut Io, mut bytes: Vec<u8>) -> c_int {
 
 fn receive_stream(t: &Transport) -> Receive {
     if let Kind::Listener { send, receive } = t.kind {
+        // SAFETY: zero initializes valid writable IPv4 output storage.
         let mut peer: libc::sockaddr_in = unsafe { zeroed() };
         let mut length = size_of::<libc::sockaddr_in>() as u32;
         // SAFETY: listener is nonblocking after ownership transfers; accepted
         // sockets are owned here until construction commits or closes them.
         let accepted = unsafe {
-            raw::sys_accept4(t.fd, (&mut peer as *mut libc::sockaddr_in).cast(),
-                &mut length, libc::SOCK_CLOEXEC)
+            raw::sys_accept4(
+                t.fd,
+                (&mut peer as *mut libc::sockaddr_in).cast(),
+                &mut length,
+                libc::SOCK_CLOEXEC,
+            )
         };
         match accepted {
             Ok(fd) => {
+                // SAFETY: the newly accepted socket has no competing consumer.
                 if unsafe { create_stream(fd, send, receive, false) }.is_null() {
                     let _ = raw::sys_close(fd);
                 }
             }
-            Err(e) => { error(e); }
+            Err(e) => {
+                error(e);
+            }
         }
         return Receive::Unavailable;
     }
@@ -783,12 +876,16 @@ fn receive_stream(t: &Transport) -> Receive {
     for _ in 0..32 {
         let stream = io.stream.as_mut().unwrap();
         if stream.start != stream.end {
-            let used = match stream.decoder.consume(&stream.bytes[stream.start..stream.end]) {
+            let used = match stream
+                .decoder
+                .consume(&stream.bytes[stream.start..stream.end])
+            {
                 Ok(n) => n,
                 Err(_) => return stream_failure(t, libc::EPROTO),
             };
             stream.start += used;
-            t.buffered.store(stream.start != stream.end, Ordering::Release);
+            t.buffered
+                .store(stream.start != stream.end, Ordering::Release);
         }
         if let Some(record) = stream.decoder.take_record() {
             io.input = record;
@@ -799,8 +896,13 @@ fn receive_stream(t: &Transport) -> Receive {
                     Receive::Call
                 }
                 Err(CallError::RpcVersion { xid }) => {
-                    if let Ok(n) = service::encode_reply_prefix(&mut io.output, xid, 0, &[],
-                        Some(RemoteError::RpcVersion { low: 2, high: 2 })) {
+                    if let Ok(n) = service::encode_reply_prefix(
+                        &mut io.output,
+                        xid,
+                        0,
+                        &[],
+                        Some(RemoteError::RpcVersion { low: 2, high: 2 }),
+                    ) {
                         if let Ok(mut reply) = buffer(n) {
                             reply.copy_from_slice(&io.output[..n]);
                             queue_stream(t, io, reply);
@@ -816,14 +918,27 @@ fn receive_stream(t: &Transport) -> Receive {
         }
         // SAFETY: receive touches only the initialized owned scratch buffer.
         match unsafe {
-            raw::sys_recvfrom(t.fd, stream.bytes.as_mut_ptr(), stream.bytes.len(),
-                libc::MSG_DONTWAIT, ptr::null_mut(), ptr::null_mut())
+            raw::sys_recvfrom(
+                t.fd,
+                stream.bytes.as_mut_ptr(),
+                stream.bytes.len(),
+                libc::MSG_DONTWAIT,
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
         } {
             Ok(0) => {
-                let code = if stream.decoder.finish().is_err() { libc::EPROTO } else { 0 };
+                let code = if stream.decoder.finish().is_err() {
+                    libc::EPROTO
+                } else {
+                    0
+                };
                 return stream_failure(t, code);
             }
-            Ok(n) => { stream.start = 0; stream.end = n as usize; }
+            Ok(n) => {
+                stream.start = 0;
+                stream.end = n as usize;
+            }
             Err(libc::EINTR) => {}
             Err(libc::EAGAIN) => return Receive::Unavailable,
             Err(e) => return stream_failure(t, e),
@@ -831,7 +946,8 @@ fn receive_stream(t: &Transport) -> Receive {
     }
     // A complete record may already be in scratch after the final bounded read.
     let stream = io.stream.as_ref().unwrap();
-    t.buffered.store(stream.start != stream.end, Ordering::Release);
+    t.buffered
+        .store(stream.start != stream.end, Ordering::Release);
     Receive::Unavailable
 }
 
@@ -1082,7 +1198,11 @@ struct StreamOutput {
 }
 impl StreamOutput {
     fn extend(&mut self, count: usize) -> bool {
-        let Some(end) = self.position.checked_add(count).filter(|&n| n <= MAX_STREAM) else {
+        let Some(end) = self
+            .position
+            .checked_add(count)
+            .filter(|&n| n <= MAX_STREAM)
+        else {
             error(libc::EMSGSIZE);
             return false;
         };
@@ -1108,9 +1228,14 @@ unsafe extern "C" fn stream_putbytes(x: *mut Xdr, source: *const i8, count: u32)
         // SAFETY: the destination is initialized owned storage. Import through
         // the shared fault-checked copier, without constructing a caller slice.
         if unsafe {
-            crate::io_abi::iov_snapshot::copy_user_bytes(source.cast(),
-                output.bytes.as_mut_ptr().add(output.position), count)
-        }.is_err() {
+            crate::io_abi::iov_snapshot::copy_user_bytes(
+                source.cast(),
+                output.bytes.as_mut_ptr().add(output.position),
+                count,
+            )
+        }
+        .is_err()
+        {
             return error(libc::EFAULT);
         }
     }
@@ -1120,8 +1245,11 @@ unsafe extern "C" fn stream_putbytes(x: *mut Xdr, source: *const i8, count: u32)
 unsafe extern "C" fn stream_putint(x: *mut Xdr, value: *const i32) -> c_int {
     // SAFETY: scalar XDR serializers supply a live initialized value.
     let bytes = unsafe { (*value).to_be_bytes() };
+    // SAFETY: this operation is installed only on the retained stack encoder.
     let output = unsafe { &mut *(*x).x_private.cast::<StreamOutput>() };
-    if !output.extend(4) { return 0; }
+    if !output.extend(4) {
+        return 0;
+    }
     output.bytes[output.position..output.position + 4].copy_from_slice(&bytes);
     output.position += 4;
     1
@@ -1129,11 +1257,18 @@ unsafe extern "C" fn stream_putint(x: *mut Xdr, value: *const i32) -> c_int {
 unsafe extern "C" fn stream_putlong(x: *mut Xdr, value: *const i64) -> c_int {
     // SAFETY: glibc LP64 long is 64 bits, encoded as the low 32-bit XDR word.
     let value = unsafe { *value as i32 };
+    // SAFETY: the converted scalar lives through this synchronous encoder call.
     unsafe { stream_putint(x, &value) }
 }
-unsafe extern "C" fn stream_getlong(_: *mut Xdr, _: *mut i64) -> c_int { 0 }
-unsafe extern "C" fn stream_getint(_: *mut Xdr, _: *mut i32) -> c_int { 0 }
-unsafe extern "C" fn stream_getbytes(_: *mut Xdr, _: *mut i8, _: u32) -> c_int { 0 }
+unsafe extern "C" fn stream_getlong(_: *mut Xdr, _: *mut i64) -> c_int {
+    0
+}
+unsafe extern "C" fn stream_getint(_: *mut Xdr, _: *mut i32) -> c_int {
+    0
+}
+unsafe extern "C" fn stream_getbytes(_: *mut Xdr, _: *mut i8, _: u32) -> c_int {
+    0
+}
 unsafe extern "C" fn stream_position(x: *const Xdr) -> u32 {
     // SAFETY: installed stream/state are retained throughout the codec call.
     unsafe { (*(*x).x_private.cast::<StreamOutput>()).position as u32 }
@@ -1141,7 +1276,9 @@ unsafe extern "C" fn stream_position(x: *const Xdr) -> u32 {
 unsafe extern "C" fn stream_setposition(x: *mut Xdr, position: u32) -> c_int {
     // SAFETY: only initialized bytes may be revisited by XDR_SETPOS.
     let output = unsafe { &mut *(*x).x_private.cast::<StreamOutput>() };
-    if position as usize > output.bytes.len() { return 0; }
+    if position as usize > output.bytes.len() {
+        return 0;
+    }
     output.position = position as usize;
     1
 }
@@ -1149,26 +1286,45 @@ unsafe extern "C" fn stream_inline(x: *mut Xdr, length: u32) -> *mut i32 {
     // SAFETY: output is private to this encoder. Inline pointers have the normal
     // XDR lifetime, ending on the next operation that can grow the buffer.
     let output = unsafe { &mut *(*x).x_private.cast::<StreamOutput>() };
-    if output.position % 4 != 0 || length % 4 != 0 || !output.extend(length as usize) {
+    if !output.position.is_multiple_of(4)
+        || !length.is_multiple_of(4)
+        || !output.extend(length as usize)
+    {
         return ptr::null_mut();
     }
+    // SAFETY: extend initialized this complete range, including its start.
     let result = unsafe { output.bytes.as_mut_ptr().add(output.position) };
-    if result as usize % std::mem::align_of::<i32>() != 0 { return ptr::null_mut(); }
+    if !(result as usize).is_multiple_of(std::mem::align_of::<i32>()) {
+        return ptr::null_mut();
+    }
     output.position += length as usize;
     result.cast()
 }
 unsafe extern "C" fn stream_destroy(_: *mut Xdr) {}
 static STREAM_OUTPUT_OPS: XdrOps = XdrOps {
-    x_getlong: stream_getlong, x_putlong: stream_putlong,
-    x_getbytes: stream_getbytes, x_putbytes: stream_putbytes,
-    x_getpostn: stream_position, x_setpostn: stream_setposition,
-    x_inline: stream_inline, x_destroy: stream_destroy,
-    x_getint32: stream_getint, x_putint32: stream_putint,
+    x_getlong: stream_getlong,
+    x_putlong: stream_putlong,
+    x_getbytes: stream_getbytes,
+    x_putbytes: stream_putbytes,
+    x_getpostn: stream_position,
+    x_setpostn: stream_setposition,
+    x_inline: stream_inline,
+    x_destroy: stream_destroy,
+    x_getint32: stream_getint,
+    x_putint32: stream_putint,
 };
 
-unsafe fn reply_stream(gate: &Operation, prefix: usize, proc: *mut c_void,
-    object: *mut c_void, encode: bool) -> c_int {
-    let mut output = StreamOutput { bytes: Vec::new(), position: prefix };
+unsafe fn reply_stream(
+    gate: &Operation,
+    prefix: usize,
+    proc: *mut c_void,
+    object: *mut c_void,
+    encode: bool,
+) -> c_int {
+    let mut output = StreamOutput {
+        bytes: Vec::new(),
+        position: prefix,
+    };
     {
         // SAFETY: Operation owns these buffers; no reference crosses a codec.
         let io = unsafe { &*gate.0.io.get() };
@@ -1189,6 +1345,7 @@ unsafe fn reply_stream(gate: &Operation, prefix: usize, proc: *mut c_void,
     if encode && !proc.is_null() {
         // SAFETY: procedure/object lifetimes and signature are the C API contract.
         let function: Procedure = unsafe { std::mem::transmute(proc) };
+        // SAFETY: the installed encoder and supplied object outlive this call.
         if unsafe { function((&mut xdr as *mut Xdr).cast(), object) } == 0 {
             return 0;
         }
@@ -1253,14 +1410,17 @@ unsafe fn send(
             Ok(n) => n,
             Err(_) => return error(libc::EMSGSIZE),
         };
-        if !stream { unsafe {
-            super::xdrmem_create(
-                (&mut xdr as *mut Xdr).cast(),
-                io.output.as_mut_ptr().add(prefix).cast(),
-                (io.output.len() - prefix) as u32,
-                super::XDR_ENCODE,
-            )
-        }; }
+        if !stream {
+            // SAFETY: the prefix fits in this owned datagram output buffer.
+            unsafe {
+                super::xdrmem_create(
+                    (&mut xdr as *mut Xdr).cast(),
+                    io.output.as_mut_ptr().add(prefix).cast(),
+                    (io.output.len() - prefix) as u32,
+                    super::XDR_ENCODE,
+                )
+            };
+        }
         (prefix, io.peer)
     };
     if stream {
@@ -1687,7 +1847,11 @@ unsafe fn register_service(
     if program > u32::MAX as u64 || version > u32::MAX as u64 || dispatch.is_null() {
         return error(libc::EINVAL);
     }
-    let expected = if t.kind == Kind::Datagram { libc::IPPROTO_UDP } else { libc::IPPROTO_TCP };
+    let expected = if t.kind == Kind::Datagram {
+        libc::IPPROTO_UDP
+    } else {
+        libc::IPPROTO_TCP
+    };
     if protocol != 0 && protocol != expected {
         return error(libc::EPROTONOSUPPORT);
     }
@@ -1965,7 +2129,11 @@ pub unsafe extern "C-unwind" fn svc_run() {
         // without allocating a process-global wake descriptor.
         let polled = unsafe {
             crate::pthread_abi::at_cancellation_point(|| {
-                raw::sys_poll(fds.as_mut_ptr().cast(), count, if has_buffered { 0 } else { 100 })
+                raw::sys_poll(
+                    fds.as_mut_ptr().cast(),
+                    count,
+                    if has_buffered { 0 } else { 100 },
+                )
             })
         };
         match polled {
@@ -1975,7 +2143,15 @@ pub unsafe extern "C-unwind" fn svc_run() {
             _ => {}
         }
         for (p, &buffered) in fds[..count].iter().zip(&buffered) {
-            if buffered >= 0 || p.revents & (libc::POLLIN | libc::POLLOUT | libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            if buffered >= 0
+                || p.revents
+                    & (libc::POLLIN
+                        | libc::POLLOUT
+                        | libc::POLLHUP
+                        | libc::POLLERR
+                        | libc::POLLNVAL)
+                    != 0
+            {
                 unsafe { svc_getreq_common(p.fd) };
             }
         }

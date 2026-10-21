@@ -1,4 +1,4 @@
-name: Native UDP RPC services
+name: Native UDP and TCP RPC services
 on:
   push:
     branches: [main]
@@ -64,7 +64,7 @@ jobs:
           sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
-          # registerrpc publishes through an exclusive loopback port 111 peer,
+          # UDP registerrpc and TCP svc_register publish through an exclusive loopback port 111 peer,
           # using the same privilege boundary as the existing RPC client gate.
           sudo python3 "$PWD/scripts/check_rpc_svc.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/cases"
           cargo test -p frankenlibc-abi --test rpc_svc_cache_test "${args[@]}" -- --nocapture --test-threads=1 2>&1 | tee "$root/cache-unit.log"

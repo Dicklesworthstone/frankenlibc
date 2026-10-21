@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
@@ -56,6 +57,7 @@ _Static_assert(sizeof(Xprt) == 336 && offsetof(Xprt, verifier) == 40, "glibc LP6
 _Static_assert(sizeof(Request) == 64 && sizeof(Auth) == 24, "glibc LP64 request/auth");
 _Static_assert(sizeof(Call)==96 && offsetof(Call,cred)==48 && sizeof(SysAuth)==40,"glibc LP64 call/cooked credentials");
 static Xprt *(*create)(int), *(*bufcreate)(int,unsigned,unsigned);
+static Xprt *(*tcpcreate)(int,unsigned,unsigned), *(*fdcreate)(int,unsigned,unsigned);
 static int (*reg)(Xprt *,unsigned long,unsigned long,void (*)(Request *,Xprt *),int);
 static void (*unreg)(unsigned long,unsigned long), (*common)(int), (*getmask)(int), (*getset)(fd_set *), (*getpoll)(struct pollfd *,int);
 static void (*run)(void), (*stop)(void);
@@ -65,6 +67,7 @@ static void *(*fdset_slot)(void), *(*poll_slot)(void), *(*count_slot)(void);
 static int (*authenticate)(Request *,Call *);
 static int (*simple_reg)(unsigned long,unsigned long,unsigned long,void *(*)(void *),Proc,Proc);
 static Proc xvoid;
+static int (*xopaque)(void *,void *,unsigned);
 static RpcClient *(*udpclient)(struct sockaddr_in *,unsigned long,unsigned long,struct timeval,int *);
 static ClientAuth *(*unixauth)(char *,unsigned,unsigned,int,unsigned *);
 static unsigned calls, cleaned;
@@ -99,6 +102,7 @@ static void load(void) {
     LOAD(fdset_slot,"__rpc_thread_svc_fdset"); LOAD(poll_slot,"__rpc_thread_svc_pollfd"); LOAD(count_slot,"__rpc_thread_svc_max_pollfd");
     LOAD(authenticate,"_authenticate"); LOAD(udpclient,"clntudp_create"); LOAD(unixauth,"authunix_create");
     LOAD(simple_reg,"registerrpc"); LOAD(xvoid,"xdr_void");
+    LOAD(tcpcreate,"svctcp_create"); LOAD(fdcreate,"svcfd_create"); LOAD(xopaque,"xdr_opaque");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -325,11 +329,11 @@ static int simple_fd(void) {
     for(int i=0;i<FD_SETSIZE;++i) if(FD_ISSET(i,&bits)) { CHECK(fd==-1);fd=i; }
     CHECK(fd>=0);return fd;
 }
-static void simple_mapping(unsigned expected) {
+static void mapping_lookup(unsigned expected,unsigned protocol) {
     int fd=socket(AF_INET,SOCK_DGRAM,0);CHECK(fd>=0);
     struct sockaddr_in mapper={.sin_family=AF_INET,.sin_port=htons(111),.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
     unsigned char packet[2048];request(packet,0x1234,100000,2,3);
-    word(packet,40,PROGRAM);word(packet,44,1);word(packet,48,17);word(packet,52,0);
+    word(packet,40,PROGRAM);word(packet,44,1);word(packet,48,protocol);word(packet,52,0);
     CHECK(sendto(fd,packet,56,0,(void *)&mapper,sizeof(mapper))==56);
     struct pollfd p={fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
     CHECK(recv(fd,packet,sizeof(packet),0)==28);
@@ -361,7 +365,7 @@ static void simple_services(void) {
     CHECK(simple_reg(PROGRAM,1,1,callback,input,output)==0);
     Xprt address={.fd=simple_fd()};server=&address;
     struct sockaddr_in a;socklen_t size=sizeof(a);CHECK(!getsockname(address.fd,(void *)&a,&size));address.port=ntohs(a.sin_port);CHECK(address.port);
-    simple_mapping(address.port);
+    mapping_lookup(address.port,17);
     client=socket(AF_INET,SOCK_DGRAM,0);CHECK(client>=0);
     unsigned char data[2048];size_t n;
     n=request(data,81,PROGRAM,1,0);send_packet(data,n);drive();expect_reply(81,0,0,-1,0);CHECK(!simple_calls);
@@ -407,14 +411,243 @@ static void simple_services(void) {
         }
     }
     unreg(PROGRAM,1);
-    simple_mapping(0);
+    mapping_lookup(0,17);
     n=request(data,94,PROGRAM,1,0);send_packet(data,n);drive();expect_reply(94,0,1,-1,0);
     CHECK(simple_reg(PROGRAM,1,3,simple_add,counted_u32,xu32)==0 && simple_fd()==address.fd);
     n=request(data,95,PROGRAM,1,3);word(data,n,35);send_packet(data,n+4);drive();expect_reply(95,0,0,0,42);
     unreg(PROGRAM,1);CHECK(fcntl(address.fd,F_GETFD)>=0);close(client);server=NULL;
 }
+
+static Xprt *tcp_listener, *tcp_connection;
+static int tcp_fd;
+static unsigned tcp_encodes, tcp_stop_count;
+static unsigned char tcp_bulk[4*1024*1024];
+static size_t tcp_bulk_length;
+static atomic_int tcp_reader_done;
+static int tcp_bulk_proc(void *x,void *p) {
+    (void)p;if(*(int *)x==XDR_ENCODE)++tcp_encodes;
+    return xopaque(x,tcp_bulk,(unsigned)tcp_bulk_length);
+}
+static int tcp_bad_encoder(void *x,void *p) { (void)x;(void)p;++tcp_encodes;return 0; }
+static void tcp_handler(Request *r,Xprt *x) {
+    tcp_connection=x;
+    if (r->procedure==16) {
+        ++calls;CHECK(x->ops->getargs(x,tcp_bulk_proc,NULL));
+        for(size_t i=0;i<tcp_bulk_length;++i)CHECK(tcp_bulk[i]==(unsigned char)(i*31+7));
+        CHECK(sendreply(x,tcp_bulk_proc,NULL));CHECK(x->ops->freeargs(x,tcp_bulk_proc,NULL));
+    } else if (r->procedure==17) {
+        ++calls;CHECK(!sendreply(x,tcp_bad_encoder,NULL));err_sys(x);
+    } else if (r->procedure==18) {
+        ++calls;CHECK(sendreply(x,tcp_bulk_proc,NULL));
+    } else {
+        handler(r,x);
+        if(r->procedure==13)tcp_stop_count=calls;
+        if(!strcmp(scenario,"tcp-client") && calls==2)stop();
+    }
+}
+static void tcp_write(int fd,const void *bytes,size_t length) {
+    const unsigned char *p=bytes;
+    while(length) { ssize_t n=send(fd,p,length,MSG_NOSIGNAL);CHECK(n>0);p+=n;length-=(size_t)n; }
+}
+static void tcp_read(int fd,void *bytes,size_t length) {
+    unsigned char *p=bytes;
+    while(length) { struct pollfd q={fd,POLLIN,0};CHECK(poll(&q,1,2000)==1);ssize_t n=recv(fd,p,length,0);CHECK(n>0);p+=n;length-=(size_t)n; }
+}
+static void tcp_fragment(int fd,const void *bytes,size_t length,int last) {
+    uint32_t marker=htonl((uint32_t)length|(last?0x80000000u:0));
+    tcp_write(fd,&marker,4);if(length)tcp_write(fd,bytes,length);
+}
+static size_t tcp_record(int fd,unsigned char *bytes,size_t capacity) {
+    size_t used=0;unsigned fragments=0;
+    for(;;) {
+        uint32_t marker;tcp_read(fd,&marker,4);marker=ntohl(marker);
+        size_t n=marker&0x7fffffffu;CHECK(n<=capacity-used && ++fragments<8192);
+        tcp_read(fd,bytes+used,n);used+=n;if(marker&0x80000000u)return used;
+    }
+}
+static void tcp_expect(int fd,unsigned xid,unsigned status,int value) {
+    unsigned char bytes[128];size_t n=tcp_record(fd,bytes,sizeof(bytes));
+    CHECK(n>=24 && readword(bytes,0)==xid && readword(bytes,4)==1 && readword(bytes,8)==0);
+    CHECK(readword(bytes,12)==0 && readword(bytes,16)==0 && readword(bytes,20)==status);
+    if(value>=0){CHECK(n==(status==2?32u:28u) && readword(bytes,24)==(unsigned)value);if(status==2)CHECK(readword(bytes,28)==(unsigned)value);}
+}
+static size_t tcp_call(unsigned char *bytes,unsigned xid,unsigned procedure) {
+    size_t n=request(bytes,xid,PROGRAM,1,procedure);
+    if(procedure==1){word(bytes,n,35);n+=4;}return n;
+}
+static void tcp_drive(int fd) {
+    struct pollfd p={fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
+    if(!strcmp(scenario,"tcp-poll")) {
+        int count=*(int *)count_slot();struct pollfd *fds=*(struct pollfd **)poll_slot();
+        int ready=poll(fds,(nfds_t)count,1000);CHECK(ready>0);getpoll(fds,ready);
+    } else if(!strcmp(scenario,"tcp-fdset")) {
+        fd_set set;FD_ZERO(&set);FD_SET(fd,&set);getset(&set);
+    } else common(fd);
+}
+static int tcp_accepted(int listener,int previous) {
+    tcp_drive(listener);fd_set set=*(fd_set *)fdset_slot();int result=-1;
+    for(int i=0;i<FD_SETSIZE;++i)if(i!=listener && i!=previous && FD_ISSET(i,&set)) {CHECK(result==-1);result=i;}
+    CHECK(result>=0);return result;
+}
+static int tcp_connect(unsigned short port) {
+    int fd=socket(AF_INET,SOCK_STREAM,0);CHECK(fd>=0);
+    int one=1;CHECK(!setsockopt(fd,IPPROTO_TCP,TCP_NODELAY,&one,sizeof(one)));
+    struct sockaddr_in a={.sin_family=AF_INET,.sin_port=htons(port),.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
+    CHECK(!connect(fd,(void *)&a,sizeof(a)));return fd;
+}
+static void tcp_exchange(unsigned xid,unsigned procedure) {
+    unsigned char bytes[128];size_t n=tcp_call(bytes,xid,procedure);
+    tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,xid,0,procedure==1?42:-1);
+}
+static void *tcp_reader(void *unused) {
+    (void)unused;size_t capacity=tcp_bulk_length+24;unsigned char *bytes=malloc(capacity);CHECK(bytes);
+    CHECK(tcp_record(client,bytes,capacity)==capacity && readword(bytes,20)==0);
+    for(size_t i=0;i<tcp_bulk_length;++i)CHECK(bytes[24+i]==(unsigned char)(i*31+7));
+    free(bytes);atomic_store_explicit(&tcp_reader_done,1,memory_order_release);return NULL;
+}
+static void *tcp_serve(void *p) { common(*(int *)p);return NULL; }
+static void *tcp_run_client(void *unused) {
+    (void)unused;
+    if(!strcmp(scenario,"tcp-client")) {
+        RpcClient *(*constructor)(struct sockaddr_in *,unsigned long,unsigned long,int *,unsigned,unsigned);
+        LOAD(constructor,"clnttcp_create");
+        struct sockaddr_in dest={.sin_family=AF_INET,.sin_port=htons(tcp_listener->port),.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};
+        int fd=-1;RpcClient *c=constructor(&dest,PROGRAM,1,&fd,128,128);CHECK(c && fd>=0);
+        unsigned groups[]={11,12};ClientAuth *a=unixauth("host",1001,1002,2,groups);CHECK(a);c->auth=a;
+        for(unsigned i=0;i<2;++i){unsigned result=0;CHECK(c->ops->call(c,15,xvoid,NULL,xu32,&result,(struct timeval){3,0})==0 && result==2026);}
+        c->ops->destroy(c);a->ops->destroy(a);CHECK(fcntl(fd,F_GETFD)==-1);return NULL;
+    }
+    unsigned char bytes[128];size_t n=tcp_call(bytes,201,1);tcp_fragment(client,bytes,n,1);tcp_expect(client,201,0,42);
+    n=tcp_call(bytes,202,13);tcp_fragment(client,bytes,n,1);tcp_expect(client,202,0,-1);return NULL;
+}
+static void tcp_services(void) {
+    if(!strcmp(scenario,"tcp-invalid")) {
+        CHECK(!fdcreate(-1,0,0) && !tcpcreate(-2,0,0));
+        int d=socket(AF_INET,SOCK_DGRAM,0);CHECK(d>=0);
+        CHECK(!fdcreate(d,0,0) && !tcpcreate(d,0,0) && fcntl(d,F_GETFD)>=0);close(d);
+        d=socket(AF_INET,SOCK_STREAM,0);CHECK(d>=0);CHECK(!fdcreate(d,0,0) && fcntl(d,F_GETFD)>=0);close(d);return;
+    }
+    int connected=!strcmp(scenario,"tcp-fd") || !strcmp(scenario,"tcp-unix-fd") || !strcmp(scenario,"tcp-direct") || !strcmp(scenario,"tcp-backpressure");
+    if(connected) {
+        int service_fd;
+        if(!strcmp(scenario,"tcp-unix-fd") || !strcmp(scenario,"tcp-backpressure")) {
+            int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_STREAM,0,pair));service_fd=pair[0];client=pair[1];
+        } else {
+            int listener=socket(AF_INET,SOCK_STREAM,0);CHECK(listener>=0);
+            struct sockaddr_in a={.sin_family=AF_INET,.sin_addr.s_addr=htonl(INADDR_LOOPBACK)};socklen_t length=sizeof(a);
+            CHECK(!bind(listener,(void *)&a,length) && !listen(listener,4) && !getsockname(listener,(void *)&a,&length));
+            client=tcp_connect(ntohs(a.sin_port));service_fd=accept(listener,NULL,NULL);CHECK(service_fd>=0);close(listener);
+        }
+        int flags=fcntl(service_fd,F_GETFL);tcp_connection=fdcreate(service_fd,128,128);
+        CHECK(tcp_connection && tcp_connection->fd==service_fd && !tcp_connection->port && fcntl(service_fd,F_GETFL)==flags);
+        tcp_fd=service_fd;CHECK(reg(tcp_connection,PROGRAM,1,tcp_handler,0));
+    } else {
+        int supplied=-1;
+        if(!strcmp(scenario,"tcp-supplied"))supplied=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK,0);
+        tcp_listener=tcpcreate(supplied,128,128);CHECK(tcp_listener && tcp_listener->port && tcp_listener->ops && tcp_listener->fd>=0);
+        if(supplied>=0)CHECK(tcp_listener->fd==supplied);
+        CHECK(reg(tcp_listener,PROGRAM,1,tcp_handler,!strcmp(scenario,"tcp-publish")?IPPROTO_TCP:0));
+        if(!strcmp(scenario,"tcp-publish"))mapping_lookup(tcp_listener->port,6);
+        if(!strcmp(scenario,"tcp-client")) {
+            pthread_t t;CHECK(!pthread_create(&t,NULL,tcp_run_client,NULL));run();CHECK(!pthread_join(t,NULL) && calls==2);
+            CHECK(tcp_connection);tcp_fd=tcp_connection->fd;client=-1;
+        } else { client=tcp_connect(tcp_listener->port);tcp_fd=tcp_accepted(tcp_listener->fd,-1); }
+    }
+    int retired=0;
+    if(!strcmp(scenario,"tcp-client")) { /* real native CLIENT exchange completed above */ }
+    else if(!strcmp(scenario,"tcp-direct")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,203,1);tcp_fragment(client,bytes,n,1);
+        struct pollfd p={tcp_fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);
+        Call msg={0};char cred[400],verifier[400];msg.cred.base=cred;msg.verifier.base=verifier;
+        CHECK(tcp_connection->ops->recv(tcp_connection,&msg) && msg.xid==203 && msg.procedure==1);
+        unsigned value=0;CHECK(tcp_connection->ops->getargs(tcp_connection,xu32,&value) && value==35);value+=7;
+        unsigned long reply[12]={0};*(int *)((char *)reply+8)=1;*(void **)((char *)reply+56)=&value;*(Proc *)((char *)reply+64)=xu32;
+        CHECK(tcp_connection->ops->reply(tcp_connection,reply));tcp_expect(client,203,0,42);CHECK(tcp_connection->ops->freeargs(tcp_connection,xu32,&value));
+    } else if(!strcmp(scenario,"tcp-fragments") || !strcmp(scenario,"tcp-empty-fragment") || !strcmp(scenario,"tcp-empty-final")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,204,1);
+        tcp_fragment(client,bytes,2,0);
+        if(!strcmp(scenario,"tcp-empty-fragment"))tcp_fragment(client,NULL,0,0);
+        int final=!strcmp(scenario,"tcp-empty-final");
+        tcp_fragment(client,bytes+2,n-2,!final);if(final)tcp_fragment(client,NULL,0,1);
+        tcp_drive(tcp_fd);tcp_expect(client,204,0,42);CHECK(calls==1);
+    } else if(!strcmp(scenario,"tcp-partial")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes+4,205,1);word(bytes,0,0x80000000u|(unsigned)n);
+        for(size_t i=0;i<n+3;++i){tcp_write(client,bytes+i,1);common(tcp_fd);CHECK(!calls);}
+        tcp_write(client,bytes+n+3,1);tcp_drive(tcp_fd);tcp_expect(client,205,0,42);CHECK(calls==1);
+    } else if(!strcmp(scenario,"tcp-pipeline")) {
+        for(unsigned i=0;i<3;++i){unsigned char bytes[128];size_t n=tcp_call(bytes,206+i,1);tcp_fragment(client,bytes,n,1);}
+        tcp_drive(tcp_fd);for(unsigned i=0;i<3;++i)tcp_expect(client,206+i,0,42);CHECK(calls==3);
+    } else if(!strcmp(scenario,"tcp-string")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,210,2);word(bytes,n,10);memcpy(bytes+n+4,"native-rpc",10);memset(bytes+n+14,0,2);
+        tcp_fragment(client,bytes,n+16,1);tcp_drive(tcp_fd);n=tcp_record(client,bytes,sizeof(bytes));CHECK(n==40 && readword(bytes,24)==10 && !memcmp(bytes+28,"native-rpc",10));
+    } else if(!strcmp(scenario,"tcp-large")) {
+        tcp_bulk_length=256*1024;size_t n=tcp_bulk_length+40;unsigned char *bytes=malloc(n);CHECK(bytes);request(bytes,211,PROGRAM,1,16);
+        for(size_t i=0;i<tcp_bulk_length;++i)bytes[40+i]=(unsigned char)(i*31+7);
+        tcp_fragment(client,bytes,57,0);tcp_fragment(client,bytes+57,n-57,1);
+        /* Bounded native turns need not consume a large record in one call. */
+        for(unsigned i=0;i<100 && !calls;++i)tcp_drive(tcp_fd);
+        CHECK(calls==1 && tcp_encodes==1);CHECK(tcp_record(client,bytes,n)==tcp_bulk_length+24);
+        for(size_t i=0;i<tcp_bulk_length;++i)CHECK(bytes[24+i]==(unsigned char)(i*31+7));
+        free(bytes);
+    } else if(!strcmp(scenario,"tcp-errors")) {
+        unsigned char bytes[128];size_t n=request(bytes,212,PROGRAM+1,1,0);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,212,1,-1);
+        n=request(bytes,213,PROGRAM,2,0);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,213,2,1);
+        n=tcp_call(bytes,214,3);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,214,3,-1);
+    } else if(!strcmp(scenario,"tcp-auth")) {
+        unsigned char bytes[128];request(bytes,215,PROGRAM,1,9);word(bytes,24,1);word(bytes,28,32);
+        unsigned body[]={1234,4,0x686f7374,1001,1002,2,11,12};for(unsigned i=0;i<8;++i)word(bytes,32+4*i,body[i]);word(bytes,64,0);word(bytes,68,0);
+        tcp_fragment(client,bytes,72,1);tcp_drive(tcp_fd);tcp_expect(client,215,0,-1);
+    } else if(!strcmp(scenario,"tcp-run")) {
+        pthread_t t;CHECK(!pthread_create(&t,NULL,tcp_run_client,NULL));run();CHECK(!pthread_join(t,NULL) && calls==2);
+    } else if(!strcmp(scenario,"tcp-fairness")) {
+        int other=tcp_connect(tcp_listener->port);int second=tcp_accepted(tcp_listener->fd,tcp_fd);
+        unsigned char bytes[128];
+        for(unsigned i=0;i<40;++i){size_t n=tcp_call(bytes,300+i,1);tcp_fragment(client,bytes,n,1);}
+        size_t n=tcp_call(bytes,340,13);tcp_fragment(other,bytes,n,1);run();
+        CHECK(tcp_stop_count<=33);tcp_expect(other,340,0,-1);
+        for(unsigned i=0;i<100 && calls<41;++i)common(tcp_fd);
+        CHECK(calls==41);for(unsigned i=0;i<40;++i)tcp_expect(client,300+i,0,42);
+        close(other);common(second);CHECK(fcntl(second,F_GETFD)==-1);
+    } else if(!strcmp(scenario,"tcp-backpressure")) {
+        int small=4096;CHECK(!setsockopt(tcp_fd,SOL_SOCKET,SO_SNDBUF,&small,sizeof(small)));
+        tcp_bulk_length=sizeof(tcp_bulk);for(size_t i=0;i<tcp_bulk_length;++i)tcp_bulk[i]=(unsigned char)(i*31+7);
+        unsigned char bytes[128];size_t n=tcp_call(bytes,216,18);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);CHECK(calls==1 && tcp_encodes==1);
+        int count=*(int *)count_slot();struct pollfd *fds=*(struct pollfd **)poll_slot();int writing=0;
+        for(int i=0;i<count;++i)if(fds[i].fd==tcp_fd)writing=!!(fds[i].events&POLLOUT);
+        CHECK(writing);
+        pthread_t t;CHECK(!pthread_create(&t,NULL,tcp_reader,NULL));
+        for(unsigned i=0;i<2000 && !atomic_load_explicit(&tcp_reader_done,memory_order_acquire);++i){int ready=poll(fds,(nfds_t)count,5);CHECK(ready>=0);if(ready)getpoll(fds,ready);}
+        CHECK(atomic_load_explicit(&tcp_reader_done,memory_order_acquire) && !pthread_join(t,NULL));CHECK(calls==1 && tcp_encodes==1);tcp_exchange(217,1);
+    } else if(!strcmp(scenario,"tcp-child")) {
+        tcp_exchange(218,1);CHECK(tcp_connection && tcp_listener);int fd=tcp_listener->fd;
+        tcp_listener->ops->destroy(tcp_listener);tcp_listener=NULL;CHECK(fcntl(fd,F_GETFD)==-1);tcp_exchange(219,1);
+    } else if(!strcmp(scenario,"tcp-destroy")) {
+        tcp_exchange(220,10);CHECK(fcntl(tcp_fd,F_GETFD)==-1);retired=1;tcp_connection=NULL;
+    } else if(!strcmp(scenario,"tcp-callback-exit")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,221,12);tcp_fragment(client,bytes,n,1);
+        struct pollfd p={tcp_fd,POLLIN,0};CHECK(poll(&p,1,1000)==1);pthread_t t;void *result;
+        CHECK(!pthread_create(&t,NULL,tcp_serve,&tcp_fd));CHECK(!pthread_join(t,&result));CHECK(result==(void *)19 && cleaned==1);
+        tcp_expect(client,221,0,-1);tcp_exchange(222,1);
+    } else if(!strcmp(scenario,"tcp-encode-failure")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,223,17);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,223,5,-1);CHECK(tcp_encodes==1);tcp_exchange(224,1);
+    } else if(!strcmp(scenario,"tcp-malformed") || !strcmp(scenario,"tcp-limit") || !strcmp(scenario,"tcp-truncated") || !strcmp(scenario,"tcp-fragment-limit")) {
+        unsigned char bytes[128]={0};
+        if(!strcmp(scenario,"tcp-malformed"))tcp_fragment(client,bytes,11,1);
+        else if(!strcmp(scenario,"tcp-limit")){word(bytes,0,0x81000001u);tcp_write(client,bytes,4);}
+        else if(!strcmp(scenario,"tcp-truncated")){tcp_write(client,bytes,2);CHECK(!shutdown(client,SHUT_WR));}
+        else for(unsigned i=0;i<4097;++i)tcp_fragment(client,NULL,0,0);
+        for(unsigned i=0;i<100 && fcntl(tcp_fd,F_GETFD)>=0;++i)tcp_drive(tcp_fd);
+        CHECK(!calls && fcntl(tcp_fd,F_GETFD)==-1);retired=1;tcp_connection=NULL;
+    } else { tcp_exchange(225,1);tcp_exchange(226,1);CHECK(calls==2); }
+    if(client>=0)close(client);
+    if(!retired){common(tcp_fd);CHECK(fcntl(tcp_fd,F_GETFD)==-1);}
+    if(tcp_listener){int fd=tcp_listener->fd;tcp_listener->ops->destroy(tcp_listener);CHECK(fcntl(fd,F_GETFD)==-1);tcp_listener=NULL;}
+    unreg(PROGRAM,1);
+    if(!strcmp(scenario,"tcp-publish"))mapping_lookup(0,6);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
+    if (!strncmp(scenario,"tcp-",4)) { tcp_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"register-",9)) { simple_services();printf("PASS %s\n",scenario);return 0; }
     int borrowed=-1;
     if (!strcmp(scenario,"borrowed")) {

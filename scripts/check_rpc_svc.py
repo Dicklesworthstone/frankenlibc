@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute real glibc-shaped RPC service exports, using isolated UDP processes."""
+"""Execute real glibc-shaped RPC services in isolated UDP/TCP processes."""
 import argparse
 import hashlib
 import json
@@ -17,12 +17,21 @@ HOST = ['transport', 'dispatch', 'fdset', 'poll', 'mask', 'string', 'errors',
         'register-multi', 'register-string', 'register-decoder-error', 'register-void',
         'register-no-reply', 'register-zero', 'register-denied', 'register-reentry',
         'register-unknown', 'register-encode-error']
+HOST += ['tcp-listener', 'tcp-supplied', 'tcp-fd', 'tcp-unix-fd', 'tcp-direct',
+         'tcp-fragments', 'tcp-pipeline', 'tcp-string', 'tcp-large', 'tcp-errors',
+         'tcp-auth', 'tcp-run', 'tcp-client', 'tcp-child', 'tcp-poll', 'tcp-fdset',
+         'tcp-publish', 'tcp-empty-final']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
 OWNED = ['short-args', 'destroy-dispatch', 'callback-exit', 'malformed', 'oversized',
          'auth-bounds', 'register-invalid', 'register-partial', 'register-callback-exit',
          'register-decode']
+OWNED += ['tcp-invalid', 'tcp-partial', 'tcp-backpressure', 'tcp-destroy',
+          'tcp-callback-exit', 'tcp-encode-failure', 'tcp-malformed', 'tcp-limit',
+          'tcp-truncated', 'tcp-fragment-limit', 'tcp-fairness', 'tcp-empty-fragment']
+# glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
+# failing host probe as an explicit native extension, rather than parity proof.
 
 
 class RegistrationPeer:
@@ -63,8 +72,9 @@ class RegistrationPeer:
                     raise ValueError(f'portmapper envelope {data}')
                 self.requests.append(list(data))
                 key = (target, revision)
+                expected_protocol = 6 if self.case == 'tcp-publish' else 17
                 if procedure == 1:
-                    if protocol != 17 or not 0 < port <= 65535:
+                    if protocol != expected_protocol or not 0 < port <= 65535:
                         raise ValueError(f'invalid publication {data}')
                     accepted = target != 0x31234568
                     if accepted:
@@ -79,7 +89,7 @@ class RegistrationPeer:
                     self.mappings.pop(key, None)
                     result = 1
                 else:
-                    if protocol != 17 or port != 0:
+                    if protocol != expected_protocol or port != 0:
                         raise ValueError(f'invalid lookup {data}')
                     result = self.mappings.get(key, 0)
                 self.socket.sendto(struct.pack('!7I', xid, 1, 0, 0, 0, 0, result), peer)
@@ -94,7 +104,7 @@ class RegistrationPeer:
         self.socket.close()
         accepted = sum(r[5] == 1 and r[10] == 0x31234567 for r in self.requests)
         fatal = self.case in ('register-unknown', 'register-encode-error')
-        expected = (1 if fatal else 4 if self.case == 'register-multi' else 3
+        expected = (1 if fatal or self.case == 'tcp-publish' else 4 if self.case == 'register-multi' else 3
                     if self.case in ('register-callback-exit', 'register-reentry') else 2)
         expected_mappings = ({(0x31234567, 1): self.requests[1][13]}
                              if fatal and len(self.requests) > 1 else {})
@@ -128,7 +138,8 @@ def main():
         name = f'{mode}-{case}'
         peer = None
         try:
-            if case.startswith('register-') and case not in ('register-zero', 'register-invalid'):
+            if ((case.startswith('register-') and case not in ('register-zero', 'register-invalid'))
+                    or case == 'tcp-publish'):
                 peer = RegistrationPeer(case)
             p = subprocess.run([str(fixture), case], env=env, capture_output=True, timeout=12)
             code, stdout, stderr = p.returncode, p.stdout, p.stderr
