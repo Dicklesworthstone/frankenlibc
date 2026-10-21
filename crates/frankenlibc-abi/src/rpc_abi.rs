@@ -32,7 +32,7 @@ pub use rpc_svc::{
     _authenticate, registerrpc, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll,
     svc_getreqset, svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth,
     svcerr_decode, svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr,
-    svcerr_weakauth, svcudp_bufcreate, svcudp_create, svcudp_enablecache,
+    svcerr_weakauth, svcfd_create, svctcp_create, svcudp_bufcreate, svcudp_create, svcudp_enablecache,
 };
 
 /// Read a user-supplied C string pointer with a known-region bound so a
@@ -2564,8 +2564,6 @@ use frankenlibc_core::rpc::status_message as rpc_errstr;
 // --- SVC transport creation (non-UDP stubs) ---
 
 rpc_stub!(svcraw_create() -> *mut c_void);
-rpc_stub!(svcfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
-rpc_stub!(svctcp_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 rpc_stub!(svcunix_create(sock: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 rpc_stub!(svcunixfd_create(fd: c_int, sendsize: c_uint, recvsize: c_uint) -> *mut c_void);
 
