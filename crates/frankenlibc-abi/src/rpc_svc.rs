@@ -170,7 +170,7 @@ unsafe fn authenticate_request(
             }
             let destination = request.cooked.cast::<CookedCredential>();
             // SAFETY: the caller provides the documented aligned cooked area.
-            // Every byte is initialized, and both pointers target that area.
+            // All fields are initialized, and both pointers target that area.
             unsafe {
                 destination.write(zeroed());
                 let cooked = &mut *destination;
