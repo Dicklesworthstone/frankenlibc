@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute real glibc-shaped RPC services in isolated UDP/TCP processes."""
+"""Execute real glibc-shaped RPC services in isolated UDP/TCP/Unix processes."""
 import argparse
 import hashlib
 import json
@@ -21,6 +21,9 @@ HOST += ['tcp-listener', 'tcp-supplied', 'tcp-fd', 'tcp-unix-fd', 'tcp-direct',
          'tcp-fragments', 'tcp-pipeline', 'tcp-string', 'tcp-large', 'tcp-errors',
          'tcp-auth', 'tcp-run', 'tcp-client', 'tcp-child', 'tcp-poll', 'tcp-fdset',
          'tcp-publish', 'tcp-empty-final']
+HOST += ['unix-fd', 'unix-listener', 'unix-supplied', 'unix-prebound',
+         'unix-direct', 'unix-credentials', 'unix-auth', 'unix-fragments',
+         'unix-pipeline', 'unix-child', 'unix-peer-pid']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
@@ -31,6 +34,9 @@ OWNED += ['tcp-invalid', 'tcp-partial', 'tcp-backpressure', 'tcp-destroy',
           'tcp-callback-exit', 'tcp-encode-failure', 'tcp-malformed', 'tcp-limit',
           'tcp-truncated', 'tcp-fragment-limit', 'tcp-fairness', 'tcp-empty-fragment',
           'tcp-rpcversion']
+OWNED += ['unix-invalid', 'unix-path-bounds', 'unix-rights',
+          'unix-rights-truncated', 'unix-partial', 'unix-destroy',
+          'unix-identity-switch', 'unix-backpressure']
 # glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
 # failing host probe as an explicit native extension, rather than parity proof.
 

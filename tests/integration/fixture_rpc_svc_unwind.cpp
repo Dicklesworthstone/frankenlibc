@@ -99,8 +99,9 @@ static void expect_reply(int client, unsigned xid) {
     for (unsigned i=0;i<7;++i) CHECK(ntohl(words[i])==expected[i]);
 }
 int main(int argc,char **argv) {
-    CHECK(argc==2);stream_transport=std::strncmp(argv[1],"tcp-",4)==0;scenario=argv[1]+(stream_transport?4:0);
-    if(stream_transport)LOAD(create,"svcfd_create");else LOAD(create,"svcudp_bufcreate");
+    CHECK(argc==2);bool local=std::strncmp(argv[1],"unix-",5)==0;
+    stream_transport=local || std::strncmp(argv[1],"tcp-",4)==0;scenario=argv[1]+(local?5:stream_transport?4:0);
+    if(local)LOAD(create,"svcunixfd_create");else if(stream_transport)LOAD(create,"svcfd_create");else LOAD(create,"svcudp_bufcreate");
     LOAD(reg,"svc_register"); LOAD(unreg,"svc_unregister");
     LOAD(common,"svc_getreq_common"); LOAD(sendreply,"svc_sendreply");
     LOAD(xu32,"xdr_u_int"); LOAD(enablecache,"svcudp_enablecache");

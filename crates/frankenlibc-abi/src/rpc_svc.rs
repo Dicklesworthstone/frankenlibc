@@ -1,4 +1,4 @@
-//! Native glibc Sun RPC UDP services. RFC 5531 envelopes live in safe core.
+//! Native glibc Sun RPC datagram and stream services. RFC 5531 lives in safe core.
 //!
 //! Registry locks never cover callbacks or socket I/O. A registry Arc retains
 //! each transport while a dispatch/XDR operation runs; destroying it inside a
@@ -16,7 +16,7 @@ use frankenlibc_core::rpc::wire::{
 use frankenlibc_core::syscall as raw;
 use std::cell::UnsafeCell;
 use std::ffi::{c_int, c_uint, c_void};
-use std::mem::{size_of, zeroed};
+use std::mem::{size_of, size_of_val, zeroed};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -90,6 +90,7 @@ const _: () = {
     assert!(std::mem::offset_of!(CallMessage, credential) == 48);
     assert!(std::mem::offset_of!(CallMessage, verifier) == 72);
     assert!(size_of::<CookedCredential>() <= 400);
+    assert!(size_of::<UnixCredential>() == 32);
 };
 
 /// Authenticate the asserted AUTH_NONE/AUTH_SYS identity without host RPC.
@@ -204,6 +205,28 @@ struct Pending {
     bytes: Vec<u8>,
     position: usize,
 }
+/// Linux LP64 CMSG_SPACE(sizeof(ucred)), including initialized tail padding.
+/// This is the local Unix verifier, not an XDR AUTH_SYS credential.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct UnixCredential {
+    length: usize,
+    level: c_int,
+    kind: c_int,
+    pid: c_int,
+    uid: u32,
+    gid: u32,
+    padding: u32,
+}
+impl UnixCredential {
+    fn verifier(&self) -> OpaqueAuth {
+        OpaqueAuth {
+            oa_flavor: 1,
+            oa_base: (self as *const Self).cast_mut().cast(),
+            oa_length: size_of::<Self>() as u32,
+        }
+    }
+}
 struct StreamIo {
     decoder: RecordDecoder,
     bytes: Vec<u8>,
@@ -211,6 +234,9 @@ struct StreamIo {
     end: usize,
     send_hint: usize,
     pending: Option<Pending>,
+    chunk_credential: Option<UnixCredential>,
+    record_credential: Option<UnixCredential>,
+    credential: Option<UnixCredential>,
 }
 struct Io {
     input: Vec<u8>,
@@ -226,6 +252,7 @@ struct Transport {
     io: UnsafeCell<Io>,
     fd: c_int,
     kind: Kind,
+    unix: bool,
     operation: AtomicBool,
     dispatching: AtomicBool,
     destroyed: AtomicBool,
@@ -474,6 +501,7 @@ pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut
             public: UnsafeCell::new(public),
             fd,
             kind: Kind::Datagram,
+            unix: false,
             io: UnsafeCell::new(Io {
                 input,
                 output,
@@ -543,14 +571,22 @@ fn install(t: Arc<Transport>) -> *mut c_void {
     x.cast()
 }
 
-unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bool) -> *mut c_void {
+unsafe fn create_stream(
+    sock: c_int,
+    send: c_uint,
+    receive: c_uint,
+    listener: bool,
+    unix: bool,
+    path: Option<&libc::sockaddr_un>,
+) -> *mut c_void {
     if send as usize > MAX_STREAM || receive as usize > MAX_STREAM {
         error(libc::EINVAL);
         return ptr::null_mut();
     }
     let created = listener && sock == -1;
     let fd = if created {
-        match raw::sys_socket(libc::AF_INET, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) {
+        let family = if unix { libc::AF_UNIX } else { libc::AF_INET };
+        match raw::sys_socket(family, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) {
             Ok(fd) => fd,
             Err(e) => {
                 error(e);
@@ -589,7 +625,32 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
         let (mut address, mut peer): (libc::sockaddr_in, libc::sockaddr_storage) =
             unsafe { zeroed() };
         let mut peer_length = size_of::<libc::sockaddr_storage>() as u32;
-        let (port, stream) = if listener {
+        let (port, stream) = if listener && unix {
+            let mut length = size_of::<libc::sockaddr_storage>() as u32;
+            // SAFETY: peer is owned storage with capacity described by length.
+            unsafe {
+                raw::sys_getsockname(
+                    fd,
+                    (&mut peer as *mut libc::sockaddr_storage).cast(),
+                    &mut length,
+                )
+            }?;
+            if peer.ss_family as c_int != libc::AF_UNIX {
+                return Err(libc::EAFNOSUPPORT);
+            }
+            if length <= size_of::<libc::sa_family_t>() as u32 {
+                let path = path.ok_or(libc::EINVAL)?;
+                // SAFETY: path is an initialized bounded Unix socket address.
+                unsafe {
+                    raw::sys_bind(
+                        fd,
+                        (path as *const libc::sockaddr_un).cast(),
+                        size_of::<libc::sockaddr_un>() as u32,
+                    )
+                }?;
+            }
+            (0, None)
+        } else if listener {
             let mut length = size_of::<libc::sockaddr_in>() as u32;
             // SAFETY: the kernel receives owned address storage of this length.
             unsafe {
@@ -626,6 +687,9 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
                     &mut peer_length,
                 )
             }?;
+            if unix && peer.ss_family as c_int != libc::AF_UNIX {
+                return Err(libc::EAFNOSUPPORT);
+            }
             let receive = if receive == 0 {
                 DEFAULT_BUFFER
             } else {
@@ -644,6 +708,9 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
                         send as usize
                     },
                     pending: None,
+                    chunk_credential: None,
+                    record_credential: None,
+                    credential: None,
                 }),
             )
         };
@@ -658,6 +725,19 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
         };
         let input = Vec::new();
         let output = buffer(DEFAULT_BUFFER)?;
+        if unix {
+            let enabled = 1i32;
+            // SAFETY: the option reads the owned initialized integer only.
+            unsafe {
+                raw::sys_setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_PASSCRED,
+                    (&enabled as *const i32).cast(),
+                    size_of::<i32>(),
+                )
+            }?;
+        }
         if listener {
             raw::sys_listen(fd, libc::SOMAXCONN)?;
         }
@@ -692,6 +772,7 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
             } else {
                 Kind::Stream
             },
+            unix,
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
             destroyed: AtomicBool::new(false),
@@ -724,7 +805,7 @@ unsafe fn create_stream(sock: c_int, send: c_uint, receive: c_uint, listener: bo
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn svctcp_create(sock: c_int, send: c_uint, receive: c_uint) -> *mut c_void {
     // SAFETY: descriptor inspection and ownership transfer are handled above.
-    unsafe { create_stream(sock, send, receive, true) }
+    unsafe { create_stream(sock, send, receive, true, false, None) }
 }
 
 /// Take ownership of a connected stream socket without changing its file flags.
@@ -736,7 +817,69 @@ pub unsafe extern "C" fn svctcp_create(sock: c_int, send: c_uint, receive: c_uin
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn svcfd_create(fd: c_int, send: c_uint, receive: c_uint) -> *mut c_void {
     // SAFETY: failure does not consume the caller descriptor.
-    unsafe { create_stream(fd, send, receive, false) }
+    unsafe { create_stream(fd, send, receive, false, false, None) }
+}
+
+/// Create a credentialized local stream service. Successful construction owns
+/// the descriptor; failed construction leaves a supplied descriptor open.
+///
+/// # Safety
+/// The connected Unix socket must not be concurrently consumed or reconfigured.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcunixfd_create(fd: c_int, send: c_uint, receive: c_uint) -> *mut c_void {
+    // SAFETY: descriptor inspection and ownership are handled by create_stream.
+    unsafe { create_stream(fd, send, receive, false, true, None) }
+}
+
+/// Create a Unix RPC listener at a bounded filesystem pathname, or adopt a
+/// supplied Unix listener. Destroy closes the descriptor and leaves the socket
+/// pathname in place. Existing bound descriptors retain their address.
+///
+/// # Safety
+/// path points to a NUL-terminated pathname; a supplied socket has no competing
+/// consumer. Success transfers descriptor ownership to the service.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcunix_create(
+    fd: c_int,
+    send: c_uint,
+    receive: c_uint,
+    path: *const libc::c_char,
+) -> *mut c_void {
+    // SAFETY: zero initializes the complete address and its trailing bytes.
+    let mut address: libc::sockaddr_un = unsafe { zeroed() };
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    if path.is_null() {
+        error(libc::EFAULT);
+        return ptr::null_mut();
+    }
+    for index in 0..address.sun_path.len() {
+        let mut byte = 0u8;
+        // SAFETY: the importer fault-checks one user byte into owned storage;
+        // wrapping_add cannot itself dereference or overflow a Rust reference.
+        if unsafe {
+            crate::io_abi::iov_snapshot::copy_user_bytes(
+                path.cast::<u8>().wrapping_add(index),
+                &mut byte,
+                1,
+            )
+        }
+        .is_err()
+        {
+            error(libc::EFAULT);
+            return ptr::null_mut();
+        }
+        address.sun_path[index] = byte as libc::c_char;
+        if byte == 0 {
+            if index == 0 {
+                error(libc::EINVAL);
+                return ptr::null_mut();
+            }
+            // SAFETY: the bounded initialized address survives construction.
+            return unsafe { create_stream(fd, send, receive, true, true, Some(&address)) };
+        }
+    }
+    error(libc::ENAMETOOLONG);
+    ptr::null_mut()
 }
 
 unsafe extern "C" fn destroy(x: *mut SvcXprt) {
@@ -772,6 +915,134 @@ fn stream_failure(t: &Transport, code: c_int) -> Receive {
 
 // The operation gate owns the stream queue. Short writes keep their exact
 // offset; EAGAIN schedules POLLOUT and never re-executes an application callback.
+fn unix_send(fd: c_int, bytes: &[u8]) -> Result<isize, c_int> {
+    let mut credential = UnixCredential {
+        length: size_of::<libc::cmsghdr>() + size_of::<libc::ucred>(),
+        level: libc::SOL_SOCKET,
+        kind: libc::SCM_CREDENTIALS,
+        pid: raw::sys_getpid(),
+        uid: raw::sys_geteuid(),
+        gid: raw::sys_getegid(),
+        padding: 0,
+    };
+    let mut vector = libc::iovec {
+        iov_base: bytes.as_ptr().cast_mut().cast(),
+        iov_len: bytes.len(),
+    };
+    // SAFETY: zero is valid for optional address/control fields in msghdr.
+    let mut message: libc::msghdr = unsafe { zeroed() };
+    message.msg_iov = &mut vector;
+    message.msg_iovlen = 1;
+    message.msg_control = (&mut credential as *mut UnixCredential).cast();
+    message.msg_controllen = size_of::<UnixCredential>();
+    // SAFETY: message and its referenced initialized buffers outlive the call.
+    unsafe {
+        raw::sys_sendmsg(
+            fd,
+            (&message as *const libc::msghdr).cast(),
+            libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+        )
+    }
+}
+
+fn unix_receive(fd: c_int, bytes: &mut [u8]) -> Result<(isize, UnixCredential), c_int> {
+    // Extra room lets us close installed SCM_RIGHTS descriptors even when the
+    // sender overflows this bounded control buffer. Linux closes the excess.
+    let mut control = [0u64; 32];
+    let mut vector = libc::iovec {
+        iov_base: bytes.as_mut_ptr().cast(),
+        iov_len: bytes.len(),
+    };
+    // SAFETY: zero is valid for optional msghdr fields.
+    let mut message: libc::msghdr = unsafe { zeroed() };
+    message.msg_iov = &mut vector;
+    message.msg_iovlen = 1;
+    message.msg_control = control.as_mut_ptr().cast();
+    message.msg_controllen = size_of_val(&control);
+    // SAFETY: all writable ranges are initialized, owned, and nonoverlapping.
+    let count = unsafe {
+        raw::sys_recvmsg(
+            fd,
+            (&mut message as *mut libc::msghdr).cast(),
+            libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC,
+        )
+    }?;
+    let length = message.msg_controllen.min(size_of_val(&control));
+    let mut offset = 0;
+    let mut credential = None;
+    let mut invalid = message.msg_flags & (libc::MSG_CTRUNC | libc::MSG_TRUNC) != 0;
+    while offset + size_of::<libc::cmsghdr>() <= length {
+        // SAFETY: offset and header size are bounded by the kernel output.
+        let header = unsafe {
+            ptr::read_unaligned(
+                control
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<libc::cmsghdr>(),
+            )
+        };
+        let header_size = size_of::<libc::cmsghdr>();
+        if header.cmsg_len < header_size || header.cmsg_len > length - offset {
+            invalid = true;
+            break;
+        }
+        let data_length = header.cmsg_len - header_size;
+        // SAFETY: the validated cmsg contains this entire payload range.
+        let data = unsafe { control.as_ptr().cast::<u8>().add(offset + header_size) };
+        if header.cmsg_level == libc::SOL_SOCKET && header.cmsg_type == libc::SCM_RIGHTS {
+            invalid = true;
+            for index in 0..data_length / size_of::<c_int>() {
+                // SAFETY: every full descriptor word lies in the validated cmsg.
+                let received = unsafe {
+                    ptr::read_unaligned(data.add(index * size_of::<c_int>()).cast::<c_int>())
+                };
+                let _ = raw::sys_close(received);
+            }
+        } else if header.cmsg_level == libc::SOL_SOCKET
+            && header.cmsg_type == libc::SCM_CREDENTIALS
+            && data_length == size_of::<libc::ucred>()
+            && credential.is_none()
+        {
+            // SAFETY: payload length is exactly one kernel-written ucred.
+            let identity = unsafe { ptr::read_unaligned(data.cast::<libc::ucred>()) };
+            credential = Some(UnixCredential {
+                length: header.cmsg_len,
+                level: header.cmsg_level,
+                kind: header.cmsg_type,
+                pid: identity.pid,
+                uid: identity.uid,
+                gid: identity.gid,
+                padding: 0,
+            });
+        } else {
+            invalid = true;
+        }
+        offset += (header.cmsg_len + size_of::<usize>() - 1) & !(size_of::<usize>() - 1);
+    }
+    if invalid {
+        return Err(libc::EPROTO);
+    }
+    if count == 0 {
+        // EOF has no ancillary identity; the caller only inspects the count.
+        return Ok((
+            0,
+            UnixCredential {
+                length: 0,
+                level: 0,
+                kind: 0,
+                pid: 0,
+                uid: 0,
+                gid: 0,
+                padding: 0,
+            },
+        ));
+    }
+    credential
+        .map(|identity| (count, identity))
+        .ok_or(libc::EPROTO)
+}
+
 fn flush_stream(t: &Transport, io: &mut Io) -> bool {
     let stream = io.stream.as_mut().unwrap();
     for _ in 0..32 {
@@ -780,15 +1051,20 @@ fn flush_stream(t: &Transport, io: &mut Io) -> bool {
             return true;
         };
         // SAFETY: initialized owned reply bytes remain alive through send.
-        let result = unsafe {
-            raw::sys_sendto(
-                t.fd,
-                pending.bytes[pending.position..].as_ptr(),
-                pending.bytes.len() - pending.position,
-                libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
-                ptr::null(),
-                0,
-            )
+        let result = if t.unix {
+            unix_send(t.fd, &pending.bytes[pending.position..])
+        } else {
+            // SAFETY: the pending initialized reply remains owned by this gate.
+            unsafe {
+                raw::sys_sendto(
+                    t.fd,
+                    pending.bytes[pending.position..].as_ptr(),
+                    pending.bytes.len() - pending.position,
+                    libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+                    ptr::null(),
+                    0,
+                )
+            }
         };
         match result {
             Ok(0) => {
@@ -837,15 +1113,15 @@ fn queue_stream(t: &Transport, io: &mut Io, mut bytes: Vec<u8>) -> c_int {
 
 fn receive_stream(t: &Transport) -> Receive {
     if let Kind::Listener { send, receive } = t.kind {
-        // SAFETY: zero initializes valid writable IPv4 output storage.
-        let mut peer: libc::sockaddr_in = unsafe { zeroed() };
-        let mut length = size_of::<libc::sockaddr_in>() as u32;
+        // SAFETY: zero initializes writable storage for IPv4 and Unix peers.
+        let mut peer: libc::sockaddr_storage = unsafe { zeroed() };
+        let mut length = size_of::<libc::sockaddr_storage>() as u32;
         // SAFETY: listener is nonblocking after ownership transfers; accepted
         // sockets are owned here until construction commits or closes them.
         let accepted = unsafe {
             raw::sys_accept4(
                 t.fd,
-                (&mut peer as *mut libc::sockaddr_in).cast(),
+                (&mut peer as *mut libc::sockaddr_storage).cast(),
                 &mut length,
                 libc::SOCK_CLOEXEC,
             )
@@ -853,7 +1129,7 @@ fn receive_stream(t: &Transport) -> Receive {
         match accepted {
             Ok(fd) => {
                 // SAFETY: the newly accepted socket has no competing consumer.
-                if unsafe { create_stream(fd, send, receive, false) }.is_null() {
+                if unsafe { create_stream(fd, send, receive, false, t.unix, None) }.is_null() {
                     let _ = raw::sys_close(fd);
                 }
             }
@@ -876,6 +1152,15 @@ fn receive_stream(t: &Transport) -> Receive {
     for _ in 0..32 {
         let stream = io.stream.as_mut().unwrap();
         if stream.start != stream.end {
+            if t.unix {
+                if let Some(previous) = stream.record_credential {
+                    if Some(previous) != stream.chunk_credential {
+                        return stream_failure(t, libc::EPROTO);
+                    }
+                } else {
+                    stream.record_credential = stream.chunk_credential;
+                }
+            }
             let used = match stream
                 .decoder
                 .consume(&stream.bytes[stream.start..stream.end])
@@ -888,6 +1173,7 @@ fn receive_stream(t: &Transport) -> Receive {
                 .store(stream.start != stream.end, Ordering::Release);
         }
         if let Some(record) = stream.decoder.take_record() {
+            stream.credential = stream.record_credential.take();
             io.input = record;
             return match service::decode_call(&io.input) {
                 Ok(call) => {
@@ -916,16 +1202,25 @@ fn receive_stream(t: &Transport) -> Receive {
             continue;
         }
         // SAFETY: receive touches only the initialized owned scratch buffer.
-        match unsafe {
-            raw::sys_recvfrom(
-                t.fd,
-                stream.bytes.as_mut_ptr(),
-                stream.bytes.len(),
-                libc::MSG_DONTWAIT,
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        } {
+        let received = if t.unix {
+            unix_receive(t.fd, &mut stream.bytes).map(|(count, credential)| {
+                stream.chunk_credential = Some(credential);
+                count
+            })
+        } else {
+            // SAFETY: the operation gate owns this initialized scratch buffer.
+            unsafe {
+                raw::sys_recvfrom(
+                    t.fd,
+                    stream.bytes.as_mut_ptr(),
+                    stream.bytes.len(),
+                    libc::MSG_DONTWAIT,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            }
+        };
+        match received {
             Ok(0) => {
                 let code = if stream.decoder.finish().is_err() {
                     libc::EPROTO
@@ -1097,9 +1392,39 @@ unsafe extern "C-unwind" fn recv(x: *mut SvcXprt, message: *mut c_void) -> c_int
             super::XDR_DECODE,
         )
     };
-    // Native xdr_callmsg respects caller-provided credential buffers and allocates
-    // with the native XDR allocator when the public message uses null pointers.
-    unsafe { super::xdr_callmsg((&mut xdr as *mut Xdr).cast(), message) }
+    // Unix replaces the wire verifier with kernel credentials. Decode its wire
+    // body into scratch so a null caller pointer cannot allocate a lost buffer.
+    let mut wire_verifier = [0u8; 400];
+    let local = io
+        .stream
+        .as_ref()
+        .and_then(|stream| stream.credential.as_ref());
+    let original = if local.is_some() {
+        // SAFETY: the caller supplies a live rpc_msg; scratch survives decoding.
+        unsafe {
+            let verifier = &mut (*message.cast::<CallMessage>()).verifier;
+            let original = ptr::read(verifier);
+            verifier.oa_base = wire_verifier.as_mut_ptr().cast();
+            Some(original)
+        }
+    } else {
+        None
+    };
+    // Native xdr_callmsg respects caller credential buffers and allocates using
+    // the native XDR allocator when that public credential pointer is null.
+    let result = unsafe { super::xdr_callmsg((&mut xdr as *mut Xdr).cast(), message) };
+    if let Some(credential) = local {
+        // SAFETY: xdr_callmsg succeeded into the caller's live rpc_msg. The
+        // credential resides in the retained transport until its next receive.
+        unsafe {
+            (*message.cast::<CallMessage>()).verifier = if result != 0 {
+                credential.verifier()
+            } else {
+                original.unwrap()
+            };
+        }
+    }
+    result
 }
 
 unsafe extern "C" fn stat(x: *mut SvcXprt) -> c_int {
@@ -2007,6 +2332,11 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
                 oa_base: verifier.as_ptr().cast_mut().cast(),
                 oa_length: verifier.len() as u32,
             };
+            let verifier = io
+                .stream
+                .as_ref()
+                .and_then(|stream| stream.credential.as_ref())
+                .map_or(verifier, UnixCredential::verifier);
             // SAFETY: decoded ranges are bounded by the retained input, the
             // operation gate owns x, and cooked remains alive through dispatch.
             let status = unsafe { authenticate_request(&mut request, credential, verifier) };

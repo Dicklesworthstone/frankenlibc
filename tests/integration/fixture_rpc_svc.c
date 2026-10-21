@@ -21,6 +21,9 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <dirent.h>
 #include <unistd.h>
 
 typedef struct { int flavor; char *base; unsigned length; } Auth;
@@ -58,6 +61,7 @@ _Static_assert(sizeof(Request) == 64 && sizeof(Auth) == 24, "glibc LP64 request/
 _Static_assert(sizeof(Call)==96 && offsetof(Call,cred)==48 && sizeof(SysAuth)==40,"glibc LP64 call/cooked credentials");
 static Xprt *(*create)(int), *(*bufcreate)(int,unsigned,unsigned);
 static Xprt *(*tcpcreate)(int,unsigned,unsigned), *(*fdcreate)(int,unsigned,unsigned);
+static Xprt *(*unixcreate)(int,unsigned,unsigned,char *), *(*unixfdcreate)(int,unsigned,unsigned);
 static int (*reg)(Xprt *,unsigned long,unsigned long,void (*)(Request *,Xprt *),int);
 static void (*unreg)(unsigned long,unsigned long), (*common)(int), (*getmask)(int), (*getset)(fd_set *), (*getpoll)(struct pollfd *,int);
 static void (*run)(void), (*stop)(void);
@@ -103,6 +107,7 @@ static void load(void) {
     LOAD(authenticate,"_authenticate"); LOAD(udpclient,"clntudp_create"); LOAD(unixauth,"authunix_create");
     LOAD(simple_reg,"registerrpc"); LOAD(xvoid,"xdr_void");
     LOAD(tcpcreate,"svctcp_create"); LOAD(fdcreate,"svcfd_create"); LOAD(xopaque,"xdr_opaque");
+    LOAD(unixcreate,"svcunix_create"); LOAD(unixfdcreate,"svcunixfd_create");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -656,9 +661,139 @@ static void tcp_services(void) {
     unreg(PROGRAM,1);
     if(!strcmp(scenario,"tcp-publish"))mapping_lookup(0,6);
 }
+/* Real Unix peers use explicit sendmsg credentials, independently of the RPC
+ * implementation. Pathname sockets are intentionally retained, never unlinked. */
+static void unix_fragment(const void *bytes,size_t length,int last,int rights) {
+    unsigned char packet[256];CHECK(length+4<=sizeof(packet));
+    word(packet,0,(unsigned)length|(last?0x80000000u:0));if(length)memcpy(packet+4,bytes,length);
+    union { struct cmsghdr alignment; unsigned char bytes[2048]; } control={0};
+    struct iovec iov={packet,length+4};
+    struct msghdr msg={.msg_iov=&iov,.msg_iovlen=1,.msg_control=control.bytes,.msg_controllen=CMSG_SPACE(sizeof(struct ucred))};
+    struct cmsghdr *c=CMSG_FIRSTHDR(&msg);c->cmsg_level=SOL_SOCKET;c->cmsg_type=SCM_CREDENTIALS;c->cmsg_len=CMSG_LEN(sizeof(struct ucred));
+    struct ucred identity={getpid(),geteuid(),getegid()};memcpy(CMSG_DATA(c),&identity,sizeof(identity));
+    if(rights) {
+        msg.msg_controllen+=CMSG_SPACE((size_t)rights*sizeof(int));c=CMSG_NXTHDR(&msg,c);CHECK(c);
+        c->cmsg_level=SOL_SOCKET;c->cmsg_type=SCM_RIGHTS;c->cmsg_len=CMSG_LEN((size_t)rights*sizeof(int));
+        for(int i=0;i<rights;++i)memcpy(CMSG_DATA(c)+(size_t)i*sizeof(int),&client,sizeof(client));
+    }
+    CHECK(sendmsg(client,&msg,MSG_NOSIGNAL)==(ssize_t)(length+4));
+}
+static void unix_identity_pid(const void *bytes,size_t length,pid_t pid) {
+    CHECK(length==CMSG_SPACE(sizeof(struct ucred)));
+    struct cmsghdr header;memcpy(&header,bytes,sizeof(header));
+    CHECK(header.cmsg_level==SOL_SOCKET && header.cmsg_type==SCM_CREDENTIALS && header.cmsg_len==CMSG_LEN(sizeof(struct ucred)));
+    struct ucred identity;memcpy(&identity,(const char *)bytes+CMSG_LEN(0),sizeof(identity));
+    CHECK(identity.pid==pid && identity.uid==geteuid() && identity.gid==getegid());
+}
+static void unix_identity(const void *bytes,size_t length) { unix_identity_pid(bytes,length,getpid()); }
+static unsigned fd_count(void) {
+    DIR *directory=opendir("/proc/self/fd");CHECK(directory);unsigned count=0;
+    while(readdir(directory))++count;
+    CHECK(!closedir(directory));return count;
+}
+static void unix_services(void) {
+    if(!strcmp(scenario,"unix-invalid")) {
+        CHECK(!unixfdcreate(-1,0,0));int d=socket(AF_INET,SOCK_STREAM,0);CHECK(d>=0);
+        CHECK(!unixfdcreate(d,0,0) && fcntl(d,F_GETFD)>=0);
+        CHECK(!unixcreate(d,0,0,"/tmp/not-created-frankenlibc") && fcntl(d,F_GETFD)>=0);close(d);
+        int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_DGRAM,0,pair));
+        CHECK(!unixfdcreate(pair[0],0,0) && fcntl(pair[0],F_GETFD)>=0);close(pair[0]);close(pair[1]);return;
+    }
+    if(!strcmp(scenario,"unix-path-bounds")) {
+        char path[109];memset(path,'x',sizeof(path));path[108]=0;
+        CHECK(!unixcreate(-1,0,0,path) && errno==ENAMETOOLONG);
+        CHECK(!unixcreate(-1,0,0,NULL) && errno==EFAULT);
+        CHECK(!unixcreate(-1,0,0,(char *)1) && errno==EFAULT);return;
+    }
+    int listener=!strcmp(scenario,"unix-listener") || !strcmp(scenario,"unix-supplied") || !strcmp(scenario,"unix-prebound") || !strcmp(scenario,"unix-child");
+    char path[108]={0};
+    if(listener) {
+        CHECK(snprintf(path,sizeof(path),"/tmp/frankenlibc-rpc-%ld-%s",(long)getpid(),scenario)>0);
+        int supplied=-1;struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,path);
+        if(strcmp(scenario,"unix-listener"))supplied=socket(AF_UNIX,SOCK_STREAM,0);
+        if(!strcmp(scenario,"unix-prebound"))CHECK(!bind(supplied,(void *)&address,sizeof(address)));
+        tcp_listener=unixcreate(supplied,128,128,path);CHECK(tcp_listener && !tcp_listener->port);
+        if(supplied>=0)CHECK(tcp_listener->fd==supplied);
+        CHECK(reg(tcp_listener,PROGRAM,1,tcp_handler,0));
+        client=socket(AF_UNIX,SOCK_STREAM,0);CHECK(client>=0 && !connect(client,(void *)&address,sizeof(address)));
+        tcp_fd=tcp_accepted(tcp_listener->fd,-1);
+    } else {
+        int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_STREAM,0,pair));client=pair[1];tcp_fd=pair[0];
+        int flags=fcntl(tcp_fd,F_GETFL);tcp_connection=unixfdcreate(tcp_fd,128,128);
+        CHECK(tcp_connection && tcp_connection->fd==tcp_fd && !tcp_connection->port && fcntl(tcp_fd,F_GETFL)==flags);
+        CHECK(reg(tcp_connection,PROGRAM,1,tcp_handler,0));
+    }
+    int one=1;CHECK(!setsockopt(client,SOL_SOCKET,SO_PASSCRED,&one,sizeof(one)));
+    unsigned char bytes[256];size_t n=tcp_call(bytes,401,1);int retired=0;
+    if(!strcmp(scenario,"unix-direct") || !strcmp(scenario,"unix-peer-pid")) {
+        pid_t peer=getpid();
+        if(!strcmp(scenario,"unix-peer-pid")) {
+            peer=fork();CHECK(peer>=0);if(!peer){unix_fragment(bytes,n,1,0);_Exit(0);}
+            int status;CHECK(waitpid(peer,&status,0)==peer && WIFEXITED(status) && !WEXITSTATUS(status));
+        } else unix_fragment(bytes,n,1,0);
+        Call msg={0};char credential[400],verifier[400];msg.cred.base=credential;msg.verifier.base=verifier;
+        CHECK(tcp_connection->ops->recv(tcp_connection,&msg) && msg.xid==401 && msg.verifier.flavor==1);
+        unix_identity_pid(msg.verifier.base,msg.verifier.length,peer);
+        unsigned value=0;CHECK(tcp_connection->ops->getargs(tcp_connection,xu32,&value) && value==35);value+=7;
+        unsigned long reply[12]={0};*(int *)((char *)reply+8)=1;*(void **)((char *)reply+56)=&value;*(Proc *)((char *)reply+64)=xu32;
+        CHECK(tcp_connection->ops->reply(tcp_connection,reply));tcp_expect(client,401,0,42);
+        CHECK(tcp_connection->ops->freeargs(tcp_connection,xu32,&value));
+    } else if(!strcmp(scenario,"unix-credentials")) {
+        unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);
+        union { struct cmsghdr alignment; unsigned char bytes[128]; } control={0};
+        struct iovec iov={bytes,sizeof(bytes)};struct msghdr msg={.msg_iov=&iov,.msg_iovlen=1,.msg_control=control.bytes,.msg_controllen=sizeof(control)};
+        CHECK(recvmsg(client,&msg,0)==32 && !(msg.msg_flags&MSG_CTRUNC));
+        struct cmsghdr *c=CMSG_FIRSTHDR(&msg);CHECK(c);unix_identity(c,CMSG_SPACE(sizeof(struct ucred)));
+        CHECK(readword(bytes,0)==0x8000001c && readword(bytes,4)==401 && readword(bytes,28)==42 && calls==1);
+    } else if(!strcmp(scenario,"unix-auth")) {
+        request(bytes,402,PROGRAM,1,9);word(bytes,24,1);word(bytes,28,32);
+        word(bytes,32,1234);word(bytes,36,4);memcpy(bytes+40,"host",4);word(bytes,44,1001);word(bytes,48,1002);word(bytes,52,2);word(bytes,56,11);word(bytes,60,12);word(bytes,64,0);word(bytes,68,0);
+        unix_fragment(bytes,72,1,0);tcp_drive(tcp_fd);n=tcp_record(client,bytes,sizeof(bytes));
+        CHECK(n==56 && readword(bytes,0)==402 && readword(bytes,12)==1 && readword(bytes,16)==32 && readword(bytes,52)==0);
+        unix_identity(bytes+20,32);CHECK(calls==1);
+    } else if(!strcmp(scenario,"unix-identity-switch")) {
+        unix_fragment(bytes,2,0,0);common(tcp_fd);CHECK(!calls);
+        pid_t peer=fork();CHECK(peer>=0);if(!peer){unix_fragment(bytes+2,n-2,1,0);_Exit(0);}
+        int status;CHECK(waitpid(peer,&status,0)==peer && WIFEXITED(status) && !WEXITSTATUS(status));
+        tcp_drive(tcp_fd);CHECK(!calls && fcntl(tcp_fd,F_GETFD)==-1);tcp_connection=NULL;retired=1;
+    } else if(!strcmp(scenario,"unix-rights") || !strcmp(scenario,"unix-rights-truncated")) {
+        unsigned before=fd_count();unix_fragment(bytes,n,1,!strcmp(scenario,"unix-rights")?1:100);tcp_drive(tcp_fd);
+        CHECK(!calls && fcntl(tcp_fd,F_GETFD)==-1 && fd_count()+1==before);tcp_connection=NULL;retired=1;
+    } else if(!strcmp(scenario,"unix-partial")) {
+        uint32_t marker=htonl(0x80000000u|(unsigned)n);tcp_write(client,&marker,2);common(tcp_fd);CHECK(!calls);
+        tcp_write(client,(char *)&marker+2,2);tcp_write(client,bytes,n);tcp_drive(tcp_fd);tcp_expect(client,401,0,42);
+    } else if(!strcmp(scenario,"unix-fragments")) {
+        unix_fragment(bytes,2,0,0);unix_fragment(bytes+2,n-2,1,0);tcp_drive(tcp_fd);tcp_expect(client,401,0,42);
+    } else if(!strcmp(scenario,"unix-pipeline")) {
+        for(unsigned i=0;i<3;++i){n=tcp_call(bytes,403+i,1);unix_fragment(bytes,n,1,0);}
+        tcp_drive(tcp_fd);for(unsigned i=0;i<3;++i)tcp_expect(client,403+i,0,42);CHECK(calls==3);
+    } else if(!strcmp(scenario,"unix-destroy")) {
+        n=tcp_call(bytes,406,10);unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);tcp_expect(client,406,0,-1);
+        CHECK(fcntl(tcp_fd,F_GETFD)==-1);tcp_connection=NULL;retired=1;
+    } else if(!strcmp(scenario,"unix-backpressure")) {
+        int small=4096;CHECK(!setsockopt(tcp_fd,SOL_SOCKET,SO_SNDBUF,&small,sizeof(small)));
+        tcp_bulk_length=sizeof(tcp_bulk);for(size_t i=0;i<tcp_bulk_length;++i)tcp_bulk[i]=(unsigned char)(i*31+7);
+        n=tcp_call(bytes,408,18);unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);CHECK(calls==1 && tcp_encodes==1);
+        int count=*(int *)count_slot();struct pollfd *fds=*(struct pollfd **)poll_slot();int writing=0;
+        for(int i=0;i<count;++i){if(fds[i].fd==tcp_fd)writing=!!(fds[i].events&POLLOUT);}CHECK(writing);
+        pthread_t thread;CHECK(!pthread_create(&thread,NULL,tcp_reader,NULL));
+        for(unsigned i=0;i<2000 && !atomic_load_explicit(&tcp_reader_done,memory_order_acquire);++i){int ready=poll(fds,(nfds_t)count,5);CHECK(ready>=0);if(ready)getpoll(fds,ready);}
+        CHECK(atomic_load_explicit(&tcp_reader_done,memory_order_acquire) && !pthread_join(thread,NULL));CHECK(calls==1 && tcp_encodes==1);
+        writing=0;for(int i=0;i<count;++i){if(fds[i].fd==tcp_fd)writing=!!(fds[i].events&POLLOUT);}CHECK(!writing);
+    } else if(!strcmp(scenario,"unix-child")) {
+        unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);tcp_expect(client,401,0,42);CHECK(tcp_connection);
+        tcp_listener->ops->destroy(tcp_listener);tcp_listener=NULL;
+        n=tcp_call(bytes,407,1);unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);tcp_expect(client,407,0,42);
+    } else { unix_fragment(bytes,n,1,0);tcp_drive(tcp_fd);tcp_expect(client,401,0,42);CHECK(calls==1); }
+    close(client);if(!retired){common(tcp_fd);CHECK(fcntl(tcp_fd,F_GETFD)==-1);}
+    if(tcp_listener){int fd=tcp_listener->fd;tcp_listener->ops->destroy(tcp_listener);CHECK(fcntl(fd,F_GETFD)==-1);}
+    if(listener){struct stat state;CHECK(!lstat(path,&state) && S_ISSOCK(state.st_mode));}
+    unreg(PROGRAM,1);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
     if (!strncmp(scenario,"tcp-",4)) { tcp_services();printf("PASS %s\n",scenario);return 0; }
+    if (!strncmp(scenario,"unix-",5)) { unix_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"register-",9)) { simple_services();printf("PASS %s\n",scenario);return 0; }
     int borrowed=-1;
     if (!strcmp(scenario,"borrowed")) {
