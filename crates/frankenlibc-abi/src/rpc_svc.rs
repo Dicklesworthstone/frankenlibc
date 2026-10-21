@@ -59,11 +59,138 @@ struct ServiceRequest {
     transport: *mut SvcXprt,
 }
 
+#[repr(C)]
+struct CallMessage {
+    xid: u64,
+    direction: c_int,
+    rpc_version: u64,
+    program: u64,
+    version: u64,
+    procedure: u64,
+    credential: OpaqueAuth,
+    verifier: OpaqueAuth,
+}
+
+/// glibc reserves 400 bytes for rq_clntcred. Pointers in params refer into
+/// this caller-owned area, never into a temporary authentication stack frame.
+#[repr(C)]
+struct CookedCredential {
+    params: AuthUnixParms,
+    machine: [u8; 256],
+    groups: [u32; 16],
+}
+
 const _: () = {
     assert!(size_of::<SvcXprt>() == 336);
     assert!(std::mem::offset_of!(SvcXprt, verifier) == 40);
     assert!(size_of::<ServiceRequest>() == 64);
+    assert!(size_of::<CallMessage>() == 96);
+    assert!(std::mem::offset_of!(CallMessage, credential) == 48);
+    assert!(std::mem::offset_of!(CallMessage, verifier) == 72);
+    assert!(size_of::<CookedCredential>() <= 400);
 };
+
+/// Authenticate the asserted AUTH_NONE/AUTH_SYS identity without host RPC.
+/// AUTH_SYS provides no cryptographic authentication. Unsupported flavors are
+/// rejected rather than reported as authenticated.
+///
+/// # Safety
+/// Non-null rqst/msg must point to live, aligned glibc LP64 svc_req/rpc_msg
+/// objects. rq_xprt must be writable. For AUTH_SYS, rq_clntcred must provide
+/// aligned writable storage of at least 400 bytes, valid through dispatch.
+/// Credential/verifier buffers must remain alive while used by the request.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn _authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int {
+    if rqst.is_null() || msg.is_null() {
+        return 7; // AUTH_FAILED: invalid local API arguments
+    }
+    let msg = msg.cast::<CallMessage>();
+    // SAFETY: the caller supplies the documented LP64 objects; only initialized
+    // auth descriptors are read, not padding or unused rpc_msg union members.
+    let (request, credential, verifier) = unsafe {
+        (
+            &mut *rqst.cast::<ServiceRequest>(),
+            ptr::read(ptr::addr_of!((*msg).credential)),
+            ptr::read(ptr::addr_of!((*msg).verifier)),
+        )
+    };
+    // SAFETY: the public API requires the request's transport/cooked storage
+    // and descriptor buffers to remain valid through this operation.
+    unsafe { authenticate_request(request, credential, verifier) }
+}
+
+unsafe fn authenticate_request(
+    request: &mut ServiceRequest,
+    credential: OpaqueAuth,
+    verifier: OpaqueAuth,
+) -> c_int {
+    request.credential = credential;
+    if request.transport.is_null() {
+        return 7;
+    }
+    // SAFETY: the API caller owns the writable transport. Reset the outgoing
+    // verifier for every call while retaining its preallocated storage pointer.
+    let outgoing = unsafe { &mut (*request.transport).verifier };
+    outgoing.oa_flavor = 0;
+    outgoing.oa_length = 0;
+    match request.credential.oa_flavor {
+        0 => 0,
+        1 => {
+            let length = request.credential.oa_length as usize;
+            let mut bytes = [0u8; 400];
+            if length > bytes.len() || request.credential.oa_base.is_null() {
+                return 1; // AUTH_BADCRED
+            }
+            // SAFETY: the destination is an owned bounded byte array. The
+            // shared fault-checked copier imports only the declared credential.
+            if unsafe {
+                crate::io_abi::iov_snapshot::copy_user_bytes(
+                    request.credential.oa_base.cast(),
+                    bytes.as_mut_ptr(),
+                    length,
+                )
+            }
+            .is_err()
+            {
+                return 1;
+            }
+            let policy = if frankenlibc_membrane::config::safety_level().heals_enabled() {
+                service::SystemCredentialPolicy::ExactIdentity
+            } else {
+                service::SystemCredentialPolicy::Glibc
+            };
+            let Ok(sys) = service::decode_system_credential(&bytes[..length], policy) else {
+                return 1;
+            };
+            if request.cooked.is_null() {
+                return 7;
+            }
+            if verifier.oa_length > 400 || (verifier.oa_length != 0 && verifier.oa_base.is_null()) {
+                return 3; // AUTH_BADVERF
+            }
+            let destination = request.cooked.cast::<CookedCredential>();
+            // SAFETY: the caller provides the documented aligned cooked area.
+            // Every byte is initialized, and both pointers target that area.
+            unsafe {
+                destination.write(zeroed());
+                let cooked = &mut *destination;
+                cooked.machine[..sys.machine.len()].copy_from_slice(sys.machine);
+                cooked.groups = sys.groups;
+                cooked.params.aup_time = sys.stamp as u64;
+                cooked.params.aup_machname = cooked.machine.as_mut_ptr().cast();
+                cooked.params.aup_uid = sys.uid;
+                cooked.params.aup_gid = sys.gid;
+                cooked.params.aup_len = sys.group_count as u32;
+                cooked.params.aup_gids = cooked.groups.as_mut_ptr();
+            }
+            if verifier.oa_length != 0 {
+                *outgoing = verifier;
+            }
+            0
+        }
+        _ => 2, // AUTH_REJECTEDCRED, including unsupported AUTH_SHORT/DES
+    }
+}
 
 struct Io {
     input: Vec<u8>,
@@ -961,10 +1088,12 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
             Receive::Unavailable => break,
         }
         let x = t.public.get();
-        let mut hostname = [0u8; 256];
-        let mut groups: [u32; 16];
-        let mut cooked: AuthUnixParms = unsafe { zeroed() };
+        // SAFETY: every field in the cooked ABI layout admits the zero value.
+        // This area stays in place until the callback finishes or unwinds.
+        let mut cooked: CookedCredential = unsafe { zeroed() };
         let (mut request, auth_error) = {
+            // SAFETY: the operation gate owns the transport input buffer, and
+            // the dispatch guard retains it until the callback returns.
             let io = unsafe { &*t.io.get() };
             let call = io.call.as_ref().unwrap();
             let credential = &io.input[call.credential.body.clone()];
@@ -973,42 +1102,33 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
                 version: call.version as u64,
                 procedure: call.procedure as u64,
                 credential: OpaqueAuth {
-                    oa_flavor: call.credential.flavor as c_int,
-                    oa_base: credential.as_ptr().cast_mut().cast(),
-                    oa_length: credential.len() as u32,
+                    oa_flavor: 0,
+                    oa_base: ptr::null_mut(),
+                    oa_length: 0,
                 },
-                cooked: ptr::null_mut(),
+                cooked: (&mut cooked as *mut CookedCredential).cast(),
                 transport: x,
             };
-            let bad = if call.verifier.flavor != 0 || !call.verifier.body.is_empty() {
-                Some(3)
-            } else {
-                match call.credential.flavor {
-                    0 if credential.is_empty() => None,
-                    1 => match service::decode_system_credential(credential) {
-                        Ok(sys) => {
-                            hostname[..sys.machine.len()].copy_from_slice(sys.machine);
-                            groups = sys.groups;
-                            cooked.aup_time = sys.stamp as u64;
-                            cooked.aup_machname = hostname.as_mut_ptr().cast();
-                            cooked.aup_uid = sys.uid;
-                            cooked.aup_gid = sys.gid;
-                            cooked.aup_len = sys.group_count as u32;
-                            cooked.aup_gids = groups.as_mut_ptr();
-                            request.cooked = (&mut cooked as *mut AuthUnixParms).cast();
-                            None
-                        }
-                        Err(_) => Some(1),
-                    },
-                    0 => Some(1),
-                    _ => Some(2), // AUTH_REJECTEDCRED: unsupported credential flavor
-                }
+            let credential = OpaqueAuth {
+                oa_flavor: call.credential.flavor as c_int,
+                oa_base: credential.as_ptr().cast_mut().cast(),
+                oa_length: credential.len() as u32,
             };
-            (request, bad)
+            let verifier = &io.input[call.verifier.body.clone()];
+            let verifier = OpaqueAuth {
+                oa_flavor: call.verifier.flavor as c_int,
+                oa_base: verifier.as_ptr().cast_mut().cast(),
+                oa_length: verifier.len() as u32,
+            };
+            // SAFETY: decoded ranges are bounded by the retained input, the
+            // operation gate owns x, and cooked remains alive through dispatch.
+            let status = unsafe { authenticate_request(&mut request, credential, verifier) };
+            (request, status)
         };
         drop(op);
-        if let Some(why) = auth_error {
-            unsafe { svcerr_auth(x.cast(), why) };
+        if auth_error != 0 {
+            // SAFETY: the dispatch guard retains this live transport.
+            unsafe { svcerr_auth(x.cast(), auth_error) };
             continue;
         }
         let (handler, range) = {

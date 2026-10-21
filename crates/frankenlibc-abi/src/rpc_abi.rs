@@ -29,10 +29,10 @@ mod rpc_svc_cache;
 mod rpc_udp;
 pub use rpc_client_create::{callrpc, clnt_create};
 pub use rpc_svc::{
-    svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset, svc_register, svc_run,
-    svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode, svcerr_noproc, svcerr_noprog,
-    svcerr_progvers, svcerr_systemerr, svcerr_weakauth, svcudp_bufcreate, svcudp_create,
-    svcudp_enablecache,
+    _authenticate, svc_exit, svc_getreq, svc_getreq_common, svc_getreq_poll, svc_getreqset,
+    svc_register, svc_run, svc_sendreply, svc_unregister, svcerr_auth, svcerr_decode,
+    svcerr_noproc, svcerr_noprog, svcerr_progvers, svcerr_systemerr, svcerr_weakauth,
+    svcudp_bufcreate, svcudp_create, svcudp_enablecache,
 };
 
 /// Read a user-supplied C string pointer with a known-region bound so a
@@ -2298,8 +2298,6 @@ pub unsafe extern "C" fn authdes_getucred(
 ) -> c_int {
     0
 }
-
-rpc_stub!(_authenticate(rqst: *mut c_void, msg: *mut c_void) -> c_int = 7);
 
 // ===========================================================================
 // RPC client creation and error handling (14 symbols)

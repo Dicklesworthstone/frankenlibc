@@ -63,9 +63,21 @@ pub struct SystemCredential<'a> {
     pub group_count: usize,
 }
 
-/// Parse the bounded AUTH_SYS credential from RFC 5531 Appendix A. Require
-/// complete fields, including XDR padding, and reject extra credential data.
-pub fn decode_system_credential(bytes: &[u8]) -> Result<SystemCredential<'_>, DecodeError> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SystemCredentialPolicy {
+    /// GNU accepts trailing bytes and embedded NULs in the counted hostname.
+    Glibc,
+    /// Reject identities that cannot be represented exactly by the cooked C ABI.
+    ExactIdentity,
+}
+
+/// Parse bounded AUTH_SYS fields from RFC 5531 Appendix A, including padding.
+/// Both policies require every declared field to fit; GNU compatibility never
+/// permits its historical inline decoder's out-of-bounds reads on short bodies.
+pub fn decode_system_credential(
+    bytes: &[u8],
+    policy: SystemCredentialPolicy,
+) -> Result<SystemCredential<'_>, DecodeError> {
     if bytes.len() > MAX_AUTH_BYTES { return Err(DecodeError::AuthenticationTooLong); }
     let mut input = Cursor { bytes, position: 0 };
     let stamp = input.word()?;
@@ -77,7 +89,9 @@ pub fn decode_system_credential(bytes: &[u8]) -> Result<SystemCredential<'_>, De
     let machine = &bytes[start..start + length];
     // The public cooked credential is a C string. Embedded NULs cannot be
     // represented faithfully and must not silently change the asserted host.
-    if machine.contains(&0) { return Err(DecodeError::InvalidDiscriminant); }
+    if policy == SystemCredentialPolicy::ExactIdentity && machine.contains(&0) {
+        return Err(DecodeError::InvalidDiscriminant);
+    }
     input.position = end;
     let uid = input.word()?;
     let gid = input.word()?;
@@ -85,7 +99,9 @@ pub fn decode_system_credential(bytes: &[u8]) -> Result<SystemCredential<'_>, De
     if group_count > 16 { return Err(DecodeError::AuthenticationTooLong); }
     let mut groups = [0; 16];
     for group in &mut groups[..group_count] { *group = input.word()?; }
-    if input.position != bytes.len() { return Err(DecodeError::InvalidDiscriminant); }
+    if policy == SystemCredentialPolicy::ExactIdentity && input.position != bytes.len() {
+        return Err(DecodeError::InvalidDiscriminant);
+    }
     Ok(SystemCredential { stamp, machine, uid, gid, groups, group_count })
 }
 

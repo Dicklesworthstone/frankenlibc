@@ -8,11 +8,14 @@ from pathlib import Path
 import subprocess
 
 HOST = ['transport', 'dispatch', 'fdset', 'poll', 'mask', 'string', 'errors',
-        'auth', 'lifecycle', 'borrowed', 'run-exit']
+        'auth', 'lifecycle', 'borrowed', 'run-exit', 'authenticate-none',
+        'authenticate-sys', 'authenticate-reject', 'authenticate-malformed',
+        'auth-none-opaque', 'auth-verifier', 'auth-client']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
-OWNED = ['short-args', 'destroy-dispatch', 'callback-exit', 'malformed', 'oversized']
+OWNED = ['short-args', 'destroy-dispatch', 'callback-exit', 'malformed', 'oversized',
+         'auth-bounds']
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -21,14 +24,19 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=False)
     library = args.library.resolve(strict=True)
+    library_sha256 = hashlib.sha256(library.read_bytes()).hexdigest()
+    sources = ['tests/integration/fixture_rpc_svc.c', 'scripts/check_rpc_svc.py']
+    source_sha256 = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                     for name in sources}
     fixture = out / 'fixture'
     subprocess.run(['cc', '-O2', '-Wall', '-Wextra', '-Werror',
                     str(root / 'tests/integration/fixture_rpc_svc.c'),
                     '-ldl', '-pthread', '-o', str(fixture)], check=True)
     base = {k: v for k, v in os.environ.items()
-            if k not in ('LD_PRELOAD', 'FRANKENLIBC_TEST_LIBRARY', 'RPC_TRACE')}
+            if k not in ('LD_PRELOAD', 'FRANKENLIBC_TEST_LIBRARY', 'RPC_TRACE',
+                         'FRANKENLIBC_MODE')}
     base.update(FRANKENLIBC_THREAD_NATIVE='0')
     records = []
     def execute(mode, case, env, negative=False):
@@ -45,10 +53,11 @@ def main():
         records.append({'mode': mode, 'case': case, 'passed': passed, 'returncode': code,
                         'negative': negative, 'host_differential': case in HOST and not negative})
         (out / 'report.json').write_text(json.dumps({
-            'library_sha256': hashlib.sha256(library.read_bytes()).hexdigest(),
+            'library_sha256': library_sha256,
+            'source_sha256': source_sha256,
             'results': records}, indent=2) + '\n')
         if not passed:
-            raise SystemExit(f'FAIL {name}: rc={code}: {stderr.decode(errors="replace")}')
+            print(f'FAIL {name}: rc={code}: {stderr.decode(errors="replace")}', flush=True)
     for case in HOST:
         execute('host', case, base)
     execute('wrong-provider-host', 'dispatch', {**base, 'FRANKENLIBC_TEST_LIBRARY': str(library)}, True)
@@ -58,7 +67,17 @@ def main():
         env = {**base, 'LD_PRELOAD': str(library), 'FRANKENLIBC_TEST_LIBRARY': str(library), 'FRANKENLIBC_MODE': mode}
         for case in HOST + OWNED:
             execute(mode, case, env)
-    print(f'RPC services: {len(HOST)} host, 2 negative, {2 * (len(HOST) + len(OWNED))} candidate cases passed')
+    stable = (library_sha256 == hashlib.sha256(library.read_bytes()).hexdigest()
+              and all(digest == hashlib.sha256((root / name).read_bytes()).hexdigest()
+                      for name, digest in source_sha256.items()))
+    report = {'library_sha256': library_sha256, 'source_sha256': source_sha256,
+              'inputs_stable': stable, 'results': records}
+    (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+    failures = sum(not record['passed'] for record in records)
+    print(f'RPC services: {len(HOST)} host, 2 negative, '
+          f'{2 * (len(HOST) + len(OWNED))} candidate cases; '
+          f'{failures} failures; inputs stable={stable}')
+    raise SystemExit(int(bool(failures) or not stable))
 
 if __name__ == '__main__':
     main()
