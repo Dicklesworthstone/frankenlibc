@@ -60,6 +60,7 @@ jobs:
           root=artifacts/rpc-svc
           cargo build --release -p frankenlibc-abi --lib "${args[@]}" 2>&1 | tee "$root/build.log"
           cp target/release/libfrankenlibc_abi.so "$root/libfrankenlibc_abi.so"
+          cp Cargo.lock "$root/Cargo.lock"
           sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
           python3 scripts/check_rpc_svc_cache.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/cache" --repeat 2
           python3 scripts/check_rpc_svc_unwind.py "$PWD/target/release/libfrankenlibc_abi.so" --output "$root/unwind" --repeat 2
@@ -82,6 +83,7 @@ jobs:
           subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--',
               'crates/frankenlibc-abi/src/rpc*.rs', 'scripts/check_rpc_svc*.py',
               'tests/integration/fixture_rpc_svc*'], check=True)
+          assert pathlib.Path('Cargo.lock').read_bytes() == pathlib.Path('artifacts/rpc-svc/Cargo.lock').read_bytes()
           result = {}
           for name in ['rpc_svc.rs', 'rpc_abi.rs', 'rpc_svc_cache.rs']:
               path = pathlib.Path('crates/frankenlibc-abi/src') / name
