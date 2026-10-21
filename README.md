@@ -47,7 +47,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Host-backed and unsupported subsets are explicit | **1,272 `WrapsHostLibc` (30.9%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
 | Interposition has a checked workload snapshot | The committed 2026-09-24 preload artifact reports **189 passes / 0 fails / 4 optional skips / 1 xfail** across strict + hardened modes. It was produced from source commit `a8a4110b…`, not current HEAD, so it is historical evidence rather than a current-release result (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
-| Two architectures supported | x86_64 (primary) and aarch64 (gated, tested via cross-compile) |
+| Architecture scope | x86_64 is primary; aarch64 has a Rust type-check gate, with linked-artifact/runtime qualification still outstanding |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
 | Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for PSD/Cholesky validity and an algebraic recomposition identity; a source scanner inventories selected atomic sites. These are consistency checks, not proofs of allocator fragmentation, thread safety, or size-class correctness (`crates/frankenlibc-membrane/build.rs`) |
@@ -302,9 +302,9 @@ The committed curated preload snapshot has 189 pass / 0 fail / 4 optional skips 
 
 | Crate | Purpose | Approx size |
 |---|---|---:|
-| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 50 files, ~121 kLOC |
-| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 109 files, ~75 kLOC |
-| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 197 Rust files, ~1.16 MLOC including generated codec tables |
+| `frankenlibc-abi` | `extern "C"` boundary, interpose `cdylib`, version script | 115 Rust source files, ~216 kLOC |
+| `frankenlibc-membrane` | TSM pipeline, healing, runtime math, concurrency primitives, evidence ledger | 113 Rust source files, ~82 kLOC |
+| `frankenlibc-core` | Safe-Rust semantic kernels (`#![deny(unsafe_code)]` except for explicitly-marked SIMD/arena modules) | 201 Rust source files, ~1.16 MLOC including generated codec tables |
 | `frankenlibc-harness` | Conformance CLI, fixture capture/verify, reports, evidence tooling | 44 files, ~34 kLOC |
 | `frankenlibc-bench` | Criterion benches | 1 module, ~25 kLOC |
 | `frankenlibc-fuzz` | 66 `cargo-fuzz` targets | — |
@@ -322,7 +322,7 @@ This project is only interesting if existing binaries can talk to it. The ABI bo
 
 ### 2. Safety at the edge
 
-Unsafe C inputs are not trusted. The TSM sits at the libc boundary and classifies pointers, regions, fds, and contexts before anything meaningful happens. Safe-Rust kernels run after classification, never before.
+On membrane-wired paths, the TSM classifies pointers, regions, fds, and contexts before dispatching the protected operation. Other compatibility paths, particularly strict-mode hot paths, bypass full validation. Safe-Rust implementation code alone does not establish safety for the raw C caller.
 
 ### 3. Native by default
 
@@ -666,7 +666,7 @@ Failure produces a typed error (`UninitializedContext`, `ForeignContext`, `Corru
 
 ## Process Startup
 
-`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,861 lines at this snapshot) uses a multi-checkpoint envelope:
+`__libc_start_main` runs before `main()` and is a high-value validation target. The implementation in `crates/frankenlibc-abi/src/startup_abi.rs` (1,862 lines at this snapshot) uses a multi-checkpoint envelope:
 
 ```
 1. membrane gate           — runtime_policy::decide(ApiFamily::Process)
@@ -716,7 +716,7 @@ All five claims have completion-contract artifacts under `tests/conformance/*_co
 
 ## Runtime Math Controllers
 
-`crates/frankenlibc-membrane/src/runtime_math/` is ~71 controller modules. Which calls reach them depends on the mode: in hardened mode allocator and validation calls go through `RuntimeMathKernel::decide` (58 distinct runtime-math symbols in a `perf` profile of an allocation-heavy perl run, 2026-10-06), while the strict-mode hot paths bypass the kernel (no runtime-math or runtime-policy symbol at all in the same perl run under strict). Decision law for a call that reaches the kernel:
+`crates/frankenlibc-membrane/src/runtime_math/` contains ~71 controller modules. Routing is path- and mode-specific: the ABI policy's seven high-frequency hardened families return before its kernel decision, while the pointer-validation pipeline can consult a separate `RuntimeMathKernel`. A historical allocation-heavy Perl profile (2026-10-06) contained 58 runtime-math symbols in hardened mode and none in strict mode; execution in a profile does not prove that a controller changed an ABI-visible decision. That influence needs a route-specific causal test. Decision law for a call that reaches the kernel:
 
 ```
 mode + context + risk + budget + pareto + design + barrier + consistency
@@ -1340,7 +1340,7 @@ If any source file has fewer matching atomic sites than expected, the build fail
 
 ### ABI Build Script
 
-`crates/frankenlibc-abi/build.rs` links the GNU ld version script (`libc.map`) into non-debug, non-fuzz `cdylib` builds when present. Debug and fuzz builds skip version-script linking to avoid conflicts with rustc's generated export list. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
+The ABI manifest selects `crates/frankenlibc-abi/build_elf.rs`, which runs the existing `build.rs` policy checks. For Linux x86_64 interpose builds it also supplies `version_scripts/fromfp.map` version nodes for the C23 `fromfp` exports and the corresponding linker handling. This is distinct from applying the full `libc.map` to every default interpose export. Native packaging checks that need the versioned `libc.so` link the `staticlib` with `cc` using `libc.map` (see `scripts/check_setjmp_native.sh`).
 
 ---
 
@@ -2183,7 +2183,9 @@ Each kind has a different cost / signal trade-off. Cheap kinds (unit, property) 
 
 ## Cargo Profile and Build Configuration
 
-The workspace currently uses Cargo's default release profile (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`). LTO, a single codegen unit and stripping are untried tuning for the shipped artifact, not current settings. The release artifact is built for **baseline x86-64** (`.cargo/config.toml` adds no target features) and runs on any x86_64 CPU; its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and the AVX2+FMA twins of the hot math kernels are selected per call from the CPUID bits `std` caches (bd-rc0923-epic-eeuy4f.13). `scripts/check_baseline_isa.sh` keeps it that way: an objdump allow-list of the dispatch-guarded functions, plus the C fixture suite and a few real programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) compiles everything with `+avx2,+fma` for A/B benchmarking; that build refuses to start on a CPU without the extensions it was compiled for, with a message naming them and exit 127, instead of dying of SIGILL.
+The workspace inherits Cargo's release defaults (`opt-level = 3`, `lto = false`, `codegen-units = 16`, `strip = false`), with a package override setting **`codegen-units = 1` for `frankenlibc-abi`** so versioned math entries share an ELF object. LTO and stripping are not enabled for the default release artifact.
+
+The default target is **baseline x86-64** (`.cargo/config.toml` adds no target features). Its SSE4.2/AVX/AVX2/AVX-512 string and memory kernels and AVX2+FMA math variants require runtime dispatch. `scripts/check_baseline_isa.sh` qualifies an actual artifact using an objdump allow-list, C fixtures and selected programs under `qemu-x86_64 -cpu Nehalem` and `-cpu qemu64`. Source configuration alone is not that artifact qualification. The `release-x86-64-v3` profile (`cargo build -p frankenlibc-abi --profile release-x86-64-v3`, output in `target/release-x86-64-v3/`) enables `+avx2,+fma` for A/B benchmarking and requires those CPU extensions; it is not the default release artifact.
 
 `Cargo.toml` declares the workspace edition as **Rust 2024** (nightly required, pinned via `rust-toolchain.toml` to `nightly-2026-08-31`). The membrane and core crates set `#![deny(unsafe_code)]` at the crate root and selectively `#[allow]` it per-module with mandatory `// SAFETY:` comments.
 
@@ -2808,19 +2810,15 @@ This pattern lets the project add a new behavior contract by *capturing* it from
 
 ## Cross-Architecture: aarch64 Today
 
-x86_64 is the primary target. aarch64 is gated and tested via cross-compile. The aarch64-specific completion contracts:
+x86_64 is the primary target. aarch64 has source branches and a Rust type-check gate; linked release/runtime qualification remains outstanding. The aarch64-specific completion contracts describe intended coverage:
 
 - `aarch64_arch_regression_gate_completion_contract.v1.json` — Ensures aarch64 builds remain green
 - `aarch64_conformance_perf_matrix_completion_contract.v1.json` — Performance parity matrix
 - `aarch64_raw_syscall_tls_completion_contract.v1.json` — TLS layout differences and raw-syscall correctness
 
-The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) builds the workspace with `--target aarch64-unknown-linux-gnu` and asserts that:
+The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) runs `cargo check` for the core and ABI crates with `--target aarch64-unknown-linux-gnu`. It checks the Rust frontend paths, including architecture-specific source and inline-assembly declarations. It does not link a release library, verify its dynamic symbols, or execute syscall/TLS behavior.
 
-- All crates compile cleanly
-- The version script `libc.map` exports the right symbols
-- The native syscall layer correctly uses the aarch64 syscall numbering (different from x86_64)
-- The futex implementation uses the right argument-passing convention
-- TLS access uses the aarch64-specific `tpidr_el0` register rather than x86_64's `fs:`
+`scripts/run_aarch64_smoke.sh` currently compiles a static system-libc smoke program and never loads the supplied FrankenLibC artifact. Its success therefore cannot qualify this library. The architecture work must establish actual providers and behavior under native ARM or QEMU execution (`bd-rc0923-epic-eeuy4f.41`–`.42`).
 
 What's *not* yet done on aarch64:
 
@@ -3879,19 +3877,19 @@ Selected project health snapshot:
 | Snapshot basis | Counts below are derived from the current working tree; historical smoke/perf rows retain their artifact dates |
 | Classified ABI surface | 4,119 symbols; 2,829 native/direct-syscall rows (68.7%), 1,272 host-backed wrapper rows (30.9%), and 18 explicit stubs (0.4%) |
 | Crates | 6 active main-workspace members (`membrane`, `core`, `abi`, `harness`, `bench`, `fixture-exec`) + 2 legacy (`frankenlibc`, `frankenlibc_conformance`) + 1 separate fuzz sub-workspace (`frankenlibc-fuzz` with 66 targets) |
-| Tracked Rust files in `crates/` | 2,878 |
-| `crates/frankenlibc-abi/src/` | 114 Rust files, 214,982 lines |
-| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,160 lines |
-| `crates/frankenlibc-core/src/` | 201 Rust files, 1,164,450 lines including generated codec tables |
+| Tracked Rust files in `crates/` | 2,879 |
+| `crates/frankenlibc-abi/src/` | 115 Rust files, 216,293 lines |
+| `crates/frankenlibc-membrane/src/` | 113 Rust files, 82,393 lines |
+| `crates/frankenlibc-core/src/` | 201 Rust files, 1,164,398 lines including generated codec tables |
 | Runtime math controllers | 71 modules |
 | `cargo-fuzz` targets | 66 |
 | Conformance fixtures | 132 JSON files; 94 distinct non-empty `family` values |
-| C integration fixtures | 122 |
+| C integration fixtures | 123 |
 | Completion contracts | 282 (267 checker scripts: 147 `executes`, 120 `receipt`) |
 | CLI contracts | 69 |
 | CLI meta-gates per contract | ~50 |
 | Proof notes / obligations | 9 (not yet machine-checked) |
-| Top-level shell/scripts files | 718 files under `scripts/` |
+| Top-level shell/scripts files | 719 files under `scripts/` |
 | GNU ld version script | 4,749 lines, `GLIBC_2.2.5` |
 | Membrane `build.rs` | 1,049 lines (supplied-matrix consistency + atomic-site inventory) |
 | Curated `LD_PRELOAD` snapshot | 189 pass / 0 fail / 4 optional skip + 1 xfail at source `a8a4110b…`; stale relative to HEAD |

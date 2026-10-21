@@ -6,6 +6,7 @@
 //! leave. Nonblocking operation gates reject recursive use of one XDR buffer.
 //! This is the glibc LP64 interface, not libtirpc's differently shaped SVCXPRT.
 
+use super::rpc_svc_cache::{CacheError, Peer, ReplyCache};
 use super::{AcceptedReply, AuthUnixParms, OpaqueAuth, RejectedReply, Xdr};
 use frankenlibc_core::rpc::wire::{
     RemoteError,
@@ -70,6 +71,7 @@ struct Io {
     call: Option<Call>,
     cursor: usize,
     peer: libc::sockaddr_in,
+    cache: Option<ReplyCache>,
 }
 struct Transport {
     public: UnsafeCell<SvcXprt>,
@@ -103,10 +105,12 @@ struct Registration {
 struct Registry {
     transports: Vec<Arc<Transport>>,
     services: Vec<Registration>,
+    generation: u64,
 }
 static REGISTRY: Mutex<Registry> = Mutex::new(Registry {
     transports: Vec::new(),
     services: Vec::new(),
+    generation: 0,
 });
 static EXIT_EPOCH: AtomicU64 = AtomicU64::new(0);
 fn registry() -> MutexGuard<'static, Registry> {
@@ -307,6 +311,7 @@ pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut
                 call: None,
                 cursor: 0,
                 peer: unsafe { zeroed() },
+                cache: None,
             }),
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
@@ -356,9 +361,16 @@ unsafe extern "C" fn destroy(x: *mut SvcXprt) {
     refresh();
 }
 
+enum Receive {
+    Call,
+    Replayed,
+    Unavailable,
+}
+
 // Caller holds the operation gate. All input/output buffers are owned and
 // bounded. MSG_TRUNC detects oversize UDP packets rather than dispatching a prefix.
-fn receive(t: &Transport) -> bool {
+fn receive(t: &Transport) -> Receive {
+    // SAFETY: the caller's Operation owns exclusive access to transport buffers.
     let io = unsafe { &mut *t.io.get() };
     io.call = None;
     let mut peer: libc::sockaddr_in = unsafe { zeroed() };
@@ -377,7 +389,7 @@ fn receive(t: &Transport) -> bool {
         Ok(n) => n as usize,
         Err(e) => {
             error(e);
-            return false;
+            return Receive::Unavailable;
         }
     };
     if count > io.input.len()
@@ -385,18 +397,64 @@ fn receive(t: &Transport) -> bool {
         || peer.sin_family as c_int != libc::AF_INET
     {
         error(libc::EMSGSIZE);
-        return false;
+        return Receive::Unavailable;
     }
     io.peer = peer;
     unsafe {
         (*t.public.get()).raddr = peer;
         (*t.public.get()).addrlen = length as c_int;
     }
+    // Registration mutations and this snapshot use the same registry lock.
+    // A call racing registration may finish against its earlier snapshot;
+    // subsequent generation snapshots cannot hit that old cache entry.
+    // Keep the default no-cache path free of an extra registry acquisition.
+    let generation = if io.cache.is_some() {
+        registry().generation
+    } else {
+        0
+    };
+    let identity = Peer {
+        address: peer.sin_addr.s_addr,
+        port: peer.sin_port,
+    };
+    if let Some(reply) = io
+        .cache
+        .as_ref()
+        .and_then(|cache| cache.lookup(identity, generation, &io.input[..count]))
+    {
+        // SAFETY: Operation retains the transport, peer and owned cache bytes
+        // throughout this synchronous syscall. A replay never enters C code.
+        match unsafe {
+            raw::sys_sendto(
+                t.fd,
+                reply.as_ptr(),
+                reply.len(),
+                libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+                (&peer as *const libc::sockaddr_in).cast(),
+                size_of::<libc::sockaddr_in>(),
+            )
+        } {
+            Ok(n) if n as usize == reply.len() => {}
+            Ok(_) => {
+                error(libc::EIO);
+            }
+            Err(e) => {
+                error(e);
+            }
+        }
+        // Even if sending fails, this already-completed request must not
+        // execute the application's side effects again in this readiness turn.
+        return Receive::Replayed;
+    }
     match service::decode_call(&io.input[..count]) {
         Ok(call) => {
+            if let Some(cache) = &mut io.cache {
+                // Own identity before an XDR decoder may mutate input bytes.
+                cache.stage(identity, generation, &io.input[..count]);
+            }
             io.cursor = call.arguments.start;
             io.call = Some(call);
-            true
+            Receive::Call
         }
         Err(CallError::RpcVersion { xid }) => {
             if let Ok(n) = service::encode_reply_prefix(
@@ -417,9 +475,9 @@ fn receive(t: &Transport) -> bool {
                     )
                 };
             }
-            false
+            Receive::Unavailable
         }
-        Err(_) => false,
+        Err(_) => Receive::Unavailable,
     }
 }
 
@@ -436,7 +494,7 @@ unsafe extern "C-unwind" fn recv(x: *mut SvcXprt, message: *mut c_void) -> c_int
     let Some(gate) = Operation::begin(t) else {
         return 0;
     };
-    if !receive(&gate.0) {
+    if !matches!(receive(&gate.0), Receive::Call) {
         return 0;
     }
     let io = unsafe { &mut *gate.0.io.get() };
@@ -584,6 +642,11 @@ unsafe fn send(
         };
         (prefix, io.peer)
     };
+    // The public initializer may decline a policy decision without an error
+    // return. Do not pass that zeroed stream to an application encoder.
+    if xdr.x_ops.is_null() {
+        return error(libc::EINVAL);
+    }
     if failure.is_none() && !proc.is_null() {
         let function: Procedure = unsafe { std::mem::transmute(proc) };
         if unsafe { function((&mut xdr as *mut Xdr).cast(), object) } == 0 {
@@ -593,8 +656,18 @@ unsafe fn send(
     if gate.0.destroyed.load(Ordering::Acquire) {
         return 0;
     }
-    let length = prefix + unsafe { ((*xdr.x_ops).x_getpostn)(&xdr) } as usize;
-    let io = unsafe { &*gate.0.io.get() };
+    // SAFETY: the encoder has returned and Operation still exclusively owns
+    // these buffers; no Rust reference was retained across the C callback.
+    let io = unsafe { &mut *gate.0.io.get() };
+    // An application encoder can modify the public XDR cursor. Check its
+    // position against the owned output before sending or slicing cache bytes;
+    // do not dispatch through a potentially modified operation table.
+    let Some(length) = (xdr.x_private as usize)
+        .checked_sub(io.output.as_ptr() as usize)
+        .filter(|&length| length >= prefix && length <= io.output.len())
+    else {
+        return error(libc::EMSGSIZE);
+    };
     match unsafe {
         raw::sys_sendto(
             gate.0.fd,
@@ -605,7 +678,13 @@ unsafe fn send(
             size_of::<libc::sockaddr_in>(),
         )
     } {
-        Ok(n) => c_int::from(n as usize == length),
+        Ok(n) if n as usize == length => {
+            if let Some(cache) = &mut io.cache {
+                cache.remember_staged(&io.output[..length]);
+            }
+            1
+        }
+        Ok(_) => error(libc::EIO),
         Err(e) => error(e),
     }
 }
@@ -679,6 +758,38 @@ pub unsafe extern "C" fn svcudp_bufcreate(
     recvsz: c_uint,
 ) -> *mut c_void {
     unsafe { create(sock, sendsz, recvsz) }
+}
+
+/// Enable bounded duplicate-reply caching on a native UDP transport.
+/// Repeated enablement leaves the existing cache intact. All storage is
+/// reserved here, outside application callbacks and service packet handling.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn svcudp_enablecache(x: *mut c_void, count: u64) -> c_int {
+    let Some(t) = lookup(x.cast()) else {
+        return error(libc::EINVAL);
+    };
+    let Some(gate) = Operation::begin(t) else {
+        return 0;
+    };
+    if gate.0.dispatching.load(Ordering::Acquire) {
+        return error(libc::EBUSY);
+    }
+    // SAFETY: Operation excludes receive/reply and other cache configuration.
+    let io = unsafe { &mut *gate.0.io.get() };
+    if io.cache.is_some() {
+        return error(libc::EINVAL);
+    }
+    let Ok(count) = usize::try_from(count) else {
+        return error(libc::ENOMEM);
+    };
+    match ReplyCache::new(count, io.input.len().max(io.output.len())) {
+        Ok(cache) => {
+            io.cache = Some(cache);
+            1
+        }
+        Err(CacheError::InvalidSize) => error(libc::EINVAL),
+        Err(CacheError::NoMemory) => error(libc::ENOMEM),
+    }
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn svc_sendreply(
@@ -799,6 +910,9 @@ pub unsafe extern "C" fn svc_register(
             published: protocol != 0,
         });
     }
+    // Conservatively retire cached responses after every successful service
+    // registration, including a repeated registration by the same callback.
+    r.generation = r.generation.wrapping_add(1);
     1
 }
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -809,8 +923,12 @@ pub unsafe extern "C" fn svc_unregister(program: u64, version: u64) {
             .services
             .iter()
             .any(|s| s.program as u64 == program && s.version as u64 == version && s.published);
+        let previous_len = r.services.len();
         r.services
             .retain(|s| s.program as u64 != program || s.version as u64 != version);
+        if r.services.len() != previous_len {
+            r.generation = r.generation.wrapping_add(1);
+        }
         published
     };
     if published {
@@ -837,8 +955,10 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
         let Some(op) = Operation::begin(Arc::clone(t)) else {
             break;
         };
-        if !receive(t) {
-            break;
+        match receive(t) {
+            Receive::Call => {}
+            Receive::Replayed => continue,
+            Receive::Unavailable => break,
         }
         let x = t.public.get();
         let mut hostname = [0u8; 256];

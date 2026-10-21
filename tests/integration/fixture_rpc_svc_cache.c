@@ -23,11 +23,27 @@ static int fail_encoding(void *x, void *unused) {
     CHECK(xu32(x,&partial));
     return 0;
 }
+static int invalid_cursor(void *stream, void *unused) {
+    (void)unused;
+    CacheXdr *x=stream;
+    /* Integer arithmetic does not form or dereference an out-of-bounds C
+     * pointer. The service must reject the claimed output length. */
+    x->cursor=(char *)((uintptr_t)x->cursor+x->remaining+1);
+    return 1;
+}
 static void cache_handler(Request *r, Xprt *x) {
     if (r->procedure==15) { ++calls; CHECK(!sendreply(x,fail_encoding,NULL)); }
     else if (r->procedure==16) {
         ++calls;unsigned value=0;CHECK(x->ops->getargs(x,consume_decode,&value));
         value+=7;CHECK(sendreply(x,xu32,&value));CHECK(x->ops->freeargs(x,xu32,&value));
+    }
+    else if (r->procedure==17) {
+        ++calls;errno=0;CHECK(!enablecache(x,2) && errno==EBUSY);
+        CHECK(sendreply(x,void_proc,NULL));
+    }
+    else if (r->procedure==18) {
+        ++calls;errno=0;
+        CHECK(!sendreply(x,invalid_cursor,NULL) && errno==EMSGSIZE);
     }
     else handler(r,x);
 }
@@ -46,11 +62,14 @@ int main(int argc,char **argv) {
     client=socket(AF_INET,SOCK_DGRAM,0);CHECK(client>=0);
     CHECK(reg(server,PROGRAM,1,cache_handler,0));
     if (!strcmp(scenario,"cache-limits")) {
-        CHECK(!enablecache(server,0));CHECK(!enablecache(server,ULONG_MAX));
-        CHECK(!enablecache(server,1024*1024));
+        errno=0;CHECK(!enablecache(NULL,1) && errno==EINVAL);
+        errno=0;CHECK(!enablecache((Xprt *)(uintptr_t)1,1) && errno==EINVAL);
+        errno=0;CHECK(!enablecache(server,0) && errno==EINVAL);
+        errno=0;CHECK(!enablecache(server,ULONG_MAX) && errno==ENOMEM);
+        errno=0;CHECK(!enablecache(server,1024*1024) && errno==ENOMEM);
     }
     unsigned long count=!strcmp(scenario,"cache-eviction")?2:4;
-    CHECK(enablecache(server,count));
+    if (strcmp(scenario,"cache-disabled")) CHECK(enablecache(server,count));
     if (!strcmp(scenario,"cache-basic")) {
         for (unsigned i=0;i<8;++i) {exchange(1,101);CHECK(calls==1);}
     } else if (!strcmp(scenario,"cache-input-snapshot")) {
@@ -85,6 +104,11 @@ int main(int argc,char **argv) {
         unsigned char data[2048];size_t n=request(data,101,PROGRAM,1,15);
         for(unsigned i=1;i<=2;++i) {send_packet(data,n);drive();no_response();CHECK(calls==i);}
         exchange(1,102);CHECK(calls==3);
+    } else if (!strcmp(scenario,"cache-invalid-cursor")) {
+        exchange(1,100);CHECK(calls==1);
+        unsigned char data[2048];size_t n=request(data,101,PROGRAM,1,18);
+        for(unsigned i=2;i<=3;++i) {send_packet(data,n);drive();no_response();CHECK(calls==i);}
+        exchange(1,100);CHECK(calls==3);
     } else if (!strcmp(scenario,"cache-body")) {
         exchange(1,101);CHECK(calls==1);
         unsigned char data[2048];size_t n=request(data,101,PROGRAM,1,1);word(data,n,41);
@@ -101,8 +125,13 @@ int main(int argc,char **argv) {
     } else if (!strcmp(scenario,"cache-generation")) {
         exchange(1,101);CHECK(calls==1);unreg(PROGRAM,1);
         CHECK(reg(server,PROGRAM,1,cache_handler,0));exchange(1,101);CHECK(calls==2);
+    } else if (!strcmp(scenario,"cache-disabled")) {
+        exchange(1,101);exchange(1,101);CHECK(calls==2);
+    } else if (!strcmp(scenario,"cache-enable-callback")) {
+        exchange(17,101);exchange(17,101);CHECK(calls==1);
     } else if (!strcmp(scenario,"cache-limits")) {
-        CHECK(!enablecache(server,2));exchange(1,101);exchange(1,101);CHECK(calls==1);
+        errno=0;CHECK(!enablecache(server,2) && errno==EINVAL);
+        exchange(1,101);exchange(1,101);CHECK(calls==1);
     } else if (!strcmp(scenario,"cache-destroy")) {
         exchange(1,101);int fd=server->fd;
         unsigned char data[2048];size_t n=request(data,102,PROGRAM,1,10);

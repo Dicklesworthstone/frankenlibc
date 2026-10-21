@@ -49,22 +49,34 @@ impl ReplyCache {
             return Err(CacheError::InvalidSize);
         }
         let stride = packet_size.checked_mul(2).ok_or(CacheError::NoMemory)?;
-        let footprint = stride.checked_add(size_of::<Slot>())
+        let footprint = stride
+            .checked_add(size_of::<Slot>())
             .and_then(|n| n.checked_mul(count))
-            .and_then(|n| n.checked_add(packet_size)).ok_or(CacheError::NoMemory)?;
+            .and_then(|n| n.checked_add(packet_size))
+            .ok_or(CacheError::NoMemory)?;
         if footprint > MAX_CACHE_BYTES {
             return Err(CacheError::NoMemory);
         }
         let mut slots = Vec::new();
-        slots.try_reserve_exact(count).map_err(|_| CacheError::NoMemory)?;
+        slots
+            .try_reserve_exact(count)
+            .map_err(|_| CacheError::NoMemory)?;
         slots.resize(count, Slot::default());
         let mut bytes = Vec::new();
         // The final packet-sized region is an owned pre-dispatch snapshot. A
         // custom XDR decoder may alter the public input buffer before replying.
         let length = stride * count + packet_size; // checked by footprint above
-        bytes.try_reserve_exact(length).map_err(|_| CacheError::NoMemory)?;
+        bytes
+            .try_reserve_exact(length)
+            .map_err(|_| CacheError::NoMemory)?;
         bytes.resize(length, 0);
-        Ok(Self { slots, bytes, packet_size, next: 0, staged: None })
+        Ok(Self {
+            slots,
+            bytes,
+            packet_size,
+            next: 0,
+            staged: None,
+        })
     }
 
     fn index(&self, peer: Peer, generation: u64, request: &[u8]) -> Option<usize> {
@@ -72,8 +84,11 @@ impl ReplyCache {
             return None;
         }
         self.slots.iter().enumerate().find_map(|(index, slot)| {
-            if !slot.occupied || slot.peer != peer || slot.generation != generation
-                || slot.request_len != request.len() {
+            if !slot.occupied
+                || slot.peer != peer
+                || slot.generation != generation
+                || slot.request_len != request.len()
+            {
                 return None;
             }
             let start = index * self.packet_size * 2;
@@ -98,7 +113,11 @@ impl ReplyCache {
         let start = self.slots.len() * self.packet_size * 2;
         self.bytes[start..start + request.len()].copy_from_slice(request);
         self.staged = Some(Slot {
-            peer, generation, request_len: request.len(), reply_len: 0, occupied: true,
+            peer,
+            generation,
+            request_len: request.len(),
+            reply_len: 0,
+            occupied: true,
         });
         true
     }
@@ -106,19 +125,27 @@ impl ReplyCache {
     /// Publish a fully serialized response for the immutable staged request.
     /// Keep the snapshot available for a second reply to the same active call.
     pub fn remember_staged(&mut self, reply: &[u8]) -> bool {
-        let Some(mut slot) = self.staged else { return false };
+        let Some(mut slot) = self.staged else {
+            return false;
+        };
         if reply.len() > self.packet_size {
             return false;
         }
         let saved = self.slots.len() * self.packet_size * 2;
-        let index = self.index(slot.peer, slot.generation,
-            &self.bytes[saved..saved + slot.request_len]).unwrap_or_else(|| {
+        let index = self
+            .index(
+                slot.peer,
+                slot.generation,
+                &self.bytes[saved..saved + slot.request_len],
+            )
+            .unwrap_or_else(|| {
                 let index = self.next;
                 self.next = (self.next + 1) % self.slots.len();
                 index
             });
         let start = index * self.packet_size * 2;
-        self.bytes.copy_within(saved..saved + slot.request_len, start);
+        self.bytes
+            .copy_within(saved..saved + slot.request_len, start);
         let start = start + self.packet_size;
         self.bytes[start..start + reply.len()].copy_from_slice(reply);
         slot.reply_len = reply.len();
@@ -128,6 +155,9 @@ impl ReplyCache {
 
     /// Store only a fully encoded response. Oversized data leaves the cache
     /// unchanged. Replacing a reply to the same request consumes no FIFO slot.
+    /// Tests use this convenience composition; transports snapshot before
+    /// callbacks with stage() and publish later with remember_staged().
+    #[cfg(test)]
     pub fn remember(&mut self, peer: Peer, generation: u64, request: &[u8], reply: &[u8]) -> bool {
         if request.len() > self.packet_size || reply.len() > self.packet_size {
             return false;
