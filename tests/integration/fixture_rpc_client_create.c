@@ -179,7 +179,10 @@ int main(int argc,char **argv) {
         if(strstr(argv[1],"encode-error")) { encode=fail_xdr;expected=1; }
         if(strstr(argv[1],"decode-error")) { decode=fail_xdr;expected=2; }
         if(strstr(argv[1],"procedure-error")) { procedure=8;expected=10; }
-        if(strstr(argv[1],"high-ids")) { p=0x12345678f4567001UL;v=0xabcdef01fffffffeUL;procedure=0xffffffff80000007UL; }
+        if(strstr(argv[1],"high-ids")) { p=0x12345678f4567001UL;v=0xabcdef01fffffffeUL;procedure=0xffffffff80000007UL;expected=14; }
+        if(strstr(argv[1],"high-wire-ids")) { p=0xf4567001UL;v=0xfffffffeUL;procedure=0x80000007UL; }
+        if(strstr(argv[1],"version-overflow")) { v=0x100000001UL;expected=14; }
+        if(strstr(argv[1],"procedure-overflow")) procedure=0xffffffff00000007UL;
         if(strstr(argv[1],"reentrant")) encode=reenter_xdr;
         if(strstr(argv[1],"null-host")) { host=NULL;expected=13; }
         if(strstr(argv[1],"null-encode")) { encode=NULL;expected=1; }
@@ -187,7 +190,13 @@ int main(int argc,char **argv) {
         int before=descriptor_count();
         for(int i=0;i<(strstr(argv[1],"repeat")?64:1);i++) {
             uint32_t in=0x87340000U+(unsigned)i,out=0;
-            CHECK(call_rpc(host,p,v,procedure,encode,&in,decode,&out)==expected);
+            int status=call_rpc(host,p,v,procedure,encode,&in,decode,&out);
+            if (status!=expected) fprintf(stderr,"RPC_STATUS actual=%d expected=%d\n",status,expected);
+            CHECK(status==expected);
+            if (expected==14) {
+                CHECK(*(int *)create_error()==14);
+                CHECK(*(int *)((char *)create_error()+8)==1);
+            }
             if(!expected) CHECK(out==(in^0x55aa55aaU));
         }
         /* A reference implementation may retain one cached UDP descriptor. */

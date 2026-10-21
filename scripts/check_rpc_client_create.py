@@ -20,7 +20,8 @@ HOST = ('unknown-protocol', 'unregistered', 'portmapper-error', 'udp', 'tcp',
         'udp-name', 'tcp-name', 'udp-repeat', 'tcp-repeat', 'callrpc-udp',
         'callrpc-name', 'callrpc-repeat', 'callrpc-unregistered',
         'callrpc-encode-error', 'callrpc-decode-error', 'callrpc-procedure-error',
-        'callrpc-high-ids')
+        'callrpc-high-ids', 'callrpc-high-wire-ids', 'callrpc-version-overflow',
+        'callrpc-procedure-overflow')
 OWNED = ('callrpc-reentrant', 'callrpc-null-host', 'callrpc-null-encode',
          'callrpc-null-decode')
 UNWIND = ('callrpc-encode-throw', 'callrpc-decode-throw', 'callrpc-encode-exit',
@@ -39,10 +40,12 @@ class Peers:
         self.selector = selectors.DefaultSelector()
         self.sockets = []
         self.errors = []
-        self.counts = dict(portmap=0, udp=0, tcp=0)
+        self.counts = dict(portmap=0, portmap_tcp=0, udp=0, tcp=0)
         self.stop = threading.Event()
         try:
             self.mapper = self.bind(socket.SOCK_DGRAM, 111, 'mapper')
+            self.mapper_tcp = self.bind(socket.SOCK_STREAM, 111, 'mapper-listener')
+            self.mapper_tcp.listen()
             self.udp = self.bind(socket.SOCK_DGRAM, 0, 'udp')
             self.tcp = self.bind(socket.SOCK_STREAM, 0, 'listener')
             self.tcp.listen()
@@ -98,32 +101,34 @@ class Peers:
             while not self.stop.is_set():
                 for key, _ in self.selector.select(0.1):
                     sock, label = key.fileobj, key.data
-                    if label == 'listener':
+                    if label in ('listener', 'mapper-listener'):
                         connection, _ = sock.accept()
                         connection.setblocking(False)
                         self.sockets.append(connection)
-                        self.selector.register(connection, selectors.EVENT_READ, bytearray())
-                    elif isinstance(label, bytearray):
+                        self.selector.register(connection, selectors.EVENT_READ,
+                                               dict(buffer=bytearray(), mapper=label == 'mapper-listener'))
+                    elif isinstance(label, dict):
+                        buffer = label['buffer']
                         packet = sock.recv(65536)
                         if not packet:
                             self.selector.unregister(sock)
                             sock.close()
                             continue
-                        label.extend(packet)
-                        while len(label) >= 4:
-                            marker = struct.unpack('!I', label[:4])[0]
+                        buffer.extend(packet)
+                        while len(buffer) >= 4:
+                            marker = struct.unpack('!I', buffer[:4])[0]
                             length = marker & 0x7fffffff
                             if not marker & 0x80000000 or length > 65536:
                                 raise ValueError('unexpected TCP record framing')
-                            if len(label) < length + 4:
+                            if len(buffer) < length + 4:
                                 break
-                            response = self.reply(bytes(label[4:length + 4]))
-                            del label[:length + 4]
+                            response = self.reply(bytes(buffer[4:length + 4]), label['mapper'])
+                            del buffer[:length + 4]
                             # The bounded replies fit one tiny loopback write.
                             framed = words([0x80000000 | len(response)]) + response
+                            self.counts['portmap_tcp' if label['mapper'] else 'tcp'] += 1
                             if sock.send(framed) != len(framed):
                                 raise ValueError('short TCP peer reply')
-                            self.counts['tcp'] += 1
                     else:
                         packet, peer = sock.recvfrom(65536)
                         response = self.reply(packet, label == 'mapper')
@@ -169,6 +174,7 @@ def main():
     peers = Peers()
 
     def run(provider, case, env, negative=False, cpp=False):
+        before = peers.counts.copy()
         try:
             process = subprocess.run([str(binaries[cpp]), case], env=env,
                                      capture_output=True, timeout=12)
@@ -177,12 +183,17 @@ def main():
             code, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
         expected = (113, b'', b'WRONG RPC PROVIDER\n') if negative else (0, f'PASS {case}\n'.encode(), b'')
         passed = (code, stdout, stderr) == expected
+        wire = {key: value - before[key] for key, value in peers.counts.items()}
+        if not negative and case.startswith('tcp'):
+            passed = passed and wire['portmap_tcp'] > 0 and wire['tcp'] > 0
+        if not negative and case in ('callrpc-high-ids', 'callrpc-version-overflow'):
+            passed = passed and wire['portmap'] == 0
         stem = f'{provider}-{case}'
         (out / f'{stem}.out').write_bytes(stdout)
         (out / f'{stem}.err').write_bytes(stderr)
         bucket = 'negative' if negative else 'host' if provider == 'host' else 'candidate'
         report[bucket].append(dict(provider=provider, case=case, passed=passed,
-                                   returncode=code))
+                                   returncode=code, wire_exchanges=wire))
         (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
 

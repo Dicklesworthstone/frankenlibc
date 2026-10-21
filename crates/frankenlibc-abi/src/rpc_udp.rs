@@ -800,7 +800,7 @@ unsafe fn make_client(
         } else {
             libc::IPPROTO_UDP
         };
-        let port = portmap(&peer, program as u32, version as u32, protocol as u32, 0, 3)
+        let port = portmap(&peer, program, version, protocol as u32, 0, 3)
             .map_err(CreateFailure::portmapper)?;
         peer.sin_port = port.to_be();
     }
@@ -952,20 +952,26 @@ unsafe fn create_transport(
 /// A zero GETPORT result is a semantic failure, not a valid endpoint.
 fn portmap(
     peer: &libc::sockaddr_in,
-    program: u32,
-    version: u32,
+    program: u64,
+    version: u64,
     protocol: u32,
     port: u16,
     procedure: u32,
 ) -> Result<u16, RpcError> {
+    // Mapping arguments use GNU xdr_u_long, which rejects values outside the
+    // 32-bit wire domain. Do not turn an invalid LP64 identifier into a query
+    // for a different, truncated program or version.
+    let program = u32::try_from(program).map_err(|_| RpcError::status(1))?;
+    let version = u32::try_from(version).map_err(|_| RpcError::status(1))?;
     let mut endpoint = *peer;
     endpoint.sin_port = 111u16.to_be();
     let mut arguments = [0u8; 16];
-    for (slot, word) in arguments
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .zip([program, version, protocol, port as u32])
+    for (slot, word) in
+        arguments
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip([program, version, protocol, port as u32])
     {
         *slot = word.to_be_bytes();
     }
@@ -973,17 +979,32 @@ fn portmap(
     let xid = transaction_id();
     wire::encode_null_call(&mut request, xid, 100000, 2, procedure, &arguments)
         .map_err(|_| RpcError::status(1))?;
-    let socket = Socket::open()?;
     let mut response = [0u8; 1024];
-    let length = exchange(
-        &socket,
-        &endpoint,
-        &request,
-        &mut response,
-        xid,
-        5 * SECOND,
-        60 * SECOND,
-    )?;
+    let length = if procedure == 3 && protocol == libc::IPPROTO_TCP as u32 {
+        // GNU TCP discovery consults the mapper over TCP too. Reuse the
+        // bounded native record transport without recursively constructing a
+        // CLIENT or falling back to UDP when TCP is unavailable.
+        let socket = tcp::connect(&endpoint, -1)?;
+        let mut stream = tcp::Stream::new(response.len());
+        stream.exchange(
+            &socket,
+            &request,
+            &mut response,
+            xid,
+            Deadline::new(60 * SECOND)?,
+        )?
+    } else {
+        let socket = Socket::open()?;
+        exchange(
+            &socket,
+            &endpoint,
+            &request,
+            &mut response,
+            xid,
+            5 * SECOND,
+            60 * SECOND,
+        )?
+    };
     let result =
         match wire::decode_reply(&response[..length], xid).map_err(|_| RpcError::status(2))? {
             Reply::Failure(error) => return Err(RpcError::remote(error)),
@@ -1019,7 +1040,7 @@ pub(super) unsafe fn getport(
             if peer.sin_family as c_int != libc::AF_INET {
                 return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT));
             }
-            let result = portmap(&peer, program as u32, version as u32, protocol, 0, 3);
+            let result = portmap(&peer, program, version, protocol, 0, 3);
             // Public pmap_getport resets the caller's port on return (including a
             // zero/unregistered result). Constructors instead publish the discovered
             // service port. Keep those two ABI contracts distinct.
@@ -1064,8 +1085,8 @@ pub(super) fn registration(
     } else {
         portmap(
             &peer,
-            program as u32,
-            version as u32,
+            program,
+            version,
             protocol as u32,
             port,
             if remove { 2 } else { 1 },

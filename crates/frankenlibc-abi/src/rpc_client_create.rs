@@ -108,8 +108,9 @@ pub unsafe extern "C" fn clnt_create(
 }
 
 /// Execute a one-shot UDP RPC using the native CLIENT and XDR implementations.
-/// The GNU LP64 ABI takes `unsigned long` identifiers. The shared transport
-/// serializes their low 32 bits, as required by the RPC wire format.
+/// The GNU LP64 ABI takes `unsigned long` identifiers. Discovery rejects a
+/// program/version outside the 32-bit wire domain; the procedure uses its
+/// low 32 bits, matching the GNU call header encoder.
 /// Each call owns and retires its client; no process-global client cache or
 /// lock is retained across application encoder/decoder callbacks.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
