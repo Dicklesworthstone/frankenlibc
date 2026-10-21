@@ -29,6 +29,10 @@ UNWIND = ('callrpc-encode-throw', 'callrpc-decode-throw', 'callrpc-encode-exit',
           'client-free-throw', 'client-marshal-throw', 'client-validate-throw',
           'client-refresh-throw')
 PROGRAM = 0x34567001
+DIAGNOSTICS = ('diag-status', 'diag-text', 'diag-errno', 'diag-auth', 'diag-print',
+               'diag-create', 'diag-prefix', 'diag-static', 'diag-thread',
+               'diag-reentry', 'diag-native-udp', 'diag-native-tcp')
+DIAGNOSTIC_UNWIND = ('diag-geterr-throw', 'diag-geterr-exit', 'diag-print-throw', 'diag-print-exit')
 
 
 def words(values):
@@ -90,6 +94,10 @@ class Peers:
         expected = (0xf4567001, 0xfffffffe, 0x80000007) if program == 0xf4567001 else (PROGRAM, 1, 7)
         if procedure == 9 and (program, revision) == (PROGRAM, 1):
             return words([xid, 1, 1, 1, 2])  # AUTH_REJECTEDCRED, invokes refresh.
+        if procedure == 10 and (program, revision) == (PROGRAM, 1):
+            return words(prefix + [2, 1, 5])  # Program version range.
+        if procedure == 11 and (program, revision) == (PROGRAM, 1):
+            return words([xid, 1, 1, 0, 2, 2])  # RPC version range.
         if procedure == 8 and (program, revision) == (PROGRAM, 1):
             return words(prefix + [3])  # PROC_UNAVAIL.
         if (program, revision, procedure) != expected or len(data) != 11:
@@ -198,8 +206,10 @@ def main():
         print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
 
     try:
-        for case in HOST:
+        for case in HOST + DIAGNOSTICS:
             run('host', case, clean)
+        for case in DIAGNOSTIC_UNWIND:
+            run('host', case, clean, cpp=True)
         run('wrong-provider-host', 'unknown-protocol',
             dict(clean, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
         run('wrong-provider-forced', 'unknown-protocol',
@@ -208,9 +218,9 @@ def main():
         for mode in ('strict', 'hardened'):
             env = dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
                        FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE='0')
-            for case in HOST + OWNED:
+            for case in HOST + DIAGNOSTICS + OWNED:
                 run(mode, case, env)
-            for case in UNWIND:
+            for case in UNWIND + DIAGNOSTIC_UNWIND:
                 run(mode, case, env, cpp=True)
     finally:
         peers.close()

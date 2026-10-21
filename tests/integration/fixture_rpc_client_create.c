@@ -6,6 +6,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -15,10 +17,11 @@
 #include <sys/time.h>
 #include <unistd.h>
 #ifdef __cplusplus
-#include <pthread.h>
 #define STATIC_ASSERT static_assert
+#define THREAD_LOCAL thread_local
 #else
 #define STATIC_ASSERT _Static_assert
+#define THREAD_LOCAL _Thread_local
 #endif
 
 /* glibc's public LP64 Sun RPC client prefix. Do not substitute libtirpc's
@@ -84,6 +87,158 @@ static int descriptor_count(void) {
 static void destroy_owned(Client *client) {
     int fd=-1; CHECK(client->ops->control(client,6,&fd)); CHECK(fd>=0);
     client->ops->destroy(client); errno=0; CHECK(fcntl(fd,F_GETFD)==-1&&errno==EBADF);
+}
+
+/* Diagnostics accept the public CLIENT operation table, including a caller's
+   own geterr callback. Expected bytes use host snprintf/strerror explicitly,
+   never the candidate formatter or candidate's error-name table. */
+typedef struct RpcError { int status; unsigned padding; unsigned long first,second; } RpcError;
+typedef struct CreateError { int status; unsigned padding; RpcError error; } CreateError;
+STATIC_ASSERT(sizeof(RpcError)==24 && sizeof(CreateError)==32,"glibc LP64 RPC errors");
+static char *(*diagnostic)(Client *,const char *), *(*creation_diagnostic)(const char *), *(*status_name)(int);
+static void (*print_diagnostic)(Client *,const char *), (*print_creation)(const char *), (*print_status)(int);
+static int (*host_format)(char *,size_t,const char *,...);
+static char *(*host_error)(int);
+static THREAD_LOCAL int diagnostic_depth, diagnostic_reentry;
+static void (*diagnostic_hook)(void);
+static const char *error_name(int status) {
+    static const char *names[]={"RPC: Success","RPC: Can't encode arguments","RPC: Can't decode result",
+        "RPC: Unable to send","RPC: Unable to receive","RPC: Timed out","RPC: Incompatible versions of RPC",
+        "RPC: Authentication error","RPC: Program unavailable","RPC: Program/version mismatch",
+        "RPC: Procedure unavailable","RPC: Server can't decode arguments","RPC: Remote system error",
+        "RPC: Unknown host","RPC: Port mapper failure","RPC: Program not registered",
+        "RPC: Failed (unspecified error)","RPC: Unknown protocol"};
+    return status>=0 && status<18?names[status]:"RPC: (unknown error code)";
+}
+static const char *auth_name(int why) {
+    static const char *names[]={"Authentication OK","Invalid client credential","Server rejected credential",
+        "Invalid client verifier","Server rejected verifier","Client credential too weak",
+        "Invalid server verifier","Failed (unspecified error)"};
+    return why>=0 && why<8?names[why]:NULL;
+}
+static void diagnostic_geterr(Client *client,void *output);
+static const Ops diagnostic_ops={NULL,NULL,diagnostic_geterr,NULL,NULL,NULL};
+static void diagnostic_geterr(Client *client,void *output) {
+    if (diagnostic_hook) diagnostic_hook();
+    if (diagnostic_reentry && !diagnostic_depth) {
+        diagnostic_depth=1;
+        RpcError nested={5,0,0,0}; Client inner={NULL,&diagnostic_ops,&nested};
+        CHECK(!strcmp(diagnostic(&inner,"inner"),"inner: RPC: Timed out\n"));
+        diagnostic_depth=0;
+    }
+    memcpy(output,client->private_state,sizeof(RpcError));
+}
+static void expected_diagnostic(char *out,size_t size,const char *prefix,const RpcError *error) {
+    const char *name=error_name(error->status);
+    int status=error->status, why=(int)error->first;
+    if(status==3 || status==4) host_format(out,size,"%s: %s; errno = %s\n",prefix,name,host_error(why));
+    else if(status==6 || status==9) host_format(out,size,"%s: %s; low version = %lu, high version = %lu",prefix,name,error->first,error->second);
+    else if(status==7 && auth_name(why)) host_format(out,size,"%s: %s; why = %s\n",prefix,name,auth_name(why));
+    else if(status==7) host_format(out,size,"%s: %s; why = (unknown authentication error - %d)\n",prefix,name,why);
+    else if(status<0 || status>17) host_format(out,size,"%s: %s; s1 = %lu, s2 = %lu",prefix,name,error->first,error->second);
+    else host_format(out,size,"%s: %s\n",prefix,name);
+}
+static void expect_diagnostic(Client *client,const char *prefix,const RpcError *error) {
+    char expected[131072]; expected_diagnostic(expected,sizeof(expected),prefix,error);
+    char *actual=diagnostic(client,prefix); CHECK(actual);
+    if(strcmp(actual,expected)) fprintf(stderr,"DIAGNOSTIC expected=[%s] actual=[%s]\n",expected,actual);
+    CHECK(!strcmp(actual,expected));
+}
+static void expect_print(Client *client,const char *expected,int kind) {
+    int fds[2]; CHECK(!pipe(fds)); CHECK(!fflush(stderr));
+    int original=dup(2); CHECK(original>=0 && dup2(fds[1],2)==2); CHECK(!close(fds[1]));
+    if(kind==0) print_diagnostic(client,"print");
+    else if(kind==1) print_creation("print");
+    else print_status(((RpcError *)client->private_state)->status);
+    CHECK(!fflush(stderr)); CHECK(dup2(original,2)==2 && !close(original));
+    char output[4096]; size_t used=0; ssize_t n;
+    while((n=read(fds[0],output+used,sizeof(output)-1-used))>0) used+=(size_t)n;
+    CHECK(n==0 && !close(fds[0])); output[used]=0; CHECK(!strcmp(output,expected));
+}
+static void load_diagnostics(void) {
+    diagnostic=(char *(*)(Client *,const char *))symbol("clnt_sperror");
+    print_diagnostic=(void (*)(Client *,const char *))symbol("clnt_perror");
+    creation_diagnostic=(char *(*)(const char *))symbol("clnt_spcreateerror");
+    print_creation=(void (*)(const char *))symbol("clnt_pcreateerror");
+    status_name=(char *(*)(int))symbol("clnt_sperrno");
+    print_status=(void (*)(int))symbol("clnt_perrno");
+    void *host=dlopen("libc.so.6",RTLD_NOW|RTLD_LOCAL); CHECK(host);
+    host_format=(int (*)(char *,size_t,const char *,...))dlvsym(host,"snprintf","GLIBC_2.2.5");
+    host_error=(char *(*)(int))dlvsym(host,"strerror","GLIBC_2.2.5"); CHECK(host_format && host_error);
+}
+static pthread_barrier_t diagnostic_barrier;
+static void *diagnostic_thread(void *value) {
+    int index=(int)(intptr_t)value;
+    RpcError error={index?9:7,0,index?ULONG_MAX:5,1}; Client client={NULL,&diagnostic_ops,&error};
+    char expected[1024]; const char *prefix=index?"thread-b":"thread-a";
+    expected_diagnostic(expected,sizeof(expected),prefix,&error);
+    char *actual=diagnostic(&client,prefix); CHECK(actual);
+    int rc=pthread_barrier_wait(&diagnostic_barrier); CHECK(rc==0 || rc==PTHREAD_BARRIER_SERIAL_THREAD);
+    CHECK(!strcmp(actual,expected)); return NULL;
+}
+#ifdef __cplusplus
+static void diagnostic_unwind_case(const char *name);
+#endif
+static void diagnostic_case(const char *name) {
+    load_diagnostics();
+#ifdef __cplusplus
+    if(strstr(name,"throw") || strstr(name,"exit")) { diagnostic_unwind_case(name);return; }
+#endif
+    RpcError error={0,0,ULONG_MAX,0x1234567887654321UL}; Client client={NULL,&diagnostic_ops,&error};
+    if(!strcmp(name,"diag-native-udp") || !strcmp(name,"diag-native-tcp")) {
+        Client *native=create("127.0.0.1",program,1,strstr(name,"tcp")?"tcp":"udp"); CHECK(native);
+        expect_diagnostic(native,"native",&error);
+        const unsigned long procedures[]={7,8,9,10,11}; const int statuses[]={0,10,7,9,6};
+        for(unsigned i=0;i<5;i++) {
+            uint32_t in=31,out=0; struct timeval timeout={2,0};
+            CHECK(native->ops->call(native,procedures[i],xdr_uint,&in,xdr_uint,&out,timeout)==statuses[i]);
+            error.status=statuses[i]; error.first=i==2?2:i==3?1:i==4?2:0;error.second=i==3?5:i==4?2:0;
+            expect_diagnostic(native,"native",&error);
+        }
+        destroy_owned(native);
+    } else if(!strcmp(name,"diag-thread")) {
+        CHECK(!pthread_barrier_init(&diagnostic_barrier,NULL,2)); pthread_t workers[2];
+        for(int i=0;i<2;i++) CHECK(!pthread_create(&workers[i],NULL,diagnostic_thread,(void *)(intptr_t)i));
+        for(int i=0;i<2;i++) { CHECK(!pthread_join(workers[i],NULL)); }
+        CHECK(!pthread_barrier_destroy(&diagnostic_barrier));
+    } else if(!strcmp(name,"diag-reentry")) {
+        diagnostic_reentry=1; error.status=9; expect_diagnostic(&client,"outer",&error);
+    } else if(!strcmp(name,"diag-prefix")) {
+        char *prefix=(char *)malloc(100001); CHECK(prefix); memset(prefix,'q',100000);prefix[100000]=0;
+        expect_diagnostic(&client,prefix,&error);free(prefix);
+        expect_diagnostic(&client,"\xff\x80%s%n",&error); expect_diagnostic(&client,"",&error);
+        expect_diagnostic(&client,NULL,&error);
+        char saved[1024]; char *previous=diagnostic(&client,"alias"); CHECK(previous); strcpy(saved,previous);
+        expected_diagnostic(saved+strlen(saved)+1,sizeof(saved)/2,previous,&error);
+        CHECK(!strcmp(diagnostic(&client,previous),saved+strlen(saved)+1));
+    } else if(!strcmp(name,"diag-static")) {
+        char *first=status_name(0);CHECK(first && !strcmp(first,error_name(0)));
+        CHECK(!strcmp(status_name(5),error_name(5)));CHECK(!strcmp(first,error_name(0)));
+        expect_diagnostic(&client,"client",&error);CHECK(!strcmp(first,error_name(0)));
+        (void)creation_diagnostic("creation");CHECK(!strcmp(first,error_name(0)));
+    } else if(!strcmp(name,"diag-create")) {
+        CreateError *creation=(CreateError *)create_error();
+        for(int i=0;i<18;i++) {
+            creation->status=i; creation->error.status=5; creation->error.first=EACCES;
+            char expected[1024];
+            host_format(expected,sizeof(expected),"print: %s%s%s\n",error_name(i),i==12 || i==14?" - ":"",i==12?host_error(EACCES):i==14?error_name(5):"");
+            CHECK(!strcmp(creation_diagnostic("print"),expected));expect_print(&client,expected,1);
+        }
+    } else {
+        const int statuses[]={0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,-1,INT_MAX,INT_MIN};
+        for(unsigned i=0;i<sizeof(statuses)/sizeof(statuses[0]);i++) {
+            error.status=statuses[i];
+            if(!strcmp(name,"diag-status")) CHECK(!strcmp(status_name(error.status),error_name(error.status)));
+            else if(!strcmp(name,"diag-print")) {
+                char expected[1024];expected_diagnostic(expected,sizeof(expected),"print",&error);expect_print(&client,expected,0);expect_print(&client,error_name(error.status),2);
+            } else expect_diagnostic(&client,"diagnostic",&error);
+        }
+        if(!strcmp(name,"diag-errno")) {
+            const int errors[]={0,EACCES,EBADF,ECONNRESET,99999,-17,INT_MIN};
+            for(unsigned i=0;i<sizeof(errors)/sizeof(errors[0]);i++) {error.status=3;error.first=(unsigned)errors[i];expect_diagnostic(&client,"errno",&error);}
+        }
+        if(!strcmp(name,"diag-auth")) for(int i=-1;i<=8;i++) {error.status=7;error.first=(unsigned)i;expect_diagnostic(&client,"auth",&error);}
+    }
 }
 #ifdef __cplusplus
 static const char *scenario;
@@ -159,6 +314,27 @@ static void unwind_case(const char *name) {
     CHECK(call_rpc("127.0.0.1",program,1,7,xdr_uint,&in,xdr_uint,&out)==0);
     CHECK(out==(in^0x55aa55aaU) && descriptor_count()==before);
 }
+static void interrupt_geterr(void) { Marker marker;interrupt_now(); }
+static void *diagnostic_interrupted_thread(void *raw) {
+    Client *client=(Client *)raw;
+    if(strstr(scenario,"print")) print_diagnostic(client,"interrupted");
+    else (void)diagnostic(client,"interrupted");
+    CHECK(0);return NULL;
+}
+static void diagnostic_unwind_case(const char *name) {
+    scenario=name;diagnostic_hook=interrupt_geterr;
+    RpcError error={5,0,0,0};Client client={NULL,&diagnostic_ops,&error};
+    if(strstr(name,"exit")) {
+        pthread_t worker;void *result=NULL;
+        CHECK(!pthread_create(&worker,NULL,diagnostic_interrupted_thread,&client));
+        CHECK(!pthread_join(worker,&result) && result==(void *)19);
+    } else {
+        int caught=0;
+        try { diagnostic_interrupted_thread(&client); } catch(const CodecException &) { caught=1; }
+        CHECK(caught);
+    }
+    CHECK(destructors==1);diagnostic_hook=NULL;expect_diagnostic(&client,"after",&error);
+}
 #endif
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(8);
@@ -166,6 +342,9 @@ int main(int argc,char **argv) {
     xdr_uint=(Xdr)symbol("xdr_u_int");
     create_error=(void *(*)(void))symbol("__rpc_thread_createerr");
     call_rpc=(CallRpc)symbol("callrpc");
+    if(!strncmp(argv[1],"diag-",5)) {
+        diagnostic_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
 #ifdef __cplusplus
     if (strstr(argv[1],"throw") || strstr(argv[1],"exit")) {
         unwind_case(argv[1]); printf("PASS %s\n",argv[1]); return 0;
