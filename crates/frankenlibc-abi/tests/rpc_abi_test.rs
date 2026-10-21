@@ -297,7 +297,7 @@ fn clnt_sperrno_success() {
     let msg = unsafe { clnt_sperrno(0) };
     assert!(!msg.is_null());
     let s = unsafe { CStr::from_ptr(msg) }.to_str().unwrap();
-    assert_eq!(s, "Success");
+    assert_eq!(s, "RPC: Success");
 }
 
 #[test]
@@ -305,7 +305,7 @@ fn clnt_sperrno_timeout() {
     let msg = unsafe { clnt_sperrno(5) };
     assert!(!msg.is_null());
     let s = unsafe { CStr::from_ptr(msg) }.to_str().unwrap();
-    assert_eq!(s, "Timed out");
+    assert_eq!(s, "RPC: Timed out");
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn clnt_sperrno_unknown() {
     let msg = unsafe { clnt_sperrno(999) };
     assert!(!msg.is_null());
     let s = unsafe { CStr::from_ptr(msg) }.to_str().unwrap();
-    assert_eq!(s, "Unknown error");
+    assert_eq!(s, "RPC: (unknown error code)");
 }
 
 // ===========================================================================
@@ -338,7 +338,7 @@ fn clnt_spcreateerror_ignores_tracked_unterminated_prefix() {
 
     assert!(!msg.is_null());
     let rendered = unsafe { CStr::from_ptr(msg) }.to_bytes();
-    assert_eq!(rendered, b": Success");
+    assert_eq!(rendered, b": RPC: Success\n");
 }
 
 // ===========================================================================

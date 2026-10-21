@@ -23,7 +23,7 @@ HOST = ('unknown-protocol', 'unregistered', 'portmapper-error', 'udp', 'tcp',
         'callrpc-high-ids', 'callrpc-high-wire-ids', 'callrpc-version-overflow',
         'callrpc-procedure-overflow')
 OWNED = ('callrpc-reentrant', 'callrpc-null-host', 'callrpc-null-encode',
-         'callrpc-null-decode')
+         'callrpc-null-decode', 'diag-native-initial')
 UNWIND = ('callrpc-encode-throw', 'callrpc-decode-throw', 'callrpc-encode-exit',
           'callrpc-decode-exit', 'client-encode-throw', 'client-decode-throw',
           'client-free-throw', 'client-marshal-throw', 'client-validate-throw',

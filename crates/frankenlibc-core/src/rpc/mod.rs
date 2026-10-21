@@ -12,6 +12,9 @@
 //! are skipped. Trailing inline `# ...` comments are stripped before
 //! tokenization.
 
+use std::collections::TryReserveError;
+use std::ffi::CStr;
+
 /// Bounded native ONC RPC message envelopes.
 pub mod wire;
 
@@ -101,31 +104,154 @@ fn eq_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
 /// Map an RPC `clnt_stat` (`rpc/clnt_stat.h`) status code to the
 /// canonical glibc human-readable description string.
 ///
-/// Codes in `0..=17` map per `<rpc/clnt_stat.h>`; out-of-range values
-/// return `"Unknown error"`. Used by the abi shims `clnt_perrno`,
-/// `clnt_sperrno`, and `clnt_spcreateerror`.
-pub fn status_message(stat: i32) -> &'static str {
+/// The terminating NUL and static lifetime support the public `clnt_sperrno`
+/// contract without mutable scratch storage. These are the C-locale messages.
+pub fn status_message(stat: i32) -> &'static CStr {
     match stat {
-        0 => "Success",
-        1 => "Can't encode arguments",
-        2 => "Can't decode results",
-        3 => "Unable to send",
-        4 => "Unable to receive",
-        5 => "Timed out",
-        6 => "Incompatible versions of RPC",
-        7 => "Authentication error",
-        8 => "Program unavailable",
-        9 => "Program/version mismatch",
-        10 => "Procedure unavailable",
-        11 => "Server can't decode arguments",
-        12 => "Remote system error",
-        13 => "Unknown host",
-        14 => "Port mapper failure",
-        15 => "Program not registered",
-        16 => "Failed (unspecified error)",
-        17 => "Unknown protocol",
-        _ => "Unknown error",
+        0 => c"RPC: Success",
+        1 => c"RPC: Can't encode arguments",
+        2 => c"RPC: Can't decode result",
+        3 => c"RPC: Unable to send",
+        4 => c"RPC: Unable to receive",
+        5 => c"RPC: Timed out",
+        6 => c"RPC: Incompatible versions of RPC",
+        7 => c"RPC: Authentication error",
+        8 => c"RPC: Program unavailable",
+        9 => c"RPC: Program/version mismatch",
+        10 => c"RPC: Procedure unavailable",
+        11 => c"RPC: Server can't decode arguments",
+        12 => c"RPC: Remote system error",
+        13 => c"RPC: Unknown host",
+        14 => c"RPC: Port mapper failure",
+        15 => c"RPC: Program not registered",
+        16 => c"RPC: Failed (unspecified error)",
+        17 => c"RPC: Unknown protocol",
+        _ => c"RPC: (unknown error code)",
     }
+}
+
+fn diagnostic_start(
+    prefix: &[u8],
+    status: i32,
+    extra: usize,
+) -> Result<Vec<u8>, TryReserveError> {
+    let mut output = Vec::new();
+    // The fixed allowance covers the status, separators, two 20-digit words,
+    // authentication text, newline and NUL. Reserve before any append so an
+    // allocation failure is a Result, not an abort in the formatting path.
+    output.try_reserve_exact(prefix.len().saturating_add(extra).saturating_add(256))?;
+    output.extend_from_slice(prefix);
+    output.extend_from_slice(b": ");
+    output.extend_from_slice(status_message(status).to_bytes());
+    Ok(output)
+}
+
+fn diagnostic_unsigned(output: &mut Vec<u8>, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    output.extend_from_slice(&digits[start..]);
+}
+
+fn diagnostic_signed(output: &mut Vec<u8>, value: i32) {
+    if value < 0 {
+        output.push(b'-');
+    }
+    diagnostic_unsigned(output, i64::from(value).unsigned_abs());
+}
+
+fn diagnostic_errno(output: &mut Vec<u8>, value: i32, description: Option<&[u8]>) {
+    if let Some(description) = description {
+        output.extend_from_slice(description);
+    } else {
+        output.extend_from_slice(b"Unknown error ");
+        diagnostic_signed(output, value);
+    }
+}
+
+/// Format a GNU LP64 CLIENT last error as NUL-terminated C-locale bytes.
+/// Prefixes remain arbitrary bytes. Version/unknown statuses omit a newline;
+/// the other statuses include one. The two words are the copied error union.
+pub fn client_error_message(
+    prefix: &[u8],
+    status: i32,
+    words: [u64; 2],
+    errno_description: Option<&[u8]>,
+) -> Result<Vec<u8>, TryReserveError> {
+    let mut output = diagnostic_start(prefix, status, errno_description.map_or(0, <[u8]>::len))?;
+    match status {
+        3 | 4 => {
+            output.extend_from_slice(b"; errno = ");
+            diagnostic_errno(&mut output, words[0] as i32, errno_description);
+            output.push(b'\n');
+        }
+        6 | 9 => {
+            output.extend_from_slice(b"; low version = ");
+            diagnostic_unsigned(&mut output, words[0]);
+            output.extend_from_slice(b", high version = ");
+            diagnostic_unsigned(&mut output, words[1]);
+        }
+        7 => {
+            output.extend_from_slice(b"; why = ");
+            let why = words[0] as i32;
+            let known: Option<&[u8]> = match why {
+                0 => Some(b"Authentication OK"),
+                1 => Some(b"Invalid client credential"),
+                2 => Some(b"Server rejected credential"),
+                3 => Some(b"Invalid client verifier"),
+                4 => Some(b"Server rejected verifier"),
+                5 => Some(b"Client credential too weak"),
+                6 => Some(b"Invalid server verifier"),
+                7 => Some(b"Failed (unspecified error)"),
+                _ => None,
+            };
+            if let Some(message) = known {
+                output.extend_from_slice(message);
+            } else {
+                output.extend_from_slice(b"(unknown authentication error - ");
+                diagnostic_signed(&mut output, why);
+                output.push(b')');
+            }
+            output.push(b'\n');
+        }
+        0..=17 => output.push(b'\n'),
+        _ => {
+            output.extend_from_slice(b"; s1 = ");
+            diagnostic_unsigned(&mut output, words[0]);
+            output.extend_from_slice(b", s2 = ");
+            diagnostic_unsigned(&mut output, words[1]);
+        }
+    }
+    output.push(0);
+    Ok(output)
+}
+
+/// Format a GNU creation error, including its nested mapper/system failure.
+/// The result includes a newline and terminating NUL, without prefix truncation.
+pub fn creation_error_message(
+    prefix: &[u8],
+    status: i32,
+    nested_status: i32,
+    error_number: i32,
+    errno_description: Option<&[u8]>,
+) -> Result<Vec<u8>, TryReserveError> {
+    let mut output = diagnostic_start(prefix, status, errno_description.map_or(0, <[u8]>::len))?;
+    if status == 14 {
+        output.extend_from_slice(b" - ");
+        output.extend_from_slice(status_message(nested_status).to_bytes());
+    } else if status == 12 {
+        output.extend_from_slice(b" - ");
+        diagnostic_errno(&mut output, error_number, errno_description);
+    }
+    output.extend_from_slice(b"\n\0");
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -314,7 +440,7 @@ mod tests {
 
     #[test]
     fn status_message_zero_is_success() {
-        assert_eq!(status_message(0), "Success");
+        assert_eq!(status_message(0), c"RPC: Success");
     }
 
     #[test]
@@ -332,20 +458,50 @@ mod tests {
     #[test]
     fn status_message_known_codes_match_glibc_text() {
         // A handful of the most-cited codes verbatim.
-        assert_eq!(status_message(1), "Can't encode arguments");
-        assert_eq!(status_message(5), "Timed out");
-        assert_eq!(status_message(7), "Authentication error");
-        assert_eq!(status_message(9), "Program/version mismatch");
-        assert_eq!(status_message(13), "Unknown host");
-        assert_eq!(status_message(17), "Unknown protocol");
+        assert_eq!(status_message(1), c"RPC: Can't encode arguments");
+        assert_eq!(status_message(5), c"RPC: Timed out");
+        assert_eq!(status_message(7), c"RPC: Authentication error");
+        assert_eq!(status_message(9), c"RPC: Program/version mismatch");
+        assert_eq!(status_message(13), c"RPC: Unknown host");
+        assert_eq!(status_message(17), c"RPC: Unknown protocol");
     }
 
     #[test]
     fn status_message_out_of_range_returns_unknown() {
-        assert_eq!(status_message(-1), "Unknown error");
-        assert_eq!(status_message(18), "Unknown error");
-        assert_eq!(status_message(99999), "Unknown error");
-        assert_eq!(status_message(i32::MAX), "Unknown error");
-        assert_eq!(status_message(i32::MIN), "Unknown error");
+        assert_eq!(status_message(-1), c"RPC: (unknown error code)");
+        assert_eq!(status_message(18), c"RPC: (unknown error code)");
+        assert_eq!(status_message(99999), c"RPC: (unknown error code)");
+        assert_eq!(status_message(i32::MAX), c"RPC: (unknown error code)");
+        assert_eq!(status_message(i32::MIN), c"RPC: (unknown error code)");
+    }
+
+    #[test]
+    fn diagnostic_preserves_raw_long_prefixes_and_terminators() {
+        let prefix = vec![0xff; 100_000];
+        let message = client_error_message(&prefix, 2, [0; 2], None).unwrap();
+        assert_eq!(&message[..prefix.len()], prefix);
+        assert_eq!(&message[prefix.len()..], b": RPC: Can't decode result\n\0");
+        let message = creation_error_message(&[], 14, 5, 0, None).unwrap();
+        assert_eq!(message, b": RPC: Port mapper failure - RPC: Timed out\n\0");
+    }
+
+    #[test]
+    fn diagnostic_integer_extremes_are_not_truncated_or_signed() {
+        let message = client_error_message(b"v", 9, [u64::MAX, 0], None).unwrap();
+        assert_eq!(message, b"v: RPC: Program/version mismatch; low version = 18446744073709551615, high version = 0\0");
+        let message = client_error_message(b"a", 7, [i32::MIN as u32 as u64, 0], None).unwrap();
+        assert_eq!(message, b"a: RPC: Authentication error; why = (unknown authentication error - -2147483648)\n\0");
+        let message = client_error_message(b"u", -1, [0, u64::MAX], None).unwrap();
+        assert_eq!(message, b"u: RPC: (unknown error code); s1 = 0, s2 = 18446744073709551615\0");
+    }
+
+    #[test]
+    fn diagnostic_errno_and_creation_details_have_distinct_contracts() {
+        let message = client_error_message(b"io", 3, [13, 0], Some(b"Permission denied")).unwrap();
+        assert_eq!(message, b"io: RPC: Unable to send; errno = Permission denied\n\0");
+        let message = client_error_message(b"io", 4, [i32::MIN as u32 as u64, 0], None).unwrap();
+        assert_eq!(message, b"io: RPC: Unable to receive; errno = Unknown error -2147483648\n\0");
+        let message = creation_error_message(b"create", 12, 0, -17, None).unwrap();
+        assert_eq!(message, b"create: RPC: Remote system error - Unknown error -17\n\0");
     }
 }

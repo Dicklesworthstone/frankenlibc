@@ -2383,15 +2383,40 @@ pub unsafe extern "C" fn clnt_broadcast(
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_perrno(stat: c_int) {
-    let msg = rpc_errstr(stat);
-    // Write to stderr: "RPC: <message>\n". Raw writes: an error report is not
-    // a cancellation point here (a forced unwind must not start in a "C" frame).
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"RPC: ".as_ptr().cast(), 5) };
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.as_ptr().cast(), msg.len()) };
-    let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
+    write_rpc_diagnostic(rpc_errstr(stat).to_bytes());
 }
 
-rpc_stub!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
+fn write_rpc_diagnostic(bytes: &[u8]) {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        // SAFETY: the complete byte range remains live during each raw write.
+        // These reporting functions introduce no cancellation point in C frames.
+        let written = unsafe {
+            crate::unistd_abi::sys_write_fd(2, bytes.as_ptr().add(offset).cast(), bytes.len() - offset)
+        };
+        if written > 0 {
+            offset += written as usize;
+        } else if written < 0 && unsafe { *crate::errno_abi::__errno_location() } == libc::EINTR {
+            continue;
+        } else {
+            break;
+        }
+    }
+}
+
+/// Print the CLIENT's last error using its own geterr callback. The rendered
+/// message already has the status-specific newline, if any.
+///
+/// # Safety
+/// The CLIENT/table/callback and optional C prefix must remain live for the call.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_perror(clnt: *mut c_void, s: *const c_char) {
+    let message = unsafe { clnt_sperror(clnt, s) };
+    if !message.is_null() {
+        // SAFETY: clnt_sperror published an owned NUL-terminated thread buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes());
+    }
+}
 
 /// Print RPC client creation error to stderr. Native implementation.
 /// Reads from thread-local rpc_createerr (via __rpc_thread_createerr).
@@ -2402,38 +2427,8 @@ rpc_stub!(clnt_perror(clnt: *mut c_void, s: *const c_char) -> ());
 pub unsafe extern "C" fn clnt_pcreateerror(s: *const c_char) {
     let msg = unsafe { clnt_spcreateerror(s) };
     if !msg.is_null() {
-        let len = unsafe { crate::string_abi::strlen(msg) };
-        // Raw writes, as in clnt_perrno.
-        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, msg.cast(), len) };
-        let _ = unsafe { crate::unistd_abi::sys_write_fd(2, b"\n".as_ptr().cast(), 1) };
-    }
-}
-
-#[cfg(feature = "owned-tls-cache")]
-static SPERRNO_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 64]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(empty_sperrno_buf);
-
-#[cfg(feature = "owned-tls-cache")]
-fn empty_sperrno_buf() -> [u8; 64] {
-    [0u8; 64]
-}
-
-// Thread-local buffer for clnt_sperrno return value.
-#[cfg(not(feature = "owned-tls-cache"))]
-std::thread_local! {
-    static SPERRNO_BUF: std::cell::UnsafeCell<[u8; 64]> =
-        const { std::cell::UnsafeCell::new([0u8; 64]) };
-}
-
-#[inline]
-fn with_sperrno_buf<R>(f: impl FnOnce(&mut [u8; 64]) -> R) -> R {
-    #[cfg(feature = "owned-tls-cache")]
-    {
-        SPERRNO_BUF_OWNED_TLS.with(f)
-    }
-    #[cfg(not(feature = "owned-tls-cache"))]
-    {
-        SPERRNO_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+        // SAFETY: the creation formatter published a complete terminated buffer.
+        write_rpc_diagnostic(unsafe { std::ffi::CStr::from_ptr(msg) }.to_bytes());
     }
 }
 
@@ -2441,46 +2436,91 @@ fn with_sperrno_buf<R>(f: impl FnOnce(&mut [u8; 64]) -> R) -> R {
 /// Uses RPC_* status codes from glibc's <rpc/clnt_stat.h>.
 ///
 /// # Safety
-/// ABI boundary function. Returns a pointer valid until the next call from the same thread.
+/// The returned pointer refers to immutable process-lifetime C-locale storage.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_sperrno(stat: c_int) -> *mut c_char {
-    let msg = rpc_errstr(stat);
-    with_sperrno_buf(|buf| {
-        let len = msg.len().min(63);
-        buf[..len].copy_from_slice(&msg.as_bytes()[..len]);
-        buf[len] = 0;
-        buf.as_mut_ptr().cast()
-    })
+    rpc_errstr(stat).as_ptr().cast_mut()
 }
 
-rpc_stub!(clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char);
-
 #[cfg(feature = "owned-tls-cache")]
-static SPCREATEERR_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<[u8; 256]> =
-    crate::owned_tls_cache::OwnedTlsCache::new(empty_spcreateerr_buf);
+static RPC_DIAGNOSTIC_BUF_OWNED_TLS: crate::owned_tls_cache::OwnedTlsCache<Vec<u8>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(Vec::new);
 
-#[cfg(feature = "owned-tls-cache")]
-fn empty_spcreateerr_buf() -> [u8; 256] {
-    [0u8; 256]
-}
-
-// Thread-local buffer for clnt_spcreateerror return value.
+// GNU client/creation diagnostics share one per-thread allocation. Build the
+// next message before replacing it, including when the prefix aliases it.
 #[cfg(not(feature = "owned-tls-cache"))]
 std::thread_local! {
-    static SPCREATEERR_BUF: std::cell::UnsafeCell<[u8; 256]> =
-        const { std::cell::UnsafeCell::new([0u8; 256]) };
+    static RPC_DIAGNOSTIC_BUF: std::cell::UnsafeCell<Vec<u8>> =
+        const { std::cell::UnsafeCell::new(Vec::new()) };
 }
 
 #[inline]
-fn with_spcreateerr_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
+fn with_rpc_diagnostic_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     #[cfg(feature = "owned-tls-cache")]
     {
-        SPCREATEERR_BUF_OWNED_TLS.with(f)
+        RPC_DIAGNOSTIC_BUF_OWNED_TLS.with(f)
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
-        SPCREATEERR_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
+        RPC_DIAGNOSTIC_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
     }
+}
+
+unsafe fn rpc_diagnostic_prefix(prefix: *const c_char) -> Vec<u8> {
+    if prefix.is_null() {
+        b"(null)".to_vec()
+    } else {
+        unsafe { read_bounded_cstr(prefix) }.unwrap_or_default()
+    }
+}
+
+fn rpc_errno_description(number: c_int) -> Option<&'static [u8]> {
+    let message = crate::string_abi::strerrordesc_np(number);
+    if message.is_null() {
+        None
+    } else {
+        // SAFETY: strerrordesc_np returns immutable NUL-terminated static data.
+        Some(unsafe { std::ffi::CStr::from_ptr(message) }.to_bytes())
+    }
+}
+
+fn publish_rpc_diagnostic(
+    message: Result<Vec<u8>, std::collections::TryReserveError>,
+) -> *mut c_char {
+    match message {
+        Ok(message) => with_rpc_diagnostic_buf(|previous| {
+            *previous = message;
+            previous.as_mut_ptr().cast()
+        }),
+        Err(_) => {
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Render a live CLIENT's last error. Prefix bytes are copied before calling
+/// application geterr code; no diagnostic storage borrow/lock crosses it.
+///
+/// # Safety
+/// The CLIENT/table/callback must be live. A non-null prefix must be a valid C
+/// string. The result lasts until the next client/creation diagnostic on this thread.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char {
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    let (status, words) = match unsafe { rpc_udp::client_error(clnt) } {
+        Ok(error) => error,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            return std::ptr::null_mut();
+        }
+    };
+    publish_rpc_diagnostic(frankenlibc_core::rpc::client_error_message(
+        &prefix,
+        status,
+        words,
+        rpc_errno_description(words[0] as c_int),
+    ))
 }
 
 /// Return a string describing the RPC client creation error. Native implementation.
@@ -2490,29 +2530,18 @@ fn with_spcreateerr_buf<R>(f: impl FnOnce(&mut [u8; 256]) -> R) -> R {
 /// ABI boundary function. `s` must be a valid C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
-    let prefix = unsafe { read_bounded_cstr(s) }
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .unwrap_or_default();
-    // Read cf_stat from thread-local rpc_createerr (first 4 bytes = clnt_stat enum)
-    let createerr = unsafe { __rpc_thread_createerr() };
-    let cf_stat = if createerr.is_null() {
-        0i32
-    } else {
-        unsafe { std::ptr::read_unaligned(createerr as *const i32) }
-    };
-    let err_msg = rpc_errstr(cf_stat);
-    let formatted = format!("{}: {}\0", prefix, err_msg);
-    with_spcreateerr_buf(|buf| {
-        let len = formatted.len().min(255);
-        buf[..len].copy_from_slice(&formatted.as_bytes()[..len]);
-        buf[len] = 0;
-        buf.as_mut_ptr().cast()
-    })
+    let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    let (status, nested_status, words) = rpc_udp::creation_error_details();
+    let error_number = words[0] as c_int;
+    publish_rpc_diagnostic(frankenlibc_core::rpc::creation_error_message(
+        &prefix,
+        status,
+        nested_status,
+        error_number,
+        rpc_errno_description(error_number),
+    ))
 }
 
-// rpc_errstr moved to frankenlibc_core::rpc::status_message. Local
-// alias preserves the call sites in clnt_perrno / clnt_sperrno /
-// clnt_spcreateerror unchanged.
 use frankenlibc_core::rpc::status_message as rpc_errstr;
 
 // ===========================================================================
@@ -2574,8 +2603,8 @@ pub unsafe extern "C" fn _rpc_dtablesize() -> c_int {
 // get per-thread storage without needing to call into glibc.
 
 // rpc_createerr: struct rpc_createerr { enum clnt_stat cf_stat; struct rpc_err cf_error; }
-// This is 24 bytes on x86_64 (4 + padding + 16 for rpc_err).
-// We allocate 32 bytes to be safe for SIZE — and, since callers receive this
+// This is 32 bytes on x86_64 (4 + padding + 24 for rpc_err).
+// We allocate exactly 32 bytes — and, since callers receive this
 // address as a `struct rpc_createerr *` and write `cf_stat`/`cf_error` fields
 // through it, for ALIGNMENT too: a bare `[u8; 32]` has align 1, which is the
 // class that aborted `re_comp` and `getmntent` with misaligned pointer

@@ -185,9 +185,13 @@ static void diagnostic_case(const char *name) {
     if(strstr(name,"throw") || strstr(name,"exit")) { diagnostic_unwind_case(name);return; }
 #endif
     RpcError error={0,0,ULONG_MAX,0x1234567887654321UL}; Client client={NULL,&diagnostic_ops,&error};
-    if(!strcmp(name,"diag-native-udp") || !strcmp(name,"diag-native-tcp")) {
+    if(!strcmp(name,"diag-native-initial")) {
+        Client *native=create("127.0.0.1",program,1,"udp");CHECK(native);
+        expect_diagnostic(native,"initial",&error);destroy_owned(native);
+    } else if(!strcmp(name,"diag-native-udp") || !strcmp(name,"diag-native-tcp")) {
         Client *native=create("127.0.0.1",program,1,strstr(name,"tcp")?"tcp":"udp"); CHECK(native);
-        expect_diagnostic(native,"native",&error);
+        /* GNU's last-error storage is not initialized by these constructors;
+           compare it only after a real call has supplied the last status. */
         const unsigned long procedures[]={7,8,9,10,11}; const int statuses[]={0,10,7,9,6};
         for(unsigned i=0;i<5;i++) {
             uint32_t in=31,out=0; struct timeval timeout={2,0};

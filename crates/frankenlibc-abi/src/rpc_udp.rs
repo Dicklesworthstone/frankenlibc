@@ -44,6 +44,11 @@ struct RpcError {
 }
 
 impl RpcError {
+    fn words(self) -> [u64; 2] {
+        let parts = self.detail.as_chunks::<8>().0;
+        [u64::from_ne_bytes(parts[0]), u64::from_ne_bytes(parts[1])]
+    }
+
     fn status(status: c_int) -> Self {
         Self {
             status,
@@ -95,6 +100,13 @@ fn creation_error(status: c_int, error: RpcError) {
 
 pub(super) fn creation_status(status: c_int, error: c_int) {
     creation_error(status, RpcError::system(status, error));
+}
+
+pub(super) fn creation_error_details() -> (c_int, c_int, [u64; 2]) {
+    // SAFETY: the public TLS accessor provides initialized, aligned storage
+    // for this exact all-integer LP64 layout for the current thread.
+    let value = unsafe { super::__rpc_thread_createerr().cast::<CreateError>().read() };
+    (value.status, value.error.status, value.error.words())
 }
 
 fn kernel(raw_value: usize) -> Result<usize, c_int> {
@@ -503,6 +515,7 @@ pub(super) fn authnone() -> *mut c_void {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct Client {
     auth: *mut Auth,
     operations: *const ClientOps,
@@ -605,6 +618,36 @@ unsafe extern "C-unwind" fn call(
     data.error.status
 }
 unsafe extern "C" fn abort() {}
+
+/// Snapshot any live public CLIENT through its own geterr operation. A
+/// foreign CLIENT need not use our private State or have non-null unrelated
+/// operations. Do not hold an owned diagnostic-buffer lock over the callback.
+pub(super) unsafe fn client_error(client: *mut c_void) -> Result<(c_int, [u64; 2]), c_int> {
+    if client.is_null() {
+        return Err(libc::EINVAL);
+    }
+    let header = unsafe { import::<Client>(client.cast()) }.map_err(|_| libc::EFAULT)?;
+    if header.operations.is_null() {
+        return Err(libc::EINVAL);
+    }
+    // Use integer arithmetic for an untrusted table address and import only
+    // the one slot: a foreign table can have NULL in its other function slots.
+    let slot = (header.operations as usize)
+        .checked_add(std::mem::offset_of!(ClientOps, geterr))
+        .ok_or(libc::EFAULT)?;
+    let operation = unsafe { import::<usize>(slot as *const usize) }.map_err(|_| libc::EFAULT)?;
+    if operation == 0 {
+        return Err(libc::EINVAL);
+    }
+    // SAFETY: a live CLIENT supplies a callable public geterr slot. C-unwind
+    // preserves application exceptions/pthread_exit across this boundary.
+    let operation: unsafe extern "C-unwind" fn(*mut Client, *mut RpcError) =
+        unsafe { std::mem::transmute(operation) };
+    let mut error = RpcError::system(RPC_SYSTEMERROR, libc::EINVAL);
+    unsafe { operation(client.cast(), &mut error) };
+    Ok((error.status, error.words()))
+}
+
 unsafe extern "C" fn geterr(client: *mut Client, output: *mut RpcError) {
     let state = unsafe { &*(*client).private };
     let error = if let Some(_gate) = Gate::enter(state) {
