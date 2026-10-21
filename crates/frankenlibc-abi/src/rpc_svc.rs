@@ -90,7 +90,7 @@ const _: () = {
     assert!(std::mem::offset_of!(CallMessage, credential) == 48);
     assert!(std::mem::offset_of!(CallMessage, verifier) == 72);
     assert!(size_of::<CookedCredential>() <= 400);
-    assert!(size_of::<UnixCredential>() == 32);
+    assert!(size_of::<UnixCredential>() == 40);
 };
 
 /// Authenticate the asserted AUTH_NONE/AUTH_SYS identity without host RPC.
@@ -205,7 +205,7 @@ struct Pending {
     bytes: Vec<u8>,
     position: usize,
 }
-/// Linux LP64 CMSG_SPACE(sizeof(ucred)), including initialized tail padding.
+/// glibc LP64 Unix RPC verifier: cmsghdr, ucred, and twelve padding bytes.
 /// This is the local Unix verifier, not an XDR AUTH_SYS credential.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -216,7 +216,7 @@ struct UnixCredential {
     pid: c_int,
     uid: u32,
     gid: u32,
-    padding: u32,
+    padding: [u8; 12],
 }
 impl UnixCredential {
     fn verifier(&self) -> OpaqueAuth {
@@ -649,7 +649,7 @@ unsafe fn create_stream(
                     )
                 }?;
             }
-            (0, None)
+            (u16::MAX, None)
         } else if listener {
             let mut length = size_of::<libc::sockaddr_in>() as u32;
             // SAFETY: the kernel receives owned address storage of this length.
@@ -923,7 +923,7 @@ fn unix_send(fd: c_int, bytes: &[u8]) -> Result<isize, c_int> {
         pid: raw::sys_getpid(),
         uid: raw::sys_geteuid(),
         gid: raw::sys_getegid(),
-        padding: 0,
+        padding: [0; 12],
     };
     let mut vector = libc::iovec {
         iov_base: bytes.as_ptr().cast_mut().cast(),
@@ -1013,7 +1013,7 @@ fn unix_receive(fd: c_int, bytes: &mut [u8]) -> Result<(isize, UnixCredential), 
                 pid: identity.pid,
                 uid: identity.uid,
                 gid: identity.gid,
-                padding: 0,
+                padding: [0; 12],
             });
         } else {
             invalid = true;
@@ -1034,7 +1034,7 @@ fn unix_receive(fd: c_int, bytes: &mut [u8]) -> Result<(isize, UnixCredential), 
                 pid: 0,
                 uid: 0,
                 gid: 0,
-                padding: 0,
+                padding: [0; 12],
             },
         ));
     }

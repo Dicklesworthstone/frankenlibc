@@ -712,7 +712,7 @@ static void unix_services(void) {
         int supplied=-1;struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,path);
         if(strcmp(scenario,"unix-listener"))supplied=socket(AF_UNIX,SOCK_STREAM,0);
         if(!strcmp(scenario,"unix-prebound"))CHECK(!bind(supplied,(void *)&address,sizeof(address)));
-        tcp_listener=unixcreate(supplied,128,128,path);CHECK(tcp_listener && !tcp_listener->port);
+        tcp_listener=unixcreate(supplied,128,128,path);CHECK(tcp_listener && tcp_listener->port==65535);
         if(supplied>=0)CHECK(tcp_listener->fd==supplied);
         CHECK(reg(tcp_listener,PROGRAM,1,tcp_handler,0));
         client=socket(AF_UNIX,SOCK_STREAM,0);CHECK(client>=0 && !connect(client,(void *)&address,sizeof(address)));
@@ -733,7 +733,7 @@ static void unix_services(void) {
         } else unix_fragment(bytes,n,1,0);
         Call msg={0};char credential[400],verifier[400];msg.cred.base=credential;msg.verifier.base=verifier;
         CHECK(tcp_connection->ops->recv(tcp_connection,&msg) && msg.xid==401 && msg.verifier.flavor==1);
-        unix_identity_pid(msg.verifier.base,msg.verifier.length,peer);
+        CHECK(msg.verifier.length==40);unix_identity_pid(msg.verifier.base,CMSG_SPACE(sizeof(struct ucred)),peer);
         unsigned value=0;CHECK(tcp_connection->ops->getargs(tcp_connection,xu32,&value) && value==35);value+=7;
         unsigned long reply[12]={0};*(int *)((char *)reply+8)=1;*(void **)((char *)reply+56)=&value;*(Proc *)((char *)reply+64)=xu32;
         CHECK(tcp_connection->ops->reply(tcp_connection,reply));tcp_expect(client,401,0,42);
@@ -749,8 +749,8 @@ static void unix_services(void) {
         request(bytes,402,PROGRAM,1,9);word(bytes,24,1);word(bytes,28,32);
         word(bytes,32,1234);word(bytes,36,4);memcpy(bytes+40,"host",4);word(bytes,44,1001);word(bytes,48,1002);word(bytes,52,2);word(bytes,56,11);word(bytes,60,12);word(bytes,64,0);word(bytes,68,0);
         unix_fragment(bytes,72,1,0);tcp_drive(tcp_fd);n=tcp_record(client,bytes,sizeof(bytes));
-        CHECK(n==56 && readword(bytes,0)==402 && readword(bytes,12)==1 && readword(bytes,16)==32 && readword(bytes,52)==0);
-        unix_identity(bytes+20,32);CHECK(calls==1);
+        CHECK(n==64 && readword(bytes,0)==402 && readword(bytes,12)==1 && readword(bytes,16)==40 && readword(bytes,60)==0);
+        unix_identity(bytes+20,CMSG_SPACE(sizeof(struct ucred)));CHECK(calls==1);
     } else if(!strcmp(scenario,"unix-identity-switch")) {
         unix_fragment(bytes,2,0,0);common(tcp_fd);CHECK(!calls);
         pid_t peer=fork();CHECK(peer>=0);if(!peer){unix_fragment(bytes+2,n-2,1,0);_Exit(0);}
