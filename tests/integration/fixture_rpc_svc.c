@@ -618,7 +618,9 @@ static void tcp_services(void) {
         pthread_t t;CHECK(!pthread_create(&t,NULL,tcp_reader,NULL));
         for(unsigned i=0;i<2000 && !atomic_load_explicit(&tcp_reader_done,memory_order_acquire);++i){int ready=poll(fds,(nfds_t)count,5);CHECK(ready>=0);if(ready)getpoll(fds,ready);}
         CHECK(atomic_load_explicit(&tcp_reader_done,memory_order_acquire) && !pthread_join(t,NULL));CHECK(calls==1 && tcp_encodes==1);
-        count=*(int *)count_slot();fds=*(struct pollfd **)poll_slot();writing=0;int reading=0;
+        /* Retain the original public array: calling the slot accessor itself
+           refreshes it and would conceal a missing drain-time refresh. */
+        writing=0;int reading=0;
         for(int i=0;i<count;++i)if(fds[i].fd==tcp_fd){writing=!!(fds[i].events&POLLOUT);reading=!!(fds[i].events&POLLIN);}
         CHECK(!writing && reading);tcp_exchange(217,1);
     } else if(!strcmp(scenario,"tcp-child")) {
