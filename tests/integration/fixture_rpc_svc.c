@@ -593,6 +593,12 @@ static void tcp_services(void) {
         unsigned char bytes[128];size_t n=request(bytes,212,PROGRAM+1,1,0);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,212,1,-1);
         n=request(bytes,213,PROGRAM,2,0);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,213,2,1);
         n=tcp_call(bytes,214,3);tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);tcp_expect(client,214,3,-1);
+    } else if(!strcmp(scenario,"tcp-rpcversion")) {
+        unsigned char bytes[128];size_t n=tcp_call(bytes,227,1);word(bytes,8,3);
+        tcp_fragment(client,bytes,n,1);tcp_drive(tcp_fd);n=tcp_record(client,bytes,sizeof(bytes));
+        const unsigned expected[]={227,1,1,0,2,2};CHECK(n==sizeof(expected) && !calls);
+        for(unsigned i=0;i<6;++i)CHECK(readword(bytes,i*4)==expected[i]);
+        tcp_exchange(228,1);CHECK(calls==1);
     } else if(!strcmp(scenario,"tcp-auth")) {
         unsigned char bytes[128];request(bytes,215,PROGRAM,1,9);word(bytes,24,1);word(bytes,28,32);
         unsigned body[]={1234,4,0x686f7374,1001,1002,2,11,12};for(unsigned i=0;i<8;++i)word(bytes,32+4*i,body[i]);word(bytes,64,0);word(bytes,68,0);

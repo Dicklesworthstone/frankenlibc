@@ -29,7 +29,8 @@ OWNED = ['short-args', 'destroy-dispatch', 'callback-exit', 'malformed', 'oversi
          'register-decode']
 OWNED += ['tcp-invalid', 'tcp-partial', 'tcp-backpressure', 'tcp-destroy',
           'tcp-callback-exit', 'tcp-encode-failure', 'tcp-malformed', 'tcp-limit',
-          'tcp-truncated', 'tcp-fragment-limit', 'tcp-fairness', 'tcp-empty-fragment']
+          'tcp-truncated', 'tcp-fragment-limit', 'tcp-fairness', 'tcp-empty-fragment',
+          'tcp-rpcversion']
 # glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
 # failing host probe as an explicit native extension, rather than parity proof.
 

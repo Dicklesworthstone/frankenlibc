@@ -902,11 +902,10 @@ fn receive_stream(t: &Transport) -> Receive {
                         0,
                         &[],
                         Some(RemoteError::RpcVersion { low: 2, high: 2 }),
-                    ) {
-                        if let Ok(mut reply) = buffer(n) {
-                            reply.copy_from_slice(&io.output[..n]);
-                            queue_stream(t, io, reply);
-                        }
+                    ) && let Ok(mut reply) = buffer(n)
+                    {
+                        reply.copy_from_slice(&io.output[..n]);
+                        queue_stream(t, io, reply);
                     }
                     Receive::Replayed
                 }
