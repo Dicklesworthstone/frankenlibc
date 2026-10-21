@@ -12,6 +12,7 @@
 // Unconditional: the `getnameinfo` render paths below borrow-or-own their host
 // and service text in both feature configurations.
 use std::borrow::Cow;
+#[cfg(not(feature = "owned-tls-cache"))]
 use std::cell::RefCell;
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::mem::{align_of, size_of};
