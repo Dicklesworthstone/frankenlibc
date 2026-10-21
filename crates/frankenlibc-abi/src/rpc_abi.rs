@@ -2392,8 +2392,13 @@ fn write_rpc_diagnostic(bytes: &[u8]) {
         // SAFETY: the complete byte range remains live during each raw write.
         // These reporting functions introduce no cancellation point in C frames.
         let written = unsafe {
-            crate::unistd_abi::sys_write_fd(2, bytes.as_ptr().add(offset).cast(), bytes.len() - offset)
+            crate::unistd_abi::sys_write_fd(
+                2,
+                bytes.as_ptr().add(offset).cast(),
+                bytes.len() - offset,
+            )
         };
+        // SAFETY: __errno_location provides this thread's live errno slot.
         if written > 0 {
             offset += written as usize;
         } else if written < 0 && unsafe { *crate::errno_abi::__errno_location() } == libc::EINTR {
@@ -2411,6 +2416,7 @@ fn write_rpc_diagnostic(bytes: &[u8]) {
 /// The CLIENT/table/callback and optional C prefix must remain live for the call.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clnt_perror(clnt: *mut c_void, s: *const c_char) {
+    // SAFETY: the caller supplies the same CLIENT and prefix contract.
     let message = unsafe { clnt_sperror(clnt, s) };
     if !message.is_null() {
         // SAFETY: clnt_sperror published an owned NUL-terminated thread buffer.
@@ -2462,6 +2468,8 @@ fn with_rpc_diagnostic_buf<R>(f: impl FnOnce(&mut Vec<u8>) -> R) -> R {
     }
     #[cfg(not(feature = "owned-tls-cache"))]
     {
+        // SAFETY: only this thread accesses the cell; callers replace the Vec
+        // without invoking application callbacks while the borrow is held.
         RPC_DIAGNOSTIC_BUF.with(|cell| f(unsafe { &mut *cell.get() }))
     }
 }
@@ -2470,6 +2478,8 @@ unsafe fn rpc_diagnostic_prefix(prefix: *const c_char) -> Vec<u8> {
     if prefix.is_null() {
         b"(null)".to_vec()
     } else {
+        // SAFETY: the caller supplies a live C string; the existing bounded
+        // reader applies the mode-specific checked-prefix policy.
         unsafe { read_bounded_cstr(prefix) }.unwrap_or_default()
     }
 }
@@ -2493,6 +2503,7 @@ fn publish_rpc_diagnostic(
             previous.as_mut_ptr().cast()
         }),
         Err(_) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
             unsafe { set_abi_errno(libc::ENOMEM) };
             std::ptr::null_mut()
         }
@@ -2507,10 +2518,13 @@ fn publish_rpc_diagnostic(
 /// string. The result lasts until the next client/creation diagnostic on this thread.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C-unwind" fn clnt_sperror(clnt: *mut c_void, s: *const c_char) -> *mut c_char {
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
     let prefix = unsafe { rpc_diagnostic_prefix(s) };
+    // SAFETY: the caller keeps the CLIENT/table/geterr callback live.
     let (status, words) = match unsafe { rpc_udp::client_error(clnt) } {
         Ok(error) => error,
         Err(error) => {
+            // SAFETY: setting errno accesses only the current thread's slot.
             unsafe { set_abi_errno(error) };
             return std::ptr::null_mut();
         }
@@ -2530,6 +2544,7 @@ pub unsafe extern "C-unwind" fn clnt_sperror(clnt: *mut c_void, s: *const c_char
 /// ABI boundary function. `s` must be a valid C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn clnt_spcreateerror(s: *const c_char) -> *mut c_char {
+    // SAFETY: the public prefix contract is forwarded to the bounded reader.
     let prefix = unsafe { rpc_diagnostic_prefix(s) };
     let (status, nested_status, words) = rpc_udp::creation_error_details();
     let error_number = words[0] as c_int;

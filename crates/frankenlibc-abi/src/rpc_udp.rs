@@ -626,6 +626,8 @@ pub(super) unsafe fn client_error(client: *mut c_void) -> Result<(c_int, [u64; 2
     if client.is_null() {
         return Err(libc::EINVAL);
     }
+    // SAFETY: import fault-checks the address and Client contains only raw
+    // pointers, so every imported bit pattern is valid as an opaque header.
     let header = unsafe { import::<Client>(client.cast()) }.map_err(|_| libc::EFAULT)?;
     if header.operations.is_null() {
         return Err(libc::EINVAL);
@@ -635,6 +637,8 @@ pub(super) unsafe fn client_error(client: *mut c_void) -> Result<(c_int, [u64; 2
     let slot = (header.operations as usize)
         .checked_add(std::mem::offset_of!(ClientOps, geterr))
         .ok_or(libc::EFAULT)?;
+    // SAFETY: import fault-checks this one integer-sized slot, without
+    // constructing function pointers from the table's unrelated NULL slots.
     let operation = unsafe { import::<usize>(slot as *const usize) }.map_err(|_| libc::EFAULT)?;
     if operation == 0 {
         return Err(libc::EINVAL);
@@ -644,6 +648,8 @@ pub(super) unsafe fn client_error(client: *mut c_void) -> Result<(c_int, [u64; 2
     let operation: unsafe extern "C-unwind" fn(*mut Client, *mut RpcError) =
         unsafe { std::mem::transmute(operation) };
     let mut error = RpcError::system(RPC_SYSTEMERROR, libc::EINVAL);
+    // SAFETY: the caller keeps the public CLIENT/callback live; error is a
+    // writable, fully initialized rpc_err for the duration of the callback.
     unsafe { operation(client.cast(), &mut error) };
     Ok((error.status, error.words()))
 }

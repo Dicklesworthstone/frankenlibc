@@ -130,11 +130,7 @@ pub fn status_message(stat: i32) -> &'static CStr {
     }
 }
 
-fn diagnostic_start(
-    prefix: &[u8],
-    status: i32,
-    extra: usize,
-) -> Result<Vec<u8>, TryReserveError> {
+fn diagnostic_start(prefix: &[u8], status: i32, extra: usize) -> Result<Vec<u8>, TryReserveError> {
     let mut output = Vec::new();
     // The fixed allowance covers the status, separators, two 20-digit words,
     // authentication text, newline and NUL. Reserve before any append so an
@@ -490,18 +486,33 @@ mod tests {
         let message = client_error_message(b"v", 9, [u64::MAX, 0], None).unwrap();
         assert_eq!(message, b"v: RPC: Program/version mismatch; low version = 18446744073709551615, high version = 0\0");
         let message = client_error_message(b"a", 7, [i32::MIN as u32 as u64, 0], None).unwrap();
-        assert_eq!(message, b"a: RPC: Authentication error; why = (unknown authentication error - -2147483648)\n\0");
+        assert_eq!(
+            message,
+            b"a: RPC: Authentication error; why = (unknown authentication error - -2147483648)\n\0"
+        );
         let message = client_error_message(b"u", -1, [0, u64::MAX], None).unwrap();
-        assert_eq!(message, b"u: RPC: (unknown error code); s1 = 0, s2 = 18446744073709551615\0");
+        assert_eq!(
+            message,
+            b"u: RPC: (unknown error code); s1 = 0, s2 = 18446744073709551615\0"
+        );
     }
 
     #[test]
     fn diagnostic_errno_and_creation_details_have_distinct_contracts() {
         let message = client_error_message(b"io", 3, [13, 0], Some(b"Permission denied")).unwrap();
-        assert_eq!(message, b"io: RPC: Unable to send; errno = Permission denied\n\0");
+        assert_eq!(
+            message,
+            b"io: RPC: Unable to send; errno = Permission denied\n\0"
+        );
         let message = client_error_message(b"io", 4, [i32::MIN as u32 as u64, 0], None).unwrap();
-        assert_eq!(message, b"io: RPC: Unable to receive; errno = Unknown error -2147483648\n\0");
+        assert_eq!(
+            message,
+            b"io: RPC: Unable to receive; errno = Unknown error -2147483648\n\0"
+        );
         let message = creation_error_message(b"create", 12, 0, -17, None).unwrap();
-        assert_eq!(message, b"create: RPC: Remote system error - Unknown error -17\n\0");
+        assert_eq!(
+            message,
+            b"create: RPC: Remote system error - Unknown error -17\n\0"
+        );
     }
 }
