@@ -164,6 +164,11 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding; do
     echo "FAIL: empty GNU oracle for ${scenario}" >&2
     exit 1
   fi
+  if [[ "${scenario}" == "gnu-rounding" ]] &&
+     [[ "$(grep -Ec '^round-thread:[0-3]:0$' "${oracle_stdout}")" -ne 4 ]]; then
+    echo "FAIL: GNU oracle failed concurrent rounding expectations" >&2
+    exit 1
+  fi
   for mode in strict hardened; do
     actual_stdout="${OUT_DIR}/${scenario}.${mode}.stdout.log"
     actual_stderr="${OUT_DIR}/${scenario}.${mode}.stderr.log"
