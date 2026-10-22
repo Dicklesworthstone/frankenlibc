@@ -1414,13 +1414,13 @@ fn gconv_transliterate_returns_noconv() {
 // parse_printf_format
 // ===========================================================================
 
-const PA_INT: i32 = 1;
-const PA_CHAR: i32 = 2;
-const PA_STRING: i32 = 4;
-const PA_POINTER: i32 = 6;
-const PA_DOUBLE: i32 = 8;
-const PA_FLAG_LONG: i32 = 0x100;
-const PA_FLAG_LONG_LONG: i32 = 0x200;
+// Values from GNU printf.h, independently checked by the live C fixture.
+const PA_INT: i32 = 0;
+const PA_CHAR: i32 = 1;
+const PA_STRING: i32 = 3;
+const PA_POINTER: i32 = 5;
+const PA_DOUBLE: i32 = 7;
+const PA_FLAG_LONG: i32 = 0x200;
 
 #[test]
 fn parse_printf_format_simple_types() {
@@ -1441,7 +1441,7 @@ fn parse_printf_format_length_modifiers() {
     let count = unsafe { parse_printf_format(fmt.as_ptr(), 8, types.as_mut_ptr()) };
     assert_eq!(count, 4);
     assert_eq!(types[0], PA_INT | PA_FLAG_LONG);
-    assert_eq!(types[1], PA_INT | PA_FLAG_LONG_LONG);
+    assert_eq!(types[1], PA_INT | PA_FLAG_LONG); // LP64: long == long long representation
     assert_eq!(types[2], PA_INT | 0x400); // PA_FLAG_SHORT
     assert_eq!(types[3], PA_CHAR);
 }
@@ -1478,6 +1478,36 @@ fn parse_printf_format_null_argtypes_just_counts() {
 fn parse_printf_format_null_fmt_returns_zero() {
     let count = unsafe { parse_printf_format(ptr::null(), 0, ptr::null_mut()) };
     assert_eq!(count, 0);
+}
+
+#[test]
+fn parse_printf_format_positional_slots_and_write_bounds() {
+    let fmt = CString::new("%3$*2$.*1$f %5$s %m %% %Q").unwrap();
+    let mut types = [-77; 7];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 3, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [PA_INT, PA_INT, PA_DOUBLE, -77, -77, -77, -77]);
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 7, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [PA_INT, PA_INT, PA_DOUBLE, -77, PA_STRING, -77, -77]);
+}
+
+#[test]
+fn parse_printf_format_wide_aliases_and_count_pointers() {
+    let fmt = CString::new("%lc %C %ls %S %hhn %lln %Lf %hhd").unwrap();
+    let mut types = [-77; 8];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 8, types.as_mut_ptr()) },
+        8
+    );
+    assert_eq!(
+        types,
+        [PA_CHAR, 2, PA_STRING, 4, 0x800, 0x800, 263, PA_CHAR]
+    );
 }
 
 // ===========================================================================
@@ -2864,9 +2894,41 @@ fn printf_size_returns_negative() {
 }
 
 #[test]
-fn printf_size_info_returns_zero() {
+fn printf_size_info_counts_without_storage() {
     let r = unsafe { printf_size_info(ptr::null(), 0, ptr::null_mut()) };
-    assert_eq!(r, 0);
+    assert_eq!(r, 1);
+}
+
+#[test]
+fn printf_size_info_gnu_layout_and_single_slot() {
+    #[repr(C)]
+    struct Info {
+        precision: i32,
+        width: i32,
+        spec: i32,
+        flags: u16,
+        user: u16,
+        pad: i32,
+    }
+    assert_eq!(std::mem::size_of::<Info>(), 20);
+    let mut info = Info {
+        precision: -1,
+        width: 0,
+        spec: 115,
+        flags: 0,
+        user: 0,
+        pad: 32,
+    };
+    for (flags, expected) in [(0, 7), (1, 263), (4096, 7), (4097, 263)] {
+        info.flags = flags;
+        for n in 0..=2 {
+            let mut types = [-77; 3];
+            let rc =
+                unsafe { printf_size_info((&info as *const Info).cast(), n, types.as_mut_ptr()) };
+            assert_eq!(rc, 1);
+            assert_eq!(types, [if n == 0 { -77 } else { expected }, -77, -77]);
+        }
+    }
 }
 
 // ===========================================================================

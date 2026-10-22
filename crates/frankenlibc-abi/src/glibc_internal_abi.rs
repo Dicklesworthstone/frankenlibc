@@ -6740,14 +6740,41 @@ pub unsafe extern "C" fn modify_ldt(_func: c_int, _ptr: *mut c_void, _bytecount:
 }
 // parse_printf_format: introspect printf format string to get argument types
 // glibc PA_* type constants
-const PA_INT: c_int = 1;
-const PA_CHAR: c_int = 2;
-const PA_STRING: c_int = 4;
-const PA_POINTER: c_int = 6;
-const PA_DOUBLE: c_int = 8;
-const PA_FLAG_LONG: c_int = 0x100;
-const PA_FLAG_LONG_LONG: c_int = 0x200;
+const PA_INT: c_int = 0;
+const PA_CHAR: c_int = 1;
+const PA_WCHAR: c_int = 2;
+const PA_STRING: c_int = 3;
+const PA_WSTRING: c_int = 4;
+const PA_POINTER: c_int = 5;
+const PA_DOUBLE: c_int = 7;
+const PA_FLAG_LONG_DOUBLE: c_int = 0x100;
+const PA_FLAG_LONG: c_int = 0x200;
 const PA_FLAG_SHORT: c_int = 0x400;
+const PA_FLAG_PTR: c_int = 0x800;
+
+fn printf_decimal(bytes: &[u8], pos: &mut usize) -> usize {
+    let mut value = 0usize;
+    while let Some(digit) = bytes.get(*pos).filter(|c| c.is_ascii_digit()) {
+        value = value
+            .saturating_mul(10)
+            .saturating_add((digit - b'0') as usize);
+        *pos += 1;
+    }
+    value
+}
+
+fn printf_position(bytes: &[u8], pos: &mut usize) -> Option<usize> {
+    let start = *pos;
+    let value = printf_decimal(bytes, pos);
+    if *pos > start && bytes.get(*pos) == Some(&b'$') {
+        *pos += 1;
+        Some(value)
+    } else {
+        *pos = start;
+        None
+    }
+}
+
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn parse_printf_format(
     fmt: *const c_char,
@@ -6757,104 +6784,125 @@ pub unsafe extern "C" fn parse_printf_format(
     if fmt.is_null() {
         return 0;
     }
-    let mut p = fmt as *const u8;
-    let mut count: usize = 0;
-    loop {
-        let c = unsafe { *p };
-        if c == 0 {
+    // SAFETY: the caller supplies a terminated C format. The allocation-aware
+    // scan retains the existing ABI's protection for tracked unterminated data.
+    let len = unsafe { bounded_c_string_len(fmt) };
+    let bytes = unsafe { std::slice::from_raw_parts(fmt.cast::<u8>(), len) };
+    let mut pos = 0;
+    let mut next = 0usize;
+    let mut count = 0usize;
+    let mut record = |index: usize, kind: c_int| {
+        count = count.max(index.saturating_add(1));
+        if index < n && !argtypes.is_null() {
+            // SAFETY: n is the caller's writable array capacity. Unreferenced
+            // positional holes deliberately retain the caller's original bytes.
+            unsafe { *argtypes.add(index) = kind };
+        }
+    };
+    while pos < bytes.len() {
+        if bytes[pos] != b'%' {
+            pos += 1;
+            continue;
+        }
+        pos += 1;
+        let value_position = printf_position(bytes, &mut pos);
+        if value_position == Some(0) {
             break;
         }
-        if c != b'%' {
-            p = unsafe { p.add(1) };
-            continue;
+        while bytes.get(pos).is_some_and(|b| b"-+0 #'I".contains(b)) {
+            pos += 1;
         }
-        p = unsafe { p.add(1) }; // skip '%'
-        if unsafe { *p } == b'%' {
-            p = unsafe { p.add(1) };
-            continue;
-        }
-        // Skip flags: -+0 #'
-        while {
-            let f = unsafe { *p };
-            f == b'-' || f == b'+' || f == b'0' || f == b' ' || f == b'#' || f == b'\''
-        } {
-            p = unsafe { p.add(1) };
-        }
-        // Skip width (may be * which consumes an int arg)
-        if unsafe { *p } == b'*' {
-            if count < n && !argtypes.is_null() {
-                unsafe { *argtypes.add(count) = PA_INT };
-            }
-            count += 1;
-            p = unsafe { p.add(1) };
-        } else {
-            while unsafe { (*p).is_ascii_digit() } {
-                p = unsafe { p.add(1) };
-            }
-        }
-        // Skip precision
-        if unsafe { *p } == b'.' {
-            p = unsafe { p.add(1) };
-            if unsafe { *p } == b'*' {
-                if count < n && !argtypes.is_null() {
-                    unsafe { *argtypes.add(count) = PA_INT };
+        for precision in [false, true] {
+            if precision {
+                if bytes.get(pos) != Some(&b'.') {
+                    break;
                 }
-                count += 1;
-                p = unsafe { p.add(1) };
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'*') {
+                pos += 1;
+                let index = match printf_position(bytes, &mut pos) {
+                    Some(position) if position > 0 => position - 1,
+                    _ => {
+                        let index = next;
+                        next = next.saturating_add(1);
+                        index
+                    }
+                };
+                record(index, PA_INT);
             } else {
-                while unsafe { (*p).is_ascii_digit() } {
-                    p = unsafe { p.add(1) };
-                }
+                printf_decimal(bytes, &mut pos);
             }
         }
-        // Length modifiers
-        let mut length_flag: c_int = 0;
-        match unsafe { *p } {
-            b'h' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'h' {
-                    p = unsafe { p.add(1) };
-                }
-                length_flag = PA_FLAG_SHORT;
-            }
-            b'l' => {
-                p = unsafe { p.add(1) };
-                if unsafe { *p } == b'l' {
-                    p = unsafe { p.add(1) };
-                    length_flag = PA_FLAG_LONG_LONG;
+        let mut integer_type = PA_INT;
+        let mut long_double = false;
+        match bytes.get(pos) {
+            Some(b'h') => {
+                pos += 1;
+                integer_type = if bytes.get(pos) == Some(&b'h') {
+                    pos += 1;
+                    PA_CHAR
                 } else {
-                    length_flag = PA_FLAG_LONG;
+                    PA_INT | PA_FLAG_SHORT
+                };
+            }
+            Some(b'l') => {
+                pos += 1;
+                if bytes.get(pos) == Some(&b'l') {
+                    pos += 1;
+                    long_double = true;
                 }
+                // On the supported LP64 ABI long and long long have the same
+                // argument representation; glibc reports PA_FLAG_LONG for both.
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'L' | b'q' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG_LONG;
+            Some(b'j' | b'z' | b't') => {
+                pos += 1;
+                integer_type = PA_INT | PA_FLAG_LONG;
             }
-            b'z' | b'j' | b't' => {
-                p = unsafe { p.add(1) };
-                length_flag = PA_FLAG_LONG;
+            Some(b'L' | b'q') => {
+                pos += 1;
+                long_double = true;
+            }
+            Some(b'w') => {
+                pos += 1;
+                let fast = bytes.get(pos) == Some(&b'f');
+                pos += usize::from(fast);
+                integer_type = match (fast, printf_decimal(bytes, &mut pos)) {
+                    (_, 8) => PA_CHAR,
+                    (false, 16) => PA_INT | PA_FLAG_SHORT,
+                    (false, 32) => PA_INT,
+                    (_, 64) | (true, 16 | 32) => PA_INT | PA_FLAG_LONG,
+                    _ => break,
+                };
             }
             _ => {}
         }
-        // Conversion specifier
-        let argtype = match unsafe { *p } {
-            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' => PA_INT | length_flag,
-            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => PA_DOUBLE | length_flag,
-            b'c' => PA_CHAR | length_flag,
-            b's' => PA_STRING | length_flag,
-            b'p' => PA_POINTER,
-            b'n' => PA_POINTER,
-            _ => PA_INT,
+        let Some(&conversion) = bytes.get(pos) else {
+            break;
         };
-        if unsafe { *p } != 0 {
-            p = unsafe { p.add(1) };
-        }
-        if count < n && !argtypes.is_null() {
-            unsafe { *argtypes.add(count) = argtype };
-        }
-        count += 1;
+        pos += 1;
+        let kind = match conversion {
+            b'd' | b'i' | b'o' | b'u' | b'x' | b'X' | b'b' | b'B' => integer_type,
+            b'e' | b'E' | b'f' | b'F' | b'g' | b'G' | b'a' | b'A' => {
+                PA_DOUBLE | if long_double { PA_FLAG_LONG_DOUBLE } else { 0 }
+            }
+            b'c' => PA_CHAR,
+            b'C' => PA_WCHAR,
+            b's' => PA_STRING,
+            b'S' => PA_WSTRING,
+            b'p' => PA_POINTER,
+            b'n' => PA_INT | PA_FLAG_PTR,
+            _ => continue,
+        };
+        let index = value_position.map(|p| p - 1).unwrap_or_else(|| {
+            let index = next;
+            next = next.saturating_add(1);
+            index
+        });
+        record(index, kind);
     }
-    count as SizeT
+    count
 }
 /// pidfd_getpid: native syscall (Linux 6.9+)
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8506,23 +8554,213 @@ pub static mut _obstack: *mut c_void = std::ptr::null_mut();
 
 // __stpcpy_small: optimized small-string stpcpy
 
-// printf_size: custom printf formatter for human-readable sizes — requires register_printf_specifier, not supported
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn printf_size(
-    _fp: *mut c_void,
-    _info: *const c_void,
-    _args: *const *const c_void,
-) -> c_int {
-    -1
+// GNU printf_info's bitfield storage on the supported Linux LP64 targets.
+// Keep the pad after the two 16-bit fields: treating the flags as a u32 with
+// no user field silently reads a different wide/pad contract.
+#[repr(C)]
+struct PrintfInfo {
+    precision: c_int,
+    width: c_int,
+    spec: WcharT,
+    flags: u16,
+    user: u16,
+    pad: WcharT,
 }
-// printf_size_info: arginfo callback for printf_size — not supported
+
+unsafe fn printf_size_write(fp: *mut c_void, wide: bool, bytes: &[u8]) -> bool {
+    if wide {
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return false;
+        };
+        for ch in text.chars() {
+            // SAFETY: the caller owns the FILE and requests wide output. The
+            // existing wide writer handles orientation, encoding, and errors.
+            if unsafe { crate::wchar_abi::fputwc(ch as u32, fp) } == u32::MAX {
+                return false;
+            }
+        }
+        true
+    } else {
+        // SAFETY: bytes is live for this synchronous native FILE write.
+        let written =
+            unsafe { crate::stdio_abi::fwrite(bytes.as_ptr().cast(), 1, bytes.len(), fp) };
+        written == bytes.len()
+    }
+}
+
+unsafe fn printf_size_padding(fp: *mut c_void, wide: bool, byte: u8, mut n: usize) -> bool {
+    let chunk = [byte; 128];
+    while n > 0 {
+        let len = n.min(chunk.len());
+        // SAFETY: same live FILE and bounded initialized chunk as the caller.
+        if !unsafe { printf_size_write(fp, wide, &chunk[..len]) } {
+            return false;
+        }
+        n -= len;
+    }
+    true
+}
+
+/// Native GNU size callback, also callable directly before registering it.
+/// Registration and custom-conversion dispatch remain separate work.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C-unwind" fn printf_size(
+    fp: *mut c_void,
+    info: *const c_void,
+    args: *const *const c_void,
+) -> c_int {
+    use frankenlibc_core::stdio::printf::{
+        FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
+    };
+    if fp.is_null() || info.is_null() || args.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    // SAFETY: GNU's callback ABI supplies one live printf_info and an array of
+    // addresses of arguments. No argument is read through a narrower type.
+    let info = unsafe { &*info.cast::<PrintfInfo>() };
+    let arg = unsafe { *args };
+    if arg.is_null() {
+        unsafe { set_abi_errno(libc::EINVAL) };
+        return -1;
+    }
+    let precision = if info.precision < 0 {
+        3
+    } else {
+        info.precision as usize
+    };
+    // Beyond this many fractional digits every supported binary float is
+    // exact. Render a bounded prefix and stream the remaining zeroes, rather
+    // than inheriting the f64 renderer's clamp or allocating precision bytes.
+    let extra_precision = precision.saturating_sub(65_535);
+    let binary128 = info.flags & (1 << 12) != 0;
+    let extended = binary128 || info.flags & 1 != 0;
+    let uppercase = (b'A' as i32..=b'Z' as i32).contains(&info.spec);
+    let units = if uppercase {
+        b" KMGTPEZY"
+    } else {
+        b" kmgtpezy"
+    };
+    let divisor = if uppercase { 1000.0 } else { 1024.0 };
+    let mut unit = 0;
+    let spec = FormatSpec::new(
+        FormatFlags {
+            force_sign: info.flags & (1 << 6) != 0,
+            space_sign: info.flags & (1 << 4) != 0,
+            alt_form: info.flags & (1 << 3) != 0,
+            group: info.flags & (1 << 7) != 0,
+            ..FormatFlags::default()
+        },
+        Width::None,
+        Precision::Fixed(precision.min(65_535)),
+        if extended {
+            LengthMod::BigL
+        } else {
+            LengthMod::None
+        },
+        b'f',
+        None,
+    );
+    let mut body = Vec::new();
+    let _ = take_render_failure();
+    let finite;
+    if extended {
+        let x87 = !binary128 && cfg!(target_arch = "x86_64");
+        let mut value = if x87 {
+            let mut bytes = [0u8; 10];
+            // SAFETY: an x87 argument has at least its ten significant bytes.
+            unsafe { std::ptr::copy_nonoverlapping(arg.cast::<u8>(), bytes.as_mut_ptr(), 10) };
+            f128::from_bits(frankenlibc_core::float128::x87_to_binary128(&bytes))
+        } else {
+            // SAFETY: IEEE binary128 arguments occupy sixteen bytes.
+            unsafe { std::ptr::read_unaligned(arg.cast::<f128>()) }
+        };
+        finite = (value.to_bits() >> 112) & 0x7fff != 0x7fff;
+        while finite && value >= divisor as f128 && unit + 1 < units.len() {
+            value /= divisor as f128;
+            if x87 {
+                // A native long-double division rounds to 80 bits at each
+                // step; retaining quad precision until the end changes ties.
+                let bytes = frankenlibc_core::float128::binary128_to_x87(value.to_bits());
+                value = f128::from_bits(frankenlibc_core::float128::x87_to_binary128(&bytes));
+            }
+            unit += 1;
+        }
+        spec.render_binary128_arg(value.to_bits(), &mut body);
+    } else {
+        // SAFETY: the ordinary callback argument is an address of a double.
+        let mut value = unsafe { std::ptr::read_unaligned(arg.cast::<f64>()) };
+        finite = value.is_finite();
+        while finite && value >= divisor && unit + 1 < units.len() {
+            value /= divisor;
+            unit += 1;
+        }
+        format_float(value, &spec, &mut body);
+    }
+    let failure = take_render_failure();
+    if failure != 0 {
+        unsafe { set_abi_errno(failure) };
+        return -1;
+    }
+    let wide = info.flags & (1 << 10) != 0;
+    let body_len = if wide {
+        let Ok(text) = std::str::from_utf8(&body) else {
+            unsafe { set_abi_errno(libc::EILSEQ) };
+            return -1;
+        };
+        text.chars().count()
+    } else {
+        body.len()
+    };
+    let len = body_len + if finite { 1 + extra_precision } else { 0 };
+    // GNU's special-value path uses precision as a minimum field width.
+    let width = (info.width.max(0) as usize).max(if finite { 0 } else { precision });
+    let count = width.max(len);
+    if count > c_int::MAX as usize {
+        unsafe { set_abi_errno(libc::EOVERFLOW) };
+        return -1;
+    }
+    let padding = width.saturating_sub(len);
+    let left = info.flags & (1 << 5) != 0;
+    let zero = finite && info.pad == b'0' as WcharT;
+    // Zeroes are always adjacent to the number and precede the suffix, even
+    // for left alignment. Space padding goes after the suffix when left.
+    let sign_len = usize::from(zero && body.first().is_some_and(|b| b"-+ ".contains(b)));
+    // SAFETY: all writes share the caller's live FILE and initialized slices.
+    let ok = unsafe {
+        (left || zero || printf_size_padding(fp, wide, b' ', padding))
+            && printf_size_write(fp, wide, &body[..sign_len])
+            && (!zero || left || printf_size_padding(fp, wide, b'0', padding))
+            && printf_size_write(fp, wide, &body[sign_len..])
+            && (!finite || printf_size_padding(fp, wide, b'0', extra_precision))
+            && (!zero || !left || printf_size_padding(fp, wide, b'0', padding))
+            && (!finite || printf_size_write(fp, wide, &units[unit..unit + 1]))
+            && (!left || zero || printf_size_padding(fp, wide, b' ', padding))
+    };
+    if ok { count as c_int } else { -1 }
+}
+
+// GNU's old-style arginfo callback returns int, not size_t.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn printf_size_info(
-    _info: *const c_void,
-    _n: SizeT,
-    _argtypes: *mut c_int,
-) -> SizeT {
-    0
+    info: *const c_void,
+    n: SizeT,
+    argtypes: *mut c_int,
+) -> c_int {
+    if n > 0 && !argtypes.is_null() && !info.is_null() {
+        // SAFETY: n promises slot zero is writable; info uses the GNU layout.
+        unsafe {
+            let info = &*info.cast::<PrintfInfo>();
+            *argtypes = PA_DOUBLE
+                | if info.flags & 1 != 0 {
+                    PA_FLAG_LONG_DOUBLE
+                } else {
+                    0
+                };
+        }
+    }
+    1
 }
 
 // nfsservctl: deprecated NFS server control

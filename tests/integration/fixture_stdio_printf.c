@@ -2,14 +2,19 @@
  * Part of frankenlibc C fixture suite.
  * Exit 0 = PASS, nonzero = FAIL with diagnostic to stderr.
  */
+#define _GNU_SOURCE 1
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <printf.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <wchar.h>
 
 static int make_temp_path(char path[72]) {
     strcpy(path, "/tmp/frankenlibc_fixture_stdio_printf_XXXXXX");
@@ -360,7 +365,142 @@ static int test_vasprintf_contracts(void) {
     return 0;
 }
 
-int main(void) {
+/* Direct calls exercise the GNU callbacks independently of registration.  The
+ * same executable runs against glibc and each candidate; output includes return
+ * values, write bounds, and bytes so a plausible-looking string cannot pass. */
+static int check_gnu_provider(const char *name) {
+    const char *expected = getenv("FRANKENLIBC_TEST_LIBRARY");
+    if (!expected) return 0;
+    Dl_info info;
+    struct stat actual, wanted;
+    void *symbol = dlsym(RTLD_DEFAULT, name);
+    if (!symbol || !dladdr(symbol, &info) || stat(info.dli_fname, &actual) ||
+        stat(expected, &wanted) || actual.st_dev != wanted.st_dev ||
+        actual.st_ino != wanted.st_ino) {
+        fprintf(stderr, "FAIL: wrong provider for %s\n", name);
+        return 1;
+    }
+    return 0;
+}
+
+static int gnu_types(void) {
+    if (check_gnu_provider("parse_printf_format") ||
+        check_gnu_provider("printf_size_info")) return 1;
+    static const char *formats[] = {
+        "%d %i %u %o %x %X %b %B", "%hhd %hd %ld %lld %jd %zd %td %qd %Ld",
+        "%c %lc %C %s %ls %S %p", "%f %lf %Lf %a %La",
+        "%n %hhn %hn %ln %lln %zn %Ln", "%*.*f", "%3$*2$.*1$f",
+        "%2$s %1$d %2$s", "%5$d", "%% %m %Q", "%*Q %.*m %d",
+        "%Iu %'d", "%w8d %w16d %w32d %w64d %wf16d", "end%", "%0$d",
+        "%2$*4$d %1$s", "%2$d %2$f", "%*2$d %d"
+    };
+    for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
+        for (size_t cap = 0; cap <= 12; ++cap) {
+            int types[14];
+            for (size_t k = 0; k < 14; ++k) types[k] = -77;
+            size_t count = parse_printf_format(formats[f], cap, types);
+            printf("types:%zu:%zu:%zu", f, cap, count);
+            for (size_t k = 0; k < 14; ++k) printf(":%d", types[k]);
+            putchar('\n');
+        }
+    }
+    struct printf_info info = {0};
+    for (unsigned flags = 0; flags < 4; ++flags) {
+        info.is_long_double = flags & 1;
+        info.is_binary128 = (flags >> 1) & 1;
+        for (size_t cap = 0; cap < 3; ++cap) {
+            int types[3] = {-77, -77, -77};
+            int rc = printf_size_info(&info, cap, types);
+            printf("info:%u:%zu:%d:%d:%d:%d\n", flags, cap, rc,
+                   types[0], types[1], types[2]);
+        }
+    }
+    return 0;
+}
+
+static int gnu_sizes(void) {
+    if (check_gnu_provider("printf_size")) return 1;
+    static const long double values[] = {
+        0.0L, -0.0L, 1.0L, 999.9995L, 1000.0L, 1023.9995L, 1024.0L,
+        1048576.0L, -1048576.0L, 1e30L, INFINITY, -INFINITY, NAN,
+        3.141592653589793238512809L, 1e400L
+    };
+    for (unsigned kind = 0; kind < 3; ++kind) {
+        for (size_t v = 0; v < sizeof(values) / sizeof(values[0]); ++v) {
+            for (unsigned style = 0; style < 26; ++style) {
+                if (style >= 24 && v != 6) continue;
+                struct printf_info info = {0};
+                info.prec = style >= 24 ? 65535 + (int)(style - 24) :
+                            style < 8 ? -1 : style >= 16 ? 25 : (int)(style % 4);
+                info.width = style % 4 ? 16 : 0;
+                info.spec = style & 1 ? L'S' : L's';
+                info.pad = style & 2 ? L'0' : L' ';
+                info.left = (style >> 2) & 1;
+                info.showsign = (style >> 3) & 1;
+                info.space = style == 3;
+                info.alt = style == 4;
+                info.group = style == 5;
+                info.is_long_double = kind == 1;
+                info.is_binary128 = kind == 2;
+                double d = (double)values[v];
+                long double ld = values[v];
+                _Float128 q = (_Float128)values[v];
+                if (v == 13) q = 3.141592653589793238462643383279502884197F128;
+                const void *arg = kind == 0 ? (void *)&d :
+                                  kind == 1 ? (void *)&ld : (void *)&q;
+                for (unsigned wide = 0; wide < 2; ++wide) {
+                    char *bytes = NULL;
+                    wchar_t *chars = NULL;
+                    size_t count = 0;
+                    FILE *fp = wide ? open_wmemstream(&chars, &count) :
+                                      open_memstream(&bytes, &count);
+                    if (!fp) return 1;
+                    info.wide = wide;
+                    errno = 0;
+                    int rc = printf_size(fp, &info, &arg);
+                    int err = errno;
+                    if (fclose(fp)) return 1;
+                    printf("size:%u:%zu:%u:%u:%d:%d:%zu:", kind, v, style,
+                           wide, rc, err, count);
+                    for (size_t k = 0; k < count; ++k)
+                        printf("%02x", wide ? (unsigned)chars[k] :
+                               (unsigned)(unsigned char)bytes[k]);
+                    putchar('\n');
+                    free(bytes);
+                    free(chars);
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+static int gnu_size_errors(void) {
+    if (check_gnu_provider("printf_size")) return 1;
+    for (unsigned wide = 0; wide < 2; ++wide) {
+        for (unsigned broken = 0; broken < 2; ++broken) {
+            FILE *fp = fopen("/dev/full", "w");
+            if (!fp || setvbuf(fp, NULL, _IONBF, 0)) return 1;
+            if (wide && fwide(fp, 1) <= 0) return 1;
+            if (broken && close(fileno(fp))) return 1;
+            struct printf_info info = { .prec = 3, .spec = L's', .pad = L' ' };
+            info.wide = wide;
+            double d = 1024.0;
+            const void *arg = &d;
+            errno = 0;
+            int rc = printf_size(fp, &info, &arg);
+            int err = errno;
+            printf("error:%u:%u:%d:%d:%d\n", wide, broken, rc, err, !!ferror(fp));
+            fclose(fp);
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--gnu-types") == 0) return gnu_types();
+    if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();
+    if (argc == 2 && strcmp(argv[1], "--gnu-errors") == 0) return gnu_size_errors();
     int fails = 0;
     fails += test_snprintf_contracts();
     fails += test_sprintf_contracts();

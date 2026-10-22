@@ -621,6 +621,23 @@ impl FormatSpec {
     /// With the `'` flag under a grouping locale, %Lf/%LF/%Lg/%LG render
     /// without width, group the integer part, then pad (see `format_float`).
     pub fn render_long_double_arg(&self, bytes: &[u8; 10], buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| crate::float128::format_x87(bytes, spec))
+    }
+
+    /// Render an IEEE binary128 argument with the same locale and field rules
+    /// as the x87 long-double path. The caller supplies the bits without an
+    /// intermediate, lossy conversion to `f64`.
+    pub fn render_binary128_arg(&self, bits: u128, buf: &mut Vec<u8>) -> bool {
+        self.render_extended_arg(buf, |spec| {
+            crate::float128::format_binary128(bits, spec)
+        })
+    }
+
+    fn render_extended_arg(
+        &self,
+        buf: &mut Vec<u8>,
+        render: impl Fn(&crate::float128::FmtSpec) -> Vec<u8>,
+    ) -> bool {
         if !self.value_arg_is_x87() {
             return false;
         }
@@ -640,7 +657,7 @@ impl FormatSpec {
                 alt: self.flags.alt_form,
                 zero: false,
             };
-            let mut rendered = crate::float128::format_x87(bytes, &bare);
+            let mut rendered = render(&bare);
             // The radix first: it may be the very byte the separator is.
             let mut uncounted = 0;
             if let Some(dp) = DecimalPoint::active() {
@@ -675,7 +692,7 @@ impl FormatSpec {
             zero: self.flags.zero_pad,
         };
         let start = buf.len();
-        buf.extend_from_slice(&crate::float128::format_x87(bytes, &spec));
+        buf.extend_from_slice(&render(&spec));
         if let Some(dp) = DecimalPoint::active() {
             dp.localize(buf, start);
         }
