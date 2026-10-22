@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${ROOT}/target/conformance"
+OUT_DIR="${FRANKENLIBC_STDIO_OUT_DIR:-${ROOT}/target/conformance}"
 BIN_DIR="${OUT_DIR}/stdio_native_bins"
 REPORT="${OUT_DIR}/stdio_native.report.json"
 LOG="${OUT_DIR}/stdio_native.log.jsonl"
@@ -12,29 +12,23 @@ RUN_ID="stdio-native-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 
 mkdir -p "${OUT_DIR}" "${BIN_DIR}"
 
-TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
-BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-${TARGET_DIR}}"
-LIB_CANDIDATES=(
-  "${TARGET_DIR}/release/libfrankenlibc_abi.so"
-  "${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
-)
-LIB=""
-
-echo "[stdio-native] building release ABI library locally" >"${TEST_LOG}"
-env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
-
-for candidate in "${LIB_CANDIDATES[@]}"; do
-  if [[ -f "${candidate}" ]]; then
-    LIB="${candidate}"
-    break
-  fi
-done
-
+LIB="${FRANKENLIBC_TEST_LIBRARY:-}"
+BUILD_KIND="provided_artifact"
+echo "[stdio-native] qualifying native stdio" >"${TEST_LOG}"
 if [[ -z "${LIB}" ]]; then
+  TARGET_DIR="$(cargo metadata --format-version 1 --no-deps | jq -r '.target_directory')"
+  BUILD_TARGET_DIR="${CARGO_TARGET_DIR:-${TARGET_DIR}}"
+  env CARGO_TARGET_DIR="${BUILD_TARGET_DIR}" cargo build -p frankenlibc-abi --release >>"${TEST_LOG}" 2>&1
+  LIB="${BUILD_TARGET_DIR}/release/libfrankenlibc_abi.so"
+  BUILD_KIND="executed_build"
+fi
+
+if [[ ! -f "${LIB}" ]]; then
   echo "FAIL: expected release library missing at ${LIB}" >&2
   cat "${TEST_LOG}" >&2
   exit 1
 fi
+LIB="$(realpath "${LIB}")"
 
 symbol_addr() {
   local symbol="$1"
@@ -77,7 +71,7 @@ check_alias_addr "stdout" "_IO_2_1_stdout_"
 check_alias_addr "stderr" "_IO_2_1_stderr_"
 
 cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
-  -o "${BIN_DIR}/fixture_stdio_printf.bin"
+  -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl
 cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
   -o "${BIN_DIR}/fixture_stdio_globals.bin"
 
@@ -143,19 +137,49 @@ run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened"
 run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "strict" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
 run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "hardened" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
 
+# Live GNU oracle and the exact supplied library execute the same fixture.
+# Keep every row and compare both streams; a process exit alone is not proof.
+for scenario in gnu-types gnu-size gnu-errors; do
+  oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
+  oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
+  env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
+    "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" >"${oracle_stdout}" 2>"${oracle_stderr}"
+  rows="$(wc -l <"${oracle_stdout}")"
+  if [[ "${rows}" -eq 0 ]]; then
+    echo "FAIL: empty GNU oracle for ${scenario}" >&2
+    exit 1
+  fi
+  for mode in strict hardened; do
+    actual_stdout="${OUT_DIR}/${scenario}.${mode}.stdout.log"
+    actual_stderr="${OUT_DIR}/${scenario}.${mode}.stderr.log"
+    start_ns="$(date +%s%N)"
+    FRANKENLIBC_MODE="${mode}" FRANKENLIBC_TEST_LIBRARY="${LIB}" LD_PRELOAD="${LIB}" \
+      "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" >"${actual_stdout}" 2>"${actual_stderr}"
+    latency_ns="$(( $(date +%s%N) - start_ns ))"
+    if ! cmp -s "${oracle_stdout}" "${actual_stdout}" || ! cmp -s "${oracle_stderr}" "${actual_stderr}"; then
+      echo "FAIL: ${scenario} (${mode}) differs from live GNU oracle; see ${OUT_DIR}" >&2
+      exit 1
+    fi
+    echo "${scenario} (${mode}): ${rows} live differential rows passed" >>"${TEST_LOG}"
+    emit_log_row "${scenario}" "${mode}" "stdio" "pass" "${latency_ns}" "${COMMON_REFS}"
+  done
+done
+
 cat >"${REPORT}" <<JSON
 {
   "schema_version": "v1",
   "bead": "bd-zh1y.4",
   "run_id": "${RUN_ID}",
-  "library": "target/release/libfrankenlibc_abi.so",
+  "library": "${LIB}",
+  "build_kind": "${BUILD_KIND}",
   "checks": {
-    "release_build_local": "pass",
     "nm_stdio_alias_addresses": "pass",
     "fixture_stdio_printf_strict": "pass",
     "fixture_stdio_printf_hardened": "pass",
     "fixture_stdio_globals_strict": "pass",
-    "fixture_stdio_globals_hardened": "pass"
+    "fixture_stdio_globals_hardened": "pass",
+    "gnu_printf_live_differential_strict": "pass",
+    "gnu_printf_live_differential_hardened": "pass"
   },
   "artifacts": [
     "scripts/check_stdio_native.sh",
