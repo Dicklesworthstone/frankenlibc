@@ -854,10 +854,12 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     // (exponent extraction, fixed-vs-scientific choice, trailing-zero strip) is unchanged.
     // Covers %g integers that `try_gcvt_exact_small_fixed` leaves (scientific-style and
     // >= 2^53). Guarded so no rounding occurs.
-    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap)
-        || try_build_dyadic_rust_sci(value, frac, &mut sci_heap)
-    {
+    let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
         sci_heap.as_str()
+    } else if try_build_dyadic_rust_sci(value, frac, &mut sci_stack) {
+        // The dyadic builder accepts at most 19 fractional digits, so this
+        // scratch also fits beyond gcvt's 17-significant-digit boundary.
+        sci_stack.as_str()
     } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
         sci_stack.as_str()
     } else {
