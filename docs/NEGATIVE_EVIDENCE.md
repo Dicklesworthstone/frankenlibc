@@ -41894,6 +41894,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   divergences vs host glibc**. Earlier pinned-worker queue timeouts executed zero
   tests. An obsolete, separately bound release build hit its 3600-second deadline
   with exit 137; neither its source nor output is the qualified artifact above.
+  Final-source `hardened_mode_safety_test` then compiled and executed on the same
+  clean overlay: **`17 passed; 0 failed; 0 ignored; 0 filtered out`**, exit 0.
 - **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
   hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
   padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
@@ -41942,8 +41944,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
   acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
   durable deployed-path bench group, and corpus performance enforcement remain required.
-  Final-source ABI safety execution remains pending after the compiler, fuzz,
-  reverse-order timing and actual 100k-profile follow-up above.
+  Final-source ABI safety, compiler, fuzz, reverse-order timing and actual 100k
+  profiles have executed; a final focused conversion-unit replay is still pending.
   This entry serves that named bead's review; it retires as active evidence when
   superseded by its next bound qualification, while preserving the history.
 

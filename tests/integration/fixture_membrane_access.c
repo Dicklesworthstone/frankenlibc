@@ -18,6 +18,7 @@ static void (*release_bytes)(void *);
 static void *(*copy_bytes)(void *, const void *, size_t);
 static void *(*move_bytes)(void *, const void *, size_t);
 static void *(*fill_bytes)(void *, int, size_t);
+static int (*compare_bytes)(const void *, const void *, size_t);
 static size_t (*string_length)(const char *);
 static size_t (*bounded_length)(const char *, size_t);
 
@@ -60,13 +61,15 @@ int main(int argc, char **argv) {
     int copying = strcmp(operation, "memcpy-dst") == 0 || strcmp(operation, "memcpy-src") == 0;
     int moving = strcmp(operation, "memmove-dst") == 0 || strcmp(operation, "memmove-src") == 0;
     int filling = strcmp(operation, "memset") == 0;
+    int comparing = strcmp(operation, "memcmp-lhs") == 0 || strcmp(operation, "memcmp-rhs") == 0;
+    int compare_rhs = strcmp(operation, "memcmp-rhs") == 0;
     int length = strcmp(operation, "strlen") == 0;
     int bounded = strcmp(operation, "strnlen") == 0;
     int source = strcmp(operation, "memcpy-src") == 0 || strcmp(operation, "memmove-src") == 0;
     if (!(valid || header || canary || end || quarantine) ||
-        !(copying || moving || filling || length || bounded) ||
-        (quarantine && !(source || length || bounded)) ||
-        (end && !(copying || moving || filling))) {
+        !(copying || moving || filling || comparing || length || bounded) ||
+        (quarantine && !(source || comparing || length || bounded)) ||
+        (end && !(copying || moving || filling || comparing))) {
         fprintf(stderr, "unsupported probe combination\n");
         return 2;
     }
@@ -80,6 +83,7 @@ int main(int argc, char **argv) {
     copy_bytes = required_symbol("memcpy", library);
     move_bytes = required_symbol("memmove", library);
     fill_bytes = required_symbol("memset", library);
+    compare_bytes = required_symbol("memcmp", library);
     string_length = required_symbol("strlen", library);
     bounded_length = required_symbol("strnlen", library);
 
@@ -108,6 +112,14 @@ int main(int argc, char **argv) {
         size_t actual = length ? string_length((const char *)access) : bounded_length((const char *)access, 32);
         size_t expected = valid ? (length ? CAPACITY - 1 : 32) : 0;
         ok = actual == expected;
+    } else if (comparing) {
+        const void *left = compare_rhs ? input : access;
+        const void *right = compare_rhs ? access : input;
+        int result = compare_bytes(left, right, COPY_SIZE);
+        /* Valid operands differ in the first byte (0x35 versus 0xC7).
+         * A denied/clamped-to-zero operand must instead yield the safe default,
+         * in either position, without reading corrupt or quarantined storage. */
+        ok = valid ? (compare_rhs ? result > 0 : result < 0) : result == 0;
     } else {
         void *destination = source ? output : access;
         const void *origin = source ? access : input;

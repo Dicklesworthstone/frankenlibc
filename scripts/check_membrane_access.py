@@ -15,7 +15,10 @@ from pathlib import Path
 import subprocess
 import sys
 
-OPERATIONS = ("memcpy-dst", "memcpy-src", "memmove-dst", "memmove-src", "memset", "strlen", "strnlen")
+OPERATIONS = (
+    "memcpy-dst", "memcpy-src", "memmove-dst", "memmove-src", "memset",
+    "strlen", "strnlen", "memcmp-lhs", "memcmp-rhs",
+)
 
 
 def sha256(path: Path) -> str:
@@ -57,9 +60,11 @@ def main() -> int:
             cases.extend((mode, math, op, "valid") for op in OPERATIONS)
         for fault in ("header", "canary"):
             cases.extend(("hardened", math, op, fault) for op in OPERATIONS)
-        cases.extend(("hardened", math, op, "end") for op in OPERATIONS[:5])
-        cases.extend(("hardened", math, op, "quarantine") for op in ("memcpy-src", "memmove-src", "strlen", "strnlen"))
-    assert len(cases) == 74
+        cases.extend(("hardened", math, op, "end") for op in OPERATIONS if op not in ("strlen", "strnlen"))
+        cases.extend(("hardened", math, op, "quarantine") for op in (
+            "memcpy-src", "memmove-src", "strlen", "strnlen", "memcmp-lhs", "memcmp-rhs",
+        ))
+    assert len(cases) == 98
     records = []
     for mode, math, operation, fault in cases:
         case_env = dict(env, LD_PRELOAD=str(library), FRANKENLIBC_MODE=mode, FRANKENLIBC_RUNTIME_MATH=math)
