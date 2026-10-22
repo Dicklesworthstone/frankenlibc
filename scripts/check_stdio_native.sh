@@ -2,6 +2,18 @@
 # check_stdio_native.sh — native stdio globals smoke for bd-zh1y.4
 set -euo pipefail
 
+GNU_ONLY=0
+if [[ "${1:-}" == "--gnu-printf" ]]; then
+  GNU_ONLY=1
+elif [[ "$#" -ne 0 ]]; then
+  echo "usage: $0 [--gnu-printf]" >&2
+  exit 2
+fi
+BEAD_ID="bd-zh1y.4"
+if [[ "${GNU_ONLY}" -eq 1 ]]; then
+  BEAD_ID="bd-rc0923-epic-eeuy4f.34"
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${FRANKENLIBC_STDIO_OUT_DIR:-${ROOT}/target/conformance}"
 BIN_DIR="${OUT_DIR}/stdio_native_bins"
@@ -29,6 +41,7 @@ if [[ ! -f "${LIB}" ]]; then
   exit 1
 fi
 LIB="$(realpath "${LIB}")"
+LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
 symbol_addr() {
   local symbol="$1"
@@ -66,14 +79,18 @@ check_alias_addr() {
   fi
 }
 
-check_alias_addr "stdin" "_IO_2_1_stdin_"
-check_alias_addr "stdout" "_IO_2_1_stdout_"
-check_alias_addr "stderr" "_IO_2_1_stderr_"
+if [[ "${GNU_ONLY}" -eq 0 ]]; then
+  check_alias_addr "stdin" "_IO_2_1_stdin_"
+  check_alias_addr "stdout" "_IO_2_1_stdout_"
+  check_alias_addr "stderr" "_IO_2_1_stderr_"
+fi
 
 cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
   -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl
-cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
-  -o "${BIN_DIR}/fixture_stdio_globals.bin"
+if [[ "${GNU_ONLY}" -eq 0 ]]; then
+  cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
+    -o "${BIN_DIR}/fixture_stdio_globals.bin"
+fi
 
 now_iso_ms() {
   date -u +"%Y-%m-%dT%H:%M:%S.%3NZ"
@@ -87,7 +104,7 @@ emit_log_row() {
   local latency_ns="$5"
   local artifact_refs="$6"
   cat >>"${LOG}" <<JSON
-{"timestamp":"$(now_iso_ms)","trace_id":"bd-zh1y.4::${RUN_ID}::${scenario_id}::${mode}::${stream}","level":"info","event":"native_stdio_fixture","bead_id":"bd-zh1y.4","stream":"${stream}","gate":"check_stdio_native","scenario_id":"${scenario_id}","mode":"${mode}","api_family":"stdio","symbol":"stdio_globals","decision_path":"ld_preload>native_stdio_globals","healing_action":"none","errno":"0","latency_ns":${latency_ns},"outcome":"${outcome}","artifact_refs":${artifact_refs}}
+{"timestamp":"$(now_iso_ms)","trace_id":"${BEAD_ID}::${RUN_ID}::${scenario_id}::${mode}::${stream}","level":"info","event":"native_stdio_fixture","bead_id":"${BEAD_ID}","stream":"${stream}","gate":"check_stdio_native","scenario_id":"${scenario_id}","mode":"${mode}","api_family":"stdio","symbol":"stdio_globals","decision_path":"ld_preload>native_stdio_globals","healing_action":"none","errno":"0","latency_ns":${latency_ns},"outcome":"${outcome}","artifact_refs":${artifact_refs}}
 JSON
 }
 
@@ -103,11 +120,7 @@ run_case() {
   stdout_file="${OUT_DIR}/${name}.${mode}.stdout.log"
   stderr_file="${OUT_DIR}/${name}.${mode}.stderr.log"
   start_ns="$(date +%s%N)"
-  if [[ "${mode}" == "strict" ]]; then
-    LD_PRELOAD="${LIB}" "${bin}" >"${stdout_file}" 2>"${stderr_file}"
-  else
-    FRANKENLIBC_MODE=hardened LD_PRELOAD="${LIB}" "${bin}" >"${stdout_file}" 2>"${stderr_file}"
-  fi
+  FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" "${bin}" >"${stdout_file}" 2>"${stderr_file}"
   end_ns="$(date +%s%N)"
   latency_ns="$((end_ns - start_ns))"
 
@@ -134,8 +147,10 @@ COMMON_REFS='["scripts/check_stdio_native.sh","tests/integration/fixture_stdio_p
 
 run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "strict" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
 run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
-run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "strict" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
-run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "hardened" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
+if [[ "${GNU_ONLY}" -eq 0 ]]; then
+  run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "strict" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
+  run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "hardened" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
+fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
@@ -165,12 +180,21 @@ for scenario in gnu-types gnu-size gnu-errors; do
   done
 done
 
+if [[ "${GNU_ONLY}" -eq 1 ]]; then
+  cat >"${REPORT}" <<JSON
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass"}
+JSON
+  echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
+  exit 0
+fi
+
 cat >"${REPORT}" <<JSON
 {
   "schema_version": "v1",
   "bead": "bd-zh1y.4",
   "run_id": "${RUN_ID}",
   "library": "${LIB}",
+  "library_sha256": "${LIB_SHA256}",
   "build_kind": "${BUILD_KIND}",
   "checks": {
     "nm_stdio_alias_addresses": "pass",

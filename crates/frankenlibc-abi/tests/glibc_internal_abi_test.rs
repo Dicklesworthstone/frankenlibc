@@ -1510,6 +1510,23 @@ fn parse_printf_format_wide_aliases_and_count_pointers() {
     );
 }
 
+#[test]
+fn parse_printf_format_no_value_positions_preserve_holes() {
+    let fmt = CString::new("%5$Q %3$m %2$%").unwrap();
+    let mut types = [-77; 5];
+    assert_eq!(
+        unsafe { parse_printf_format(fmt.as_ptr(), 5, types.as_mut_ptr()) },
+        5
+    );
+    assert_eq!(types, [-77; 5]);
+    let overflow = CString::new("%2147483648$d").unwrap();
+    assert_eq!(
+        unsafe { parse_printf_format(overflow.as_ptr(), 1, types.as_mut_ptr()) },
+        1
+    );
+    assert_eq!(types, [PA_INT, -77, -77, -77, -77]);
+}
+
 // ===========================================================================
 // Security deny stubs: rcmd/rexec/ruserok/iruserok/ruserpass
 // ===========================================================================

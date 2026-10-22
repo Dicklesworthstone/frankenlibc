@@ -6768,7 +6768,7 @@ fn printf_position(bytes: &[u8], pos: &mut usize) -> Option<usize> {
     let value = printf_decimal(bytes, pos);
     if *pos > start && bytes.get(*pos) == Some(&b'$') {
         *pos += 1;
-        Some(value)
+        (value <= c_int::MAX as usize).then_some(value)
     } else {
         *pos = start;
         None
@@ -6787,13 +6787,17 @@ pub unsafe extern "C" fn parse_printf_format(
     // SAFETY: the caller supplies a terminated C format. The allocation-aware
     // scan retains the existing ABI's protection for tracked unterminated data.
     let len = unsafe { bounded_c_string_len(fmt) };
+    // SAFETY: the scan established these len readable bytes in the C string.
     let bytes = unsafe { std::slice::from_raw_parts(fmt.cast::<u8>(), len) };
     let mut pos = 0;
     let mut next = 0usize;
     let mut count = 0usize;
-    let mut record = |index: usize, kind: c_int| {
+    let mut record = |index: usize, kind: Option<c_int>| {
         count = count.max(index.saturating_add(1));
-        if index < n && !argtypes.is_null() {
+        if index < n
+            && !argtypes.is_null()
+            && let Some(kind) = kind
+        {
             // SAFETY: n is the caller's writable array capacity. Unreferenced
             // positional holes deliberately retain the caller's original bytes.
             unsafe { *argtypes.add(index) = kind };
@@ -6808,6 +6812,11 @@ pub unsafe extern "C" fn parse_printf_format(
         let value_position = printf_position(bytes, &mut pos);
         if value_position == Some(0) {
             break;
+        }
+        if let Some(position) = value_position {
+            // GNU counts an explicit reference even for a conversion which
+            // consumes no value (%m, %% or an unregistered custom character).
+            record(position - 1, None);
         }
         while bytes.get(pos).is_some_and(|b| b"-+0 #'I".contains(b)) {
             pos += 1;
@@ -6829,7 +6838,7 @@ pub unsafe extern "C" fn parse_printf_format(
                         index
                     }
                 };
-                record(index, PA_INT);
+                record(index, Some(PA_INT));
             } else {
                 printf_decimal(bytes, &mut pos);
             }
@@ -6900,7 +6909,7 @@ pub unsafe extern "C" fn parse_printf_format(
             next = next.saturating_add(1);
             index
         });
-        record(index, kind);
+        record(index, Some(kind));
     }
     count
 }
@@ -8570,6 +8579,7 @@ struct PrintfInfo {
 unsafe fn printf_size_write(fp: *mut c_void, wide: bool, bytes: &[u8]) -> bool {
     if wide {
         let Ok(text) = std::str::from_utf8(bytes) else {
+            // SAFETY: setting the calling thread's ABI errno owns no FILE data.
             unsafe { set_abi_errno(libc::EILSEQ) };
             return false;
         };
@@ -8614,14 +8624,17 @@ pub unsafe extern "C-unwind" fn printf_size(
         FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
     };
     if fp.is_null() || info.is_null() || args.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
     // SAFETY: GNU's callback ABI supplies one live printf_info and an array of
     // addresses of arguments. No argument is read through a narrower type.
     let info = unsafe { &*info.cast::<PrintfInfo>() };
+    // SAFETY: the callback ABI provides at least one argument-address slot.
     let arg = unsafe { *args };
     if arg.is_null() {
+        // SAFETY: this only updates the calling thread's errno.
         unsafe { set_abi_errno(libc::EINVAL) };
         return -1;
     }
@@ -8700,12 +8713,14 @@ pub unsafe extern "C-unwind" fn printf_size(
     }
     let failure = take_render_failure();
     if failure != 0 {
+        // SAFETY: propagate the current thread's recorded render error.
         unsafe { set_abi_errno(failure) };
         return -1;
     }
     let wide = info.flags & (1 << 10) != 0;
     let body_len = if wide {
         let Ok(text) = std::str::from_utf8(&body) else {
+            // SAFETY: this only updates the calling thread's errno.
             unsafe { set_abi_errno(libc::EILSEQ) };
             return -1;
         };
@@ -8718,6 +8733,7 @@ pub unsafe extern "C-unwind" fn printf_size(
     let width = (info.width.max(0) as usize).max(if finite { 0 } else { precision });
     let count = width.max(len);
     if count > c_int::MAX as usize {
+        // SAFETY: this only updates the calling thread's errno, before writing.
         unsafe { set_abi_errno(libc::EOVERFLOW) };
         return -1;
     }

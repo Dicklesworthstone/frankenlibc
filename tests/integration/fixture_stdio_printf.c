@@ -392,7 +392,9 @@ static int gnu_types(void) {
         "%n %hhn %hn %ln %lln %zn %Ln", "%*.*f", "%3$*2$.*1$f",
         "%2$s %1$d %2$s", "%5$d", "%% %m %Q", "%*Q %.*m %d",
         "%Iu %'d", "%w8d %w16d %w32d %w64d %wf16d", "end%", "%0$d",
-        "%2$*4$d %1$s", "%2$d %2$f", "%*2$d %d"
+        "%2$*4$d %1$s", "%2$d %2$f", "%*2$d %d",
+        "%5$Q %3$m %2$%", "%4$*2$Q %1$s", "%2147483648$d",
+        "%hhf %hf %llf %qf"
     };
     for (size_t f = 0; f < sizeof(formats) / sizeof(formats[0]); ++f) {
         for (size_t cap = 0; cap <= 12; ++cap) {
