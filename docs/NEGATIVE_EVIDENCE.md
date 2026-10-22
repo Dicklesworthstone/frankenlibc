@@ -41882,7 +41882,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   evidence, not universal safety. `membrane-safety-final/report.json` SHA-256
   `277ef205954280bf4b760bfd9a656393964814aa0e706fe3b2cfbeab836c5424`.
 - **STATIC LIMITS.** Final runtime-source workspace Clippy exits 101 with the same
-  27 diagnostic occurrences (17 distinct title/file pairs) as the retained baseline. A newly introduced
+  27 diagnostic occurrences (17 distinct title/file pairs) as the retained baseline.
+  A newly introduced
   identical-branch lint was fixed and both artifacts rebuilt; no suppression was
   added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
   zero added or removed. Neither check is green. UBS was not executed because
@@ -41922,7 +41923,14 @@ ones that would notice a threading-policy depth counter behaving differently.
   583 baseline diff bodies, zero added/removed; exit 1 remains red. A prior fmt
   attempt lost SSH completion, was recovered as exit 255 with terminal acknowledgement,
   and supplies no formatting proof. Its subsequent worker-admission failure also
-  executed zero formatting cases. Post-extension Clippy is still running.
+  executed zero formatting cases. Post-extension Clippy reached its configured
+  3600-second deadline, exit 137 after 3607.958 seconds, while compiling test
+  dependencies. Its partial output contains 14 baseline diagnostic occurrences
+  (9 distinct title/file pairs), zero new pairs, with 13 baseline occurrences not
+  observed. It did not finish all targets: this is **incomplete**, not a second
+  full baseline-equivalence result. The earlier completed runtime-source Clippy
+  comparison above remains separate. Log `clippy-native-final.log`, exact wrapper
+  `rchw-20467d77-6dc8-4826-af5c-1677a892e720`; no automatic replay or local fallback.
 - **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
   hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
   padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
@@ -41972,8 +41980,9 @@ ones that would notice a threading-policy depth counter behaving differently.
   acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
   durable deployed-path bench group, and corpus performance enforcement remain required.
   Final-source ABI safety, conversion, compiler, fuzz, reverse-order timing and
-  actual 100k profiles have executed. Static checks are being repeated after the
-  test-only gate extension; the original throughput acceptance remains unmet.
+  actual 100k profiles have executed. Post-extension compiler and formatting
+  checks finished; the Clippy recheck timed out as recorded above. The original
+  throughput acceptance remains unmet.
   This entry serves that named bead's review; it retires as active evidence when
   superseded by its next bound qualification, while preserving the history.
 
