@@ -2,6 +2,9 @@
 """Execute real exported memory/string operations in fresh preload processes.
 
 Usage: python3 scripts/check_membrane_access.py LIBRARY [--output DIRECTORY]
+Add --benchmark for the deployed overhead group (also used by the bench crate
+and ld_preload_smoke.sh). It returns 1 on unmet performance targets, 2 on setup
+or behavior/provider failure, and never calls a partial measurement a pass.
 No missing compiler, missing library, timeout, wrong provider, or failed case is
 counted as a pass. The gate never uses a reference libc for invalid accesses.
 """
@@ -91,6 +94,11 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
     bindings = []
     load_before = Path("/proc/loadavg").read_text().strip()
 
+    def host_sample():
+        clock = Path(f"/sys/devices/system/cpu/cpu{allowed[0]}/cpufreq/scaling_cur_freq")
+        return dict(loadavg=list(os.getloadavg()),
+                    cpu_khz=clock.read_text().strip() if clock.is_file() else None)
+
     def arm_env(path, mode):
         child_env = dict(env, FRANKENLIBC_MODE=mode, FRANKENLIBC_RUNTIME_MATH="on")
         if path is not None:
@@ -105,6 +113,7 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
             for operation in operations:
                 for length in lengths:
                     for arm, path, mode in order:
+                        host = host_sample()
                         result = subprocess.run(
                             [str(executable), str(path) if path else "host", "benchmark",
                              operation, str(length), str(args.iterations)],
@@ -128,7 +137,7 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
                         providers[arm] = str(provider)
                         versions[arm] = row["glibc_version"]
                         row.update(arm=arm, round=round_index, warmup=warmup,
-                                   ns_per_call=row["elapsed_ns"] / args.iterations)
+                                   ns_per_call=row["elapsed_ns"] / args.iterations, host=host)
                         raw.write(json.dumps(row) + "\n")
                         raw.flush()
                         raw_count += 1
@@ -146,6 +155,7 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
                     child_env = arm_env(path, mode)
                     if round_index == -2:
                         child_env["LD_DEBUG"] = "bindings"
+                    host = host_sample()
                     start = time.perf_counter_ns()
                     result = subprocess.run([sort, *flags, str(corpus)], env=child_env,
                                             capture_output=True, timeout=30)
@@ -172,7 +182,7 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
                     elif result.stderr:
                         raise ValueError(f"unexpected sort stderr: {result.stderr!r}")
                     row = dict(operation=f"sort100k-{kind}", arm=arm, round=round_index,
-                               warmup=warmup, elapsed_ns=elapsed, output_sha256=reference_hash)
+                               warmup=warmup, elapsed_ns=elapsed, output_sha256=reference_hash, host=host)
                     raw.write(json.dumps(row) + "\n")
                     raw.flush()
                     raw_count += 1
@@ -209,6 +219,8 @@ def deployed_benchmark(args, library, source, executable, output, env) -> int:
                   seed=20261022, samples=args.samples, warmups=2, iterations=args.iterations,
                   lengths=lengths, operations=operations, runtime_math="on", cpu=allowed[0],
                   allowed_cpus_before=allowed, platform=list(os.uname()),
+                  cpuinfo=Path("/proc/cpuinfo").read_text(),
+                  compiler=subprocess.check_output(["cc", "--version"], env=env, text=True).splitlines()[0],
                   load_before=load_before, load_after=Path("/proc/loadavg").read_text().strip(),
                   raw_records=raw_count, providers=providers, glibc_versions=versions, bindings=bindings,
                   arm_libraries={arm: dict(path=str(path), sha256=sha256(path))

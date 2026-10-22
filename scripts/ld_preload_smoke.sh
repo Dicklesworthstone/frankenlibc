@@ -5,7 +5,7 @@
 # any non-zero/timeout outcome.
 set -euo pipefail
 
-if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--performance-only" ) ]]; then
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
   echo "usage: $0 [--performance-only]" >&2
   exit 2
 fi

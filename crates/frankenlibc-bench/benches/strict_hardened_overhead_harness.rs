@@ -29,7 +29,11 @@ fn main() {
         let library = arguments
             .next()
             .expect("--deployed requires a release library");
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let current = env::current_dir().expect("cannot locate benchmark working directory");
+        let root = current
+            .ancestors()
+            .find(|path| path.join("scripts/check_membrane_access.py").is_file())
+            .expect("run the deployed bench inside the project or its bound source snapshot");
         let output = output_dir(selected_lane()).join("deployed");
         // The measured process is the provider-pinned C fixture under preload,
         // never this executable's linked Rust implementations. Reuse the exact
