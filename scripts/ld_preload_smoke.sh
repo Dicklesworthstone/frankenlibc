@@ -5,6 +5,11 @@
 # any non-zero/timeout outcome.
 set -euo pipefail
 
+if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != "--performance-only" ) ]]; then
+  echo "usage: $0 [--performance-only]" >&2
+  exit 2
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_ROOT="${ROOT}/target/ld_preload_smoke"
 RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
@@ -103,6 +108,20 @@ fi
 if [[ -z "${LIB_PATH}" ]]; then
   echo "ld_preload_smoke: could not locate libfrankenlibc_abi.so" >&2
   exit 2
+fi
+
+run_deployed_overhead() {
+  # The same provider-pinned deployed runner is used by the bench crate.
+  # These hardened budgets are mandatory, independent of ENFORCE_PERF_MODES
+  # (which controls the older per-command startup timings below).
+  python3 "${ROOT}/scripts/check_membrane_access.py" "${LIB_PATH}" \
+    --benchmark --output "${RUN_DIR}/deployed-overhead"
+}
+
+if [[ "${1:-}" == "--performance-only" ]]; then
+  # Scoped invocation: never label it a pass of the whole functional corpus.
+  run_deployed_overhead
+  exit 0
 fi
 
 if ! command -v cc >/dev/null 2>&1; then
@@ -1205,10 +1224,17 @@ emit_trace "info" "suite_start" "all" "all" "running" \
 overall_failed=0
 run_suite_for_mode strict || overall_failed=1
 run_suite_for_mode hardened || overall_failed=1
+deployed_overhead_exit=0
+run_deployed_overhead || deployed_overhead_exit=$?
+if [[ "${deployed_overhead_exit}" -ne 0 ]]; then
+  overall_failed=1
+fi
 emit_trace "info" "suite_end" "all" "all" "$([[ "${overall_failed}" -eq 0 ]] && echo "pass" || echo "fail")" \
   "orchestration" "None" "0" "0" "[]" "suite" "orchestration" "none" "0" "0"
 
 export LD_PRELOAD_SMOKE_BEAD_ID="${BEAD_ID}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT="${deployed_overhead_exit}"
+export LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT="${RUN_DIR}/deployed-overhead/benchmark.json"
 export LD_PRELOAD_SMOKE_CASE_TSV="${CASE_TSV}"
 export LD_PRELOAD_SMOKE_ENFORCE_PARITY_MODES="${ENFORCE_PARITY_MODES}"
 export LD_PRELOAD_SMOKE_ENFORCE_PERF_MODES="${ENFORCE_PERF_MODES}"
@@ -1323,6 +1349,13 @@ payload = {
         if m.strip()
     ],
     "perf_ratio_max_ppm": int(env["LD_PRELOAD_SMOKE_PERF_RATIO_MAX_PPM"]),
+    "deployed_overhead": {
+        "required": True,
+        "modes": ["strict", "hardened"],
+        "exit_code": int(env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"]),
+        "passed": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_EXIT"] == "0",
+        "report": env["LD_PRELOAD_SMOKE_DEPLOYED_OVERHEAD_REPORT"],
+    },
     "valgrind_policy": env["LD_PRELOAD_SMOKE_VALGRIND_POLICY"],
     "summary": {
         "total_cases": len(cases),
