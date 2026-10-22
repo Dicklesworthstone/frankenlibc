@@ -41881,8 +41881,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   entrypoints all came from the selected library. This is bounded repair/deny
   evidence, not universal safety. `membrane-safety-final/report.json` SHA-256
   `277ef205954280bf4b760bfd9a656393964814aa0e706fe3b2cfbeab836c5424`.
-- **STATIC LIMITS.** Final workspace Clippy still exits 101 with the same 27
-  diagnostic-title/file pairs as the retained baseline. A newly introduced
+- **STATIC LIMITS.** Final runtime-source workspace Clippy exits 101 with the same
+  27 diagnostic occurrences (17 distinct title/file pairs) as the retained baseline. A newly introduced
   identical-branch lint was fixed and both artifacts rebuilt; no suppression was
   added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
   zero added or removed. Neither check is green. UBS was not executed because
@@ -41896,6 +41896,33 @@ ones that would notice a threading-policy depth counter behaving differently.
   with exit 137; neither its source nor output is the qualified artifact above.
   Final-source `hardened_mode_safety_test` then compiled and executed on the same
   clean overlay: **`17 passed; 0 failed; 0 ignored; 0 filtered out`**, exit 0.
+  The final focused conversion replay also compiled and executed:
+  **`12 passed; 0 failed; 0 ignored; 3664 filtered out`**, including the tiny-buffer
+  prefix and precision-boundary gates. This is a focused result, not a full core pass.
+- **MEMCMP GATE CONNECTED.** The lexical profile exposed a coverage gap: the
+  deployed fault fixture did not exercise either `memcmp` operand. Test-only
+  source `0922448c3` adds valid nonzero comparisons and header/canary/end/quarantine
+  cases for both sides in the existing C fixture and existing gate runner. All
+  original 74 cases per library remain; 24 new comparison cases make **98 per
+  library**, covering runtime math on/off. The existing runner compiled with
+  `-Wall -Wextra -Werror`, executed **196/196 positive cases** across the two frozen
+  release artifacts, and rejected both unpreloaded provider controls before fault
+  injection. Both compile logs are empty. Runtime-library source remains `2258bb1d4`;
+  these tests do not imply a newly rebuilt library from the test-only commit.
+  Fixture SHA-256 `6ce9105ac5557a50c98e8b6e3fe5615e392b1134d36d29fc9f85541cb7d3e9f6`;
+  runner `e658c3890257db98b711f65581b7a9733653272bff3c5eb3d3fb069685fb430e`.
+  Reports `membrane-access-default-ts1/results.json` SHA-256
+  `99652c73f6e020c1f071c825f1c5daa5dcdc0cfe35f7f5695cbe5306e4fa7302`;
+  `membrane-access-owned-ts1/results.json`
+  `184e72bf511bf344c250822857a0c0cba1cf6583f10d727971a05b8d3f79ca61`.
+  After this extension, the six-file clean overlay
+  `0f05ec759faed52893729f43ed2ec8a23306199e8dbc6041af845501c8d09144`
+  passed `cargo check --workspace --all-targets --keep-going` again (exit 0,
+  16m27s compiler run). The repeated formatting check executed and retained exactly
+  583 baseline diff bodies, zero added/removed; exit 1 remains red. A prior fmt
+  attempt lost SSH completion, was recovered as exit 255 with terminal acknowledgement,
+  and supplies no formatting proof. Its subsequent worker-admission failure also
+  executed zero formatting cases. Post-extension Clippy is still running.
 - **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
   hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
   padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
@@ -41944,8 +41971,9 @@ ones that would notice a threading-policy depth counter behaving differently.
   **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
   acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
   durable deployed-path bench group, and corpus performance enforcement remain required.
-  Final-source ABI safety, compiler, fuzz, reverse-order timing and actual 100k
-  profiles have executed; a final focused conversion-unit replay is still pending.
+  Final-source ABI safety, conversion, compiler, fuzz, reverse-order timing and
+  actual 100k profiles have executed. Static checks are being repeated after the
+  test-only gate extension; the original throughput acceptance remains unmet.
   This entry serves that named bead's review; it retires as active evidence when
   superseded by its next bound qualification, while preserving the history.
 
