@@ -41857,6 +41857,46 @@ ones that would notice a threading-policy depth counter behaving differently.
   added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
   zero added or removed. Neither check is green. UBS was not executed because
   its installed wrapper deletes temporary files and no preserve mode was found.
+- **FINAL FOLLOW-UP.** Final-source `cargo check --workspace --all-targets
+  --keep-going` executed remotely and exited 0 (15m49s compiler run; existing
+  warnings retained). `printf_float_differential_fuzz` compiled and executed:
+  `1 passed; 0 failed; 0 ignored; 0 filtered out`, **300,000 comparisons, zero
+  divergences vs host glibc**. Earlier pinned-worker queue timeouts executed zero
+  tests. An obsolete, separately bound release build hit its 3600-second deadline
+  with exit 137; neither its source nor output is the qualified artifact above.
+- **REVERSED ORDER.** Same cases and frozen default artifact, separate outputs:
+  hardened `%.6g` 7,228.94 -> 1,531.44 ns; `%.17g` 7,840.41 -> 2,276.11 ns;
+  padded `%G` 3,957.63 -> 4,100.23 ns (3.6% slower); heap `strlen`
+  917.88 -> 97.64 ns; stack `memcmp` 193.79 -> 197.11 ns. Width-400 incumbent
+  returned to 1,166.21 ns, candidate 1,159.63 ns: its large forward-only delta is
+  **not a repeatable improvement**. No format median exceeded 1.1x incumbent in
+  either final order. Sort100k GNU/strict/hardened candidate medians were
+  133.64/143.72/311.56 ms: **2.168x strict, 2.331x GNU**, still failing 2x.
+  Sort120k candidate hardened was 376.86 ms versus incumbent 361.20 ms (4.3%
+  slower), candidate strict 175.42 ms. These controls do not establish a macro win.
+  Reverse reports SHA-256: `short-strings-final-reverse/report.json`
+  `9ee674b6e76428778dc4d3606641bc79614eb8028e3fef15a37d6e1dc2f5e93d`;
+  `timing-reverse-final/report.json`
+  `3dcdec5a61bd049f024e4d132994037d595d9050333a80a4500088df3c6ec5e3`;
+  `sort100k-reverse/report.json`
+  `b805da32dae49560f772624b42f7d1e011bcebf6608bc14b487d2d1bbb024650`.
+- **ACTUAL 100K PROFILE.** One profile job runs five Callgrind children: live GNU
+  libc, incumbent strict/hardened, and final candidate strict/hardened on that same
+  input, with identical output SHA-256
+  `54f31903923d9bdf8dad573b725402e6beb926d7d59c7446c390c89981a36e4e`.
+  Total instructions: GNU 1,006,442,145; incumbent strict 1,057,834,511;
+  candidate strict 1,057,836,733; incumbent hardened 1,632,630,601;
+  candidate hardened 1,633,201,691. **No macro instruction reduction.** Candidate
+  inclusive costs include malloc 260.40M, free 157.27M, and memcpy validation
+  196.23M instructions (nested counts must not be summed). Exclusive costs include
+  arena free 47.40M, memcpy validation 38.42M, SipHash 33.81M, index
+  insertion 29.64M, bloom insertion 29.52M, SIMD selection 22.08M, policy decide
+  21.24M, and attempted HTM 19.06M. Allocator bookkeeping and the remaining copy
+  path are the next measured levers; Clifford recomputation is no longer a major
+  named row here. These instruction counts are not hardware-counter or latency
+  proof. `sort100k-profile/report.json` SHA-256
+  `3b62491fc83072f1d174eaaf4e0b54ea53ff5fd3138e9f85cbedb55d9e5e5f6f`;
+  both inclusive and exclusive annotations and all five raw profiles are retained.
 - **RECEIPTS.** Frozen root
   `/Users/jemanuel/projects/.frankenlibc-g-format-final-job-20261022/artifacts/`:
   `replay/report.json` SHA-256
@@ -41872,8 +41912,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
   acceptance: stable short-call bounds, <=2x strict macro throughput, durable
   deployed-path bench group, and corpus performance enforcement remain required.
-  Final-source compiler/fuzz/safety completion, reverse-order measurements and a
-  genuine 100k Callgrind profile are still pending at this entry's first write.
+  Final-source ABI safety execution remains pending after the compiler, fuzz,
+  reverse-order timing and actual 100k-profile follow-up above.
   This entry serves that named bead's review; it retires as active evidence when
   superseded by its next bound qualification, while preserving the history.
 
