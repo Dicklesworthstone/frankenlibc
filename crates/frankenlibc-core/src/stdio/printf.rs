@@ -628,9 +628,7 @@ impl FormatSpec {
     /// as the x87 long-double path. The caller supplies the bits without an
     /// intermediate, lossy conversion to `f64`.
     pub fn render_binary128_arg(&self, bits: u128, buf: &mut Vec<u8>) -> bool {
-        self.render_extended_arg(buf, |spec| {
-            crate::float128::format_binary128(bits, spec)
-        })
+        self.render_extended_arg(buf, |spec| crate::float128::format_binary128(bits, spec))
     }
 
     fn render_extended_arg(
