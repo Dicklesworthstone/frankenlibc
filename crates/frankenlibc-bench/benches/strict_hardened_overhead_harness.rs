@@ -39,6 +39,7 @@ fn main() {
         // never this executable's linked Rust implementations. Reuse the exact
         // runner consumed by the corpus gate, including its failure exit code.
         let status = Command::new("python3")
+            .current_dir(root)
             .arg(root.join("scripts/check_membrane_access.py"))
             .arg(library)
             .arg("--benchmark")

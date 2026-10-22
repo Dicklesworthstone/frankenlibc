@@ -41986,3 +41986,81 @@ ones that would notice a threading-policy depth counter behaving differently.
   This entry serves that named bead's review; it retires as active evidence when
   superseded by its next bound qualification, while preserving the history.
 
+## 2026-10-22 — Connect deployed overhead enforcement; retain the failures (.9)
+
+`bd-rc0923-epic-eeuy4f.9` remains **in progress**. This continuation supplies
+the missing deployed benchmark consumer and corpus enforcement. It does not
+establish the original throughput targets or integrated L1 readiness.
+
+- **CONNECTED CODE.** Existing `fixture_membrane_access.c` now times valid,
+  warmed, provider-pinned `strlen`/`memcmp` calls through function pointers with
+  `-fno-builtin`. Stack and heap lengths 0, 1, 7, 15, 31 and 63 are separate
+  cases; alternating unequal operands and checked checksums prevent a constant
+  zero comparison from masquerading as work. All original 98 fault/valid cases
+  remain. The existing Python runner adds `--benchmark`, with live GNU libc,
+  strict and hardened children in one invocation, optional incumbent arms,
+  two retained warmups, nine measured rounds, rotated arm order, CPU affinity,
+  provider and sort-binding checks, exact sort-output parity, source/library/
+  corpus hashes, and retained raw rows. The existing Cargo bench accepts
+  `--deployed LIBRARY`; the corpus script consumes the same runner. Its scoped
+  `--performance-only` invocation propagates failure without claiming the full
+  functional corpus. The full corpus path also requires this benchmark after
+  its two mode suites. Original limits stay fixed: each hardened short-case
+  maximum batch mean <=200 ns, sort100k median <=3x GNU and <=2x strict.
+  Batch means are not individual-call tail latencies. Both lexical and numeric
+  sort are mandatory; the favorable numeric denominator cannot hide lexical.
+- **ACTUAL FAILURES.** Runtime artifacts in these first wiring executions are
+  the previously qualified `2258bb1d4` libraries: default SHA-256
+  `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`,
+  owned-TLS `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  The default invocation retained **1,430 child rows: 1,170 measured and 260
+  warmup**, with five live arms, 24 short-case groups and two sort workloads.
+  Wrong-provider and all three malformed-argument controls rejected. All
+  measured checksums, provider checks and sort-output comparisons passed;
+  throughput gate **exit 1**: lexical hardened was **3.002x strict / 3.515x
+  GNU**, and stack memcmp maxima at 7/63 bytes were **202.25/202.92 ns**.
+  Numeric was 1.718x strict / 1.917x GNU on this host and input, not a general
+  acceptance result. Actual Cargo caller compilation and execution retained
+  **858 rows** and propagated exit 1 (lexical 3.040x strict / 3.375x GNU).
+  Actual corpus performance-only caller retained **858 rows**, exit 1
+  (lexical 3.154x strict / 3.764x GNU; several short stack memcmp cases also
+  exceeded 200 ns). These are distinct invocations, not independent reviewers.
+  The unpreloaded host reports GNU **2.43**; Franken's compatibility version
+  string is **2.38**, which must not be called the worker's host version.
+- **SAFETY AND OWNED-TLS LIMIT.** The revised existing fixture compiled with
+  `-Wall -Wextra -Werror` and executed **98/98 cases on each frozen library**,
+  including runtime math on/off; both wrong-provider controls rejected before
+  fault injection. The owned-TLS benchmark nevertheless terminated with a
+  **30-second lexical-sort timeout, exit 2**. It has partial raw rows, not a
+  completed `benchmark.json` or a nine-sample pass. Its retained hardened heap
+  memcmp 63-byte batch measured **13,633.42 ns/call**, with the correct checksum.
+  Source diagnosis: `tls_cache.rs` intentionally uses a fresh unbacked cache
+  under `owned-tls-cache`, and `try_with_tls_cache_hit` always misses there.
+  Its short-lived EBR handles and process-global validation-depth storage need
+  owner-safe lifecycle integration. Re-enabling host TLS or substituting a
+  global locked cache would not qualify that work. Existing .9/standalone/L1
+  blockers retain it; no new follow-up is used to close the original.
+- **BOUNDED EXECUTION.** The full corpus was **not executed**: its existing
+  gencat case contains `rm -r`, and `fixture_remove_dir_ftell_ebadf` exercises
+  deletion. No-deletion instructions remain binding. The full aggregation
+  branch was source-reviewed; only its real performance-only branch executed.
+  UBS remains unrun because its installed wrapper deletes temporary files
+  and no preserve mode was found. Neither omission is a pass.
+- **FROZEN EVIDENCE.** Root:
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/`.
+  SHA-256: `artifacts/default/benchmark.json`
+  `39f62d32dfc41f8ef7b2676ca84b792e78a686c6a93fef8efd3a26b4d784583a`;
+  `artifacts/bench-caller/deployed/benchmark.json`
+  `d264f74e53a55e4c132665f6335366207200902ea3514ad50f238c83b46efacd`;
+  `input/target/ld_preload_smoke/deployed-bound/deployed-overhead/benchmark.json`
+  `b4dc53d08e0514fb0ebc11b4ba9e2dfde18fe83656cf7955c04636ec11c54567`;
+  `artifacts/safety-default/results.json`
+  `a9e5ce94ceaf314fe334129e5c48093da7ef71a8e189ac8c6969ff3c8345e948`;
+  `artifacts/safety-owned/results.json`
+  `8c47eee258514a874808798500ff60cc0a30374e57a24d4eba3c1fa79ea14c11`.
+  Frozen fixture SHA-256 `bf6bccd38cd283fda3dd02c7554814aa27658fbdbb9bd750c09bc86011c425e1`;
+  runner `c3d64ad244f0bd74f9bf5e766e0c12ed96d74a47c1915b10f663a4cd5b165f27`;
+  corpus script `173077e6561d4d49658611b73aca603c734378673ff169c8b38b79c5c13da494`.
+  This entry serves .9's unchanged acceptance review and retires as active
+  evidence when its next bound qualification supersedes it; history remains.
+
