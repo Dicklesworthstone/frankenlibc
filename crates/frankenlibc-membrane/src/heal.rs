@@ -442,7 +442,10 @@ impl HealingPolicy {
     }
 
     /// Decide healing for a copy/memory operation with bounds.
+    // Keep this state-free decision visible to ABI callers so the compiler can
+    // fold its temporary action into the existing clamp/no-clamp branches.
     #[must_use]
+    #[inline]
     pub fn heal_copy_bounds(
         &self,
         requested: usize,
@@ -953,6 +956,7 @@ static GLOBAL_POLICY: HealingPolicy = HealingPolicy::new();
 
 /// Access the global healing policy.
 #[must_use]
+#[inline]
 pub fn global_healing_policy() -> &'static HealingPolicy {
     &GLOBAL_POLICY
 }
