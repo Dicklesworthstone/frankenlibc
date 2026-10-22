@@ -1,4 +1,4 @@
-//! Native IPv4 Sun RPC clients, shared with the portmapper v2 client.
+//! Native IPv4/Unix Sun RPC clients, shared with the portmapper v2 client.
 //!
 //! The public layouts follow glibc's LP64 rpc/clnt.h and rpc/auth.h. Wire
 //! parsing is safe core code; procedure callbacks use the existing native XDR.
@@ -546,6 +546,7 @@ struct Data {
     socket: Socket,
     stream: Option<tcp::Stream>,
     peer: libc::sockaddr_in,
+    unix_peer: Option<libc::sockaddr_un>,
     program: u32,
     version: u32,
     xid: u32,
@@ -737,7 +738,15 @@ unsafe extern "C" fn control(
                     information.cast(),
                 )
             }?,
-            3 => unsafe { publish(&data.peer, information.cast()) }?,
+            3 => {
+                if let Some(peer) = &data.unix_peer {
+                    // SAFETY: publish fault-checks the complete Unix address.
+                    unsafe { publish(peer, information.cast()) }?;
+                } else {
+                    // SAFETY: IPv4 retains its original 16-byte control ABI.
+                    unsafe { publish(&data.peer, information.cast()) }?;
+                }
+            }
             5 => unsafe { publish(&data.retry, information.cast()) }?,
             6 => unsafe { publish(&data.socket.fd, information.cast()) }?,
             8 => data.socket.owned = true,
@@ -808,6 +817,12 @@ struct CreateFailure {
     status: c_int,
     error: RpcError,
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Network {
+    Datagram,
+    Tcp,
+    Unix,
+}
 impl From<RpcError> for CreateFailure {
     fn from(error: RpcError) -> Self {
         Self {
@@ -834,16 +849,33 @@ unsafe fn make_client(
     descriptor: *mut c_int,
     sendsize: c_uint,
     recvsize: c_uint,
-    stream: bool,
+    network: Network,
 ) -> Result<*mut c_void, CreateFailure> {
     nanos(retry, true)?;
-    let mut peer = unsafe { import::<libc::sockaddr_in>(address.cast()) }?;
+    let stream = network != Network::Datagram;
+    let unix_peer = if network == Network::Unix {
+        // SAFETY: import copies the complete public sockaddr_un with faults checked.
+        let peer = unsafe { import::<libc::sockaddr_un>(address.cast()) }?;
+        if peer.sun_family as c_int != libc::AF_UNIX {
+            return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT).into());
+        }
+        Some(peer)
+    } else {
+        None
+    };
+    let mut peer = if unix_peer.is_some() {
+        // SAFETY: the unused IPv4 fields have a valid initialized zero representation.
+        unsafe { std::mem::zeroed() }
+    } else {
+        // SAFETY: the shared importer bounds and fault-checks the IPv4 input.
+        unsafe { import::<libc::sockaddr_in>(address.cast()) }?
+    };
     let fd = unsafe { import(descriptor.cast_const()) }?;
-    if peer.sin_family as c_int != libc::AF_INET {
+    if unix_peer.is_none() && peer.sin_family as c_int != libc::AF_INET {
         return Err(RpcError::system(RPC_SYSTEMERROR, libc::EAFNOSUPPORT).into());
     }
     let original_port = peer.sin_port;
-    if peer.sin_port == 0 {
+    if unix_peer.is_none() && peer.sin_port == 0 {
         let protocol = if stream {
             libc::IPPROTO_TCP
         } else {
@@ -873,14 +905,20 @@ unsafe fn make_client(
     };
     let send = buffer(size(sendsize, wire::NULL_CALL_BYTES)?)?;
     let receive = buffer(size(recvsize, 24)?)?;
-    let socket = if stream {
+    let socket = if let Some(peer) = &unix_peer {
+        tcp::connect_unix(peer, fd)?
+    } else if stream {
         tcp::connect(&peer, fd)?
     } else if fd == -1 {
         Socket::open()?
     } else {
         Socket::borrow(fd)?
     };
-    let stream = stream.then(|| tcp::Stream::new(receive.len()));
+    let stream = stream.then(|| {
+        let mut transport = tcp::Stream::new(receive.len());
+        transport.unix = unix_peer.is_some();
+        transport
+    });
     let returned_fd = socket.fd;
     let state = boxed(State {
         busy: AtomicBool::new(false),
@@ -888,6 +926,7 @@ unsafe fn make_client(
             socket,
             stream,
             peer,
+            unix_peer,
             program: program as u32,
             version: version as u32,
             xid: transaction_id(),
@@ -904,7 +943,7 @@ unsafe fn make_client(
         operations: &CLIENT_OPS,
         private: (&*state as *const State).cast_mut(),
     })?;
-    if original_port == 0 {
+    if unix_peer.is_none() && original_port == 0 {
         let port_pointer = unsafe {
             address
                 .cast::<u8>()
@@ -913,7 +952,7 @@ unsafe fn make_client(
         };
         unsafe { publish(&peer.sin_port, port_pointer) }?;
     }
-    if fd == -1 {
+    if fd == -1 || (unix_peer.is_some() && fd < 0) {
         unsafe { publish(&returned_fd, descriptor) }?;
     }
     // Ownership leaves these two Boxes only after every fallible operation.
@@ -932,7 +971,14 @@ pub(super) unsafe fn create(
 ) -> *mut c_void {
     unsafe {
         create_transport(
-            address, program, version, retry, descriptor, sendsize, recvsize, false,
+            address,
+            program,
+            version,
+            retry,
+            descriptor,
+            sendsize,
+            recvsize,
+            Network::Datagram,
         )
     }
 }
@@ -957,7 +1003,33 @@ pub(super) unsafe fn create_tcp(
             descriptor,
             sendsize,
             recvsize,
-            true,
+            Network::Tcp,
+        )
+    }
+}
+
+pub(super) unsafe fn create_unix(
+    address: *mut c_void,
+    program: u64,
+    version: u64,
+    descriptor: *mut c_int,
+    sendsize: c_uint,
+    recvsize: c_uint,
+) -> *mut c_void {
+    // SAFETY: the common constructor imports all public buffers with fault checks.
+    unsafe {
+        create_transport(
+            address,
+            program,
+            version,
+            Timeval {
+                tv_sec: 1,
+                tv_usec: 0,
+            },
+            descriptor,
+            sendsize,
+            recvsize,
+            Network::Unix,
         )
     }
 }
@@ -971,7 +1043,7 @@ unsafe fn create_transport(
     descriptor: *mut c_int,
     sendsize: c_uint,
     recvsize: c_uint,
-    stream: bool,
+    network: Network,
 ) -> *mut c_void {
     let (_, decision) =
         super::runtime_policy::decide(ApiFamily::Socket, address as usize, 0, false, true, 0);
@@ -983,7 +1055,7 @@ unsafe fn create_transport(
     } else {
         unsafe {
             make_client(
-                address, program, version, retry, descriptor, sendsize, recvsize, stream,
+                address, program, version, retry, descriptor, sendsize, recvsize, network,
             )
         }
     };

@@ -209,7 +209,7 @@ struct Pending {
 /// This is the local Unix verifier, not an XDR AUTH_SYS credential.
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct UnixCredential {
+pub(super) struct UnixCredential {
     length: usize,
     level: c_int,
     kind: c_int,
@@ -915,7 +915,7 @@ fn stream_failure(t: &Transport, code: c_int) -> Receive {
 
 // The operation gate owns the stream queue. Short writes keep their exact
 // offset; EAGAIN schedules POLLOUT and never re-executes an application callback.
-fn unix_send(fd: c_int, bytes: &[u8]) -> Result<isize, c_int> {
+pub(super) fn unix_send(fd: c_int, bytes: &[u8]) -> Result<isize, c_int> {
     let mut credential = UnixCredential {
         length: size_of::<libc::cmsghdr>() + size_of::<libc::ucred>(),
         level: libc::SOL_SOCKET,
@@ -945,7 +945,7 @@ fn unix_send(fd: c_int, bytes: &[u8]) -> Result<isize, c_int> {
     }
 }
 
-fn unix_receive(fd: c_int, bytes: &mut [u8]) -> Result<(isize, UnixCredential), c_int> {
+pub(super) fn unix_receive(fd: c_int, bytes: &mut [u8]) -> Result<(isize, UnixCredential), c_int> {
     // Extra room lets us close installed SCM_RIGHTS descriptors even when the
     // sender overflows this bounded control buffer. Linux closes the excess.
     let mut control = [0u64; 32];

@@ -2346,16 +2346,24 @@ pub unsafe extern "C" fn clntudp_bufcreate(
     unsafe { rpc_udp::create(raddr, prog, vers, wait, sockp, sendsz, recvsz) }
 }
 
-rpc_stub!(
-    clntunix_create(
-        raddr: *mut c_void,
-        prog: c_ulong,
-        vers: c_ulong,
-        sockp: *mut c_int,
-        sendsz: c_uint,
-        recvsz: c_uint,
-    ) -> *mut c_void
-);
+/// Create a native Unix RPC stream client with credential-bearing records.
+///
+/// # Safety
+/// raddr and sockp point to live public sockaddr_un/int objects. A supplied
+/// connected descriptor must have no competing consumer. It stays caller-owned
+/// unless CLSET_FD_CLOSE transfers ownership; Unix I/O enables SO_PASSCRED.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn clntunix_create(
+    raddr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    sockp: *mut c_int,
+    sendsz: c_uint,
+    recvsz: c_uint,
+) -> *mut c_void {
+    // SAFETY: native construction imports all user structures with fault checks.
+    unsafe { rpc_udp::create_unix(raddr, prog, vers, sockp, sendsz, recvsz) }
+}
 
 /// Broadcast an RPC call to all hosts on the local network.
 /// Returns RPC_UNKNOWNPROTO (17) — broadcast requires portmapper which is not supported.

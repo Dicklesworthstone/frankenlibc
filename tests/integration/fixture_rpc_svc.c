@@ -23,6 +23,7 @@
 #include <sys/mman.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <sys/syscall.h>
 #include <dirent.h>
 #include <unistd.h>
 
@@ -62,6 +63,7 @@ _Static_assert(sizeof(Call)==96 && offsetof(Call,cred)==48 && sizeof(SysAuth)==4
 static Xprt *(*create)(int), *(*bufcreate)(int,unsigned,unsigned);
 static Xprt *(*tcpcreate)(int,unsigned,unsigned), *(*fdcreate)(int,unsigned,unsigned);
 static Xprt *(*unixcreate)(int,unsigned,unsigned,char *), *(*unixfdcreate)(int,unsigned,unsigned);
+static RpcClient *(*unixclient)(struct sockaddr_un *,unsigned long,unsigned long,int *,unsigned,unsigned);
 static int (*reg)(Xprt *,unsigned long,unsigned long,void (*)(Request *,Xprt *),int);
 static void (*unreg)(unsigned long,unsigned long), (*common)(int), (*getmask)(int), (*getset)(fd_set *), (*getpoll)(struct pollfd *,int);
 static void (*run)(void), (*stop)(void);
@@ -108,6 +110,7 @@ static void load(void) {
     LOAD(simple_reg,"registerrpc"); LOAD(xvoid,"xdr_void");
     LOAD(tcpcreate,"svctcp_create"); LOAD(fdcreate,"svcfd_create"); LOAD(xopaque,"xdr_opaque");
     LOAD(unixcreate,"svcunix_create"); LOAD(unixfdcreate,"svcunixfd_create");
+    LOAD(unixclient,"clntunix_create");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -447,7 +450,7 @@ static void tcp_handler(Request *r,Xprt *x) {
     } else {
         handler(r,x);
         if(r->procedure==13)tcp_stop_count=calls;
-        if(!strcmp(scenario,"tcp-client") && calls==2)stop();
+        if((!strcmp(scenario,"tcp-client") || !strcmp(scenario,"clunix-created") || !strcmp(scenario,"clunix-auth")) && calls==2)stop();
     }
 }
 static void tcp_write(int fd,const void *bytes,size_t length) {
@@ -790,8 +793,122 @@ static void unix_services(void) {
     if(listener){struct stat state;CHECK(!lstat(path,&state) && S_ISSOCK(state.st_mode));}
     unreg(PROGRAM,1);
 }
+static int clunix_peer_fd;
+static RpcClient *clunix_client;
+static atomic_int clunix_service_done;
+static int clunix_exit_codec(void *x,void *p) { (void)x;(void)p;pthread_exit((void *)71);return 0; }
+static void *clunix_interrupted(void *unused) {
+    (void)unused;unsigned value=35,result=0;
+    clunix_client->ops->call(clunix_client,1,clunix_exit_codec,&value,xu32,&result,(struct timeval){2,0});return NULL;
+}
+static size_t clunix_request(unsigned char *bytes,size_t capacity) {
+    union { struct cmsghdr alignment; unsigned char bytes[128]; } control={0};uint32_t marker;
+    struct iovec iov={&marker,4};struct msghdr msg={.msg_iov=&iov,.msg_iovlen=1,.msg_control=control.bytes,.msg_controllen=sizeof(control)};
+    CHECK(recvmsg(clunix_peer_fd,&msg,MSG_WAITALL)==4 && !(msg.msg_flags&MSG_CTRUNC));
+    struct cmsghdr *c=CMSG_FIRSTHDR(&msg);CHECK(c && c->cmsg_level==SOL_SOCKET && c->cmsg_type==SCM_CREDENTIALS && c->cmsg_len==CMSG_LEN(sizeof(struct ucred)));
+    struct ucred identity;memcpy(&identity,CMSG_DATA(c),sizeof(identity));
+    CHECK(identity.pid==getpid() && identity.uid==(!strcmp(scenario,"clunix-euid")?65534:geteuid()) && identity.gid==getegid());
+    size_t n=ntohl(marker)&0x7fffffffu;CHECK((ntohl(marker)&0x80000000u) && n>=40 && n<=capacity);tcp_read(clunix_peer_fd,bytes,n);
+    CHECK(readword(bytes,4)==0 && readword(bytes,8)==2);
+    CHECK(readword(bytes,12)==(!strcmp(scenario,"clunix-controls")?PROGRAM+1:PROGRAM) && readword(bytes,16)==(!strcmp(scenario,"clunix-controls")?9u:1u));
+    return n;
+}
+static size_t clunix_reply(unsigned char *bytes,unsigned xid,unsigned value) {
+    word(bytes,0,xid);word(bytes,4,1);word(bytes,8,0);word(bytes,12,0);word(bytes,16,0);word(bytes,20,0);word(bytes,24,value);return 28;
+}
+static void *clunix_peer(void *unused) {
+    (void)unused;unsigned char bytes[1024];size_t n=clunix_request(bytes,sizeof(bytes));unsigned xid=readword(bytes,0);
+    CHECK(n==44 && readword(bytes,20)==1 && readword(bytes,40)==35);
+    if(!strcmp(scenario,"clunix-disconnect")){CHECK(!shutdown(clunix_peer_fd,SHUT_WR));return NULL;}
+    if(!strcmp(scenario,"clunix-timeout")){usleep(150000);return NULL;}
+    if(!strcmp(scenario,"clunix-malformed")){word(bytes,0,0x81000001u);tcp_write(clunix_peer_fd,bytes,4);return NULL;}
+    if(!strcmp(scenario,"clunix-timeout-reuse")) {
+        n=clunix_reply(bytes,xid,42);uint32_t marker=htonl(0x80000000u|(unsigned)n);tcp_write(clunix_peer_fd,&marker,2);
+        unsigned char next[1024];clunix_request(next,sizeof(next));unsigned nextid=readword(next,0);CHECK(nextid!=xid);
+        tcp_write(clunix_peer_fd,(char *)&marker+2,2);tcp_write(clunix_peer_fd,bytes,n);
+        n=clunix_reply(bytes,nextid,42);tcp_fragment(clunix_peer_fd,bytes,n,1);return NULL;
+    }
+    n=clunix_reply(bytes,xid,42);
+    if(!strcmp(scenario,"clunix-rights") || !strcmp(scenario,"clunix-rights-truncated")) {
+        int saved=client;client=clunix_peer_fd;unix_fragment(bytes,n,1,!strcmp(scenario,"clunix-rights")?1:100);client=saved;return NULL;
+    }
+    if(!strcmp(scenario,"clunix-error")){word(bytes,20,3);n=24;}
+    if(!strcmp(scenario,"clunix-stale")){word(bytes,0,xid^0x12345678u);tcp_fragment(clunix_peer_fd,bytes,n,1);word(bytes,0,xid);}
+    if(!strcmp(scenario,"clunix-fragments")){tcp_fragment(clunix_peer_fd,bytes,2,0);tcp_fragment(clunix_peer_fd,bytes+2,n-2,1);}
+    else tcp_fragment(clunix_peer_fd,bytes,n,1);
+    return NULL;
+}
+static struct sockaddr_un clunix_address;
+static void *clunix_service_client(void *unused) {
+    (void)unused;int fd=-7;RpcClient *c=unixclient(&clunix_address,PROGRAM,1,&fd,0,0);CHECK(c && fd>=0);
+    ClientAuth *auth=NULL;
+    if(!strcmp(scenario,"clunix-auth")){unsigned groups[]={11,12};auth=unixauth("host",1001,1002,2,groups);CHECK(auth);c->auth=auth;}
+    for(unsigned i=0;i<2;++i){unsigned value=35,result=0;CHECK(c->ops->call(c,auth?15:1,auth?xvoid:xu32,auth?NULL:&value,xu32,&result,(struct timeval){2,0})==0 && result==(auth?2026u:42u));}
+    while(!atomic_load_explicit(&clunix_service_done,memory_order_acquire))usleep(1000);
+    c->ops->destroy(c);if(auth)auth->ops->destroy(auth);CHECK(fcntl(fd,F_GETFD)==-1);return NULL;
+}
+static void clunix_services(void) {
+    struct sockaddr_un address;memset(&address,0xa5,sizeof(address));address.sun_family=AF_UNIX;strcpy(address.sun_path,"/tmp/frankenlibc-unconnected-client");
+    if(!strcmp(scenario,"clunix-invalid")) {
+        int fd=-1;CHECK(!unixclient(NULL,PROGRAM,1,&fd,0,0) && fd==-1);
+        CHECK(!unixclient((void *)1,PROGRAM,1,&fd,0,0));CHECK(!unixclient(&address,PROGRAM,1,NULL,0,0));
+        memset(address.sun_path,'x',sizeof(address.sun_path));CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fd==-1);
+        int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_DGRAM,0,pair));fd=pair[0];CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fcntl(fd,F_GETFD)>=0);close(pair[0]);close(pair[1]);return;
+    }
+    if(!strcmp(scenario,"clunix-connect-error")) {
+        int fd=-1;unsigned before=fd_count();CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fd_count()==before);
+        void *(*slot)(void);LOAD(slot,"__rpc_thread_createerr");unsigned char *e=slot();CHECK(*(int *)e==12 && *(int *)(e+8)==12 && *(int *)(e+16)==ENOENT);return;
+    }
+    if(!strcmp(scenario,"clunix-created") || !strcmp(scenario,"clunix-auth")) {
+        memset(&clunix_address,0,sizeof(clunix_address));clunix_address.sun_family=AF_UNIX;
+        CHECK(snprintf(clunix_address.sun_path,sizeof(clunix_address.sun_path),"/tmp/frankenlibc-client-%ld-%s",(long)getpid(),scenario)>0);
+        tcp_listener=unixcreate(-1,128,128,clunix_address.sun_path);CHECK(tcp_listener && reg(tcp_listener,PROGRAM,1,tcp_handler,0));
+        pthread_t thread;CHECK(!pthread_create(&thread,NULL,clunix_service_client,NULL));run();atomic_store_explicit(&clunix_service_done,1,memory_order_release);CHECK(!pthread_join(thread,NULL) && calls==2 && tcp_connection);
+        tcp_connection->ops->destroy(tcp_connection);tcp_listener->ops->destroy(tcp_listener);unreg(PROGRAM,1);return;
+    }
+    int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_STREAM,0,pair));int fd=pair[0];clunix_peer_fd=pair[1];
+    int one=1;CHECK(!setsockopt(clunix_peer_fd,SOL_SOCKET,SO_PASSCRED,&one,sizeof(one)));
+    int flags=fcntl(fd,F_GETFL);clunix_client=unixclient(&address,PROGRAM,1,&fd,0,0);CHECK(clunix_client && fd==pair[0] && fcntl(fd,F_GETFL)==flags);
+    RpcClient *c=clunix_client;struct sockaddr_un returned;memset(&returned,0,sizeof(returned));CHECK(c->ops->control(c,3,&returned) && !memcmp(&returned,&address,sizeof(address)));
+    int actual=-1;CHECK(c->ops->control(c,6,&actual) && actual==fd);
+    struct timeval retry={1,0};CHECK(!c->ops->control(c,4,&retry) && !c->ops->control(c,5,&retry));
+    if(!strcmp(scenario,"clunix-controls")) {
+        unsigned long program=PROGRAM+1,version=9,observed=0;struct timeval timeout={2,0},returned_time={0};
+        CHECK(c->ops->control(c,15,&program) && c->ops->control(c,13,&version));
+        CHECK(c->ops->control(c,14,&observed) && observed==program && c->ops->control(c,12,&observed) && observed==version);
+        CHECK(c->ops->control(c,1,&timeout) && c->ops->control(c,2,&returned_time) && returned_time.tv_sec==2 && returned_time.tv_usec==0);
+    }
+    if(!strcmp(scenario,"clunix-address-output")) {
+        long page=sysconf(_SC_PAGESIZE);void *output=mmap(NULL,(size_t)page,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);CHECK(output!=MAP_FAILED);
+        memset(output,0x5a,(size_t)page);CHECK(!mprotect(output,(size_t)page,PROT_READ));CHECK(!c->ops->control(c,3,output));
+        CHECK(*(unsigned char *)output==0x5a && !munmap(output,(size_t)page));
+        c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)>=0);close(fd);close(clunix_peer_fd);return;
+    }
+    if(!strcmp(scenario,"clunix-close")){CHECK(c->ops->control(c,8,NULL));c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)==-1);close(clunix_peer_fd);return;}
+    if(!strcmp(scenario,"clunix-callback-exit")) {pthread_t t;void *result;CHECK(!pthread_create(&t,NULL,clunix_interrupted,NULL) && !pthread_join(t,&result) && result==(void *)71);}
+    unsigned long forced=0x12345678ul;CHECK(c->ops->control(c,11,&forced));
+    if(!strcmp(scenario,"clunix-euid"))CHECK(getuid()==0 && geteuid()==0);
+    pthread_t thread;CHECK(!pthread_create(&thread,NULL,clunix_peer,NULL));
+    /* Keep the server thread at root while only this calling thread changes euid. */
+    unsigned before=fd_count(),argument=35,result=0;struct timeval timeout={2,0};
+    if(!strcmp(scenario,"clunix-timeout") || !strcmp(scenario,"clunix-timeout-reuse"))timeout=(struct timeval){0,50000};
+    if(!strcmp(scenario,"clunix-euid"))CHECK(!syscall(SYS_setresuid,-1,65534,-1));
+    int status=c->ops->call(c,1,xu32,&argument,xu32,&result,timeout);
+    if(!strcmp(scenario,"clunix-euid"))CHECK(!syscall(SYS_setresuid,-1,0,-1));
+    if(!strcmp(scenario,"clunix-timeout-reuse")){CHECK(status==5);status=c->ops->call(c,1,xu32,&argument,xu32,&result,(struct timeval){2,0});}
+    if(!strcmp(scenario,"clunix-timeout"))CHECK(status==5);
+    else if(!strcmp(scenario,"clunix-disconnect") || !strcmp(scenario,"clunix-rights") || !strcmp(scenario,"clunix-rights-truncated"))CHECK(status==4);
+    else if(!strcmp(scenario,"clunix-error"))CHECK(status==10);
+    else if(!strcmp(scenario,"clunix-malformed")){CHECK(status==2);CHECK(c->ops->call(c,1,xu32,&argument,xu32,&result,(struct timeval){2,0})==2);}
+    else CHECK(status==0 && result==42 && c->ops->freeres(c,xu32,&result));
+    CHECK(!pthread_join(thread,NULL) && fd_count()==before);
+    if(strcmp(scenario,"clunix-timeout-reuse")){unsigned long observed=0;CHECK(c->ops->control(c,10,&observed) && observed==forced);}
+    unsigned char error[24]={0};c->ops->geterr(c,error);CHECK(*(int *)error==status);
+    c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)>=0 && fcntl(fd,F_GETFL)==flags);close(fd);close(clunix_peer_fd);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
+    if (!strncmp(scenario,"clunix-",7)) { clunix_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"tcp-",4)) { tcp_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"unix-",5)) { unix_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"register-",9)) { simple_services();printf("PASS %s\n",scenario);return 0; }

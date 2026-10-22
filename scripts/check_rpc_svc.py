@@ -24,6 +24,9 @@ HOST += ['tcp-listener', 'tcp-supplied', 'tcp-fd', 'tcp-unix-fd', 'tcp-direct',
 HOST += ['unix-fd', 'unix-listener', 'unix-supplied', 'unix-prebound',
          'unix-direct', 'unix-credentials', 'unix-auth', 'unix-fragments',
          'unix-pipeline', 'unix-child', 'unix-peer-pid']
+HOST += ['clunix-created', 'clunix-auth', 'clunix-borrowed', 'clunix-close',
+         'clunix-fragments', 'clunix-stale', 'clunix-error', 'clunix-disconnect',
+         'clunix-timeout', 'clunix-connect-error', 'clunix-euid', 'clunix-controls']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
@@ -37,6 +40,9 @@ OWNED += ['tcp-invalid', 'tcp-partial', 'tcp-backpressure', 'tcp-destroy',
 OWNED += ['unix-invalid', 'unix-path-bounds', 'unix-rights',
           'unix-rights-truncated', 'unix-partial', 'unix-destroy',
           'unix-identity-switch', 'unix-backpressure']
+OWNED += ['clunix-invalid', 'clunix-rights', 'clunix-rights-truncated',
+          'clunix-malformed', 'clunix-timeout-reuse', 'clunix-callback-exit',
+          'clunix-address-output']
 # glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
 # failing host probe as an explicit native extension, rather than parity proof.
 
