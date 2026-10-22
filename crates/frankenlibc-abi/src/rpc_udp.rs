@@ -1077,9 +1077,9 @@ unsafe fn create_transport(
                 // SAFETY: this accessor supplies the current thread's live,
                 // initialized and aligned public 32-byte create-error record.
                 unsafe {
-                    let slot = super::__rpc_thread_createerr().cast::<CreateError>();
-                    (*slot).status = error.status;
-                    (*slot).error.detail[..4].copy_from_slice(&error.error.detail[..4]);
+                    let slot = &mut *super::__rpc_thread_createerr().cast::<CreateError>();
+                    slot.status = error.status;
+                    slot.error.detail[..4].copy_from_slice(&error.error.detail[..4]);
                 }
             } else {
                 creation_error(error.status, error.error);
