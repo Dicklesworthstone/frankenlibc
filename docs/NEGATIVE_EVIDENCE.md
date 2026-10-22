@@ -41826,13 +41826,35 @@ ones that would notice a threading-policy depth counter behaving differently.
   | stack `memcmp`, same lengths | hardened | 3.57 | 196.55 | 197.39 |
   | heap `memcmp`, same lengths | hardened | 3.23 | 67.18 | 68.58 |
 
-- **MACRO LIMIT.** Genuine 100,000-line seeded input SHA-256
+- **NUMERIC MACRO LIMIT (`sort -g`).** Genuine 100,000-line seeded input SHA-256
   `6e584c8b4674544d18369ff7b00768739d56f190935eb56c4848dbf42c4b2704`:
   GNU libc 131.21 ms; incumbent strict/hardened 140.09/304.46 ms; candidate
   147.01/314.19 ms. Candidate hardened is 2.394x GNU libc but **2.137x strict**,
-  failing the original 2x target. The 120k control is also slower: incumbent
+  failing the original 2x target. The numeric 120k control is also slower: incumbent
   hardened 366.12 ms, candidate 373.38 ms, candidate strict 167.78 ms (2.225x).
   All sorted outputs match. No macro speedup or task closure is claimed.
+- **LEXICAL MACRO LIMIT (plain `sort`).** The historical bead does not specify a
+  sort flag; the numeric probe cannot silently stand in for every sort workload.
+  A separate lexical run on the same input and libraries gives GNU 31.70 ms,
+  incumbent strict/hardened 39.89/164.70 ms, candidate 39.43/159.78 ms:
+  **4.052x strict and 5.040x GNU**, missing both original milestones. The numeric
+  3x-GNU observation therefore does **not** establish the general first milestone.
+  This is a new retained seeded corpus, not a reconstruction of the unretained
+  historical input. `sort100k-lexical/report.json` SHA-256
+  `5beff1e9060456d8b09eccf82ee703ac1b11d21d86b09489799560f90027deed`.
+  Reversed order confirms the miss: GNU 31.59 ms, candidate strict/hardened
+  39.53/154.50 ms, **3.909x strict / 4.891x GNU**; incumbent hardened 160.21 ms.
+  Reverse report SHA-256
+  `e6767e4dd3467a876e8b1d2be3fd4bea1b7818d94faba6733cec8c0470b4474b`.
+  The corresponding five-child Callgrind job records total instructions GNU
+  221,501,170; incumbent/candidate strict 292,175,441/292,177,803; hardened
+  1,260,703,795/1,260,662,512, effectively unchanged. Candidate exclusive costs:
+  `memcmp_validating` 313.99M; membrane guard 122.30M; TLS remaining lookup 117.13M;
+  PCC TLS closure 116.27M; safety-level lookup 46.37M. **The next lexical-sort
+  lever is redundant memcmp guard/TLS/policy work**, preserving tracked-pointer
+  bounds, quarantine, repair logging and PCC explainability. This differs from
+  numeric-sort attribution; the workload split matters. Lexical profile report
+  SHA-256 `eb6a9f92203e8b7cf3b8c5b8fb5703af11bb0bca6fdfc9b424e681bafc765478`.
 - **LOSSES THAT CHANGED THE IMPLEMENTATION.** The first stack-render candidate
   repeatedly regressed hardened width-400 padding by about 2.1x and padded `%G`
   by about 1.64x, including reversed order. Callgrind exposed an added interposed
@@ -41851,6 +41873,14 @@ ones that would notice a threading-policy depth counter behaving differently.
   differential rows plus 40 original cases**, with all 20 wrong-provider negatives
   rejected. The full stdio gate remains red before execution: missing
   `stdin/_IO_2_1_stdin_` symbols, **zero cases**, for both artifacts.
+  The unchanged deployed `fixture_membrane_access.c` (source SHA-256
+  `71d11cf2d21942bb5d3ad9babe120f3fb5ac2cd8aa66aa1a5ec2a9af519f577a`)
+  additionally executed **74/74 cases** on both final TLS artifacts: valid calls
+  in both modes and hardened header/canary corruption, end-of-allocation and
+  quarantine cases. Its provider-pinned `malloc`, `free`, copy/fill and string
+  entrypoints all came from the selected library. This is bounded repair/deny
+  evidence, not universal safety. `membrane-safety-final/report.json` SHA-256
+  `277ef205954280bf4b760bfd9a656393964814aa0e706fe3b2cfbeab836c5424`.
 - **STATIC LIMITS.** Final workspace Clippy still exits 101 with the same 27
   diagnostic-title/file pairs as the retained baseline. A newly introduced
   identical-branch lint was fixed and both artifacts rebuilt; no suppression was
@@ -41910,8 +41940,8 @@ ones that would notice a threading-policy depth counter behaving differently.
   Raw output, provider checks, compiler failures and prior candidates are retained.
 - **DISPOSITION.** KEEP the bounded implementation and correctness repair;
   **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
-  acceptance: stable short-call bounds, <=2x strict macro throughput, durable
-  deployed-path bench group, and corpus performance enforcement remain required.
+  acceptance: stable short-call bounds, <=3x GNU and <=2x strict macro throughput,
+  durable deployed-path bench group, and corpus performance enforcement remain required.
   Final-source ABI safety execution remains pending after the compiler, fuzz,
   reverse-order timing and actual 100k-profile follow-up above.
   This entry serves that named bead's review; it retires as active evidence when
