@@ -25,6 +25,9 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <dirent.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
 #include <unistd.h>
 
 typedef struct { int flavor; char *base; unsigned length; } Auth;
@@ -67,6 +70,8 @@ static Xprt *(*create)(int), *(*bufcreate)(int,unsigned,unsigned);
 static Xprt *(*tcpcreate)(int,unsigned,unsigned), *(*fdcreate)(int,unsigned,unsigned);
 static Xprt *(*unixcreate)(int,unsigned,unsigned,char *), *(*unixfdcreate)(int,unsigned,unsigned);
 static RpcClient *(*unixclient)(struct sockaddr_un *,unsigned long,unsigned long,int *,unsigned,unsigned);
+static RpcClient *(*rawclient)(unsigned long,unsigned long);
+static Xprt *(*rawserver)(void);
 static int (*reg)(Xprt *,unsigned long,unsigned long,void (*)(Request *,Xprt *),int);
 static void (*unreg)(unsigned long,unsigned long), (*common)(int), (*getmask)(int), (*getset)(fd_set *), (*getpoll)(struct pollfd *,int);
 static void (*run)(void), (*stop)(void);
@@ -114,6 +119,7 @@ static void load(void) {
     LOAD(tcpcreate,"svctcp_create"); LOAD(fdcreate,"svcfd_create"); LOAD(xopaque,"xdr_opaque");
     LOAD(unixcreate,"svcunix_create"); LOAD(unixfdcreate,"svcunixfd_create");
     LOAD(unixclient,"clntunix_create");
+    LOAD(rawclient,"clntraw_create"); LOAD(rawserver,"svcraw_create");
 }
 static int void_proc(void *x,void *p) { (void)x;(void)p; return 1; }
 static int string_proc(void *x,void *p) { return xstr(x,p,128); }
@@ -914,8 +920,143 @@ static void clunix_services(void) {
     ClientError error={0};c->ops->geterr(c,&error);CHECK(error.status==status);
     c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)>=0 && fcntl(fd,F_GETFL)==flags);close(fd);close(clunix_peer_fd);
 }
+static RpcClient *raw_active;
+static pthread_barrier_t raw_barrier;
+static int raw_bad_reply(void *x,void *p) { (void)x;(void)p;return 0; }
+static int raw_large(void *x,void *p) { return xopaque(x,p,9000); }
+static void raw_handler(Request *r,Xprt *x) {
+    if(r->procedure==18) {
+        /* Concurrent probes do not write the fixture's shared call counter. */
+        unsigned value=0;CHECK(x->ops->getargs(x,xu32,&value));value+=7;CHECK(sendreply(x,xu32,&value));
+    } else if(r->procedure==16) {
+        ++calls;
+        unsigned value=2,out=0;
+        CHECK(raw_active->ops->call(raw_active,1,xu32,&value,xu32,&out,(struct timeval){1,0})==12);
+        errno=0;CHECK(!rawclient(PROGRAM,1) && errno==EBUSY);
+        raw_active->ops->destroy(raw_active);x->ops->destroy(x);
+        CHECK(sendreply(x,xu32,&value));
+    } else if(r->procedure==17) {
+        ++calls;CHECK(!sendreply(x,raw_bad_reply,NULL));
+    } else handler(r,x);
+}
+static void raw_roundtrip(RpcClient *c,unsigned value) {
+    unsigned result=0;
+    CHECK(c->ops->call(c,!strcmp(scenario,"raw-threads")?18:1,xu32,&value,xu32,&result,(struct timeval){1,0})==0);
+    CHECK(result==value+7);
+}
+static void raw_deny_network(void) {
+    struct sock_filter filters[]={
+        BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,nr)),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socketpair,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_connect,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_sendto,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_recvfrom,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_sendmsg,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_recvmsg,0,1),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
+        BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
+    };
+    struct sock_fprog program={(unsigned short)(sizeof(filters)/sizeof(*filters)),filters};
+    CHECK(!prctl(PR_SET_NO_NEW_PRIVS,1,0,0,0));CHECK(!prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&program));
+    errno=0;CHECK(syscall(SYS_socket,AF_INET,SOCK_DGRAM,0)==-1 && errno==EPERM);
+}
+static int raw_exit_codec(void *x,void *p) { (void)x;(void)p;pthread_exit((void *)19); }
+typedef struct { RpcClient *c; Xprt *s; unsigned value; } RawThread;
+static void *raw_thread(void *p) {
+    RawThread *record=p;
+    record->c=rawclient(PROGRAM,1);record->s=rawserver();CHECK(record->c && record->s);
+    CHECK(reg(record->s,PROGRAM,1,raw_handler,0));
+    int status=pthread_barrier_wait(&raw_barrier);CHECK(!status || status==PTHREAD_BARRIER_SERIAL_THREAD);
+    raw_roundtrip(record->c,record->value);
+    status=pthread_barrier_wait(&raw_barrier);CHECK(!status || status==PTHREAD_BARRIER_SERIAL_THREAD);
+    return NULL;
+}
+static void *raw_unwind(void *p) {
+    (void)p;RpcClient *c=rawclient(PROGRAM,1);Xprt *s=rawserver();CHECK(c && s);
+    CHECK(reg(s,PROGRAM,1,raw_handler,0));
+    unsigned value=9,result=0;
+    pthread_cleanup_push(cleanup,NULL);
+    if(!strcmp(scenario,"raw-encode-exit"))c->ops->call(c,1,raw_exit_codec,&value,xu32,&result,(struct timeval){1,0});
+    else if(!strcmp(scenario,"raw-decode-exit"))c->ops->call(c,1,xu32,&value,raw_exit_codec,&result,(struct timeval){1,0});
+    else c->ops->call(c,12,void_proc,NULL,void_proc,NULL,(struct timeval){1,0});
+    pthread_cleanup_pop(1);
+    CHECK(0);return NULL;
+}
+static void raw_services(void) {
+    int stdin_flags=fcntl(0,F_GETFD);unsigned before=fd_count();
+    if(!strcmp(scenario,"raw-no-network"))raw_deny_network();
+    RpcClient *c=rawclient(PROGRAM,1);Xprt *s=rawserver();CHECK(c && s && c->ops && s->ops);
+    CHECK(s->fd==0 && !s->port && s->ops->stat(s)==2 && fd_count()==before);
+    if(!strcmp(scenario,"raw-handles") || !strcmp(scenario,"raw-controls")) {
+        CHECK(rawclient(PROGRAM+1,2)==c);
+        ClientError error,original;memset(&error,0xa5,sizeof(error));original=error;
+        c->ops->geterr(c,&error);CHECK(!memcmp(&error,&original,sizeof(error)));
+        for(int control=1;control<=15;++control) {
+            unsigned long data[16],saved[16];memset(data,0x3c,sizeof(data));memcpy(saved,data,sizeof(data));
+            CHECK(!c->ops->control(c,control,data) && !memcmp(data,saved,sizeof(data)));
+        }
+        c->ops->abort(c);c->ops->destroy(c);s->ops->destroy(s);
+        CHECK(rawclient(PROGRAM,1)==c && fcntl(0,F_GETFD)==stdin_flags && fd_count()==before);return;
+    }
+    CHECK(reg(s,PROGRAM,1,raw_handler,0));raw_active=c;
+    if(!strcmp(scenario,"raw-string")) {
+        char *input="native-rpc",*output=NULL;
+        CHECK(!c->ops->call(c,2,string_proc,&input,string_proc,&output,(struct timeval){1,0}));
+        CHECK(output && !strcmp(output,input));CHECK(c->ops->freeres(c,string_proc,&output));CHECK(output==NULL);
+    } else if(!strcmp(scenario,"raw-auth")) {
+        unsigned groups[]={11,12},result=0;ClientAuth *a=unixauth("host",1001,1002,2,groups);CHECK(a);c->auth=a;
+        CHECK(!c->ops->call(c,15,void_proc,NULL,xu32,&result,(struct timeval){1,0}) && result==2026);
+        c->auth=NULL;a->ops->destroy(a);CHECK(rawclient(PROGRAM,1)==c);raw_roundtrip(c,23);
+    } else if(!strcmp(scenario,"raw-errors")) {
+        const unsigned procedures[]={3,4,5,6,7,8,14};const int statuses[]={10,11,12,7,7,9,8};
+        for(unsigned i=0;i<7;++i)CHECK(c->ops->call(c,procedures[i],void_proc,NULL,void_proc,NULL,(struct timeval){1,0})==statuses[i]);
+        CHECK(rawclient(PROGRAM+1,1)==c);CHECK(c->ops->call(c,0,void_proc,NULL,void_proc,NULL,(struct timeval){1,0})==8);
+        CHECK(rawclient(PROGRAM,2)==c);CHECK(c->ops->call(c,0,void_proc,NULL,void_proc,NULL,(struct timeval){1,0})==9);
+        CHECK(rawclient(PROGRAM,1)==c);raw_roundtrip(c,12);
+    } else if(!strcmp(scenario,"raw-timeout")) {
+        unsigned value=11,result=0;
+        CHECK(!c->ops->call(c,1,xu32,&value,xu32,&result,(struct timeval){-1,-1}) && result==18);
+        result=0;CHECK(!c->ops->call(c,1,xu32,&value,xu32,&result,(struct timeval){0,0}) && result==18);
+    } else if(!strcmp(scenario,"raw-lifecycle")) {
+        raw_roundtrip(c,1);c->ops->destroy(c);s->ops->destroy(s);CHECK(rawserver()==s);raw_roundtrip(c,2);
+        unreg(PROGRAM,1);CHECK(c->ops->call(c,0,void_proc,NULL,void_proc,NULL,(struct timeval){1,0})==8);
+        CHECK(reg(s,PROGRAM,1,raw_handler,0));raw_roundtrip(c,3);
+    } else if(!strcmp(scenario,"raw-bounds")) {
+        unsigned char bytes[9000]={0};unsigned value=0;
+        CHECK(c->ops->call(c,1,void_proc,NULL,xu32,&value,(struct timeval){1,0})==11);
+        CHECK(c->ops->call(c,1,simple_encode_failure,NULL,xu32,&value,(struct timeval){1,0})==1);
+        CHECK(c->ops->call(c,17,void_proc,NULL,void_proc,NULL,(struct timeval){1,0})==2);
+        unsigned dispatched=calls;
+        CHECK(c->ops->call(c,1,raw_large,bytes,xu32,&value,(struct timeval){1,0})==1 && calls==dispatched);
+        raw_roundtrip(c,4);
+    } else if(!strcmp(scenario,"raw-reentry")) {
+        unsigned result=0;CHECK(!c->ops->call(c,16,void_proc,NULL,xu32,&result,(struct timeval){1,0}) && result==2);
+        raw_roundtrip(c,5);
+    } else if(!strcmp(scenario,"raw-threads")) {
+        RawThread records[2]={{.value=31},{.value=67}};pthread_t threads[2];CHECK(!pthread_barrier_init(&raw_barrier,NULL,3));
+        for(unsigned i=0;i<2;++i)CHECK(!pthread_create(&threads[i],NULL,raw_thread,&records[i]));
+        int status=pthread_barrier_wait(&raw_barrier);CHECK(!status || status==PTHREAD_BARRIER_SERIAL_THREAD);
+        CHECK(records[0].c!=records[1].c && records[0].s!=records[1].s && records[0].c!=c && records[0].s!=s);
+        status=pthread_barrier_wait(&raw_barrier);CHECK(!status || status==PTHREAD_BARRIER_SERIAL_THREAD);
+        for(unsigned i=0;i<2;++i)CHECK(!pthread_join(threads[i],NULL));
+        CHECK(!pthread_barrier_destroy(&raw_barrier));raw_roundtrip(c,83);
+    } else if(!strcmp(scenario,"raw-encode-exit") || !strcmp(scenario,"raw-decode-exit") || !strcmp(scenario,"raw-dispatch-exit")) {
+        pthread_t t;void *result;CHECK(!pthread_create(&t,NULL,raw_unwind,NULL));CHECK(!pthread_join(t,&result));
+        CHECK(result==(void *)19 && cleaned>=1);raw_roundtrip(c,95);
+    } else raw_roundtrip(c,42);
+    c->ops->destroy(c);s->ops->destroy(s);unreg(PROGRAM,1);
+    CHECK(fcntl(0,F_GETFD)==stdin_flags && fd_count()==before);
+}
 int main(int argc,char **argv) {
     CHECK(argc==2);scenario=argv[1];load();
+    if (!strncmp(scenario,"raw-",4)) { raw_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"clunix-",7)) { clunix_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"tcp-",4)) { tcp_services();printf("PASS %s\n",scenario);return 0; }
     if (!strncmp(scenario,"unix-",5)) { unix_services();printf("PASS %s\n",scenario);return 0; }

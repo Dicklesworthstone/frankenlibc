@@ -544,6 +544,7 @@ struct State {
 }
 struct Data {
     socket: Socket,
+    raw: bool,
     stream: Option<tcp::Stream>,
     peer: libc::sockaddr_in,
     unix_peer: Option<libc::sockaddr_un>,
@@ -571,6 +572,92 @@ impl Drop for Gate<'_> {
     fn drop(&mut self) {
         self.0.busy.store(false, Ordering::Release);
     }
+}
+
+// GNU raw clients reuse one caller-thread handle. destroy is deliberately a
+// no-op; TLS owns the boxes, independently of user-owned AUTH replacements.
+struct RawClient {
+    client: Box<Client>,
+    state: Box<State>,
+}
+// SAFETY: slots are keyed by their owning thread, and each State has a
+// nonblocking operation gate. No public pointer is dereferenced under a lock
+// belonging to a different slot; external C mutation has the usual CLIENT rules.
+unsafe impl Send for RawClient {}
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RAW_CLIENT: std::cell::RefCell<Option<RawClient>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(feature = "owned-tls-cache")]
+static RAW_CLIENT: crate::owned_tls_cache::OwnedTlsCache<Option<RawClient>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| None);
+fn with_raw_client<R>(f: impl FnOnce(&mut Option<RawClient>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RAW_CLIENT.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RAW_CLIENT.with(|slot| f(&mut slot.borrow_mut()))
+    }
+}
+
+pub(super) fn create_raw(program: u64, version: u64) -> *mut c_void {
+    let result = with_raw_client(|slot| -> Result<*mut c_void, RpcError> {
+        if let Some(raw) = slot {
+            let Some(_gate) = Gate::enter(&raw.state) else {
+                return Err(RpcError::system(RPC_SYSTEMERROR, libc::EBUSY));
+            };
+            // SAFETY: the operation gate owns initialized state and creation
+            // occurs before returning the public pointer, outside any callback.
+            let data = unsafe { &mut *raw.state.data.get() };
+            data.program = program as u32;
+            data.version = version as u32;
+            raw.client.auth = authnone().cast();
+            return Ok((&mut *raw.client as *mut Client).cast());
+        }
+        let state = boxed(State {
+            busy: AtomicBool::new(false),
+            data: UnsafeCell::new(Data {
+                socket: Socket {
+                    fd: -1,
+                    owned: false,
+                },
+                raw: true,
+                stream: None,
+                // SAFETY: raw clients have no kernel address fields.
+                peer: unsafe { std::mem::zeroed() },
+                unix_peer: None,
+                program: program as u32,
+                version: version as u32,
+                xid: 0,
+                next_xid: None,
+                retry: Timeval {
+                    tv_sec: 1,
+                    tv_usec: 0,
+                },
+                timeout: None,
+                send: buffer(DEFAULT_BUFFER)?,
+                receive: buffer(DEFAULT_BUFFER)?,
+                error: RpcError::status(0),
+            }),
+        })?;
+        let mut client = boxed(Client {
+            auth: authnone().cast(),
+            operations: &RAW_CLIENT_OPS,
+            private: (&*state as *const State).cast_mut(),
+        })?;
+        let pointer = (&mut *client as *mut Client).cast();
+        *slot = Some(RawClient { client, state });
+        Ok(pointer)
+    });
+    result.unwrap_or_else(|error| {
+        // SAFETY: only the caller's errno is modified on local failure.
+        unsafe {
+            super::set_abi_errno(c_int::from_ne_bytes(error.detail[..4].try_into().unwrap()))
+        };
+        ptr::null_mut()
+    })
 }
 
 #[path = "rpc_call.rs"]
@@ -783,6 +870,17 @@ static CLIENT_OPS: ClientOps = ClientOps {
     destroy,
     control,
 };
+unsafe extern "C" fn raw_geterr(_: *mut Client, _: *mut RpcError) {}
+unsafe extern "C" fn raw_destroy(_: *mut Client) {}
+unsafe extern "C" fn raw_control(_: *mut Client, _: c_int, _: *mut c_char) -> c_int {
+    0
+}
+static RAW_CLIENT_OPS: ClientOps = ClientOps {
+    geterr: raw_geterr,
+    destroy: raw_destroy,
+    control: raw_control,
+    ..CLIENT_OPS
+};
 
 /// One-shot convenience calls own their freshly constructed client. Keep the
 /// callback casts and the matching destruction in the CLIENT implementation.
@@ -931,6 +1029,7 @@ unsafe fn make_client(
         busy: AtomicBool::new(false),
         data: UnsafeCell::new(Data {
             socket,
+            raw: false,
             stream,
             peer,
             unix_peer,

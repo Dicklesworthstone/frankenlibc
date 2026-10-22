@@ -3,9 +3,9 @@
 //! These are legacy ONC RPC functions from glibc's `<rpc/rpc.h>`, `<rpc/xdr.h>`,
 //! `<rpc/svc.h>`, `<rpc/clnt.h>`, `<rpc/auth.h>`, `<rpc/pmap_clnt.h>`, and
 //! `<rpc/des_crypt.h>` families. XDR serialisation is natively implemented in
-//! pure Rust. IPv4 UDP clients, AUTH_NONE, and portmapper v2 lookup/registration
-//! have native implementations. Other RPC transports, server operations, and
-//! legacy authentication constructors retain their explicitly limited behavior.
+//! pure Rust. Native clients/services cover IPv4 UDP/TCP, Unix streams and
+//! synchronous memory RPC with AUTH_NONE/AUTH_SYS. Legacy authentication
+//! constructors retain their explicitly limited behavior; see README coverage.
 
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
@@ -64,95 +64,6 @@ type c_long = i64;
 pub struct Timeval {
     pub tv_sec: c_long,
     pub tv_usec: c_long,
-}
-
-// ---------------------------------------------------------------------------
-// Explicit safe-default stub macro for RPC functions
-// ---------------------------------------------------------------------------
-// Sun RPC is a legacy subsystem. Instead of delegating to host glibc via
-// dlsym(RTLD_NEXT), we return deterministic safe defaults:
-//   - boolean c_int → 0 (FALSE / failure)
-//   - status c_int → the API's explicit failure sentinel
-//   - *mut c_void → null (handle creation failed)
-//   - () → no-op
-//   - *mut c_char → null (no error string)
-//   - c_ulong → 0
-//   - u16 → 0
-// This eliminates the last glibc call-through dependency for RPC symbols.
-/// Generate explicitly annotated deterministic safe-default RPC stubs.
-///
-/// Sun RPC is a legacy subsystem. Rather than delegating to host glibc,
-/// we return deterministic safe defaults directly:
-///   - boolean c_int → 0 (FALSE / failure)
-///   - status c_int → the API's explicit failure sentinel
-///   - *mut c_void → null (handle creation failed)
-///   - () → no-op
-///   - *mut c_char → null (no error string)
-///   - c_ulong → 0
-///   - u16 → 0
-macro_rules! rpc_stub {
-    // Pattern 1: function returning an explicit c_int failure sentinel.
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int = $failure:expr) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
-            $( let _ = $pname; )*
-            $failure
-        }
-    };
-    // Pattern 2: boolean-style function returning FALSE.
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_int) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_int {
-            $( let _ = $pname; )*
-            0
-        }
-    };
-    // Pattern 3: function returning *mut c_void
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_void) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_void {
-            $( let _ = $pname; )*
-            std::ptr::null_mut()
-        }
-    };
-    // Pattern 4: function returning ()
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> ()) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) {
-            $( let _ = $pname; )*
-        }
-    };
-    // Pattern 5: function returning c_ulong
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> c_ulong) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> c_ulong {
-            $( let _ = $pname; )*
-            0
-        }
-    };
-    // Pattern 6: function returning *mut c_char
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> *mut c_char) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> *mut c_char {
-            $( let _ = $pname; )*
-            std::ptr::null_mut()
-        }
-    };
-    // Pattern 7: function returning u16
-    ($name:ident ( $($pname:ident : $pty:ty),* $(,)? ) -> u16) => {
-        abi_stub_contract!($name);
-        #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-        pub unsafe extern "C" fn $name( $($pname: $pty),* ) -> u16 {
-            $( let _ = $pname; )*
-            0
-        }
-    };
 }
 
 // ===========================================================================
@@ -2304,7 +2215,13 @@ pub unsafe extern "C" fn authdes_getucred(
 // RPC client creation and error handling (14 symbols)
 // ===========================================================================
 
-rpc_stub!(clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void);
+/// Return the caller-thread memory RPC client; construction reuses its handle
+/// and resets AUTH_NONE. No socket or descriptor is created. The handle remains
+/// live until thread exit; its destroy/geterr operations are GNU no-ops.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn clntraw_create(prog: c_ulong, vers: c_ulong) -> *mut c_void {
+    rpc_udp::create_raw(prog, vers)
+}
 
 /// Create a native IPv4 TCP RPC client with bounded record framing.
 /// Borrowed descriptors must already be connected and remain caller-owned.
@@ -2570,9 +2487,13 @@ use frankenlibc_core::rpc::status_message as rpc_errstr;
 // RPC server / SVC (24 symbols; 18 UDP service symbols provided by rpc_svc)
 // ===========================================================================
 
-// --- SVC transport creation (non-UDP stubs) ---
-
-rpc_stub!(svcraw_create() -> *mut c_void);
+/// Return a caller-thread memory RPC service with a logical descriptor of zero.
+/// It never owns stdin and is excluded from socket readiness sets. Register
+/// dispatch with svc_register(..., 0); the native raw client invokes it directly.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub extern "C" fn svcraw_create() -> *mut c_void {
+    rpc_svc::create_raw()
+}
 
 // ===========================================================================
 // RPC misc: registerrpc, dtablesize, createerr thread locals (14+ symbols)

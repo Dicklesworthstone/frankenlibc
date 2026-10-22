@@ -200,6 +200,7 @@ enum Kind {
     Datagram,
     Listener { send: c_uint, receive: c_uint },
     Stream,
+    Raw,
 }
 struct Pending {
     bytes: Vec<u8>,
@@ -246,6 +247,8 @@ struct Io {
     peer: libc::sockaddr_in,
     cache: Option<ReplyCache>,
     stream: Option<StreamIo>,
+    raw_request: Option<usize>,
+    raw_reply: Option<usize>,
 }
 struct Transport {
     public: UnsafeCell<SvcXprt>,
@@ -309,11 +312,118 @@ fn registry() -> MutexGuard<'static, Registry> {
     REGISTRY.lock().unwrap_or_else(|p| p.into_inner())
 }
 fn lookup(x: *mut SvcXprt) -> Option<Arc<Transport>> {
-    registry()
+    let socket = registry()
         .transports
         .iter()
         .find(|t| t.public.get() == x)
-        .cloned()
+        .cloned();
+    socket.or_else(|| with_raw(|slot| slot.as_ref().filter(|t| t.public.get() == x).cloned()))
+}
+
+// Raw handles are caller-thread objects, never entries in a descriptor set.
+// Clone ownership out of TLS before any application callback runs.
+#[cfg(not(feature = "owned-tls-cache"))]
+std::thread_local! {
+    static RAW: std::cell::RefCell<Option<Arc<Transport>>> = const { std::cell::RefCell::new(None) };
+}
+#[cfg(feature = "owned-tls-cache")]
+static RAW: crate::owned_tls_cache::OwnedTlsCache<Option<Arc<Transport>>> =
+    crate::owned_tls_cache::OwnedTlsCache::new(|| None);
+fn with_raw<R>(f: impl FnOnce(&mut Option<Arc<Transport>>) -> R) -> R {
+    #[cfg(feature = "owned-tls-cache")]
+    {
+        RAW.with(f)
+    }
+    #[cfg(not(feature = "owned-tls-cache"))]
+    {
+        RAW.with(|slot| f(&mut slot.borrow_mut()))
+    }
+}
+
+pub(super) fn create_raw() -> *mut c_void {
+    with_raw(|slot| {
+        if let Some(t) = slot {
+            return t.public.get().cast();
+        }
+        let (Ok(input), Ok(output)) = (buffer(DEFAULT_BUFFER), buffer(DEFAULT_BUFFER)) else {
+            error(libc::ENOMEM);
+            return ptr::null_mut();
+        };
+        let t = Arc::new(Transport {
+            public: UnsafeCell::new(SvcXprt {
+                sock: 0,
+                port: 0,
+                ops: &RAW_OPS,
+                addrlen: 0,
+                // SAFETY: a zero IPv4 address is an initialized unused field.
+                raddr: unsafe { zeroed() },
+                verifier: OpaqueAuth {
+                    oa_flavor: 0,
+                    oa_base: ptr::null_mut(),
+                    oa_length: 0,
+                },
+                private1: ptr::null_mut(),
+                private2: ptr::null_mut(),
+                padding: [0; 256],
+            }),
+            io: UnsafeCell::new(Io {
+                input,
+                output,
+                call: None,
+                cursor: 0,
+                // SAFETY: raw transport has no kernel peer.
+                peer: unsafe { zeroed() },
+                cache: None,
+                stream: None,
+                raw_request: None,
+                raw_reply: None,
+            }),
+            fd: 0,
+            kind: Kind::Raw,
+            unix: false,
+            operation: AtomicBool::new(false),
+            dispatching: AtomicBool::new(false),
+            destroyed: AtomicBool::new(false),
+            close_fd: AtomicBool::new(false),
+            dead: AtomicBool::new(false),
+            buffered: AtomicBool::new(false),
+            wants_write: AtomicBool::new(false),
+        });
+        let x = t.public.get().cast();
+        *slot = Some(t);
+        x
+    })
+}
+
+/// Synchronous memory handoff to the same parser/authenticator/dispatcher used
+/// by socket services. No descriptor, socket, poll, or global callback lock.
+pub(super) unsafe fn raw_exchange(request: &[u8], reply: &mut [u8]) -> Result<usize, c_int> {
+    let t = with_raw(|slot| slot.clone()).ok_or(libc::ENOTCONN)?;
+    if t.dispatching.load(Ordering::Acquire) {
+        return Err(libc::EBUSY);
+    }
+    {
+        let op = Operation::begin(Arc::clone(&t)).ok_or(libc::EBUSY)?;
+        // SAFETY: op exclusively owns the buffers; no reference crosses dispatch.
+        let io = unsafe { &mut *op.0.io.get() };
+        if request.len() > io.input.len() {
+            return Err(libc::EMSGSIZE);
+        }
+        io.input[..request.len()].copy_from_slice(request);
+        io.raw_request = Some(request.len());
+        io.raw_reply = None;
+    }
+    // SAFETY: ownership is retained through all foreign unwind edges.
+    unsafe { dispatch_transport(Arc::clone(&t)) };
+    let op = Operation::begin(t).ok_or(libc::EBUSY)?;
+    // SAFETY: dispatch has returned, op again owns the buffers exclusively.
+    let io = unsafe { &*op.0.io.get() };
+    let length = io.raw_reply.ok_or(libc::ENOMSG)?;
+    if length > reply.len() {
+        return Err(libc::EMSGSIZE);
+    }
+    reply[..length].copy_from_slice(&io.output[..length]);
+    Ok(length)
 }
 fn error(code: c_int) -> c_int {
     unsafe { super::set_abi_errno(code) };
@@ -510,6 +620,8 @@ pub(super) unsafe fn create(sock: c_int, sendsz: c_uint, recvsz: c_uint) -> *mut
                 peer: unsafe { zeroed() },
                 cache: None,
                 stream: None,
+                raw_request: None,
+                raw_reply: None,
             }),
             operation: AtomicBool::new(false),
             dispatching: AtomicBool::new(false),
@@ -765,6 +877,8 @@ unsafe fn create_stream(
                 peer: raddr,
                 cache: None,
                 stream,
+                raw_request: None,
+                raw_reply: None,
             }),
             fd,
             kind: if listener {
@@ -1251,6 +1365,22 @@ fn receive(t: &Transport) -> Receive {
     if t.dead.load(Ordering::Acquire) {
         return Receive::Unavailable;
     }
+    if t.kind == Kind::Raw {
+        // SAFETY: the caller holds Operation; consume a staged request once.
+        let io = unsafe { &mut *t.io.get() };
+        let Some(length) = io.raw_request.take() else {
+            return Receive::Unavailable;
+        };
+        io.call = None;
+        return match service::decode_call(&io.input[..length]) {
+            Ok(call) => {
+                io.cursor = call.arguments.start;
+                io.call = Some(call);
+                Receive::Call
+            }
+            Err(_) => Receive::Unavailable,
+        };
+    }
     if t.kind != Kind::Datagram {
         return receive_stream(t);
     }
@@ -1431,6 +1561,9 @@ unsafe extern "C" fn stat(x: *mut SvcXprt) -> c_int {
     let Some(t) = lookup(x) else {
         return 0;
     }; // XPRT_DIED
+    if t.kind == Kind::Raw {
+        return 2; // XPRT_IDLE, no descriptor to poll
+    }
     if t.dead.load(Ordering::Acquire) {
         return 0;
     }
@@ -1777,6 +1910,10 @@ unsafe fn send(
     else {
         return error(libc::EMSGSIZE);
     };
+    if gate.0.kind == Kind::Raw {
+        io.raw_reply = Some(length);
+        return 1;
+    }
     match unsafe {
         raw::sys_sendto(
             gate.0.fd,
@@ -1854,6 +1991,11 @@ static OPS: SvcOps = SvcOps {
     reply,
     freeargs,
     destroy,
+};
+unsafe extern "C" fn raw_destroy(_: *mut SvcXprt) {}
+static RAW_OPS: SvcOps = SvcOps {
+    destroy: raw_destroy,
+    ..OPS
 };
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -2275,6 +2417,11 @@ pub unsafe extern "C-unwind" fn svc_getreq_common(fd: c_int) {
     let Some(t) = t else {
         return;
     };
+    // SAFETY: the retained socket transport follows the dispatch contract.
+    unsafe { dispatch_transport(t) };
+}
+
+unsafe fn dispatch_transport(t: Arc<Transport>) {
     if t.dispatching.swap(true, Ordering::Acquire) {
         return;
     }

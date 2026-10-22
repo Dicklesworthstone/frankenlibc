@@ -27,6 +27,7 @@ HOST += ['unix-fd', 'unix-listener', 'unix-supplied', 'unix-prebound',
 HOST += ['clunix-created', 'clunix-auth', 'clunix-borrowed', 'clunix-close',
          'clunix-fragments', 'clunix-stale', 'clunix-error', 'clunix-disconnect',
          'clunix-timeout', 'clunix-connect-error', 'clunix-euid', 'clunix-controls']
+HOST += ['raw-handles', 'raw-controls']
 # These are independently specified bounds/lifetime contracts, not host-parity
 # claims: some historical glibc servers accept truncated UDP prefixes or keep
 # their service registry in a different thread. Never label their failure green.
@@ -43,6 +44,11 @@ OWNED += ['unix-invalid', 'unix-path-bounds', 'unix-rights',
 OWNED += ['clunix-invalid', 'clunix-rights', 'clunix-rights-truncated',
           'clunix-malformed', 'clunix-timeout-reuse', 'clunix-callback-exit',
           'clunix-address-output']
+# GNU raw construction/control is comparable; positive memory exchanges have
+# separate client/server storage in GNU and are explicitly native contracts.
+OWNED += ['raw-basic', 'raw-string', 'raw-auth', 'raw-errors', 'raw-timeout',
+          'raw-lifecycle', 'raw-bounds', 'raw-reentry', 'raw-no-network',
+          'raw-threads', 'raw-encode-exit', 'raw-decode-exit', 'raw-dispatch-exit']
 # glibc xdr_rec.c rejects a zero nonfinal marker. Keep that exact original
 # failing host probe as an explicit native extension, rather than parity proof.
 
@@ -168,6 +174,13 @@ def main():
                            else b"never registered prog 824395111\n" if case == 'register-unknown'
                            else b"trouble replying to prog 824395111\n" if case == 'register-encode-error'
                            else b'')
+        if mode == 'host' and case in ('raw-handles', 'raw-controls'):
+            # GNU still supplies these handle/control contracts, but emits
+            # three constructor diagnostics. Retain their exact observed bytes;
+            # positive raw exchange is a separate native contract, not parity.
+            expected_stderr = (b'clnt_raw.c: fatal header serialization error: Success\n'
+                               b'clnt_raw.c: fatal header serialization error: Invalid argument\n'
+                               b'clnt_raw.c: fatal header serialization error: Invalid argument\n')
         fatal = case in ('register-unknown', 'register-encode-error')
         passed = (code == 2 and b'WRONG_PROVIDER' in stderr) if negative else (
             code == int(fatal) and stdout == (b'' if fatal else f'PASS {case}\n'.encode())
