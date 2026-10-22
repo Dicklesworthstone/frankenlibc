@@ -41785,3 +41785,95 @@ ones that would notice a threading-policy depth counter behaving differently.
 
 - **DISPOSITION.** KEEP. Hardened `sort120k` drops from `252.42ms` (`9.136x` glibc) to `71.07ms` (`2.572x` glibc), a **`3.552x` speedup** (`71.8%` wall-time reduction) that clears the `<=3x` target on `sort120k`.
 
+## 2026-10-22 — `bd-rc0923-epic-eeuy4f.9`: bounded `%g` allocation removal and certificate memo repair (MAINTENANCE; throughput task remains open)
+
+- **CHANGE.** Source `2258bb1d4d256458cfefebb55d0e541629ff94b3` keeps common
+  at-most-17-digit `%g` rendering in stack scratch, sharing the existing rounding
+  guards with the allocating formatter. Complete output is trimmed before copying
+  a bounded prefix; a new tiny-buffer test exposed the previous trim-after-truncate
+  defect. The existing 16-entry Clifford memo now absorbs primary-bucket collisions
+  and retires startup entries in insertion order. Its key includes the overlap
+  contract, which affects compatibility even for disjoint addresses. Entries remain
+  32 bytes, with no new TLS cell, allocation, global lock, or controller-law change.
+- **OBJECTS.** Both release artifacts were built remotely from base
+  `86fb3ed9b49a4244e19e300bd0c789ea8915e20d` plus clean overlay
+  `62f5ddf6c58d8a0e6dd968a870a6d1b1f9837a82226eee6e9ec9846cd407415a`;
+  the three modified source files equal commit `2258bb1d4`. The receipt's base tree
+  is not the modified tree. SHA-256, checked on worker, retrieved file, and frozen copy:
+  default `986da6a14fd4f3e59997920f42550c0488bd451e9f1f8401b1b9955804d14e15`;
+  `owned-tls-cache` `cc5a62c79228c5f8fc9d6dbe645a0abf45d211a65b838631427d82bb1947fdd8`.
+  Incumbent default SHA-256
+  `b79e9a16e488c61d5729398f8c6af5edc7303b7b269b3001e6d7aedd45fcb38d`.
+  Timing below is default TLS only; owned TLS receives functional coverage only.
+- **LIVE REFERENCE / DENOMINATOR.** ovh-b, Xeon E3-1245 V2, CPU 0 affinity,
+  GNU libc 2.43 live in the same invocation as incumbent and candidate. Nine
+  measured rounds and two warmups, rotating order, 200,000 calls per format/string
+  sample. All 15 format cases, both modes, heap/stack short strings, and macro
+  controls are retained, including losses. `/usr/bin/sort` is uutils 0.10.0 linked
+  to GNU libc; this is the same deployed executable for all configurations.
+- **FORWARD RESULTS (ns/call).** These are scoped maintenance measurements, not a
+  banked claim that FrankenLibC beats GNU libc:
+
+  | case | mode | GNU libc | incumbent | candidate |
+  |---|---|---:|---:|---:|
+  | `%.6g` | strict | 246.60 | 392.77 | 311.42 |
+  | `%.6g` | hardened | 241.16 | 7,233.09 | 1,534.32 |
+  | `%.17g` | hardened | 300.67 | 7,865.67 | 2,281.69 |
+  | `%+400.2f` | hardened | 273.15 | 2,535.11 | 1,160.57 |
+  | `[%+020.6G]` | hardened | 305.51 | 3,946.42 | 4,044.65 |
+  | heap `strlen`, lengths 0/7/15/31 | hardened | 2.66 | 924.70 | 95.25 |
+  | stack `strlen`, same lengths | hardened | 2.71 | 129.40 | 132.87 |
+  | stack `memcmp`, same lengths | hardened | 3.57 | 196.55 | 197.39 |
+  | heap `memcmp`, same lengths | hardened | 3.23 | 67.18 | 68.58 |
+
+- **MACRO LIMIT.** Genuine 100,000-line seeded input SHA-256
+  `6e584c8b4674544d18369ff7b00768739d56f190935eb56c4848dbf42c4b2704`:
+  GNU libc 131.21 ms; incumbent strict/hardened 140.09/304.46 ms; candidate
+  147.01/314.19 ms. Candidate hardened is 2.394x GNU libc but **2.137x strict**,
+  failing the original 2x target. The 120k control is also slower: incumbent
+  hardened 366.12 ms, candidate 373.38 ms, candidate strict 167.78 ms (2.225x).
+  All sorted outputs match. No macro speedup or task closure is claimed.
+- **LOSSES THAT CHANGED THE IMPLEMENTATION.** The first stack-render candidate
+  repeatedly regressed hardened width-400 padding by about 2.1x and padded `%G`
+  by about 1.64x, including reversed order. Callgrind exposed an added interposed
+  slice-to-String copy and mixed-length certificate recomputation. Bounded ASCII
+  pushes plus the memo repair removed that extra work. The initial sign-insertion
+  explanation was wrong. Incumbent width-400 timings themselves varied roughly
+  1.2–2.54 microseconds across batches/path/layout, so every elapsed delta cannot
+  be attributed solely to source. A pre-format build of the same algorithm had
+  stack `memcmp` at 206.90 ns: one favorable sub-200 ns batch does not establish
+  the general short-call target. Earlier artifacts remain separate from final ones.
+- **EXECUTED FUNCTIONAL EVIDENCE.** Original memo with the new regression tests:
+  `13 passed; 2 failed; 0 ignored` (mixed-length retention and opposite overlap
+  contracts). Final complete membrane suite:
+  `1466 passed; 0 failed; 0 ignored; 0 filtered out`. Fresh committed-input C replay
+  against both final artifacts, strict and hardened: **628,808 configured GNU
+  differential rows plus 40 original cases**, with all 20 wrong-provider negatives
+  rejected. The full stdio gate remains red before execution: missing
+  `stdin/_IO_2_1_stdin_` symbols, **zero cases**, for both artifacts.
+- **STATIC LIMITS.** Final workspace Clippy still exits 101 with the same 27
+  diagnostic-title/file pairs as the retained baseline. A newly introduced
+  identical-branch lint was fixed and both artifacts rebuilt; no suppression was
+  added. Final `cargo fmt --check` has exactly the baseline's 583 diff bodies,
+  zero added or removed. Neither check is green. UBS was not executed because
+  its installed wrapper deletes temporary files and no preserve mode was found.
+- **RECEIPTS.** Frozen root
+  `/Users/jemanuel/projects/.frankenlibc-g-format-final-job-20261022/artifacts/`:
+  `replay/report.json` SHA-256
+  `ec1bccb75fc60ad28c8ef6772784c02441ccf8bee58c6aac4e926b4f566bb768`;
+  `timing-qualified-final/report.json`
+  `db505b5254807baea747d65025d9cf3fede51a9cd74a77f79bcae60384188fed`;
+  `short-strings-final/report.json`
+  `4c79fe00768ddab7fa10fa47843cf6d538f6d372ad5af0e79fb024180bf0df60`;
+  `sort100k/report.json`
+  `eb8e2efb2ca36c3071ce239a18313f03fd13d652311e9a9dcbc6bf7a48146efc`.
+  Raw output, provider checks, compiler failures and prior candidates are retained.
+- **DISPOSITION.** KEEP the bounded implementation and correctness repair;
+  **MAINTENANCE, not a banked global win**. `.9` remains in progress with unchanged
+  acceptance: stable short-call bounds, <=2x strict macro throughput, durable
+  deployed-path bench group, and corpus performance enforcement remain required.
+  Final-source compiler/fuzz/safety completion, reverse-order measurements and a
+  genuine 100k Callgrind profile are still pending at this entry's first write.
+  This entry serves that named bead's review; it retires as active evidence when
+  superseded by its next bound qualification, while preserving the history.
+
