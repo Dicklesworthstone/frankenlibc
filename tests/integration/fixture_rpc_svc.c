@@ -52,6 +52,9 @@ typedef struct {
     int (*control)(RpcClient *,int,void *);
 } ClientOps;
 struct RpcClient { void *auth; const ClientOps *ops; void *private_state; };
+typedef struct { int status; unsigned padding; unsigned long detail[2]; } ClientError;
+typedef struct { int status; unsigned padding; ClientError error; } ClientCreateError;
+_Static_assert(sizeof(ClientError)==24 && sizeof(ClientCreateError)==32,"glibc LP64 client errors");
 typedef struct {
     void (*next)(void *); int (*marshal)(void *,void *); int (*validate)(void *,void *);
     int (*refresh)(void *); void (*destroy)(void *);
@@ -848,7 +851,8 @@ static void *clunix_service_client(void *unused) {
     c->ops->destroy(c);if(auth)auth->ops->destroy(auth);CHECK(fcntl(fd,F_GETFD)==-1);return NULL;
 }
 static void clunix_services(void) {
-    struct sockaddr_un address;memset(&address,0xa5,sizeof(address));address.sun_family=AF_UNIX;strcpy(address.sun_path,"/tmp/frankenlibc-unconnected-client");
+    struct sockaddr_un address;memset(&address,0xa5,sizeof(address));address.sun_family=AF_UNIX;
+    CHECK(snprintf(address.sun_path,sizeof(address.sun_path),"/tmp/frankenlibc-unconnected-%ld",(long)getpid())>0);
     if(!strcmp(scenario,"clunix-invalid")) {
         int fd=-1;CHECK(!unixclient(NULL,PROGRAM,1,&fd,0,0) && fd==-1);
         CHECK(!unixclient((void *)1,PROGRAM,1,&fd,0,0));CHECK(!unixclient(&address,PROGRAM,1,NULL,0,0));
@@ -857,7 +861,7 @@ static void clunix_services(void) {
     }
     if(!strcmp(scenario,"clunix-connect-error")) {
         int fd=-1;unsigned before=fd_count();CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fd_count()==before);
-        void *(*slot)(void);LOAD(slot,"__rpc_thread_createerr");unsigned char *e=slot();CHECK(*(int *)e==12 && *(int *)(e+8)==12 && *(int *)(e+16)==ENOENT);return;
+        void *(*slot)(void);LOAD(slot,"__rpc_thread_createerr");ClientCreateError *e=slot();CHECK(e->status==12 && e->error.status==12 && (int)e->error.detail[0]==ENOENT);return;
     }
     if(!strcmp(scenario,"clunix-created") || !strcmp(scenario,"clunix-auth")) {
         memset(&clunix_address,0,sizeof(clunix_address));clunix_address.sun_family=AF_UNIX;
@@ -903,7 +907,7 @@ static void clunix_services(void) {
     else CHECK(status==0 && result==42 && c->ops->freeres(c,xu32,&result));
     CHECK(!pthread_join(thread,NULL) && fd_count()==before);
     if(strcmp(scenario,"clunix-timeout-reuse")){unsigned long observed=0;CHECK(c->ops->control(c,10,&observed) && observed==forced);}
-    unsigned char error[24]={0};c->ops->geterr(c,error);CHECK(*(int *)error==status);
+    ClientError error={0};c->ops->geterr(c,&error);CHECK(error.status==status);
     c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)>=0 && fcntl(fd,F_GETFL)==flags);close(fd);close(clunix_peer_fd);
 }
 int main(int argc,char **argv) {
