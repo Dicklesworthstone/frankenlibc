@@ -508,7 +508,9 @@ static int gnu_size_errors(void) {
  * conversion rather than the construction of the test value. */
 static int gnu_extended_rounding(void) {
     if (check_gnu_provider("printf_size") || check_gnu_provider("strfromf128") ||
-        check_gnu_provider("snprintf") || check_gnu_provider("fegetround")) return 1;
+        check_gnu_provider("snprintf") || check_gnu_provider("swprintf") ||
+        check_gnu_provider("fegetround") || check_gnu_provider("fesetround") ||
+        check_gnu_provider("fegetenv") || check_gnu_provider("fesetenv")) return 1;
     static const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
     static const long double values[] = {
         0.0L, -0.0L, 0.125L, -0.125L, 0.5L, -0.5L, 1.25L, -1.25L,
