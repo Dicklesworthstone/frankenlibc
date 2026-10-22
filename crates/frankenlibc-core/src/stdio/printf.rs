@@ -3280,6 +3280,23 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
 }
 
 pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
+    let mut out = [0u8; 48];
+    let len = try_format_g_fixed_scaled_into(value, precision, &mut out)?;
+    Some(
+        core::str::from_utf8(&out[..len])
+            .expect("fixed-scaled general digits are ASCII")
+            .to_owned(),
+    )
+}
+
+/// Buffer-writing core shared by the allocating formatter and deployed `%g`.
+/// Accepted values have at most nine integer digits and nine fractional
+/// digits, so the sign, decimal point and digits fit in the caller's 48-byte scratch.
+pub(crate) fn try_format_g_fixed_scaled_into(
+    value: f64,
+    precision: usize,
+    out: &mut [u8; 48],
+) -> Option<usize> {
     let p = if precision == 0 { 1 } else { precision };
     if p > 9 || value == 0.0 {
         return None;
@@ -3304,13 +3321,43 @@ pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<
 
     let mut tmp = [0u8; 40];
     let ds = decimal_digits_u128(scaled, &mut tmp);
-    let mut s = String::with_capacity(ds.len() + frac_digits + 3 + usize::from(negative));
+    let mut len = 0;
     if negative {
-        s.push('-');
+        out[len] = b'-';
+        len += 1;
     }
-    push_fixed_scaled_digits_string(&mut s, ds, frac_digits);
-    strip_trailing_zeros(&mut s);
-    Some(s)
+    if ds.len() > frac_digits {
+        let point = ds.len() - frac_digits;
+        for &digit in &ds[..point] {
+            out[len] = digit;
+            len += 1;
+        }
+        out[len] = b'.';
+        len += 1;
+        for &digit in &ds[point..] {
+            out[len] = digit;
+            len += 1;
+        }
+    } else {
+        out[len] = b'0';
+        out[len + 1] = b'.';
+        len += 2;
+        for _ in 0..frac_digits - ds.len() {
+            out[len] = b'0';
+            len += 1;
+        }
+        for &digit in ds {
+            out[len] = digit;
+            len += 1;
+        }
+    }
+    while out[len - 1] == b'0' {
+        len -= 1;
+    }
+    if out[len - 1] == b'.' {
+        len -= 1;
+    }
+    Some(len)
 }
 
 /// Fast path for `%e`/`%E` (no `#`): compute the `precision + 1` significant
