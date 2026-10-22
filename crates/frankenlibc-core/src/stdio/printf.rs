@@ -2121,6 +2121,58 @@ fn format_float_huge_precision(value: f64, spec: &FormatSpec, precision: usize, 
     }
 }
 
+/// Finite nearest-mode fixed digits, without padding or a temporary String.
+/// Callers retain precision-zero, grouping and directed-rounding semantics.
+#[inline]
+fn format_fixed_nearest(value: f64, precision: usize, buf: &mut Vec<u8>, flags: FormatFlags) {
+    use core::fmt::Write as _;
+    let abs = value.abs();
+    if value.is_sign_negative() {
+        buf.push(b'-');
+    } else if flags.force_sign {
+        buf.push(b'+');
+    } else if flags.space_sign {
+        buf.push(b' ');
+    }
+    // Exact integral values need only integer digits and fractional zeros.
+    if is_integral_f64(abs) && abs < 18446744073709551616.0 {
+        let _ = write!(VecWriter(buf), "{}", abs as u64);
+        buf.push(b'.');
+        buf.extend(core::iter::repeat_n(b'0', precision));
+        return;
+    }
+    // A dyadic terminating within `precision` bits also has exact scaled
+    // digits. The bounds keep the integer product inside u128.
+    if precision <= 19 {
+        let scale = f64::from_bits((1023u64 + precision as u64) << 52);
+        let scaled = abs * scale;
+        if is_integral_f64(scaled)
+            && scaled < 18446744073709551616.0
+            && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
+        {
+            let mut tmp = [0u8; 40];
+            let ds = decimal_digits_u128(digits, &mut tmp);
+            if ds.len() > precision {
+                let point = ds.len() - precision;
+                buf.push_bytes(&ds[..point]);
+                buf.push(b'.');
+                buf.push_bytes(&ds[point..]);
+            } else {
+                buf.push(b'0');
+                buf.push(b'.');
+                buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
+                buf.push_bytes(ds);
+            }
+            return;
+        }
+    }
+    if let Some(scaled) = rounded_scaled_fixed(value, precision) {
+        push_fixed_scaled_u128(buf, scaled, precision);
+        return;
+    }
+    let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
+}
+
 /// [`format_float`] with the C locale's "." radix.
 fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let precision = match spec.precision {
@@ -2189,88 +2241,55 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // Grouped floats are rendered by the general path below.
     let grouping = float_grouping(spec);
 
-    // Fast path: bare fixed-point %f with precision>=1 and no field width.
-    // For precision>=1, format_f is exactly `format!("{:.prec$}", abs)` (alt_form
-    // is a no-op once a fractional point is present); with no width there is no
-    // padding. So emit the sign byte and write the digits straight into `buf`,
-    // skipping the temporary String and the padding pipeline. Byte-identical to
-    // the general path (sign + body, no pad); precision==0 keeps the general path
-    // because format_f pre-rounds there.
+    // Fixed-point %f with precision>=1 can render into the output buffer,
+    // including when a field width is present. Apply padding afterwards so a
+    // padded conversion does not allocate a temporary digit String.
+    // Alt-form is a no-op once the fractional point is present; precision zero
+    // retains the general path's distinct pre-rounding rule.
     if nearest
         && precision >= 1
         && grouping.is_none()
-        && resolve_width(spec) == 0
         && matches!(
             spec.raw_render_kind(),
             Some(RawValueRenderKind::Float(FloatFormatKind::Fixed))
         )
     {
-        use core::fmt::Write as _;
-        if negative {
-            buf.push(b'-');
-        } else if spec.flags.force_sign {
-            buf.push(b'+');
-        } else if spec.flags.space_sign {
-            buf.push(b' ');
-        }
-        // Exact-integer fast path: a finite integral `abs` < 2^64 has an exact
-        // fixed-point form (integer digits + `precision` zeros), so skip the flt2dec
-        // machinery entirely. `abs` is already finite (inf/nan returned above) and
-        // non-negative; `fract() == 0.0` proves integral, `< 2^64` proves the `as u64`
-        // cast is exact. Byte-identical to `{:.prec$}` for integral values (~4.8x
-        // faster, intf_iso). Non-integral / >= 2^64 values fall through unchanged.
-        if is_integral_f64(abs) && abs < 18446744073709551616.0 {
-            let _ = write!(VecWriter(buf), "{}", abs as u64);
-            buf.push(b'.');
-            buf.extend(core::iter::repeat_n(b'0', precision));
-            return;
-        }
-        // Exact-dyadic fast path: if `abs` has at most `precision` fractional bits
-        // (`abs * 2^precision` is integral and < 2^64), its exact decimal terminates at
-        // `precision` places (halves/quarters/eighths — common in %f). Then
-        // `abs * 10^precision = (abs*2^precision) * 5^precision` is an integer whose digits
-        // are the output with a decimal point `precision` places from the right — no
-        // flt2dec, no rounding. Byte-identical to `{:.prec$}` (~3.55x faster, dyadf_iso).
-        // Guarded to precision <= 19 so `5^precision` * (< 2^64) fits u128.
-        if precision <= 19 {
-            // 2^precision built directly from the exponent field (exact, no powi call).
-            let scale = f64::from_bits((1023u64 + precision as u64) << 52);
-            let scaled = abs * scale;
-            if is_integral_f64(scaled)
-                && scaled < 18446744073709551616.0
-                && let Some(digits) = (scaled as u128).checked_mul(5u128.pow(precision as u32))
-            {
-                let mut tmp = [0u8; 40];
-                let mut nrem = digits;
-                let mut i = tmp.len();
-                loop {
-                    i -= 1;
-                    tmp[i] = b'0' + (nrem % 10) as u8;
-                    nrem /= 10;
-                    if nrem == 0 {
-                        break;
+        let start = buf.len();
+        format_fixed_nearest(value, precision, buf, spec.flags);
+        let content_end = buf.len();
+        let pad_total = resolve_width(spec).saturating_sub(content_end - start);
+        if pad_total != 0 {
+            let byte = if spec.flags.zero_pad && !spec.flags.left_justify {
+                b'0'
+            } else {
+                b' '
+            };
+            pad(buf, byte, pad_total);
+            // A failed fallible reserve leaves the unpadded result in place
+            // and records ENOMEM for the caller, just as the general path does.
+            let added = buf.len() - content_end;
+            if !spec.flags.left_justify && added != 0 {
+                let sign_len =
+                    usize::from(negative || spec.flags.force_sign || spec.flags.space_sign);
+                let insertion = start + if spec.flags.zero_pad { sign_len } else { 0 };
+                let digits = content_end - insertion;
+                // Move only the digits, never the potentially enormous pad.
+                // Small indexed moves stay out of the interposed memmove,
+                // using the same eight-byte cutoff as PushBytes above.
+                if digits <= 8 {
+                    for i in (0..digits).rev() {
+                        buf[insertion + added + i] = buf[insertion + i];
                     }
-                }
-                let ds = &tmp[i..];
-                if ds.len() > precision {
-                    let point = ds.len() - precision;
-                    buf.push_bytes(&ds[..point]);
-                    buf.push(b'.');
-                    buf.push_bytes(&ds[point..]);
                 } else {
-                    buf.push(b'0');
-                    buf.push(b'.');
-                    buf.extend(core::iter::repeat_n(b'0', precision - ds.len()));
-                    buf.push_bytes(ds);
+                    buf.copy_within(insertion..content_end, insertion + added);
                 }
-                return;
+                // The appended region already contains `byte`; only the old
+                // digit positions inside the new padding need replacement.
+                for i in 0..digits.min(added) {
+                    buf[insertion + i] = byte;
+                }
             }
         }
-        if let Some(scaled) = rounded_scaled_fixed(value, precision) {
-            push_fixed_scaled_u128(buf, scaled, precision);
-            return;
-        }
-        let _ = write!(VecWriter(buf), "{:.prec$}", abs, prec = precision);
         return;
     }
 

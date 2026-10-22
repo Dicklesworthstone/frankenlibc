@@ -638,9 +638,14 @@ static int gnu_double_rounding(void) {
                 if (convs[c] == ' ') continue;
                 for (unsigned p = 0; p < sizeof(precisions) / sizeof(precisions[0]); ++p) {
                     int precision = precisions[p];
-                    for (unsigned style = 0; style < 3; ++style) {
+                    for (unsigned style = 0; style < 9; ++style) {
+                        if (style >= 3 && convs[c] != 'f' && convs[c] != 'F') continue;
                         char fmt[48];
                         if (style == 2) snprintf(fmt, sizeof(fmt), "[%%2$0*1$.*3$%c]", convs[c]);
+                        else if (style >= 3) {
+                            static const char *flags[] = {"+020", "-020", " 20", "3", "+400", "#010"};
+                            snprintf(fmt, sizeof(fmt), "[%%%s.%d%c]", flags[style - 3], precision, convs[c]);
+                        }
                         else snprintf(fmt, sizeof(fmt), style ? "%%+#18.%d%c" : "%%.%d%c", precision, convs[c]);
                         for (unsigned kind = 0; kind < 10; ++kind) {
                             char buf[512] = {0}, *allocated = NULL;
