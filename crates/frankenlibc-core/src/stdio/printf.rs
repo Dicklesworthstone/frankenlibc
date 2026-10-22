@@ -3282,11 +3282,13 @@ fn format_g(value: f64, precision: usize, uppercase: bool, alt_form: bool) -> St
 pub(crate) fn try_format_g_fixed_scaled(value: f64, precision: usize) -> Option<String> {
     let mut out = [0u8; 48];
     let len = try_format_g_fixed_scaled_into(value, precision, &mut out)?;
-    Some(
-        core::str::from_utf8(&out[..len])
-            .expect("fixed-scaled general digits are ASCII")
-            .to_owned(),
-    )
+    let mut rendered = String::with_capacity(len);
+    // A slice-to-String copy lowers to the interposed memcpy in the deployed
+    // library. Push the bounded ASCII digits as the original formatter did.
+    for &byte in &out[..len] {
+        rendered.push(byte as char);
+    }
+    Some(rendered)
 }
 
 /// Buffer-writing core shared by the allocating formatter and deployed `%g`.

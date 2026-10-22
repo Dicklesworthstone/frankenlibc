@@ -784,9 +784,8 @@ fn render_gcvt_into(value: f64, ndigit: usize, out: &mut [u8]) -> usize {
     // fit in StackStr, so they cannot leave a partial write on overflow here.
     let sci: &str = if try_build_integer_sci(value, frac, &mut sci_stack)
         || try_build_dyadic_rust_sci(value, frac, &mut sci_stack)
+        || write!(sci_stack, "{value:.frac$e}").is_ok()
     {
-        sci_stack.as_str()
-    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
         sci_stack.as_str()
     } else {
         let _ = write!(sci_heap, "{value:.frac$e}");
@@ -833,9 +832,12 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     }
     let mut tmp = [0u8; 48];
     if let Some(len) = try_gcvt_exact_small_fixed(value, ndigit, &mut tmp) {
-        return core::str::from_utf8(&tmp[..len])
-            .expect("exact fixed digits are ASCII")
-            .to_owned();
+        let mut rendered = String::with_capacity(len);
+        // Avoid an interposed memcpy for this small, already-ASCII body.
+        for &byte in &tmp[..len] {
+            rendered.push(byte as char);
+        }
+        return rendered;
     }
 
     // Pick format based on the decimal exponent the value rounds to.
@@ -854,13 +856,13 @@ fn render_gcvt(value: f64, ndigit: usize) -> String {
     // (exponent extraction, fixed-vs-scientific choice, trailing-zero strip) is unchanged.
     // Covers %g integers that `try_gcvt_exact_small_fixed` leaves (scientific-style and
     // >= 2^53). Guarded so no rounding occurs.
+    // The dyadic builder accepts at most 19 fractional digits, so this scratch
+    // also fits beyond gcvt's 17-significant-digit boundary.
     let sci: &str = if try_build_integer_sci(value, frac, &mut sci_heap) {
         sci_heap.as_str()
-    } else if try_build_dyadic_rust_sci(value, frac, &mut sci_stack) {
-        // The dyadic builder accepts at most 19 fractional digits, so this
-        // scratch also fits beyond gcvt's 17-significant-digit boundary.
-        sci_stack.as_str()
-    } else if write!(sci_stack, "{value:.frac$e}").is_ok() {
+    } else if try_build_dyadic_rust_sci(value, frac, &mut sci_stack)
+        || write!(sci_stack, "{value:.frac$e}").is_ok()
+    {
         sci_stack.as_str()
     } else {
         let _ = write!(sci_heap, "{value:.frac$e}");
