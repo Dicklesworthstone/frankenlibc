@@ -8612,6 +8612,39 @@ unsafe fn printf_size_padding(fp: *mut c_void, wide: bool, byte: u8, mut n: usiz
     true
 }
 
+// Positive normal values only: printf_size scales only values >= the unit.
+// Dividing a 64/113-bit significand by 1000 needs at most 123 numerator bits,
+// so integer division gives the exact rounding remainder without double
+// rounding through the compiler's always-nearest binary128 arithmetic.
+fn printf_size_divide(bits: u128, binary_unit: bool, x87: bool) -> u128 {
+    use frankenlibc_core::float128::RoundingMode;
+    if binary_unit {
+        return bits - (10u128 << 112);
+    }
+    let precision = if x87 { 64 } else { 113 };
+    let significand = ((bits & ((1u128 << 112) - 1)) | (1u128 << 112)) >> (113 - precision);
+    let shift = if (significand << 10) / 1000 >= 1u128 << precision {
+        9
+    } else {
+        10
+    };
+    let numerator = significand << shift;
+    let mut quotient = numerator / 1000;
+    let remainder = numerator % 1000;
+    let increment = match RoundingMode::current() {
+        RoundingMode::Nearest => remainder > 500 || (remainder == 500 && quotient & 1 != 0),
+        RoundingMode::Upward => remainder != 0,
+        RoundingMode::Downward | RoundingMode::TowardZero => false,
+    };
+    quotient += u128::from(increment);
+    let mut exponent = ((bits >> 112) & 0x7fff) - shift;
+    if quotient >= 1u128 << precision {
+        quotient >>= 1;
+        exponent += 1;
+    }
+    (exponent << 112) | ((quotient - (1u128 << (precision - 1))) << (113 - precision))
+}
+
 /// Native GNU size callback, also callable directly before registering it.
 /// Registration and custom-conversion dispatch remain separate work.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8620,6 +8653,7 @@ pub unsafe extern "C-unwind" fn printf_size(
     info: *const c_void,
     args: *const *const c_void,
 ) -> c_int {
+    use frankenlibc_core::float128::RoundingMode;
     use frankenlibc_core::stdio::printf::{
         FormatFlags, FormatSpec, LengthMod, Precision, Width, format_float, take_render_failure,
     };
@@ -8657,6 +8691,7 @@ pub unsafe extern "C-unwind" fn printf_size(
     };
     let divisor = if uppercase { 1000.0 } else { 1024.0 };
     let mut unit = 0;
+    let directed = RoundingMode::current() != RoundingMode::Nearest;
     let spec = FormatSpec::new(
         FormatFlags {
             force_sign: info.flags & (1 << 6) != 0,
@@ -8667,7 +8702,7 @@ pub unsafe extern "C-unwind" fn printf_size(
         },
         Width::None,
         Precision::Fixed(precision.min(65_535)),
-        if extended {
+        if extended || directed {
             LengthMod::BigL
         } else {
             LengthMod::None
@@ -8691,13 +8726,7 @@ pub unsafe extern "C-unwind" fn printf_size(
         };
         finite = (value.to_bits() >> 112) & 0x7fff != 0x7fff;
         while finite && value >= divisor as f128 && unit + 1 < units.len() {
-            value /= divisor as f128;
-            if x87 {
-                // A native long-double division rounds to 80 bits at each
-                // step; retaining quad precision until the end changes ties.
-                let bytes = frankenlibc_core::float128::binary128_to_x87(value.to_bits());
-                value = f128::from_bits(frankenlibc_core::float128::x87_to_binary128(&bytes));
-            }
+            value = f128::from_bits(printf_size_divide(value.to_bits(), !uppercase, x87));
             unit += 1;
         }
         spec.render_binary128_arg(value.to_bits(), &mut body);
@@ -8709,7 +8738,11 @@ pub unsafe extern "C-unwind" fn printf_size(
             value /= divisor;
             unit += 1;
         }
-        format_float(value, &spec, &mut body);
+        if directed {
+            spec.render_binary128_arg((value as f128).to_bits(), &mut body);
+        } else {
+            format_float(value, &spec, &mut body);
+        }
     }
     let failure = take_render_failure();
     if failure != 0 {

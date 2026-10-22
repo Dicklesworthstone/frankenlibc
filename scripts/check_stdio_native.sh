@@ -86,7 +86,7 @@ if [[ "${GNU_ONLY}" -eq 0 ]]; then
 fi
 
 cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
-  -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl
+  -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl -lm -pthread
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
   cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
     -o "${BIN_DIR}/fixture_stdio_globals.bin"
@@ -154,7 +154,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
