@@ -756,7 +756,14 @@ unsafe extern "C" fn control(
             11 => {
                 let next = unsafe { import::<u64>(information.cast()) }? as u32;
                 data.xid = next.wrapping_sub(1);
-                data.next_xid = Some(next);
+                // GNU's Unix client decrements the serialized word after
+                // CLSET_XID prepares htonl(next - 1). Preserve that observable
+                // Unix control behavior without changing IPv4 clients.
+                data.next_xid = Some(if data.unix_peer.is_some() {
+                    u32::from_be(next.wrapping_sub(1).to_be().wrapping_sub(1))
+                } else {
+                    next
+                });
             }
             12 => unsafe { publish(&(data.version as u64), information.cast()) }?,
             13 => data.version = unsafe { import::<u64>(information.cast()) }? as u32,
@@ -1063,7 +1070,20 @@ unsafe fn create_transport(
     match result {
         Ok(client) => client,
         Err(error) => {
-            creation_error(error.status, error.error);
+            if network == Network::Unix && error.status == RPC_SYSTEMERROR {
+                // GNU Unix creation writes cf_stat and re_errno only. The
+                // caller-visible nested status/union tail retain their prior
+                // TLS values, including values installed by a previous error.
+                // SAFETY: this accessor supplies the current thread's live,
+                // initialized and aligned public 32-byte create-error record.
+                unsafe {
+                    let slot = super::__rpc_thread_createerr().cast::<CreateError>();
+                    (*slot).status = error.status;
+                    (*slot).error.detail[..4].copy_from_slice(&error.error.detail[..4]);
+                }
+            } else {
+                creation_error(error.status, error.error);
+            }
             ptr::null_mut()
         }
     }

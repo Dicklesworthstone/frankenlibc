@@ -799,6 +799,7 @@ static void unix_services(void) {
 static int clunix_peer_fd;
 static RpcClient *clunix_client;
 static atomic_int clunix_service_done;
+static unsigned clunix_requests;
 static int clunix_exit_codec(void *x,void *p) { (void)x;(void)p;pthread_exit((void *)71);return 0; }
 static void *clunix_interrupted(void *unused) {
     (void)unused;unsigned value=35,result=0;
@@ -813,6 +814,7 @@ static size_t clunix_request(unsigned char *bytes,size_t capacity) {
     CHECK(identity.pid==getpid() && identity.uid==(!strcmp(scenario,"clunix-euid")?65534:geteuid()) && identity.gid==getegid());
     size_t n=ntohl(marker)&0x7fffffffu;CHECK((ntohl(marker)&0x80000000u) && n>=40 && n<=capacity);tcp_read(clunix_peer_fd,bytes,n);
     CHECK(readword(bytes,4)==0 && readword(bytes,8)==2);
+    if(++clunix_requests==1)CHECK(readword(bytes,0)==ntohl(htonl(0x12345677u)-1u));
     CHECK(readword(bytes,12)==(!strcmp(scenario,"clunix-controls")?PROGRAM+1:PROGRAM) && readword(bytes,16)==(!strcmp(scenario,"clunix-controls")?9u:1u));
     return n;
 }
@@ -860,8 +862,10 @@ static void clunix_services(void) {
         int pair[2];CHECK(!socketpair(AF_UNIX,SOCK_DGRAM,0,pair));fd=pair[0];CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fcntl(fd,F_GETFD)>=0);close(pair[0]);close(pair[1]);return;
     }
     if(!strcmp(scenario,"clunix-connect-error")) {
+        void *(*slot)(void);LOAD(slot,"__rpc_thread_createerr");ClientCreateError *e=slot();
+        e->error.status=17;e->error.detail[0]=0x1234567800000000ul;e->error.detail[1]=0xaabbccdd11223344ul;
         int fd=-1;unsigned before=fd_count();CHECK(!unixclient(&address,PROGRAM,1,&fd,0,0) && fd_count()==before);
-        void *(*slot)(void);LOAD(slot,"__rpc_thread_createerr");ClientCreateError *e=slot();CHECK(e->status==12 && e->error.status==12 && (int)e->error.detail[0]==ENOENT);return;
+        CHECK(e->status==12 && e->error.status==17 && e->error.detail[0]==(0x1234567800000000ul|ENOENT) && e->error.detail[1]==0xaabbccdd11223344ul);return;
     }
     if(!strcmp(scenario,"clunix-created") || !strcmp(scenario,"clunix-auth")) {
         memset(&clunix_address,0,sizeof(clunix_address));clunix_address.sun_family=AF_UNIX;
@@ -899,6 +903,7 @@ static void clunix_services(void) {
     if(!strcmp(scenario,"clunix-euid"))CHECK(!syscall(SYS_setresuid,-1,65534,-1));
     int status=c->ops->call(c,1,xu32,&argument,xu32,&result,timeout);
     if(!strcmp(scenario,"clunix-euid"))CHECK(!syscall(SYS_setresuid,-1,0,-1));
+    unsigned long observed=0;CHECK(c->ops->control(c,10,&observed) && observed==ntohl(htonl(0x12345677u)-1u));
     if(!strcmp(scenario,"clunix-timeout-reuse")){CHECK(status==5);status=c->ops->call(c,1,xu32,&argument,xu32,&result,(struct timeval){2,0});}
     if(!strcmp(scenario,"clunix-timeout"))CHECK(status==5);
     else if(!strcmp(scenario,"clunix-disconnect") || !strcmp(scenario,"clunix-rights") || !strcmp(scenario,"clunix-rights-truncated"))CHECK(status==4);
@@ -906,7 +911,6 @@ static void clunix_services(void) {
     else if(!strcmp(scenario,"clunix-malformed")){CHECK(status==2);CHECK(c->ops->call(c,1,xu32,&argument,xu32,&result,(struct timeval){2,0})==2);}
     else CHECK(status==0 && result==42 && c->ops->freeres(c,xu32,&result));
     CHECK(!pthread_join(thread,NULL) && fd_count()==before);
-    if(strcmp(scenario,"clunix-timeout-reuse")){unsigned long observed=0;CHECK(c->ops->control(c,10,&observed) && observed==forced);}
     ClientError error={0};c->ops->geterr(c,&error);CHECK(error.status==status);
     c->ops->destroy(c);CHECK(fcntl(fd,F_GETFD)>=0 && fcntl(fd,F_GETFL)==flags);close(fd);close(clunix_peer_fd);
 }
