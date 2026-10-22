@@ -154,7 +154,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -164,7 +164,7 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding; do
     echo "FAIL: empty GNU oracle for ${scenario}" >&2
     exit 1
   fi
-  if [[ "${scenario}" == "gnu-rounding" ]] &&
+  if [[ "${scenario}" == *rounding ]] &&
      [[ "$(grep -Ec '^round-thread:[0-3]:0$' "${oracle_stdout}")" -ne 4 ]]; then
     echo "FAIL: GNU oracle failed concurrent rounding expectations" >&2
     exit 1

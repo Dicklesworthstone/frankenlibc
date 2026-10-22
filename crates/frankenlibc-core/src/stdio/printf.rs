@@ -2021,8 +2021,8 @@ impl core::fmt::Write for VecWriter<'_> {
 }
 
 /// Supports `%f`/`%F`, `%e`/`%E`, and `%g`/`%G` conversions.
-/// Uses Rust's `format!` machinery internally for digit generation,
-/// then applies POSIX width/flag rules.
+/// Uses Rust's digit generation for nearest mode and the exact shared float
+/// engine for directed modes, then applies POSIX width/flag rules.
 pub fn format_float(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     let start = buf.len();
     format_float_with_dot(value, spec, buf);
@@ -2183,6 +2183,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
 
     let negative = value.is_sign_negative();
     let abs = value.abs();
+    let nearest =
+        crate::float128::RoundingMode::current() == crate::float128::RoundingMode::Nearest;
 
     // Grouped floats are rendered by the general path below.
     let grouping = float_grouping(spec);
@@ -2194,7 +2196,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // skipping the temporary String and the padding pipeline. Byte-identical to
     // the general path (sign + body, no pad); precision==0 keeps the general path
     // because format_f pre-rounds there.
-    if precision >= 1
+    if nearest
+        && precision >= 1
         && grouping.is_none()
         && resolve_width(spec) == 0
         && matches!(
@@ -2277,7 +2280,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // byte-identical to `render_pct_g`, so routing every value through
     // `render_pct_g_into` gives the same bytes without the heap allocation). At width 0
     // there is no padding, so this is byte-identical to the general path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && grouping.is_none()
         && !spec.flags.alt_form
         && matches!(
@@ -2306,7 +2310,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // byte it emits is the `'e'`), so `render_pct_e_into` gives byte-identical output
     // without the heap allocation. At width 0 there is no padding = byte-identical to the
     // general path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && !spec.flags.alt_form
         && matches!(
             spec.raw_render_kind(),
@@ -2334,7 +2339,8 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     // (alt_form forces the point), so unlike `%e`/`%g` this needs no alt-form exclusion
     // or uppercase fold. At width 0 there is no padding — byte-identical to the general
     // path below.
-    if resolve_width(spec) == 0
+    if nearest
+        && resolve_width(spec) == 0
         && matches!(
             spec.raw_render_kind(),
             Some(RawValueRenderKind::Float(FloatFormatKind::Hex))
@@ -2358,29 +2364,52 @@ fn format_float_with_dot(value: f64, spec: &FormatSpec, buf: &mut Vec<u8>) {
     }
 
     // Generate digit string.
-    let body = match spec.raw_render_kind() {
-        Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
-            format_f(abs, precision, spec.flags.alt_form)
+    let body = if !nearest {
+        let exact = crate::float128::FmtSpec {
+            conv: spec.conversion,
+            precision: if spec.conversion.eq_ignore_ascii_case(&b'a') {
+                hex_float_precision(spec)
+            } else {
+                Some(precision)
+            },
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: spec.flags.alt_form,
+            zero: false,
+        };
+        let mut body = String::from_utf8(crate::float128::format_binary64(value, &exact))
+            .expect("exact float output is ASCII");
+        if negative {
+            body.remove(0);
         }
-        Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
-            abs,
-            precision,
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
-            abs,
-            precision,
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
-            abs,
-            hex_float_precision(spec),
-            spec.conversion.is_ascii_uppercase(),
-            spec.flags.alt_form,
-        ),
-        _ => format_f(abs, precision, spec.flags.alt_form),
+        body
+    } else {
+        match spec.raw_render_kind() {
+            Some(RawValueRenderKind::Float(FloatFormatKind::Fixed)) => {
+                format_f(abs, precision, spec.flags.alt_form)
+            }
+            Some(RawValueRenderKind::Float(FloatFormatKind::Exp)) => format_e(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::General)) => format_g(
+                abs,
+                precision,
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            Some(RawValueRenderKind::Float(FloatFormatKind::Hex)) => format_a(
+                abs,
+                hex_float_precision(spec),
+                spec.conversion.is_ascii_uppercase(),
+                spec.flags.alt_form,
+            ),
+            _ => format_f(abs, precision, spec.flags.alt_form),
+        }
     };
 
     let sign = if negative {

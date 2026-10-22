@@ -7,9 +7,10 @@
 //! `strfromf128` formatter (bd-trosmi): the rounding and `%a/%e/%f/%g` format
 //! assembly are layered on top of this exact decomposition by the caller.
 //!
-//! The exported function takes the raw 128-bit pattern (`u128`) rather than a
-//! `f128`, so it needs no nightly `f128` feature and can be unit-tested against
-//! exact reference values independent of argument-passing ABI concerns.
+//! Binary128 APIs take a raw 128-bit pattern (`u128`) rather than a `f128`, so
+//! they need no nightly `f128` feature. Binary64 and x87 adapters reuse the
+//! exact engine while preserving their hexadecimal encoding conventions.
+//! Tests remain independent of argument-passing ABI concerns.
 
 /// The calling thread's floating-point rounding direction. Formatting reads
 /// hardware state, so fesetenv and direct environment restoration work without
@@ -1638,6 +1639,71 @@ fn assemble(sign: &[u8], body: &[u8], spec: &FmtSpec, is_hex: bool, numeric: boo
     }
 }
 
+/// Widen the encoding exactly, including binary64 subnormals and NaN payloads.
+/// No floating arithmetic can introduce an extra rounding step here.
+fn binary64_to_binary128(bits: u64) -> u128 {
+    let sign = u128::from(bits >> 63) << 127;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    match exponent {
+        0 if fraction == 0 => sign,
+        0 => {
+            let top = 63 - fraction.leading_zeros();
+            let normalized = u128::from(fraction) << (112 - top);
+            sign | (((top as i32 - 1074 + 16383) as u128) << 112)
+                | (normalized & ((1u128 << 112) - 1))
+        }
+        0x7ff => sign | (0x7fffu128 << 112) | (u128::from(fraction) << 60),
+        _ => sign | (((exponent - 1023 + 16383) as u128) << 112) | (u128::from(fraction) << 60),
+    }
+}
+
+/// Format a binary64 value using the exact shared rounding engine. Decimal
+/// conversions widen without loss. Hex conversions retain binary64's encoding:
+/// subnormals have a leading zero and exponent -1022, rather than the widened
+/// binary128 value's normalized exponent.
+pub fn format_binary64(value: f64, spec: &FmtSpec) -> Vec<u8> {
+    let bits = value.to_bits();
+    if !spec.conv.eq_ignore_ascii_case(&b'a') || !value.is_finite() || value == 0.0 {
+        return format_binary128(binary64_to_binary128(bits), spec);
+    }
+    let negative = bits >> 63 != 0;
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    let fraction = bits & ((1u64 << 52) - 1);
+    let mut nibs: Vec<u8> = (0..13)
+        .rev()
+        .map(|i| ((fraction >> (i * 4)) & 0xf) as u8)
+        .collect();
+    let lead = round_hex_nibbles(
+        &mut nibs,
+        u32::from(exponent != 0),
+        spec.precision,
+        RoundingMode::current().magnitude(negative),
+    );
+    let upper = spec.conv.is_ascii_uppercase();
+    let body = emit_hex_float(
+        lead,
+        &nibs,
+        if exponent == 0 {
+            -1022
+        } else {
+            exponent - 1023
+        },
+        upper,
+        spec.alt,
+    );
+    let sign: &[u8] = if negative {
+        b"-"
+    } else if spec.plus {
+        b"+"
+    } else if spec.space {
+        b" "
+    } else {
+        b""
+    };
+    assemble(sign, &body, spec, true, true)
+}
+
 /// Format a binary128 value per `spec`, returning the bytes (no NUL), matching
 /// glibc's `strfromf128` / `printf` float conversions.
 pub fn format_binary128(bits: u128, spec: &FmtSpec) -> Vec<u8> {
@@ -1910,6 +1976,37 @@ mod tests {
         assert_eq!(fmt(bits(0, 0, 0), b'e', None), "0.000000e+00"); // 0.0
         assert_eq!(fmt(bits(0, 0, 0), b'a', None), "0x0p+0");
         assert_eq!(fmt(bits(0, 0x4000, 1 << 111), b'a', Some(0)), "0x2p+1"); // 3.0 %.0a
+    }
+
+    #[test]
+    fn binary64_widens_subnormals_and_preserves_special_encodings() {
+        assert_eq!(binary64_to_binary128(1), bits(0, 0x3bcd, 0));
+        assert_eq!(binary64_to_binary128(1u64 << 63), 1u128 << 127);
+        assert_eq!(binary64_to_binary128(1.0f64.to_bits()), bits(0, 0x3fff, 0));
+        assert_eq!(
+            binary64_to_binary128(0x7ff8_0000_0000_0123),
+            bits(0, 0x7fff, (1u128 << 111) | (0x123u128 << 60))
+        );
+    }
+
+    #[test]
+    fn binary64_hex_retains_the_narrow_subnormal_exponent() {
+        let spec = FmtSpec {
+            conv: b'a',
+            precision: None,
+            width: 0,
+            left: false,
+            plus: false,
+            space: false,
+            alt: false,
+            zero: false,
+        };
+        assert_eq!(
+            format_binary64(f64::from_bits(1), &spec),
+            b"0x0.0000000000001p-1022"
+        );
+        assert_eq!(format_binary64(f64::MAX, &spec), b"0x1.fffffffffffffp+1023");
+        assert_eq!(format_binary64(-0.0, &spec), b"-0x0p+0");
     }
 
     #[test]

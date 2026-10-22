@@ -8085,6 +8085,25 @@ unsafe fn exact_direct_f_format(format: *const c_char) -> Option<usize> {
 /// together, which is why the bound has a name instead of a literal.
 fn render_direct_fixed(value: f64, precision: usize, out: &mut [u8; DIRECT_FIXED_BUF]) -> usize {
     use core::fmt::Write as _;
+    use frankenlibc_core::float128::{FmtSpec, RoundingMode, format_binary64};
+
+    if value.is_finite() && RoundingMode::current() != RoundingMode::Nearest {
+        let bytes = format_binary64(
+            value,
+            &FmtSpec {
+                conv: b'f',
+                precision: Some(precision),
+                width: 0,
+                left: false,
+                plus: false,
+                space: false,
+                alt: false,
+                zero: false,
+            },
+        );
+        out[..bytes.len()].copy_from_slice(&bytes);
+        return bytes.len();
+    }
 
     struct SliceWriter<'a> {
         buf: &'a mut [u8; DIRECT_FIXED_BUF],

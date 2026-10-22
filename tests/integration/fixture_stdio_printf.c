@@ -81,6 +81,22 @@ static int call_vasprintf(char **out, const char *fmt, ...) {
     return rc;
 }
 
+static int call_vfprintf(FILE *fp, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = vfprintf(fp, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
+static int call_vswprintf(wchar_t *buf, size_t size, const wchar_t *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = vswprintf(buf, size, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
 static int test_snprintf_contracts(void) {
     char buf[5] = {0};
     int rc = snprintf(buf, sizeof(buf), "abcdef");
@@ -595,10 +611,106 @@ static int gnu_extended_rounding(void) {
     return fesetround(saved) != 0;
 }
 
+static int gnu_double_rounding(void) {
+    static const char *providers[] = {
+        "snprintf", "vsnprintf", "sprintf", "vsprintf", "asprintf", "vasprintf",
+        "fprintf", "vfprintf", "swprintf", "vswprintf",
+        "fegetround", "fesetround", "fegetenv", "fesetenv"
+    };
+    for (unsigned i = 0; i < sizeof(providers) / sizeof(providers[0]); ++i)
+        if (check_gnu_provider(providers[i])) return 1;
+    static const int modes[] = { FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO };
+    static const double values[] = {
+        0.0, -0.0, 0.125, -0.125, 0.5, -0.5, 1.25, -1.25, 9.5, -9.5,
+        0.1, -0.1, DBL_TRUE_MIN, -DBL_TRUE_MIN, DBL_MIN, -DBL_MIN,
+        DBL_MAX, -DBL_MAX, 0x1.fffffffffffffp-1, 0x1.fffffffffffffp+3,
+        INFINITY, -INFINITY, NAN, -NAN
+    };
+    static const char convs[] = "feg aFEGA";
+    static const int precisions[] = {0, 1, 2, 6};
+    static const int boundaries[] = {17, 25, 99, 100, 1101};
+    int saved = fegetround();
+    for (unsigned m = 0; m < sizeof(modes) / sizeof(modes[0]); ++m) {
+        if (fesetround(modes[m]) || fegetround() != modes[m]) return 1;
+        for (unsigned v = 0; v < sizeof(values) / sizeof(values[0]); ++v) {
+            double value = values[v];
+            for (unsigned c = 0; c < sizeof(convs) - 1; ++c) {
+                if (convs[c] == ' ') continue;
+                for (unsigned p = 0; p < sizeof(precisions) / sizeof(precisions[0]); ++p) {
+                    int precision = precisions[p];
+                    for (unsigned style = 0; style < 3; ++style) {
+                        char fmt[48];
+                        if (style == 2) snprintf(fmt, sizeof(fmt), "[%%2$0*1$.*3$%c]", convs[c]);
+                        else snprintf(fmt, sizeof(fmt), style ? "%%+#18.%d%c" : "%%.%d%c", precision, convs[c]);
+                        for (unsigned kind = 0; kind < 10; ++kind) {
+                            char buf[512] = {0}, *allocated = NULL;
+                            wchar_t wfmt[48], wide[512];
+                            for (size_t k = 0; k <= strlen(fmt); ++k) wfmt[k] = (unsigned char)fmt[k];
+                            size_t len = 0;
+                            FILE *fp = NULL;
+                            if (kind == 6 || kind == 7) {
+                                fp = open_memstream(&allocated, &len);
+                                if (!fp) return 1;
+                            }
+                            errno = 0;
+                            int rc;
+#define DOUBLE_CALL(fn, form, ...) (style == 2 ? fn(__VA_ARGS__, form, 18, value, precision) : fn(__VA_ARGS__, form, value))
+                            switch (kind) {
+                            case 0: rc = DOUBLE_CALL(snprintf, fmt, buf, sizeof(buf)); break;
+                            case 1: rc = DOUBLE_CALL(call_vsnprintf, fmt, buf, 8); break;
+                            case 2: rc = DOUBLE_CALL(sprintf, fmt, buf); break;
+                            case 3: rc = DOUBLE_CALL(call_vsprintf, fmt, buf); break;
+                            case 4: rc = DOUBLE_CALL(asprintf, fmt, &allocated); break;
+                            case 5: rc = DOUBLE_CALL(call_vasprintf, fmt, &allocated); break;
+                            case 6: rc = DOUBLE_CALL(fprintf, fmt, fp); break;
+                            case 7: rc = DOUBLE_CALL(call_vfprintf, fmt, fp); break;
+                            case 8: rc = DOUBLE_CALL(swprintf, wfmt, wide, sizeof(wide) / sizeof(wide[0])); break;
+                            default: rc = DOUBLE_CALL(call_vswprintf, wfmt, wide, sizeof(wide) / sizeof(wide[0])); break;
+                            }
+#undef DOUBLE_CALL
+                            int err = errno;
+                            if (fp && fclose(fp)) return 1;
+                            if (rc < 0) return 1;
+                            if (kind >= 8) {
+                                if (rc >= (int)sizeof(buf)) return 1;
+                                for (int k = 0; k <= rc; ++k) buf[k] = (char)wide[k];
+                            }
+                            const char *text = allocated ? allocated : buf;
+                            printf("double:%u:%u:%u:%u:%u:%u:%d:%d:", m, v, c, p, style, kind, rc, err);
+                            for (size_t k = 0; k < strlen(text); ++k) printf("%02x", (unsigned char)text[k]);
+                            putchar('\n');
+                            free(allocated);
+                        }
+                    }
+                }
+            }
+        }
+        static const double edge_values[] = {0.1, -0.1, DBL_TRUE_MIN, -DBL_MAX};
+        for (unsigned v = 0; v < sizeof(edge_values) / sizeof(edge_values[0]); ++v) {
+            for (unsigned c = 0; c < sizeof(convs) - 1; ++c) {
+                if (convs[c] == ' ') continue;
+                for (unsigned p = 0; p < sizeof(boundaries) / sizeof(boundaries[0]); ++p) {
+                    char fmt[32], *buf = NULL;
+                    snprintf(fmt, sizeof(fmt), "%%#.%d%c", boundaries[p], convs[c]);
+                    errno = 0;
+                    int rc = asprintf(&buf, fmt, edge_values[v]), err = errno;
+                    if (rc < 0 || !buf) return 1;
+                    printf("double-edge:%u:%u:%u:%u:%d:%d:", m, v, c, p, rc, err);
+                    for (size_t k = 0; k < strlen(buf); ++k) printf("%02x", (unsigned char)buf[k]);
+                    putchar('\n');
+                    free(buf);
+                }
+            }
+        }
+    }
+    return fesetround(saved) != 0;
+}
+
 struct rounding_thread_case {
     int mode;
     atomic_int *ready;
     unsigned failures;
+    int ordinary;
 };
 
 static void *rounding_thread(void *opaque) {
@@ -617,11 +729,14 @@ static void *rounding_thread(void *opaque) {
             long double value = sign ? -0.125L : 0.125L;
             char buf[32] = {0};
             wchar_t wide[32];
-            int rc = snprintf(buf, sizeof(buf), "%.*Lf", 2, value);
+            int rc = test->ordinary ? snprintf(buf, sizeof(buf), "%.2f", (double)value) :
+                                     snprintf(buf, sizeof(buf), "%.*Lf", 2, value);
             test->failures += rc != (int)strlen(expected) || strcmp(buf, expected) != 0;
-            rc = strfromf128(buf, sizeof(buf), "%.2f", (_Float128)value);
+            rc = test->ordinary ? call_vsnprintf(buf, sizeof(buf), "%.*f", 2, (double)value) :
+                                  strfromf128(buf, sizeof(buf), "%.2f", (_Float128)value);
             test->failures += rc != (int)strlen(expected) || strcmp(buf, expected) != 0;
-            rc = swprintf(wide, sizeof(wide) / sizeof(wide[0]), L"%.*Lf", 2, value);
+            rc = test->ordinary ? swprintf(wide, sizeof(wide) / sizeof(wide[0]), L"%.2f", (double)value) :
+                                 swprintf(wide, sizeof(wide) / sizeof(wide[0]), L"%.*Lf", 2, value);
             test->failures += rc != (int)strlen(expected);
             if (rc == (int)strlen(expected))
                 for (int k = 0; k <= rc; ++k) test->failures += wide[k] != (unsigned char)expected[k];
@@ -630,11 +745,11 @@ static void *rounding_thread(void *opaque) {
     return NULL;
 }
 
-static int gnu_rounding_threads(void) {
+static int gnu_rounding_threads(int ordinary) {
     atomic_int ready = 0;
     struct rounding_thread_case cases[4] = {
-        {FE_TONEAREST, &ready, 0}, {FE_DOWNWARD, &ready, 0},
-        {FE_UPWARD, &ready, 0}, {FE_TOWARDZERO, &ready, 0}
+        {FE_TONEAREST, &ready, 0, ordinary}, {FE_DOWNWARD, &ready, 0, ordinary},
+        {FE_UPWARD, &ready, 0, ordinary}, {FE_TOWARDZERO, &ready, 0, ordinary}
     };
     pthread_t threads[4];
     for (unsigned i = 0; i < 4; ++i)
@@ -652,7 +767,11 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-errors") == 0) return gnu_size_errors();
     if (argc == 2 && strcmp(argv[1], "--gnu-rounding") == 0) {
         int rc = gnu_extended_rounding();
-        return rc ? rc : gnu_rounding_threads();
+        return rc ? rc : gnu_rounding_threads(0);
+    }
+    if (argc == 2 && strcmp(argv[1], "--gnu-double-rounding") == 0) {
+        int rc = gnu_double_rounding();
+        return rc ? rc : gnu_rounding_threads(1);
     }
     int fails = 0;
     fails += test_snprintf_contracts();
