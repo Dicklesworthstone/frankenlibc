@@ -8673,7 +8673,7 @@ pub unsafe extern "C-unwind" fn printf_size(
     let extra_precision = precision.saturating_sub(65_535);
     let binary128 = info.flags & (1 << 12) != 0;
     let extended = binary128 || info.flags & 1 != 0;
-    let uppercase = (b'A' as i32..=b'Z' as i32).contains(&info.spec);
+    let uppercase = (b'A' as libc::wchar_t..=b'Z' as libc::wchar_t).contains(&info.spec);
     let units = if uppercase {
         b" KMGTPEZY"
     } else {

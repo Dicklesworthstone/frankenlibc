@@ -15,7 +15,7 @@ use frankenlibc_core::rpc::wire::{
 };
 use frankenlibc_core::syscall as raw;
 use std::cell::UnsafeCell;
-use std::ffi::{c_int, c_uint, c_void};
+use std::ffi::{c_char, c_int, c_uint, c_void};
 use std::mem::{size_of, size_of_val, zeroed};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1673,7 +1673,7 @@ impl StreamOutput {
         true
     }
 }
-unsafe extern "C" fn stream_putbytes(x: *mut Xdr, source: *const i8, count: u32) -> c_int {
+unsafe extern "C" fn stream_putbytes(x: *mut Xdr, source: *const c_char, count: u32) -> c_int {
     // SAFETY: these operations are installed only on our live stack-owned
     // StreamOutput. Caller codecs must preserve the XDR operation/state pointers.
     let output = unsafe { &mut *(*x).x_private.cast::<StreamOutput>() };
@@ -1723,7 +1723,7 @@ unsafe extern "C" fn stream_getlong(_: *mut Xdr, _: *mut i64) -> c_int {
 unsafe extern "C" fn stream_getint(_: *mut Xdr, _: *mut i32) -> c_int {
     0
 }
-unsafe extern "C" fn stream_getbytes(_: *mut Xdr, _: *mut i8, _: u32) -> c_int {
+unsafe extern "C" fn stream_getbytes(_: *mut Xdr, _: *mut c_char, _: u32) -> c_int {
     0
 }
 unsafe extern "C" fn stream_position(x: *const Xdr) -> u32 {
