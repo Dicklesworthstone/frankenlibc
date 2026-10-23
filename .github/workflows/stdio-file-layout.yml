@@ -6,6 +6,7 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
       - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/fortify_abi.rs'
       - 'crates/frankenlibc-abi/src/wchar_abi.rs'
       - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
@@ -15,6 +16,7 @@ on:
       - 'crates/frankenlibc-core/src/stdio/**'
       - 'tests/integration/fixture_stdio_file_layout.c'
       - 'tests/integration/fixture_stdio_lifetime.c'
+      - 'tests/integration/fixture_callback_unwind.cpp'
       - 'tests/integration/fixture_stdio_printf.c'
       - 'scripts/check_stdio_native.sh'
       - '.github/workflows/stdio-file-layout.yml'
@@ -114,6 +116,40 @@ jobs:
             grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
               "artifacts/stdio-layout/registration-$mode.log"
           done
+      - name: Propagate registered C++ callback exceptions through every printf boundary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          c++ -O2 -Wall -Wextra -Werror -pthread tests/integration/fixture_callback_unwind.cpp -ldl -o target/stdio-callback-unwind
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          host="$(env -u LD_PRELOAD ldd target/stdio-callback-unwind | awk '$1 == "libc.so.6" {print $3}')"
+          test -f "$host"
+          cases=(printf vprintf fprintf vfprintf sprintf vsprintf snprintf vsnprintf dprintf vdprintf asprintf vasprintf
+            wprintf vwprintf fwprintf vfwprintf swprintf vswprintf
+            __printf_chk __vprintf_chk __fprintf_chk __vfprintf_chk __sprintf_chk __vsprintf_chk __snprintf_chk __vsnprintf_chk
+            __dprintf_chk __vdprintf_chk __asprintf_chk __vasprintf_chk
+            __wprintf_chk __vwprintf_chk __fwprintf_chk __vfwprintf_chk __swprintf_chk __vswprintf_chk
+            obstack_printf obstack_vprintf __obstack_printf_chk __obstack_vprintf_chk __vsnprintf __asprintf parse_printf_format)
+          count=0
+          for case in "${cases[@]}"; do
+            for stage in 0 1 2; do
+              if [[ "$case" == parse_printf_format && "$stage" != 1 ]]; then continue; fi
+              prefix="artifacts/stdio-layout/unwind-$case-$stage"
+              env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_TEST_LIBRARY="$host" \
+                timeout 20 target/stdio-callback-unwind --printf "$case" "$stage" > "$prefix-host.out" 2> "$prefix-host.err"
+              grep -qx 'printf-callback-unwind:PASS' "$prefix-host.out"
+              test ! -s "$prefix-host.err"
+              for mode in strict hardened; do
+                timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" FRANKENLIBC_TEST_LIBRARY="$library" \
+                  target/stdio-callback-unwind --printf "$case" "$stage" > "$prefix-$mode.out" 2> "$prefix-$mode.err"
+                cmp "$prefix-host.out" "$prefix-$mode.out"
+                cmp "$prefix-host.err" "$prefix-$mode.err"
+              done
+              count=$((count + 1))
+            done
+          done
+          test "$count" -eq 127
       - name: Exercise GNU printf callbacks against the live host in both modes
         if: always()
         shell: bash

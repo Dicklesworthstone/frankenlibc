@@ -27128,7 +27128,7 @@ pub unsafe extern "C" fn obstack_free(obstack: *mut c_void, block: *mut c_void) 
 /// `obstack_printf` — formatted print to obstack (variadic).
 /// Builds the va_list and forwards to `obstack_vprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn obstack_printf(
+pub unsafe extern "C-unwind" fn obstack_printf(
     obstack: *mut c_void,
     fmt: *const c_char,
     mut args: ...
@@ -27141,7 +27141,7 @@ pub unsafe extern "C" fn obstack_printf(
 /// Native implementation: format via our native vasprintf, then grow obstack.
 /// The obstack struct layout must match glibc's struct obstack (see glibc_internal_abi.rs).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn obstack_vprintf(
+pub unsafe extern "C-unwind" fn obstack_vprintf(
     obstack: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,

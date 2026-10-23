@@ -2884,7 +2884,7 @@ pub unsafe extern "C" fn _obstack_memory_used(h: *mut c_void) -> SizeT {
 // __obstack_printf_chk: fortified printf to obstack. The flag is fortify
 // metadata; obstack growth is bounds-checked by the native obstack path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_printf_chk(
+pub unsafe extern "C-unwind" fn __obstack_printf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -2896,7 +2896,7 @@ pub unsafe extern "C" fn __obstack_printf_chk(
 
 // __obstack_vprintf_chk: vprintf to obstack with overflow checking
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __obstack_vprintf_chk(
+pub unsafe extern "C-unwind" fn __obstack_vprintf_chk(
     h: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -3889,23 +3889,17 @@ pub unsafe extern "C" fn __arch_prctl(_code: c_int, _addr: c_ulong) -> c_int {
     unsafe { set_abi_errno(libc::ENOSYS) };
     -1
 }
-// __asprintf: glibc internal alias for asprintf — forward to our vasprintf via va_list
-// Since this is variadic and we can't easily forward varargs, use dlsym fallback
-// to host glibc's __asprintf. This is one of the few symbols that genuinely needs
-// host delegation because variadic→va_list forwarding in Rust is not portable.
-// Return ENOSYS stub for the replace profile; interpose profile keeps passthrough.
+// GNU's internal variadic alias shares the native vasprintf implementation,
+// including registered callbacks and their unwind-safe buffer ownership.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf(
+pub unsafe extern "C-unwind" fn __asprintf(
     strp: *mut *mut c_char,
-    _fmt: *const c_char, // ... variadic
+    fmt: *const c_char,
+    mut args: ...
 ) -> c_int {
-    // Cannot forward variadic args to vasprintf without platform-specific va_list tricks.
-    // For safety, return error. Real callers should use asprintf() which we handle natively.
-    if !strp.is_null() {
-        unsafe { *strp = std::ptr::null_mut() };
-    }
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    // SAFETY: the C variadic ABI supplies the same live va_list representation
+    // consumed by the ordinary asprintf and fortified alias entrypoints.
+    unsafe { super::stdio_abi::vasprintf(strp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 // __backtrace: native — forward to our backtrace
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -4646,7 +4640,7 @@ pub unsafe extern "C" fn __vfscanf(
 }
 // __vsnprintf: native — forward to our vsnprintf
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsnprintf(
+pub unsafe extern "C-unwind" fn __vsnprintf(
     buf: *mut c_char,
     size: SizeT,
     fmt: *const c_char,
@@ -6776,7 +6770,7 @@ fn printf_position(bytes: &[u8], pos: &mut usize) -> Option<usize> {
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn parse_printf_format(
+pub unsafe extern "C-unwind" fn parse_printf_format(
     fmt: *const c_char,
     n: SizeT,
     argtypes: *mut c_int,

@@ -6394,7 +6394,7 @@ pub unsafe extern "C" fn putwchar(wc: u32) -> u32 {
 
 /// Native `swprintf`: format into wide buffer with size limit.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn swprintf(
+pub unsafe extern "C-unwind" fn swprintf(
     s: *mut libc::wchar_t,
     n: usize,
     format: *const libc::wchar_t,
@@ -6458,7 +6458,7 @@ pub unsafe extern "C" fn swprintf(
 
 /// Native `wprintf`: format to stdout.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn wprintf(format: *const libc::wchar_t, mut args: ...) -> c_int {
     let stdout_ptr = super::stdio_abi::active_stdout_stream();
     if format.is_null() || !super::stdio_abi::orient_stream_wide(stdout_ptr) {
         return -1;
@@ -6506,7 +6506,7 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
 
 /// Native `fwprintf`: format to stream.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn fwprintf(
+pub unsafe extern "C-unwind" fn fwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     mut args: ...
@@ -6559,7 +6559,7 @@ pub unsafe extern "C" fn fwprintf(
 
 /// Native `vswprintf`: format into wide buffer from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vswprintf(
+pub unsafe extern "C-unwind" fn vswprintf(
     s: *mut libc::wchar_t,
     n: usize,
     format: *const libc::wchar_t,
@@ -6593,7 +6593,7 @@ pub unsafe extern "C" fn vswprintf(
 
 /// Native `vwprintf`: format to stdout from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vwprintf(
+pub unsafe extern "C-unwind" fn vwprintf(
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,
 ) -> c_int {
@@ -6638,7 +6638,7 @@ pub unsafe extern "C" fn vwprintf(
 
 /// Native `vfwprintf`: format to stream from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vfwprintf(
+pub unsafe extern "C-unwind" fn vfwprintf(
     stream: *mut std::ffi::c_void,
     format: *const libc::wchar_t,
     ap: *mut std::ffi::c_void,

@@ -6741,6 +6741,9 @@ pub(crate) const MAX_VA_ARGS: usize = 32;
 // GNU printf extensions are an opt-in path. A process which never registers
 // anything only loads this flag once at the public formatting boundary; its
 // existing parser, register readers and direct-format fast paths are unchanged.
+// Render, arginfo and type-reader callbacks may throw foreign exceptions. All
+// public/forwarding frames that reach this engine use C-unwind so the buffer
+// owner and stream-lock guards are dropped before the caller catches them.
 static PRINTF_EXTENSIONS_ACTIVE: AtomicBool = AtomicBool::new(false);
 static PRINTF_EXTENSIONS: Mutex<Option<PrintfExtensions>> = Mutex::new(None);
 
@@ -10745,7 +10748,7 @@ pub(crate) fn write_all_fd(fd: c_int, data: &[u8]) -> bool {
 
 /// POSIX `snprintf` — format at most `size` bytes into `str`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn snprintf(
+pub unsafe extern "C-unwind" fn snprintf(
     str_buf: *mut c_char,
     size: usize,
     format: *const c_char,
@@ -10974,7 +10977,7 @@ pub unsafe extern "C" fn snprintf(
 
 /// POSIX `sprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn sprintf(
+pub unsafe extern "C-unwind" fn sprintf(
     str_buf: *mut c_char,
     format: *const c_char,
     mut args: ...
@@ -11706,7 +11709,7 @@ unsafe fn strict_direct_fd_ux(fd: c_int, arg: c_uint, hex: bool, newline: bool) 
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn dprintf(fd: c_int, format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -11771,7 +11774,7 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
 
 /// GNU `asprintf`.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn asprintf(
+pub unsafe extern "C-unwind" fn asprintf(
     strp: *mut *mut c_char,
     format: *const c_char,
     mut args: ...
@@ -12343,7 +12346,7 @@ unsafe fn strict_direct_sprintf_f(str_buf: *mut c_char, value: f64, precision: u
 
 /// POSIX `vsnprintf` — format at most `size` bytes from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vsnprintf(
+pub unsafe extern "C-unwind" fn vsnprintf(
     str_buf: *mut c_char,
     size: usize,
     format: *const c_char,
@@ -12506,7 +12509,7 @@ pub fn take_last_decision_gate_for_tests() -> Option<&'static str> {
 
 /// POSIX `vsprintf` — format into buffer from va_list (no size limit).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vsprintf(
+pub unsafe extern "C-unwind" fn vsprintf(
     str_buf: *mut c_char,
     format: *const c_char,
     ap: *mut c_void,
@@ -13123,7 +13126,11 @@ pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) 
 
 /// POSIX `vdprintf` — format to file descriptor from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn vdprintf(
+    fd: c_int,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
     if format.is_null() {
         return -1;
     }
@@ -13203,7 +13210,7 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
 
 /// GNU `vasprintf` — allocate and format from va_list.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn vasprintf(
+pub unsafe extern "C-unwind" fn vasprintf(
     strp: *mut *mut c_char,
     format: *const c_char,
     ap: *mut c_void,

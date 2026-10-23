@@ -3656,15 +3656,28 @@ fn obstack_printf_chk_rejects_null_inputs() {
 // ===========================================================================
 
 #[test]
-fn asprintf_internal_returns_enosys() {
-    let mut ptr: *mut i8 = 42usize as *mut i8; // non-null sentinel
-    let fmt = CString::new("hello %d").unwrap();
-    let r = unsafe { __asprintf(&mut ptr, fmt.as_ptr()) };
-    assert_eq!(r, -1);
-    assert!(
-        ptr.is_null(),
-        "__asprintf should set *strp to null on failure"
-    );
+fn asprintf_internal_forwards_variadic_arguments() {
+    let mut output = ptr::null_mut();
+    let count = unsafe {
+        __asprintf(
+            &mut output,
+            c"%s:%d".as_ptr(),
+            c"hello".as_ptr(),
+            17 as c_int,
+        )
+    };
+    assert_eq!(count, 8);
+    assert!(!output.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"hello:17");
+    unsafe { free(output.cast()) };
+
+    output = ptr::null_mut();
+    assert_eq!(unsafe { __asprintf(&mut output, c"".as_ptr()) }, 0);
+    assert!(!output.is_null());
+    assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"");
+    unsafe { free(output.cast()) };
+
+    assert_eq!(unsafe { __asprintf(ptr::null_mut(), c"ignored".as_ptr()) }, -1);
 }
 
 #[test]

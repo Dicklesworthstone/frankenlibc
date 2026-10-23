@@ -345,9 +345,11 @@ pub unsafe extern "C" fn __stpncpy_chk(
 }
 
 // ── printf family (variadic → va_list forwarding) ──────────────────────────
+// Registered render/arginfo/type callbacks may unwind. Each forwarding frame
+// must preserve that ABI so the formatting engine's stream/buffer guards run.
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __sprintf_chk(
+pub unsafe extern "C-unwind" fn __sprintf_chk(
     buf: *mut c_char,
     _flag: c_int,
     buflen: usize,
@@ -363,7 +365,7 @@ pub unsafe extern "C" fn __sprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __snprintf_chk(
+pub unsafe extern "C-unwind" fn __snprintf_chk(
     buf: *mut c_char,
     maxlen: usize,
     _flag: c_int,
@@ -379,7 +381,7 @@ pub unsafe extern "C" fn __snprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsprintf_chk(
+pub unsafe extern "C-unwind" fn __vsprintf_chk(
     buf: *mut c_char,
     _flag: c_int,
     buflen: usize,
@@ -394,7 +396,7 @@ pub unsafe extern "C" fn __vsprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vsnprintf_chk(
+pub unsafe extern "C-unwind" fn __vsnprintf_chk(
     buf: *mut c_char,
     maxlen: usize,
     _flag: c_int,
@@ -409,7 +411,7 @@ pub unsafe extern "C" fn __vsnprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fprintf_chk(
+pub unsafe extern "C-unwind" fn __fprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -420,7 +422,7 @@ pub unsafe extern "C" fn __fprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vfprintf_chk(
+pub unsafe extern "C-unwind" fn __vfprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const c_char,
@@ -430,18 +432,26 @@ pub unsafe extern "C" fn __vfprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __printf_chk(_flag: c_int, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __printf_chk(
+    _flag: c_int,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { vprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vprintf_chk(_flag: c_int, fmt: *const c_char, ap: *mut c_void) -> c_int {
+pub unsafe extern "C-unwind" fn __vprintf_chk(
+    _flag: c_int,
+    fmt: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
     unsafe { vprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __dprintf_chk(
+pub unsafe extern "C-unwind" fn __dprintf_chk(
     fd: c_int,
     _flag: c_int,
     fmt: *const c_char,
@@ -452,7 +462,7 @@ pub unsafe extern "C" fn __dprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vdprintf_chk(
+pub unsafe extern "C-unwind" fn __vdprintf_chk(
     fd: c_int,
     _flag: c_int,
     fmt: *const c_char,
@@ -462,7 +472,7 @@ pub unsafe extern "C" fn __vdprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __asprintf_chk(
+pub unsafe extern "C-unwind" fn __asprintf_chk(
     strp: *mut *mut c_char,
     _flag: c_int,
     fmt: *const c_char,
@@ -473,7 +483,7 @@ pub unsafe extern "C" fn __asprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vasprintf_chk(
+pub unsafe extern "C-unwind" fn __vasprintf_chk(
     strp: *mut *mut c_char,
     _flag: c_int,
     fmt: *const c_char,
@@ -1096,7 +1106,7 @@ pub unsafe extern "C" fn __wmemset_chk(
 // ── Wide printf ────────────────────────────────────────────────────────────
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __swprintf_chk(
+pub unsafe extern "C-unwind" fn __swprintf_chk(
     buf: *mut WcharT,
     maxlen: usize,
     _flag: c_int,
@@ -1116,7 +1126,7 @@ pub unsafe extern "C" fn __swprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vswprintf_chk(
+pub unsafe extern "C-unwind" fn __vswprintf_chk(
     buf: *mut WcharT,
     maxlen: usize,
     _flag: c_int,
@@ -1132,13 +1142,17 @@ pub unsafe extern "C" fn __vswprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __wprintf_chk(_flag: c_int, fmt: *const WcharT, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn __wprintf_chk(
+    _flag: c_int,
+    fmt: *const WcharT,
+    mut args: ...
+) -> c_int {
     let ap = &mut args as *mut _ as *mut c_void;
     unsafe { vwprintf(fmt, ap) }
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vwprintf_chk(
+pub unsafe extern "C-unwind" fn __vwprintf_chk(
     _flag: c_int,
     fmt: *const WcharT,
     ap: *mut c_void,
@@ -1147,7 +1161,7 @@ pub unsafe extern "C" fn __vwprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __fwprintf_chk(
+pub unsafe extern "C-unwind" fn __fwprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const WcharT,
@@ -1158,7 +1172,7 @@ pub unsafe extern "C" fn __fwprintf_chk(
 }
 
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn __vfwprintf_chk(
+pub unsafe extern "C-unwind" fn __vfwprintf_chk(
     stream: *mut c_void,
     _flag: c_int,
     fmt: *const WcharT,
