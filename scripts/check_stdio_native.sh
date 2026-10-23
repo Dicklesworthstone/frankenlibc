@@ -30,6 +30,10 @@ REPORT="${OUT_DIR}/stdio_native.report.json"
 LOG="${OUT_DIR}/stdio_native.log.jsonl"
 TEST_LOG="${OUT_DIR}/stdio_native.test_output.log"
 RUN_ID="stdio-native-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+PRESERVE_SCRATCH_FILES=false
+if [[ "${FRANKENLIBC_TEST_PRESERVE_FILES:-}" == 1 ]]; then
+  PRESERVE_SCRATCH_FILES=true
+fi
 
 mkdir -p "${OUT_DIR}" "${BIN_DIR}"
 
@@ -206,7 +210,7 @@ fi
 
 if [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","pointer_cell_symbols":"pass","link_styles":["copy","got"],"candidate_processes":4,"live_GNU_processes":2,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
+{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"pointer_cell_symbols":"pass","link_styles":["copy","got"],"candidate_processes":4,"live_GNU_processes":2,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
 JSON
   echo "check_stdio_native --globals-only: PASS (provider-bound FILE semantics in both modes; full stdio gate not run)"
   exit 0
@@ -280,7 +284,7 @@ done
 
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","preserve_scratch_files":${PRESERVE_SCRATCH_FILES},"original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
 JSON
   echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
   exit 0
@@ -294,6 +298,7 @@ cat >"${REPORT}" <<JSON
   "library": "${LIB}",
   "library_sha256": "${LIB_SHA256}",
   "build_kind": "${BUILD_KIND}",
+  "preserve_scratch_files": ${PRESERVE_SCRATCH_FILES},
   "checks": {
     "nm_stdio_pointer_cells": "pass",
     "fixture_stdio_printf_strict": "pass",

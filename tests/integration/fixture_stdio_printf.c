@@ -23,6 +23,13 @@
 #include <unistd.h>
 #include <wchar.h>
 
+/* Retain scratch files when the caller forbids deletion. This changes only
+ * cleanup: every persisted-output and return-value assertion still runs. */
+static void cleanup_temp_path(const char *path) {
+    const char *preserve = getenv("FRANKENLIBC_TEST_PRESERVE_FILES");
+    if (preserve == NULL || strcmp(preserve, "1") != 0) unlink(path);
+}
+
 static int make_temp_path(char path[72]) {
     strcpy(path, "/tmp/frankenlibc_fixture_stdio_printf_XXXXXX");
     int fd = mkstemp(path);
@@ -176,7 +183,7 @@ static int test_fprintf_contracts(void) {
     FILE *fp = fopen(path, "w+");
     if (fp == NULL) {
         fprintf(stderr, "FAIL: fopen w+ for fprintf: %s\n", strerror(errno));
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
@@ -184,28 +191,28 @@ static int test_fprintf_contracts(void) {
     if (rc != 6) {
         fprintf(stderr, "FAIL: fprintf length expected 6 got %d\n", rc);
         fclose(fp);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
     if (fflush(fp) != 0 || fclose(fp) != 0) {
         fprintf(stderr, "FAIL: fflush/fclose after fprintf failed\n");
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
     char out[32] = {0};
     if (read_file_exact(path, out, sizeof(out)) < 0) {
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     if (strcmp(out, "v=42:Z") != 0) {
         fprintf(stderr, "FAIL: fprintf persisted output mismatch got '%s'\n", out);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
-    unlink(path);
+    cleanup_temp_path(path);
     return 0;
 }
 
@@ -218,7 +225,7 @@ static int test_printf_redirect_contracts(void) {
     int out_fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
     if (out_fd < 0) {
         fprintf(stderr, "FAIL: open redirect path: %s\n", strerror(errno));
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
@@ -226,7 +233,7 @@ static int test_printf_redirect_contracts(void) {
     if (saved_stdout < 0) {
         fprintf(stderr, "FAIL: dup stdout: %s\n", strerror(errno));
         close(out_fd);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
@@ -234,7 +241,7 @@ static int test_printf_redirect_contracts(void) {
         fprintf(stderr, "FAIL: dup2 redirect stdout: %s\n", strerror(errno));
         close(saved_stdout);
         close(out_fd);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     close(out_fd);
@@ -244,7 +251,7 @@ static int test_printf_redirect_contracts(void) {
         fprintf(stderr, "FAIL: printf length expected 4 got %d\n", rc);
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     fflush(stdout);
@@ -252,23 +259,23 @@ static int test_printf_redirect_contracts(void) {
     if (dup2(saved_stdout, STDOUT_FILENO) < 0) {
         fprintf(stderr, "FAIL: dup2 restore stdout: %s\n", strerror(errno));
         close(saved_stdout);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     close(saved_stdout);
 
     char out[32] = {0};
     if (read_file_exact(path, out, sizeof(out)) < 0) {
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     if (strcmp(out, "p=91") != 0) {
         fprintf(stderr, "FAIL: printf redirected output mismatch got '%s'\n", out);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
-    unlink(path);
+    cleanup_temp_path(path);
     return 0;
 }
 
@@ -281,7 +288,7 @@ static int test_dprintf_contracts(void) {
     int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
     if (fd < 0) {
         fprintf(stderr, "FAIL: open for dprintf: %s\n", strerror(errno));
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
@@ -289,23 +296,23 @@ static int test_dprintf_contracts(void) {
     if (rc != 10) {
         fprintf(stderr, "FAIL: dprintf length expected 10 got %d\n", rc);
         close(fd);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     close(fd);
 
     char out[32] = {0};
     if (read_file_exact(path, out, sizeof(out)) < 0) {
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     if (strcmp(out, "dprintf-77") != 0) {
         fprintf(stderr, "FAIL: dprintf output mismatch got '%s'\n", out);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
-    unlink(path);
+    cleanup_temp_path(path);
     return 0;
 }
 
@@ -318,7 +325,7 @@ static int test_vdprintf_contracts(void) {
     int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
     if (fd < 0) {
         fprintf(stderr, "FAIL: open for vdprintf: %s\n", strerror(errno));
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
@@ -326,23 +333,23 @@ static int test_vdprintf_contracts(void) {
     if (rc != 6) {
         fprintf(stderr, "FAIL: vdprintf length expected 6 got %d\n", rc);
         close(fd);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     close(fd);
 
     char out[32] = {0};
     if (read_file_exact(path, out, sizeof(out)) < 0) {
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
     if (strcmp(out, "vdp-66") != 0) {
         fprintf(stderr, "FAIL: vdprintf output mismatch got '%s'\n", out);
-        unlink(path);
+        cleanup_temp_path(path);
         return 1;
     }
 
-    unlink(path);
+    cleanup_temp_path(path);
     return 0;
 }
 

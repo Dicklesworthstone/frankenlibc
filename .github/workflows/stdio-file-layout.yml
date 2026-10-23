@@ -45,6 +45,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       RUST_BACKTRACE: 1
+      FRANKENLIBC_TEST_PRESERVE_FILES: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -87,6 +88,9 @@ jobs:
           if grep -Eq 'R_.*_COPY' artifacts/stdio-layout/lifetime-pic.relocations; then exit 1; fi
           library="$PWD/target/release/libfrankenlibc_abi.so"
           for model in copy pic; do
+            timeout 20 "target/stdio-lifetime-$model" "$library" host-flush \
+              > "artifacts/stdio-layout/lifetime-$model-host-flush.out" \
+              2> "artifacts/stdio-layout/lifetime-$model-host-flush.err"
             for mode in strict hardened; do
               FRANKENLIBC_MODE="$mode" timeout 20 "target/stdio-lifetime-$model" "$library" local \
                 > "artifacts/stdio-layout/lifetime-$model-$mode-local.out" \

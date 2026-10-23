@@ -15,8 +15,10 @@ static void fail(const char *message) {
     _exit(written < 0 ? 2 : 1);
 }
 
+#define STRINGIFY_INNER(value) #value
+#define STRINGIFY(value) STRINGIFY_INNER(value)
 #define CHECK(condition) do { \
-    if (!(condition)) fail("stdio-lifetime: " #condition "\n"); \
+    if (!(condition)) fail("stdio-lifetime:" STRINGIFY(__LINE__) ": " #condition "\n"); \
 } while (0)
 
 struct native_api {
@@ -133,7 +135,26 @@ static void exercise_native(struct native_api *api, int preload) {
     check_head(api, initial, preload);
     CHECK(error_len == 15 && memcmp(error_bytes, "native-error:19", 16) == 0);
     api->release(error_bytes);
-    CHECK(api->flush(NULL) == 0);
+}
+
+/* fflush(NULL) explicitly requests every output stream, including host-owned
+ * streams. Test that contract separately from preservation during dlclose. */
+static void check_flush_all(int (*flush)(FILE *)) {
+    FILE *host = tmpfile();
+    CHECK(host);
+    char buffering[128];
+    CHECK(setvbuf(host, buffering, _IOFBF, sizeof buffering) == 0);
+    const char pending[] = "explicit-flush";
+    for (size_t i = 0; i < sizeof pending - 1; ++i) CHECK(fputc(pending[i], host) != EOF);
+    int fd = fileno(host);
+    CHECK(lseek(fd, 0, SEEK_CUR) == 0);
+    CHECK(flush(NULL) == 0);
+    CHECK(lseek(fd, 0, SEEK_CUR) == (off_t)(sizeof pending - 1));
+    CHECK(fseek(host, 0, SEEK_SET) == 0);
+    char readback[sizeof pending] = {0};
+    CHECK(fread(readback, 1, sizeof pending - 1, host) == sizeof pending - 1);
+    CHECK(memcmp(readback, pending, sizeof pending) == 0);
+    CHECK(fclose(host) == 0);
 }
 
 static void check_host(FILE ***cells, FILE **values, FILE **saved) {
@@ -175,6 +196,15 @@ static void local_lifetime(const char *library) {
     char readback[sizeof pending] = {0};
     CHECK(fread(readback, 1, sizeof pending - 1, host) == sizeof pending - 1);
     CHECK(memcmp(readback, pending, sizeof pending) == 0);
+
+    /* A separate load proves that the native NULL-stream flush reaches a
+     * buffered host FILE, without confusing it with implicit lifetime effects. */
+    void *handle = dlopen(library, RTLD_NOW | RTLD_LOCAL);
+    CHECK(handle);
+    struct native_api api = native_api(handle);
+    check_flush_all(api.flush);
+    CHECK(dlclose(handle) == 0);
+    check_host(cells, values, saved);
     CHECK(fclose(host) == 0);
 }
 
@@ -191,6 +221,7 @@ static void preload_lifetime(const char *library) {
     CHECK(stdin == *api.cells[0] && stdout == *api.cells[1] && stderr == *api.cells[2]);
     check_head(&api, *api.list, 1);
     exercise_native(&api, 1);
+    CHECK(api.flush(NULL) == 0);
     CHECK(dlclose(handle) == 0);
 }
 
@@ -199,6 +230,7 @@ int main(int argc, char **argv) {
     alarm(15);
     if (strcmp(argv[2], "local") == 0) local_lifetime(argv[1]);
     else if (strcmp(argv[2], "preload") == 0) preload_lifetime(argv[1]);
+    else if (strcmp(argv[2], "host-flush") == 0) check_flush_all(fflush);
     else fail("stdio-lifetime: unknown deployment\n");
     CHECK(printf("stdio-lifetime:%s:PASS\n", argv[2]) > 0);
     CHECK(fprintf(stderr, "stdio-lifetime:%s:stderr-alive\n", argv[2]) > 0);
