@@ -15,6 +15,37 @@ use frankenlibc_abi::wchar_abi::*;
 /// poisoning this guard and taking every later test with it (bd-9ri7g1).
 static STDIO_GLOBAL_STREAM_LOCK: Mutex<()> = Mutex::new(());
 
+#[test]
+fn swprintf_unknown_conversions_keep_following_arguments_and_count() {
+    let fmt: Vec<libc::wchar_t> = "%*.*lQ:%d:%s:%.1f%n\0"
+        .chars()
+        .map(|c| c as i32)
+        .collect();
+    let mut buf = [0x5a_i32; 64];
+    let mut count = -77_i32;
+    let written = unsafe {
+        swprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            fmt.as_ptr(),
+            7_i32,
+            3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    let expected: Vec<i32> = "%7.3Q:701:tail:1.5\0"
+        .chars()
+        .map(|c| c as i32)
+        .collect();
+    assert_eq!(&buf[..expected.len()], expected);
+    assert!(buf[expected.len()..].iter().all(|&v| v == 0x5a));
+}
+
 struct StdioGlobalStreamGuard {
     _guard: MutexGuard<'static, ()>,
     old_stdin: *mut c_void,

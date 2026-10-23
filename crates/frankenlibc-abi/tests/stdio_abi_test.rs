@@ -1168,6 +1168,49 @@ fn snprintf_truncates_and_reports_full_length() {
 }
 
 #[test]
+fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
+    let mut buf = [0x5a_i8; 64];
+    let mut count = -77_i32;
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%0*.*lQ:%d:%s:%.1f%n".as_ptr(),
+            -7_i32,
+            -3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-07Q:701:tail:1.5"
+    );
+    assert!(buf[19..].iter().all(|&v| v == 0x5a));
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            5,
+            c"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n".as_ptr(),
+            7_i32,
+            3_i32,
+            701_i32,
+            c"tail".as_ptr(),
+            1.5_f64,
+            &mut count,
+        )
+    };
+    assert_eq!(written, 18);
+    assert_eq!(count, 18);
+    assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"%7.3");
+    assert_eq!(buf[5] as u8, b':');
+}
+
+#[test]
 fn snprintf_percent_m_formats_errno_message() {
     let mut buf = [0_i8; 64];
     unsafe {

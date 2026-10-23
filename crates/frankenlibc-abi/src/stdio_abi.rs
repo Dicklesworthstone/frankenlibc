@@ -7320,6 +7320,8 @@ pub(crate) unsafe fn render_segments(
 
                 if resolved_spec.is_literal_percent() {
                     buf.push(b'%');
+                } else if resolved_spec.is_unknown_conversion() {
+                    resolved_spec.render_unknown_conversion(&mut buf);
                 } else if resolved_spec.is_errno_message() {
                     // %m == strerror(errno). Use the shared renderer directly:
                     // it yields glibc's "Unknown error <N>" for unknown codes

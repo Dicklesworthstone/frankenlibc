@@ -518,6 +518,41 @@ impl FormatSpec {
         self.conversion == b'm'
     }
 
+    /// An unregistered conversion consumes its `*` operands, but no value.
+    pub fn is_unknown_conversion(&self) -> bool {
+        self.conversion != b'm' && self.route().is_none()
+    }
+
+    /// GNU prints an unknown directive in normalized form, with resolved
+    /// width/precision and without its length or positional markers. It does
+    /// not pad a value, and must not advance the value-argument cursor.
+    pub fn render_unknown_conversion(&self, buf: &mut Vec<u8>) {
+        buf.push(b'%');
+        for (enabled, byte) in [
+            (self.flags.alt_form, b'#'),
+            (self.flags.group, b'\''),
+            (self.flags.force_sign, b'+'),
+            (self.flags.space_sign, b' '),
+            (self.flags.left_justify, b'-'),
+            (self.flags.zero_pad, b'0'),
+        ] {
+            if enabled {
+                buf.push(byte);
+            }
+        }
+        let mut digits = [0u8; 64];
+        if let Width::Fixed(width) = self.width {
+            let n = render_decimal(width as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        if let Precision::Fixed(precision) = self.precision {
+            buf.push(b'.');
+            let n = render_decimal(precision as u64, &mut digits);
+            buf.push_bytes(&digits[64 - n..]);
+        }
+        buf.push(self.conversion);
+    }
+
     pub fn stores_count(&self) -> bool {
         self.route().is_some_and(PrintfRoute::is_store_count)
     }
@@ -1408,12 +1443,17 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
     let route = if conversion == b'm' {
         None
     } else {
-        let route = printf_route(conversion)?;
-        if !route.accepts_length(length) {
-            return None;
+        let route = printf_route(conversion);
+        if let Some(route) = route {
+            if !route.accepts_length(length) {
+                return None;
+            }
+            route.sanitize_flags(&mut flags);
         }
-        route.sanitize_flags(&mut flags);
-        Some(route)
+        // Preserve unknown directives too: their width and precision operands
+        // still consume arguments. Turning `%*Q` into a literal makes the next
+        // `%s` dereference the width as a pointer (bd-rc0923-epic-eeuy4f.33.3).
+        route
     };
 
     Some((
@@ -1513,8 +1553,9 @@ pub fn parse_format_string(fmt: &[u8]) -> FormatSegments<'_> {
             pos += consumed;
             segments.push(FormatSegment::Spec(spec));
         } else {
-            // Unknown conversion: emit the '%' as literal and continue, as
-            // glibc does (an EINVAL directive was recorded above).
+            // A known conversion with an unsupported length retains the
+            // existing literal fallback; malformed directives were flagged
+            // above. Unknown conversions are parsed specs, not this fallback.
             segments.push(FormatSegment::Literal(&fmt[pos - 1..pos]));
         }
     }
@@ -3800,6 +3841,55 @@ mod tests {
                 "{:?} must not be rejected",
                 String::from_utf8_lossy(fmt)
             );
+        }
+    }
+
+    #[test]
+    fn unknown_conversions_preserve_star_operands_without_a_value() {
+        let segments = parse_format_string(b"%*.*lQ:%d:%s:%.1f%n");
+        assert_eq!(count_printf_args_of(&segments), 6);
+        let FormatSegment::Spec(spec) = segments[0] else {
+            panic!("unknown conversion must remain a parsed directive");
+        };
+        assert!(spec.is_unknown_conversion());
+        assert_eq!(spec.width, Width::FromArg);
+        assert_eq!(spec.precision, Precision::FromArg);
+        assert_eq!(spec.length, LengthMod::L);
+        assert_eq!(spec.value_arg_kind(), None);
+        let positional = parse_format_string(b"%3$*1$.*2$Q:%3$d:%4$s:%5$.1f%6$n");
+        assert_eq!(count_printf_args_of(&positional), 6);
+        assert_eq!(
+            positional_printf_arg_plan(&positional).unwrap(),
+            vec![
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Gp,
+                ValueArgKind::Fp,
+                ValueArgKind::Gp,
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_conversions_render_normalized_flags_and_operands() {
+        for (fmt, expected) in [
+            (&b"# +0-'12.003Q"[..], &b"%#'+-12.3Q"[..]),
+            (b"hhQ", b"%Q"),
+            (b"LQ", b"%Q"),
+            (b"9.2Q", b"%9.2Q"),
+            (b"0Q", b"%0Q"),
+            (b".0Q", b"%.0Q"),
+        ] {
+            let (spec, consumed) = parse_format_spec(fmt).unwrap();
+            assert_eq!(consumed, fmt.len());
+            assert!(spec.is_unknown_conversion());
+            let mut buf = Vec::new();
+            spec.render_unknown_conversion(&mut buf);
+            assert_eq!(buf, expected);
+        }
+        for fmt in [b"d".as_slice(), b"s", b"m", b"%", b"Lf"] {
+            assert!(!parse_format_spec(fmt).unwrap().0.is_unknown_conversion());
         }
     }
 
