@@ -3700,6 +3700,93 @@ pub static mut stdout: *mut c_void = STDOUT_SENTINEL as *mut c_void;
 #[allow(non_upper_case_globals)]
 pub static mut stderr: *mut c_void = STDERR_SENTINEL as *mut c_void;
 
+// ELF data symbols remain interposable even with -Bsymbolic-functions. A
+// locally dlopened copy must initialize its own cells, not the host's cells
+// or an executable's COPY relocations. Keep the aliases beside the storage
+// definitions so they are emitted in the same assembler/codegen unit.
+#[cfg(not(debug_assertions))]
+core::arch::global_asm!(
+    ".globl __frankenlibc_stdin_storage",
+    ".hidden __frankenlibc_stdin_storage",
+    ".set __frankenlibc_stdin_storage, stdin",
+    ".globl __frankenlibc_stdout_storage",
+    ".hidden __frankenlibc_stdout_storage",
+    ".set __frankenlibc_stdout_storage, stdout",
+    ".globl __frankenlibc_stderr_storage",
+    ".hidden __frankenlibc_stderr_storage",
+    ".set __frankenlibc_stderr_storage, stderr",
+);
+
+#[cfg(not(debug_assertions))]
+unsafe extern "C" {
+    #[link_name = "__frankenlibc_stdin_storage"]
+    static mut OWNED_STDIN: *mut c_void;
+    #[link_name = "__frankenlibc_stdout_storage"]
+    static mut OWNED_STDOUT: *mut c_void;
+    #[link_name = "__frankenlibc_stderr_storage"]
+    static mut OWNED_STDERR: *mut c_void;
+}
+
+#[inline]
+fn owned_stdio_cell(fd: c_int) -> *mut *mut c_void {
+    #[cfg(debug_assertions)]
+    let cells = [
+        core::ptr::addr_of_mut!(stdin),
+        core::ptr::addr_of_mut!(stdout),
+        core::ptr::addr_of_mut!(stderr),
+    ];
+    #[cfg(not(debug_assertions))]
+    let cells = [
+        core::ptr::addr_of_mut!(OWNED_STDIN),
+        core::ptr::addr_of_mut!(OWNED_STDOUT),
+        core::ptr::addr_of_mut!(OWNED_STDERR),
+    ];
+    cells[fd as usize]
+}
+
+/// True only when the native stdio functions own process-wide lookup. A
+/// different address for the visible stdout DATA cell is not sufficient:
+/// ordinary host executables also have COPY relocations for that cell.
+#[inline]
+#[allow(clippy::needless_return)]
+pub(crate) fn stdio_symbols_are_interposed() -> bool {
+    #[cfg(feature = "standalone")]
+    {
+        return true;
+    }
+    #[cfg(all(not(feature = "standalone"), debug_assertions))]
+    {
+        // Debug rlibs do not export the libc symbol names.
+        return false;
+    }
+    #[cfg(all(not(feature = "standalone"), not(debug_assertions)))]
+    {
+        // No TLS or allocation is needed here, including before runtime_ready.
+        // The constructor must publish real COPY-cell FILE pointers immediately.
+        static OWNERSHIP: AtomicUsize = AtomicUsize::new(0);
+        match OWNERSHIP.load(Ordering::Acquire) {
+            1 => return true,
+            2 => return false,
+            _ => {}
+        }
+        type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
+        let interposed =
+            crate::host_resolve::resolve_host_symbol_raw("dlsym").is_some_and(|address| {
+                // SAFETY: the raw resolver identifies the host's dlsym. Function
+                // addresses in this DSO bind locally under -Bsymbolic-functions.
+                let lookup: DlsymFn = unsafe { core::mem::transmute(address) };
+                unsafe {
+                    lookup(std::ptr::null_mut(), c"fopen".as_ptr())
+                        == fopen as *const () as *mut c_void
+                        || lookup(std::ptr::null_mut(), c"printf".as_ptr())
+                            == printf as *const () as *mut c_void
+                }
+            });
+        OWNERSHIP.store(if interposed { 1 } else { 2 }, Ordering::Release);
+        interposed
+    }
+}
+
 // glibc internal `_IO_2_1_{stdin,stdout,stderr}_` mirrors.
 //
 // These names are not pointer cells in glibc; they are the actual `_IO_FILE_plus`
@@ -3757,25 +3844,39 @@ pub(crate) const fn stdin_stream_id() -> usize {
 
 #[inline]
 pub(crate) fn active_stdout_stream() -> *mut c_void {
-    // SAFETY: reading the exported `stdout` global is required to keep
-    // output helpers coherent with later `fflush(stdout)` and redirection.
-    unsafe {
-        if stdout.is_null() {
-            io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO)
-        } else {
-            stdout
-        }
-    }
+    active_standard_stream(libc::STDOUT_FILENO)
 }
 
 #[inline]
 pub(crate) fn active_stdin_stream() -> *mut c_void {
-    unsafe {
-        if stdin.is_null() {
-            io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO)
+    active_standard_stream(libc::STDIN_FILENO)
+}
+
+#[inline]
+pub(crate) fn active_stderr_stream() -> *mut c_void {
+    active_standard_stream(libc::STDERR_FILENO)
+}
+
+#[inline]
+fn active_standard_stream(fd: c_int) -> *mut c_void {
+    // In an interpose deployment, the program may reassign a COPY-relocated
+    // stdout/stdin/stderr cell after startup. Respect that visible cell. A
+    // locally loaded DSO instead uses its own public FILE objects throughout.
+    let stream = unsafe {
+        if stdio_symbols_are_interposed() {
+            match fd {
+                libc::STDIN_FILENO => stdin,
+                libc::STDOUT_FILENO => stdout,
+                _ => stderr,
+            }
         } else {
-            stdin
+            owned_stdio_cell(fd).read()
         }
+    };
+    if stream.is_null() {
+        io_internal_abi::native_stdio_stream_ptr(fd)
+    } else {
+        stream
     }
 }
 
@@ -3786,6 +3887,9 @@ unsafe fn sync_copy_relocated_stdio_symbol(
     owned_cell: *mut *mut c_void,
     value: *mut c_void,
 ) {
+    if !stdio_symbols_are_interposed() {
+        return;
+    }
     type DlsymFn = unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_void;
 
     let Some(addr) = crate::host_resolve::resolve_host_symbol_raw("dlsym") else {
@@ -3825,19 +3929,28 @@ pub(crate) fn init_host_stdio_streams() {
 
     #[cfg(not(feature = "standalone"))]
     {
+        let interposed = stdio_symbols_are_interposed();
         ensure_host_libio_exit_safe();
 
         #[cfg(not(debug_assertions))]
-        let can_sync_copy_relocations = runtime_policy::is_runtime_ready()
+        let can_sync_copy_relocations = interposed
+            && runtime_policy::is_runtime_ready()
             && !HOST_STDIO_COPY_RELOCATIONS_SYNCED.load(Ordering::Acquire);
         let stdin_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDIN_FILENO);
         let stdout_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDOUT_FILENO);
         let stderr_ptr = io_internal_abi::native_stdio_stream_ptr(libc::STDERR_FILENO);
         if !stdin_ptr.is_null() && !stdout_ptr.is_null() && !stderr_ptr.is_null() {
             unsafe {
-                stdin = stdin_ptr;
-                stdout = stdout_ptr;
-                stderr = stderr_ptr;
+                owned_stdio_cell(libc::STDIN_FILENO).write(stdin_ptr);
+                owned_stdio_cell(libc::STDOUT_FILENO).write(stdout_ptr);
+                owned_stdio_cell(libc::STDERR_FILENO).write(stderr_ptr);
+                if interposed {
+                    // Preserve initial COPY relocation publication even when
+                    // this constructor runs before signal_runtime_ready().
+                    stdin = stdin_ptr;
+                    stdout = stdout_ptr;
+                    stderr = stderr_ptr;
+                }
                 #[cfg(debug_assertions)]
                 {
                     IO_2_1_STDIN = stdin_ptr;
@@ -3849,17 +3962,17 @@ pub(crate) fn init_host_stdio_streams() {
                     if can_sync_copy_relocations {
                         sync_copy_relocated_stdio_symbol(
                             c"stdin",
-                            core::ptr::addr_of_mut!(stdin),
+                            owned_stdio_cell(libc::STDIN_FILENO),
                             stdin_ptr,
                         );
                         sync_copy_relocated_stdio_symbol(
                             c"stdout",
-                            core::ptr::addr_of_mut!(stdout),
+                            owned_stdio_cell(libc::STDOUT_FILENO),
                             stdout_ptr,
                         );
                         sync_copy_relocated_stdio_symbol(
                             c"stderr",
-                            core::ptr::addr_of_mut!(stderr),
+                            owned_stdio_cell(libc::STDERR_FILENO),
                             stderr_ptr,
                         );
                         HOST_STDIO_COPY_RELOCATIONS_SYNCED.store(true, Ordering::Release);
