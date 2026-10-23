@@ -212,12 +212,12 @@ static int invoke_printf(const char *name, FILE *stream, obstack *stack,
   using VDPrint = int (*)(int, const char *, va_list);
   using APrint = int (*)(char **, const char *, ...);
   using VAPrint = int (*)(char **, const char *, va_list);
-  if (IS("printf")) return CALL(Print, fmt, 42);
+  if (IS("printf") || IS("_IO_printf")) return CALL(Print, fmt, 42);
   if (IS("vprintf")) return CALL(VPrint, fmt, ap);
-  if (IS("fprintf")) return CALL(FPrint, stream, fmt, 42);
-  if (IS("vfprintf")) return CALL(VFPrint, stream, fmt, ap);
-  if (IS("sprintf")) return CALL(SPrint, buffer, fmt, 42);
-  if (IS("vsprintf")) return CALL(VSPrint, buffer, fmt, ap);
+  if (IS("fprintf") || IS("_IO_fprintf")) return CALL(FPrint, stream, fmt, 42);
+  if (IS("vfprintf") || IS("_IO_vfprintf")) return CALL(VFPrint, stream, fmt, ap);
+  if (IS("sprintf") || IS("_IO_sprintf")) return CALL(SPrint, buffer, fmt, 42);
+  if (IS("vsprintf") || IS("_IO_vsprintf")) return CALL(VSPrint, buffer, fmt, ap);
   if (IS("snprintf")) return CALL(SNPrint, buffer, sizeof buffer, fmt, 42);
   if (IS("vsnprintf") || IS("__vsnprintf")) return CALL(VSNPrint, buffer, sizeof buffer, fmt, ap);
   if (IS("dprintf")) return CALL(DPrint, fileno(stream), fmt, 42);

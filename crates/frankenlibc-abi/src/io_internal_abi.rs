@@ -3305,19 +3305,27 @@ pub unsafe extern "C" fn _IO_flush_all_linebuffered() {
 
 /// `_IO_fprintf` — internal fprintf (variadic, forwards to _IO_vfprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_fprintf(fp: *mut c_void, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_fprintf(
+    fp: *mut c_void,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vfprintf(fp, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_printf` — internal printf (variadic, forwards to _IO_vfprintf on stdout).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_printf(fmt: *const c_char, mut args: ...) -> c_int {
     unsafe { stdio_abi::vprintf(fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
 /// `_IO_sprintf` — internal sprintf (variadic, forwards to _IO_vsprintf).
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_sprintf(buf: *mut c_char, fmt: *const c_char, mut args: ...) -> c_int {
+pub unsafe extern "C-unwind" fn _IO_sprintf(
+    buf: *mut c_char,
+    fmt: *const c_char,
+    mut args: ...
+) -> c_int {
     unsafe { stdio_abi::vsprintf(buf, fmt, (&mut args) as *mut _ as *mut c_void) }
 }
 
@@ -3912,7 +3920,7 @@ pub unsafe extern "C" fn _IO_switch_to_wget_mode(fp: *mut c_void) -> c_int {
 
 /// `_IO_vfprintf` — internal vfprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vfprintf(
+pub unsafe extern "C-unwind" fn _IO_vfprintf(
     fp: *mut c_void,
     fmt: *const c_char,
     ap: *mut c_void,
@@ -3941,7 +3949,7 @@ pub unsafe extern "C" fn _IO_vfscanf(
 
 /// `_IO_vsprintf` — internal vsprintf.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn _IO_vsprintf(
+pub unsafe extern "C-unwind" fn _IO_vsprintf(
     buf: *mut c_char,
     fmt: *const c_char,
     ap: *mut c_void,
