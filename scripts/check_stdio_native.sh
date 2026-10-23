@@ -214,7 +214,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-register gnu-register-wide; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-unknown-registered gnu-register gnu-register-wide; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -224,7 +224,7 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: empty GNU oracle for ${scenario}" >&2
     exit 1
   fi
-  if [[ "${scenario}" == gnu-unknown && "${rows}" -ne 3000 ]]; then
+  if [[ "${scenario}" == gnu-unknown* && "${rows}" -ne 3000 ]]; then
     echo "FAIL: incomplete unknown-conversion oracle (${rows}/3000 rows)" >&2
     exit 1
   fi

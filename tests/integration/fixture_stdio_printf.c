@@ -1216,6 +1216,13 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();
     if (argc == 2 && strcmp(argv[1], "--gnu-errors") == 0) return gnu_size_errors();
     if (argc == 2 && strcmp(argv[1], "--gnu-unknown") == 0) return gnu_unknown_conversions();
+    if (argc == 2 && strcmp(argv[1], "--gnu-unknown-registered") == 0) {
+        if (check_gnu_provider("register_printf_specifier")) return 1;
+        /* Allocating GNU's registration tables changes its formatting route,
+         * even though this conversion remains unregistered. Exercise both. */
+        if (register_printf_specifier('Q', NULL, NULL) != 0) return 1;
+        return gnu_unknown_conversions();
+    }
     if (argc == 2 && strcmp(argv[1], "--gnu-rounding") == 0) {
         int rc = gnu_extended_rounding();
         return rc ? rc : gnu_rounding_threads(0);

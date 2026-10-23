@@ -7414,42 +7414,21 @@ fn extension_invalid_native_pointer(
     (!valid).then_some(pointer)
 }
 
-fn extension_unknown_conversion(info: &PrintfInfo, wide: bool) -> Vec<u8> {
-    let mut output = vec![b'%'];
-    if info.flags & (1 << 3) != 0 {
-        output.push(b'#');
-    }
-    if info.flags & (1 << 7) != 0 {
-        output.push(b'\'');
-    }
-    if info.flags & (1 << 6) != 0 {
-        output.push(b'+');
-    } else if info.flags & (1 << 4) != 0 {
-        output.push(b' ');
-    }
-    if info.flags & (1 << 5) != 0 {
-        output.push(b'-');
-    }
-    if info.pad == b'0' as libc::wchar_t {
-        output.push(b'0');
-    }
-    if info.flags & (1 << 11) != 0 {
-        output.push(b'I');
-    }
-    if info.width != 0 {
-        output.extend_from_slice(info.width.to_string().as_bytes());
-    }
-    if info.precision >= 0 {
-        output.push(b'.');
-        output.extend_from_slice(info.precision.to_string().as_bytes());
-    }
-    if wide {
+fn extension_unknown_conversion(spec: &FormatSpec, info: &PrintfInfo, wide: bool) -> Vec<u8> {
+    // Keep both argument walkers on the same GNU spelling, including a
+    // negative star width's zero flag and INT_MIN's unsigned-long value.
+    let mut output = Vec::new();
+    let mut normalized = *spec;
+    normalized.flags.space_sign &= !normalized.flags.force_sign;
+    normalized.render_unknown_conversion(&mut output);
+    if wide && u8::try_from(info.spec).is_err() {
+        // The shared core renders byte conversions. A genuinely wide unknown
+        // specifier replaces that last byte with its original UTF-8 spelling.
+        output.pop();
         if let Some(ch) = char::from_u32(info.spec as u32) {
             let mut encoded = [0; 4];
             output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
         }
-    } else {
-        output.push(info.spec as u8);
     }
     output
 }
@@ -7514,14 +7493,22 @@ unsafe fn extension_format_stream(
                 unsafe { extension_write(stream, literal, wide) }?
             }
             ExtensionSegment::Spec(mut spec) => {
+                let unregistered = spec.native.is_unknown_conversion()
+                    && !spec.conversion.is_some_and(|c| c.render != 0);
                 if let Some(index) = spec.width_arg {
                     let width = args[index].bits as c_int;
                     if width < 0 {
-                        spec.info.width = width.checked_abs().ok_or(errno::EOVERFLOW)?;
+                        spec.info.width = if unregistered {
+                            width.wrapping_neg()
+                        } else {
+                            width.checked_abs().ok_or(errno::EOVERFLOW)?
+                        };
                         spec.info.flags |= 1 << 5;
-                        spec.info.pad = b' ' as libc::wchar_t;
                         spec.native.flags.left_justify = true;
-                        spec.native.flags.zero_pad = false;
+                        if !unregistered {
+                            spec.info.pad = b' ' as libc::wchar_t;
+                            spec.native.flags.zero_pad = false;
+                        }
                     } else {
                         spec.info.width = width;
                     }
@@ -7529,7 +7516,7 @@ unsafe fn extension_format_stream(
                 if let Some(index) = spec.precision_arg {
                     spec.info.precision = (args[index].bits as c_int).max(-1);
                 }
-                spec.native.width = Width::Fixed(spec.info.width as usize);
+                spec.native.width = Width::Fixed(spec.info.width as isize as usize);
                 spec.native.precision = if spec.info.precision >= 0 {
                     Precision::Fixed(spec.info.precision as usize)
                 } else {
@@ -7591,7 +7578,8 @@ unsafe fn extension_format_stream(
                         {
                             // GNU prints the resolved flags, width and precision
                             // for unknown conversions, omitting length modifiers.
-                            let spelling = extension_unknown_conversion(&spec.info, wide);
+                            let spelling =
+                                extension_unknown_conversion(&spec.native, &spec.info, wide);
                             unsafe { extension_write(stream, &spelling, wide) }?
                         } else if spec.native.is_errno_message() {
                             // Every %m in one call uses errno from function entry,
