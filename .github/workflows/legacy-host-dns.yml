@@ -8,7 +8,9 @@ on:
       - 'crates/frankenlibc-core/src/resolv/**'
       - 'crates/frankenlibc-core/src/dns_transport.rs'
       - 'crates/frankenlibc-core/src/addrinfo.rs'
+      - 'crates/frankenlibc-core/src/addrinfo/**'
       - 'tests/conformance/legacy_dns_fixture.c'
+      - 'tests/integration/fixture_nss_module_lib.c'
       - '.github/workflows/legacy-host-dns.yml'
       - 'Cargo.toml'
       - 'rust-toolchain.toml'
@@ -41,6 +43,18 @@ jobs:
           sudo "$RUNNER_TEMP/legacy-dns" reverse
       - name: Build actual release ABI
         run: cargo build --release -p frankenlibc-abi --lib --keep-going
+      - name: NSS module host ABI regression tests
+        shell: bash
+        env:
+          CARGO_INCREMENTAL: '0'
+          CARGO_PROFILE_DEV_DEBUG: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: |
+          set -euo pipefail
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test --locked -p frankenlibc-abi --test nss_module_test --no-fail-fast hosts_modules_ -- --test-threads=1 --nocapture 2>&1 | tee "$RUNNER_TEMP/nss-hosts-$mode.log"
+            grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$RUNNER_TEMP/nss-hosts-$mode.log"
+          done
       - name: Exercise native forward and reverse lookups in both modes
         run: |
           set -euo pipefail
