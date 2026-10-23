@@ -42,7 +42,7 @@ jobs:
           import pathlib, subprocess
           root = pathlib.Path('artifacts/rpc'); root.mkdir(parents=True, exist_ok=True)
           failures = []
-          for selector, count in [('rpc::', 51), ('stdio::file::tests::', 43)]:
+          for selector, count in [('rpc::', 58), ('stdio::file::tests::', 43)]:
               run = subprocess.run(['cargo', 'test', '-p', 'frankenlibc-core', '--lib', selector,
                   '--', '--nocapture', '--test-threads=1'], stdout=subprocess.PIPE,
                   stderr=subprocess.STDOUT, timeout=900)
@@ -53,6 +53,8 @@ jobs:
                   failures.append(selector)
               if selector == 'rpc::' and text.count('test rpc::wire::portmap::tests::') != 5:
                   failures.append('missing bounded portmapper decoder tests')
+              if selector == 'rpc::' and text.count('test rpc::secret::tests::') != 7:
+                  failures.append('missing secret-key decryption tests')
           assert not failures, failures
           PY
       - name: Execute actual UDP client ABI and XDR regressions

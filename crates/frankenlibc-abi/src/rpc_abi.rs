@@ -3426,18 +3426,121 @@ pub unsafe extern "C" fn getpublickey(netname: *const c_char, publickey: *mut c_
     1
 }
 
-/// Get the secret key for a netname from the publickey database.
-/// Returns 0 (failure): encrypted secret-key decryption is not implemented.
+/// Import a bounded Secure RPC input without dereferencing caller storage.
+unsafe fn rpc_secret_string(source: *const c_char, maximum: usize) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    for index in 0..=maximum {
+        let Some(address) = (source as usize).checked_add(index) else {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EFAULT) };
+            return None;
+        };
+        let mut byte = 0u8;
+        // SAFETY: the byte destination is private; the copier checks each
+        // source address and never reads beyond a discovered terminator.
+        if !unsafe { rpc_des_copy(address as *const u8, &mut byte, 1) } {
+            return None;
+        }
+        if byte == 0 {
+            return Some(value);
+        }
+        if index == maximum {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::EINVAL) };
+            return None;
+        }
+        if value.try_reserve(1).is_err() {
+            // SAFETY: errno belongs to the calling thread.
+            unsafe { set_abi_errno(libc::ENOMEM) };
+            return None;
+        }
+        value.push(byte);
+    }
+    None
+}
+
+/// Get a classic secret key through the publickey NSS database. Native files
+/// decrypt and verify the stored checksum; configured GNU modules receive the
+/// complete password through their public four-argument entry point.
+///
+/// A found key with a wrong password returns 1 and publishes an empty string.
+/// A missing key or failed source returns 0 without publishing partial output.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname/passwd are readable C strings. secretkey is writable for 49 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn getsecretkey(
-    _netname: *const c_char,
-    _secretkey: *mut c_char,
-    _passwd: *const c_char,
+    netname: *const c_char,
+    secretkey: *mut c_char,
+    passwd: *const c_char,
 ) -> c_int {
-    0 // Not found
+    use frankenlibc_core::crypt::des::RpcDesError;
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    use frankenlibc_core::rpc::secret::{SecretKey, decrypt_secret, lookup_encrypted_secret};
+
+    if secretkey.is_null()
+        || known_remaining(secretkey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        // SAFETY: errno belongs to the calling thread.
+        unsafe { set_abi_errno(libc::EFAULT) };
+        return 0;
+    }
+    // SAFETY: inputs are only addresses for the fault-checked importer. The
+    // native name limit is 255; the password bound matches NSS scratch limits.
+    let Some(name) = (unsafe { rpc_secret_string(netname, 255) }) else {
+        return 0;
+    };
+    if name.is_empty() {
+        return 0;
+    }
+    let Some(password) = (unsafe { rpc_secret_string(passwd, 1 << 24) }) else {
+        return 0;
+    };
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() != b"files" {
+                return crate::nss_module::getsecretkey(service.name(), &name, &password);
+            }
+            match rpc_identity_file(c"/etc/publickey", |image| {
+                lookup_encrypted_secret(image, &name)
+            }) {
+                Answer::Found(encrypted) => match decrypt_secret(&encrypted, &password) {
+                    Ok(secret) => Answer::Found(secret),
+                    Err(RpcDesError::Allocation) => {
+                        // SAFETY: errno belongs to the calling thread.
+                        unsafe { set_abi_errno(libc::ENOMEM) };
+                        Answer::TryAgain(libc::ENOMEM)
+                    }
+                    Err(RpcDesError::BadLength) => Answer::NotFound,
+                },
+                Answer::NotFound => Answer::NotFound,
+                Answer::Unavailable(error) => Answer::Unavailable(error),
+                Answer::TryAgain(error) => Answer::TryAgain(error),
+                Answer::BufferTooSmall => Answer::BufferTooSmall,
+            }
+        },
+        None,
+    );
+    let Answer::Found(secret) = answer else {
+        return 0;
+    };
+    let mut output = [0u8; PUBLICKEY_HEX_BYTES + 1];
+    let length = match secret {
+        SecretKey::Key(key) => {
+            output[..PUBLICKEY_HEX_BYTES].copy_from_slice(&key);
+            output.len()
+        }
+        // Only this byte changes on a wrong password, preserving the public
+        // distinction between a missing key and a found but unusable key.
+        SecretKey::WrongPassword => 1,
+    };
+    // SAFETY: only initialized private bytes are published; the shared copier
+    // checks tracked allocation bounds and actual writable kernel mappings.
+    c_int::from(unsafe { rpc_des_copy(output.as_ptr(), secretkey.cast(), length) })
 }
 
 /// Get the port number for an RPC program on a remote host.
