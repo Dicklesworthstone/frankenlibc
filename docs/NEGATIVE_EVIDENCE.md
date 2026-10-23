@@ -42063,4 +42063,80 @@ establish the original throughput targets or integrated L1 readiness.
   corpus script `173077e6561d4d49658611b73aca603c734378673ff169c8b38b79c5c13da494`.
   This entry serves .9's unchanged acceptance review and retires as active
   evidence when its next bound qualification supersedes it; history remains.
+- **INLINE EXPERIMENT: DISCARD.** Four experimental lines added cross-crate
+  inline hints to the unchanged bounds-healing decision and global-policy
+  accessor. A fresh explicit Linux release artifact was actually compiled:
+  SHA-256 `a57bc2d79097c2c1c4594e9967da1625acdec1e75e0d945ea39d8acfa016ad9a`,
+  bound to base `4ed4f55dac1ad8adb9c3c3c813f1bf64811af570` plus six-file overlay
+  `1a8ce601c5e87694c01da36f5e2d6e71335347a20677db2e7bd126eab81da860`.
+  Both incumbent and candidate ELF compiler comments identify Rust
+  `1.100.0-nightly (908501772 2026-08-30)`; no compiler mismatch is inferred
+  from a worker's ambient toolchain listing. The actual existing Cargo caller
+  then compiled for 13m46s and executed **1,430 rows**, five live arms,
+  nine measured rounds and both warmups. It propagated failure, exit 1.
+  Against live default986 incumbent, hardened lexical was 292.393/298.058 ms
+  (-1.90%); numeric was 674.823/629.296 ms (**+7.23%**). Several other case
+  medians regressed >5%. High host load and dispersion prevent a general or
+  causal performance claim; this mixed result fails the predeclared keep
+  criterion. Original limits also still fail: lexical **3.397x GNU / 3.127x
+  strict**, numeric **2.189x strict**, and multiple short-call maxima >200 ns.
+  The four experimental lines were manually removed, preserving commit
+  `50589d03c`, the artifact and every raw row. `heal.rs` is again byte-identical
+  to base4ed (SHA-256 `5908b4b4e602c83d23c21e1c1d837964e8a840c7858db87e7066a384cb0289d7`).
+  No runtime performance improvement from this continuation is retained.
+  Report `artifacts/inline-ab/benchmark.json` SHA-256
+  `2d84dad1677834a415f56ad0fddad53009d24d8d017a319c643142f5eb8ab0a1`.
+  The new artifact separately passed **98/98 actual deployed fault cases**
+  with provider rejection, report `artifacts/inline-safety/results.json`
+  SHA-256 `9666aa731603d7379c7c1de66067c623199cf21300f83847253e3adcece2e511`.
+  Its complete membrane unit suite compiled and ran **1,466 passed, 0 failed,
+  0 ignored, 0 filtered out**. Those facts do not turn the losing timing result
+  into a win or identify that rejected artifact as the retained runtime.
+- **STATIC SCOPE.** Hint-source six-file overlay1a8 passed workspace
+  `cargo check --workspace --all-targets --keep-going`, exit 0. After the
+  bench's one-line working-directory correction, six-file overlay
+  `dbb90516c41b215bdceffcdd389da212ea3eac9636ba2ebe01bbc62bbbbe1a02`
+  completed workspace Clippy with `--all-targets --keep-going -- -D warnings`,
+  exit 101: exactly **27 baseline diagnostic occurrences / 17 distinct
+  title-file pairs**, zero added/removed. Formatting actually executed,
+  exit 1: exactly **583 baseline diff bodies**, zero added/removed. These
+  remain red. Current bench SHA-256
+  `680cb2e943e3a64bd62a01c568b84bbe281a338541f629bd9bce76fe75056ec2`;
+  actual relative-path Cargo invocation, including its two frozen ELF data
+  overlays, was bound to overlay
+  `1bf30467cb500901cb784bf6b430740c49390f434795126d4e87682f98b40175`.
+  The hint removal restores previously checked baseline runtime bytes; it
+  does not produce a new qualified release artifact. README documents the
+  exercised commands and uses `--keep-going` for workspace compile/lint checks.
+  The cwd-corrected overlaydbb workspace check subsequently completed **exit 0**
+  on vmi1167313 (1,744.0 seconds overall). It compiled the source cut with the
+  experimental hints; the later four-line removal restores base4ed's exact
+  runtime bytes and is not presented as a second full workspace execution.
+  CI already used `--keep-going` for compiler checks but omitted it for Clippy;
+  that two-line command/label omission is now corrected without changing failure
+  handling. `bash -n scripts/ci.sh scripts/ld_preload_smoke.sh` passed syntax
+  inspection; the full CI script itself was not executed. The completed
+  workspace Clippy command above actually exercised the stronger target-wide
+  flag and still failed on the unchanged baseline diagnostics.
+- **FAILED ATTEMPTS AND COST.** Avoidable qualification churn consumed too much
+  time: incompatible RCH flags, omitted ignored lockfile, initial oversized
+  arbitrary-job core estimates, implicit Apple target for a Linux artifact,
+  and my absent USB output destination. The corrected explicit Linux compile
+  exited 0, but its overall delivery exited **102**. Frozen artifact bytes
+  were independently copied and hashed; this is not a green delivery pipeline.
+  Exact retrieval receipt `rchw-c5265ef8-42f6-48c8-9337-9aa52a018005` remains
+  unacknowledged after supported recovery failed on that destination. No
+  daemon restart, journal rewrite, lock clearing, pressure override or foreign
+  artifact bypass was used. Source-ownership refusals executed zero tests;
+  private clean-snapshot Cargo execution supplied the actual A/B instead.
+  The queued hz2 safety request `rchw-aa9eedd5-bac2-4a66-9d56-472f3b90f867`
+  was cancelled **before start**, exit 130, zero slots, terminal acknowledged;
+  only then did the freed vmi1156319 execute the native gate successfully.
+  No started test or healthy compile was cancelled. A formatting admission
+  timeout also executed zero cases; the later executed result above is separate.
+  Full real-work and twenty-point honesty worksheets are filled in .9's
+  comments. Verdict **DRIFTING**: connected enforcement is an exercised enabler,
+  while retry churn and audit prose earn no runtime capability credit. Work
+  was solo; no independent verifier or broad performance/safety/release win
+  is claimed. Original .9 acceptance and the owned-TLS performance gap stay open.
 

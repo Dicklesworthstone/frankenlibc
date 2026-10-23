@@ -964,8 +964,8 @@ LD_PRELOAD="$PWD/target/release/libfrankenlibc_abi.so" /bin/ls
 ### 5. Run the default repo gates
 
 ```bash
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
+cargo check --workspace --all-targets --keep-going
+cargo clippy --workspace --all-targets --keep-going -- -D warnings
 cargo test --workspace
 ```
 
@@ -977,6 +977,25 @@ bash scripts/check_c_fixture_suite.sh
 TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 ```
 
+The smoke script also enforces deployed hardened overhead: separate short
+`strlen`/`memcmp` stack and heap cases must stay within 200 ns per warmed batch
+mean, and both lexical and numeric sort100k must stay within 3x GNU libc and
+2x strict mode. Run only that performance group with
+`bash scripts/ld_preload_smoke.sh --performance-only`; this scoped invocation
+does not run the functional corpus. The same provider-pinned group is available
+through the existing bench entrypoint:
+
+```bash
+cargo bench -p frankenlibc-bench --bench strict_hardened_overhead_harness -- \
+  --deployed "$PWD/target/release/libfrankenlibc_abi.so"
+```
+
+Add `--incumbent /absolute/path/to/earlier.so` to retain a live comparison arm.
+The runner retains raw warmups, measured rows, provider checks and hashes; it
+returns nonzero on a missed budget or failed setup. Each benchmark output
+directory must be empty so a new run cannot overwrite earlier evidence. Set
+`FRANKENLIBC_OVERHEAD_HARNESS_OUT_DIR` to a fresh directory for each Cargo run.
+
 ---
 
 ## Common Commands
@@ -984,8 +1003,8 @@ TIMEOUT_SECONDS=10 bash scripts/ld_preload_smoke.sh
 | Workflow | Command | What it does |
 |---|---|---|
 | Build interpose library | `cargo build -p frankenlibc-abi --release` | Produces `libfrankenlibc_abi.so` |
-| Workspace correctness gate | `cargo check --workspace --all-targets` | Compile validation |
-| Lint gate | `cargo clippy --workspace --all-targets -- -D warnings` | Lint validation |
+| Workspace correctness gate | `cargo check --workspace --all-targets --keep-going` | Compile validation across targets |
+| Lint gate | `cargo clippy --workspace --all-targets --keep-going -- -D warnings` | Lint validation across targets |
 | Test gate | `cargo test --workspace` | Unit + integration coverage |
 | Repo CI gate | `bash scripts/ci.sh` | Project-standard default gate |
 | Support-matrix drift check | `bash scripts/check_support_matrix_maintenance.sh` | Regenerates and validates maintenance report |
@@ -2281,8 +2300,8 @@ Run the curated preload smoke battery: `TIMEOUT_SECONDS=10 bash scripts/ld_prelo
 The default gate is `bash scripts/ci.sh`, which runs:
 
 1. `cargo fmt --check`
-2. `cargo check --workspace --all-targets`
-3. `cargo clippy --workspace --all-targets -- -D warnings`
+2. `cargo check --workspace --all-targets --keep-going`
+3. `cargo clippy --workspace --all-targets --keep-going -- -D warnings`
 4. `cargo test --workspace`
 5. Repo-standard drift checks (`scripts/check_*.sh` for support-matrix, runtime env, claim fields)
 

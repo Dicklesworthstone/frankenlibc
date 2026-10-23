@@ -132,8 +132,8 @@ bash scripts/check_abi_bench_feature_build.sh
 echo "PASS"
 echo ""
 
-echo "--- cargo clippy --workspace --all-targets -- -D warnings ---"
-run_remote_cargo clippy --workspace --all-targets -- -D warnings
+echo "--- cargo clippy --workspace --all-targets --keep-going -- -D warnings ---"
+run_remote_cargo clippy --workspace --all-targets --keep-going -- -D warnings
 echo "PASS"
 echo ""
 
