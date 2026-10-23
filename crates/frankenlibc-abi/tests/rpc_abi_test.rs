@@ -2,7 +2,7 @@
 
 //! Integration tests for RPC ABI entrypoints (nativized symbols).
 //!
-//! Tests cover: DES crypto stubs, thread-local RPC state, key server stubs,
+//! Tests cover: native DES crypto, thread-local RPC state, key server stubs,
 //! netname conversion functions, RPC error strings, and utility functions.
 
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
@@ -11,7 +11,8 @@ use frankenlibc_abi::malloc_abi::{free, malloc};
 use frankenlibc_abi::rpc_abi::*;
 
 // ---- DES crypto error code ----
-const DESERR_NOHWDEVICE: c_int = 4;
+const DESERR_NOHWDEVICE: c_int = 1;
+const DESERR_BADPARAM: c_int = 3;
 
 unsafe fn malloc_unterminated(bytes: &[u8]) -> *mut c_char {
     let ptr = unsafe { malloc(bytes.len()).cast::<c_char>() };
@@ -64,65 +65,197 @@ fn unsupported_rpc_status_apis_return_failure_not_success() {
 }
 
 // ===========================================================================
-// DES crypto stubs
+// Native DES crypto
 // ===========================================================================
 
 #[test]
-fn des_cbc_crypt_returns_nohwdevice() {
-    let mut key = [0u8; 8];
-    let mut buf = [0u8; 8];
-    let mut ivec = [0u8; 8];
+fn des_cbc_crypt_uses_software_fallback_and_updates_iv() {
+    let mut key: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+    let mut buf = *b"Now is the time for all ";
+    let original = buf;
+    let initial_iv: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef];
+    let mut ivec = initial_iv;
     let rc = unsafe {
         cbc_crypt(
             key.as_mut_ptr().cast(),
             buf.as_mut_ptr().cast(),
-            8,
-            0, // DES_ENCRYPT
+            buf.len() as u32,
+            0, // DES_ENCRYPT | DES_HW
             ivec.as_mut_ptr().cast(),
         )
     };
     assert_eq!(rc, DESERR_NOHWDEVICE);
+    assert_eq!(
+        buf,
+        [
+            0xe5, 0xc7, 0xcd, 0xde, 0x87, 0x2b, 0xf2, 0x7c, 0x43, 0xe9, 0x34, 0x00, 0x8c, 0x38,
+            0x9c, 0x0f, 0x68, 0x37, 0x88, 0x49, 0x9a, 0x7c, 0x05, 0xf6
+        ]
+    );
+    assert_eq!(ivec, buf[16..]);
+    let final_iv = ivec;
+    ivec = initial_iv;
+    let rc = unsafe {
+        cbc_crypt(
+            key.as_mut_ptr().cast(),
+            buf.as_mut_ptr().cast(),
+            buf.len() as u32,
+            3,
+            ivec.as_mut_ptr().cast(),
+        )
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(buf, original);
+    assert_eq!(ivec, final_iv);
 }
 
 #[test]
-fn des_ecb_crypt_returns_nohwdevice() {
-    let mut key = [0u8; 8];
-    let mut buf = [0u8; 8];
+fn des_ecb_crypt_matches_fips_vector() {
+    let mut key: [u8; 8] = [0x13, 0x34, 0x57, 0x79, 0x9b, 0xbc, 0xdf, 0xf1];
+    let mut buf: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+    let original = buf;
     let rc = unsafe { ecb_crypt(key.as_mut_ptr().cast(), buf.as_mut_ptr().cast(), 8, 0) };
     assert_eq!(rc, DESERR_NOHWDEVICE);
+    assert_eq!(buf, [0x85, 0xe8, 0x13, 0x54, 0x0f, 0x0a, 0xb4, 0x05]);
+    let rc = unsafe { ecb_crypt(key.as_mut_ptr().cast(), buf.as_mut_ptr().cast(), 8, 3) };
+    assert_eq!(rc, 0);
+    assert_eq!(buf, original);
 }
 
 #[test]
-fn des_setparity_is_noop() {
-    let mut key = [0x55u8; 8];
-    let before = key;
+fn des_setparity_matches_seven_bit_legacy_table() {
+    let mut key: [u8; 8] = [0x80, 0xff, 0xfe, 0x7f, 0, 1, 2, 3];
     unsafe { des_setparity(key.as_mut_ptr().cast()) };
-    // No-op: key should be unchanged (we don't modify it)
-    assert_eq!(key, before);
+    assert_eq!(key, [1, 0x7f, 0x7f, 0x7f, 1, 1, 2, 2]);
 }
 
 #[test]
-fn xencrypt_returns_failure() {
-    let mut secret = [0u8; 64];
-    let mut passwd = [0u8; 64];
+fn xencrypt_and_xdecrypt_match_gnu_secret_vector() {
+    let mut secret = *b"00112233445566778899aabbccddeeff\0";
+    let original = secret;
+    let mut passwd = *b"password"; // All eight bytes are consumed; no NUL is required.
     let rc = unsafe { xencrypt(secret.as_mut_ptr().cast(), passwd.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0, "xencrypt should fail (no DES support)");
-}
-
-#[test]
-fn xdecrypt_returns_failure() {
-    let mut secret = [0u8; 64];
-    let mut passwd = [0u8; 64];
+    assert_eq!(rc, 1);
+    assert_eq!(&secret, b"2ab97b02016d8e2d3ec03d15e13881d6\0");
     let rc = unsafe { xdecrypt(secret.as_mut_ptr().cast(), passwd.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0, "xdecrypt should fail (no DES support)");
+    assert_eq!(rc, 1);
+    assert_eq!(secret, original);
 }
 
 #[test]
-fn passwd2des_returns_failure() {
-    let mut passwd = [0u8; 64];
+fn des_hex_empty_odd_and_invalid_lengths_match_legacy_contract() {
+    let mut passwd = *b"password";
+    for transform in [xencrypt, xdecrypt] {
+        let mut empty = [0u8, 0xa5];
+        assert_eq!(
+            unsafe { transform(empty.as_mut_ptr().cast(), passwd.as_mut_ptr().cast()) },
+            1
+        );
+        assert_eq!(empty, [0, 0xa5]);
+        let mut invalid = *b"00\0!";
+        assert_eq!(
+            unsafe { transform(invalid.as_mut_ptr().cast(), passwd.as_mut_ptr().cast()) },
+            0
+        );
+        assert_eq!(&invalid, b"00\0!");
+    }
+    let mut odd = *b"00112233445566778\0!";
+    assert_eq!(
+        unsafe { xencrypt(odd.as_mut_ptr().cast(), passwd.as_mut_ptr().cast()) },
+        1
+    );
+    assert_eq!(&odd, b"2ab97b02016d8e2d\0\0!");
+}
+
+#[test]
+fn passwd2des_has_void_abi_and_consumes_at_most_eight_bytes() {
+    let mut passwd = *b"123456789\0";
     let mut key = [0u8; 8];
-    let rc = unsafe { passwd2des(passwd.as_mut_ptr().cast(), key.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0, "passwd2des should fail (no DES support)");
+    let transform: unsafe extern "C" fn(*mut c_char, *mut c_char) = passwd2des;
+    unsafe { transform(passwd.as_mut_ptr().cast(), key.as_mut_ptr().cast()) };
+    assert_eq!(key, [0x62, 0x64, 0x67, 0x68, 0x6b, 0x6d, 0x6e, 0x70]);
+}
+
+#[test]
+fn des_invalid_lengths_and_faults_preserve_outputs() {
+    let mut key = [0u8; 8];
+    let mut buf = [0x5au8; 16];
+    let mut iv = [0xa5u8; 8];
+    for length in [1, 7, 9, 8193, u32::MAX] {
+        assert_eq!(
+            unsafe {
+                cbc_crypt(
+                    key.as_mut_ptr().cast(),
+                    buf.as_mut_ptr().cast(),
+                    length,
+                    2,
+                    iv.as_mut_ptr().cast(),
+                )
+            },
+            DESERR_BADPARAM
+        );
+        assert_eq!(buf, [0x5a; 16]);
+        assert_eq!(iv, [0xa5; 8]);
+    }
+    assert_eq!(
+        unsafe {
+            cbc_crypt(
+                std::ptr::null_mut(),
+                buf.as_mut_ptr().cast(),
+                8,
+                2,
+                iv.as_mut_ptr().cast(),
+            )
+        },
+        DESERR_BADPARAM
+    );
+    assert_eq!(
+        unsafe {
+            cbc_crypt(
+                key.as_mut_ptr().cast(),
+                buf.as_mut_ptr().cast(),
+                8,
+                2,
+                std::ptr::null_mut(),
+            )
+        },
+        DESERR_BADPARAM
+    );
+    assert_eq!(buf, [0x5a; 16]);
+    assert_eq!(iv, [0xa5; 8]);
+    let mut secret = *b"0011223344556677\0";
+    assert_eq!(
+        unsafe { xencrypt(secret.as_mut_ptr().cast(), std::ptr::null_mut()) },
+        0
+    );
+    assert_eq!(&secret, b"0011223344556677\0");
+}
+
+#[test]
+fn des_tracked_short_buffers_fail_without_mutation() {
+    let key = unsafe { malloc_unterminated(b"password") };
+    let short = unsafe { malloc_unterminated(&[0x5a; 7]) };
+    let mut iv = [0xa5u8; 8];
+    assert_eq!(
+        unsafe { cbc_crypt(key, short, 8, 2, iv.as_mut_ptr().cast()) },
+        DESERR_BADPARAM
+    );
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(short.cast::<u8>(), 7) },
+        &[0x5a; 7]
+    );
+    assert_eq!(iv, [0xa5; 8]);
+    let secret = unsafe { malloc_unterminated(b"0011223344556677") };
+    assert_eq!(unsafe { xencrypt(secret, key) }, 0);
+    assert_eq!(
+        unsafe { std::slice::from_raw_parts(secret.cast::<u8>(), 16) },
+        b"0011223344556677"
+    );
+    unsafe {
+        free(secret.cast());
+        free(short.cast());
+        free(key.cast());
+    }
 }
 
 // ===========================================================================

@@ -206,6 +206,123 @@ fn encrypt_block(block: u64, subkeys: &[u64; 16], expansion: &[u8; 48]) -> u64 {
     permute((right << 32) | left, 64, &FP)
 }
 
+/// Maximum bytes accepted by the historical Sun RPC DES interfaces.
+pub const RPC_DES_MAX_DATA: usize = 8192;
+
+/// Errors detected before publishing a transformed RPC secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RpcDesError {
+    BadLength,
+    Allocation,
+}
+
+/// Unsalted DES for the legacy Sun RPC ECB and CBC interfaces.
+///
+/// The same FIPS round engine serves crypt(3), with its unmodified expansion
+/// table and reversed subkeys for decryption. CBC consumes and updates the
+/// chaining vector; no padding is inserted. Invalid lengths change nothing.
+pub fn rpc_des_crypt(
+    key: &[u8; 8],
+    data: &mut [u8],
+    decrypt: bool,
+    iv: Option<&mut [u8; 8]>,
+) -> Result<(), RpcDesError> {
+    if data.len() > RPC_DES_MAX_DATA || !data.len().is_multiple_of(8) {
+        return Err(RpcDesError::BadLength);
+    }
+    let mut subkeys = key_schedule(u64::from_be_bytes(*key));
+    if decrypt {
+        subkeys.reverse();
+    }
+    let chained = iv.is_some();
+    let mut previous = iv.as_ref().map_or(0, |value| u64::from_be_bytes(**value));
+    for bytes in data.chunks_exact_mut(8) {
+        let input = u64::from_be_bytes(bytes.try_into().expect("eight-byte DES block"));
+        let output = if decrypt {
+            let plain = encrypt_block(input, &subkeys, &E);
+            if chained { plain ^ previous } else { plain }
+        } else {
+            encrypt_block(if chained { input ^ previous } else { input }, &subkeys, &E)
+        };
+        bytes.copy_from_slice(&output.to_be_bytes());
+        previous = if decrypt { input } else { output };
+    }
+    if let Some(iv) = iv {
+        // The GNU legacy implementation initializes its last-ciphertext slot
+        // to zero. Even an empty decryption therefore clears the caller's IV.
+        *iv = if decrypt && data.is_empty() {
+            [0; 8]
+        } else {
+            previous.to_be_bytes()
+        };
+    }
+    Ok(())
+}
+
+/// GNU/Sun's seven-bit odd-parity table, including clearing the high bit.
+pub fn rpc_des_setparity(key: &mut [u8; 8]) {
+    for byte in key {
+        let value = *byte & 0x7e;
+        *byte = value | u8::from(value.count_ones().is_multiple_of(2));
+    }
+}
+
+/// Derive the legacy RPC DES key from at most eight password bytes.
+pub fn rpc_passwd2des(password: &[u8]) -> [u8; 8] {
+    let mut key = [0; 8];
+    for (destination, byte) in key.iter_mut().zip(password.iter().copied()) {
+        if byte == 0 {
+            break;
+        }
+        *destination = byte.wrapping_shl(1);
+    }
+    rpc_des_setparity(&mut key);
+    key
+}
+
+/// The measured legacy hex reader accepts all ASCII letters, and uses -1 for
+/// other bytes. Its wrapping/or behavior is retained rather than imposing a
+/// different text grammar on existing encrypted key databases.
+fn rpc_hex_digit(byte: u8) -> u8 {
+    match byte {
+        b'0'..=b'9' => byte - b'0',
+        b'A'..=b'Z' => byte - b'A' + 10,
+        b'a'..=b'z' => byte - b'a' + 10,
+        _ => u8::MAX,
+    }
+}
+
+/// Transform a hexadecimal RPC secret using password-derived DES CBC.
+///
+/// Returns the number of output hex bytes, excluding the terminating NUL that
+/// the ABI publishes. GNU discards an odd final nibble. Allocation and length
+/// failures leave the caller's bytes unchanged.
+pub fn rpc_des_hex_crypt(
+    secret: &mut [u8],
+    password: &[u8],
+    decrypt: bool,
+) -> Result<usize, RpcDesError> {
+    let length = secret.len() / 2;
+    if length > RPC_DES_MAX_DATA || !length.is_multiple_of(8) {
+        return Err(RpcDesError::BadLength);
+    }
+    let mut binary = Vec::new();
+    binary
+        .try_reserve_exact(length)
+        .map_err(|_| RpcDesError::Allocation)?;
+    for pair in secret.chunks_exact(2) {
+        binary.push(rpc_hex_digit(pair[0]).wrapping_shl(4) | rpc_hex_digit(pair[1]));
+    }
+    let key = rpc_passwd2des(password);
+    rpc_des_crypt(&key, &mut binary, decrypt, Some(&mut [0; 8]))?;
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for (pair, byte) in secret.chunks_exact_mut(2).zip(binary) {
+        pair[0] = HEX[(byte >> 4) as usize];
+        pair[1] = HEX[(byte & 15) as usize];
+    }
+    Ok(length * 2)
+}
+
 /// Hash `key` under a traditional DES `setting`, returning the 13-byte result.
 ///
 /// Returns `None` for any setting the incumbent rejects, which the caller turns
@@ -388,6 +505,130 @@ pub fn bsdi_crypt(key: &[u8], setting: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rpc_des_fips_vector_encrypts_and_decrypts() {
+        let key = 0x1334_5779_9bbc_dff1u64.to_be_bytes();
+        let plaintext = 0x0123_4567_89ab_cdefu64.to_be_bytes();
+        let mut data = plaintext;
+        assert_eq!(rpc_des_crypt(&key, &mut data, false, None), Ok(()));
+        assert_eq!(data, 0x85e8_1354_0f0a_b405u64.to_be_bytes());
+        assert_eq!(rpc_des_crypt(&key, &mut data, true, None), Ok(()));
+        assert_eq!(data, plaintext);
+    }
+
+    #[test]
+    fn rpc_des_cbc_preserves_chaining_and_empty_decrypt_contract() {
+        let key = 0x0123_4567_89ab_cdefu64.to_be_bytes();
+        let initial_iv = 0x1234_5678_90ab_cdefu64.to_be_bytes();
+        let mut data = *b"Now is the time for all ";
+        let plaintext = data;
+        let mut iv = initial_iv;
+        assert_eq!(rpc_des_crypt(&key, &mut data, false, Some(&mut iv)), Ok(()));
+        assert_eq!(
+            data,
+            [
+                0xe5, 0xc7, 0xcd, 0xde, 0x87, 0x2b, 0xf2, 0x7c, 0x43, 0xe9, 0x34, 0x00, 0x8c, 0x38,
+                0x9c, 0x0f, 0x68, 0x37, 0x88, 0x49, 0x9a, 0x7c, 0x05, 0xf6,
+            ]
+        );
+        assert_eq!(iv, data[16..]);
+        let mut chunked = plaintext;
+        let mut chaining = initial_iv;
+        for block in chunked.chunks_exact_mut(8) {
+            rpc_des_crypt(&key, block, false, Some(&mut chaining)).unwrap();
+        }
+        assert_eq!(chunked, data);
+        assert_eq!(chaining, iv);
+        iv = initial_iv;
+        for block in data.chunks_exact_mut(8) {
+            rpc_des_crypt(&key, block, true, Some(&mut iv)).unwrap();
+        }
+        assert_eq!(data, plaintext);
+        assert_eq!(iv, chaining);
+        iv = initial_iv;
+        rpc_des_crypt(&key, &mut [], false, Some(&mut iv)).unwrap();
+        assert_eq!(iv, initial_iv);
+        rpc_des_crypt(&key, &mut [], true, Some(&mut iv)).unwrap();
+        assert_eq!(iv, [0; 8]);
+    }
+
+    #[test]
+    fn rpc_des_invalid_lengths_leave_all_outputs_unchanged() {
+        for length in [1, 7, 9, RPC_DES_MAX_DATA + 8] {
+            let mut data = vec![0x5a; length];
+            let original = data.clone();
+            let mut iv = [0x77; 8];
+            for decrypt in [false, true] {
+                assert_eq!(
+                    rpc_des_crypt(&[0; 8], &mut data, decrypt, Some(&mut iv)),
+                    Err(RpcDesError::BadLength)
+                );
+                assert_eq!(data, original);
+                assert_eq!(iv, [0x77; 8]);
+            }
+        }
+        let mut data = vec![0; RPC_DES_MAX_DATA];
+        rpc_des_crypt(&[0; 8], &mut data, false, None).unwrap();
+        rpc_des_crypt(&[0; 8], &mut data, true, None).unwrap();
+        assert_eq!(data, vec![0; RPC_DES_MAX_DATA]);
+    }
+
+    #[test]
+    fn rpc_des_parity_and_password_match_legacy_bytes() {
+        for byte in 0..=255u8 {
+            let mut key = [byte; 8];
+            rpc_des_setparity(&mut key);
+            for value in key {
+                assert_eq!(value & 0x7e, byte & 0x7e);
+                assert_eq!(value & 0x80, 0);
+                assert_eq!(value.count_ones() % 2, 1);
+            }
+        }
+        assert_eq!(
+            rpc_passwd2des(b"password"),
+            [0x61, 0x43, 0x67, 0x67, 0x6e, 0x5e, 0x64, 0x49]
+        );
+        assert_eq!(
+            rpc_passwd2des(b"123456789"),
+            [0x62, 0x64, 0x67, 0x68, 0x6b, 0x6d, 0x6e, 0x70]
+        );
+        assert_eq!(rpc_passwd2des(b"\0ignored"), [1; 8]);
+        assert_eq!(
+            rpc_passwd2des(&[0x80, 0xff, 0xfe, 0x7f, 1, 2, 3, 4]),
+            [1, 0x7f, 0x7c, 0x7f, 2, 4, 7, 8]
+        );
+    }
+
+    #[test]
+    fn rpc_des_hex_matches_gnu_vectors_and_legacy_text() {
+        let mut data = *b"00112233445566778899aabbccddeeff";
+        assert_eq!(rpc_des_hex_crypt(&mut data, b"password", false), Ok(32));
+        assert_eq!(&data, b"2ab97b02016d8e2d3ec03d15e13881d6");
+        rpc_des_hex_crypt(&mut data, b"password", true).unwrap();
+        assert_eq!(&data, b"00112233445566778899aabbccddeeff");
+        let mut odd = *b"00112233445566778";
+        assert_eq!(rpc_des_hex_crypt(&mut odd, b"password", false), Ok(16));
+        assert_eq!(&odd[..16], b"2ab97b02016d8e2d");
+        for (prefix, expected) in [
+            (b"g0", b"00"),
+            (b"0g", b"10"),
+            (b"?0", b"f0"),
+            (b"0?", b"ff"),
+        ] {
+            let mut value = *b"0011223344556677";
+            value[..2].copy_from_slice(prefix);
+            rpc_des_hex_crypt(&mut value, b"password", false).unwrap();
+            rpc_des_hex_crypt(&mut value, b"password", true).unwrap();
+            assert_eq!(&value[..2], expected);
+        }
+        let mut invalid = *b"00";
+        assert_eq!(
+            rpc_des_hex_crypt(&mut invalid, b"password", false),
+            Err(RpcDesError::BadLength)
+        );
+        assert_eq!(&invalid, b"00");
+    }
 
     /// Transcription check on the tables themselves, which needs no oracle and
     /// catches the failure this module is most exposed to: a single wrong digit
