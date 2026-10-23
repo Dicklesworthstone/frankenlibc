@@ -357,11 +357,12 @@ fn getrpcport_returns_zero() {
 // ===========================================================================
 
 #[test]
-fn getpublickey_returns_not_found() {
-    let name = CString::new("unix.0@localhost").unwrap();
-    let mut buf = [0u8; 256];
+fn getpublickey_missing_identity_preserves_output() {
+    let name = CString::new("unix.0@frankenlibc-unmapped.invalid").unwrap();
+    let mut buf = [0xa5u8; 49];
     let rc = unsafe { getpublickey(name.as_ptr(), buf.as_mut_ptr().cast()) };
-    assert_eq!(rc, 0, "No publickey database");
+    assert_eq!(rc, 0);
+    assert_eq!(buf, [0xa5; 49]);
 }
 
 #[test]
@@ -392,7 +393,11 @@ fn host2netname_writes_the_callers_character_buffer() {
     let mut name = [0xa5u8; 258];
     // SAFETY: the destination has the public 256-byte capacity.
     let rc = unsafe {
-        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+        host2netname(
+            name.as_mut_ptr().add(1).cast(),
+            host.as_ptr(),
+            domain.as_ptr(),
+        )
     };
     assert_eq!(rc, 1);
     assert_netname_output(&name, b"unix.myhost@example.com");
@@ -404,7 +409,11 @@ fn host2netname_uses_the_hostname_suffix_for_a_null_domain() {
     let mut name = [0xa5u8; 258];
     // SAFETY: valid input string and caller-owned 256-byte output.
     let rc = unsafe {
-        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), std::ptr::null())
+        host2netname(
+            name.as_mut_ptr().add(1).cast(),
+            host.as_ptr(),
+            std::ptr::null(),
+        )
     };
     assert_eq!(rc, 1);
     assert_netname_output(&name, b"unix.myhost@example.com");
@@ -417,7 +426,11 @@ fn host2netname_preserves_non_utf8_bytes() {
     let mut name = [0xa5u8; 258];
     // SAFETY: C strings may contain arbitrary non-NUL bytes.
     let rc = unsafe {
-        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+        host2netname(
+            name.as_mut_ptr().add(1).cast(),
+            host.as_ptr(),
+            domain.as_ptr(),
+        )
     };
     assert_eq!(rc, 1);
     assert_netname_output(&name, b"unix.node\xff@domain\xfe");
@@ -430,7 +443,11 @@ fn host2netname_rejects_an_empty_domain_and_clears_only_the_first_byte() {
     let mut name = [0xa5u8; 258];
     // SAFETY: valid input strings and a 256-byte caller-owned output.
     let rc = unsafe {
-        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+        host2netname(
+            name.as_mut_ptr().add(1).cast(),
+            host.as_ptr(),
+            domain.as_ptr(),
+        )
     };
     assert_eq!(rc, 0);
     assert_eq!(name[0], 0xa5);
@@ -439,17 +456,13 @@ fn host2netname_rejects_an_empty_domain_and_clears_only_the_first_byte() {
 }
 
 #[test]
-fn netname2host_parses_correctly() {
-    let netname = CString::new("unix.myhost@example.com").unwrap();
-    let mut hostname = [0u8; 256];
+fn netname2host_does_not_invent_a_mapping_for_a_remote_domain() {
+    let netname = CString::new("unix.myhost@frankenlibc-unmapped.invalid").unwrap();
+    let mut hostname = [0xa5u8; 256];
 
     let rc = unsafe { netname2host(netname.as_ptr(), hostname.as_mut_ptr().cast(), 256) };
-    assert_eq!(rc, 1);
-
-    let s = unsafe { CStr::from_ptr(hostname.as_ptr().cast()) }
-        .to_str()
-        .unwrap();
-    assert_eq!(s, "myhost");
+    assert_eq!(rc, 0);
+    assert_eq!(hostname, [0xa5; 256]);
 }
 
 #[test]
@@ -461,11 +474,11 @@ fn netname2host_rejects_invalid() {
 }
 
 #[test]
-fn netname2user_parses_uid() {
-    let netname = CString::new("unix.1000@localhost").unwrap();
-    let mut uid: libc::uid_t = 0;
-    let mut gid: libc::gid_t = 0;
-    let mut gidlen: c_int = 0;
+fn netname2user_requires_an_authoritative_mapping() {
+    let netname = CString::new("unix.1000@frankenlibc-unmapped.invalid").unwrap();
+    let mut uid: libc::uid_t = 17;
+    let mut gid: libc::gid_t = 19;
+    let mut gidlen: c_int = 23;
 
     let rc = unsafe {
         netname2user(
@@ -476,14 +489,12 @@ fn netname2user_parses_uid() {
             std::ptr::null_mut(),
         )
     };
-    assert_eq!(rc, 1);
-    assert_eq!(uid, 1000);
-    assert_eq!(gid, 1000); // default: gid = uid
-    assert_eq!(gidlen, 0);
+    assert_eq!(rc, 0);
+    assert_eq!((uid, gid, gidlen), (17, 19, 23));
 }
 
 #[test]
-fn netname2user_preserves_adjacent_uid_and_gid_storage() {
+fn netname2user_missing_identity_preserves_adjacent_storage() {
     #[repr(C)]
     struct Outputs {
         uid: libc::uid_t,
@@ -501,7 +512,7 @@ fn netname2user_preserves_adjacent_uid_and_gid_storage() {
         count: 23,
         count_guard: 0x1357_9bdf,
     };
-    let name = CString::new("unix.4294967295@example.com").unwrap();
+    let name = CString::new("unix.4294967295@frankenlibc-unmapped.invalid").unwrap();
     // SAFETY: each output points to exactly the public C type's storage.
     let rc = unsafe {
         netname2user(
@@ -512,19 +523,17 @@ fn netname2user_preserves_adjacent_uid_and_gid_storage() {
             std::ptr::null_mut(),
         )
     };
-    assert_eq!(rc, 1);
-    assert_eq!(out.uid, libc::uid_t::MAX);
-    assert_eq!(out.gid, libc::gid_t::MAX);
-    assert_eq!(out.count, 0);
+    assert_eq!(rc, 0);
+    assert_eq!((out.uid, out.gid, out.count), (17, 19, 23));
     assert_eq!(out.uid_guard, 0x1234_5678);
     assert_eq!(out.gid_guard, 0x9abc_def0);
     assert_eq!(out.count_guard, 0x1357_9bdf);
 }
 
 #[test]
-fn netname2user_rejects_uid_overflow_without_writing_outputs() {
+fn netname2user_does_not_derive_credentials_from_unmapped_numeric_names() {
     for identity in ["4294967296", "18446744073709551615", "-1"] {
-        let name = CString::new(format!("unix.{identity}@example.com")).unwrap();
+        let name = CString::new(format!("unix.{identity}@frankenlibc-unmapped.invalid")).unwrap();
         let mut uid: libc::uid_t = 17;
         let mut gid: libc::gid_t = 19;
         let mut count: c_int = 23;
@@ -539,7 +548,7 @@ fn netname2user_rejects_uid_overflow_without_writing_outputs() {
                 groups.as_mut_ptr(),
             )
         };
-        assert_eq!(rc, 0, "unrepresentable identity {identity}");
+        assert_eq!(rc, 0, "unmapped identity {identity}");
         assert_eq!((uid, gid, count, groups), (17, 19, 23, [29, 31]));
     }
 }
@@ -555,9 +564,7 @@ fn user2netname_writes_the_callers_buffer_and_formats_signed_uid_bits() {
     ] {
         let mut name = [0xa5u8; 258];
         // SAFETY: uid uses the public uid_t type and output has 256 bytes.
-        let rc = unsafe {
-            user2netname(name.as_mut_ptr().add(1).cast(), uid, domain.as_ptr())
-        };
+        let rc = unsafe { user2netname(name.as_mut_ptr().add(1).cast(), uid, domain.as_ptr()) };
         assert_eq!(rc, 1);
         assert_netname_output(&name, expected.as_bytes());
     }
@@ -571,9 +578,7 @@ fn user2netname_rejects_an_overlong_domain_without_touching_the_buffer() {
         let domain = CString::new(bytes).unwrap();
         let mut name = [0xa5u8; 258];
         // SAFETY: valid input string and a 256-byte caller-owned output.
-        let rc = unsafe {
-            user2netname(name.as_mut_ptr().add(1).cast(), 42, domain.as_ptr())
-        };
+        let rc = unsafe { user2netname(name.as_mut_ptr().add(1).cast(), 42, domain.as_ptr()) };
         assert_eq!(rc, 0);
         assert_eq!(name, [0xa5; 258]);
     }

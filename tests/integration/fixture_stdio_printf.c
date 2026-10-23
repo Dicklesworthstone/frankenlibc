@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <float.h>
 #include <limits.h>
+#include <stdint.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
@@ -856,7 +857,361 @@ static int gnu_unknown_conversions(void) {
     return 0;
 }
 
+/* Registration is exercised in fresh processes so GNU's global registry cannot
+ * contaminate unrelated oracles. Callbacks deliberately call printf again: a
+ * lock held over either callback would deadlock rather than merely misformat. */
+#define REG_CHECK(expr) do { if (!(expr)) { \
+    fprintf(stderr, "registration failure at line %i: %s\n", __LINE__, #expr); \
+    _Exit(91); \
+} } while (0)
+
+struct reg_pair { int number; double real; };
+static int reg_pair_type;
+static int reg_info_width, reg_info_precision;
+
+static int reg_noargs(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info; (void)n; (void)types; (void)sizes;
+    return 0;
+}
+
+static int reg_letter(FILE *stream, const struct printf_info *info, const void *const *args) {
+    (void)args;
+    return info->wide ? (fputwc(L'K', stream) == WEOF ? -1 : 1)
+                      : (fputc('K', stream) == EOF ? -1 : 1);
+}
+
+static int reg_reenter(FILE *stream, const struct printf_info *info, const void *const *args) {
+    (void)args;
+    REG_CHECK(register_printf_specifier('K', reg_letter, reg_noargs) == 0);
+    const char *fmt = "R%K";
+    const wchar_t *wfmt = L"R%K";
+    return info->wide ? fwprintf(stream, wfmt, 0) : fprintf(stream, fmt, 0);
+}
+
+static int reg_two_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    reg_info_width = info->width;
+    reg_info_precision = info->prec;
+    if (n > 0) { types[0] = PA_INT; if (sizes) sizes[0] = sizeof(int); }
+    if (n > 1) { types[1] = PA_STRING; if (sizes) sizes[1] = sizeof(char *); }
+    return 2;
+}
+
+static int reg_two(FILE *stream, const struct printf_info *info, const void *const *args) {
+    int number = *(const int *)args[0];
+    const char *text = *(const char *const *)args[1];
+    unsigned flags = info->alt | (info->space << 1) | (info->left << 2) |
+        (info->showsign << 3) | (info->group << 4) | (info->is_char << 5) |
+        (info->is_short << 6) | (info->is_long << 7) |
+        (info->is_long_double << 8) | (info->i18n << 9);
+    return info->wide
+        ? fwprintf(stream, L"Q{%i,%hs,%i,%i,%u,%u,%i}", number, text,
+                   info->width, info->prec, (unsigned)info->user, flags, (int)info->pad)
+        : fprintf(stream, "Q{%i,%s,%i,%i,%u,%u,%i}", number, text,
+                  info->width, info->prec, (unsigned)info->user, flags, (int)info->pad);
+}
+
+static int reg_legacy_info(const struct printf_info *info, size_t n, int *types) {
+    (void)info;
+    if (n) types[0] = PA_INT;
+    return 1;
+}
+
+static int reg_legacy(FILE *stream, const struct printf_info *info, const void *const *args) {
+    return info->wide ? fwprintf(stream, L"Y{%i}", *(const int *)args[0])
+                      : fprintf(stream, "Y{%i}", *(const int *)args[0]);
+}
+
+static void reg_pair_read(void *memory, va_list *ap) {
+    *(struct reg_pair *)memory = va_arg(*ap, struct reg_pair);
+}
+
+static int reg_pair_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info;
+    if (n) { types[0] = reg_pair_type; if (sizes) sizes[0] = sizeof(struct reg_pair); }
+    return 1;
+}
+
+static int reg_pair_print(FILE *stream, const struct printf_info *info, const void *const *args) {
+    const struct reg_pair *value = *(const struct reg_pair *const *)args[0];
+    return info->wide ? fwprintf(stream, L"T{%i,%.2f}", value->number, value->real)
+                      : fprintf(stream, "T{%i,%.2f}", value->number, value->real);
+}
+
+static int reg_float_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    (void)info;
+    if (n) { types[0] = PA_FLOAT; if (sizes) sizes[0] = sizeof(double); }
+    return 1;
+}
+
+static int reg_float_print(FILE *stream, const struct printf_info *info, const void *const *args) {
+    double value = *(const double *)args[0];
+    return info->wide ? fwprintf(stream, L"U{%.3f}", value)
+                      : fprintf(stream, "U{%.3f}", value);
+}
+
+static int reg_d_info(const struct printf_info *info, size_t n, int *types, int *sizes) {
+    if (info->is_long || info->is_long_double) return -1;
+    if (n) { types[0] = PA_INT; if (sizes) sizes[0] = sizeof(int); }
+    return 1;
+}
+
+static int reg_d_print(FILE *stream, const struct printf_info *info, const void *const *args) {
+    if (info->is_long || info->is_long_double) return -2;
+    int value = *(const int *)args[0];
+    if (value == 42) return -2;
+    return info->wide ? fwprintf(stream, L"D{%i}", value)
+                      : fprintf(stream, "D{%i}", value);
+}
+
+static int reg_errno_print(FILE *stream, const struct printf_info *info, const void *const *args) {
+    int rc = reg_letter(stream, info, args);
+    errno = EINVAL;
+    return rc;
+}
+
+static int reg_error(FILE *stream, const struct printf_info *info, const void *const *args) {
+    (void)stream; (void)info; (void)args;
+    errno = EIO;
+    return -1;
+}
+
+static void reg_row(const char *label, int rc, int count, const char *buffer, size_t n) {
+    static const char digits[] = "0123456789abcdef";
+    char hex[2049];
+    REG_CHECK(n <= 1024);
+    for (size_t i = 0; i < n; ++i) {
+        hex[2 * i] = digits[(unsigned char)buffer[i] >> 4];
+        hex[2 * i + 1] = digits[(unsigned char)buffer[i] & 15];
+    }
+    hex[2 * n] = 0;
+    printf("reg:%s:%i:%i:%s\n", label, rc, count, hex);
+}
+
+static void reg_wrow(const char *label, int rc, int count, const wchar_t *buffer) {
+    char bytes[1024];
+    size_t n = wcslen(buffer);
+    REG_CHECK(n < sizeof bytes);
+    for (size_t i = 0; i < n; ++i) {
+        REG_CHECK(buffer[i] >= 0 && buffer[i] < 128);
+        bytes[i] = (char)buffer[i];
+    }
+    reg_row(label, rc, count, bytes, n);
+}
+
+static void reg_setup(void) {
+    static const char *providers[] = {
+        "register_printf_specifier", "register_printf_function", "register_printf_type",
+        "register_printf_modifier", "parse_printf_format", "printf", "vprintf", "fprintf",
+        "vfprintf", "snprintf", "vsnprintf", "sprintf", "vsprintf", "asprintf", "vasprintf",
+        "dprintf", "vdprintf", "swprintf", "vswprintf", "fwprintf", "vfwprintf", "wprintf", "vwprintf"
+    };
+    for (size_t i = 0; i < sizeof providers / sizeof providers[0]; ++i)
+        REG_CHECK(check_gnu_provider(providers[i]) == 0);
+    reg_pair_type = register_printf_type(reg_pair_read);
+    REG_CHECK(reg_pair_type >= PA_LAST);
+    REG_CHECK(register_printf_specifier('Q', reg_two, reg_two_info) == 0);
+    int (*legacy)(int, printf_function *, printf_arginfo_function *) =
+        (int (*)(int, printf_function *, printf_arginfo_function *))dlsym(RTLD_DEFAULT, "register_printf_function");
+    REG_CHECK(legacy && legacy('Y', reg_legacy, reg_legacy_info) == 0);
+    REG_CHECK(register_printf_specifier('T', reg_pair_print, reg_pair_info) == 0);
+    REG_CHECK(register_printf_specifier('U', reg_float_print, reg_float_info) == 0);
+    REG_CHECK(register_printf_specifier('R', reg_reenter, reg_noargs) == 0);
+    REG_CHECK(register_printf_specifier(0xe9, reg_letter, reg_noargs) == 0);
+}
+
+static int reg_vprintf(const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int rc = vprintf(fmt, ap); va_end(ap); return rc;
+}
+static int reg_vfwprintf(FILE *stream, const wchar_t *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int rc = vfwprintf(stream, fmt, ap); va_end(ap); return rc;
+}
+static int reg_vwprintf(const wchar_t *fmt, ...) {
+    va_list ap; va_start(ap, fmt); int rc = vwprintf(fmt, ap); va_end(ap); return rc;
+}
+
+static int gnu_registration(void) {
+    alarm(20);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    reg_setup();
+    int first = register_printf_modifier(L"zz");
+    int second = register_printf_modifier(L"xy");
+    int replacement = register_printf_modifier(L"xy");
+    REG_CHECK(first > 0 && second > 0 && replacement > 0 && second != replacement);
+    printf("reg:ids:%i:%i:%i:%i\n", reg_pair_type, first, second, replacement);
+    const char *formats[] = {
+        "%Q %Y %T %R %U", "%3$*1$.*2$Q %5$Y", "%zzQ %xyQ %llQ",
+        "%ls %lc %S %C %Ld %qd %llf", "%Q %d %Q"
+    };
+    for (size_t f = 0; f < sizeof formats / sizeof formats[0]; ++f) {
+        for (size_t cap = 0; cap < 9; ++cap) {
+            int types[10]; for (size_t k = 0; k < 10; ++k) types[k] = -77;
+            size_t n = parse_printf_format(formats[f], cap, types);
+            printf("reg:types:%zu:%zu:%zu", f, cap, n);
+            for (size_t k = 0; k < 10; ++k) printf(":%i", types[k]);
+            putchar('\n');
+        }
+    }
+    int dynamic_types[4];
+    parse_printf_format("%*.*Q", 4, dynamic_types);
+    printf("reg:dynamic-arginfo:%i:%i\n", reg_info_width, reg_info_precision);
+    struct reg_pair pair = { 23, 3.25 };
+    char buffer[1024]; int count, rc;
+    const char *fmt = "begin:%Q|%Y|%T|%R|%U%n:end";
+#define REG_ARGS 7, "text", 11, pair, 1.25, &count
+#define REG_BUFFER(label, expression) do { \
+    memset(buffer, 0xa5, sizeof buffer); count = -1; rc = (expression); \
+    reg_row(label, rc, count, buffer, strlen(buffer)); \
+    REG_CHECK(rc >= 0 && count > 0); \
+} while (0)
+    REG_BUFFER("snprintf", snprintf(buffer, sizeof buffer, fmt, REG_ARGS));
+    REG_BUFFER("vsnprintf", call_vsnprintf(buffer, sizeof buffer, fmt, REG_ARGS));
+    REG_BUFFER("sprintf", sprintf(buffer, fmt, REG_ARGS));
+    REG_BUFFER("vsprintf", call_vsprintf(buffer, fmt, REG_ARGS));
+    for (int variant = 0; variant < 2; ++variant) {
+        char *allocated = NULL; count = -1;
+        rc = variant ? call_vasprintf(&allocated, fmt, REG_ARGS) : asprintf(&allocated, fmt, REG_ARGS);
+        REG_CHECK(rc >= 0 && allocated && (size_t)rc == strlen(allocated));
+        reg_row(variant ? "vasprintf" : "asprintf", rc, count, allocated, strlen(allocated));
+        free(allocated);
+    }
+    for (int variant = 0; variant < 2; ++variant) {
+        char *allocated = NULL; size_t len = 0; count = -1;
+        FILE *stream = open_memstream(&allocated, &len); REG_CHECK(stream);
+        rc = variant ? call_vfprintf(stream, fmt, REG_ARGS) : fprintf(stream, fmt, REG_ARGS);
+        REG_CHECK(fclose(stream) == 0 && rc >= 0 && len == (size_t)rc);
+        reg_row(variant ? "vfprintf" : "fprintf", rc, count, allocated, len);
+        free(allocated);
+    }
+    for (int variant = 0; variant < 2; ++variant) {
+        int descriptors[2]; REG_CHECK(pipe(descriptors) == 0); count = -1;
+        rc = variant ? call_vdprintf(descriptors[1], fmt, REG_ARGS) : dprintf(descriptors[1], fmt, REG_ARGS);
+        REG_CHECK(close(descriptors[1]) == 0 && rc >= 0);
+        ssize_t n = read(descriptors[0], buffer, sizeof buffer); close(descriptors[0]);
+        REG_CHECK(n == rc); reg_row(variant ? "vdprintf" : "dprintf", rc, count, buffer, (size_t)n);
+    }
+    const char *stdout_fmt = "reg:stdout:%Q|%Y|%T|%R|%U%n\n";
+    count = -1; rc = printf(stdout_fmt, REG_ARGS); printf("reg:printf-result:%i:%i\n", rc, count);
+    count = -1; rc = reg_vprintf(stdout_fmt, REG_ARGS); printf("reg:vprintf-result:%i:%i\n", rc, count);
+    const size_t caps[] = { 0, 1, 2, 8, 32, 64 };
+    for (size_t i = 0; i < sizeof caps / sizeof caps[0]; ++i) {
+        memset(buffer, 0xa5, sizeof buffer); count = -1;
+        rc = snprintf(buffer, caps[i], fmt, REG_ARGS);
+        REG_CHECK(rc >= 0 && count > 0);
+        for (size_t k = caps[i]; k < sizeof buffer; ++k) REG_CHECK((unsigned char)buffer[k] == 0xa5);
+        char label[32]; snprintf(label, sizeof label, "cap-%zu", caps[i]);
+        reg_row(label, rc, count, buffer, 72);
+    }
+    count = -1; rc = snprintf(NULL, 0, fmt, REG_ARGS);
+    printf("reg:null-query:%i:%i\n", rc, count);
+    const char *positional = "%3$*1$.*2$Q|%5$Y|%6$n";
+    REG_BUFFER("positional", snprintf(buffer, sizeof buffer, positional, -12, 4, 31, "slot", 17, &count));
+    printf("reg:dynamic-runtime:%i:%i\n", reg_info_width, reg_info_precision);
+    const char *modifiers = "%# +0'I12.3zzQ|%xyQ|%llQ%n";
+    REG_BUFFER("modifiers", snprintf(buffer, sizeof buffer, modifiers, 1, "a", 2, "b", 3, "c", &count));
+    const char *ordinary = "%u|%lu|%llu|%hhd|%hd|%ld|%lld|%s|%ls|%lc|%S|%C|%p|%a|%La|%llf%n";
+    REG_BUFFER("ordinary", snprintf(buffer, sizeof buffer, ordinary, UINT_MAX, ULONG_MAX, ULLONG_MAX,
+        -7, -301, -123456789L, -4294967297LL, "abc", L"wide", (wint_t)L'J', L"alias", (wint_t)L'Z',
+        (void *)(uintptr_t)0x1234, 0.125, 1.25L, 3.5L, &count));
+    const char *lengths = "%Ld|%qd|%Ld%n";
+    REG_BUFFER("lengths", snprintf(buffer, sizeof buffer, lengths, -1, 4294967297LL, 4294967297LL, &count));
+    const char *unknown = "%#-+ 08.3W|%*W|%.*W%n";
+    REG_BUFFER("unknown", snprintf(buffer, sizeof buffer, unknown, 12, 4, &count));
+    REG_CHECK(register_printf_specifier('V', reg_errno_print, reg_noargs) == 0);
+    const char *errfmt = "%m|%V|%m"; errno = ENOENT;
+    rc = snprintf(buffer, sizeof buffer, errfmt, 0); int error = errno;
+    reg_row("errno-snapshot", rc, error, buffer, strlen(buffer));
+    REG_CHECK(register_printf_specifier('d', reg_d_print, reg_d_info) == 0);
+    const char *override = "%d%n";
+    REG_BUFFER("override", snprintf(buffer, sizeof buffer, override, 9, &count));
+    REG_BUFFER("renderer-fallback", snprintf(buffer, sizeof buffer, override, 42, &count));
+    REG_BUFFER("arginfo-fallback-long", snprintf(buffer, sizeof buffer, "%ld%n", -123L, &count));
+    REG_BUFFER("arginfo-fallback-long-long", snprintf(buffer, sizeof buffer, "%lld%n", -456LL, &count));
+    REG_CHECK(register_printf_specifier('d', NULL, NULL) == 0);
+    REG_BUFFER("unregister-builtin", snprintf(buffer, sizeof buffer, "%d%n", 19, &count));
+    REG_CHECK(register_printf_specifier('Q', reg_legacy, reg_two_info) == 0);
+    const char *replaced = "%Q%n";
+    REG_BUFFER("replacement", snprintf(buffer, sizeof buffer, replaced, 71, "unused", &count));
+    REG_CHECK(register_printf_specifier('Q', NULL, NULL) == 0);
+    const char *unregistered = "[%Q]%n";
+    REG_BUFFER("unregister-custom", snprintf(buffer, sizeof buffer, unregistered, &count));
+    REG_CHECK(register_printf_specifier('V', reg_error, reg_noargs) == 0);
+    memset(buffer, 0xa5, sizeof buffer); errno = 0;
+    const char *failed = "before%Vafter";
+    rc = snprintf(buffer, sizeof buffer, failed, 0); error = errno;
+    reg_row("callback-error", rc, error, buffer, 24);
+    REG_CHECK(rc == -1 && error == EIO);
+    for (int variant = 0; variant < 2; ++variant) {
+        errno = 0;
+        int result = register_printf_modifier(variant ? L"\u0100" : L"");
+        printf("reg:bad-modifier:%i:%i:%i\n", variant, result, errno);
+    }
+    puts("reg:complete:narrow");
+    alarm(0);
+    return 0;
+#undef REG_ARGS
+#undef REG_BUFFER
+}
+
+/* GNU 2.39 writes 17 characters and stores 17 through %n but returns 14 for
+ * this compound case, although each fallback alone returns its byte length.
+ * Retain the actual return value as an executable diagnostic. The acceptance
+ * matrix above checks the isolated callback/fallback contracts exactly. */
+static int gnu_registration_combined_fallback(void) {
+    alarm(20);
+    reg_setup();
+    REG_CHECK(register_printf_specifier('d', reg_d_print, reg_d_info) == 0);
+    const char *fmt = "%d|%d|%ld|%lld%n";
+    char buffer[128]; int count = -1;
+    int rc = snprintf(buffer, sizeof buffer, fmt, 9, 42, -123L, -456LL, &count);
+    REG_CHECK(rc >= 0 && count == 17 && strcmp(buffer, "D{9}|42|-123|-456") == 0);
+    reg_row("combined-fallback", rc, count, buffer, strlen(buffer));
+    alarm(0);
+    return 0;
+}
+
+static int gnu_registration_wide(void) {
+    alarm(20);
+    reg_setup();
+    struct reg_pair pair = { 23, 3.25 };
+    const wchar_t *fmt = L"begin:%Q|%Y|%T|%R|%U|%\u00e9%n:end";
+    wchar_t buffer[512]; int count, rc;
+#define REG_WARGS 7, "text", 11, pair, 1.25, &count
+    for (int variant = 0; variant < 2; ++variant) {
+        count = -1;
+        rc = variant ? call_vswprintf(buffer, 512, fmt, REG_WARGS) : swprintf(buffer, 512, fmt, REG_WARGS);
+        REG_CHECK(rc >= 0 && (size_t)rc == wcslen(buffer));
+        reg_wrow(variant ? "vswprintf" : "swprintf", rc, count, buffer);
+    }
+    for (int variant = 0; variant < 2; ++variant) {
+        wchar_t *allocated = NULL; size_t len = 0; count = -1;
+        FILE *stream = open_wmemstream(&allocated, &len); REG_CHECK(stream);
+        rc = variant ? reg_vfwprintf(stream, fmt, REG_WARGS) : fwprintf(stream, fmt, REG_WARGS);
+        REG_CHECK(fclose(stream) == 0 && rc >= 0 && len == (size_t)rc);
+        reg_wrow(variant ? "vfwprintf" : "fwprintf", rc, count, allocated); free(allocated);
+    }
+    /* stdout is byte-oriented above; separate real wide streams bind both
+     * stdout entry points without changing the orientation of an existing FILE. */
+    fflush(stdout);
+    FILE *saved = stdout;
+    for (int variant = 0; variant < 2; ++variant) {
+        wchar_t *allocated = NULL; size_t len = 0; count = -1;
+        FILE *stream = open_wmemstream(&allocated, &len); REG_CHECK(stream);
+        stdout = stream;
+        rc = variant ? reg_vwprintf(fmt, REG_WARGS) : wprintf(fmt, REG_WARGS);
+        stdout = saved;
+        REG_CHECK(fclose(stream) == 0 && rc >= 0 && len == (size_t)rc);
+        reg_wrow(variant ? "vwprintf" : "wprintf", rc, count, allocated); free(allocated);
+    }
+    puts("reg:complete:wide");
+    alarm(0);
+    return 0;
+#undef REG_WARGS
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--gnu-register") == 0) return gnu_registration();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-wide") == 0) return gnu_registration_wide();
+    if (argc == 2 && strcmp(argv[1], "--gnu-register-combined-fallback") == 0) return gnu_registration_combined_fallback();
     if (argc == 2 && strcmp(argv[1], "--gnu-types") == 0) return gnu_types();
     if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();
     if (argc == 2 && strcmp(argv[1], "--gnu-errors") == 0) return gnu_size_errors();

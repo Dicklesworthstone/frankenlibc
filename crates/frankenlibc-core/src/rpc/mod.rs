@@ -18,6 +18,100 @@ use std::ffi::CStr;
 /// Bounded native ONC RPC message envelopes.
 pub mod wire;
 
+/// Linux's public `NGROUPS` limit for the Secure RPC group output array.
+pub const NETID_MAX_GROUPS: usize = 65_536;
+
+/// Hexadecimal bytes in a classic 192-bit Secure RPC public key.
+pub const PUBLICKEY_HEX_BYTES: usize = 48;
+
+/// An authoritative local credential mapping, independent of the numeric
+/// spelling of its network name. The primary gid is not a supplementary gid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetidUser {
+    pub uid: u32,
+    pub gid: u32,
+    pub groups: Vec<u32>,
+}
+
+/// Select a network name from the documented netid/publickey text formats.
+/// Names are opaque, case-sensitive bytes; a different domain is a different
+/// identity. The first matching record owns the result, including rejection
+/// of a malformed value, so a later duplicate cannot override it.
+fn secure_rpc_value<'a>(content: &'a [u8], netname: &[u8]) -> Option<&'a [u8]> {
+    if netname.is_empty() || netname.len() > 255 || netname.contains(&0) {
+        return None;
+    }
+    for line in content.split(|&byte| byte == b'\n') {
+        let line = line.split(|&byte| byte == b'#').next()?.trim_ascii();
+        let Some(separator) = line.iter().position(u8::is_ascii_whitespace) else {
+            continue;
+        };
+        if &line[..separator] == netname {
+            let value = line[separator..].trim_ascii();
+            return (!value.is_empty() && !value.contains(&0)).then_some(value);
+        }
+    }
+    None
+}
+
+fn netid_number(bytes: &[u8]) -> Option<u32> {
+    let bytes = bytes.trim_ascii();
+    if bytes.is_empty() {
+        return None;
+    }
+    bytes.iter().try_fold(0u32, |value, &byte| {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        value.checked_mul(10)?.checked_add(u32::from(byte - b'0'))
+    })
+}
+
+/// Resolve `netname uid:primary_gid,supplementary_gid,...` in `/etc/netid`.
+/// Numeric fields must fit the Linux uid_t/gid_t ABI. Invalid or oversized
+/// records fail as a whole, before any caller-owned credential is changed.
+pub fn lookup_netid_user(content: &[u8], netname: &[u8]) -> Option<NetidUser> {
+    let value = secure_rpc_value(content, netname)?;
+    let separator = value.iter().position(|&byte| byte == b':')?;
+    let uid = netid_number(&value[..separator])?;
+    let mut gids = value[separator + 1..].split(|&byte| byte == b',');
+    let gid = netid_number(gids.next()?)?;
+    let mut groups = Vec::new();
+    for field in gids {
+        if groups.len() == NETID_MAX_GROUPS {
+            return None;
+        }
+        let group = netid_number(field)?;
+        groups.try_reserve(1).ok()?;
+        groups.push(group);
+    }
+    Some(NetidUser { uid, gid, groups })
+}
+
+/// Resolve `netname 0:hostname` in `/etc/netid`.
+pub fn lookup_netid_host<'a>(content: &'a [u8], netname: &[u8]) -> Option<&'a [u8]> {
+    let hostname = secure_rpc_value(content, netname)?.strip_prefix(b"0:")?;
+    let hostname = hostname.trim_ascii();
+    (!hostname.is_empty() && !hostname.iter().any(u8::is_ascii_whitespace)).then_some(hostname)
+}
+
+/// Resolve the public half of `netname public_hex:encrypted_secret_hex`.
+/// This does not decrypt or expose the secret half of the record.
+pub fn lookup_publickey(content: &[u8], netname: &[u8]) -> Option<[u8; PUBLICKEY_HEX_BYTES]> {
+    let value = secure_rpc_value(content, netname)?;
+    let separator = value.iter().position(|&byte| byte == b':')?;
+    let public = &value[..separator];
+    let encrypted = &value[separator + 1..];
+    if public.len() != PUBLICKEY_HEX_BYTES
+        || !public.iter().all(u8::is_ascii_hexdigit)
+        || encrypted.is_empty()
+        || !encrypted.iter().all(u8::is_ascii_hexdigit)
+    {
+        return None;
+    }
+    public.try_into().ok()
+}
+
 /// Parsed /etc/rpc entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpcEntry {
@@ -253,6 +347,104 @@ pub fn creation_error_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn netid_maps_credentials_instead_of_inventing_them_from_the_name() {
+        let content = b"# authority\n\n unix.555@example 1000:42,17,88 # local ids\n";
+        assert_eq!(
+            lookup_netid_user(content, b"unix.555@example"),
+            Some(NetidUser {
+                uid: 1000,
+                gid: 42,
+                groups: vec![17, 88]
+            })
+        );
+        assert_eq!(lookup_netid_user(content, b"unix.555@elsewhere"), None);
+        assert_eq!(lookup_netid_user(content, b"unix.555@EXAMPLE"), None);
+        assert_eq!(lookup_netid_user(content, b"unix.1000@example"), None);
+        assert_eq!(
+            lookup_netid_user(b"unix.7@d 0:4294967295\n", b"unix.7@d"),
+            Some(NetidUser {
+                uid: 0,
+                gid: u32::MAX,
+                groups: vec![]
+            })
+        );
+    }
+
+    #[test]
+    fn netid_rejects_bad_fields_and_does_not_fall_through_a_duplicate() {
+        for value in [
+            "4294967296:42",
+            "-1:42",
+            "1000:4294967296",
+            "1000:-1",
+            "1000:42,a",
+            "1000:42,",
+            "1000:",
+            "1000:42:17",
+            "0:node.local",
+        ] {
+            let content = format!("unix.7@d {value}\nunix.7@d 99:99\n");
+            assert_eq!(
+                lookup_netid_user(content.as_bytes(), b"unix.7@d"),
+                None,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn netid_keeps_more_than_the_auth_sys_sixteen_group_limit() {
+        let mut content = b"unix.7@d 1000:42".to_vec();
+        for group in 0..NETID_MAX_GROUPS {
+            content.extend_from_slice(format!(",{group}").as_bytes());
+        }
+        let user = lookup_netid_user(&content, b"unix.7@d").unwrap();
+        assert_eq!(user.groups.len(), NETID_MAX_GROUPS);
+        assert_eq!(user.groups[16], 16);
+        assert_eq!(user.groups[NETID_MAX_GROUPS - 1], 65_535);
+        content.extend_from_slice(b",42");
+        assert_eq!(lookup_netid_user(&content, b"unix.7@d"), None);
+    }
+
+    #[test]
+    fn netid_host_uses_the_authoritative_value_and_exact_domain() {
+        let content = b"unix.gateway@d 0:node.local\nunix.user@d 1000:42\n";
+        assert_eq!(
+            lookup_netid_host(content, b"unix.gateway@d"),
+            Some(b"node.local".as_slice())
+        );
+        assert_eq!(lookup_netid_host(content, b"unix.gateway@elsewhere"), None);
+        assert_eq!(lookup_netid_host(content, b"unix.user@d"), None);
+        for value in [b"0:".as_slice(), b"0:two words", b"0:node\0tail"] {
+            let mut line = b"unix.host@d ".to_vec();
+            line.extend_from_slice(value);
+            assert_eq!(lookup_netid_host(&line, b"unix.host@d"), None);
+        }
+    }
+
+    #[test]
+    fn publickey_returns_only_the_valid_public_half() {
+        let public = "0123456789abcdef0123456789ABCDEF0123456789abcdef";
+        assert_eq!(public.len(), PUBLICKEY_HEX_BYTES);
+        let image = format!("# keys\n nobody {public}:aabbcc # encrypted\n");
+        assert_eq!(
+            lookup_publickey(image.as_bytes(), b"nobody"),
+            public.as_bytes().try_into().ok()
+        );
+        assert_eq!(lookup_publickey(image.as_bytes(), b"Nobody"), None);
+        for value in [
+            format!("{public}"),
+            format!("{public}:"),
+            format!("{public}:xyz"),
+            format!("0{public}:11"),
+            format!("{}z:11", &public[..47]),
+        ] {
+            let image = format!("nobody {value}\n");
+            assert_eq!(lookup_publickey(image.as_bytes(), b"nobody"), None);
+        }
+    }
 
     #[test]
     fn parse_simple_line() {

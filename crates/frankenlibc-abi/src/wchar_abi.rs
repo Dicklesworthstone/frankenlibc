@@ -6403,6 +6403,18 @@ pub unsafe extern "C" fn swprintf(
     if format.is_null() {
         return -1;
     }
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: the wide format and this frame's C va_list remain live.
+        let fmt = unsafe { wide_to_narrow_pooled(format) };
+        return unsafe {
+            super::stdio_abi::registered_swprintf(
+                s,
+                n,
+                fmt.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+            )
+        };
+    }
     if unsafe { is_exact_wide_percent_ls(format) } {
         let arg = unsafe { args.next_arg::<*const libc::wchar_t>() };
         return unsafe { swprintf_direct_wide_string(s, n, arg) };
@@ -6452,6 +6464,17 @@ pub unsafe extern "C" fn wprintf(format: *const libc::wchar_t, mut args: ...) ->
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stdout is wide-oriented and this frame owns the va_list.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(
+                stdout_ptr,
+                fmt_narrow.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+                true,
+            )
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6492,6 +6515,17 @@ pub unsafe extern "C" fn fwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stream is wide-oriented and this frame owns the va_list.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(
+                stream,
+                fmt_narrow.as_bytes(),
+                core::ptr::from_mut(&mut args).cast(),
+                true,
+            )
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6535,6 +6569,10 @@ pub unsafe extern "C" fn vswprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: the caller supplies the wide output and matching C va_list.
+        return unsafe { super::stdio_abi::registered_swprintf(s, n, fmt_narrow.as_bytes(), ap) };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6564,6 +6602,12 @@ pub unsafe extern "C" fn vwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stdout is wide-oriented and ap matches this format.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(stdout_ptr, fmt_narrow.as_bytes(), ap, true)
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
@@ -6603,6 +6647,12 @@ pub unsafe extern "C" fn vfwprintf(
         return -1;
     }
     let fmt_narrow = unsafe { wide_to_narrow_pooled(format) };
+    if super::stdio_abi::printf_extensions_active() {
+        // SAFETY: stream is wide-oriented and ap matches this format.
+        return unsafe {
+            super::stdio_abi::registered_printf_stream(stream, fmt_narrow.as_bytes(), ap, true)
+        };
+    }
     let segments = parse_format_string(fmt_narrow.as_bytes());
     let extract_count = count_printf_args(&segments).min(super::stdio_abi::MAX_VA_ARGS);
     let mut arg_buf = [0u64; super::stdio_abi::MAX_VA_ARGS];
