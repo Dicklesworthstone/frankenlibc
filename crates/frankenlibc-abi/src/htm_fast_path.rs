@@ -247,7 +247,8 @@ impl HtmSite {
 
     #[inline]
     fn disabled_now(&self) -> bool {
-        self.disable_until_ms.load(Ordering::Acquire) > now_ms()
+        let disable_until = self.disable_until_ms.load(Ordering::Acquire);
+        disable_until != 0 && disable_until > now_ms()
     }
 
     pub fn snapshot(&self) -> HtmSiteSnapshot {
@@ -349,6 +350,10 @@ impl HtmSite {
     }
 
     fn maybe_emit_summary(&self) {
+        if !cfg!(feature = "runtime-tracing") {
+            return;
+        }
+
         let outcomes =
             self.commits.load(Ordering::Relaxed) + self.fallbacks.load(Ordering::Relaxed);
         if outcomes == 0 || !outcomes.is_multiple_of(SUMMARY_INTERVAL) {
