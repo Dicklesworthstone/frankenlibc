@@ -50,11 +50,17 @@ fn swprintf_unknown_conversions_truncation_reports_e2big() {
     // buffer, and errno points to this thread's writable slot.
     unsafe {
         *frankenlibc_abi::errno_abi::__errno_location() = 0;
-        assert_eq!(swprintf(buf.as_mut_ptr(), 2, fmt.as_ptr(), 7_i32, 701_i32), -1);
+        assert_eq!(
+            swprintf(buf.as_mut_ptr(), 2, fmt.as_ptr(), 7_i32, 701_i32),
+            -1
+        );
         assert_eq!(*frankenlibc_abi::errno_abi::__errno_location(), libc::E2BIG);
         assert_eq!(buf, [b'%' as i32, 0, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a]);
         *frankenlibc_abi::errno_abi::__errno_location() = 91;
-        assert_eq!(swprintf(buf.as_mut_ptr(), 0, fmt.as_ptr(), 7_i32, 701_i32), -1);
+        assert_eq!(
+            swprintf(buf.as_mut_ptr(), 0, fmt.as_ptr(), 7_i32, 701_i32),
+            -1
+        );
         assert_eq!(*frankenlibc_abi::errno_abi::__errno_location(), 91);
     }
 }
