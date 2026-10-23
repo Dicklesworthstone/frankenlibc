@@ -1171,6 +1171,8 @@ fn assert_hosts_policy(expected: &str) {
                 assert_eq!(reverse, Err(libc::EAI_AGAIN));
                 assert_eq!(h_errno, 2);
                 assert_eq!(reverse_h_errno, 2);
+                assert_eq!(rc, libc::EAGAIN, "forward temporary return convention");
+                assert_eq!(reverse_rc, 0, "reverse errors are reported through h_errno");
             } else {
                 assert!(forward.is_err());
                 assert!(reverse.is_err());

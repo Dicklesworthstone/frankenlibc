@@ -4940,7 +4940,10 @@ pub(crate) unsafe fn gethostbyaddr_r_impl(
                 unsafe { set_abi_errno(code) };
             }
             runtime_policy::observe(ApiFamily::Resolver, decision.profile, 25, true);
-            return code;
+            // GNU gethostbyaddr_r reports a temporary PTR lookup failure
+            // through the null result and h_errnop, returning zero. The
+            // forward reentrant interfaces still return EAGAIN instead.
+            return 0;
         }
     };
 
