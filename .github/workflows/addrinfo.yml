@@ -50,7 +50,7 @@ jobs:
             if ! FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
               --test nss_module_test hosts_modules_ -- --nocapture --test-threads=1 \
               2>&1 | tee "$log"; then status=1; fi
-            if ! grep -Eq '^test result: ok\. 2 passed; 0 failed;' "$log"; then status=1; fi
+            if ! grep -Eq '^test result: ok\. 4 passed; 0 failed;' "$log"; then status=1; fi
           done
           exit "$status"
       - uses: actions/upload-artifact@v4

@@ -51,7 +51,7 @@ struct ConfigCache {
     /// Whether `fingerprint`/`parsed` describe the current `path` at all.
     loaded: bool,
     /// Source lists per database, parsed from the cached image.
-    parsed: [Option<Arc<Vec<Service>>>; 4],
+    parsed: [Option<Arc<Vec<Service>>>; 5],
     /// Whether the image has its own `initgroups:` line.
     initgroups_explicit: Option<bool>,
 }
@@ -60,7 +60,7 @@ static CONFIG: Mutex<ConfigCache> = Mutex::new(ConfigCache {
     path: Vec::new(),
     fingerprint: None,
     loaded: false,
-    parsed: [None, None, None, None],
+    parsed: [None, None, None, None, None],
     initgroups_explicit: None,
 });
 
@@ -70,6 +70,7 @@ fn database_slot(database: Database) -> usize {
         Database::Group => 1,
         Database::Shadow => 2,
         Database::Initgroups => 3,
+        Database::Publickey => 4,
     }
 }
 
@@ -107,7 +108,8 @@ fn fingerprint(path: &[u8]) -> Option<Fingerprint> {
 
 /// The configured sources for `database`. nsswitch.conf is re-read and
 /// re-parsed whenever its fingerprint changes; a missing or unreadable file
-/// means glibc's built-in default (`files`).
+/// means the database's built-in default (`nis nisplus` for publickey and
+/// `files` for the account databases).
 pub(crate) fn services(database: Database) -> Arc<Vec<Service>> {
     let slot = database_slot(database);
     with_current_config(|cache, read| {
@@ -151,7 +153,7 @@ fn with_current_config<R>(
         cache.path = path;
         cache.fingerprint = now;
         cache.loaded = true;
-        cache.parsed = [None, None, None, None];
+        cache.parsed = [None, None, None, None, None];
         cache.initgroups_explicit = None;
     }
     fn read(cache: &ConfigCache) -> Option<Vec<u8>> {
@@ -523,9 +525,8 @@ pub(crate) fn gethostbyname4(
             }
             // SAFETY: SUCCESS supplies a valid first tuple and an optional
             // NUL-terminated name; conversion precedes scratch deallocation.
-            let canonical_name = unsafe {
-                (!(*current).name.is_null()).then(|| owned((*current).name))
-            };
+            let canonical_name =
+                unsafe { (!(*current).name.is_null()).then(|| owned((*current).name)) };
             let mut addresses = Vec::new();
             let mut visited = std::collections::HashSet::new();
             while !current.is_null() {
@@ -819,6 +820,106 @@ unsafe fn shadow_from_c(sp: &libc::spwd) -> frankenlibc_core::pwd::shadow::Shado
 fn missing_source() -> c_int {
     // SAFETY: __errno_location returns this thread's errno slot.
     unsafe { *crate::errno_abi::__errno_location() }
+}
+
+/// Secure RPC modules have fixed-output entry points rather than the account
+/// databases' resizable `_r` ABI. Keep their outputs private until SUCCESS so
+/// a failed or malformed answer cannot publish a partial local identity.
+pub(crate) fn netname2user(
+    service: &[u8],
+    netname: &[u8],
+) -> Answer<frankenlibc_core::rpc::NetidUser> {
+    use frankenlibc_core::rpc::{NETID_MAX_GROUPS, NetidUser};
+    type Function = unsafe extern "C" fn(
+        *mut c_char,
+        *mut libc::uid_t,
+        *mut libc::gid_t,
+        *mut c_int,
+        *mut libc::gid_t,
+        *mut c_int,
+    ) -> c_int;
+    let Some(address) = module_function(service, "netname2user") else {
+        return Answer::Unavailable(missing_source());
+    };
+    let mut key = netname.to_vec();
+    key.push(0);
+    let mut groups = Vec::<libc::gid_t>::new();
+    if groups.try_reserve_exact(NETID_MAX_GROUPS).is_err() {
+        return Answer::TryAgain(libc::ENOMEM);
+    }
+    groups.resize(NETID_MAX_GROUPS, 0);
+    let mut uid = 0;
+    let mut gid = 0;
+    let mut count = 0;
+    // SAFETY: this is the six-argument nss_netname2user signature declared in
+    // GNU <nss.h>. Older modules may ignore the final errno argument.
+    let function: Function = unsafe { core::mem::transmute(address) };
+    // SAFETY: the thread's errno slot is writable for the duration of the call.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: key is a mutable C string; all scalar outputs and the public
+    // NGROUPS-sized group array are owned, aligned and live across the call.
+    let status = unsafe {
+        function(
+            key.as_mut_ptr().cast(),
+            &mut uid,
+            &mut gid,
+            &mut count,
+            groups.as_mut_ptr(),
+            error,
+        )
+    };
+    // SAFETY: error is this thread's valid errno pointer.
+    let error = unsafe { *error };
+    match Status::from_raw(status) {
+        Status::Success if count >= 0 && count as usize <= NETID_MAX_GROUPS => {
+            groups.truncate(count as usize);
+            Answer::Found(NetidUser { uid, gid, groups })
+        }
+        Status::Success => Answer::Unavailable(libc::EINVAL),
+        Status::NotFound => Answer::NotFound,
+        Status::Unavailable => Answer::Unavailable(error),
+        Status::TryAgain => Answer::TryAgain(error),
+    }
+}
+
+/// Call the public `nss_getpublickey(const char *, char *, int *)` ABI.
+pub(crate) fn getpublickey(
+    service: &[u8],
+    netname: &[u8],
+) -> Answer<[u8; frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES]> {
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    type Function = unsafe extern "C" fn(*const c_char, *mut c_char, *mut c_int) -> c_int;
+    let Some(address) = module_function(service, "getpublickey") else {
+        return Answer::Unavailable(missing_source());
+    };
+    let mut key = netname.to_vec();
+    key.push(0);
+    let mut output = [0xffu8; PUBLICKEY_HEX_BYTES + 1];
+    // SAFETY: the loaded entry point has the public nss_getpublickey signature.
+    let function: Function = unsafe { core::mem::transmute(address) };
+    // SAFETY: the thread's errno slot is valid throughout the module call.
+    let error = unsafe { crate::errno_abi::__errno_location() };
+    // SAFETY: key is a C string and the output holds a full HEXKEYBYTES key
+    // plus NUL, as required by the public Secure RPC module ABI.
+    let status = unsafe { function(key.as_ptr().cast(), output.as_mut_ptr().cast(), error) };
+    // SAFETY: error is this thread's valid errno pointer.
+    let error = unsafe { *error };
+    match Status::from_raw(status) {
+        Status::Success
+            if output[PUBLICKEY_HEX_BYTES] == 0
+                && output[..PUBLICKEY_HEX_BYTES]
+                    .iter()
+                    .all(u8::is_ascii_hexdigit) =>
+        {
+            let mut public = [0; PUBLICKEY_HEX_BYTES];
+            public.copy_from_slice(&output[..PUBLICKEY_HEX_BYTES]);
+            Answer::Found(public)
+        }
+        Status::Success => Answer::Unavailable(libc::EINVAL),
+        Status::NotFound => Answer::NotFound,
+        Status::Unavailable => Answer::Unavailable(error),
+        Status::TryAgain => Answer::TryAgain(error),
+    }
 }
 
 type ByNameFn<T> =

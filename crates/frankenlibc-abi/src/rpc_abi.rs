@@ -10,6 +10,7 @@
 #![allow(non_snake_case, non_upper_case_globals, non_camel_case_types)]
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
+use std::mem::size_of;
 
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::runtime_math::{ApiFamily, MembraneAction};
@@ -3112,11 +3113,7 @@ fn rpc_netname_system_component(host: bool) -> Option<Vec<u8>> {
 /// # Safety
 /// destination is non-null and writable for 256 bytes, or its smaller extent
 /// is registered with the allocator. Both input components are owned bytes.
-unsafe fn rpc_netname_write(
-    destination: *mut c_char,
-    identity: &[u8],
-    domain: &[u8],
-) -> c_int {
+unsafe fn rpc_netname_write(destination: *mut c_char, identity: &[u8], domain: &[u8]) -> c_int {
     let len = 5 + identity.len() + 1 + domain.len() + 1;
     if len > 256 || known_remaining(destination as usize).is_some_and(|remaining| remaining < len) {
         return 0;
@@ -3154,18 +3151,110 @@ pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
     }
 }
 
-/// Get the public key for a netname from the publickey database.
-/// Returns 0 (failure) — no publickey database support.
+/// Read a bounded native Secure RPC database image. A descriptor is closed on
+/// every exit; interrupted reads retry without publishing a partial image.
+fn rpc_identity_file<T>(
+    path: &std::ffi::CStr,
+    parse: impl FnOnce(&[u8]) -> Option<T>,
+) -> frankenlibc_core::nss::Answer<T> {
+    use frankenlibc_core::nss::Answer;
+    const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+    struct File(c_int);
+    impl Drop for File {
+        fn drop(&mut self) {
+            let _ = raw_syscall::sys_close(self.0);
+        }
+    }
+    let read = || -> Result<Vec<u8>, c_int> {
+        // SAFETY: path is a live NUL-terminated constant; no mode is needed
+        // for a read-only open. No host libc lookup is used for file access.
+        let fd = File(unsafe {
+            raw_syscall::sys_openat(
+                libc::AT_FDCWD,
+                path.as_ptr().cast(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+                0,
+            )?
+        });
+        let mut image = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            // SAFETY: chunk is writable for its complete length and fd is
+            // owned by this call until its RAII guard closes it.
+            let count =
+                match unsafe { raw_syscall::sys_read(fd.0, chunk.as_mut_ptr(), chunk.len()) } {
+                    Ok(0) => return Ok(image),
+                    Ok(count) => count,
+                    Err(libc::EINTR) => continue,
+                    Err(error) => return Err(error),
+                };
+            if count > MAX_IMAGE_BYTES - image.len() {
+                return Err(libc::EFBIG);
+            }
+            image.try_reserve(count).map_err(|_| libc::ENOMEM)?;
+            image.extend_from_slice(&chunk[..count]);
+        }
+    };
+    match read() {
+        Ok(image) => parse(&image).map_or(Answer::NotFound, Answer::Found),
+        Err(error) => {
+            set_abi_errno(error);
+            Answer::Unavailable(error)
+        }
+    }
+}
+
+/// Get the public key for an exact network identity through the publickey
+/// NSS database. The native files source reads `/etc/publickey`; configured
+/// modules use their public GNU nss_getpublickey entry point.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string and publickey is writable for 49 bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getpublickey(_netname: *const c_char, _publickey: *mut c_char) -> c_int {
-    0 // Not found
+pub unsafe extern "C" fn getpublickey(netname: *const c_char, publickey: *mut c_char) -> c_int {
+    use frankenlibc_core::nss::{Answer, Database};
+    use frankenlibc_core::rpc::PUBLICKEY_HEX_BYTES;
+    if publickey.is_null()
+        || known_remaining(publickey as usize)
+            .is_some_and(|remaining| remaining < PUBLICKEY_HEX_BYTES + 1)
+    {
+        return 0;
+    }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/publickey", |image| {
+                    frankenlibc_core::rpc::lookup_publickey(image, &name)
+                })
+            } else {
+                crate::nss_module::getpublickey(service.name(), &name)
+            }
+        },
+        None,
+    );
+    let Answer::Found(key) = answer else {
+        return 0;
+    };
+    // SAFETY: the entire fixed-size output was validated before the lookup;
+    // the owned key is disjoint from caller storage and includes no NUL.
+    unsafe {
+        std::ptr::copy_nonoverlapping(key.as_ptr(), publickey.cast(), key.len());
+        *publickey.add(key.len()) = 0;
+    }
+    1
 }
 
 /// Get the secret key for a netname from the publickey database.
-/// Returns 0 (failure) — no publickey database support.
+/// Returns 0 (failure): encrypted secret-key decryption is not implemented.
 ///
 /// # Safety
 /// ABI boundary function.
@@ -3249,93 +3338,136 @@ pub unsafe extern "C" fn host2netname(
     unsafe { rpc_netname_write(netname, host, domain) }
 }
 
-/// Extract hostname from a netname. Format: "unix.<host>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Resolve a network identity to the authoritative `/etc/netid` host mapping.
+/// The publickey NSS source order and status actions apply. GNU defines no
+/// netname2host service-module entry point, so other sources are unavailable.
+/// A successful files answer copies and pads exactly hostlen bytes, matching
+/// the public netid implementation's strncpy contract (truncation may omit NUL).
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string; hostname is writable for hostlen bytes.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn netname2host(
     netname: *const c_char,
     hostname: *mut c_char,
     hostlen: c_int,
 ) -> c_int {
-    if netname.is_null() || hostname.is_null() || hostlen <= 0 {
+    use frankenlibc_core::nss::{Answer, Database};
+    if hostlen < 0 || (hostlen > 0 && hostname.is_null()) {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let name_owned = match unsafe { read_bounded_cstr(netname) } {
-        Some(b) => b,
-        None => return 0,
-    };
-    let name = match std::str::from_utf8(&name_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    // Parse "unix.<host>@<domain>"
-    let rest = match name.strip_prefix("unix.") {
-        Some(r) => r,
-        None => return 0,
-    };
-    let host = match rest.find('@') {
-        Some(idx) => &rest[..idx],
-        None => return 0,
-    };
-    if host.len() >= hostlen as usize {
+    let hostlen = hostlen as usize;
+    if known_remaining(hostname as usize).is_some_and(|remaining| remaining < hostlen) {
         return 0;
     }
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
+    };
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_host(image, &name).map(<[u8]>::to_vec)
+                })
+            } else {
+                Answer::Unavailable(libc::ENOSYS)
+            }
+        },
+        None,
+    );
+    let Answer::Found(host) = answer else {
+        return 0;
+    };
+    if hostlen == 0 {
+        return 1;
+    }
+    let copied = host.len().min(hostlen);
+    // SAFETY: the caller and tracked extent authorize hostlen writable bytes;
+    // the owned host image cannot alias the destination. Both ranges fit.
     unsafe {
-        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname.cast(), host.len());
-        *hostname.add(host.len()) = 0;
+        std::ptr::copy_nonoverlapping(host.as_ptr(), hostname.cast(), copied);
+        std::ptr::write_bytes(hostname.add(copied), 0, hostlen - copied);
     }
     1
 }
 
-/// Extract user info from a netname. Format: "unix.<uid>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Resolve an exact network name through the publickey NSS database to an
+/// authoritative uid, primary gid and supplementary group list. The files
+/// source reads `/etc/netid`; other sources use nss_netname2user modules.
+/// No local credentials are inferred from the spelling of the network name.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname is a readable C string; scalar outputs are writable uid_t/gid_t/int
+/// slots. gidlist has the public NGROUPS capacity, or a tracked smaller extent
+/// sufficient for the returned supplementary groups. A zero-group result may
+/// use a null gidlist. Failure does not publish partial caller outputs.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn netname2user(
     netname: *const c_char,
     uidp: *mut libc::uid_t,
     gidp: *mut libc::gid_t,
     gidlenp: *mut c_int,
-    _gidlist: *mut libc::gid_t,
+    gidlist: *mut libc::gid_t,
 ) -> c_int {
-    if netname.is_null() || uidp.is_null() || gidp.is_null() || gidlenp.is_null() {
+    use frankenlibc_core::nss::{Answer, Database};
+    if uidp.is_null()
+        || gidp.is_null()
+        || gidlenp.is_null()
+        || known_remaining(uidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::uid_t>())
+        || known_remaining(gidp as usize)
+            .is_some_and(|remaining| remaining < size_of::<libc::gid_t>())
+        || known_remaining(gidlenp as usize).is_some_and(|remaining| remaining < size_of::<c_int>())
+    {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
-    let name_owned = match unsafe { read_bounded_cstr(netname) } {
-        Some(b) => b,
-        None => return 0,
+    // SAFETY: the caller supplies a C string; known allocation bounds apply.
+    let Some(name) = (unsafe { read_bounded_cstr(netname) }) else {
+        return 0;
     };
-    let name = match std::str::from_utf8(&name_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    if name.is_empty() || name.len() > 255 {
+        return 0;
+    }
+    let services = crate::nss_module::services(Database::Publickey);
+    let answer = frankenlibc_core::nss::lookup(
+        &services,
+        |service| {
+            if service.name() == b"files" {
+                rpc_identity_file(c"/etc/netid", |image| {
+                    frankenlibc_core::rpc::lookup_netid_user(image, &name)
+                })
+            } else {
+                crate::nss_module::netname2user(service.name(), &name)
+            }
+        },
+        None,
+    );
+    let Answer::Found(user) = answer else {
+        return 0;
     };
-    let rest = match name.strip_prefix("unix.") {
-        Some(r) => r,
-        None => return 0,
-    };
-    let uid_str = match rest.find('@') {
-        Some(idx) => &rest[..idx],
-        None => return 0,
-    };
-    // uid_t and gid_t are 32-bit even on the LP64 RPC ABI. Parsing into
-    // unsigned long and storing eight bytes corrupts the caller's next field.
-    // Reject an unrepresentable identity before touching any output.
-    let uid: libc::uid_t = match uid_str.parse() {
-        Ok(v) => v,
-        Err(_) => return 0,
-    };
-    // SAFETY: the caller supplies writable uid_t/gid_t/int output slots.
+    let group_bytes = user.groups.len() * size_of::<libc::gid_t>();
+    if !user.groups.is_empty()
+        && (gidlist.is_null()
+            || known_remaining(gidlist as usize).is_some_and(|remaining| remaining < group_bytes))
+    {
+        return 0;
+    }
+    // SAFETY: all caller extents were checked before any publication. uid_t
+    // and gid_t remain 32-bit on LP64; no adjacent word or unused group slot
+    // is changed. Private module/file buffers cannot alias caller outputs.
     unsafe {
-        *uidp = uid;
-        *gidp = uid; // Default: gid = uid
-        *gidlenp = 0; // No supplementary groups
+        if !user.groups.is_empty() {
+            std::ptr::copy_nonoverlapping(user.groups.as_ptr(), gidlist, user.groups.len());
+        }
+        *uidp = user.uid;
+        *gidp = user.gid;
+        *gidlenp = user.groups.len() as c_int;
     }
     1
 }

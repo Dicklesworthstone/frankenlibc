@@ -5,10 +5,14 @@ on:
     paths:
       - 'crates/frankenlibc-abi/src/rpc*'
       - 'crates/frankenlibc-abi/src/resolv_abi.rs'
+      - 'crates/frankenlibc-abi/src/nss_module.rs'
       - 'crates/frankenlibc-abi/tests/rpc*'
       - 'crates/frankenlibc-core/src/rpc/mod.rs'
+      - 'crates/frankenlibc-core/src/nss/mod.rs'
       - 'tests/integration/fixture_rpc_client_create.c'
+      - 'tests/integration/fixture_rpc_identity*.c'
       - 'scripts/check_rpc_client_create.py'
+      - 'scripts/check_rpc_identity.py'
       - '.github/workflows/rpc-client-create.yml'
   workflow_dispatch:
 permissions:
@@ -35,6 +39,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+      - name: Install the independent Secure RPC files oracle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libtirpc-dev
       - name: Record the committed client implementation
         shell: bash
         run: |
@@ -47,6 +55,11 @@ jobs:
           for file in crates/frankenlibc-abi/src/rpc_abi.rs crates/frankenlibc-abi/src/rpc_client_create.rs crates/frankenlibc-abi/src/rpc_udp.rs crates/frankenlibc-abi/src/rpc_call.rs crates/frankenlibc-abi/tests/rpc_abi_test.rs crates/frankenlibc-core/src/rpc/mod.rs tests/integration/fixture_rpc_client_create.c scripts/check_rpc_client_create.py; do
             cp "$file" "$root/source/"
             git hash-object "$file" >> "$root/source-blobs.txt"
+          done
+          mkdir -p "$root/identity-source"
+          for file in crates/frankenlibc-abi/src/nss_module.rs crates/frankenlibc-core/src/nss/mod.rs tests/integration/fixture_rpc_identity.c tests/integration/fixture_rpc_identity_module.c scripts/check_rpc_identity.py; do
+            cp --parents "$file" "$root/identity-source/"
+            git hash-object "$file" >> "$root/identity-source-blobs.txt"
           done
       - name: Compile release ABI and execute existing RPC contracts
         env:
@@ -62,10 +75,13 @@ jobs:
           cp target/release/libfrankenlibc_abi.so "$root/"
           cp Cargo.lock "$root/Cargo.lock"
           sha256sum "$root/libfrankenlibc_abi.so" > "$root/library.sha256"
+          sudo python3 "$PWD/scripts/check_rpc_identity.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/identity"
           # Exclusive loopback port 111; never stop or reconfigure rpcbind.
           sudo python3 "$PWD/scripts/check_rpc_client_create.py" "$PWD/$root/libfrankenlibc_abi.so" --output "$PWD/$root/clients"
           cargo test --locked -p frankenlibc-core --lib rpc::tests -- --test-threads=1 2>&1 | tee "$root/rpc-core.log"
           grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/rpc-core.log"
+          cargo test --locked -p frankenlibc-core --lib nss::tests -- --test-threads=1 2>&1 | tee "$root/nss-core.log"
+          grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/nss-core.log"
           for target in rpc_abi_test rpc_udp_transport_test rpc_tcp_frontend_test rpc_auth_recovery_test rpc_svc_cache_test; do
             cargo test --locked -p frankenlibc-abi --test "$target" "${args[@]}" -- --test-threads=1 2>&1 | tee "$root/$target.log"
             grep -Eq 'test result: ok\. [1-9][0-9]* passed; 0 failed;' "$root/$target.log"
@@ -92,6 +108,9 @@ jobs:
           for name in paths:
               source = pathlib.Path(name)
               assert source.read_bytes() == (root / 'source' / source.name).read_bytes()
+          for source in (root / 'identity-source').rglob('*'):
+              if source.is_file():
+                  assert source.read_bytes() == source.relative_to(root / 'identity-source').read_bytes()
           PY
       - uses: actions/upload-artifact@v4
         if: always()
