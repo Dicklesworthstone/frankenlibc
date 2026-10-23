@@ -18,6 +18,7 @@
 //! Hosts use the same module loader with `addrinfo::hosts_policy` for source
 //! order and actions. Forward/reverse hostent results, aliases, address lists,
 //! and the gethostbyname3_r canonical-name extension are copied before release.
+//! gethostbyname4_r tuples retain mixed address families and IPv6 scope IDs.
 //!
 //! Loading needs the host dynamic loader, so standalone builds report every
 //! module source as unavailable (the switch then continues per its actions).
@@ -366,6 +367,23 @@ pub(crate) struct HostEntry {
     pub addresses: Vec<std::net::IpAddr>,
 }
 
+/// The getaddrinfo module ABI can return both families in one list and attach
+/// an interface scope to each IPv6 address. A hostent cannot represent these.
+pub(crate) struct AddrInfoEntry {
+    pub canonical_name: Option<Vec<u8>>,
+    pub addresses: Vec<(std::net::IpAddr, u32)>,
+}
+
+/// Public <nss.h> layout for gethostbyname4_r.
+#[repr(C)]
+struct GaihAddrTuple {
+    next: *mut GaihAddrTuple,
+    name: *mut c_char,
+    family: c_int,
+    address: [u32; 4],
+    scope_id: u32,
+}
+
 type HostAnswer = frankenlibc_core::addrinfo::hosts_policy::BackendResult<HostEntry, c_int>;
 
 /// # Safety
@@ -426,7 +444,10 @@ unsafe fn host_from_c(host: &libc::hostent, family: c_int) -> Option<HostEntry> 
     })
 }
 
-fn host_answer(answer: Answer<HostEntry>, host_error: c_int) -> HostAnswer {
+fn host_answer<T>(
+    answer: Answer<T>,
+    host_error: c_int,
+) -> frankenlibc_core::addrinfo::hosts_policy::BackendResult<T, c_int> {
     use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
     match answer {
         Answer::Found(entry) => BackendResult::Success(entry),
@@ -440,6 +461,106 @@ fn host_answer(answer: Answer<HostEntry>, host_error: c_int) -> HostAnswer {
             BackendResult::Unavailable(libc::EAI_FAIL)
         }
     }
+}
+
+/// Try the combined-family entry point used for AF_UNSPEC getaddrinfo.
+/// None means the module has no such symbol. A negative answer must reach the
+/// NSS status policy without falling back to another operation in that module.
+pub(crate) fn gethostbyname4(
+    service: &[u8],
+    name: &[u8],
+) -> Option<frankenlibc_core::addrinfo::hosts_policy::BackendResult<AddrInfoEntry, c_int>> {
+    use frankenlibc_core::addrinfo::hosts_policy::BackendResult;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    if name.contains(&0) {
+        return Some(BackendResult::Unavailable(libc::EAI_FAIL));
+    }
+    let address = module_function(service, "gethostbyname4_r")?;
+    type Name4 = unsafe extern "C" fn(
+        *const c_char,
+        *mut *mut GaihAddrTuple,
+        *mut c_char,
+        usize,
+        *mut c_int,
+        *mut c_int,
+        *mut i32,
+    ) -> c_int;
+    // SAFETY: the loaded symbol implements the public NSS tuple prototype.
+    let function: Name4 = unsafe { core::mem::transmute(address) };
+    let mut key = name.to_vec();
+    key.push(0);
+    let first = std::cell::Cell::new(std::ptr::null_mut::<GaihAddrTuple>());
+    let host_error = std::cell::Cell::new(0);
+    let result = with_scratch(
+        |buf, len, errno| {
+            // An ERANGE attempt may have published a partial list into its
+            // old scratch allocation. Start every retry with a fresh output.
+            let mut head = std::ptr::null_mut();
+            let mut h_errno = 0;
+            let mut ttl = 0;
+            // SAFETY: all output slots and the supplied scratch buffer remain
+            // writable for this call; the input name is NUL-terminated.
+            let status = unsafe {
+                function(
+                    key.as_ptr().cast(),
+                    &mut head,
+                    buf,
+                    len,
+                    errno,
+                    &mut h_errno,
+                    &mut ttl,
+                )
+            };
+            first.set(head);
+            host_error.set(h_errno);
+            status
+        },
+        || {
+            let mut current = first.get();
+            if current.is_null() {
+                return None;
+            }
+            // SAFETY: SUCCESS supplies a valid first tuple and an optional
+            // NUL-terminated name; conversion precedes scratch deallocation.
+            let canonical_name = unsafe {
+                (!(*current).name.is_null()).then(|| owned((*current).name))
+            };
+            let mut addresses = Vec::new();
+            let mut visited = std::collections::HashSet::new();
+            while !current.is_null() {
+                if addresses.len() >= MAX_SCRATCH / size_of::<GaihAddrTuple>()
+                    || !visited.insert(current as usize)
+                {
+                    return None;
+                }
+                // SAFETY: the module's successful list follows the public ABI.
+                // The traversal bound and visited set reject cyclic results.
+                let tuple = unsafe { &*current };
+                let (address, scope_id) = match tuple.family {
+                    libc::AF_INET => (
+                        IpAddr::V4(Ipv4Addr::from(tuple.address[0].to_ne_bytes())),
+                        0,
+                    ),
+                    libc::AF_INET6 => {
+                        let mut bytes = [0u8; 16];
+                        for (target, word) in bytes.chunks_exact_mut(4).zip(tuple.address) {
+                            target.copy_from_slice(&word.to_ne_bytes());
+                        }
+                        (IpAddr::V6(Ipv6Addr::from(bytes)), tuple.scope_id)
+                    }
+                    _ => return None,
+                };
+                addresses.push((address, scope_id));
+                current = tuple.next;
+            }
+            Some(AddrInfoEntry {
+                canonical_name,
+                addresses,
+            })
+        },
+    );
+    Some(host_answer(result, host_error.get()))
 }
 
 /// Query the newest available hosts entry point. Falling back is only for an

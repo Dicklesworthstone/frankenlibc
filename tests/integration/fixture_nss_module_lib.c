@@ -104,6 +104,84 @@ static enum nss_status host_by_name(const char *name, int family, struct hostent
   return fill_host(family, large, host, buf, len, errnop, h_errnop);
 }
 
+#ifdef WITH_HOST4
+enum nss_status FN(gethostbyname4_r)(const char *name, struct gaih_addrtuple **pat,
+                                    char *buf, size_t len, int *errnop,
+                                    int *h_errnop, int32_t *ttlp) {
+  static _Thread_local int partial_head_outstanding;
+  trace("gethostbyname4_r", name);
+  if (partial_head_outstanding) {
+    const char *require_reset = getenv("FLTEST_REQUIRE_TUPLE_HEAD_RESET");
+    partial_head_outstanding = 0;
+    if (require_reset != NULL && *require_reset == '1' && *pat != NULL)
+      return host_failure(NSS_STATUS_UNAVAIL, EINVAL, errnop, h_errnop);
+  }
+  enum nss_status status;
+  if (forced(&status, errnop))
+    return host_failure(status, *errnop, errnop, h_errnop);
+  int large = strcmp(name, "fltest-tuple-large") == 0;
+  if (!large && strcmp(name, "fltest-tuple") != 0)
+    return host_failure(NSS_STATUS_NOTFOUND, ENOENT, errnop, h_errnop);
+
+  const char canonical[] = "fltest-tuple.example";
+  size_t alignment = _Alignof(struct gaih_addrtuple);
+  size_t pad = (alignment - (uintptr_t)buf % alignment) % alignment;
+  size_t tuples_size = 4 * sizeof(struct gaih_addrtuple);
+  size_t required = pad + tuples_size + sizeof canonical + (large ? 8192 : 0);
+  if (len < required) {
+    /* A failed module call may publish a partial list into the old scratch.
+       Candidate retries must discard that pointer before replacing storage. */
+    if (len >= pad + sizeof(struct gaih_addrtuple)) {
+      struct gaih_addrtuple *partial = (struct gaih_addrtuple *)(buf + pad);
+      memset(partial, 0, sizeof *partial);
+      partial->family = AF_INET;
+      memcpy(partial->addr, host_v4[0], 4);
+      *pat = partial;
+      partial_head_outstanding = 1;
+    }
+    trace("gethostbyname4_r_ERANGE", name);
+    *errnop = ERANGE;
+    *h_errnop = NETDB_INTERNAL;
+    return NSS_STATUS_TRYAGAIN;
+  }
+
+  struct gaih_addrtuple *tuples = (struct gaih_addrtuple *)(buf + pad);
+  char *owner = buf + pad + tuples_size;
+  memcpy(owner, canonical, sizeof canonical);
+  memset(tuples, 0, tuples_size);
+  for (size_t i = 0; i < 4; ++i) {
+    tuples[i].next = i == 3 ? NULL : &tuples[i + 1];
+    tuples[i].name = owner;
+    tuples[i].family = i == 0 ? AF_INET : AF_INET6;
+  }
+  memcpy(tuples[0].addr, host_v4[0], 4);
+  memcpy(tuples[1].addr, host_v6[0], 16);
+  const unsigned char scoped[16] = {[0] = 0xfe, [1] = 0x80, [15] = 0x41};
+  memcpy(tuples[2].addr, scoped, 16);
+  memcpy(tuples[3].addr, scoped, 16);
+  tuples[2].scopeid = 7;
+  tuples[3].scopeid = 9;
+  *pat = tuples;
+  const char *shape = getenv("FLTEST_TUPLE_SHAPE");
+  if (shape != NULL && *shape != '\0') {
+    trace("gethostbyname4_r_shape", shape);
+    if (strcmp(shape, "nameless") == 0) {
+      for (size_t i = 0; i < 4; ++i) tuples[i].name = NULL;
+    } else if (strcmp(shape, "empty") == 0) {
+      *pat = NULL;
+    } else if (strcmp(shape, "badfamily") == 0) {
+      tuples[1].family = AF_UNIX;
+    } else if (strcmp(shape, "cycle") == 0) {
+      tuples[3].next = &tuples[1];
+    }
+  }
+  *errnop = 0;
+  *h_errnop = NETDB_SUCCESS;
+  if (ttlp != NULL) *ttlp = 60;
+  return NSS_STATUS_SUCCESS;
+}
+#endif
+
 #ifndef NO_HOST3
 enum nss_status FN(gethostbyname3_r)(const char *name, int family, struct hostent *host,
                                     char *buf, size_t len, int *errnop, int *h_errnop,
@@ -128,11 +206,13 @@ enum nss_status FN(gethostbyname2_r)(const char *name, int family, struct hosten
 }
 #endif
 
+#ifndef NO_HOST1
 enum nss_status FN(gethostbyname_r)(const char *name, struct hostent *host,
                                    char *buf, size_t len, int *errnop, int *h_errnop) {
   trace("gethostbyname_r", name);
   return host_by_name(name, AF_INET, host, buf, len, errnop, h_errnop);
 }
+#endif
 
 static enum nss_status host_by_address(const void *address, socklen_t address_len,
                                        int family, struct hostent *host, char *buf,

@@ -35,6 +35,36 @@ DIAGNOSTICS = ('diag-status', 'diag-text', 'diag-errno', 'diag-auth', 'diag-prin
 DIAGNOSTIC_UNWIND = ('diag-geterr-throw', 'diag-geterr-exit', 'diag-print-throw', 'diag-print-exit')
 
 
+NETNAME_ROWS = {'netname-user': 76, 'netname-host': 152, 'netname-default': 7}
+
+
+def netname_transcript_rows(case, stdout):
+    """Require the complete bounded C matrix before accepting a host oracle."""
+    lines = stdout.splitlines()
+    count = NETNAME_ROWS[case]
+    if len(lines) != count + 1 or lines[-1] != f'PASS {case}'.encode():
+        return 0
+    for index, line in enumerate(lines[:-1]):
+        fields = line.split()
+        if len(fields) != 5 or fields[:2] != [b'NETNAME', str(index).encode()]:
+            return 0
+        try:
+            status = int(fields[2])
+            int(fields[3])  # errno is part of the byte-exact differential.
+            payload = bytes.fromhex(fields[4].decode('ascii'))
+        except (ValueError, UnicodeDecodeError):
+            return 0
+        if status not in (0, 1) or not payload or len(payload) > 256:
+            return 0
+        if len(fields[4]) != 2 * len(payload):
+            return 0
+        if status == 0 and len(payload) != 256:
+            return 0
+        if status == 1 and (payload[-1] != 0 or b'\0' in payload[:-1]):
+            return 0
+    return count
+
+
 def words(values):
     return struct.pack('!' + 'I' * len(values), *values)
 
@@ -179,6 +209,7 @@ def main():
     report = dict(library_sha256=hashlib.sha256(library.read_bytes()).hexdigest(),
                   fixture_sha256=hashlib.sha256(fixture.read_bytes()).hexdigest(),
                   host=[], candidate=[], negative=[])
+    netname_references = {}
     peers = Peers()
 
     def run(provider, case, env, negative=False, cpp=False):
@@ -189,36 +220,53 @@ def main():
             code, stdout, stderr = process.returncode, process.stdout, process.stderr
         except subprocess.TimeoutExpired as error:
             code, stdout, stderr = 124, error.stdout or b'', error.stderr or b''
-        expected = (113, b'', b'WRONG RPC PROVIDER\n') if negative else (0, f'PASS {case}\n'.encode(), b'')
-        passed = (code, stdout, stderr) == expected
+        executed_rows = 0
+        if negative:
+            passed = (code, stdout, stderr) == (113, b'', b'WRONG RPC PROVIDER\n')
+        elif case in NETNAME_ROWS:
+            executed_rows = netname_transcript_rows(case, stdout)
+            passed = code == 0 and stderr == b'' and executed_rows == NETNAME_ROWS[case]
+            if provider == 'host':
+                if passed:
+                    netname_references[case] = stdout
+            else:
+                passed = passed and case in netname_references and stdout == netname_references[case]
+        else:
+            passed = (code, stdout, stderr) == (0, f'PASS {case}\n'.encode(), b'')
         wire = {key: value - before[key] for key, value in peers.counts.items()}
         if not negative and case.startswith('tcp'):
             passed = passed and wire['portmap_tcp'] > 0 and wire['tcp'] > 0
         if not negative and case in ('callrpc-high-ids', 'callrpc-version-overflow'):
             passed = passed and wire['portmap'] == 0
+        if not negative and case in NETNAME_ROWS:
+            passed = passed and all(count == 0 for count in wire.values())
         stem = f'{provider}-{case}'
         (out / f'{stem}.out').write_bytes(stdout)
         (out / f'{stem}.err').write_bytes(stderr)
         bucket = 'negative' if negative else 'host' if provider == 'host' else 'candidate'
-        report[bucket].append(dict(provider=provider, case=case, passed=passed,
-                                   returncode=code, wire_exchanges=wire))
+        record = dict(provider=provider, case=case, passed=passed,
+                      returncode=code, wire_exchanges=wire)
+        if case in NETNAME_ROWS:
+            record['netname_rows'] = executed_rows
+        report[bucket].append(record)
         (out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
         print(f'{"PASS" if passed else "FAIL"} {provider}/{case}: rc={code}', flush=True)
 
     try:
-        for case in HOST + DIAGNOSTICS:
+        for case in HOST + DIAGNOSTICS + tuple(NETNAME_ROWS):
             run('host', case, clean)
         for case in DIAGNOSTIC_UNWIND:
             run('host', case, clean, cpp=True)
-        run('wrong-provider-host', 'unknown-protocol',
-            dict(clean, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
-        run('wrong-provider-forced', 'unknown-protocol',
-            dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
-                 RPC_TEST_FORCE_HOST='1'), True)
+        for case in ('unknown-protocol',) + tuple(NETNAME_ROWS):
+            run('wrong-provider-host', case,
+                dict(clean, FRANKENLIBC_TEST_LIBRARY=str(library)), True)
+            run('wrong-provider-forced', case,
+                dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
+                     RPC_TEST_FORCE_HOST='1'), True)
         for mode in ('strict', 'hardened'):
             env = dict(clean, LD_PRELOAD=str(library), FRANKENLIBC_TEST_LIBRARY=str(library),
                        FRANKENLIBC_MODE=mode, FRANKENLIBC_THREAD_NATIVE='0')
-            for case in HOST + DIAGNOSTICS + OWNED:
+            for case in HOST + DIAGNOSTICS + tuple(NETNAME_ROWS) + OWNED:
                 run(mode, case, env)
             for case in UNWIND + DIAGNOSTIC_UNWIND:
                 run(mode, case, env, cpp=True)
