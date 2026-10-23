@@ -2020,7 +2020,9 @@ thread_local! {
 fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    STREAM_CELL_CACHE.with(|c| {
+    // C++ static destructors can flush streams after Rust TLS destructors.
+    // A destroyed cache is a miss; the global stream registry is still live.
+    let cached = STREAM_CELL_CACHE.try_with(|c| {
         let cache = c.borrow();
         for slot in cache.iter() {
             if let Some((cp, cg, cell)) = slot
@@ -2031,7 +2033,8 @@ fn stream_cell_cache_lookup(stream: *mut c_void) -> Option<StreamCell> {
             }
         }
         None
-    })
+    });
+    cached.unwrap_or_default()
 }
 
 thread_local! {
@@ -2092,7 +2095,7 @@ fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
         return;
     }
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    STREAM_CELL_CACHE.with(|c| {
+    let _ = STREAM_CELL_CACHE.try_with(|c| {
         // Insert-at-front (most-recent-first), shifting the previous entries down one slot (the
         // oldest, slot 2, is dropped). `store` only runs on a full cache miss (lookup checks ALL
         // slots and returns before storing), so `stream` is not already resident — no duplicate
@@ -2112,7 +2115,7 @@ fn stream_cell_cache_store(stream: *mut c_void, cell: &StreamCell) {
 fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    STREAM_CELL_CACHE.with(|c| {
+    let cached = STREAM_CELL_CACHE.try_with(|c| {
         let cache = c.borrow();
         for slot in cache.iter() {
             if let Some((cp, cg, cell)) = slot
@@ -2124,7 +2127,8 @@ fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
             }
         }
         None
-    })
+    });
+    cached.unwrap_or_default()
 }
 
 /// MT-safe fd-stream write fast path (fputs/fwrite/fputc): gen-valid cell-cache hit ⇒
@@ -2136,7 +2140,7 @@ fn try_fgetc_fast_cell(stream: *mut c_void) -> Option<c_int> {
 fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
     let key = stream as usize;
     let cur_gen = REGISTRY_GEN.load(Ordering::Acquire);
-    STREAM_CELL_CACHE.with(|c| {
+    let written = STREAM_CELL_CACHE.try_with(|c| {
         let cache = c.borrow();
         for slot in cache.iter() {
             if let Some((cp, cg, cell)) = slot
@@ -2147,7 +2151,8 @@ fn try_write_fast_cell(stream: *mut c_void, bytes: &[u8]) -> bool {
             }
         }
         false
-    })
+    });
+    written.unwrap_or_default()
 }
 
 /// MT-safe fd-stream `fgets` fast path: gen-valid cell-cache hit ⇒ lock ONLY this stream and

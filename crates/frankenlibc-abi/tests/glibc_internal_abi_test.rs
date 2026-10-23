@@ -3677,7 +3677,10 @@ fn asprintf_internal_forwards_variadic_arguments() {
     assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"");
     unsafe { free(output.cast()) };
 
-    assert_eq!(unsafe { __asprintf(ptr::null_mut(), c"ignored".as_ptr()) }, -1);
+    assert_eq!(
+        unsafe { __asprintf(ptr::null_mut(), c"ignored".as_ptr()) },
+        -1
+    );
 }
 
 #[test]
