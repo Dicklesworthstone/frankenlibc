@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/time.h>
 #include <unistd.h>
 #ifdef __cplusplus
@@ -68,6 +69,117 @@ static void *symbol(const char *name) {
         p=dlvsym(host,name,"GLIBC_2.2.5"); CHECK(p);
     }
     return p;
+}
+/* These are caller-owned char[256] buffers, not allocated char ** results.
+   The clean host process and each candidate process serialize the same rows. */
+typedef int (*UserToNetname)(char *, uid_t, const char *);
+typedef int (*HostToNetname)(char *, const char *, const char *);
+typedef int (*GetNetname)(char *);
+STATIC_ASSERT(sizeof(uid_t)==4,"GNU RPC uid_t is 32 bits");
+typedef struct NetnameOutput {
+    unsigned char before[16];
+    char name[256];
+    unsigned char after[16];
+} NetnameOutput;
+static void netname_record(const NetnameOutput *output,int result,int saved_errno,unsigned *row) {
+    CHECK(result==0 || result==1);
+    for(size_t i=0;i<sizeof(output->before);i++) CHECK(output->before[i]==0xa5);
+    for(size_t i=0;i<sizeof(output->after);i++) CHECK(output->after[i]==0xa5);
+    size_t used=sizeof(output->name);
+    if(result) {
+        const char *end=(const char *)memchr(output->name,0,sizeof(output->name));
+        CHECK(end);
+        used=(size_t)(end-output->name)+1;
+    }
+    static const char digits[]="0123456789abcdef";
+    char encoded[sizeof(output->name)*2+1];
+    for(size_t i=0;i<used;i++) {
+        unsigned byte=(unsigned char)output->name[i];
+        encoded[2*i]=digits[byte>>4];encoded[2*i+1]=digits[byte&15];
+    }
+    encoded[2*used]=0;
+    printf("NETNAME %u %d %d %s\n",(*row)++,result,saved_errno,encoded);
+}
+static void netname_user_row(UserToNetname function,unsigned *row,uid_t uid,const char *domain) {
+    NetnameOutput output;memset(&output,0xa5,sizeof(output));errno=EDOM;
+    int result=function(output.name,uid,domain),saved_errno=errno;
+    netname_record(&output,result,saved_errno,row);
+}
+static void netname_host_row(HostToNetname function,unsigned *row,const char *host,const char *domain) {
+    NetnameOutput output;memset(&output,0xa5,sizeof(output));errno=EDOM;
+    int result=function(output.name,host,domain),saved_errno=errno;
+    netname_record(&output,result,saved_errno,row);
+}
+static void netname_case(const char *name) {
+    unsigned row=0;
+    if(!strcmp(name,"netname-user")) {
+        UserToNetname function=(UserToNetname)symbol("user2netname");
+        const uid_t ids[]={0,1,42,(uid_t)UINT32_C(0x7fffffff),
+                           (uid_t)UINT32_C(0x80000000),(uid_t)UINT32_MAX};
+        const char *domains[]={"example.org","example.org.","",".","..",
+                               "domain..","\xff\x80.example",NULL};
+        for(size_t i=0;i<sizeof(ids)/sizeof(ids[0]);i++)
+            for(size_t j=0;j<sizeof(domains)/sizeof(domains[0]);j++)
+                netname_user_row(function,&row,ids[i],domains[j]);
+        const size_t lengths[]={236,237,238,254,255,256,260};
+        char domain[261];
+        for(size_t i=0;i<sizeof(lengths)/sizeof(lengths[0]);i++) {
+            size_t length=lengths[i];
+            memset(domain,'d',length);domain[length]=0;
+            netname_user_row(function,&row,42,domain);
+            netname_user_row(function,&row,(uid_t)UINT32_MAX,domain);
+            domain[length-1]='.';
+            netname_user_row(function,&row,42,domain);
+            netname_user_row(function,&row,(uid_t)UINT32_MAX,domain);
+        }
+        CHECK(row==76);return;
+    }
+    if(!strcmp(name,"netname-host")) {
+        HostToNetname function=(HostToNetname)symbol("host2netname");
+        const char *hosts[]={"short","host.example.org","","a.","a..",
+                             ".example.org","first.second.third","\xff\x80host.example",NULL};
+        const char *domains[]={"example.net","example.net.","",".","..",
+                               "domain..","\xff\x80.example",NULL};
+        for(size_t i=0;i<sizeof(hosts)/sizeof(hosts[0]);i++)
+            for(size_t j=0;j<sizeof(domains)/sizeof(domains[0]);j++)
+                netname_host_row(function,&row,hosts[i],domains[j]);
+        const size_t lengths[]={63,64,65,127,260};
+        char host[280],domain[261];
+        for(size_t i=0;i<sizeof(lengths)/sizeof(lengths[0]);i++) {
+            size_t host_length=lengths[i];
+            memset(host,'h',host_length);host[host_length]=0;
+            for(size_t j=0;j<sizeof(lengths)/sizeof(lengths[0]);j++) {
+                size_t domain_length=lengths[j];
+                memset(domain,'d',domain_length);domain[domain_length]=0;
+                netname_host_row(function,&row,host,domain);
+                domain[domain_length-1]='.';
+                netname_host_row(function,&row,host,domain);
+                if(domain_length>=64) {
+                    memset(domain,'d',domain_length);domain[63]='.';domain[domain_length]=0;
+                    netname_host_row(function,&row,host,domain);
+                }
+            }
+            host[host_length]='.';
+            memcpy(host+host_length+1,"example.org",sizeof("example.org"));
+            netname_host_row(function,&row,host,NULL);
+            netname_host_row(function,&row,host,"explicit.example");
+        }
+        CHECK(row==152);return;
+    }
+    CHECK(!strcmp(name,"netname-default"));
+    GetNetname get=(GetNetname)symbol("getnetname");
+    HostToNetname host=(HostToNetname)symbol("host2netname");
+    UserToNetname user=(UserToNetname)symbol("user2netname");
+    NetnameOutput output;memset(&output,0xa5,sizeof(output));errno=EDOM;
+    int result=get(output.name),saved_errno=errno;
+    netname_record(&output,result,saved_errno,&row);
+    netname_host_row(host,&row,NULL,NULL);
+    netname_host_row(host,&row,NULL,"example.org.");
+    netname_host_row(host,&row,"machine",NULL);
+    netname_user_row(user,&row,0,NULL);
+    netname_user_row(user,&row,(uid_t)UINT32_MAX,NULL);
+    netname_user_row(user,&row,geteuid(),NULL);
+    CHECK(row==7);
 }
 static unsigned long program=0x34567001UL;
 static int fail_xdr(void *x,void *data) { (void)x;(void)data;return 0; }
@@ -342,6 +454,9 @@ static void diagnostic_unwind_case(const char *name) {
 #endif
 int main(int argc,char **argv) {
     CHECK(argc==2); alarm(8);
+    if(!strncmp(argv[1],"netname-",8)) {
+        netname_case(argv[1]);printf("PASS %s\n",argv[1]);return 0;
+    }
     create=(Create)symbol("clnt_create");
     xdr_uint=(Xdr)symbol("xdr_u_int");
     create_error=(void *(*)(void))symbol("__rpc_thread_createerr");

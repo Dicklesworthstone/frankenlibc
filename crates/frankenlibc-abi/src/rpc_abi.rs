@@ -3088,29 +3088,70 @@ pub unsafe extern "C" fn get_myaddress(addr: *mut c_void) {
     }
 }
 
-/// Get the netname for the current effective uid.
-/// Format: "unix.<uid>@<domain>" — we use "localhost" as the domain.
-/// Returns 1 on success, 0 on failure.
+/// Read the kernel hostname or NIS domain without inventing an identity.
+fn rpc_netname_system_component(host: bool) -> Option<Vec<u8>> {
+    let mut bytes = [0u8; 65];
+    // SAFETY: both native entry points receive writable storage large enough
+    // for a Linux UTS field and its terminating NUL.
+    let status = unsafe {
+        if host {
+            crate::unistd_abi::gethostname(bytes.as_mut_ptr().cast(), bytes.len())
+        } else {
+            crate::unistd_abi::getdomainname(bytes.as_mut_ptr().cast(), bytes.len())
+        }
+    };
+    if status != 0 {
+        return None;
+    }
+    let end = bytes.iter().position(|&byte| byte == 0)?;
+    Some(bytes[..end].to_vec())
+}
+
+/// Publish a Secure RPC name in the caller's buffer.
 ///
 /// # Safety
-/// ABI boundary function. `name` must point to a buffer of at least MAXNETNAMELEN+1 (256) bytes.
-#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
-    if name.is_null() {
+/// destination is non-null and writable for 256 bytes, or its smaller extent
+/// is registered with the allocator. Both input components are owned bytes.
+unsafe fn rpc_netname_write(
+    destination: *mut c_char,
+    identity: &[u8],
+    domain: &[u8],
+) -> c_int {
+    let len = 5 + identity.len() + 1 + domain.len() + 1;
+    if len > 256 || known_remaining(destination as usize).is_some_and(|remaining| remaining < len) {
         return 0;
     }
-    let uid = raw_syscall::sys_geteuid();
-    // Format: "unix.<uid>@localhost"
-    let netname = format!("unix.{}@localhost\0", uid);
-    let bytes = netname.as_bytes();
-    // MAXNETNAMELEN is typically 255 in glibc
-    if bytes.len() > 256 {
-        return 0;
-    }
+    let mut bytes = [0u8; 256];
+    bytes[..5].copy_from_slice(b"unix.");
+    let separator = 5 + identity.len();
+    bytes[5..separator].copy_from_slice(identity);
+    bytes[separator] = b'@';
+    bytes[separator + 1..len - 1].copy_from_slice(domain);
+    // SAFETY: callers validate the destination, the tracked extent is checked,
+    // and the complete output, including its NUL, fits in the local buffer.
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), name.cast(), bytes.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), destination.cast(), len);
     }
     1
+}
+
+/// Get the current Secure RPC netname. Root uses the machine identity;
+/// other effective users use their uid and the kernel NIS domain.
+///
+/// # Safety
+/// name must point to a writable buffer of at least 256 bytes.
+#[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
+pub unsafe extern "C" fn getnetname(name: *mut c_char) -> c_int {
+    let uid = raw_syscall::sys_geteuid();
+    // SAFETY: both delegates validate null pointers and share this function's
+    // caller-owned output contract; null inputs select system components.
+    unsafe {
+        if uid == 0 {
+            host2netname(name, std::ptr::null(), std::ptr::null())
+        } else {
+            user2netname(name, uid, std::ptr::null())
+        }
+    }
 }
 
 /// Get the public key for a netname from the publickey database.
@@ -3154,60 +3195,58 @@ pub unsafe extern "C" fn getrpcport(
     0 // Not found — no native portmapper support
 }
 
-/// Convert a hostname to a netname. Format: "unix.<host>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Convert a hostname to a Secure RPC netname in a caller-owned buffer.
+/// A null host selects the kernel hostname. A null domain uses the hostname
+/// suffix when present, otherwise the kernel NIS domain.
 ///
 /// # Safety
-/// ABI boundary function. `netname` must point to a valid `*mut c_char` pointer.
+/// netname must point to a writable buffer of at least 256 bytes.
+/// Non-null host and domain must point to readable C strings.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn host2netname(
-    netname: *mut *mut c_char,
+    netname: *mut c_char,
     host: *const c_char,
     domain: *const c_char,
 ) -> c_int {
-    if netname.is_null() {
+    if netname.is_null() || known_remaining(netname as usize) == Some(0) {
         return 0;
     }
-    // Bounded reads — non-NUL-terminated host/domain pointers must not
-    // walk arbitrary memory. (REVIEW round 5: bd-z4k96 class.)
-    let host_owned = if host.is_null() {
-        b"localhost".to_vec()
-    } else {
-        match unsafe { read_bounded_cstr(host) } {
-            Some(b) => b,
-            None => return 0,
-        }
-    };
-    let domain_owned = if domain.is_null() {
-        b"localhost".to_vec()
-    } else {
-        match unsafe { read_bounded_cstr(domain) } {
-            Some(b) => b,
-            None => return 0,
-        }
-    };
-    let host_str = match std::str::from_utf8(&host_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let domain_str = match std::str::from_utf8(&domain_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
-    };
-    let name = format!("unix.{}@{}\0", host_str, domain_str);
-    // POSIX host2netname returns a heap buffer that the caller frees with the
-    // standard free(). Route through the FrankenLibC allocator entrypoint so
-    // replacement mode has no direct host call-through while keeping the public
-    // alloc/free pair matched.
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
-    if buf.is_null() {
-        return 0;
-    }
+    // GNU clears the output on a rejected host/domain pair.
+    // SAFETY: the destination is non-null with at least one writable byte.
     unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), name.len());
-        *netname = buf;
+        *netname = 0;
     }
-    1
+    let host_owned = if host.is_null() {
+        rpc_netname_system_component(true)
+    } else {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(host) }
+    };
+    let Some(host_owned) = host_owned else {
+        return 0;
+    };
+    // The host ABI bounds each component before applying its dot rules.
+    let host = &host_owned[..host_owned.len().min(64)];
+    let dot = host.iter().position(|&byte| byte == b'.');
+    let domain_owned = if !domain.is_null() {
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
+    } else if let Some(dot) = dot {
+        Some(host[dot + 1..].to_vec())
+    } else {
+        rpc_netname_system_component(false)
+    };
+    let Some(domain_owned) = domain_owned else {
+        return 0;
+    };
+    let domain = &domain_owned[..domain_owned.len().min(64)];
+    if domain.is_empty() {
+        return 0;
+    }
+    let domain = domain.strip_suffix(b".").unwrap_or(domain);
+    let host = &host[..dot.unwrap_or(host.len())];
+    // SAFETY: the output was validated above and both components are owned.
+    unsafe { rpc_netname_write(netname, host, domain) }
 }
 
 /// Extract hostname from a netname. Format: "unix.<host>@<domain>".
@@ -3301,46 +3340,39 @@ pub unsafe extern "C" fn netname2user(
     1
 }
 
-/// Convert a uid to a netname. Format: "unix.<uid>@<domain>".
-/// Returns 1 on success, 0 on failure.
+/// Convert a uid to a Secure RPC netname in a caller-owned buffer.
+/// A null domain selects the kernel NIS domain.
 ///
 /// # Safety
-/// ABI boundary function.
+/// netname must point to a writable buffer of at least 256 bytes.
+/// A non-null domain must point to a readable C string.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn user2netname(
-    netname: *mut *mut c_char,
-    uid: c_ulong,
+    netname: *mut c_char,
+    uid: libc::uid_t,
     domain: *const c_char,
 ) -> c_int {
     if netname.is_null() {
         return 0;
     }
-    // Bounded read — see bd-z4k96 class. (REVIEW round 5.)
     let domain_owned = if domain.is_null() {
-        b"localhost".to_vec()
+        rpc_netname_system_component(false)
     } else {
-        match unsafe { read_bounded_cstr(domain) } {
-            Some(b) => b,
-            None => return 0,
-        }
+        // SAFETY: the caller supplies a C string; the helper checks known bounds.
+        unsafe { read_bounded_cstr(domain) }
     };
-    let domain_str = match std::str::from_utf8(&domain_owned) {
-        Ok(s) => s,
-        Err(_) => return 0,
+    let Some(domain_owned) = domain_owned else {
+        return 0;
     };
-    let name = format!("unix.{}@{}\0", uid, domain_str);
-    // Sibling of host2netname: POSIX returns a buffer freed by the caller's
-    // free(), so use the FrankenLibC allocator entrypoint for a matched public
-    // alloc/free pair without a source-level host call-through.
-    let buf = unsafe { crate::malloc_abi::malloc(name.len()) } as *mut c_char;
-    if buf.is_null() {
+    // GNU reserves space for the longest signed uid before stripping a dot.
+    // A rejected user domain must leave the entire destination unchanged.
+    if domain_owned.len() > 237 {
         return 0;
     }
-    unsafe {
-        std::ptr::copy_nonoverlapping(name.as_ptr(), buf.cast(), name.len());
-        *netname = buf;
-    }
-    1
+    let domain = domain_owned.strip_suffix(b".").unwrap_or(&domain_owned);
+    let identity = (uid as i32).to_string();
+    // SAFETY: the output is non-null and the publisher checks its known extent.
+    unsafe { rpc_netname_write(netname, identity.as_bytes(), domain) }
 }
 
 /// Get time from a remote time server (RFC 868). Returns -1 (failure).

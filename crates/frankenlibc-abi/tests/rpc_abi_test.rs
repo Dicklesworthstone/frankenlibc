@@ -377,43 +377,65 @@ fn getsecretkey_returns_not_found() {
 // host2netname / netname2host / netname2user / user2netname
 // ===========================================================================
 
-#[test]
-fn host2netname_creates_valid_name() {
-    let host = CString::new("myhost").unwrap();
-    let domain = CString::new("example.com").unwrap();
-    let mut name: *mut c_char = std::ptr::null_mut();
-
-    let rc = unsafe { host2netname(&mut name, host.as_ptr(), domain.as_ptr()) };
-    assert_eq!(rc, 1);
-    assert!(!name.is_null());
-
-    let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
-    assert_eq!(s, "unix.myhost@example.com");
-
-    // Free through the SAME provider that allocated: host2netname/user2netname
-    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
-    // test binary (there is no interposition here), so the pair would be
-    // mismatched and glibc aborts with "free(): invalid size" — which is what
-    // this target did before bd-reality-202609-lx578q.7.
-    unsafe { free(name.cast()) };
+/// Surround the public 256-byte destination with independent byte canaries.
+fn assert_netname_output(buffer: &[u8; 258], expected: &[u8]) {
+    assert_eq!(buffer[0], 0xa5);
+    assert_eq!(buffer[257], 0xa5);
+    assert_eq!(&buffer[1..1 + expected.len()], expected);
+    assert_eq!(buffer[1 + expected.len()], 0);
 }
 
 #[test]
-fn host2netname_null_defaults() {
-    let mut name: *mut c_char = std::ptr::null_mut();
-    let rc = unsafe { host2netname(&mut name, std::ptr::null(), std::ptr::null()) };
+fn host2netname_writes_the_callers_character_buffer() {
+    let host = CString::new("myhost").unwrap();
+    let domain = CString::new("example.com").unwrap();
+    let mut name = [0xa5u8; 258];
+    // SAFETY: the destination has the public 256-byte capacity.
+    let rc = unsafe {
+        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+    };
     assert_eq!(rc, 1);
-    assert!(!name.is_null());
+    assert_netname_output(&name, b"unix.myhost@example.com");
+}
 
-    let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
-    assert_eq!(s, "unix.localhost@localhost");
+#[test]
+fn host2netname_uses_the_hostname_suffix_for_a_null_domain() {
+    let host = CString::new("myhost.example.com.").unwrap();
+    let mut name = [0xa5u8; 258];
+    // SAFETY: valid input string and caller-owned 256-byte output.
+    let rc = unsafe {
+        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), std::ptr::null())
+    };
+    assert_eq!(rc, 1);
+    assert_netname_output(&name, b"unix.myhost@example.com");
+}
 
-    // Free through the SAME provider that allocated: host2netname/user2netname
-    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
-    // test binary (there is no interposition here), so the pair would be
-    // mismatched and glibc aborts with "free(): invalid size" — which is what
-    // this target did before bd-reality-202609-lx578q.7.
-    unsafe { free(name.cast()) };
+#[test]
+fn host2netname_preserves_non_utf8_bytes() {
+    let host = CString::new(b"node\xff.suffix".as_slice()).unwrap();
+    let domain = CString::new(b"domain\xfe.".as_slice()).unwrap();
+    let mut name = [0xa5u8; 258];
+    // SAFETY: C strings may contain arbitrary non-NUL bytes.
+    let rc = unsafe {
+        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+    };
+    assert_eq!(rc, 1);
+    assert_netname_output(&name, b"unix.node\xff@domain\xfe");
+}
+
+#[test]
+fn host2netname_rejects_an_empty_domain_and_clears_only_the_first_byte() {
+    let host = CString::new("myhost").unwrap();
+    let domain = CString::new("").unwrap();
+    let mut name = [0xa5u8; 258];
+    // SAFETY: valid input strings and a 256-byte caller-owned output.
+    let rc = unsafe {
+        host2netname(name.as_mut_ptr().add(1).cast(), host.as_ptr(), domain.as_ptr())
+    };
+    assert_eq!(rc, 0);
+    assert_eq!(name[0], 0xa5);
+    assert_eq!(name[1], 0);
+    assert!(name[2..].iter().all(|&byte| byte == 0xa5));
 }
 
 #[test]
@@ -523,23 +545,38 @@ fn netname2user_rejects_uid_overflow_without_writing_outputs() {
 }
 
 #[test]
-fn user2netname_formats_correctly() {
-    let domain = CString::new("example.com").unwrap();
-    let mut name: *mut c_char = std::ptr::null_mut();
+fn user2netname_writes_the_callers_buffer_and_formats_signed_uid_bits() {
+    let domain = CString::new("example.com.").unwrap();
+    for (uid, expected) in [
+        (42, "unix.42@example.com"),
+        (0x7fff_ffff, "unix.2147483647@example.com"),
+        (0x8000_0000, "unix.-2147483648@example.com"),
+        (0xffff_ffff, "unix.-1@example.com"),
+    ] {
+        let mut name = [0xa5u8; 258];
+        // SAFETY: uid uses the public uid_t type and output has 256 bytes.
+        let rc = unsafe {
+            user2netname(name.as_mut_ptr().add(1).cast(), uid, domain.as_ptr())
+        };
+        assert_eq!(rc, 1);
+        assert_netname_output(&name, expected.as_bytes());
+    }
+}
 
-    let rc = unsafe { user2netname(&mut name, 42, domain.as_ptr()) };
-    assert_eq!(rc, 1);
-    assert!(!name.is_null());
-
-    let s = unsafe { CStr::from_ptr(name) }.to_str().unwrap();
-    assert_eq!(s, "unix.42@example.com");
-
-    // Free through the SAME provider that allocated: host2netname/user2netname
-    // route through fl's allocator entrypoint, and `libc::free` is glibc's in a
-    // test binary (there is no interposition here), so the pair would be
-    // mismatched and glibc aborts with "free(): invalid size" — which is what
-    // this target did before bd-reality-202609-lx578q.7.
-    unsafe { free(name.cast()) };
+#[test]
+fn user2netname_rejects_an_overlong_domain_without_touching_the_buffer() {
+    for tail in [b'd', b'.'] {
+        let mut bytes = vec![b'd'; 238];
+        bytes[237] = tail;
+        let domain = CString::new(bytes).unwrap();
+        let mut name = [0xa5u8; 258];
+        // SAFETY: valid input string and a 256-byte caller-owned output.
+        let rc = unsafe {
+            user2netname(name.as_mut_ptr().add(1).cast(), 42, domain.as_ptr())
+        };
+        assert_eq!(rc, 0);
+        assert_eq!(name, [0xa5; 258]);
+    }
 }
 
 // ===========================================================================

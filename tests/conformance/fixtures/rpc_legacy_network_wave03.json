@@ -362,14 +362,14 @@
       "inputs": {
         "symbol": "getnetname",
         "expected_class": "safe-default-local-netname",
-        "strict_behavior": "returns a local UNIX-style netname but logs only the structural class",
+        "strict_behavior": "returns the system UNIX-style netname but logs only the structural class",
         "hardened_behavior": "same deterministic structural class; no repair path",
-        "safe_default_rationale": "the concrete effective uid is process-local and must not enter canonical fixture output",
+        "safe_default_rationale": "the concrete uid, hostname and NIS domain must not enter canonical fixture output",
         "oracle_kind": "native_safe_default",
-        "divergence_policy": "intentional local classification; host UID value is not logged",
+        "divergence_policy": "structural classification only; system identity values are not logged",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=getnetname;mode=strict;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_LOCALHOST;failure_signature=none",
+      "expected_output": "symbol=getnetname;mode=strict;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_NETNAME;failure_signature=none",
       "expected_errno": 0,
       "mode": "strict"
     },
@@ -380,14 +380,14 @@
       "inputs": {
         "symbol": "getnetname",
         "expected_class": "safe-default-local-netname",
-        "strict_behavior": "returns a local UNIX-style netname but logs only the structural class",
+        "strict_behavior": "returns the system UNIX-style netname but logs only the structural class",
         "hardened_behavior": "same deterministic structural class; no repair path",
-        "safe_default_rationale": "the concrete effective uid is process-local and must not enter canonical fixture output",
+        "safe_default_rationale": "the concrete uid, hostname and NIS domain must not enter canonical fixture output",
         "oracle_kind": "native_safe_default",
-        "divergence_policy": "intentional local classification; host UID value is not logged",
+        "divergence_policy": "structural classification only; system identity values are not logged",
         "oracle_source": "crates/frankenlibc-abi/src/rpc_abi.rs"
       },
-      "expected_output": "symbol=getnetname;mode=hardened;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_LOCALHOST;failure_signature=none",
+      "expected_output": "symbol=getnetname;mode=hardened;expected_class=safe-default-local-netname;actual=RETURN=1_CSTR_CLASS=UNIX_NETNAME;failure_signature=none",
       "expected_errno": 0,
       "mode": "hardened"
     },
