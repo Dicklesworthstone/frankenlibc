@@ -3260,10 +3260,10 @@ pub unsafe extern "C" fn netname2host(
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn netname2user(
     netname: *const c_char,
-    uidp: *mut c_ulong,
-    gidp: *mut c_ulong,
+    uidp: *mut libc::uid_t,
+    gidp: *mut libc::gid_t,
     gidlenp: *mut c_int,
-    _gidlist: *mut c_int,
+    _gidlist: *mut libc::gid_t,
 ) -> c_int {
     if netname.is_null() || uidp.is_null() || gidp.is_null() || gidlenp.is_null() {
         return 0;
@@ -3285,10 +3285,14 @@ pub unsafe extern "C" fn netname2user(
         Some(idx) => &rest[..idx],
         None => return 0,
     };
-    let uid: u64 = match uid_str.parse() {
+    // uid_t and gid_t are 32-bit even on the LP64 RPC ABI. Parsing into
+    // unsigned long and storing eight bytes corrupts the caller's next field.
+    // Reject an unrepresentable identity before touching any output.
+    let uid: libc::uid_t = match uid_str.parse() {
         Ok(v) => v,
         Err(_) => return 0,
     };
+    // SAFETY: the caller supplies writable uid_t/gid_t/int output slots.
     unsafe {
         *uidp = uid;
         *gidp = uid; // Default: gid = uid

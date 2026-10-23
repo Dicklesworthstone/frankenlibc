@@ -441,8 +441,8 @@ fn netname2host_rejects_invalid() {
 #[test]
 fn netname2user_parses_uid() {
     let netname = CString::new("unix.1000@localhost").unwrap();
-    let mut uid: u64 = 0;
-    let mut gid: u64 = 0;
+    let mut uid: libc::uid_t = 0;
+    let mut gid: libc::gid_t = 0;
     let mut gidlen: c_int = 0;
 
     let rc = unsafe {
@@ -458,6 +458,68 @@ fn netname2user_parses_uid() {
     assert_eq!(uid, 1000);
     assert_eq!(gid, 1000); // default: gid = uid
     assert_eq!(gidlen, 0);
+}
+
+#[test]
+fn netname2user_preserves_adjacent_uid_and_gid_storage() {
+    #[repr(C)]
+    struct Outputs {
+        uid: libc::uid_t,
+        uid_guard: u32,
+        gid: libc::gid_t,
+        gid_guard: u32,
+        count: c_int,
+        count_guard: u32,
+    }
+    let mut out = Outputs {
+        uid: 17,
+        uid_guard: 0x1234_5678,
+        gid: 19,
+        gid_guard: 0x9abc_def0,
+        count: 23,
+        count_guard: 0x1357_9bdf,
+    };
+    let name = CString::new("unix.4294967295@example.com").unwrap();
+    // SAFETY: each output points to exactly the public C type's storage.
+    let rc = unsafe {
+        netname2user(
+            name.as_ptr(),
+            &mut out.uid,
+            &mut out.gid,
+            &mut out.count,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 1);
+    assert_eq!(out.uid, libc::uid_t::MAX);
+    assert_eq!(out.gid, libc::gid_t::MAX);
+    assert_eq!(out.count, 0);
+    assert_eq!(out.uid_guard, 0x1234_5678);
+    assert_eq!(out.gid_guard, 0x9abc_def0);
+    assert_eq!(out.count_guard, 0x1357_9bdf);
+}
+
+#[test]
+fn netname2user_rejects_uid_overflow_without_writing_outputs() {
+    for identity in ["4294967296", "18446744073709551615", "-1"] {
+        let name = CString::new(format!("unix.{identity}@example.com")).unwrap();
+        let mut uid: libc::uid_t = 17;
+        let mut gid: libc::gid_t = 19;
+        let mut count: c_int = 23;
+        let mut groups: [libc::gid_t; 2] = [29, 31];
+        // SAFETY: every output has the size and alignment of its public C type.
+        let rc = unsafe {
+            netname2user(
+                name.as_ptr(),
+                &mut uid,
+                &mut gid,
+                &mut count,
+                groups.as_mut_ptr(),
+            )
+        };
+        assert_eq!(rc, 0, "unrepresentable identity {identity}");
+        assert_eq!((uid, gid, count, groups), (17, 19, 23, [29, 31]));
+    }
 }
 
 #[test]
