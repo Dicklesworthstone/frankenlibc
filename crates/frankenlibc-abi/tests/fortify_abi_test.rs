@@ -25,7 +25,7 @@ fn wide_fortify_entrypoints_use_target_wchar_t() {
         *const libc::wchar_t,
         usize,
     ) -> *mut libc::wchar_t = __wcscpy_chk;
-    let _: unsafe extern "C" fn(
+    let _: unsafe extern "C-unwind" fn(
         *mut libc::wchar_t,
         usize,
         c_int,

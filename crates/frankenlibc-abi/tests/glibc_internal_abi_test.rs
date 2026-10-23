@@ -3669,13 +3669,16 @@ fn asprintf_internal_forwards_variadic_arguments() {
     assert_eq!(count, 8);
     assert!(!output.is_null());
     assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"hello:17");
-    unsafe { free(output.cast()) };
+    // SAFETY: the native alias allocates with FrankenLibC's allocator, which
+    // remains distinct from the host free declared for obstack tests below.
+    unsafe { frankenlibc_abi::malloc_abi::free(output.cast()) };
 
     output = ptr::null_mut();
     assert_eq!(unsafe { __asprintf(&mut output, c"".as_ptr()) }, 0);
     assert!(!output.is_null());
     assert_eq!(unsafe { CStr::from_ptr(output) }.to_bytes(), b"");
-    unsafe { free(output.cast()) };
+    // SAFETY: release through the allocator that produced the empty string.
+    unsafe { frankenlibc_abi::malloc_abi::free(output.cast()) };
 
     assert_eq!(
         unsafe { __asprintf(ptr::null_mut(), c"ignored".as_ptr()) },
