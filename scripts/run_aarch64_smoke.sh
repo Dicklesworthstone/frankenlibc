@@ -139,11 +139,18 @@ static int constructed;
 static __thread int tls_value = 7;
 static int *parent_errno;
 static unsigned checks, providers;
+/* Volatile function pointers keep header FORTIFY inlining and compiler
+ * builtins from replacing the library operations this probe must execute. */
+static void *(*volatile call_memcpy)(void *, const void *, size_t) = memcpy;
+static void *(*volatile call_memmove)(void *, const void *, size_t) = memmove;
+static void *(*volatile call_memset)(void *, int, size_t) = memset;
+static int (*volatile call_snprintf)(char *, size_t, const char *, ...) = snprintf;
+static int (*volatile call_printf)(const char *, ...) = printf;
 
 __attribute__((constructor)) static void before_main(void) {
     char *p = malloc(32);
     if (!p) return;
-    memset(p, 'x', 31); p[31] = 0;
+    call_memset(p, 'x', 31); p[31] = 0;
     constructed = strlen(p) == 31;
     free(p);
 }
@@ -159,14 +166,19 @@ static int check(int condition, const char *name) {
 
 static int provider(const char *name, void *binding, const char *expected) {
     void *address = dlsym(RTLD_DEFAULT, name);
-    Dl_info info;
-    char actual[PATH_MAX];
-    /* Check the executable's binding as well as RTLD_DEFAULT. A versioned
-     * call must not slip through to glibc while dlsym finds our default. */
-    if (!address || address != binding || !dladdr(binding, &info) || !info.dli_fname ||
-        !realpath(info.dli_fname, actual) || strcmp(actual, expected)) {
-        fprintf(stderr, "FAIL: wrong/missing provider: %s\n", name);
-        return 0;
+    void *addresses[] = {address, binding};
+    /* FORTIFY may redirect longjmp/siglongjmp to __longjmp_chk. Lookup and
+     * call binding can differ, but BOTH must belong to the tested library. */
+    for (size_t i = 0; i < sizeof addresses / sizeof addresses[0]; i++) {
+        Dl_info info = {0};
+        char actual[PATH_MAX] = {0};
+        if (!addresses[i] || !dladdr(addresses[i], &info) || !info.dli_fname ||
+            !realpath(info.dli_fname, actual) || strcmp(actual, expected)) {
+            fprintf(stderr, "FAIL: wrong/missing provider: %s (%s, file=%s)\n",
+                    name, i == 0 ? "lookup" : "binding",
+                    actual[0] ? actual : info.dli_fname ? info.dli_fname : "unresolved");
+            return 0;
+        }
     }
     providers++;
     return 1;
@@ -192,8 +204,10 @@ int main(void) {
 #define BOUND(function) { #function, (void *)&function }
     const struct { const char *name; void *binding; } functions[] = {
         BOUND(malloc), BOUND(calloc), BOUND(realloc), BOUND(free),
-        BOUND(memcpy), BOUND(memmove), BOUND(memset), BOUND(strlen), BOUND(strcmp),
-        BOUND(printf), BOUND(snprintf), BOUND(__memcpy_chk), BOUND(__errno_location),
+        {"memcpy", (void *)call_memcpy}, {"memmove", (void *)call_memmove},
+        {"memset", (void *)call_memset}, BOUND(strlen), BOUND(strcmp),
+        {"printf", (void *)call_printf}, {"snprintf", (void *)call_snprintf},
+        BOUND(__memcpy_chk), BOUND(__errno_location),
         BOUND(pthread_create), BOUND(pthread_join), BOUND(getpid), BOUND(pipe),
         BOUND(read), BOUND(write), BOUND(close), BOUND(setjmp), BOUND(_setjmp),
         BOUND(__sigsetjmp), BOUND(longjmp), BOUND(siglongjmp), BOUND(__longjmp_chk)
@@ -204,13 +218,13 @@ int main(void) {
     if (!check(constructed, "constructor allocation/string")) return 4;
     char *p = malloc(64);
     if (!check(p != NULL, "malloc")) return 4;
-    memset(p, 'A', 63); p[63] = 0;
+    call_memset(p, 'A', 63); p[63] = 0;
     if (!check(strlen(p) == 63, "memset/strlen")) return 4;
     p = realloc(p, 128);
     if (!check(p != NULL && p[0] == 'A' && p[62] == 'A', "realloc preservation")) return 4;
     char copy[128];
-    memcpy(copy, p, 64);
-    memmove(copy + 1, copy, 64);
+    call_memcpy(copy, p, 64);
+    call_memmove(copy + 1, copy, 64);
     if (!check(copy[1] == 'A' && copy[64] == 0, "copy/overlap")) return 4;
     free(p);
     char *zero = calloc(32, 1);
@@ -223,7 +237,7 @@ int main(void) {
     if (!check(checked_copy(copy, "fortify", 8, sizeof copy) == copy &&
                strcmp(copy, "fortify") == 0, "FORTIFY valid copy")) return 4;
     char formatted[32];
-    if (!check(snprintf(formatted, sizeof formatted, "%s:%d", "arm", 64) == 6 &&
+    if (!check(call_snprintf(formatted, sizeof formatted, "%s:%d", "arm", 64) == 6 &&
                strcmp(formatted, "arm:64") == 0, "snprintf")) return 4;
     int fds[2]; char byte = 0;
     if (!check(getpid() > 0 && pipe(fds) == 0, "pid/pipe")) return 4;
@@ -250,8 +264,9 @@ int main(void) {
     volatile int checked_value = setjmp(jump);
     if (checked_value == 0) checked_jump(jump, 13);
     if (!check(checked_value == 13, "FORTIFY longjmp")) return 4;
-    printf("{\"status\":\"pass\",\"mode\":\"%s\",\"architecture\":\"aarch64\","
-           "\"providers\":%u,\"checks\":%u}\n", mode, providers, checks);
+    call_printf("{\"status\":\"pass\",\"mode\":\"%s\",\"architecture\":\"aarch64\","
+                "\"providers\":%u,\"checks\":%u,\"fortify_level\":%d}\n",
+                mode, providers, checks, __USE_FORTIFY_LEVEL);
     return 0;
 }
 '''
@@ -314,10 +329,10 @@ else:
     except (OSError, ValueError) as exc:
         failures.append(str(exc))
 
-def probe_command(mode, preload, program=binary):
+def probe_command(mode, preload, program=binary, foreign=None):
     values = {"FRANKENLIBC_MODE": mode, "FRANKENLIBC_EXPECT_LIBRARY": str(ARTIFACT)}
     if preload:
-        values["LD_PRELOAD"] = str(ARTIFACT)
+        values["LD_PRELOAD"] = (str(foreign) + ":" if foreign else "") + str(ARTIFACT)
     if runner:
         command = list(runner)
         for key, value in values.items():
@@ -325,6 +340,7 @@ def probe_command(mode, preload, program=binary):
         return command + [str(program)], {}
     return [str(program)], values
 
+fortify_levels = {}
 if not failures:
     for mode in ("strict", "hardened"):
         command, env = probe_command(mode, True)
@@ -334,16 +350,46 @@ if not failures:
             valid = (not row["timed_out"] and row["exit_code"] == 0 and
                      observed["status"] == "pass" and
                      observed["mode"] == mode and observed["architecture"] == "aarch64" and
-                     observed["providers"] == len(REQUIRED) and observed["checks"] == 48)
+                     observed["providers"] == len(REQUIRED) and observed["checks"] == 48 and
+                     isinstance(observed["fortify_level"], int) and observed["fortify_level"] >= 0)
         except (ValueError, KeyError, TypeError):
             valid = False
         if not valid:
             failures.append(mode + "_runtime_failed")
+        else:
+            fortify_levels[mode] = observed["fortify_level"]
         command, env = probe_command(mode, False)
         negative = run(mode + "-no-preload", command, env)
         if (negative["timed_out"] or negative["exit_code"] != 3 or
                 "wrong/missing provider" not in negative["stderr"]):
             failures.append(mode + "_provider_negative_failed")
+    # Independent partial interposers isolate lookup and actual-call ownership.
+    # They trap if called: they can never supply a positive behavior result.
+    for symbol in ("longjmp", "__longjmp_chk"):
+        shim_source, shim = out / (symbol + ".c"), out / (symbol + ".so")
+        shim_source.write_text("void " + symbol + "(void *p, int n) { "
+                               "(void)p; (void)n; __builtin_trap(); }\n")
+        row = run("compile-foreign-" + symbol, compiler + ["-shared", "-fPIC", "-fno-builtin",
+                  "-Wall", "-Wextra", "-Werror", str(shim_source), "-o", str(shim)])
+        if row["timed_out"] or row["exit_code"] != 0:
+            failures.append(symbol + "_foreign_compile_failed")
+            continue
+        try:
+            if elf_header(shim) != (3, False):
+                raise ValueError("foreign_probe_not_shared_library")
+        except (OSError, ValueError) as exc:
+            failures.append(str(exc))
+            continue
+        for mode in ("strict", "hardened"):
+            command, env = probe_command(mode, True, foreign=shim)
+            row = run(mode + "-foreign-" + symbol, command, env)
+            expected = "longjmp (lookup,"
+            if symbol == "__longjmp_chk":
+                expected = ("longjmp (binding," if fortify_levels.get(mode, 0) > 0
+                            else "__longjmp_chk (lookup,")
+            if (row["timed_out"] or row["exit_code"] != 3 or row["stdout"] or
+                    "wrong/missing provider: " + expected not in row["stderr"]):
+                failures.append(mode + "_foreign_" + symbol + "_negative_failed")
     edges = out / "setjmp_edges"
     row = run("compile-setjmp", compiler + ["-O2", "-fno-builtin", "-Wall", "-Wextra",
                                           "-Werror", "-fPIE", "-pie", str(edges_source),
@@ -372,6 +418,7 @@ report = dict(status="fail" if failures else "pass", gate="bd-gq1kz7.12",
               probe_source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
               setjmp_source_sha256=edges_hash,
               runner=runner or ["native"], rows=rows, failures=failures,
+              fortify_levels=fortify_levels,
               processes_executed=sum(not row["name"].startswith("compile") for row in rows),
               process_count_scope="Top-level probe invocations; fixture fork children are additional",
               scope="L0 interposition correctness; not standalone or hardware performance")
