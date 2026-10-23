@@ -12,6 +12,70 @@ use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use frankenlibc_abi::pthread_abi::*;
 use frankenlibc_core::syscall;
 
+#[path = "common/dlsym_oracle.rs"]
+mod dlsym_oracle;
+
+struct StackAttrApi {
+    init: unsafe extern "C" fn(*mut libc::pthread_attr_t) -> i32,
+    destroy: unsafe extern "C" fn(*mut libc::pthread_attr_t) -> i32,
+    set_size: unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> i32,
+    set_address: unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void) -> i32,
+    set_stack: unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> i32,
+    get_stack:
+        unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> i32,
+    get_address: unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void) -> i32,
+}
+
+impl StackAttrApi {
+    fn managed() -> Self {
+        Self {
+            init: pthread_attr_init,
+            destroy: pthread_attr_destroy,
+            set_size: pthread_attr_setstacksize,
+            set_address: pthread_attr_setstackaddr,
+            set_stack: pthread_attr_setstack,
+            get_stack: pthread_attr_getstack,
+            get_address: pthread_attr_getstackaddr,
+        }
+    }
+
+    fn host() -> Self {
+        use dlsym_oracle::host_fn;
+        // Resolve each oracle in libc.so.6 and reject aliases to our own entrypoints.
+        unsafe {
+            Self {
+                init: host_fn(c"pthread_attr_init", pthread_attr_init as *const ()),
+                destroy: host_fn(c"pthread_attr_destroy", pthread_attr_destroy as *const ()),
+                set_size: host_fn(
+                    c"pthread_attr_setstacksize",
+                    pthread_attr_setstacksize as *const (),
+                ),
+                set_address: host_fn(
+                    c"pthread_attr_setstackaddr",
+                    pthread_attr_setstackaddr as *const (),
+                ),
+                set_stack: host_fn(c"pthread_attr_setstack", pthread_attr_setstack as *const ()),
+                get_stack: host_fn(c"pthread_attr_getstack", pthread_attr_getstack as *const ()),
+                get_address: host_fn(
+                    c"pthread_attr_getstackaddr",
+                    pthread_attr_getstackaddr as *const (),
+                ),
+            }
+        }
+    }
+
+    fn snapshot(&self, attr: &libc::pthread_attr_t) -> (usize, usize, usize) {
+        let mut base = ptr::null_mut();
+        let mut size = 0;
+        let mut top = ptr::null_mut();
+        unsafe {
+            assert_eq!((self.get_stack)(attr, &mut base, &mut size), 0);
+            assert_eq!((self.get_address)(attr, &mut top), 0);
+        }
+        (base as usize, size, top as usize)
+    }
+}
+
 struct NativeMode(bool);
 
 impl NativeMode {
@@ -397,5 +461,117 @@ fn native_stack_invalid_ranges_fail_before_publishing_a_thread() {
         );
         assert_eq!(thread, 0x1234);
         assert_eq!(pthread_attr_destroy(&mut attr), 0);
+    }
+}
+
+#[test]
+fn native_stack_legacy_address_setter_orders_use_caller_storage() {
+    let _mode = NativeMode::enter();
+    let stack = CallerStack::new();
+    let address = stack.base as usize + stack.page + 35;
+    let size = 256 * 1024 + 17;
+    let top = address + size;
+    let managed = StackAttrApi::managed();
+    let host = StackAttrApi::host();
+    for address_first in [false, true] {
+        let mut attr = unsafe { std::mem::zeroed() };
+        let mut oracle = unsafe { std::mem::zeroed() };
+        for (api, value) in [(&managed, &mut attr), (&host, &mut oracle)] {
+            unsafe {
+                assert_eq!((api.init)(value), 0);
+                if address_first {
+                    assert_eq!((api.set_address)(value, top as *mut c_void), 0);
+                    assert_eq!((api.set_size)(value, size), 0);
+                } else {
+                    assert_eq!((api.set_size)(value, size), 0);
+                    assert_eq!((api.set_address)(value, top as *mut c_void), 0);
+                }
+            }
+        }
+        assert_eq!(managed.snapshot(&attr), host.snapshot(&oracle));
+        assert_eq!(managed.snapshot(&attr), (address, size, top));
+        unsafe {
+            ((address - 1) as *mut u8).write(0x35);
+            (top as *mut u8).write(0x79);
+            let actual = run_joinable_probe(&attr);
+            assert_eq!(
+                (actual.address, actual.size, actual.guard),
+                (address, size, 0)
+            );
+            assert_eq!(((address - 1) as *const u8).read(), 0x35);
+            assert_eq!((top as *const u8).read(), 0x79);
+            assert_eq!((managed.destroy)(&mut attr), 0);
+            assert_eq!((host.destroy)(&mut oracle), 0);
+        }
+        stack.assert_preserved();
+    }
+}
+
+#[test]
+fn native_stack_mixed_setters_keep_the_high_endpoint() {
+    let _mode = NativeMode::enter();
+    let stack = CallerStack::new();
+    let address = stack.base as usize + stack.page + 39;
+    let initial_size = 256 * 1024 + 31;
+    let resized = 128 * 1024 + 17;
+    let top = address + initial_size;
+    let managed = StackAttrApi::managed();
+    let host = StackAttrApi::host();
+    let mut attr = unsafe { std::mem::zeroed() };
+    let mut oracle = unsafe { std::mem::zeroed() };
+    for (api, value) in [(&managed, &mut attr), (&host, &mut oracle)] {
+        unsafe {
+            assert_eq!((api.init)(value), 0);
+            assert_eq!(
+                (api.set_stack)(value, address as *mut c_void, initial_size),
+                0
+            );
+        }
+        assert_eq!(api.snapshot(value), (address, initial_size, top));
+        unsafe {
+            assert_eq!((api.set_size)(value, resized), 0);
+            assert_eq!((api.set_size)(value, 1), libc::EINVAL);
+        }
+    }
+    assert_eq!(managed.snapshot(&attr), host.snapshot(&oracle));
+    assert_eq!(managed.snapshot(&attr), (top - resized, resized, top));
+    let actual = unsafe { run_joinable_probe(&attr) };
+    assert_eq!(
+        (actual.address, actual.size, actual.guard),
+        (top - resized, resized, 0)
+    );
+    unsafe {
+        assert_eq!((managed.destroy)(&mut attr), 0);
+        assert_eq!((host.destroy)(&mut oracle), 0);
+    }
+    stack.assert_preserved();
+}
+
+#[test]
+fn legacy_stack_attributes_preserve_zero_and_wrapped_intermediate_bases() {
+    let managed = StackAttrApi::managed();
+    let host = StackAttrApi::host();
+    // These are attribute-only probes: the synthetic addresses are never used
+    // to launch a thread. The final valid range must survive setter ordering.
+    for top in [512 * 1024usize, 64 * 1024] {
+        let mut attr = unsafe { std::mem::zeroed() };
+        let mut oracle = unsafe { std::mem::zeroed() };
+        for (api, value) in [(&managed, &mut attr), (&host, &mut oracle)] {
+            unsafe {
+                assert_eq!((api.init)(value), 0);
+                assert_eq!((api.set_size)(value, 512 * 1024), 0);
+                assert_eq!((api.set_address)(value, top as *mut c_void), 0);
+            }
+        }
+        assert_eq!(managed.snapshot(&attr), host.snapshot(&oracle));
+        for (api, value) in [(&managed, &mut attr), (&host, &mut oracle)] {
+            unsafe { assert_eq!((api.set_size)(value, 16 * 1024), 0) };
+        }
+        assert_eq!(managed.snapshot(&attr), host.snapshot(&oracle));
+        assert_eq!(managed.snapshot(&attr), (top - 16 * 1024, 16 * 1024, top));
+        unsafe {
+            assert_eq!((managed.destroy)(&mut attr), 0);
+            assert_eq!((host.destroy)(&mut oracle), 0);
+        }
     }
 }

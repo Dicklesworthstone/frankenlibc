@@ -1924,6 +1924,7 @@ unsafe fn native_pthread_create(
     // actual allocation metadata in the handle for pthread_getattr_np.
     let mut stack_size = attr_default_stack_size();
     let mut stack_addr: usize = 0;
+    let mut caller_stack = false;
     let mut guard_size = ATTR_DEFAULT_GUARD_SIZE;
     let mut detach_state: c_int = 0;
     if !attr.is_null() {
@@ -1936,6 +1937,7 @@ unsafe fn native_pthread_create(
         if let Some(data) = managed_attr_data_ptr_const(attr) {
             stack_size = unsafe { (*data).stack_size };
             stack_addr = unsafe { (*data).stack_addr };
+            caller_stack = unsafe { (*data).has_stack_address() };
             guard_size = unsafe { (*data).guard_size };
             detach_state = unsafe { (*data).detach_state };
             handled = true;
@@ -1963,6 +1965,7 @@ unsafe fn native_pthread_create(
             if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
                 stack_addr = address as usize;
                 stack_size = size;
+                caller_stack = true;
             }
             let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
                 return libc::ENOSYS;
@@ -1985,7 +1988,7 @@ unsafe fn native_pthread_create(
     // These threads share this thread's TCB self pointer; stop keying allocator
     // slots by it before the clone.
     crate::malloc_abi::note_native_thread_backend();
-    let stack = if stack_addr == 0 {
+    let stack = if !caller_stack {
         ThreadStack::Allocated {
             size: stack_size,
             guard_size,
@@ -2161,7 +2164,7 @@ unsafe fn dispatch_host_thread_create_with_managed_attr(
         rc = unsafe { setguardsize(&mut host_attr, data.guard_size) };
     }
     if rc == 0 {
-        if data.stack_addr != 0 {
+        if data.has_stack_address() {
             rc = unsafe {
                 setstack(
                     &mut host_attr,
@@ -5191,6 +5194,11 @@ impl PthreadAttrDefaults {
     }
 }
 
+// An explicit stack can temporarily have a zero low base when the deprecated
+// high-address setter is used before the final size. Keep that state distinct
+// from a request for libc-allocated storage.
+const ATTR_FLAG_USER_STACK: u32 = 1 << 2;
+
 /// Internal layout overlaid on pthread_attr_t (56 bytes on x86_64, we use 48).
 #[repr(C)]
 struct PthreadAttrData {
@@ -5198,11 +5206,25 @@ struct PthreadAttrData {
     detach_state: i32,   // 4..8
     stack_size: usize,   // 8..16
     guard_size: usize,   // 16..24
-    stack_addr: usize,   // 24..32 (0 = system-allocated)
+    stack_addr: usize,   // 24..32: low base; flags distinguish explicit zero
     inherit_sched: i32,  // 32..36
     sched_policy: i32,   // 36..40
     sched_priority: i32, // 40..44
-    flags: u32,          // 44..48 (bit 0: affinity set, bit 1: sigmask set)
+    flags: u32,          // 44..48 (bit 0: affinity, bit 1: sigmask, bit 2: user stack)
+}
+
+impl PthreadAttrData {
+    fn has_stack_address(&self) -> bool {
+        self.stack_addr != 0 || self.flags & ATTR_FLAG_USER_STACK != 0
+    }
+
+    fn stack_top(&self) -> usize {
+        if self.has_stack_address() {
+            self.stack_addr.wrapping_add(self.stack_size)
+        } else {
+            0
+        }
+    }
 }
 
 fn attr_data_ptr(attr: *mut libc::pthread_attr_t) -> Option<*mut PthreadAttrData> {
@@ -5349,8 +5371,16 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(
     if size < ATTR_MIN_STACK_SIZE {
         return libc::EINVAL;
     }
+    // GNU retains the high endpoint when changing a caller stack's size.
+    // Wrapping arithmetic also preserves intermediate attributes produced by
+    // setstackaddr before a smaller final size is supplied. The native creator
+    // validates the completed range before writing any startup data.
     // SAFETY: pointer is non-null and aligned; caller owns the memory.
     unsafe {
+        if (*data).has_stack_address() {
+            (*data).stack_addr = (*data).stack_top().wrapping_sub(size);
+            (*data).flags |= ATTR_FLAG_USER_STACK;
+        }
         (*data).stack_size = size;
     }
     0
@@ -7263,11 +7293,12 @@ pub unsafe extern "C" fn pthread_attr_setstack(
     unsafe {
         (*data).stack_addr = stackaddr as usize;
         (*data).stack_size = stacksize;
+        (*data).flags |= ATTR_FLAG_USER_STACK;
     }
     0
 }
 
-/// Deprecated `pthread_attr_getstackaddr` — get stack address.
+/// Deprecated `pthread_attr_getstackaddr` — get the high stack address.
 /// Native implementation using the managed attr overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_getstackaddr(
@@ -7281,11 +7312,11 @@ pub unsafe extern "C" fn pthread_attr_getstackaddr(
         return libc::EINVAL;
     }
     // SAFETY: pointers are non-null and aligned.
-    unsafe { *stackaddr = (*data).stack_addr as *mut c_void };
+    unsafe { *stackaddr = (*data).stack_top() as *mut c_void };
     0
 }
 
-/// Deprecated `pthread_attr_setstackaddr` — set stack address.
+/// Deprecated `pthread_attr_setstackaddr` — set the high stack address.
 /// Native implementation using the managed attr overlay.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn pthread_attr_setstackaddr(
@@ -7298,8 +7329,14 @@ pub unsafe extern "C" fn pthread_attr_setstackaddr(
     if stackaddr.is_null() {
         return libc::EINVAL;
     }
+    // GNU's deprecated API takes the high endpoint on downward-growing stacks;
+    // the managed overlay and pthread_attr_setstack use the low base. Do not
+    // reject a wrapped intermediate base: a later setstacksize can make it valid.
     // SAFETY: pointer is non-null and aligned.
-    unsafe { (*data).stack_addr = stackaddr as usize };
+    unsafe {
+        (*data).stack_addr = (stackaddr as usize).wrapping_sub((*data).stack_size);
+        (*data).flags |= ATTR_FLAG_USER_STACK;
+    }
     0
 }
 
