@@ -214,7 +214,7 @@ fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
 # Keep every row and compare both streams; a process exit alone is not proof.
-for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown; do
+for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding gnu-unknown gnu-register gnu-register-wide; do
   oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
   oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
   env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
@@ -226,6 +226,11 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
   fi
   if [[ "${scenario}" == gnu-unknown && "${rows}" -ne 3000 ]]; then
     echo "FAIL: incomplete unknown-conversion oracle (${rows}/3000 rows)" >&2
+    exit 1
+  fi
+  if [[ "${scenario}" == gnu-register* ]] &&
+     [[ "$(grep -Ec '^reg:complete:(narrow|wide)$' "${oracle_stdout}")" -ne 1 ]]; then
+    echo "FAIL: GNU registration oracle did not complete ${scenario}" >&2
     exit 1
   fi
   if [[ "${scenario}" == *rounding ]] &&
@@ -249,9 +254,33 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
   done
 done
 
+# A GNU 2.39 custom/native fallback combination has inconsistent return-count
+# accounting. Preserve the exact host and candidate rows rather than hiding
+# the mismatch or treating this diagnostic as part of the parity claim.
+scenario=gnu-register-combined-fallback
+oracle_stdout="${OUT_DIR}/${scenario}.host.stdout.log"
+oracle_stderr="${OUT_DIR}/${scenario}.host.stderr.log"
+env -u LD_PRELOAD -u FRANKENLIBC_MODE -u FRANKENLIBC_TEST_LIBRARY \
+  "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" >"${oracle_stdout}" 2>"${oracle_stderr}"
+grep -q '^reg:combined-fallback:' "${oracle_stdout}"
+for mode in strict hardened; do
+  actual_stdout="${OUT_DIR}/${scenario}.${mode}.stdout.log"
+  actual_stderr="${OUT_DIR}/${scenario}.${mode}.stderr.log"
+  FRANKENLIBC_MODE="${mode}" FRANKENLIBC_TEST_LIBRARY="${LIB}" LD_PRELOAD="${LIB}" \
+    "${BIN_DIR}/fixture_stdio_printf.bin" "--${scenario}" >"${actual_stdout}" 2>"${actual_stderr}"
+  cmp -s "${oracle_stderr}" "${actual_stderr}"
+  if cmp -s "${oracle_stdout}" "${actual_stdout}"; then
+    result=match
+  else
+    result=return_count_differs
+  fi
+  echo "${scenario} (${mode}): diagnostic ${result}; exact return-count parity is not claimed" >>"${TEST_LOG}"
+  cat "${oracle_stdout}" "${actual_stdout}" >>"${TEST_LOG}"
+done
+
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   cat >"${REPORT}" <<JSON
-{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass"}
+{"schema_version":"v1","scope":"gnu-printf","bead":"bd-rc0923-epic-eeuy4f.34","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","original_printf_cases_per_mode":10,"gnu_live_differential_strict":"pass","gnu_live_differential_hardened":"pass","combined_fallback_return_count":"diagnostic_only"}
 JSON
   echo "check_stdio_native --gnu-printf: PASS (GNU callbacks/introspection and 10 original printf cases per mode; full stdio gate not run)"
   exit 0

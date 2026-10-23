@@ -6625,6 +6625,1293 @@ use frankenlibc_core::stdio::{
 /// Maximum variadic arguments we extract per printf call.
 pub(crate) const MAX_VA_ARGS: usize = 32;
 
+// GNU printf extensions are an opt-in path. A process which never registers
+// anything only loads this flag once at the public formatting boundary; its
+// existing parser, register readers and direct-format fast paths are unchanged.
+static PRINTF_EXTENSIONS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PRINTF_EXTENSIONS: Mutex<Option<PrintfExtensions>> = Mutex::new(None);
+
+#[derive(Clone, Copy)]
+struct PrintfConversion {
+    render: usize,
+    arginfo: usize,
+    sized: bool,
+}
+
+#[derive(Clone)]
+struct PrintfExtensions {
+    conversions: [Option<PrintfConversion>; 256],
+    modifiers: Vec<(Vec<u8>, u16)>,
+    types: Vec<usize>,
+}
+
+impl PrintfExtensions {
+    fn new() -> Self {
+        Self {
+            conversions: [None; 256],
+            modifiers: Vec::new(),
+            types: Vec::new(),
+        }
+    }
+}
+
+#[inline]
+pub(crate) fn printf_extensions_active() -> bool {
+    PRINTF_EXTENSIONS_ACTIVE.load(Ordering::Acquire)
+}
+
+fn printf_extensions_snapshot() -> PrintfExtensions {
+    // Never retain this guard across user code. Each call owns a coherent
+    // snapshot, so a callback can register/replace a conversion or recursively
+    // format without deadlocking or changing this call's argument layout.
+    // As with the GNU API, the registrant must keep callback code loaded while
+    // calls using it can still be in flight; unregistering is not dlclose.
+    PRINTF_EXTENSIONS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(PrintfExtensions::new)
+}
+
+pub(crate) fn register_printf_conversion(
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
+    sized: bool,
+) -> c_int {
+    if !(0..=255).contains(&spec) {
+        // SAFETY: errno is local to the calling thread.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    extensions.conversions[spec as usize] =
+        (!render.is_null() || !arginfo.is_null()).then_some(PrintfConversion {
+            render: render as usize,
+            arginfo: arginfo as usize,
+            sized,
+        });
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    0
+}
+
+pub(crate) unsafe fn register_printf_modifier_impl(modifier: *const libc::wchar_t) -> c_int {
+    if modifier.is_null() {
+        // SAFETY: errno is local to the calling thread.
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut bytes = Vec::new();
+    let mut i = 0;
+    loop {
+        // SAFETY: registration requires a terminated wchar_t string.
+        let ch = unsafe { *modifier.add(i) };
+        if ch == 0 {
+            break;
+        }
+        if !(1..=255).contains(&ch) {
+            // GNU modifier characters must fit in an unsigned char.
+            unsafe { set_abi_errno(errno::EINVAL) };
+            return -1;
+        }
+        if bytes.try_reserve(1).is_err() {
+            unsafe { set_abi_errno(errno::ENOMEM) };
+            return -1;
+        }
+        bytes.push(ch as u8);
+        i += 1;
+    }
+    if bytes.is_empty() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    if extensions.modifiers.len() == 16 {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return -1;
+    }
+    if extensions.modifiers.try_reserve(1).is_err() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return -1;
+    }
+    let bit = 1u16 << extensions.modifiers.len();
+    // Re-registering the same spelling allocates a new bit, as GNU does; the
+    // newest matching spelling takes precedence during parsing.
+    extensions.modifiers.push((bytes, bit));
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    c_int::from(bit)
+}
+
+pub(crate) fn register_printf_type_impl(reader: *mut c_void) -> c_int {
+    if reader.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let mut guard = PRINTF_EXTENSIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let extensions = guard.get_or_insert_with(PrintfExtensions::new);
+    let Ok(kind) = c_int::try_from(extensions.types.len()).map(|n| n.checked_add(8)) else {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return -1;
+    };
+    let Some(kind) = kind else {
+        unsafe { set_abi_errno(errno::ENOSPC) };
+        return -1;
+    };
+    if extensions.types.try_reserve(1).is_err() {
+        unsafe { set_abi_errno(errno::ENOMEM) };
+        return -1;
+    }
+    extensions.types.push(reader as usize);
+    PRINTF_EXTENSIONS_ACTIVE.store(true, Ordering::Release);
+    kind
+}
+
+use crate::glibc_internal_abi::PrintfInfo;
+use frankenlibc_core::stdio::printf::{FormatFlags, FormatSegments, FormatSpec};
+
+#[derive(Clone, Copy)]
+struct PrintfArgType {
+    kind: c_int,
+    size: usize,
+}
+
+struct ExtensionSpec {
+    info: PrintfInfo,
+    native: FormatSpec,
+    width_arg: Option<usize>,
+    precision_arg: Option<usize>,
+    first_arg: usize,
+    arg_count: usize,
+    conversion: Option<PrintfConversion>,
+    raw_start: usize,
+    raw_end: usize,
+}
+
+enum ExtensionSegment<'a> {
+    Literal(&'a [u8]),
+    Spec(ExtensionSpec),
+}
+
+struct ExtensionPlan<'a> {
+    segments: Vec<ExtensionSegment<'a>>,
+    types: Vec<Option<PrintfArgType>>,
+    count: usize,
+}
+
+fn extension_decimal(bytes: &[u8], pos: &mut usize) -> Result<usize, c_int> {
+    let mut value = 0usize;
+    while let Some(ch) = bytes.get(*pos).filter(|ch| ch.is_ascii_digit()) {
+        value = value
+            .checked_mul(10)
+            .and_then(|v| v.checked_add((ch - b'0') as usize))
+            .filter(|v| *v <= c_int::MAX as usize)
+            .ok_or(errno::EOVERFLOW)?;
+        *pos += 1;
+    }
+    Ok(value)
+}
+
+fn extension_position(bytes: &[u8], pos: &mut usize) -> Result<Option<usize>, c_int> {
+    let start = *pos;
+    let value = extension_decimal(bytes, pos)?;
+    if *pos > start && bytes.get(*pos) == Some(&b'$') {
+        *pos += 1;
+        value.checked_sub(1).map(Some).ok_or(errno::EINVAL)
+    } else {
+        *pos = start;
+        Ok(None)
+    }
+}
+
+fn extension_record_type(
+    plan: &mut ExtensionPlan<'_>,
+    index: usize,
+    kind: Option<PrintfArgType>,
+    capacity: usize,
+) -> Result<(), c_int> {
+    let required = index.checked_add(1).ok_or(errno::EOVERFLOW)?;
+    plan.count = plan.count.max(required);
+    if index < capacity {
+        if required > plan.types.len() {
+            plan.types
+                .try_reserve(required - plan.types.len())
+                .map_err(|_| errno::ENOMEM)?;
+            plan.types.resize(required, None);
+        }
+        if kind.is_some() {
+            plan.types[index] = kind;
+        }
+    }
+    Ok(())
+}
+
+fn extension_native_type(conversion: u8, length: LengthMod) -> Option<PrintfArgType> {
+    // Preserve GNU's public PA_* classification, which follows the spelling:
+    // %ls/%lc still report PA_STRING/PA_CHAR; only %S/%C report the wide codes.
+    // These pairs have the same register class when arguments are extracted.
+    let kind = match conversion {
+        b'd' | b'i' | b'u' | b'o' | b'x' | b'X' | b'b' | b'B' => match length {
+            LengthMod::Hh => 1,
+            LengthMod::H => 0x400,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 0x200,
+            _ => 0,
+        },
+        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
+            7 | if matches!(length, LengthMod::BigL | LengthMod::Ll) {
+                0x100
+            } else {
+                0
+            }
+        }
+        b's' => 3,
+        b'S' => 4,
+        b'c' => 1,
+        b'C' => 2,
+        b'p' => 5,
+        b'n' => 0x800,
+        _ => return None,
+    };
+    Some(PrintfArgType { kind, size: 0 })
+}
+
+unsafe fn extension_arginfo(
+    conversion: PrintfConversion,
+    info: &PrintfInfo,
+    n: usize,
+    types: *mut c_int,
+    sizes: *mut c_int,
+) -> c_int {
+    if conversion.sized {
+        type ArgInfo =
+            unsafe extern "C-unwind" fn(*const PrintfInfo, usize, *mut c_int, *mut c_int) -> c_int;
+        // SAFETY: the registration API supplies this exact GNU callback ABI.
+        let callback: ArgInfo = unsafe { std::mem::transmute(conversion.arginfo) };
+        unsafe { callback(info, n, types, sizes) }
+    } else {
+        type ArgInfo = unsafe extern "C-unwind" fn(*const PrintfInfo, usize, *mut c_int) -> c_int;
+        // SAFETY: register_printf_function supplies the legacy three-argument ABI.
+        let callback: ArgInfo = unsafe { std::mem::transmute(conversion.arginfo) };
+        unsafe { callback(info, n, types) }
+    }
+}
+
+unsafe fn extension_plan<'a>(
+    bytes: &'a [u8],
+    wide: bool,
+    extensions: &PrintfExtensions,
+    capacity: usize,
+) -> Result<ExtensionPlan<'a>, c_int> {
+    let mut plan = ExtensionPlan {
+        segments: Vec::new(),
+        types: Vec::new(),
+        count: 0,
+    };
+    let mut pos = 0;
+    let mut next = 0usize;
+    while pos < bytes.len() {
+        let start = pos;
+        while pos < bytes.len() && bytes[pos] != b'%' {
+            pos += 1;
+        }
+        if start != pos {
+            plan.segments
+                .push(ExtensionSegment::Literal(&bytes[start..pos]));
+        }
+        if pos == bytes.len() {
+            break;
+        }
+        let raw_start = pos;
+        pos += 1;
+        let value_position = extension_position(bytes, &mut pos)?;
+        if let Some(index) = value_position {
+            extension_record_type(&mut plan, index, None, capacity)?;
+        }
+        let mut flags = FormatFlags::default();
+        let mut i18n = false;
+        while let Some(ch) = bytes.get(pos) {
+            match ch {
+                b'-' => flags.left_justify = true,
+                b'+' => flags.force_sign = true,
+                b' ' => flags.space_sign = true,
+                b'#' => flags.alt_form = true,
+                b'0' => flags.zero_pad = true,
+                b'\'' => flags.group = true,
+                b'I' => i18n = true,
+                _ => break,
+            }
+            pos += 1;
+        }
+        if flags.left_justify {
+            flags.zero_pad = false;
+        }
+        let mut width_arg = None;
+        let mut precision_arg = None;
+        let mut width = 0;
+        let mut precision = -1;
+        for is_precision in [false, true] {
+            if is_precision {
+                if bytes.get(pos) != Some(&b'.') {
+                    break;
+                }
+                pos += 1;
+            }
+            let value = if bytes.get(pos) == Some(&b'*') {
+                pos += 1;
+                let index = extension_position(bytes, &mut pos)?.unwrap_or_else(|| {
+                    let index = next;
+                    next += 1;
+                    index
+                });
+                extension_record_type(
+                    &mut plan,
+                    index,
+                    Some(PrintfArgType { kind: 0, size: 0 }),
+                    capacity,
+                )?;
+                if is_precision {
+                    precision_arg = Some(index);
+                } else {
+                    width_arg = Some(index);
+                }
+                // GNU arginfo sees unresolved stars as the default width or
+                // precision; the renderer receives the actual argument later.
+                if is_precision { -1 } else { 0 }
+            } else {
+                extension_decimal(bytes, &mut pos)? as c_int
+            };
+            if is_precision {
+                precision = value;
+            } else {
+                width = value;
+            }
+        }
+        let mut user = 0;
+        let mut modifier_len = 0;
+        for (modifier, bit) in extensions.modifiers.iter().rev() {
+            let encoded;
+            let spelling = if wide {
+                encoded = modifier.iter().map(|&c| char::from(c)).collect::<String>();
+                encoded.as_bytes()
+            } else {
+                modifier.as_slice()
+            };
+            if spelling.len() > modifier_len && bytes[pos..].starts_with(spelling) {
+                modifier_len = spelling.len();
+                user = *bit;
+            }
+        }
+        let mut length = LengthMod::None;
+        let mut length_flags = 0;
+        if modifier_len != 0 {
+            pos += modifier_len;
+        } else {
+            match bytes.get(pos) {
+                Some(b'h') => {
+                    pos += 1;
+                    if bytes.get(pos) == Some(&b'h') {
+                        pos += 1;
+                        length = LengthMod::Hh;
+                        length_flags = 1 << 9;
+                    } else {
+                        length = LengthMod::H;
+                        length_flags = 1 << 1;
+                    }
+                }
+                Some(b'l') => {
+                    pos += 1;
+                    length = LengthMod::L;
+                    length_flags = 1 << 2;
+                    if bytes.get(pos) == Some(&b'l') {
+                        pos += 1;
+                        length = LengthMod::Ll;
+                        length_flags |= 1;
+                    }
+                }
+                Some(b'L' | b'q') => {
+                    pos += 1;
+                    length = LengthMod::BigL;
+                    length_flags = 1;
+                }
+                Some(b'j' | b'z' | b't') => {
+                    length = match bytes[pos] {
+                        b'j' => LengthMod::J,
+                        b'z' => LengthMod::Z,
+                        _ => LengthMod::T,
+                    };
+                    pos += 1;
+                    length_flags = 1 << 2;
+                }
+                Some(b'w') => {
+                    pos += 1;
+                    let fast = bytes.get(pos) == Some(&b'f');
+                    pos += usize::from(fast);
+                    (length, length_flags) = match (fast, extension_decimal(bytes, &mut pos)?) {
+                        (_, 8) => (LengthMod::Hh, 1 << 9),
+                        (false, 16) => (LengthMod::H, 1 << 1),
+                        (false, 32) => (LengthMod::None, 0),
+                        (_, 64) | (true, 16 | 32) => (LengthMod::L, 1 << 2),
+                        _ => return Err(errno::EINVAL),
+                    };
+                }
+                _ => {}
+            }
+        }
+        let (specifier, encoded_len) = if wide {
+            let ch = std::str::from_utf8(&bytes[pos..])
+                .map_err(|_| errno::EILSEQ)?
+                .chars()
+                .next()
+                .ok_or(errno::EINVAL)?;
+            (u32::from(ch), ch.len_utf8())
+        } else {
+            (u32::from(*bytes.get(pos).ok_or(errno::EINVAL)?), 1)
+        };
+        pos += encoded_len;
+        let conversion_byte = u8::try_from(specifier).unwrap_or(0);
+        flags.i18n = i18n;
+        let info = PrintfInfo {
+            precision,
+            width,
+            spec: specifier as libc::wchar_t,
+            flags: length_flags
+                | (u16::from(flags.alt_form) << 3)
+                | (u16::from(flags.space_sign) << 4)
+                | (u16::from(flags.left_justify) << 5)
+                | (u16::from(flags.force_sign) << 6)
+                | (u16::from(flags.group) << 7)
+                | (u16::from(wide) << 10)
+                | (u16::from(i18n) << 11),
+            user,
+            pad: if flags.zero_pad { b'0' } else { b' ' } as libc::wchar_t,
+        };
+        let (native_conversion, native_length) = match (conversion_byte, length) {
+            (b'S', _) => (b's', LengthMod::L),
+            (b'C', _) => (b'c', LengthMod::L),
+            (c @ (b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A'), LengthMod::Ll) => {
+                (c, LengthMod::BigL)
+            }
+            (c @ (b's' | b'c'), LengthMod::BigL) => (c, LengthMod::L),
+            pair => pair,
+        };
+        let native = FormatSpec::new(
+            flags,
+            Width::Fixed(width.max(0) as usize),
+            if precision >= 0 {
+                Precision::Fixed(precision as usize)
+            } else {
+                Precision::None
+            },
+            native_length,
+            native_conversion,
+            None,
+        );
+        let mut conversion = extensions
+            .conversions
+            .get(specifier as usize)
+            .copied()
+            .flatten();
+        let mut kinds = Vec::new();
+        if let Some(callback) = conversion.filter(|c| c.arginfo != 0) {
+            let mut kind = 0;
+            let mut size = 0;
+            // SAFETY: local one-element outputs and an immutable info snapshot.
+            let n = unsafe { extension_arginfo(callback, &info, 1, &mut kind, &mut size) };
+            if n < 0 {
+                conversion = None;
+            } else if n == 1 {
+                kinds.push(PrintfArgType {
+                    kind,
+                    size: size.max(0) as usize,
+                });
+            } else if n > 1 {
+                let n = n as usize;
+                let mut types = Vec::new();
+                let mut sizes = Vec::new();
+                types.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                sizes.try_reserve(n).map_err(|_| errno::ENOMEM)?;
+                types.resize(n, 0);
+                sizes.resize(n, 0);
+                // SAFETY: both arrays have precisely the declared capacity.
+                let actual = unsafe {
+                    extension_arginfo(callback, &info, n, types.as_mut_ptr(), sizes.as_mut_ptr())
+                };
+                if actual != n as c_int {
+                    return Err(errno::EINVAL);
+                }
+                kinds.extend(
+                    types
+                        .into_iter()
+                        .zip(sizes)
+                        .map(|(kind, size)| PrintfArgType {
+                            kind,
+                            size: size.max(0) as usize,
+                        }),
+                );
+            }
+        } else if let Some(kind) = extension_native_type(conversion_byte, length) {
+            kinds.push(kind);
+        }
+        if conversion.is_none()
+            && kinds.is_empty()
+            && let Some(kind) = extension_native_type(conversion_byte, length)
+        {
+            kinds.push(kind);
+        }
+        let first_arg = value_position.unwrap_or(next);
+        for (offset, kind) in kinds.iter().copied().enumerate() {
+            extension_record_type(
+                &mut plan,
+                first_arg.checked_add(offset).ok_or(errno::EOVERFLOW)?,
+                Some(kind),
+                capacity,
+            )?;
+        }
+        if value_position.is_none() {
+            next = next.checked_add(kinds.len()).ok_or(errno::EOVERFLOW)?;
+        }
+        plan.segments.push(ExtensionSegment::Spec(ExtensionSpec {
+            info,
+            native,
+            width_arg,
+            precision_arg,
+            first_arg,
+            arg_count: kinds.len(),
+            conversion,
+            raw_start,
+            raw_end: pos,
+        }));
+    }
+    Ok(plan)
+}
+
+pub(crate) unsafe fn parse_printf_extensions(bytes: &[u8], n: usize, types: *mut c_int) -> usize {
+    let extensions = printf_extensions_snapshot();
+    // SAFETY: registered arginfo callbacks have the GNU ABI; no registry lock
+    // is held during this parse or any callback it invokes.
+    match unsafe {
+        extension_plan(
+            bytes,
+            false,
+            &extensions,
+            if types.is_null() { 0 } else { n },
+        )
+    } {
+        Ok(plan) => {
+            for (index, kind) in plan.types.iter().enumerate() {
+                if let Some(kind) = kind {
+                    // SAFETY: plan.types is capped at the caller's n slots.
+                    unsafe { *types.add(index) = kind.kind };
+                }
+            }
+            plan.count
+        }
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            0
+        }
+    }
+}
+
+struct ExtensionArgument {
+    bits: u64,
+    storage: Vec<u128>,
+    extended: bool,
+}
+
+impl ExtensionArgument {
+    fn callback_pointer(&self) -> *const c_void {
+        if self.extended {
+            self.storage.as_ptr().cast()
+        } else {
+            std::ptr::from_ref(&self.bits).cast()
+        }
+    }
+
+    fn native_bits(&self) -> u64 {
+        if self.extended {
+            self.storage.as_ptr() as u64
+        } else {
+            self.bits
+        }
+    }
+}
+
+unsafe fn extension_read_argument(
+    kind: PrintfArgType,
+    ap: *mut c_void,
+    extensions: &PrintfExtensions,
+) -> Result<ExtensionArgument, c_int> {
+    let mut arg = ExtensionArgument {
+        bits: 0,
+        storage: Vec::new(),
+        extended: false,
+    };
+    if kind.kind & 0x800 != 0 {
+        // SAFETY: PA_FLAG_PTR is a pointer regardless of its base type.
+        arg.bits = unsafe { va_read_one_gp(ap) };
+    } else if kind.kind == (7 | 0x100) {
+        let spec = FormatSpec::new(
+            FormatFlags::default(),
+            Width::None,
+            Precision::None,
+            LengthMod::BigL,
+            b'f',
+            None,
+        );
+        let segments = [FormatSegment::Spec(spec)];
+        let mut slots = [0; MAX_VA_ARGS];
+        // SAFETY: the existing architecture-specific walker consumes one
+        // correctly aligned long-double argument from this live va_list.
+        unsafe { vprintf_extract_args(&segments, ap, &mut slots, 1) };
+        if slots[0] == 0 {
+            return Err(errno::EINVAL);
+        }
+        arg.storage
+            .try_reserve_exact(1)
+            .map_err(|_| errno::ENOMEM)?;
+        arg.storage.push(0);
+        // x87 long double has ten initialized payload bytes in a sixteen-byte
+        // ABI slot. Do not read its indeterminate padding as a Rust integer.
+        // AArch64 binary128 uses the complete sixteen-byte payload.
+        let payload_size = if cfg!(target_arch = "x86_64") { 10 } else { 16 };
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                slots[0] as *const u8,
+                arg.storage.as_mut_ptr().cast::<u8>(),
+                payload_size,
+            );
+        }
+        arg.extended = true;
+    } else if kind.kind == 6 || kind.kind == 7 {
+        // C default argument promotions pass both PA_FLOAT and PA_DOUBLE in
+        // a double slot; GNU callbacks receive that promoted double object.
+        let value = unsafe { va_read_one_fp(ap) };
+        arg.bits = value.to_bits();
+    } else if matches!(kind.kind, 0..=5 | 0x100 | 0x200 | 0x400) {
+        arg.bits = unsafe { va_read_one_gp(ap) };
+        if kind.kind == 0x400 {
+            arg.bits = (arg.bits as i16 as i64) as u64;
+        }
+    } else {
+        let reader = kind
+            .kind
+            .checked_sub(8)
+            .and_then(|index| extensions.types.get(index as usize))
+            .copied()
+            .ok_or(errno::EINVAL)?;
+        if kind.size == 0 {
+            return Err(errno::EINVAL);
+        }
+        let words = kind.size.div_ceil(std::mem::size_of::<u128>());
+        arg.storage
+            .try_reserve_exact(words)
+            .map_err(|_| errno::ENOMEM)?;
+        arg.storage.resize(words, 0);
+        type ReadArgument = unsafe extern "C-unwind" fn(*mut c_void, *mut c_void);
+        // SAFETY: register_printf_type takes a printf_va_arg_function. On
+        // both supported LP64 ABIs ap addresses the actual va_list object,
+        // not a pointer variable holding its address.
+        let callback: ReadArgument = unsafe { std::mem::transmute(reader) };
+        unsafe { callback(arg.storage.as_mut_ptr().cast(), ap) };
+        // GNU's argument union holds a POINTER to custom storage, and the
+        // renderer's args array points to that pointer slot (one extra level).
+        arg.bits = arg.storage.as_ptr() as u64;
+    }
+    Ok(arg)
+}
+
+unsafe fn extension_write(stream: *mut c_void, bytes: &[u8], wide: bool) -> Result<usize, c_int> {
+    if wide {
+        let text = std::str::from_utf8(bytes).map_err(|_| errno::EILSEQ)?;
+        let mut count = 0;
+        for ch in text.chars() {
+            // SAFETY: stream is live and wide-oriented for this operation.
+            if unsafe { crate::wchar_abi::fputwc(ch as u32, stream) } == u32::MAX {
+                return Err(unsafe { *super::errno_abi::__errno_location() });
+            }
+            count += 1;
+        }
+        Ok(count)
+    } else {
+        // SAFETY: bytes stays live through the synchronous FILE write.
+        if unsafe { fwrite(bytes.as_ptr().cast(), 1, bytes.len(), stream) } != bytes.len() {
+            Err(unsafe { *super::errno_abi::__errno_location() })
+        } else {
+            Ok(bytes.len())
+        }
+    }
+}
+
+unsafe fn extension_store_count(spec: &FormatSpec, pointer: usize, count: usize) {
+    let size = match spec.length {
+        LengthMod::Hh => 1,
+        LengthMod::H => 2,
+        LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+        _ => 4,
+    };
+    let (mode, decision) =
+        runtime_policy::decide(ApiFamily::Stdio, pointer, size, true, pointer == 0, 0);
+    if pointer == 0 || matches!(decision.action, MembraneAction::Deny) {
+        return;
+    }
+    if (mode.heals_enabled() || matches!(decision.action, MembraneAction::Repair(_)))
+        && known_remaining(pointer).is_some_and(|remaining| remaining < size)
+    {
+        global_healing_policy().record(
+            "stdio",
+            "printf",
+            &HealingAction::ReturnSafeDefault,
+            RepairLogContext::new(0, Some(pointer)),
+        );
+        return;
+    }
+    // SAFETY: %n's caller supplies the declared integer object; the same
+    // membrane admission and tracked-extent check as the ordinary renderer
+    // precede this write. The count includes all prior custom output.
+    unsafe {
+        match spec.length {
+            LengthMod::Hh => *(pointer as *mut i8) = count as i8,
+            LengthMod::H => *(pointer as *mut i16) = count as i16,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => {
+                *(pointer as *mut i64) = count as i64
+            }
+            _ => *(pointer as *mut c_int) = count as c_int,
+        }
+    }
+}
+
+struct ExtensionStreamLock(*mut c_void);
+
+impl Drop for ExtensionStreamLock {
+    fn drop(&mut self) {
+        // SAFETY: this guard follows exactly one flockfile on the same stream.
+        unsafe { funlockfile(self.0) };
+    }
+}
+
+fn extension_invalid_native_pointer(
+    spec: &FormatSpec,
+    args: &[ExtensionArgument],
+    index: usize,
+) -> Option<usize> {
+    let pointer = args.get(index)?.bits as usize;
+    let valid = if spec.stores_count() {
+        let size = match spec.length {
+            LengthMod::Hh => 1,
+            LengthMod::H => 2,
+            LengthMod::L | LengthMod::Ll | LengthMod::J | LengthMod::Z | LengthMod::T => 8,
+            _ => 4,
+        };
+        is_valid_printf_writeback_ptr(pointer, size)
+    } else if spec.value_arg_is_string() {
+        is_valid_printf_string_ptr(pointer, spec.length == LengthMod::L)
+    } else {
+        true
+    };
+    (!valid).then_some(pointer)
+}
+
+fn extension_unknown_conversion(info: &PrintfInfo, wide: bool) -> Vec<u8> {
+    let mut output = vec![b'%'];
+    if info.flags & (1 << 3) != 0 {
+        output.push(b'#');
+    }
+    if info.flags & (1 << 7) != 0 {
+        output.push(b'\'');
+    }
+    if info.flags & (1 << 6) != 0 {
+        output.push(b'+');
+    } else if info.flags & (1 << 4) != 0 {
+        output.push(b' ');
+    }
+    if info.flags & (1 << 5) != 0 {
+        output.push(b'-');
+    }
+    if info.pad == b'0' as libc::wchar_t {
+        output.push(b'0');
+    }
+    if info.flags & (1 << 11) != 0 {
+        output.push(b'I');
+    }
+    if info.width != 0 {
+        output.extend_from_slice(info.width.to_string().as_bytes());
+    }
+    if info.precision >= 0 {
+        output.push(b'.');
+        output.extend_from_slice(info.precision.to_string().as_bytes());
+    }
+    if wide {
+        if let Some(ch) = char::from_u32(info.spec as u32) {
+            let mut encoded = [0; 4];
+            output.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+        }
+    } else {
+        output.push(info.spec as u8);
+    }
+    output
+}
+
+unsafe fn extension_format_stream(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+    entry_errno: c_int,
+) -> Result<c_int, c_int> {
+    let extensions = printf_extensions_snapshot();
+    // SAFETY: the parser calls registered arginfo functions with owned outputs.
+    let plan = unsafe { extension_plan(bytes, wide, &extensions, usize::MAX) }?;
+    if ap.is_null() && plan.count != 0 {
+        return Err(errno::EINVAL);
+    }
+    let mut args = Vec::new();
+    args.try_reserve_exact(plan.count)
+        .map_err(|_| errno::ENOMEM)?;
+    for index in 0..plan.count {
+        let kind = plan
+            .types
+            .get(index)
+            .copied()
+            .flatten()
+            .unwrap_or(PrintfArgType { kind: 0, size: 0 });
+        // SAFETY: the complete arginfo/native plan determines each va_arg class.
+        args.push(unsafe { extension_read_argument(kind, ap, &extensions) }?);
+    }
+    // Registration also routes ordinary conversions through this engine.
+    // Preserve the existing hardened literal-upgrade check before any output;
+    // the per-conversion FormatSegments below intentionally have no raw format.
+    if !runtime_policy::strict_passthrough_active()
+        && let Some(pointer) = plan.segments.iter().find_map(|segment| {
+            let ExtensionSegment::Spec(spec) = segment else {
+                return None;
+            };
+            if spec
+                .conversion
+                .is_some_and(|conversion| conversion.render != 0)
+            {
+                return None;
+            }
+            extension_invalid_native_pointer(&spec.native, &args, spec.first_arg)
+        })
+    {
+        global_healing_policy().record(
+            "stdio",
+            "printf",
+            &HealingAction::UpgradeToSafeVariant,
+            RepairLogContext::new(0, Some(pointer)),
+        );
+        // SAFETY: the literal format is live and contains no interpreted args.
+        return c_int::try_from(unsafe { extension_write(stream, bytes, wide) }?)
+            .map_err(|_| errno::EOVERFLOW);
+    }
+    let mut count = 0usize;
+    for segment in plan.segments {
+        let emitted = match segment {
+            ExtensionSegment::Literal(literal) => {
+                unsafe { extension_write(stream, literal, wide) }?
+            }
+            ExtensionSegment::Spec(mut spec) => {
+                if let Some(index) = spec.width_arg {
+                    let width = args[index].bits as c_int;
+                    if width < 0 {
+                        spec.info.width = width.checked_abs().ok_or(errno::EOVERFLOW)?;
+                        spec.info.flags |= 1 << 5;
+                        spec.info.pad = b' ' as libc::wchar_t;
+                        spec.native.flags.left_justify = true;
+                        spec.native.flags.zero_pad = false;
+                    } else {
+                        spec.info.width = width;
+                    }
+                }
+                if let Some(index) = spec.precision_arg {
+                    spec.info.precision = (args[index].bits as c_int).max(-1);
+                }
+                spec.native.width = Width::Fixed(spec.info.width as usize);
+                spec.native.precision = if spec.info.precision >= 0 {
+                    Precision::Fixed(spec.info.precision as usize)
+                } else {
+                    Precision::None
+                };
+                let custom_result =
+                    if let Some(conversion) = spec.conversion.filter(|c| c.render != 0) {
+                        let pointers: Vec<*const c_void> = args
+                            [spec.first_arg..spec.first_arg + spec.arg_count]
+                            .iter()
+                            .map(ExtensionArgument::callback_pointer)
+                            .collect();
+                        type Render = unsafe extern "C-unwind" fn(
+                            *mut c_void,
+                            *const PrintfInfo,
+                            *const *const c_void,
+                        ) -> c_int;
+                        // SAFETY: the callback has the registered GNU printf_function
+                        // ABI. All decoded storage and the snapshot outlive this call.
+                        let callback: Render = unsafe { std::mem::transmute(conversion.render) };
+                        Some(unsafe { callback(stream, &spec.info, pointers.as_ptr()) })
+                    } else {
+                        None
+                    };
+                match custom_result {
+                    Some(value) if value >= 0 => value as usize,
+                    Some(value) if value != -2 => {
+                        return Err(unsafe { *super::errno_abi::__errno_location() });
+                    }
+                    _ => {
+                        if !runtime_policy::strict_passthrough_active()
+                            && let Some(pointer) = extension_invalid_native_pointer(
+                                &spec.native,
+                                &args,
+                                spec.first_arg,
+                            )
+                        {
+                            // A callback can decline after the preflight. Its
+                            // native fallback still uses the existing checks.
+                            global_healing_policy().record(
+                                "stdio",
+                                "printf",
+                                &HealingAction::UpgradeToSafeVariant,
+                                RepairLogContext::new(0, Some(pointer)),
+                            );
+                            unsafe {
+                                extension_write(stream, &bytes[spec.raw_start..spec.raw_end], wide)
+                            }?
+                        } else if spec.native.stores_count() {
+                            if let Some(arg) = args.get(spec.first_arg) {
+                                unsafe {
+                                    extension_store_count(&spec.native, arg.bits as usize, count)
+                                };
+                            }
+                            0
+                        } else if !spec.native.consumes_value_arg()
+                            && !spec.native.is_literal_percent()
+                            && !spec.native.is_errno_message()
+                        {
+                            // GNU prints the resolved flags, width and precision
+                            // for unknown conversions, omitting length modifiers.
+                            let spelling = extension_unknown_conversion(&spec.info, wide);
+                            unsafe { extension_write(stream, &spelling, wide) }?
+                        } else if spec.native.is_errno_message() {
+                            // Every %m in one call uses errno from function entry,
+                            // even if a registered callback changes it mid-format.
+                            let (message, _) =
+                                crate::string_abi::rendered_strerror_message(entry_errno);
+                            let mut rendered = Vec::new();
+                            format_str(message.as_bytes(), &spec.native, &mut rendered);
+                            unsafe { extension_write(stream, &rendered, wide) }?
+                        } else {
+                            let mut segments = FormatSegments::new();
+                            segments.push(FormatSegment::Spec(spec.native));
+                            let raw = args
+                                .get(spec.first_arg)
+                                .map_or(0, ExtensionArgument::native_bits);
+                            // SAFETY: one resolved native conversion consumes at
+                            // most one already-decoded argument. Position/asterisk
+                            // consumption was handled by the outer plan.
+                            let rendered = unsafe {
+                                render_segments(
+                                    "printf",
+                                    &segments,
+                                    &raw,
+                                    usize::from(spec.native.consumes_value_arg()),
+                                    wide,
+                                )
+                            };
+                            if let Some(error) = take_render_failure() {
+                                return Err(error);
+                            }
+                            unsafe { extension_write(stream, &rendered, wide) }?
+                        }
+                    }
+                }
+            }
+        };
+        count = count
+            .checked_add(emitted)
+            .filter(|n| *n <= c_int::MAX as usize)
+            .ok_or(errno::EOVERFLOW)?;
+    }
+    Ok(count as c_int)
+}
+
+pub(crate) unsafe fn registered_printf_stream(
+    stream: *mut c_void,
+    bytes: &[u8],
+    ap: *mut c_void,
+    wide: bool,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if stream.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let _trace_scope = runtime_policy::entrypoint_scope("printf");
+    let (_, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        canonical_stream_id(stream),
+        0,
+        false,
+        false,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        return -1;
+    }
+    if if wide {
+        !orient_stream_wide(stream)
+    } else {
+        !orient_stream_byte_by_id(canonical_stream_id(stream))
+    } {
+        return -1;
+    }
+    // The FILE lock is recursive, so user callbacks can call fprintf on the
+    // same stream. It is distinct from the registry lock, which is never held.
+    unsafe { flockfile(stream) };
+    let _lock = ExtensionStreamLock(stream);
+    match unsafe { extension_format_stream(stream, bytes, ap, wide, entry_errno) } {
+        Ok(count) => count,
+        Err(error) => {
+            unsafe { set_abi_errno(error) };
+            -1
+        }
+    }
+}
+
+struct ExtensionBufferState {
+    data: *mut c_char,
+    len: usize,
+}
+
+struct ExtensionBuffer {
+    state: Box<ExtensionBufferState>,
+    stream: *mut c_void,
+    result: c_int,
+}
+
+impl ExtensionBuffer {
+    unsafe fn format(
+        bytes: &[u8],
+        ap: *mut c_void,
+        wide: bool,
+        entry_errno: c_int,
+    ) -> Option<Self> {
+        let mut buffer = Self {
+            state: Box::new(ExtensionBufferState {
+                data: std::ptr::null_mut(),
+                len: 0,
+            }),
+            stream: std::ptr::null_mut(),
+            result: -1,
+        };
+        // Box keeps the caller-output addresses stable even if the owner moves.
+        buffer.stream = if wide {
+            unsafe {
+                crate::wchar_abi::open_wmemstream(
+                    std::ptr::from_mut(&mut buffer.state.data).cast(),
+                    &mut buffer.state.len,
+                )
+            }
+        } else {
+            unsafe { open_memstream(&mut buffer.state.data, &mut buffer.state.len) }
+        };
+        if buffer.stream.is_null() {
+            return None;
+        }
+        // Memstream construction is an implementation detail, not the entry
+        // point used by %m or by a registered callback inspecting errno.
+        unsafe { set_abi_errno(entry_errno) };
+        buffer.result = unsafe { registered_printf_stream(buffer.stream, bytes, ap, wide) };
+        let saved_errno = unsafe { *super::errno_abi::__errno_location() };
+        let close_result = unsafe { fclose(buffer.stream) };
+        buffer.stream = std::ptr::null_mut();
+        if buffer.result < 0 || close_result == 0 {
+            unsafe { set_abi_errno(saved_errno) };
+        } else if close_result < 0 {
+            buffer.result = -1;
+        }
+        Some(buffer)
+    }
+}
+
+impl Drop for ExtensionBuffer {
+    fn drop(&mut self) {
+        // The guard also owns streams during callback unwinding. Closing
+        // publishes the final buffer before it is freed, with no dangling
+        // pointer-to-stack registrations in the native memstream registry.
+        unsafe {
+            if !self.stream.is_null() {
+                fclose(self.stream);
+            }
+            free(self.state.data.cast());
+        }
+    }
+}
+
+unsafe fn registered_snprintf(
+    dst: *mut c_char,
+    size: usize,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if size != 0 && dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    // usize::MAX is the internal sprintf sentinel: its ordinary entrypoint
+    // admits an unbounded destination with len=0, then clamps known extents.
+    let admitted_size = if size == usize::MAX { 0 } else { size };
+    let (mode, decision) = runtime_policy::decide(
+        ApiFamily::Stdio,
+        dst as usize,
+        admitted_size,
+        true,
+        dst.is_null() && size != 0,
+        0,
+    );
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+    else {
+        return -1;
+    };
+    let mut capacity = size;
+    if repair_enabled(mode.heals_enabled(), decision.action)
+        && let Some(remaining) = known_remaining(dst as usize)
+        && remaining < capacity
+    {
+        capacity = remaining;
+        global_healing_policy().record(
+            "stdio",
+            "snprintf",
+            &HealingAction::ClampSize {
+                requested: size,
+                clamped: capacity,
+            },
+            RepairLogContext::new(0, Some(dst as usize)),
+        );
+    }
+    if capacity != 0 {
+        let len = buffer.state.len.min(capacity - 1);
+        // SAFETY: copy and terminator remain within the admitted capacity.
+        unsafe {
+            if len != 0 {
+                std::ptr::copy_nonoverlapping(buffer.state.data, dst, len);
+            }
+            *dst.add(len) = 0;
+        }
+    }
+    runtime_policy::observe(
+        ApiFamily::Stdio,
+        decision.profile,
+        runtime_policy::scaled_cost(15, buffer.state.len),
+        buffer.result < 0 || capacity < size,
+    );
+    buffer.result
+}
+
+unsafe fn registered_asprintf(
+    dst: *mut *mut c_char,
+    format: *const c_char,
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    unsafe { *dst = std::ptr::null_mut() };
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, dst as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(mut buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+    else {
+        return -1;
+    };
+    if buffer.result >= 0 {
+        // Transfer ownership of the native malloc allocation to the caller.
+        unsafe { *dst = buffer.state.data };
+        buffer.state.data = std::ptr::null_mut();
+    }
+    buffer.result
+}
+
+unsafe fn registered_dprintf(fd: c_int, format: *const c_char, ap: *mut c_void) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, fd as usize, 0, false, false, 0);
+    if matches!(decision.action, MembraneAction::Deny) {
+        runtime_policy::observe(ApiFamily::Stdio, decision.profile, 15, true);
+        return -1;
+    }
+    let Some(buffer) =
+        (unsafe { ExtensionBuffer::format(c_str_bytes(format), ap, false, entry_errno) })
+    else {
+        return -1;
+    };
+    let bytes = if buffer.state.len == 0 {
+        &[]
+    } else {
+        // SAFETY: fclose published these initialized output bytes. The empty
+        // failure case above does not construct a slice from a null pointer.
+        unsafe { std::slice::from_raw_parts(buffer.state.data.cast::<u8>(), buffer.state.len) }
+    };
+    if write_all_fd(fd, bytes) {
+        buffer.result
+    } else {
+        -1
+    }
+}
+
+pub(crate) unsafe fn registered_swprintf(
+    dst: *mut libc::wchar_t,
+    size: usize,
+    bytes: &[u8],
+    ap: *mut c_void,
+) -> c_int {
+    let entry_errno = unsafe { *super::errno_abi::__errno_location() };
+    if size != 0 && dst.is_null() {
+        unsafe { set_abi_errno(errno::EINVAL) };
+        return -1;
+    }
+    let Some(buffer) = (unsafe { ExtensionBuffer::format(bytes, ap, true, entry_errno) }) else {
+        return -1;
+    };
+    let capacity = if runtime_policy::strict_passthrough_active() {
+        size
+    } else {
+        known_remaining(dst as usize)
+            .map_or(size, |n| size.min(n / std::mem::size_of::<libc::wchar_t>()))
+    };
+    if capacity != 0 {
+        let len = buffer.state.len.min(capacity - 1);
+        // SAFETY: the wide memstream publishes len initialized wchar_t values;
+        // the destination copy and terminator fit the admitted capacity.
+        unsafe {
+            if len != 0 {
+                std::ptr::copy_nonoverlapping(buffer.state.data.cast::<libc::wchar_t>(), dst, len);
+            }
+            *dst.add(len) = 0;
+        }
+    }
+    if buffer.state.len >= capacity {
+        if buffer.result >= 0 && capacity != 0 {
+            // Preserve the ordinary GNU wide-buffer truncation contract.
+            unsafe { set_abi_errno(errno::E2BIG) };
+        }
+        -1
+    } else {
+        buffer.result
+    }
+}
+
 /// Extract variadic arguments from `$args` into `$buf`, guided by `$segments`.
 /// Uses a macro to avoid naming the unstable `VaListImpl` type directly.
 /// Extract variadic arguments, choosing a reader that can see them all.
@@ -9366,6 +10653,13 @@ pub unsafe extern "C" fn snprintf(
     if format.is_null() {
         return -1;
     }
+    if printf_extensions_active() {
+        // SAFETY: the pointer addresses this frame's live C va_list. The
+        // registered path must precede native fast paths, including overrides.
+        return unsafe {
+            registered_snprintf(str_buf, size, format, core::ptr::from_mut(&mut args).cast())
+        };
+    }
     // ONE mode read for the whole direct-format chain. Every rung below used to
     // call `strict_passthrough_active()` itself -- THIRTEEN of them -- so a format
     // that matches none of them (any format with more than one conversion, which
@@ -9587,6 +10881,18 @@ pub unsafe extern "C" fn sprintf(
     if format.is_null() || str_buf.is_null() {
         return -1;
     }
+    if printf_extensions_active() {
+        // SAFETY: sprintf's destination is unbounded by contract; hardened
+        // registered formatting still clamps any known allocation extent.
+        return unsafe {
+            registered_snprintf(
+                str_buf,
+                usize::MAX,
+                format,
+                core::ptr::from_mut(&mut args).cast(),
+            )
+        };
+    }
     if runtime_policy::strict_passthrough_active()
         && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
     {
@@ -9758,6 +11064,17 @@ pub unsafe extern "C-unwind" fn fprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the caller supplies the live FILE, format and variadic list.
+        return unsafe {
+            registered_printf_stream(
+                stream,
+                c_str_bytes(format),
+                core::ptr::from_mut(&mut args).cast(),
+                false,
+            )
+        };
     }
     let id = canonical_stream_id(stream);
 
@@ -10006,6 +11323,17 @@ pub unsafe extern "C-unwind" fn fprintf(
 pub unsafe extern "C-unwind" fn printf(format: *const c_char, mut args: ...) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: printf owns this live va_list and uses the active stdout FILE.
+        return unsafe {
+            registered_printf_stream(
+                active_stdout_stream(),
+                c_str_bytes(format),
+                core::ptr::from_mut(&mut args).cast(),
+                false,
+            )
+        };
     }
 
     // POSIX: printf(...) is equivalent to fprintf(stdout, ...).
@@ -10281,6 +11609,10 @@ pub unsafe extern "C" fn dprintf(fd: c_int, format: *const c_char, mut args: ...
     if format.is_null() {
         return -1;
     }
+    if printf_extensions_active() {
+        // SAFETY: the callback engine consumes this frame's live va_list.
+        return unsafe { registered_dprintf(fd, format, core::ptr::from_mut(&mut args).cast()) };
+    }
     // Exact %d/%x/%u (±\n) fast paths — render inline + write straight to the fd, skipping
     // decide + parse + extract + render_segments. Extract-once, return immediately.
     if runtime_policy::strict_passthrough_active()
@@ -10346,6 +11678,10 @@ pub unsafe extern "C" fn asprintf(
     if strp.is_null() || format.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: strp is the caller's allocation output and args is live.
+        return unsafe { registered_asprintf(strp, format, core::ptr::from_mut(&mut args).cast()) };
     }
     // SAFETY: caller provided non-null out-pointer.
     unsafe { *strp = std::ptr::null_mut() };
@@ -10915,6 +12251,10 @@ pub unsafe extern "C" fn vsnprintf(
     if format.is_null() {
         return -1;
     }
+    if printf_extensions_active() {
+        // SAFETY: ap is the caller-supplied C va_list for this format.
+        return unsafe { registered_snprintf(str_buf, size, format, ap) };
+    }
     if runtime_policy::strict_passthrough_active()
         && let Some(literal_len) = unsafe { strict_literal_format_len(format) }
     {
@@ -11072,6 +12412,10 @@ pub unsafe extern "C" fn vsprintf(
 ) -> c_int {
     if format.is_null() || str_buf.is_null() {
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the destination follows sprintf's unbounded buffer contract.
+        return unsafe { registered_snprintf(str_buf, usize::MAX, format, ap) };
     }
     // Exact single-arg va_list fast paths (unbounded twins of vsnprintf's): pull ONE gp arg and
     // render directly, skipping decide + parse + extract + render. Return immediately (ap advanced).
@@ -11241,6 +12585,10 @@ pub unsafe extern "C-unwind" fn vfprintf(
 ) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: the caller supplies the live FILE and matching C va_list.
+        return unsafe { registered_printf_stream(stream, c_str_bytes(format), ap, false) };
     }
     let id = canonical_stream_id(stream);
     let (_, decision) = runtime_policy::decide(ApiFamily::Stdio, id, 0, false, false, 0);
@@ -11455,6 +12803,12 @@ pub unsafe extern "C-unwind" fn vfprintf(
 pub unsafe extern "C-unwind" fn vprintf(format: *const c_char, ap: *mut c_void) -> c_int {
     if format.is_null() {
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: vprintf formats the caller's arguments to active stdout.
+        return unsafe {
+            registered_printf_stream(active_stdout_stream(), c_str_bytes(format), ap, false)
+        };
     }
 
     let stdout_ptr = active_stdout_stream();
@@ -11672,6 +13026,10 @@ pub unsafe extern "C" fn vdprintf(fd: c_int, format: *const c_char, ap: *mut c_v
     if format.is_null() {
         return -1;
     }
+    if printf_extensions_active() {
+        // SAFETY: ap is the caller-supplied C va_list for this format.
+        return unsafe { registered_dprintf(fd, format, ap) };
+    }
     // Exact %d/%x/%u (±\n) va_list fast paths — the va_list twin of dprintf's: pull ONE gp arg,
     // render inline + write straight to the fd. Return immediately (ap advanced).
     if runtime_policy::strict_passthrough_active()
@@ -11752,6 +13110,10 @@ pub unsafe extern "C" fn vasprintf(
     if strp.is_null() || format.is_null() {
         unsafe { set_abi_errno(errno::EINVAL) };
         return -1;
+    }
+    if printf_extensions_active() {
+        // SAFETY: strp is writable and ap is the matching live C va_list.
+        return unsafe { registered_asprintf(strp, format, ap) };
     }
     unsafe { *strp = std::ptr::null_mut() };
 

@@ -6789,6 +6789,11 @@ pub unsafe extern "C" fn parse_printf_format(
     let len = unsafe { bounded_c_string_len(fmt) };
     // SAFETY: the scan established these len readable bytes in the C string.
     let bytes = unsafe { std::slice::from_raw_parts(fmt.cast::<u8>(), len) };
+    if crate::stdio_abi::printf_extensions_active() {
+        // SAFETY: the same format and caller-provided output capacity are
+        // consumed by the registered arginfo path without holding its lock.
+        return unsafe { crate::stdio_abi::parse_printf_extensions(bytes, n, argtypes) };
+    }
     let mut pos = 0;
     let mut next = 0usize;
     let mut count = 0usize;
@@ -7154,41 +7159,31 @@ pub unsafe extern "C" fn rcmd_af(
     unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
     -1
 }
-// register_printf_function: GNU extension for custom printf formatters — not supported
-abi_stub_contract!(register_printf_function);
+// GNU printf callbacks are consumed by the opt-in native formatting path.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_function(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, false)
 }
-// register_printf_modifier: GNU extension — not supported
-abi_stub_contract!(register_printf_modifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_modifier(_str: *const WcharT) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_modifier(str: *const WcharT) -> c_int {
+    // SAFETY: GNU's registration contract supplies a terminated wide string.
+    unsafe { crate::stdio_abi::register_printf_modifier_impl(str) }
 }
-// register_printf_specifier: GNU extension — not supported
-abi_stub_contract!(register_printf_specifier);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn register_printf_specifier(
-    _spec: c_int,
-    _render: *mut c_void,
-    _arginfo: *mut c_void,
+    spec: c_int,
+    render: *mut c_void,
+    arginfo: *mut c_void,
 ) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+    crate::stdio_abi::register_printf_conversion(spec, render, arginfo, true)
 }
-// register_printf_type: GNU extension — not supported
-abi_stub_contract!(register_printf_type);
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn register_printf_type(_fct: *mut c_void) -> c_int {
-    unsafe { crate::errno_abi::set_abi_errno(libc::ENOSYS) };
-    -1
+pub unsafe extern "C" fn register_printf_type(fct: *mut c_void) -> c_int {
+    crate::stdio_abi::register_printf_type_impl(fct)
 }
 // revoke: BSD — not implemented on Linux
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
@@ -8567,13 +8562,14 @@ pub static mut _obstack: *mut c_void = std::ptr::null_mut();
 // Keep the pad after the two 16-bit fields: treating the flags as a u32 with
 // no user field silently reads a different wide/pad contract.
 #[repr(C)]
-struct PrintfInfo {
-    precision: c_int,
-    width: c_int,
-    spec: WcharT,
-    flags: u16,
-    user: u16,
-    pad: WcharT,
+#[derive(Clone, Copy)]
+pub(crate) struct PrintfInfo {
+    pub(crate) precision: c_int,
+    pub(crate) width: c_int,
+    pub(crate) spec: WcharT,
+    pub(crate) flags: u16,
+    pub(crate) user: u16,
+    pub(crate) pad: WcharT,
 }
 
 unsafe fn printf_size_write(fp: *mut c_void, wide: bool, bytes: &[u8]) -> bool {

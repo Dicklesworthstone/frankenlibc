@@ -5,11 +5,16 @@ on:
     branches: [main]
     paths:
       - 'crates/frankenlibc-abi/src/stdio_abi.rs'
+      - 'crates/frankenlibc-abi/src/glibc_internal_abi.rs'
+      - 'crates/frankenlibc-abi/src/wchar_abi.rs'
+      - 'crates/frankenlibc-abi/tests/glibc_internal_abi_test.rs'
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi/**'
       - 'crates/frankenlibc-core/src/stdio/**'
       - 'tests/integration/fixture_stdio_file_layout.c'
+      - 'tests/integration/fixture_stdio_printf.c'
+      - 'scripts/check_stdio_native.sh'
       - '.github/workflows/stdio-file-layout.yml'
   workflow_dispatch:
 
@@ -64,7 +69,29 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Exercise registration and callback dispatch through the Rust ABI
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          for mode in strict hardened; do
+            FRANKENLIBC_MODE="$mode" cargo test -p frankenlibc-abi \
+              --test glibc_internal_abi_test register_printf -- --nocapture \
+              2>&1 | tee "artifacts/stdio-layout/registration-$mode.log"
+            grep -Eq '^test result: ok\. 5 passed; 0 failed; 0 ignored;' \
+              "artifacts/stdio-layout/registration-$mode.log"
+          done
+      - name: Exercise GNU printf callbacks against the live host in both modes
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRANKENLIBC_TEST_LIBRARY="$PWD/target/release/libfrankenlibc_abi.so" \
+          FRANKENLIBC_STDIO_OUT_DIR="$PWD/artifacts/stdio-layout/gnu-printf" \
+            timeout 240 bash scripts/check_stdio_native.sh --gnu-printf
       - name: Compare inline FILE operations against host glibc in both modes
+        if: always()
         shell: bash
         run: |
           set -uo pipefail
@@ -88,3 +115,9 @@ jobs:
           name: stdio-layout-results
           path: artifacts/stdio-layout/
           retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stdio-candidate-library
+          path: target/release/libfrankenlibc_abi.so
+          retention-days: 2
