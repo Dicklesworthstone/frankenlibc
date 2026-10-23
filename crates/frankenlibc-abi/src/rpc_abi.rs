@@ -919,7 +919,8 @@ pub unsafe extern "C" fn xdr_u_long(xdrs: *mut c_void, lp: *mut c_ulong) -> c_in
                 return XDR_FALSE;
             }
             unsafe {
-                *lp = v as c_long as c_ulong;
+                // XDR unsigned longs are 32-bit wire values even on LP64.
+                *lp = v as u32 as c_ulong;
             }
             XDR_TRUE
         }
@@ -1900,7 +1901,11 @@ pub unsafe extern "C" fn xdr_pmaplist(xdrs: *mut c_void, rp: *mut c_void) -> c_i
         // peek and the tail-of-list `*cursor = null` write target
         // initialized memory.
         unsafe {
-            (**cursor).pml_next = std::ptr::null_mut();
+            if op == XDR_DECODE {
+                (**cursor).pml_next = std::ptr::null_mut();
+            }
+            // ENCODE must retain the caller's next link and serialize the
+            // complete list, including lists returned by pmap_getmaps.
             cursor = &mut (**cursor).pml_next as *mut *mut PmapList;
         }
     }
@@ -2922,13 +2927,14 @@ pub static __key_gendes_LOCAL: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null
 // Portmapper client (5 symbols)
 // ===========================================================================
 
-/// Get portmapper registrations from a host. Returns NULL — no portmapper support.
+/// Retrieve a native, caller-freeable portmapper v2 registration list over TCP.
 ///
 /// # Safety
-/// ABI boundary function.
+/// address points to a live writable sockaddr_in throughout the operation.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_getmaps(_address: *mut c_void) -> *mut c_void {
-    std::ptr::null_mut()
+pub unsafe extern "C" fn pmap_getmaps(address: *mut c_void) -> *mut c_void {
+    // SAFETY: the native importer checks the public address and owns all results.
+    unsafe { rpc_udp::getmaps(address) }
 }
 
 /// Get a program's port from the remote portmapper v2 service.
@@ -2945,24 +2951,27 @@ pub unsafe extern "C" fn pmap_getport(
     unsafe { rpc_udp::getport(address, prog, vers, proto) }
 }
 
-/// Perform a remote procedure call via portmapper. Returns RPC_UNKNOWNPROTO (17).
+/// Execute portmapper v2 CALLIT with native UDP transport and XDR callbacks.
 ///
 /// # Safety
-/// ABI boundary function.
+/// addr/portp are live writable public objects. Codecs and their payloads remain
+/// live for the call; application unwinding releases the owned transport.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn pmap_rmtcall(
-    _addr: *mut c_void,
-    _prog: c_ulong,
-    _vers: c_ulong,
-    _proc_: c_ulong,
-    _xdrargs: *mut c_void,
-    _argsp: *mut c_void,
-    _xdrres: *mut c_void,
-    _resp: *mut c_void,
-    _tout: Timeval,
-    _portp: *mut c_ulong,
+pub unsafe extern "C-unwind" fn pmap_rmtcall(
+    addr: *mut c_void,
+    prog: c_ulong,
+    vers: c_ulong,
+    proc_: c_ulong,
+    xdrargs: *mut c_void,
+    argsp: *mut c_void,
+    xdrres: *mut c_void,
+    resp: *mut c_void,
+    tout: Timeval,
+    portp: *mut c_ulong,
 ) -> c_int {
-    17 // RPC_UNKNOWNPROTO
+    // SAFETY: the native operation validates fixed structures and retains all
+    // private ownership guards across the application's live XDR callbacks.
+    unsafe { rpc_udp::remote_call(addr, prog, vers, proc_, xdrargs, argsp, xdrres, resp, tout, portp) }
 }
 
 /// Register a program with the local portmapper v2 service.
