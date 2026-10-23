@@ -766,10 +766,75 @@ static int gnu_rounding_threads(int ordinary) {
     return 0;
 }
 
+static int gnu_unknown_conversions(void) {
+    const char *providers[] = {"snprintf", "vsnprintf", "swprintf", "vswprintf"};
+    for (unsigned i = 0; i < sizeof(providers) / sizeof(providers[0]); ++i)
+        if (check_gnu_provider(providers[i])) return 1;
+    static const struct { const char *directive; unsigned args; } cases[] = {
+        {"%Q", 0}, {"%#Q", 0}, {"%+ Q", 0}, {"%-05Q", 0},
+        {"%'# +0-12.003Q", 0}, {"%0Q", 0}, {"%.0Q", 0}, {"%9.2Q", 0},
+        {"%hhQ", 0}, {"%lQ", 0}, {"%llQ", 0}, {"%LQ", 0},
+        {"%jQ", 0}, {"%zQ", 0}, {"%tQ", 0}, {"%qQ", 0},
+        {"%*Q", 1}, {"%0*Q", 1}, {"%.*Q", 2}, {"%*.*Q", 3},
+        {"%#0+*.*Q", 3}, {"%3$*1$.*2$Q", 4},
+        {"%*Q%*R%*V%*K%*Y", 5}
+    };
+    static const size_t caps[] = {0, 1, 2, 5, 8, 64};
+    for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
+        for (unsigned sign = 0; sign < 2; ++sign) {
+            const int width = sign ? -7 : 7, precision = sign ? -3 : 3;
+            for (unsigned variant = 0; variant < 4; ++variant) {
+                for (size_t k = 0; k < sizeof(caps) / sizeof(caps[0]); ++k) {
+                    const int wide = variant >= 2;
+                    char fmt[160];
+                    const char *suffix = cases[c].args == 4 ? ":%3$d:%4$s:%5$.1f" : ":%d:%s:%.1f";
+                    /* Wide truncation can stop before a final %n. Test its
+                     * count with a full buffer, and bounds without a side
+                     * effect for the deliberately truncated wide calls. */
+                    const char *count_fmt = wide && caps[k] < 64 ? "" :
+                        (cases[c].args == 4 ? "%6$n" : "%n");
+                    snprintf(fmt, sizeof(fmt), "%s%s%s", cases[c].directive, suffix, count_fmt);
+                    wchar_t wfmt[160];
+                    for (size_t i = 0; i <= strlen(fmt); ++i) wfmt[i] = (unsigned char)fmt[i];
+                    char bytes[64];
+                    wchar_t words[64];
+                    memset(bytes, 0x5a, sizeof(bytes));
+                    for (unsigned i = 0; i < 64; ++i) words[i] = 0x5a;
+                    int count = -77, rc = -99;
+                    errno = 0;
+#define UNKNOWN_CALL(function, destination, format) do { \
+    switch (cases[c].args) { \
+    case 0: rc = function(destination, caps[k], format, 701, "tail", 1.5, &count); break; \
+    case 1: rc = function(destination, caps[k], format, width, 701, "tail", 1.5, &count); break; \
+    case 2: rc = function(destination, caps[k], format, precision, 701, "tail", 1.5, &count); break; \
+    case 3: case 4: rc = function(destination, caps[k], format, width, precision, 701, "tail", 1.5, &count); break; \
+    case 5: rc = function(destination, caps[k], format, 1, -2, 3, -4, 5, 701, "tail", 1.5, &count); break; \
+    } \
+} while (0)
+                    if (variant == 0) UNKNOWN_CALL(snprintf, bytes, fmt);
+                    else if (variant == 1) UNKNOWN_CALL(call_vsnprintf, bytes, fmt);
+                    else if (variant == 2) UNKNOWN_CALL(swprintf, words, wfmt);
+                    else UNKNOWN_CALL(call_vswprintf, words, wfmt);
+#undef UNKNOWN_CALL
+                    int error = errno;
+                    printf("unknown:%zu:%u:%u:%zu:%d:%d:%d:", c, sign, variant, caps[k], rc, count, error);
+                    for (unsigned i = 0; i < 64; ++i) {
+                        if (wide) printf("%08x", (unsigned)words[i]);
+                        else printf("%02x", (unsigned char)bytes[i]);
+                    }
+                    putchar('\n');
+                }
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--gnu-types") == 0) return gnu_types();
     if (argc == 2 && strcmp(argv[1], "--gnu-size") == 0) return gnu_sizes();
     if (argc == 2 && strcmp(argv[1], "--gnu-errors") == 0) return gnu_size_errors();
+    if (argc == 2 && strcmp(argv[1], "--gnu-unknown") == 0) return gnu_unknown_conversions();
     if (argc == 2 && strcmp(argv[1], "--gnu-rounding") == 0) {
         int rc = gnu_extended_rounding();
         return rc ? rc : gnu_rounding_threads(0);
