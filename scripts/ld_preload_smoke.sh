@@ -11,7 +11,7 @@ if [[ "$#" -gt 1 || ( "$#" -eq 1 && "${1:-}" != "--performance-only" ) ]]; then
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_ROOT="${ROOT}/target/ld_preload_smoke"
+OUT_ROOT="${FRANKENLIBC_SMOKE_OUT_ROOT:-${ROOT}/target/ld_preload_smoke}"
 RUN_ID="${FRANKENLIBC_SMOKE_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
 case "${RUN_ID}" in
   ""|*[!A-Za-z0-9._-]*)
@@ -86,7 +86,12 @@ for candidate in "${LIB_CANDIDATES[@]}"; do
   fi
 done
 
-mkdir -p "${RUN_DIR}" "${BIN_DIR}"
+mkdir -p "${OUT_ROOT}"
+if ! mkdir "${RUN_DIR}"; then
+  echo "ld_preload_smoke: a fresh run directory is required: ${RUN_DIR}" >&2
+  exit 2
+fi
+mkdir -p "${BIN_DIR}"
 : > "${TRACE_FILE}"
 printf 'mode\tlabel\tstatus\tworkload\tstartup_path\tfailure_signature\tsignature_guard_triggered\tparity_required\tparity_pass\tperf_required\tperf_pass\tlatency_ratio_ppm\tbaseline_rc\tpreload_rc\tstdout_match\tstderr_match\tbaseline_latency_ns\tpreload_latency_ns\tvalgrind_checked\tvalgrind_pass\n' > "${CASE_TSV}"
 
@@ -632,7 +637,7 @@ run_case() {
   local baseline_start_ns
   baseline_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" "$@" > "${baseline_stdout}" 2> "${baseline_stderr}"
   local baseline_rc=$?
   set -e
   local baseline_end_ns
@@ -642,7 +647,7 @@ run_case() {
   local preload_start_ns
   preload_start_ns="$(date +%s%N)"
   set +e
-  timeout "${TIMEOUT_SECONDS}" \
+  timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
     env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
     > "${preload_stdout}" 2> "${preload_stderr}"
   local preload_rc=$?
@@ -711,7 +716,7 @@ run_case() {
           # execve()s the real target. With the default --trace-children=no valgrind
           # does not follow that exec, so the preloaded target would run
           # un-instrumented and this gate would inspect only `env` (always clean).
-          timeout "${TIMEOUT_SECONDS}" \
+          timeout --kill-after=2s "${TIMEOUT_SECONDS}" \
             valgrind --error-exitcode=101 --leak-check=full --track-origins=no --quiet \
             --trace-children=yes \
             env FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB_PATH}" "$@" \
@@ -1149,7 +1154,8 @@ print(eval("(" * 190 + ")" * 190))' || mode_failed=1
   run_corpus_case "${mode}" "getent_initgroups" bash -c 'LC_ALL=C getent initgroups root daemon nobody 2>&1; echo "rc=$?"' || mode_failed=1
   # gencat creates, then merges into, a catalog through glibc's private
   # __open_catalog and __libc_scratch_buffer_set_array_size.
-  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d) && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat; cd / && rm -r "$d"' || mode_failed=1
+  # Keep both catalogs and inputs beside the captured case output.
+  run_corpus_case "${mode}" "gencat_create_merge" bash -c 'd=$(mktemp -d "$1/gencat.XXXXXX") && cd "$d" && printf "\$set 1\n1 hello\n2 world\n\$set 2\n7 seven\n" > a.msg && gencat x.cat a.msg && printf "\$set 1\n1 replaced\n3 added\n\$set 2\n7\n" > b.msg && gencat x.cat b.msg 2>&1; echo "rc=$?"; od -An -tx1 x.cat' smoke-gencat "${RUN_DIR}/${mode}/gencat_create_merge" || mode_failed=1
   # /etc/hosts semantics: every address of the family, aliases merged across
   # lines (bd-rc0923-epic-eeuy4f.21).
   run_corpus_case "${mode}" "getent_hosts_localhost" /usr/bin/env LC_ALL=C getent hosts localhost || mode_failed=1

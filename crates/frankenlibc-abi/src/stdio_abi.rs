@@ -8239,7 +8239,11 @@ mod printf_out_pool {
         static POOL: Cell<Option<Vec<u8>>> = const { Cell::new(None) };
     }
     pub(super) fn take() -> Vec<u8> {
-        POOL.with(|p| p.take()).map_or_else(
+        // Process callbacks can format after the calling thread's TLS
+        // destructors drained this optional cache. Reuse is not required for
+        // rendering: an unavailable slot needs the same fresh-buffer fallback
+        // as a reentrant call whose pooled buffer is already checked out.
+        POOL.try_with(|p| p.take()).ok().flatten().map_or_else(
             || Vec::with_capacity(256),
             |mut v| {
                 v.clear();
@@ -8248,7 +8252,9 @@ mod printf_out_pool {
         )
     }
     pub(super) fn give(v: Vec<u8>) {
-        POOL.with(|p| {
+        // If TLS has been destroyed, the uncalled closure drops v normally.
+        // Never recreate thread-local state while returning a scratch buffer.
+        let _ = POOL.try_with(|p| {
             // Single slot: keep whichever buffer has the larger capacity.
             let keep = match p.take() {
                 Some(existing) if existing.capacity() >= v.capacity() => existing,

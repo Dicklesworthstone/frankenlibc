@@ -7047,6 +7047,57 @@ fn printf_pooled_output_buffer_does_not_leak_stale_bytes() {
 }
 
 #[test]
+fn printf_pooled_output_survives_thread_local_destruction() {
+    use std::cell::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+
+    struct LateRender(Arc<AtomicBool>);
+
+    fn render() {
+        let mut out = [0xa5u8; 32];
+        // Positional arguments force the general renderer and its output pool.
+        // SAFETY: the arguments match the format and out includes room for NUL.
+        let count = unsafe {
+            snprintf(
+                out.as_mut_ptr().cast(),
+                out.len(),
+                c"%2$s:%1$d".as_ptr(),
+                42 as c_int,
+                c"late".as_ptr(),
+            )
+        };
+        assert_eq!(count, 7);
+        assert_eq!(&out[..8], b"late:42\0");
+        assert!(out[8..].iter().all(|byte| *byte == 0xa5));
+    }
+
+    impl Drop for LateRender {
+        fn drop(&mut self) {
+            // The printf pool was initialized after this slot and is destroyed
+            // first. Both taking and returning a scratch buffer must still work.
+            render();
+            render();
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    thread_local! {
+        static LATE_RENDER: Cell<Option<LateRender>> = const { Cell::new(None) };
+    }
+
+    let completed = Arc::new(AtomicBool::new(false));
+    let observed = Arc::clone(&completed);
+    thread::spawn(move || {
+        LATE_RENDER.with(|slot| slot.set(Some(LateRender(observed))));
+        render();
+    })
+    .join()
+    .expect("rendering thread must finish without a teardown panic");
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[test]
 fn stream_orientation_enforcement_matches_c99_and_glibc() {
     use frankenlibc_abi::errno_abi::__errno_location;
     use frankenlibc_abi::glibc_internal_abi::fwide;
