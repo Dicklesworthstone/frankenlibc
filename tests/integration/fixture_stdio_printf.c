@@ -766,10 +766,33 @@ static int gnu_rounding_threads(int ordinary) {
     return 0;
 }
 
+static int unknown_vsnprintf(char *buf, size_t cap, const char *fmt, ...) {
+    int (*render)(char *, size_t, const char *, va_list) = dlsym(RTLD_DEFAULT, "vsnprintf");
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = render(buf, cap, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
+static int unknown_vswprintf(wchar_t *buf, size_t cap, const wchar_t *fmt, ...) {
+    int (*render)(wchar_t *, size_t, const wchar_t *, va_list) = dlsym(RTLD_DEFAULT, "vswprintf");
+    va_list ap;
+    va_start(ap, fmt);
+    int rc = render(buf, cap, fmt, ap);
+    va_end(ap);
+    return rc;
+}
+
 static int gnu_unknown_conversions(void) {
     const char *providers[] = {"snprintf", "vsnprintf", "swprintf", "vswprintf"};
     for (unsigned i = 0; i < sizeof(providers) / sizeof(providers[0]); ++i)
         if (check_gnu_provider(providers[i])) return 1;
+    /* Bind ordinary symbols explicitly: fortified header wrappers deliberately
+     * reject %n in a generated writable format and test a different contract. */
+    int (*narrow)(char *, size_t, const char *, ...) = dlsym(RTLD_DEFAULT, "snprintf");
+    int (*wide_render)(wchar_t *, size_t, const wchar_t *, ...) = dlsym(RTLD_DEFAULT, "swprintf");
+    if (!narrow || !wide_render) return 1;
     static const struct { const char *directive; unsigned args; } cases[] = {
         {"%Q", 0}, {"%#Q", 0}, {"%+ Q", 0}, {"%-05Q", 0},
         {"%'# +0-12.003Q", 0}, {"%0Q", 0}, {"%.0Q", 0}, {"%9.2Q", 0},
@@ -811,10 +834,10 @@ static int gnu_unknown_conversions(void) {
     case 5: rc = function(destination, caps[k], format, 1, -2, 3, -4, 5, 701, "tail", 1.5, &count); break; \
     } \
 } while (0)
-                    if (variant == 0) UNKNOWN_CALL(snprintf, bytes, fmt);
-                    else if (variant == 1) UNKNOWN_CALL(call_vsnprintf, bytes, fmt);
-                    else if (variant == 2) UNKNOWN_CALL(swprintf, words, wfmt);
-                    else UNKNOWN_CALL(call_vswprintf, words, wfmt);
+                    if (variant == 0) UNKNOWN_CALL(narrow, bytes, fmt);
+                    else if (variant == 1) UNKNOWN_CALL(unknown_vsnprintf, bytes, fmt);
+                    else if (variant == 2) UNKNOWN_CALL(wide_render, words, wfmt);
+                    else UNKNOWN_CALL(unknown_vswprintf, words, wfmt);
 #undef UNKNOWN_CALL
                     int error = errno;
                     printf("unknown:%zu:%u:%u:%zu:%d:%d:%d:", c, sign, variant, caps[k], rc, count, error);
