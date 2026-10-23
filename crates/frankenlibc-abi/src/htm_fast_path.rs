@@ -247,8 +247,7 @@ impl HtmSite {
 
     #[inline]
     fn disabled_now(&self) -> bool {
-        let disable_until = self.disable_until_ms.load(Ordering::Acquire);
-        disable_until != 0 && disable_until > now_ms()
+        self.disable_until_ms.load(Ordering::Acquire) > now_ms()
     }
 
     pub fn snapshot(&self) -> HtmSiteSnapshot {
@@ -350,10 +349,6 @@ impl HtmSite {
     }
 
     fn maybe_emit_summary(&self) {
-        if !cfg!(feature = "runtime-tracing") {
-            return;
-        }
-
         let outcomes =
             self.commits.load(Ordering::Relaxed) + self.fallbacks.load(Ordering::Relaxed);
         if outcomes == 0 || !outcomes.is_multiple_of(SUMMARY_INTERVAL) {
@@ -558,67 +553,5 @@ mod tests {
             epoch_after_run, 0,
             "unsupported real-mode fallback should not read the cooldown clock"
         );
-    }
-
-    #[test]
-    fn inactive_cooldown_commits_without_reading_clock() {
-        let _guard = test_lock().lock().expect("test lock poisoned");
-        let site = HtmSite::new("unit::inactive_cooldown");
-        let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::ForceCommit);
-        let previous_epoch = HTM_EPOCH_NS.swap(0, Ordering::AcqRel);
-
-        let result = site.run(|| 41usize + 1);
-        let epoch_after_run = HTM_EPOCH_NS.load(Ordering::Relaxed);
-        let snapshot = site.snapshot();
-
-        HTM_EPOCH_NS.store(previous_epoch, Ordering::Release);
-        htm_restore_test_mode_for_tests(previous_mode);
-
-        assert_eq!(result, Ok(42));
-        assert_eq!(snapshot.attempts, 1);
-        assert_eq!(snapshot.commits, 1);
-        assert_eq!(snapshot.aborts, 0);
-        assert_eq!(snapshot.fallbacks, 0);
-        assert!(!snapshot.disabled);
-        assert_eq!(
-            epoch_after_run, 0,
-            "a zero cooldown deadline must not consult the clock"
-        );
-    }
-
-    #[test]
-    fn unsupported_summary_boundary_preserves_counters_and_trace_contract() {
-        let _guard = test_lock().lock().expect("test lock poisoned");
-        let site = HtmSite::new("unit::unsupported_summary");
-        let previous_mode = htm_swap_test_mode_for_tests(HtmTestMode::Real);
-        let previous_support = HTM_SUPPORT_CACHE.swap(HTM_SUPPORT_UNAVAILABLE, Ordering::AcqRel);
-        let previous_epoch = HTM_EPOCH_NS.swap(0, Ordering::AcqRel);
-        let mut calls = 0;
-        let mut result = Ok(());
-        for _ in 0..SUMMARY_INTERVAL {
-            result = site.run(|| calls += 1);
-        }
-        let epoch_after_runs = HTM_EPOCH_NS.load(Ordering::Relaxed);
-        let summary_outcomes = site.last_summary_outcome_count.load(Ordering::Relaxed);
-        let snapshot = site.snapshot();
-
-        HTM_EPOCH_NS.store(previous_epoch, Ordering::Release);
-        HTM_SUPPORT_CACHE.store(previous_support, Ordering::Release);
-        htm_restore_test_mode_for_tests(previous_mode);
-
-        assert_eq!(result, Err(HtmFallbackReason::Unsupported));
-        assert_eq!(calls, 0, "unsupported HTM must not execute the closure");
-        assert_eq!(snapshot.attempts, 0);
-        assert_eq!(snapshot.commits, 0);
-        assert_eq!(snapshot.aborts, 0);
-        assert_eq!(snapshot.fallbacks, SUMMARY_INTERVAL);
-        assert!(!snapshot.disabled);
-        if cfg!(feature = "runtime-tracing") {
-            assert_eq!(summary_outcomes, SUMMARY_INTERVAL);
-            assert_ne!(epoch_after_runs, 0, "tracing retains its summary snapshot");
-        } else {
-            assert_eq!(summary_outcomes, 0, "no summary exists without tracing");
-            assert_eq!(epoch_after_runs, 0, "unsupported HTM has no cooldown clock");
-        }
     }
 }
