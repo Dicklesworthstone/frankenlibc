@@ -30,15 +30,15 @@ use frankenlibc_core::pthread::tls::{
 };
 use frankenlibc_core::pthread::{
     CondvarData, MANAGED_CONDVAR_MAGIC, MANAGED_CONDVAR_PSHARED_MAGIC, PTHREAD_COND_CLOCK_REALTIME,
-    THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle,
+    THREAD_DETACHED, THREAD_FINISHED, THREAD_JOINED, ThreadHandle, ThreadStack,
     condvar_broadcast as core_condvar_broadcast, condvar_destroy as core_condvar_destroy,
     condvar_init as core_condvar_init, condvar_signal as core_condvar_signal,
     condvar_timed_futex_op as core_condvar_timed_futex_op,
     condvar_wait_finish as core_condvar_wait_finish,
-    condvar_wait_prepare as core_condvar_wait_prepare, create_thread as core_create_thread,
-    detach_thread as core_detach_thread, exit_current_thread as core_exit_current_thread,
-    handle_for_tid as core_handle_for_tid, join_thread as core_join_thread,
-    self_tid as core_self_tid,
+    condvar_wait_prepare as core_condvar_wait_prepare,
+    create_thread_with_stack as core_create_thread_with_stack, detach_thread as core_detach_thread,
+    exit_current_thread as core_exit_current_thread, handle_for_tid as core_handle_for_tid,
+    join_thread as core_join_thread, self_tid as core_self_tid,
 };
 use frankenlibc_core::syscall as raw_syscall;
 use frankenlibc_membrane::check_oracle::CheckStage;
@@ -80,8 +80,12 @@ type ResolvedPthreadAttrGetdetachstateFn =
     unsafe extern "C" fn(*const libc::pthread_attr_t, *mut c_int) -> c_int;
 type ResolvedPthreadAttrSetguardsizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
+type ResolvedPthreadAttrGetguardsizeFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstackFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, *mut c_void, usize) -> c_int;
+type ResolvedPthreadAttrGetstackFn =
+    unsafe extern "C" fn(*const libc::pthread_attr_t, *mut *mut c_void, *mut usize) -> c_int;
 type ResolvedPthreadAttrSetstacksizeFn =
     unsafe extern "C" fn(*mut libc::pthread_attr_t, usize) -> c_int;
 type ResolvedPthreadAttrGetstacksizeFn =
@@ -176,7 +180,6 @@ const SCHED_FIFO_PRIO_MAX: c_int = 99;
 
 struct ManagedThreadRecord {
     handle_raw: usize,
-    stack_size: usize,
     detach_state: c_int,
 }
 
@@ -245,7 +248,9 @@ static RESOLVED_PTHREAD_ATTR_DESTROY_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_GETDETACHSTATE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSTACK_PTR: OnceLock<usize> = OnceLock::new();
+static RESOLVED_PTHREAD_ATTR_GETSTACK_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_GETSTACKSIZE_PTR: OnceLock<usize> = OnceLock::new();
 static RESOLVED_PTHREAD_ATTR_SETINHERITSCHED_PTR: OnceLock<usize> = OnceLock::new();
@@ -676,6 +681,26 @@ unsafe fn resolved_pthread_attr_setstack_fn() -> Option<ResolvedPthreadAttrSetst
         )
     }?;
     Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrSetstackFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getguardsize_fn() -> Option<ResolvedPthreadAttrGetguardsizeFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETGUARDSIZE_PTR,
+            &[b"pthread_attr_getguardsize\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetguardsizeFn>(ptr) })
+}
+
+unsafe fn resolved_pthread_attr_getstack_fn() -> Option<ResolvedPthreadAttrGetstackFn> {
+    let ptr = unsafe {
+        resolve_cached_pthread_attr_symbol(
+            &RESOLVED_PTHREAD_ATTR_GETSTACK_PTR,
+            &[b"pthread_attr_getstack\0"],
+        )
+    }?;
+    Some(unsafe { std::mem::transmute::<usize, ResolvedPthreadAttrGetstackFn>(ptr) })
 }
 
 unsafe fn resolved_pthread_attr_setstacksize_fn() -> Option<ResolvedPthreadAttrSetstacksizeFn> {
@@ -1895,8 +1920,11 @@ unsafe fn native_pthread_create(
         return libc::EINVAL;
     }
 
-    // Extract attributes if provided; default to 0 (use core defaults).
-    let mut stack_size: usize = 0;
+    // Use the same default that pthread_attr_init reports, then retain the
+    // actual allocation metadata in the handle for pthread_getattr_np.
+    let mut stack_size = attr_default_stack_size();
+    let mut stack_addr: usize = 0;
+    let mut guard_size = ATTR_DEFAULT_GUARD_SIZE;
     let mut detach_state: c_int = 0;
     if !attr.is_null() {
         if let Some(data_ptr) = managed_attr_data_for_host_translation(attr)
@@ -1907,6 +1935,8 @@ unsafe fn native_pthread_create(
         let mut handled = false;
         if let Some(data) = managed_attr_data_ptr_const(attr) {
             stack_size = unsafe { (*data).stack_size };
+            stack_addr = unsafe { (*data).stack_addr };
+            guard_size = unsafe { (*data).guard_size };
             detach_state = unsafe { (*data).detach_state };
             handled = true;
         }
@@ -1915,6 +1945,29 @@ unsafe fn native_pthread_create(
                 return libc::ENOSYS;
             };
             let rc = unsafe { getstacksize(attr, &mut stack_size) };
+            if rc != 0 {
+                return rc;
+            }
+            let Some(getstack) = (unsafe { resolved_pthread_attr_getstack_fn() }) else {
+                return libc::ENOSYS;
+            };
+            let mut address = std::ptr::null_mut();
+            let mut size = 0;
+            let rc = unsafe { getstack(attr, &mut address, &mut size) };
+            if rc != 0 {
+                return rc;
+            }
+            // GNU attributes with only a stack size set expose an unset stack
+            // top as base == 0 - size. It is not caller-provided memory. Keep
+            // getstacksize's effective default when that representation appears.
+            if !address.is_null() && (address as usize).wrapping_add(size) != 0 {
+                stack_addr = address as usize;
+                stack_size = size;
+            }
+            let Some(getguardsize) = (unsafe { resolved_pthread_attr_getguardsize_fn() }) else {
+                return libc::ENOSYS;
+            };
+            let rc = unsafe { getguardsize(attr, &mut guard_size) };
             if rc != 0 {
                 return rc;
             }
@@ -1932,19 +1985,26 @@ unsafe fn native_pthread_create(
     // These threads share this thread's TCB self pointer; stop keying allocator
     // slots by it before the clone.
     crate::malloc_abi::note_native_thread_backend();
+    let stack = if stack_addr == 0 {
+        ThreadStack::Allocated {
+            size: stack_size,
+            guard_size,
+            page_size: unsafe { crate::unistd_abi::getpagesize() } as usize,
+        }
+    } else {
+        ThreadStack::Borrowed {
+            address: stack_addr,
+            size: stack_size,
+        }
+    };
     let handle_ptr =
-        match unsafe { core_create_thread(start_routine as usize, arg as usize, stack_size) } {
+        match unsafe { core_create_thread_with_stack(start_routine as usize, arg as usize, stack) }
+        {
             Ok(ptr) => ptr,
             Err(errno) => return errno,
         };
 
     let thread_key = handle_ptr as usize;
-
-    let effective_stack_size = if stack_size > 0 {
-        stack_size
-    } else {
-        attr_default_stack_size()
-    };
 
     let mut registry = THREAD_HANDLE_REGISTRY
         .lock()
@@ -1965,7 +2025,6 @@ unsafe fn native_pthread_create(
         thread_key,
         ManagedThreadRecord {
             handle_raw: handle_ptr as usize,
-            stack_size: effective_stack_size,
             detach_state,
         },
     );
@@ -6187,7 +6246,7 @@ pub unsafe extern "C" fn pthread_getattr_np(
         .unwrap_or_else(|e| e.into_inner());
     if let Some(record) = registry.get(&thread_key) {
         let handle_ptr = record.handle_raw as *mut ThreadHandle;
-        // SAFETY: registry only stores live handles from core_create_thread.
+        // SAFETY: registry only stores live handles from the core creator.
         let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
         let detach_state = if state == THREAD_DETACHED {
             libc::PTHREAD_CREATE_DETACHED
@@ -6197,9 +6256,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
         // SAFETY: pointer is non-null and aligned; we initialized it above.
         unsafe {
             (*data).detach_state = detach_state;
-            (*data).stack_size = record.stack_size;
-            (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
-            (*data).stack_addr = (*handle_ptr).stack_base + ATTR_DEFAULT_GUARD_SIZE;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
         }
         return 0;
     }
@@ -6212,9 +6271,6 @@ pub unsafe extern "C" fn pthread_getattr_np(
         // established that the thread still appears live, so the handle fields
         // remain readable here.
         let state = unsafe { (*handle_ptr).state.load(Ordering::Acquire) };
-        // SAFETY: same liveness argument as above.
-        let stack_total_size = unsafe { (*handle_ptr).stack_total_size };
-        let stack_base = unsafe { (*handle_ptr).stack_base };
         let detach_state = if state == THREAD_DETACHED {
             libc::PTHREAD_CREATE_DETACHED
         } else {
@@ -6222,9 +6278,9 @@ pub unsafe extern "C" fn pthread_getattr_np(
         };
         unsafe {
             (*data).detach_state = detach_state;
-            (*data).stack_size = stack_total_size.saturating_sub(ATTR_DEFAULT_GUARD_SIZE);
-            (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
-            (*data).stack_addr = stack_base + ATTR_DEFAULT_GUARD_SIZE;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
         }
         return 0;
     }
@@ -6241,13 +6297,11 @@ pub unsafe extern "C" fn pthread_getattr_np(
             libc::PTHREAD_CREATE_JOINABLE
         };
         // SAFETY: `handle_ptr` is the current thread's live handle.
-        let stack_total_size = unsafe { (*handle_ptr).stack_total_size };
-        let stack_base = unsafe { (*handle_ptr).stack_base };
         unsafe {
             (*data).detach_state = detach_state;
-            (*data).stack_size = stack_total_size.saturating_sub(ATTR_DEFAULT_GUARD_SIZE);
-            (*data).guard_size = ATTR_DEFAULT_GUARD_SIZE;
-            (*data).stack_addr = stack_base + ATTR_DEFAULT_GUARD_SIZE;
+            (*data).stack_size = (*handle_ptr).stack_size;
+            (*data).guard_size = (*handle_ptr).guard_size;
+            (*data).stack_addr = (*handle_ptr).stack_addr;
         }
         return 0;
     }
