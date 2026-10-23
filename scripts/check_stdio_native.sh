@@ -224,6 +224,10 @@ for scenario in gnu-types gnu-size gnu-errors gnu-rounding gnu-double-rounding g
     echo "FAIL: empty GNU oracle for ${scenario}" >&2
     exit 1
   fi
+  if [[ "${scenario}" == gnu-unknown && "${rows}" -ne 3000 ]]; then
+    echo "FAIL: incomplete unknown-conversion oracle (${rows}/3000 rows)" >&2
+    exit 1
+  fi
   if [[ "${scenario}" == *rounding ]] &&
      [[ "$(grep -Ec '^round-thread:[0-3]:0$' "${oracle_stdout}")" -ne 4 ]]; then
     echo "FAIL: GNU oracle failed concurrent rounding expectations" >&2

@@ -8,6 +8,7 @@
 #include <fenv.h>
 #include <fcntl.h>
 #include <float.h>
+#include <limits.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdatomic.h>
@@ -800,12 +801,14 @@ static int gnu_unknown_conversions(void) {
         {"%jQ", 0}, {"%zQ", 0}, {"%tQ", 0}, {"%qQ", 0},
         {"%*Q", 1}, {"%0*Q", 1}, {"%.*Q", 2}, {"%*.*Q", 3},
         {"%#0+*.*Q", 3}, {"%3$*1$.*2$Q", 4},
-        {"%*Q%*R%*V%*K%*Y", 5}
+        {"%*Q%*R%*V%*K%*Y", 5}, {"%I*Q", 1}, {"%#I0*.*Q", 3}
     };
     static const size_t caps[] = {0, 1, 2, 5, 8, 64};
+    static const int widths[] = {7, -7, 0, INT_MAX, INT_MIN};
+    static const int precisions[] = {3, -3, 0, INT_MAX, INT_MIN};
     for (size_t c = 0; c < sizeof(cases) / sizeof(cases[0]); ++c) {
-        for (unsigned sign = 0; sign < 2; ++sign) {
-            const int width = sign ? -7 : 7, precision = sign ? -3 : 3;
+        for (unsigned sign = 0; sign < sizeof(widths) / sizeof(widths[0]); ++sign) {
+            const int width = widths[sign], precision = precisions[sign];
             for (unsigned variant = 0; variant < 4; ++variant) {
                 for (size_t k = 0; k < sizeof(caps) / sizeof(caps[0]); ++k) {
                     const int wide = variant >= 2;

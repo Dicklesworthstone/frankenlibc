@@ -77,6 +77,7 @@ pub struct FormatFlags {
     pub alt_form: bool,     // '#'
     pub zero_pad: bool,     // '0'
     pub group: bool,        // '\'' (POSIX thousands grouping)
+    pub i18n: bool,         // 'I' (GNU alternative-digit flag)
 }
 
 /// Width specification.
@@ -535,13 +536,16 @@ impl FormatSpec {
             (self.flags.space_sign, b' '),
             (self.flags.left_justify, b'-'),
             (self.flags.zero_pad, b'0'),
+            (self.flags.i18n, b'I'),
         ] {
             if enabled {
                 buf.push(byte);
             }
         }
         let mut digits = [0u8; 64];
-        if let Width::Fixed(width) = self.width {
+        if let Width::Fixed(width) = self.width
+            && width != 0
+        {
             let n = render_decimal(width as u64, &mut digits);
             buf.push_bytes(&digits[64 - n..]);
         }
@@ -1284,6 +1288,7 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
             // separator and grouping (`set_numeric_grouping`); under the C
             // locale both are empty and it is a no-op, as in glibc.
             b'\'' => flags.group = true,
+            b'I' => flags.i18n = true,
             _ => break,
         }
         pos += 1;
@@ -1376,7 +1381,7 @@ fn parse_format_spec_checked(fmt: &[u8], invalid: &mut bool) -> Option<(FormatSp
                 pos += 1;
                 LengthMod::J
             }
-            b'L' => {
+            b'L' | b'q' => {
                 pos += 1;
                 LengthMod::BigL
             }
@@ -3815,6 +3820,7 @@ mod tests {
             &b"a%"[..],
             b"a%5",
             b"a%l",
+            b"a%q",
             b"a%-",
             b"a%.",
             b"a%w7d",
@@ -3877,9 +3883,11 @@ mod tests {
             (&b"# +0-'12.003Q"[..], &b"%#'+-12.3Q"[..]),
             (b"hhQ", b"%Q"),
             (b"LQ", b"%Q"),
+            (b"qQ", b"%Q"),
             (b"9.2Q", b"%9.2Q"),
             (b"0Q", b"%0Q"),
             (b".0Q", b"%.0Q"),
+            (b"#I0Q", b"%#0IQ"),
         ] {
             let (spec, consumed) = parse_format_spec(fmt).unwrap();
             assert_eq!(consumed, fmt.len());
@@ -3891,6 +3899,17 @@ mod tests {
         for fmt in [b"d".as_slice(), b"s", b"m", b"%", b"Lf"] {
             assert!(!parse_format_spec(fmt).unwrap().0.is_unknown_conversion());
         }
+        let (integer, _) = parse_format_spec(b"qd").unwrap();
+        assert_eq!(integer.length, LengthMod::Ll);
+        assert_eq!(integer.value_arg_kind(), Some(ValueArgKind::Gp));
+        let (float, _) = parse_format_spec(b"qf").unwrap();
+        assert_eq!(float.length, LengthMod::BigL);
+        assert_eq!(float.value_arg_kind(), Some(ValueArgKind::X87));
+        let (mut zero_width, _) = parse_format_spec(b"Q").unwrap();
+        zero_width.width = Width::Fixed(0);
+        let mut buf = Vec::new();
+        zero_width.render_unknown_conversion(&mut buf);
+        assert_eq!(buf, b"%Q");
     }
 
     /// The accumulated `sequential_args` must equal the walk it replaced.

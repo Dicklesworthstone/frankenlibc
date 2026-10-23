@@ -7286,7 +7286,15 @@ pub(crate) unsafe fn render_segments(
                         let w = (raw_width as core::ffi::c_int) as i64;
                         if w < 0 {
                             resolved_spec.flags.left_justify = true;
-                            resolved_spec.width = Width::Fixed((-w) as usize);
+                            resolved_spec.width = Width::Fixed(if spec.is_unknown_conversion() {
+                                // GNU's unknown-directive spelling promotes the
+                                // int-width's wrapping negation to unsigned long.
+                                // INT_MIN therefore retains its sign-extended
+                                // bits; no field padding/allocation uses this.
+                                (w as c_int).wrapping_neg() as isize as usize
+                            } else {
+                                (-w) as usize
+                            });
                         } else {
                             resolved_spec.width = Width::Fixed(w as usize);
                         }

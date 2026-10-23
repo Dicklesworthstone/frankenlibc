@@ -1171,6 +1171,8 @@ fn snprintf_truncates_and_reports_full_length() {
 fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
     let mut buf = [0x5a_i8; 64];
     let mut count = -77_i32;
+    // SAFETY: every variadic operand matches the directive; buffers/count are
+    // live writable objects, and the string argument is NUL-terminated.
     let written = unsafe {
         snprintf(
             buf.as_mut_ptr(),
@@ -1186,11 +1188,13 @@ fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
     };
     assert_eq!(written, 18);
     assert_eq!(count, 18);
+    // SAFETY: the successful nontruncated call terminated this live buffer.
     assert_eq!(
         unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
         b"%-07Q:701:tail:1.5"
     );
     assert!(buf[19..].iter().all(|&v| v == 0x5a));
+    // SAFETY: the positional types and capacities match the live objects.
     let written = unsafe {
         snprintf(
             buf.as_mut_ptr(),
@@ -1206,8 +1210,26 @@ fn snprintf_unknown_conversions_keep_following_arguments_and_count() {
     };
     assert_eq!(written, 18);
     assert_eq!(count, 18);
+    // SAFETY: positive capacity guarantees a terminator inside this buffer.
     assert_eq!(unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(), b"%7.3");
     assert_eq!(buf[5] as u8, b':');
+    // SAFETY: GNU I-flag unknown conversions consume one promoted int width
+    // and no value; the following int and output buffers match the format.
+    let written = unsafe {
+        snprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            c"%I*Q:%d".as_ptr(),
+            i32::MIN,
+            701_i32,
+        )
+    };
+    assert_eq!(written, 28);
+    // SAFETY: the successful nontruncated snprintf terminated this buffer.
+    assert_eq!(
+        unsafe { CStr::from_ptr(buf.as_ptr()) }.to_bytes(),
+        b"%-I18446744071562067968Q:701"
+    );
 }
 
 #[test]
