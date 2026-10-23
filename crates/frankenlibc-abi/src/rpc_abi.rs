@@ -3198,7 +3198,7 @@ fn rpc_identity_file<T>(
     match read() {
         Ok(image) => parse(&image).map_or(Answer::NotFound, Answer::Found),
         Err(error) => {
-            // SAFETY: errno is the calling thread's writable error slot.
+            // SAFETY: errno is the calling thread's valid, writable error slot.
             unsafe { set_abi_errno(error) };
             Answer::Unavailable(error)
         }

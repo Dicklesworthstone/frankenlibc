@@ -11,8 +11,10 @@ on:
       - 'crates/frankenlibc-abi/src/stdio_abi/**'
       - 'crates/frankenlibc-abi/src/io_internal_abi.rs'
       - 'crates/frankenlibc-abi/src/io_internal_abi/**'
+      - 'crates/frankenlibc-abi/src/unistd_abi.rs'
       - 'crates/frankenlibc-core/src/stdio/**'
       - 'tests/integration/fixture_stdio_file_layout.c'
+      - 'tests/integration/fixture_stdio_lifetime.c'
       - 'tests/integration/fixture_stdio_printf.c'
       - 'scripts/check_stdio_native.sh'
       - '.github/workflows/stdio-file-layout.yml'
@@ -69,6 +71,32 @@ jobs:
           mkdir -p artifacts/stdio-layout
           cargo build --release -p frankenlibc-abi --lib 2>&1 | tee artifacts/stdio-layout/build.log
           cc -O2 -Wall -Wextra -Werror tests/integration/fixture_stdio_file_layout.c -o target/stdio-file-layout
+      - name: Preserve host stdio across local loading and native COPY relocations
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/stdio-layout
+          cc -O2 -Wall -Wextra -Werror -fno-pie -no-pie tests/integration/fixture_stdio_lifetime.c -ldl -o target/stdio-lifetime-copy
+          cc -O2 -Wall -Wextra -Werror -fPIC -pie tests/integration/fixture_stdio_lifetime.c -ldl -o target/stdio-lifetime-pic
+          readelf -rW target/stdio-lifetime-copy > artifacts/stdio-layout/lifetime-copy.relocations
+          readelf -rW target/stdio-lifetime-pic > artifacts/stdio-layout/lifetime-pic.relocations
+          for symbol in stdin stdout stderr _IO_list_all; do
+            grep -Eq "R_.*_COPY.* ${symbol}(@| )" artifacts/stdio-layout/lifetime-copy.relocations
+          done
+          if grep -Eq 'R_.*_COPY' artifacts/stdio-layout/lifetime-pic.relocations; then exit 1; fi
+          library="$PWD/target/release/libfrankenlibc_abi.so"
+          for model in copy pic; do
+            for mode in strict hardened; do
+              FRANKENLIBC_MODE="$mode" timeout 20 "target/stdio-lifetime-$model" "$library" local \
+                > "artifacts/stdio-layout/lifetime-$model-$mode-local.out" \
+                2> "artifacts/stdio-layout/lifetime-$model-$mode-local.err"
+              timeout 20 env FRANKENLIBC_MODE="$mode" LD_PRELOAD="$library" \
+                "target/stdio-lifetime-$model" "$library" preload \
+                > "artifacts/stdio-layout/lifetime-$model-$mode-preload.out" \
+                2> "artifacts/stdio-layout/lifetime-$model-$mode-preload.err"
+            done
+          done
       - name: Exercise registration and callback dispatch through the Rust ABI
         if: always()
         shell: bash

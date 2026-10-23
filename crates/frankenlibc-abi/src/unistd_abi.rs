@@ -3531,7 +3531,7 @@ fn emit_getopt_diagnostic(argv0: &[u8], optspec: &[u8], diagnostic: Option<Getop
 /// fl wrote to fd 2 directly, so ftell(stderr) never moved (gnulib
 /// test-getopt detects the message that way).
 fn getopt_write_stderr(msg: &[u8]) {
-    let stream = unsafe { crate::stdio_abi::stderr };
+    let stream = crate::stdio_abi::active_stderr_stream();
     if stream.is_null() {
         let _ = unsafe { syscall::sys_write(2, msg.as_ptr(), msg.len()) };
         return;
@@ -26145,11 +26145,11 @@ unsafe fn argp_write_bytes(stream: *mut libc::FILE, bytes: &[u8]) -> bool {
 }
 
 fn argp_stderr() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stderr }.cast()
+    crate::stdio_abi::active_stderr_stream().cast()
 }
 
 fn argp_stdout() -> *mut libc::FILE {
-    unsafe { crate::stdio_abi::stdout }.cast()
+    crate::stdio_abi::active_stdout_stream().cast()
 }
 
 /// Read one of the program-settable argp globals. Programs define these in
