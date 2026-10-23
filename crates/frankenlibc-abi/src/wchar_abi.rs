@@ -5403,20 +5403,29 @@ macro_rules! extract_wprintf_args_registers {
                         $buf[_idx] = unsafe { $args.next_arg::<u64>() };
                         _idx += 1;
                     }
-                    match spec.conversion {
-                        b'%' => {}
-                        b'f' | b'F' | b'e' | b'E' | b'g' | b'G' | b'a' | b'A' => {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
-                                _idx += 1;
-                            }
+                    // Share the parser's value classification with the narrow
+                    // extractor. Unknown conversions and %m consume stars but
+                    // no value; a default GP read here shifts every later
+                    // argument and can turn an integer into a string pointer.
+                    match spec.value_arg_kind() {
+                        Some(ValueArgKind::Fp) if _idx < $extract_count => {
+                            // SAFETY: the parsed directive requires a promoted
+                            // double in this caller's live va_list.
+                            $buf[_idx] = unsafe { $args.next_arg::<f64>() }.to_bits();
+                            _idx += 1;
                         }
-                        _ => {
-                            if _idx < $extract_count {
-                                $buf[_idx] = unsafe { $args.next_arg::<u64>() };
-                                _idx += 1;
-                            }
+                        Some(ValueArgKind::Gp) if _idx < $extract_count => {
+                            // SAFETY: GP arguments occupy an eight-byte slot
+                            // in the supported variadic ABIs.
+                            $buf[_idx] = unsafe { $args.next_arg::<u64>() };
+                            _idx += 1;
                         }
+                        Some(ValueArgKind::X87) => {
+                            // The outer macro routes every X87 format through
+                            // the raw walker before this macro can run.
+                            debug_assert!(false, "X87 reached wide register extraction");
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -5767,8 +5776,8 @@ fn narrow_to_wide_count(narrow: &[u8]) -> Option<usize> {
 /// the buffer bound, and report glibc's return value.
 ///
 /// Returns `-1` with `EILSEQ` when the locale cannot convert the rendered
-/// bytes, and `-1` WITHOUT touching errno when the output simply did not fit —
-/// two different failures that share a return value, which is why they are
+/// bytes, and `-1` with `E2BIG` when the output simply did not fit — two
+/// different failures that share a return value, which is why they are
 /// distinguished here rather than at each call site.
 fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
     let Some(wide_count) = narrow_to_wide_count(rendered) else {
@@ -5779,7 +5788,12 @@ fn finish_swprintf(rendered: &[u8], s: *mut libc::wchar_t, n: usize) -> c_int {
         // glibc still writes the TRUNCATED prefix plus a NUL rather than
         // emptying the buffer.
         if narrow_to_wide_buf(rendered, s, n).is_none() {
+            // SAFETY: errno is this thread's writable error slot.
             unsafe { set_abi_errno(libc::EILSEQ) };
+        } else if n != 0 {
+            // SAFETY: GNU reports truncation through this thread's errno;
+            // n==0 retains the entrypoint's no-write/no-errno contract.
+            unsafe { set_abi_errno(libc::E2BIG) };
         }
         return -1;
     }

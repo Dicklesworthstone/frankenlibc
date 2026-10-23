@@ -17,12 +17,11 @@ static STDIO_GLOBAL_STREAM_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn swprintf_unknown_conversions_keep_following_arguments_and_count() {
-    let fmt: Vec<libc::wchar_t> = "%*.*lQ:%d:%s:%.1f%n\0"
-        .chars()
-        .map(|c| c as i32)
-        .collect();
+    let fmt: Vec<libc::wchar_t> = "%*.*lQ:%d:%s:%.1f%n\0".chars().map(|c| c as i32).collect();
     let mut buf = [0x5a_i32; 64];
     let mut count = -77_i32;
+    // SAFETY: format and string are terminated, operand types match, and
+    // both the wchar buffer and count pointer are live writable objects.
     let written = unsafe {
         swprintf(
             buf.as_mut_ptr(),
@@ -38,12 +37,50 @@ fn swprintf_unknown_conversions_keep_following_arguments_and_count() {
     };
     assert_eq!(written, 18);
     assert_eq!(count, 18);
-    let expected: Vec<i32> = "%7.3Q:701:tail:1.5\0"
+    let expected: Vec<i32> = "%7.3Q:701:tail:1.5\0".chars().map(|c| c as i32).collect();
+    assert_eq!(&buf[..expected.len()], expected);
+    assert!(buf[expected.len()..].iter().all(|&v| v == 0x5a));
+}
+
+#[test]
+fn swprintf_unknown_conversions_truncation_reports_e2big() {
+    let fmt: Vec<libc::wchar_t> = "%*qQ:%d\0".chars().map(|c| c as i32).collect();
+    let mut buf = [0x5a_i32; 8];
+    // SAFETY: format and promoted arguments agree, capacities fit the live
+    // buffer, and errno points to this thread's writable slot.
+    unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = 0;
+        assert_eq!(swprintf(buf.as_mut_ptr(), 2, fmt.as_ptr(), 7_i32, 701_i32), -1);
+        assert_eq!(*frankenlibc_abi::errno_abi::__errno_location(), libc::E2BIG);
+        assert_eq!(buf, [b'%' as i32, 0, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a]);
+        *frankenlibc_abi::errno_abi::__errno_location() = 91;
+        assert_eq!(swprintf(buf.as_mut_ptr(), 0, fmt.as_ptr(), 7_i32, 701_i32), -1);
+        assert_eq!(*frankenlibc_abi::errno_abi::__errno_location(), 91);
+    }
+}
+
+#[test]
+fn swprintf_unknown_conversions_and_errno_message_consume_no_value() {
+    let fmt: Vec<libc::wchar_t> = "%m:%d:%s\0".chars().map(|c| c as i32).collect();
+    let mut buf = [0_i32; 64];
+    // SAFETY: errno is this thread's slot; the terminated format/string and
+    // promoted integer agree with the caller's writable wchar buffer.
+    let written = unsafe {
+        *frankenlibc_abi::errno_abi::__errno_location() = libc::EINVAL;
+        swprintf(
+            buf.as_mut_ptr(),
+            buf.len(),
+            fmt.as_ptr(),
+            701_i32,
+            c"tail".as_ptr(),
+        )
+    };
+    let expected: Vec<i32> = "Invalid argument:701:tail\0"
         .chars()
         .map(|c| c as i32)
         .collect();
+    assert_eq!(written as usize, expected.len() - 1);
     assert_eq!(&buf[..expected.len()], expected);
-    assert!(buf[expected.len()..].iter().all(|&v| v == 0x5a));
 }
 
 struct StdioGlobalStreamGuard {
