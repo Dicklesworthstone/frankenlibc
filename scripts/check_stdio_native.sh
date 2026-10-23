@@ -3,15 +3,24 @@
 set -euo pipefail
 
 GNU_ONLY=0
+GLOBALS_ONLY=0
+if [[ "$#" -gt 1 ]]; then
+  echo "usage: $0 [--gnu-printf|--globals-only]" >&2
+  exit 2
+fi
 if [[ "${1:-}" == "--gnu-printf" ]]; then
   GNU_ONLY=1
+elif [[ "${1:-}" == "--globals-only" ]]; then
+  GLOBALS_ONLY=1
 elif [[ "$#" -ne 0 ]]; then
-  echo "usage: $0 [--gnu-printf]" >&2
+  echo "usage: $0 [--gnu-printf|--globals-only]" >&2
   exit 2
 fi
 BEAD_ID="bd-zh1y.4"
 if [[ "${GNU_ONLY}" -eq 1 ]]; then
   BEAD_ID="bd-rc0923-epic-eeuy4f.34"
+elif [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
+  BEAD_ID="bd-reality-202609-lx578q.6.2.1"
 fi
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -43,53 +52,76 @@ fi
 LIB="$(realpath "${LIB}")"
 LIB_SHA256="$(sha256sum "${LIB}" | awk '{print $1}')"
 
-symbol_addr() {
+check_pointer_cell() {
   local symbol="$1"
-  nm -D --defined-only "${LIB}" 2>/dev/null | awk -v sym="${symbol}" '
+  local pointer_size
+  pointer_size="$(( $(getconf LONG_BIT) / 8 ))"
+  nm -D --defined-only --print-size "${LIB}" | awk -v sym="${symbol}" -v width="${pointer_size}" '
     {
       name = $NF
       sub(/@.*/, "", name)
-      if (name == sym && addr == "") {
-        addr = $1
+      if (name == sym) {
+        found++
+        size = $2
+        sub(/^0+/, "", size)
+        if (size == width && $(NF - 1) ~ /^[BD]$/) valid++
       }
     }
     END {
-      if (addr != "") {
-        print addr
+      if (found != 1 || valid != 1) {
+        print "FAIL: " sym " must be an exported pointer-sized data object" > "/dev/stderr"
+        exit 1
       }
     }
   '
 }
 
-check_alias_addr() {
-  local public_symbol="$1"
-  local alias_symbol="$2"
-  local public_addr alias_addr
-  public_addr="$(symbol_addr "${public_symbol}")"
-  alias_addr="$(symbol_addr "${alias_symbol}")"
-  if [[ -z "${public_addr}" || -z "${alias_addr}" ]]; then
-    echo "FAIL: missing nm symbol(s) for ${public_symbol}/${alias_symbol}" >&2
-    nm -D --defined-only "${LIB}" >&2 || true
-    exit 1
-  fi
-  if [[ "${public_addr}" != "${alias_addr}" ]]; then
-    echo "FAIL: ${alias_symbol} address ${alias_addr} != ${public_symbol} address ${public_addr}" >&2
-    nm -D --defined-only "${LIB}" | grep -E "(${public_symbol}|${alias_symbol})" >&2 || true
-    exit 1
-  fi
+check_file_object() {
+  local symbol="$1"
+  local pointer_size
+  pointer_size="$(( $(getconf LONG_BIT) / 8 ))"
+  nm -D --defined-only --print-size "${LIB}" | awk -v sym="${symbol}" -v width="${pointer_size}" '
+    {
+      name = $NF
+      sub(/@.*/, "", name)
+      if (name == sym) {
+        size = $2
+        sub(/^0+/, "", size)
+        if (size == width) {
+          print "FAIL: " sym " must not be a pointer-sized FILE alias" > "/dev/stderr"
+          invalid = 1
+        }
+      }
+    }
+    END { exit invalid }
+  '
 }
 
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  check_alias_addr "stdin" "_IO_2_1_stdin_"
-  check_alias_addr "stdout" "_IO_2_1_stdout_"
-  check_alias_addr "stderr" "_IO_2_1_stderr_"
+  # stdin/out/err are pointer cells. _IO_2_1_* are FILE objects in glibc,
+  # not aliases of those cells; the hybrid preload need not export them.
+  check_pointer_cell "stdin"
+  check_pointer_cell "stdout"
+  check_pointer_cell "stderr"
+  check_file_object "_IO_2_1_stdin_"
+  check_file_object "_IO_2_1_stdout_"
+  check_file_object "_IO_2_1_stderr_"
 fi
 
-cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
-  -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl -lm -pthread
+if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
+  cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_printf.c" \
+    -o "${BIN_DIR}/fixture_stdio_printf.bin" -ldl -lm -pthread
+fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  cc -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -Wno-format-truncation "${ROOT}/tests/integration/fixture_stdio_globals.c" \
-    -o "${BIN_DIR}/fixture_stdio_globals.bin"
+  for style in copy got; do
+    link_flags=(-fno-pic -no-pie)
+    if [[ "${style}" == got ]]; then
+      link_flags=(-fPIC -pie)
+    fi
+    cc -D_GNU_SOURCE -D_POSIX_C_SOURCE=200809L -std=c11 -O2 -fno-builtin -Wall -Wextra -Werror \
+      "${link_flags[@]}" "${ROOT}/tests/integration/fixture_stdio_globals.c" \
+      -o "${BIN_DIR}/fixture_stdio_globals.${style}.bin" -ldl
+  done
 fi
 
 now_iso_ms() {
@@ -115,12 +147,13 @@ run_case() {
   local expected_stdout="$4"
   local expected_stderr="$5"
   local artifact_refs="$6"
-  local stdout_file stderr_file output start_ns end_ns latency_ns env_prefix=()
+  local stdout_file stderr_file start_ns end_ns latency_ns
 
   stdout_file="${OUT_DIR}/${name}.${mode}.stdout.log"
   stderr_file="${OUT_DIR}/${name}.${mode}.stderr.log"
   start_ns="$(date +%s%N)"
-  FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" "${bin}" >"${stdout_file}" 2>"${stderr_file}"
+  FRANKENLIBC_STDIO_EXPECT_PROVIDER="${LIB}" FRANKENLIBC_MODE="${mode}" LD_PRELOAD="${LIB}" \
+    "${bin}" >"${stdout_file}" 2>"${stderr_file}"
   end_ns="$(date +%s%N)"
   latency_ns="$((end_ns - start_ns))"
 
@@ -145,11 +178,38 @@ run_case() {
 
 COMMON_REFS='["scripts/check_stdio_native.sh","tests/integration/fixture_stdio_printf.c","tests/integration/fixture_stdio_globals.c","target/conformance/stdio_native.report.json","target/conformance/stdio_native.log.jsonl","target/conformance/stdio_native.test_output.log"]'
 
-run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "strict" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
-run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
+if [[ "${GLOBALS_ONLY}" -eq 0 ]]; then
+  run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "strict" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
+  run_case "fixture_stdio_printf" "${BIN_DIR}/fixture_stdio_printf.bin" "hardened" "fixture_stdio_printf: PASS" "" "${COMMON_REFS}"
+fi
 if [[ "${GNU_ONLY}" -eq 0 ]]; then
-  run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "strict" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
-  run_case "fixture_stdio_globals" "${BIN_DIR}/fixture_stdio_globals.bin" "hardened" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
+  for style in copy got; do
+    name="fixture_stdio_globals.${style}"
+    bin="${BIN_DIR}/${name}.bin"
+    host_provider="$(env -u LD_PRELOAD ldd "${bin}" | awk '$1 == "libc.so.6" { print $3 }')"
+    if [[ ! -f "${host_provider}" ]]; then
+      echo "FAIL: cannot identify live GNU stdio provider" >&2
+      exit 1
+    fi
+    env -u LD_PRELOAD -u FRANKENLIBC_MODE FRANKENLIBC_STDIO_EXPECT_PROVIDER="${host_provider}" \
+      "${bin}" >"${OUT_DIR}/${name}.host.stdout.log" 2>"${OUT_DIR}/${name}.host.stderr.log"
+    for mode in strict hardened; do
+      run_case "${name}" "${bin}" "${mode}" "fixture_stdio_globals: PASS" "stderr-immediate" "${COMMON_REFS}"
+      if ! cmp -s "${OUT_DIR}/${name}.host.stdout.log" "${OUT_DIR}/${name}.${mode}.stdout.log" || \
+         ! cmp -s "${OUT_DIR}/${name}.host.stderr.log" "${OUT_DIR}/${name}.${mode}.stderr.log"; then
+        echo "FAIL: ${name} (${mode}) differs from live GNU stdout/stderr" >&2
+        exit 1
+      fi
+    done
+  done
+fi
+
+if [[ "${GLOBALS_ONLY}" -eq 1 ]]; then
+  cat >"${REPORT}" <<JSON
+{"schema_version":"v1","scope":"stdio-globals","bead":"${BEAD_ID}","run_id":"${RUN_ID}","library":"${LIB}","library_sha256":"${LIB_SHA256}","build_kind":"${BUILD_KIND}","pointer_cell_symbols":"pass","link_styles":["copy","got"],"candidate_processes":4,"live_GNU_processes":2,"provider_bound_FILE_semantics_strict":"pass","provider_bound_FILE_semantics_hardened":"pass","full_stdio_gate":"not_run"}
+JSON
+  echo "check_stdio_native --globals-only: PASS (provider-bound FILE semantics in both modes; full stdio gate not run)"
+  exit 0
 fi
 
 # Live GNU oracle and the exact supplied library execute the same fixture.
@@ -202,7 +262,7 @@ cat >"${REPORT}" <<JSON
   "library_sha256": "${LIB_SHA256}",
   "build_kind": "${BUILD_KIND}",
   "checks": {
-    "nm_stdio_alias_addresses": "pass",
+    "nm_stdio_pointer_cells": "pass",
     "fixture_stdio_printf_strict": "pass",
     "fixture_stdio_printf_hardened": "pass",
     "fixture_stdio_globals_strict": "pass",
