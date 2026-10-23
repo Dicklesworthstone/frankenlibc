@@ -3198,7 +3198,8 @@ fn rpc_identity_file<T>(
     match read() {
         Ok(image) => parse(&image).map_or(Answer::NotFound, Answer::Found),
         Err(error) => {
-            set_abi_errno(error);
+            // SAFETY: this updates only the current thread's valid errno slot.
+            unsafe { set_abi_errno(error) };
             Answer::Unavailable(error)
         }
     }
