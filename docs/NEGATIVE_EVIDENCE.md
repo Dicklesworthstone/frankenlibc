@@ -42140,3 +42140,89 @@ establish the original throughput targets or integrated L1 readiness.
   was solo; no independent verifier or broad performance/safety/release win
   is claimed. Original .9 acceptance and the owned-TLS performance gap stay open.
 
+## 2026-10-22 — Discard HTM bookkeeping experiment; repair its isolated test setup (.9)
+
+- **DISCARD.** Two guards avoided the cooldown clock for an unset deadline and
+  summary bookkeeping without `runtime-tracing`. Both new cost regressions
+  compiled and failed separately on old source `ed44d7b31`; the candidate passed
+  all six HTM units in default and tracing builds. Nevertheless, the actual
+  five-arm deployed invocation rejected it: hardened numeric sort was
+  **1,192.880 ms versus 1,007.463 ms incumbent (+18.40%)**; lexical was
+  480.665/486.449 ms (-1.19%). No favorable rerun or causal/general loss claim.
+  Both guards and their two optimization-specific tests were manually rolled
+  back together. Commits `ed44d7b31` and `1c2ca7c9b` and all evidence remain.
+  The HTM file again exactly matches pre-experiment `2624ba6cc`, SHA-256
+  `1d7a689c02e9f8e0e47c560260f00b6894a2bf35e8e25c52c14673674029565e`;
+  its original four tests actually execute **4 passed / 0 failed / 229 filtered**.
+  Automatic save had already published `1c2ca7c9b`; rollback `0c0e5ce44` was
+  pushed to main and the required legacy mirror, with both remote refs verified.
+- **ORIGINAL LIMITS STILL FAIL.** The rejected candidate's same-invocation GNU
+  ratios were lexical 2.694x and numeric 2.367x, but strict ratios were
+  **4.509x and 2.411x**. Twenty-two of 24 short groups exceeded the original
+  maximum batch mean of 200 ns; the worst was 1,375.99 ns. This invocation
+  retained **1,430 rows: 1,170 measured and 260 warmup**, 130 nine-sample
+  summaries and ten sort-binding records. Provider rejection, three malformed
+  controls, checksums and sort-output parity all held. GNU 2.43 was live in the
+  same invocation; the compatibility strings were 2.38. Host load changed from
+  6.00/11.22/14.81 to 14.20/12.56/14.88. All raw samples remain; neither an
+  improved lexical median nor the GNU-only limits qualify the failed targets.
+- **REJECTED ARTIFACT SCOPE.** Explicit Linux default and owned-TLS release
+  builds and delivery both completed with exit 0, bound to `ed44d7b31` plus
+  overlay `32c51efc9c9ea4e0b76cb26329691363fb7569dc2b048e4b5e70418fd0ec7fe3`.
+  Default ELF SHA-256
+  `caadd42a3969e8cdd681c864747ac358e74aaa002c4c9f475df00e15ce2e1f5d`
+  passed **98/98 deployed safety cases** and wrong-provider rejection. Owned
+  SHA-256 `4fa0e39b9cb1be9bc78a6c70d75f26dbfbcdc0a89238d433f5ae7fbbbdef7157`
+  received no native/performance execution after discard. These are rejected
+  artifacts, not replacements for the retained runtime. The default candidate
+  and live incumbent both identify Rust 1.100.0-nightly (908501772 2026-08-30).
+  Workspace compilation passed on the candidate; its Clippy/fmt failures matched
+  the baseline. None of those receipts is a post-rollback execution.
+- **RETAINED TEST REPAIR.** Actual isolated malloc HTM integration failed in
+  strict and hardened modes: single-threaded slot-local statistics never enter
+  the global combiner, so counters remained zero. The first failure poisoned
+  the shared test mutex; the second was not an independent allocator failure.
+  An additional old-source commit test run alone failed directly, **0 passed /
+  1 failed / 88 filtered**, confirming the hidden ordering prerequisite.
+  Existing `malloc_abi_test.rs` now allocates/frees on the calling thread and a
+  real joined second thread, asserts the actual multi-threaded latch, then
+  resets the site before the original forced-mode allocation/free sequence.
+  All original commit/abort/fallback assertions remain. No production branch,
+  counter injection, mock, tolerance, skip or direct statistics hook was added.
+  With `--no-fail-fast`, all three binaries actually execute in **each** mode:
+  malloc **2 passed / 87 filtered**, mutex **2 passed / 18 filtered**, memcpy
+  **2 passed / 211 filtered**, with zero failures and both overall exits 0.
+  This exercises the intended global-combiner path without depending on another
+  test first creating a second allocating thread. It proves neither hardware
+  RTM execution nor full allocator conformance. Exact test SHA-256
+  `7e981d36c1ea962517794516f3cad48d30b6c071fd3b81e888dc350485491e68`;
+  source receipt `2624ba6cc` plus overlay
+  `6fcd240213b149a68294e1657888e3afe7082e690cd7e7defcae0541bd5cbf5b`.
+- **FINAL CHECKS AND LIMITS.** Helper-source full workspace Clippy with
+  `--all-targets --keep-going -- -D warnings` completed exit 101 with exactly
+  **27 baseline occurrences / 17 title-file pairs**, zero added/removed.
+  Formatting completed exit 1 with exactly **583 baseline diff bodies**, zero
+  added/removed. The final helper-source workspace compiler check with
+  `--all-targets --keep-going` completed **exit 0** (16m03s compiler time),
+  bound to the same `2624ba6cc` + overlay `6fcd2402` source as the repaired
+  integration tests. Full allocator-file/corpus
+  and UBS execution remain unrun. Original `.9` throughput and owned-TLS
+  lifecycle/cache work, `bd-dcrhgl` allocator acceptance, and L1 readiness stay
+  open. The retained change is a test enabler; **no runtime optimization is
+  retained**. Admission churn and reports earn no capability credit.
+- **RECEIPTS.** Existing root
+  `/Users/jemanuel/projects/.frankenlibc-deployed-bench-job-20261022/` retains
+  `artifacts/htm-ab/benchmark.json`, SHA-256
+  `fe8eae06c5dd15719bc1e1d14ba2f2880d4e661db2d03b2d4ea43867c49ec476`;
+  `benchmark.raw.jsonl`,
+  `b6c76f429714fc3e80f73fb4d5dac1ebad33f0a0ff28517e238949888ec48695`;
+  and `artifacts/htm-safety-default/results.json`,
+  `bd1c39d7790cad51585f0c83f39f1dd9f2444e30798264de419376da793bcdd5`.
+  Original isolated failures and all command logs remain. Detailed TODO and
+  gate-fix win/lose split are recorded on `.9` and `bd-dcrhgl`; this entry retires
+  as active evidence when the next exact-source qualification supersedes it.
+  Guarded tracker export preserved all 7,544 IDs, 4,693 dependencies, 13,232
+  labels and every prior comment, appending only nine comments on two tasks.
+  Tracker doctor still exits 1 for its existing inner-ignore-template warning
+  and preserved temporary/recovery artifacts; no cleanup or repair was applied.
+
