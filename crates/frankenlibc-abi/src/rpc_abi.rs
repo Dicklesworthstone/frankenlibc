@@ -2885,103 +2885,113 @@ pub unsafe extern "C" fn _seterr_reply(msg: *mut c_void, error: *mut c_void) {
 // Key management / Secure RPC (16+ symbols)
 // ===========================================================================
 
-/// Decrypt a session key using the key server. Returns -1 (failure) — no keyserv.
+/// Decrypt a session key through the local native keyserver client.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_decryptsession(
-    _remotename: *const c_char,
-    _deskey: *mut c_void,
+    remotename: *const c_char,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, false) }
 }
 
-/// Decrypt a session key with a public key. Returns -1 (failure) — no keyserv.
+/// Decrypt using a counted public key, including an installed local key hook.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_decryptsession_pk(
-    _remotename: *const c_char,
-    _remotekey: *mut c_void,
-    _deskey: *mut c_void,
+pub unsafe extern "C-unwind" fn key_decryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, false) }
 }
 
-/// Encrypt a session key using the key server. Returns -1 (failure) — no keyserv.
+/// Encrypt a session key through the local native keyserver client.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_encryptsession(
-    _remotename: *const c_char,
-    _deskey: *mut c_void,
+    remotename: *const c_char,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: the helper imports caller storage before the protocol exchange.
+    unsafe { rpc_udp::key_session(remotename, deskey, true) }
 }
 
-/// Encrypt a session key with a public key. Returns -1 (failure) — no keyserv.
+/// Encrypt using a counted public key, including an installed local key hook.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_encryptsession_pk(
-    _remotename: *const c_char,
-    _remotekey: *mut c_void,
-    _deskey: *mut c_void,
+pub unsafe extern "C-unwind" fn key_encryptsession_pk(
+    remotename: *const c_char,
+    remotekey: *mut c_void,
+    deskey: *mut c_void,
 ) -> c_int {
-    -1 // No keyserver available
+    // SAFETY: checked private snapshots remain live across reentry or unwind.
+    unsafe { rpc_udp::key_session_pk(remotename, remotekey, deskey, true) }
 }
 
-/// Generate a DES key using the key server. Returns -1 (failure) — no keyserv.
+/// Generate a DES key using native KEY_GEN or an installed local generator.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_gendes(_deskey: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C-unwind" fn key_gendes(deskey: *mut c_void) -> c_int {
+    // SAFETY: output admission precedes the request or user-installed callback.
+    unsafe { rpc_udp::key_generate(deskey) }
 }
 
-/// Get conversation key from public key. Returns -1 (failure) — no keyserv.
+/// Derive a conversation key from a classic 48-byte public key via keyserv.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_get_conv(_pkey: *mut c_char, _deskey: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_get_conv(pkey: *mut c_char, deskey: *mut c_void) -> c_int {
+    // SAFETY: keybuf and output are imported/published through the checked copier.
+    unsafe { rpc_udp::key_conversation(pkey, deskey) }
 }
 /// Check if the secret key has been set with the key server.
-/// Returns 0 (FALSE) — no keyserv integration in FrankenLibC.
+/// Returns zero on a missing/empty secret or failed protocol exchange.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
 pub unsafe extern "C" fn key_secretkey_is_set() -> c_int {
-    0 // No keyserv client installed
+    // SAFETY: the operation uses only private request and result storage.
+    unsafe { rpc_udp::key_secret_is_set() }
 }
 
-/// Set network key parameters. Returns -1 (failure) — no keyserv.
+/// Store private/public keys and a network identity; returns one on success.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_setnet(_arg: *mut c_void) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_setnet(arg: *mut c_void) -> c_int {
+    // SAFETY: the public record and its name are copied before daemon access.
+    unsafe { rpc_udp::key_set_network(arg) }
 }
 
-/// Set secret key with key server. Returns -1 (failure) — no keyserv.
+/// Store a classic 48-byte secret key with the local keyserver.
 ///
 /// # Safety
 /// ABI boundary function.
 #[cfg_attr(not(debug_assertions), unsafe(no_mangle))]
-pub unsafe extern "C" fn key_setsecret(_secretkey: *const c_char) -> c_int {
-    -1 // No keyserver available
+pub unsafe extern "C" fn key_setsecret(secretkey: *const c_char) -> c_int {
+    // SAFETY: the helper retains and erases its own fixed-size secret copy.
+    unsafe { rpc_udp::key_set_secret(secretkey) }
 }
 
 // --- Internal key function pointer globals ---
-// In glibc these are `int (*__key_*_LOCAL)(...)` global function pointers.
+// The public-key hooks return a borrowed cryptkeyres*, while the generator
+// returns a borrowed des_block*. Both receive uid_t and a procedure argument.
 // We export them as mutable static AtomicPtrs so programs and libraries
 // can read/write them. Initialized to null (no keyserv client installed).
 

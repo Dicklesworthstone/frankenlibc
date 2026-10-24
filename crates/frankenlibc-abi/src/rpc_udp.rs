@@ -26,6 +26,14 @@ mod tcp;
 mod portmap;
 pub(super) use portmap::{getmaps, remote_call};
 
+#[path = "rpc_keyserv.rs"]
+mod keyserv;
+pub(super) use keyserv::{
+    conversation as key_conversation, generate as key_generate, secret_is_set as key_secret_is_set,
+    session as key_session, session_pk as key_session_pk, set_network as key_set_network,
+    set_secret as key_set_secret,
+};
+
 // Reuse the same tracked-bound, fault-checked copier as the socket importers.
 // Keep one implementation; do not introduce another process_vm/pipe fallback.
 use crate::io_abi::iov_snapshot as user_copy;
