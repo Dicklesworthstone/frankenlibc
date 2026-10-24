@@ -47,7 +47,7 @@ FrankenLibC puts a **Transparent Safety Membrane (TSM)** behind selected parts o
 | Host-backed and unsupported subsets are explicit | **1,272 `WrapsHostLibc` (30.9%), 0 `GlibcCallThrough`, 18 `Stub` (0.4%)** |
 | Interposition has a checked workload snapshot | The committed 2026-09-24 preload artifact reports **189 passes / 0 fails / 4 optional skips / 1 xfail** across strict + hardened modes. It was produced from source commit `a8a4110b…`, not current HEAD, so it is historical evidence rather than a current-release result (`tests/conformance/ld_preload_smoke_summary.v1.json`) |
 | Two runtime safety modes | `FRANKENLIBC_MODE=strict` (compatibility-first) and `FRANKENLIBC_MODE=hardened` (deterministic repair) |
-| Architecture scope | x86_64 is primary; aarch64 has a Rust type-check gate, with linked-artifact/runtime qualification still outstanding |
+| Architecture scope | x86_64 is primary; aarch64 has bounded linked-release and provider-verified QEMU interposition coverage in strict and hardened modes |
 | Verification is first-class | Harness CLI, **132 fixture JSONs covering 94 distinct `family` values**, **282 completion-contract artifacts**, **69 CLI-contract manifests**, **66 `cargo-fuzz` targets**, and 9 proof notes / obligation mappings (counts checked by `scripts/check_docs_semantic_claims.sh`) |
 | Runtime math is live code | `crates/frankenlibc-membrane/src/runtime_math/` contains **~71 control-kernel modules** with live execution paths, not just design docs (which calls reach them depends on mode; see [Runtime Math Controllers](#runtime-math-controllers)) |
 | Build-time proof-oriented infrastructure | Three supplied Gram matrices are checked for PSD/Cholesky validity and an algebraic recomposition identity; a source scanner inventories selected atomic sites. These are consistency checks, not proofs of allocator fragmentation, thread safety, or size-class correctness (`crates/frankenlibc-membrane/build.rs`) |
@@ -644,7 +644,7 @@ The x86_64 release path (`setjmp_abi.rs`, naked asm) uses glibc's exact 200-byte
 
 The aarch64 asm mangles too. It stores the saved frame pointer (`x29`), return address (`x30`) and stack pointer (`sp`) as `value ^ pointer_guard` (`eor`, with no rotate: glibc rotates only on x86_64; glibc also leaves `x29` in plaintext). aarch64 has no fixed TCB slot for the guard the way x86_64 has `%fs:0x30`. glibc's `__pointer_chk_guard` is a `GLIBC_PRIVATE` symbol that an interposing library cannot rely on resolving. So the guard is FrankenLibC's own `__frankenlibc_pointer_guard`, which the library's `.init_array` constructor seeds from the same `AT_RANDOM` bytes glibc uses, and the asm reads through the GOT. Unlike glibc's RELRO copy, the word stays writable after startup. `__longjmp_chk` performs the same stack-direction check there. aarch64's `jmp_buf` word layout is FrankenLibC's own; it is not byte-identical to glibc's aarch64 `__jmp_buf`. So the inspection and overwritten-return-address checks live in `tests/integration/fixture_setjmp_edges.c`, under the FrankenLibC preload, rather than in the byte-compared corpus.
 
-**aarch64 is not a shipping release target yet** (bd-aarch64-setjmp-ship-w6nh8r). The aarch64 cdylib does not build until the x86_64-only TLSDESC asm in `dlfcn_tls.rs` is gated. Even with that gate, the `global_asm!` setjmp family is not exported, so an aarch64 preload binds `setjmp`/`longjmp` to glibc while `__longjmp_chk` binds to FrankenLibC. Until that is fixed, the mangling above is verified only on the cross-built library under qemu-aarch64, and the aarch64 blocks of `fixture_setjmp_edges.c` cannot run under a real preload.
+**aarch64 remains a bring-up target with bounded release evidence** (`bd-rc0923-epic-eeuy4f.41`–`.42`). On 2026-10-23 a linked AArch64 release library passed provider-verified C probes under QEMU in strict and hardened modes, including the ARM blocks of `fixture_setjmp_edges.c`. The qualifier checks both symbol lookups and executable call bindings; GNU FORTIFY aliases such as `longjmp` to `__longjmp_chk` must resolve to the same tested library. The release build also executed 163 FORTIFY integration tests and two raw-poll tests successfully. Full workload coverage, native ARM hardware qualification and standalone replacement remain open.
 
 The guard metadata below is **not** in release builds: it does not fit glibc's layout, and rejecting cross-thread jumps would diverge from glibc in strict mode.
 
@@ -927,7 +927,7 @@ LD_PRELOAD=/usr/lib/frankenlibc/libfrankenlibc_abi.so /bin/echo hello
 
 ### Requirements
 
-- Linux (x86_64 primary; aarch64 supported and cross-compile-tested). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
+- Linux (x86_64 primary; aarch64 has bounded QEMU release/interposition qualification). The x86_64 release artifact targets baseline x86-64 and picks SSE4.2/AVX2/FMA kernels at run time, so no particular CPU generation is required.
 - Rust nightly with `rustfmt` and `clippy` (pinned via `rust-toolchain.toml`)
 - A normal Cargo workspace; no mixed package-manager build system
 
@@ -1017,7 +1017,8 @@ directory must be empty so a new run cannot overwrite earlier evidence. Set
 | Membrane verification | `cargo run -p frankenlibc-harness --bin harness -- verify-membrane --mode both --output /tmp/healing.json` | Runs strict/hardened healing oracle |
 | Benchmarking | `cargo bench -p frankenlibc-bench` | Benchmarks library hot paths |
 | Fuzzing (target) | `cargo +nightly fuzz run <target>` | Runs a `cargo-fuzz` target |
-| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Cross-compile validation |
+| aarch64 cross-compile gate | `bash scripts/check_aarch64_crosscompile.sh` | Rust frontend validation |
+| aarch64 linked-library smoke | `FRANKENLIBC_AARCH64_ARTIFACT=/absolute/path/to/libfrankenlibc_abi.so bash scripts/run_aarch64_smoke.sh run` | Dynamic providers and C behavior in both modes, with foreign-provider controls |
 | L1 dashboard freshness | `bash scripts/check_release_gate.sh` | Top-level claim coherence |
 
 Interpretation note:
@@ -2839,7 +2840,7 @@ This pattern lets the project add a new behavior contract by *capturing* it from
 
 ## Cross-Architecture: aarch64 Today
 
-x86_64 is the primary target. aarch64 has source branches and a Rust type-check gate; linked release/runtime qualification remains outstanding. The aarch64-specific completion contracts describe intended coverage:
+x86_64 is the primary target. aarch64 has source branches, a Rust type-check gate, and bounded linked-release QEMU evidence. The aarch64-specific completion contracts describe intended coverage:
 
 - `aarch64_arch_regression_gate_completion_contract.v1.json` — Ensures aarch64 builds remain green
 - `aarch64_conformance_perf_matrix_completion_contract.v1.json` — Performance parity matrix
@@ -2847,13 +2848,15 @@ x86_64 is the primary target. aarch64 has source branches and a Rust type-check 
 
 The cross-compile gate (`scripts/check_aarch64_crosscompile.sh`) runs `cargo check` for the core and ABI crates with `--target aarch64-unknown-linux-gnu`. It checks the Rust frontend paths, including architecture-specific source and inline-assembly declarations. It does not link a release library, verify its dynamic symbols, or execute syscall/TLS behavior.
 
-`scripts/run_aarch64_smoke.sh` currently compiles a static system-libc smoke program and never loads the supplied FrankenLibC artifact. Its success therefore cannot qualify this library. The architecture work must establish actual providers and behavior under native ARM or QEMU execution (`bd-rc0923-epic-eeuy4f.41`–`.42`).
+`scripts/run_aarch64_smoke.sh` qualifies an explicit linked AArch64 library. It checks ELF architecture and exports, builds dynamic C probes, verifies both lookup and call-binding providers, and executes allocator/string, constructor, TLS/thread, FORTIFY, raw-I/O and jump cases in strict and hardened modes. Volatile function pointers keep compiler inlining from replacing the memory and printf operations being tested. Partial foreign interposers must be rejected; missing tools/artifacts, compile failures, static probes and timeouts cannot qualify. Generated sources, binaries and logs are retained.
+
+The 2026-10-23 release artifact (`sha256:6445302cfa3a3abf93b85188567ad200674e1305f95d177fb88f810837070650`) passed 26 named-provider checks and 48 behavior checks per mode, with both fortified and unfortified callers. A renamed library also passed, including its ARM jump-edge cases. An eight-case acceptance run verified these positives and rejection of missing artifacts, wrong architecture, missing compiler, compile failure, static-only execution and compiler timeout. The artifact was built through RCH from `5e9008051` plus the recorded ARM repair overlay; exact commands and receipts are attached to `bd-rc0923-epic-eeuy4f.41`. This is L0 interposition evidence, with full ABI differential coverage and hardware performance still unqualified.
 
 What's *not* yet done on aarch64:
 
 - Full ABI-fixture differential coverage (the fixture corpus is x86_64-captured)
 - Hardware-transactional-memory fast path (HTM is x86-specific; aarch64 needs its own LSE / SVE equivalents)
-- Production `LD_PRELOAD` smoke run (curated battery is x86_64-only today)
+- Broad production-workload `LD_PRELOAD` smoke run (the curated real-program battery is x86_64-only today)
 
 RISC-V, MIPS, and others are explicitly out of scope for v0.1.
 
